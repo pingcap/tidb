@@ -18,34 +18,73 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
 
-// ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
+// ResolveExprAndReplace replaces column fields in an expression by child logical-plan columns.
+// Callers must use the returned expression because shared scalar-function trees are rewritten
+// with copy-on-write instead of being mutated in place.
+func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) expression.Expression {
 	switch expr := origin.(type) {
 	case *expression.Column:
-		ResolveColumnAndReplace(expr, replace)
+		return ResolveColumnAndReplace(expr, replace)
 	case *expression.CorrelatedColumn:
-		ResolveColumnAndReplace(&expr.Column, replace)
-	case *expression.ScalarFunction:
-		for _, arg := range expr.GetArgs() {
-			ResolveExprAndReplace(arg, replace)
+		newCol, changed := resolveColumnAndReplace(&expr.Column, replace)
+		if !changed {
+			return expr
 		}
+		newExpr := expr.Clone().(*expression.CorrelatedColumn)
+		newExpr.Data = expr.Data
+		newExpr.Column = *newCol
+		return newExpr
+	case *expression.ScalarFunction:
+		var cloned *expression.ScalarFunction
+		// Planner expressions may already be hashed or shared across operators.
+		// Rewrite scalar-function args with copy-on-write so column replacement
+		// does not mutate an existing expression tree in place.
+		for i, arg := range expr.GetArgs() {
+			newArg := ResolveExprAndReplace(arg, replace)
+			if newArg == arg {
+				continue
+			}
+			if cloned == nil {
+				cloned = expr.Clone().(*expression.ScalarFunction)
+			}
+			cloned.GetArgs()[i] = newArg
+		}
+		if cloned != nil {
+			return cloned
+		}
+		return expr
 	}
+	return origin
 }
 
 // ResolveColumnAndReplace replaces columns fields of expressions by children logical plans.
-func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
-	dst := replace[string(origin.HashCode())]
-	if dst != nil {
-		retType, inOperand := origin.RetType, origin.InOperand
-		*origin = *dst
-		origin.RetType, origin.InOperand = retType, inOperand
-	}
+func ResolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) *expression.Column {
+	newCol, _ := resolveColumnAndReplace(origin, replace)
+	return newCol
 }
 
-// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
+func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) (*expression.Column, bool) {
+	dst := replace[string(origin.HashCode())]
+	if dst != nil {
+		// To avoid origin column is shared by multiple operators,
+		// need to clone it before modification.
+		newCol := dst.Clone().(*expression.Column)
+		newCol.RetType, newCol.InOperand = origin.RetType, origin.InOperand
+		return newCol, true
+	}
+	return origin, false
+}
+
+// ReplaceColumnOfExpr replaces columns in an expression by another LogicalProjection.
+// Callers must use the returned expression because shared scalar-function trees are rewritten
+// with copy-on-write instead of being mutated in place.
 func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expression, schema *expression.Schema) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
@@ -54,8 +93,21 @@ func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expressi
 			return exprs[idx]
 		}
 	case *expression.ScalarFunction:
-		for i := range v.GetArgs() {
-			v.GetArgs()[i] = ReplaceColumnOfExpr(v.GetArgs()[i], exprs, schema)
+		var cloned *expression.ScalarFunction
+		// Projection elimination may rewrite expressions that are still shared or
+		// already hashed, so keep the same copy-on-write rule as ResolveExprAndReplace.
+		for i, arg := range v.GetArgs() {
+			newArg := ReplaceColumnOfExpr(arg, exprs, schema)
+			if newArg == arg {
+				continue
+			}
+			if cloned == nil {
+				cloned = v.Clone().(*expression.ScalarFunction)
+			}
+			cloned.GetArgs()[i] = newArg
+		}
+		if cloned != nil {
+			return cloned
 		}
 	}
 	return expr
@@ -84,5 +136,100 @@ func IsColFromInnerTable(cols []*expression.Column, innerUniqueIDs *intset.FastI
 	})
 }
 
+// CheckMaxOneRowCond check if a condition is the form of (uniqueKey = constant) or (uniqueKey =
+// Correlated column), it returns at most one row.
+func CheckMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Schema) bool {
+	if len(eqColIDs) == 0 {
+		return false
+	}
+	// We check `UniqueKeys` as well since the condition is `col = con | corr`, not `col <=> con | corr`.
+	keys := make([]expression.KeyInfo, 0, len(childSchema.PKOrUK)+len(childSchema.NullableUK))
+	keys = append(keys, childSchema.PKOrUK...)
+	keys = append(keys, childSchema.NullableUK...)
+	var maxOneRow bool
+	for _, cols := range keys {
+		maxOneRow = true
+		for _, c := range cols {
+			if _, ok := eqColIDs[c.UniqueID]; !ok {
+				maxOneRow = false
+				break
+			}
+		}
+		if maxOneRow {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckIndexCanBeKey checks whether an Index can be a Key in schema.
+func CheckIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) (uniqueKey, newKey expression.KeyInfo) {
+	if !idx.Unique {
+		return nil, nil
+	}
+	newKeyOK := true
+	uniqueKeyOK := true
+	for _, idxCol := range idx.Columns {
+		// The columns of this index should all occur in column schema.
+		// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
+		findUniqueKey := false
+		for i, col := range columns {
+			if idxCol.Name.L == col.Name.L {
+				uniqueKey = append(uniqueKey, schema.Columns[i])
+				findUniqueKey = true
+				if newKeyOK {
+					if !mysql.HasNotNullFlag(col.GetFlag()) {
+						newKeyOK = false
+						break
+					}
+					newKey = append(newKey, schema.Columns[i])
+					break
+				}
+			}
+		}
+		if !findUniqueKey {
+			newKeyOK = false
+			uniqueKeyOK = false
+			break
+		}
+	}
+	if newKeyOK {
+		return nil, newKey
+	} else if uniqueKeyOK {
+		return uniqueKey, nil
+	}
+
+	return nil, nil
+}
+
 // SetPredicatePushDownFlag is a hook for other packages to set rule flag.
 var SetPredicatePushDownFlag func(uint64) uint64
+
+// ApplyPredicateSimplificationForJoin is a hook for other packages to simplify the expression.
+var ApplyPredicateSimplificationForJoin func(sctx base.PlanContext, predicates []expression.Expression,
+	schema1, schema2 *expression.Schema,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+
+// ApplyPredicateSimplification is a hook for other packages to simplify the expression.
+var ApplyPredicateSimplification func(sctx base.PlanContext, predicates []expression.Expression,
+	propagateConstant bool, filter expression.VaildConstantPropagationExpressionFuncType) []expression.Expression
+
+var childSchemaSlicePool = zeropool.New[[]*expression.Schema](func() []*expression.Schema {
+	return make([]*expression.Schema, 0, 4)
+})
+
+// BuildKeyInfoPortal recursively calls base.LogicalPlan's BuildKeyInfo method.
+func BuildKeyInfoPortal(lp base.LogicalPlan) {
+	for _, child := range lp.Children() {
+		BuildKeyInfoPortal(child)
+	}
+	childSchema := childSchemaSlicePool.Get()
+	childSchema = slices.Grow(childSchema, len(lp.Children()))
+	defer func() {
+		childSchemaSlicePool.Put(childSchema[:0])
+	}()
+	for _, child := range lp.Children() {
+		childSchema = append(childSchema, child.Schema())
+	}
+	lp.BuildKeyInfo(lp.Schema(), childSchema)
+}

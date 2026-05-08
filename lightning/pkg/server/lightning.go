@@ -45,19 +45,21 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/importinto"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // init expression.EvalSimpleAst related function
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -66,7 +68,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/shurcooL/httpgzip"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -93,6 +94,7 @@ type Lightning struct {
 	cancelLock sync.Mutex
 	curTask    *config.Config
 	cancel     context.CancelFunc // for per task context, which maybe different from lightning context
+	importer   LightningImporter
 
 	taskCanceled bool
 }
@@ -216,7 +218,6 @@ func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
 
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
 
 	registry := l.promRegistry
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -247,20 +248,9 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.Handle("/tasks/", httpHandleWrapper(handleTasks.ServeHTTP))
 	mux.HandleFunc("/progress/task", httpHandleWrapper(handleProgressTask))
 	mux.HandleFunc("/progress/table", httpHandleWrapper(handleProgressTable))
-	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
-	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
+	mux.HandleFunc("/pause", httpHandleWrapper(l.handlePause))
+	mux.HandleFunc("/resume", httpHandleWrapper(l.handleResume))
 	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
-
-	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
-		IndexHTML: true,
-		ServeError: func(w http.ResponseWriter, req *http.Request, err error) {
-			if os.IsNotExist(err) && !strings.Contains(req.URL.Path, ".") {
-				http.Redirect(w, req, "/web/", http.StatusFound)
-			} else {
-				httpgzip.NonSpecific(w, req, err)
-			}
-		},
-	})))
 
 	listener, err := net.Listen("tcp", statusAddr)
 	if err != nil {
@@ -329,11 +319,11 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
-		b, err := storage.ParseBackend(path, nil)
+		b, err := objstore.ParseBackend(path, nil)
 		if err != nil {
 			panic(err)
 		}
-		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		s, err := objstore.New(context.Background(), b, &storeapi.Options{})
 		if err != nil {
 			panic(err)
 		}
@@ -455,14 +445,15 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	l.cancel = cancel
 	l.curTask = taskCfg
 	l.cancelLock.Unlock()
-	web.BroadcastStartTask()
+	progress.BroadcastStartTask()
 
 	defer func() {
 		cancel()
 		l.cancelLock.Lock()
 		l.cancel = nil
+		l.importer = nil
 		l.cancelLock.Unlock()
-		web.BroadcastEndTask(err)
+		progress.BroadcastEndTask(err)
 	}()
 
 	failpoint.Inject("SkipRunTask", func() {
@@ -506,63 +497,115 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
 
+	var mdl *mydump.MDLoader
+	var dbMetas []*mydump.MDDatabaseMeta
+	s := o.dumpFileStorage
+	if taskCfg.TikvImporter.Backend != config.BackendImportInto {
+		mdl, s, err = l.initDataSource(ctx, taskCfg, o)
+		if err != nil {
+			return err
+		}
+
+		dbMetas = mdl.GetDatabases()
+		progress.BroadcastInitProgress(dbMetas)
+	}
+
+	db, keyspaceName, err := initDBAndKeyspace(ctx, taskCfg, o)
+	if err != nil {
+		return err
+	}
+
+	param := &importer.ControllerParam{
+		DBMetas:           dbMetas,
+		Status:            &l.status,
+		DumpFileStorage:   s,
+		OwnExtStorage:     o.dumpFileStorage == nil,
+		DB:                db,
+		CheckpointStorage: o.checkpointStorage,
+		CheckpointName:    o.checkpointName,
+		DupIndicator:      o.dupIndicator,
+		KeyspaceName:      keyspaceName,
+	}
+
+	var procedure LightningImporter
+	procedure, err = newImporter(ctx, taskCfg, param)
+	if err != nil {
+		o.logger.Error("restore failed", log.ShortError(err))
+		return errors.Trace(err)
+	}
+
+	l.cancelLock.Lock()
+	l.importer = procedure
+	l.cancelLock.Unlock()
+
+	failpoint.Inject("orphanWriterGoRoutine", func() {
+		// don't exit too quickly to expose panic
+		defer time.Sleep(time.Second * 10)
+	})
+	defer procedure.Close()
+
+	err = procedure.Run(ctx)
+	return errors.Trace(err)
+}
+
+func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, o *options) (*mydump.MDLoader, storeapi.Storage, error) {
 	s := o.dumpFileStorage
 	if s == nil {
-		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
+		u, err := objstore.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
 		if err != nil {
-			return common.NormalizeError(err)
+			return nil, nil, common.NormalizeError(err)
 		}
-		s, err = storage.New(ctx, u, &storage.ExternalStorageOptions{})
+		s, err = objstore.New(ctx, u, &storeapi.Options{})
 		if err != nil {
-			return common.NormalizeError(err)
+			return nil, nil, common.NormalizeError(err)
 		}
 	}
 
 	// return expectedErr means at least meet one file
 	expectedErr := errors.New("Stop Iter")
-	walkErr := s.WalkDir(ctx, &storage.WalkOption{ListCount: 1}, func(string, int64) error {
+	walkErr := s.WalkDir(ctx, &storeapi.WalkOption{ListCount: 1}, func(string, int64) error {
 		// return an error when meet the first regular file to break the walk loop
 		return expectedErr
 	})
 	if !errors.ErrorEqual(walkErr, expectedErr) {
 		if walkErr == nil {
-			return common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
+			return nil, nil, common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
 		}
-		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
+		return nil, nil, common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}
 
 	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
-	var mdl *mydump.MDLoader
-	mdl, err = mydump.NewLoaderWithStore(
+	mdl, err := mydump.NewLoaderWithStore(
 		ctx, mydump.NewLoaderCfg(taskCfg), s,
 		mydump.WithScanFileConcurrency(l.curTask.App.RegionConcurrency*2),
 	)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
 	if err != nil {
 		o.logger.Error("check system requirements failed", zap.Error(err))
-		return common.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
+		return nil, nil, common.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
 	}
 	// check table schema conflicts
 	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
 	if err != nil {
 		o.logger.Error("checkpoint schema conflicts with data files", zap.Error(err))
-		return errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
+	return mdl, s, nil
+}
 
-	dbMetas := mdl.GetDatabases()
-	web.BroadcastInitProgress(dbMetas)
-
+func initDBAndKeyspace(ctx context.Context, taskCfg *config.Config, o *options) (*sql.DB, string, error) {
 	// db is only not nil in unit test
 	db := o.db
+	var err error
 	if db == nil {
 		// initiation of default db should be after BuildTLSConfig
 		db, err = importer.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
-			return common.ErrDBConnect.Wrap(err)
+			return nil, "", common.ErrDBConnect.Wrap(err)
 		}
 	}
 
@@ -587,34 +630,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		}
 		o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
 	}
-
-	param := &importer.ControllerParam{
-		DBMetas:           dbMetas,
-		Status:            &l.status,
-		DumpFileStorage:   s,
-		OwnExtStorage:     o.dumpFileStorage == nil,
-		DB:                db,
-		CheckpointStorage: o.checkpointStorage,
-		CheckpointName:    o.checkpointName,
-		DupIndicator:      o.dupIndicator,
-		KeyspaceName:      keyspaceName,
-	}
-
-	var procedure *importer.Controller
-	procedure, err = importer.NewImportController(ctx, taskCfg, param)
-	if err != nil {
-		o.logger.Error("restore failed", log.ShortError(err))
-		return errors.Trace(err)
-	}
-
-	failpoint.Inject("orphanWriterGoRoutine", func() {
-		// don't exit too quickly to expose panic
-		defer time.Sleep(time.Second * 10)
-	})
-	defer procedure.Close()
-
-	err = procedure.Run(ctx)
-	return errors.Trace(err)
+	return db, keyspaceName, nil
 }
 
 // Stop stops the lightning server.
@@ -885,7 +901,7 @@ func writeBytesCompressed(w http.ResponseWriter, req *http.Request, b []byte) {
 
 func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	res, err := web.MarshalTaskProgress()
+	res, err := progress.MarshalTaskProgress()
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {
@@ -897,7 +913,7 @@ func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 func handleProgressTable(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	tableName := req.URL.Query().Get("t")
-	res, err := web.MarshalTableCheckpoints(tableName)
+	res, err := progress.MarshalTableCheckpoints(tableName)
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {
@@ -910,7 +926,7 @@ func handleProgressTable(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func handlePause(w http.ResponseWriter, req *http.Request) {
+func (l *Lightning) handlePause(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	switch req.Method {
@@ -920,8 +936,21 @@ func handlePause(w http.ResponseWriter, req *http.Request) {
 
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		importer.DeliverPauser.Pause()
-		log.L().Info("progress paused")
+		l.cancelLock.Lock()
+		imp := l.importer
+		l.cancelLock.Unlock()
+
+		if imp != nil {
+			if err := imp.Pause(req.Context()); err != nil {
+				log.L().Error("failed to pause", zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "failed to pause", err)
+				return
+			}
+			log.L().Info("progress paused")
+		} else {
+			importer.DeliverPauser.Pause()
+			log.L().Info("progress paused")
+		}
 		_, _ = w.Write([]byte("{}"))
 
 	default:
@@ -930,14 +959,27 @@ func handlePause(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func handleResume(w http.ResponseWriter, req *http.Request) {
+func (l *Lightning) handleResume(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	switch req.Method {
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		importer.DeliverPauser.Resume()
-		log.L().Info("progress resumed")
+		l.cancelLock.Lock()
+		imp := l.importer
+		l.cancelLock.Unlock()
+
+		if imp != nil {
+			if err := imp.Resume(req.Context()); err != nil {
+				log.L().Error("failed to resume", zap.Error(err))
+				writeJSONError(w, http.StatusInternalServerError, "failed to resume", err)
+				return
+			}
+			log.L().Info("progress resumed")
+		} else {
+			importer.DeliverPauser.Resume()
+			log.L().Info("progress resumed")
+		}
 		_, _ = w.Write([]byte("{}"))
 
 	default:
@@ -1026,34 +1068,9 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 	return nil
 }
 
-// CheckpointRemove removes the checkpoint of the given table.
-func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer cpdb.Close()
-
-	// try to remove the metadata first.
-	taskCp, err := cpdb.TaskCheckpoint(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// a empty id means this task is not inited, we needn't further check metas.
-	if taskCp != nil && taskCp.TaskID != 0 {
-		// try to clean up table metas if exists
-		if err = CleanupMetas(ctx, cfg, tableName); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
-}
-
 // CleanupMetas removes the table metas of the given table.
 func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
-	if tableName == "all" {
+	if tableName == common.AllTables {
 		tableName = ""
 	}
 	// try to clean up table metas if exists
@@ -1154,4 +1171,50 @@ func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
 		}
 	}
 	return x509.ParseECPrivateKey(keyDERBlock.Bytes)
+}
+
+// LightningImporter is an interface that abstracts the execution lifecycle of different import backends.
+// It allows TiDB Lightning to support multiple import engines (such as the standard Local/Importer
+// backend and the specialized IMPORT INTO procedure) through a unified API.
+//
+// This interface should be implemented when adding a new import strategy or engine that requires
+// integration with the Lightning task server. Unlike the legacy Controller pattern, which is often
+// specifically tied to mydump-based data sourcing and global resource management, LightningImporter
+// provides a polymorphic abstraction focused on the execution phase (Run, Pause, Resume, Close),
+// enabling the higher-level server to manage various import procedures consistently.
+type LightningImporter interface {
+	// Run starts the import process.
+	Run(ctx context.Context) error
+	// Pause pauses the import process.
+	Pause(ctx context.Context) error
+	// Resume resumes the import process.
+	Resume(ctx context.Context) error
+	// Close closes the importer and releases resources.
+	Close()
+}
+
+type importIntoProgressAdapter struct {
+	s *importer.LightningStatus
+}
+
+func (a *importIntoProgressAdapter) UpdateTotalSize(size int64) {
+	a.s.TotalFileSize.Store(size)
+}
+
+func (a *importIntoProgressAdapter) UpdateFinishedSize(size int64) {
+	a.s.FinishedFileSize.Store(size)
+}
+
+// newImporter creates a new LightningImporter based on the configuration.
+func newImporter(ctx context.Context, cfg *config.Config, param *importer.ControllerParam) (LightningImporter, error) {
+	switch cfg.TikvImporter.Backend {
+	case config.BackendImportInto:
+		return importinto.NewImporter(ctx, cfg, param.DB,
+			importinto.WithProgressUpdater(&importIntoProgressAdapter{s: param.Status}),
+		)
+	case config.BackendLocal, config.BackendTiDB:
+		return importer.NewImportController(ctx, cfg, param)
+	default:
+		return nil, errors.Errorf("unknown backend %s", cfg.TikvImporter.Backend)
+	}
 }

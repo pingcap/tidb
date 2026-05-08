@@ -21,6 +21,7 @@ import (
 )
 
 func TestPiTRCreateNonUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	var colIDs = [][]int{
 		{1, 4, 7},
 		{2, 5, 8},
@@ -32,6 +33,7 @@ func TestPiTRCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestPiTRCreateUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	var colIDs = [][]int{
 		{1, 6},
 		{11},
@@ -43,18 +45,21 @@ func TestPiTRCreateUniqueIndex(t *testing.T) {
 }
 
 func TestPiTRCreatePrimaryKey(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	ctx := testutils.InitCompCtx(t)
 	ctx.CompCtx.IsPiTR = true
 	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
 
 func TestPiTRCreateGenColIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	ctx := testutils.InitCompCtx(t)
 	ctx.CompCtx.IsPiTR = true
 	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
 
 func TestPiTRCreateMultiColsIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	var coliIDs = [][]int{
 		{1},
 		{8},

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -225,8 +225,6 @@ func testNotInAntiSemi(t *testing.T, rightAsBuildSide bool) {
 	ctx.GetSessionVars().MaxChunkSize = maxChunkSizeInTest
 	leftDataSource, rightDataSource, expectedResult := buildNotInAntiSemiDataSourceAndExpectResult(ctx, semiJoinleftCols, semiJoinrightCols)
 
-	maxRowTableSegmentSize = 100
-
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 
 	leftKeys := []*expression.Column{
@@ -265,7 +263,7 @@ func testNotInAntiSemi(t *testing.T, rightAsBuildSide bool) {
 		schema:                buildSchema(semiJoinRetTypes),
 		leftExec:              leftDataSource,
 		rightExec:             rightDataSource,
-		joinType:              logicalop.AntiSemiJoin,
+		joinType:              base.AntiSemiJoin,
 		rightAsBuildSide:      rightAsBuildSide,
 		buildKeys:             buildKeys,
 		probeKeys:             probeKeys,
@@ -326,7 +324,7 @@ func TestAntiSemiJoinProbeBasic(t *testing.T) {
 
 	partitionNumber := 4
 
-	joinType := logicalop.AntiSemiJoin
+	joinType := base.AntiSemiJoin
 
 	testCases := []testCase{
 		// normal case
@@ -400,7 +398,7 @@ func TestAntiSemiJoinProbeAllJoinKeys(t *testing.T) {
 	rTypes := lTypes
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := []int{}
-	joinType := logicalop.AntiSemiJoin
+	joinType := base.AntiSemiJoin
 	partitionNumber := 4
 
 	rightAsBuildSide := []bool{true, false}
@@ -469,7 +467,7 @@ func TestAntiSemiJoinJoinProbeWithSel(t *testing.T) {
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 
-	joinType := logicalop.AntiSemiJoin
+	joinType := base.AntiSemiJoin
 
 	rightAsBuildSide := []bool{true, false}
 

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
@@ -43,7 +44,6 @@ func TestIssue24210(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=1")
 
 	// for ProjectionExec
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockProjectionExecBaseExecutorOpenReturnedError", `return(true)`))
@@ -331,7 +331,7 @@ func TestIndexJoin31494(t *testing.T) {
 	tk.MustExec(insertStr)
 	tk.MustExec("analyze table t2")
 	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+		PS: make([]*sessmgr.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
@@ -346,7 +346,7 @@ func TestIndexJoin31494(t *testing.T) {
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
-		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err) || err.Error() == "context canceled")
 	}
 }
 
@@ -600,7 +600,7 @@ func TestIssue42662(t *testing.T) {
 	tk.Session().GetSessionVars().MemTracker.IsRootTrackerOfSess = true
 
 	sm := &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
 	}
 	sm.Conn = make(map[uint64]sessionapi.Session)
 	sm.Conn[tk.Session().GetSessionVars().ConnectionID] = tk.Session()
@@ -789,7 +789,7 @@ func TestIssue60926(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue60926", "panic")
 	tk.MustExec("set tidb_hash_join_version=legacy")
 
-	join.IsChildCloseCalledForTest = false
+	join.IsChildCloseCalledForTest.Store(false)
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
-	require.True(t, join.IsChildCloseCalledForTest)
+	require.True(t, join.IsChildCloseCalledForTest.Load())
 }

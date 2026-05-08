@@ -29,7 +29,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -41,6 +40,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -293,19 +293,6 @@ func (em *engineManager) closeEngine(
 	engineUUID uuid.UUID,
 ) (errRet error) {
 	if externalCfg := cfg.External; externalCfg != nil {
-		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
-		if err != nil {
-			return err
-		}
-		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if errRet != nil {
-				store.Close()
-			}
-		}()
 		ts := cfg.TS
 		if ts == 0 {
 			physical, logical, err := em.GetTS(ctx)
@@ -316,21 +303,21 @@ func (em *engineManager) closeEngine(
 		}
 		externalEngine := external.NewExternalEngine(
 			ctx,
-			store,
+			externalCfg.ExtStore,
 			externalCfg.DataFiles,
 			externalCfg.StatFiles,
 			externalCfg.StartKey,
 			externalCfg.EndKey,
 			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			em.WorkerConcurrency,
+			int(em.WorkerConcurrency.Load()),
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
 			externalCfg.MemCapacity,
 			externalCfg.OnDup,
-			"",
+			externalCfg.FilePrefix,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -365,26 +352,7 @@ func (em *engineManager) closeEngine(
 	}
 
 	engine := engineI.(*Engine)
-	engine.rLock()
-	if engine.closed.Load() {
-		engine.rUnlock()
-		return nil
-	}
-
-	err := engine.flushEngineWithoutLock(ctx)
-	engine.rUnlock()
-
-	// use mutex to make sure we won't close sstMetasChan while other routines
-	// trying to do flush.
-	engine.lock(importMutexStateClose)
-	engine.closed.Store(true)
-	close(engine.sstMetasChan)
-	engine.unlock()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	engine.wg.Wait()
-	return engine.ingestErr.Get()
+	return engine.finishWrite(ctx)
 }
 
 // getImportedKVCount returns the number of imported KV pairs of some engine.
@@ -409,6 +377,14 @@ func (em *engineManager) getExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	return v.ImportedStatistics()
 }
 
+func (em *engineManager) getExternalEngineConflictInfo(engineUUID uuid.UUID) engineapi.ConflictInfo {
+	v, ok := em.externalEngine[engineUUID]
+	if !ok {
+		return engineapi.ConflictInfo{}
+	}
+	return v.ConflictInfo()
+}
+
 // resetEngine reset the engine and reclaim the space.
 func (em *engineManager) resetEngine(
 	ctx context.Context,
@@ -420,7 +396,8 @@ func (em *engineManager) resetEngine(
 	if localEngine == nil {
 		if engineI, ok := em.externalEngine[engineUUID]; ok {
 			extEngine := engineI.(*external.Engine)
-			return extEngine.Reset()
+			extEngine.Reset()
+			return nil
 		}
 
 		logutil.Logger(ctx).Warn("could not find engine in cleanupEngine", zap.Stringer("uuid", engineUUID))
@@ -499,6 +476,33 @@ func (em *engineManager) cleanupEngine(ctx context.Context, engineUUID uuid.UUID
 	return nil
 }
 
+// cleanupAllLocalEngines performs best-effort cleanup for all local engines.
+// Failures are logged internally and not returned to the caller.
+func (em *engineManager) cleanupAllLocalEngines(ctx context.Context) {
+	var (
+		retErr  error
+		engines []*Engine
+	)
+	em.engines.Range(func(_, v any) bool {
+		engines = append(engines, v.(*Engine))
+		return true
+	})
+	task := em.logger.With(zap.Int("engineCount", len(engines))).Begin(zap.InfoLevel, "cleanup all local engines")
+	defer func() {
+		task.End(zap.ErrorLevel, retErr)
+	}()
+	for _, eng := range engines {
+		if err := eng.finishWrite(ctx); err != nil {
+			retErr = multierr.Append(retErr, errors.Annotatef(err,
+				"finish write failed, engine id=%s, uuid=%s", eng.ID(), eng.UUID))
+		}
+		if err := em.cleanupEngine(ctx, eng.UUID); err != nil {
+			retErr = multierr.Append(retErr, errors.Annotatef(err,
+				"cleanup failed, engine id=%s, uuid=%s", eng.ID(), eng.UUID))
+		}
+	}
+}
+
 // LocalWriter returns a new local writer.
 func (em *engineManager) localWriter(_ context.Context, cfg *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
 	e, ok := em.engines.Load(engineUUID)
@@ -524,12 +528,16 @@ func (em *engineManager) engineFileSizes() (res []backend.EngineFileSize) {
 
 func (em *engineManager) close() {
 	for _, e := range em.externalEngine {
-		_ = e.Close()
+		if err := e.Close(); err != nil {
+			em.logger.Warn("close external engine failed", zap.String("id", e.ID()), zap.Error(err))
+		}
 	}
 	em.externalEngine = map[uuid.UUID]engineapi.Engine{}
 	allLocalEngines := em.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
-		_ = e.Close()
+		if err := e.Close(); err != nil {
+			em.logger.Warn("close local engine failed", zap.String("id", e.ID()), zap.Error(err))
+		}
 		e.unlock()
 	}
 	em.engines = sync.Map{}

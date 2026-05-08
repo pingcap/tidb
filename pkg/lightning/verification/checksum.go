@@ -56,6 +56,17 @@ func MakeKVChecksum(bytes uint64, kvs uint64, checksum uint64) KVChecksum {
 	}
 }
 
+// MakeKVChecksumWithKeyspace creates a new KVChecksum with the given keyspace, bytes, kvs, and checksum.
+func MakeKVChecksumWithKeyspace(keyspace []byte, bytes uint64, kvs uint64, checksum uint64) KVChecksum {
+	return KVChecksum{
+		base:      crc64.Update(0, ecmaTable, keyspace),
+		prefixLen: len(keyspace),
+		bytes:     bytes,
+		kvs:       kvs,
+		checksum:  checksum,
+	}
+}
+
 // UpdateOne updates the checksum with a single key-value pair.
 func (c *KVChecksum) UpdateOne(kv common.KvPair) {
 	sum := crc64.Update(c.base, ecmaTable, kv.Key)

@@ -1734,8 +1734,7 @@ func checkConstraintForExchangePartition(ctx table.MutateContext, row []types.Da
 		}
 	}
 
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	if err := table.CheckRowConstraintWithDatum(evalCtx, nt.WritableConstraint(), row); err != nil {
+	if err := table.CheckRowConstraintWithDatum(ctx.GetExprCtx(), nt.WritableConstraint(), row, nt.Meta()); err != nil {
 		// TODO: make error include ExchangePartition info.
 		return err
 	}
@@ -2036,7 +2035,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		return finishFunc(err, nil)
 	}
 
-	var found map[string][]byte
+	var found map[string]kv.ValueEntry
 	var newFromKey, newToKey kv.Key
 
 	keys := make([]kv.Key, 0, 2)
@@ -2077,12 +2076,12 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		if len(newFromKey) > 0 {
 			if val, ok := found[string(newFromKey)]; ok {
-				newFromVal = val
+				newFromVal = val.Value
 			}
 		}
 		if len(newToKey) > 0 {
 			if val, ok := found[string(newToKey)]; ok {
-				newToVal = val
+				newToVal = val.Value
 			}
 		}
 	}

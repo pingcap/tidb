@@ -2,4 +2,4 @@ CREATE TABLE t1(c0 INT );
 CREATE  VIEW v0(c0) AS SELECT NULL AS col_0 FROM t1 WHERE ((t1.c0));
 SELECT * FROM t1 JOIN (SELECT ((v0.c0) LIKE (((v0.c0) + (v0.c0)))) AS col_0 FROM v0) as subQuery1 ON (subQuery1.col_0);
 show warnings;
-EXPLAIN FORMAT='brief' SELECT * FROM t1 JOIN (SELECT ((v0.c0) LIKE (((v0.c0) + (v0.c0)))) AS col_0 FROM v0) as subQuery1 ON (subQuery1.col_0);
+EXPLAIN FORMAT='plan_tree' SELECT * FROM t1 JOIN (SELECT ((v0.c0) LIKE (((v0.c0) + (v0.c0)))) AS col_0 FROM v0) as subQuery1 ON (subQuery1.col_0);

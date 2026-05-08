@@ -23,6 +23,7 @@ import (
 	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,7 +43,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -53,7 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
@@ -64,11 +67,14 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -391,7 +397,7 @@ func TestGetRegionByIDWithError(t *testing.T) {
 
 func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	var err error
-	ts.store, err = mockstore.NewMockStore()
+	ts.store, err = teststore.NewMockStoreWithoutBootstrap()
 	require.NoError(t, err)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
@@ -542,6 +548,11 @@ func TestGetTableMVCC(t *testing.T) {
 	}
 
 	hexKey := p2.Key
+	if kerneltype.IsNextGen() {
+		// EncodeKey(nil) returns the codec's key prefix. We use this to strip the prefix from the hex key.
+		keyPrefix := strings.ToUpper(hex.EncodeToString(ts.store.GetCodec().EncodeKey(nil)))
+		hexKey = strings.TrimPrefix(hexKey, keyPrefix)
+	}
 	resp, err = ts.FetchStatus("/mvcc/hex/" + hexKey)
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
@@ -756,6 +767,108 @@ func TestGetIndexMVCC(t *testing.T) {
 	require.NoError(t, err)
 	decodeKeyMvcc(resp.Body, t, true)
 	require.NoError(t, resp.Body.Close())
+}
+
+func TestDeleteKeyHandler(t *testing.T) {
+	// on CI env, the store_cache might mark the uni-store as unreachable, and
+	// cause the test to fail, so we enable the failpoint to make it always reachable.
+	testfailpoint.Enable(t, "tikvclient/injectLiveness", `return("reachable")`)
+	ts := createBasicHTTPHandlerTestSuite()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/server/enableTestAPI", "return")
+	ts.startServer(t)
+	ts.prepareData(t)
+	defer ts.stopServer(t)
+
+	ctx := context.Background()
+	store := ts.store
+
+	t.Run("index", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, ts.store)
+		tk.MustExec("use tidb")
+		tk.MustExec("drop table if exists delete_idx")
+		tk.MustExec("create table delete_idx (a int primary key, b int, key idx_ab(a, b))")
+		tk.MustExec("insert into delete_idx values (1, 2)")
+
+		tbl, err := ts.domain.InfoSchema().TableByName(ctx, ast.NewCIStr("tidb"), ast.NewCIStr("delete_idx"))
+		require.NoError(t, err)
+
+		var idx table.Index
+		for _, v := range tbl.Indices() {
+			if strings.EqualFold(v.Meta().Name.String(), "idx_ab") {
+				idx = v
+				break
+			}
+		}
+		require.NotNil(t, idx)
+
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+		idxRow := []types.Datum{
+			types.NewIntDatum(1),
+			types.NewIntDatum(2),
+		}
+		handle := kv.IntHandle(1)
+		encodedKey, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow, handle, nil)
+		require.NoError(t, err)
+
+		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+			_, err := txn.Get(ctx, encodedKey)
+			return err
+		})
+		require.NoError(t, err)
+
+		resp, err := ts.PostStatus("/test/delete/indexkey/tidb/delete_idx/idx_ab?handle=1&a=1&b=2", "application/x-www-form-urlencoded", nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+			_, err := txn.Get(ctx, encodedKey)
+			return err
+		})
+		require.True(t, kv.ErrNotExist.Equal(err))
+
+		err = tk.ExecToErr("admin check index tidb.delete_idx idx_ab")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "data inconsistency")
+	})
+
+	t.Run("row", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, ts.store)
+		tk.MustExec("use tidb")
+		tk.MustExec("drop table if exists delete_row")
+		tk.MustExec("create table delete_row (a int primary key, b int, key idx_b(b))")
+		tk.MustExec("insert into delete_row values (1, 2)")
+
+		tbl, err := ts.domain.InfoSchema().TableByName(ctx, ast.NewCIStr("tidb"), ast.NewCIStr("delete_row"))
+		require.NoError(t, err)
+
+		handle := kv.IntHandle(1)
+		encodedKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), handle)
+		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+			_, err := txn.Get(ctx, encodedKey)
+			return err
+		})
+		require.NoError(t, err)
+
+		resp, err := ts.PostStatus("/test/delete/rowkey/tidb/delete_row?handle=1", "application/x-www-form-urlencoded", nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+			_, err := txn.Get(ctx, encodedKey)
+			return err
+		})
+		require.True(t, kv.ErrNotExist.Equal(err))
+
+		err = tk.ExecToErr("admin check table tidb.delete_row")
+		require.Error(t, err)
+		require.ErrorContains(t, err, "data inconsistency")
+	})
 }
 
 func TestGetSettings(t *testing.T) {
@@ -974,6 +1087,9 @@ func TestGetSchema(t *testing.T) {
 }
 
 func TestAllHistory(t *testing.T) {
+	// TestGetSchema will set schema lease to -1, while this test needs a valid
+	// schema lease.
+	vardef.SetStatsLease(time.Second)
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -1033,6 +1149,49 @@ func TestAllHistory(t *testing.T) {
 		lastID = job.ID
 	}
 	require.NoError(t, resp.Body.Close())
+}
+
+func TestDDLCheckHandler(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("DDL check handler is only available for next-gen kernel")
+	}
+
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	ts.prepareData(t)
+	defer ts.stopServer(t)
+
+	resp, err := ts.FetchStatus("/ddl/check/tidb/test/idx1")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Contains(t, string(body), "only support POST")
+
+	resp, err = ts.PostStatus("/ddl/check/tidb/test/idx_not_exist", "application/json", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	decoder := json.NewDecoder(resp.Body)
+	var result map[string]any
+	err = decoder.Decode(&result)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "failed", result["result"])
+	require.NotEmpty(t, result["error"])
+
+	resp, err = ts.PostStatus("/ddl/check/tidb/test/idx1", "application/json", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&result)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "tidb", result["db"])
+	require.Equal(t, "test", result["table"])
+	require.Equal(t, "idx1", result["index"])
+	require.Equal(t, "admin check index `tidb`.`test` `idx1`", result["check_sql"])
+	require.Equal(t, "success", result["result"])
 }
 
 func filterSpaces(bs []byte) []byte {
@@ -1151,7 +1310,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1165,7 +1324,7 @@ func TestWriteDBTablesData(t *testing.T) {
 	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
 
 	// Two tables in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
 	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
 	require.NoError(t, err)
@@ -1233,7 +1392,7 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
-	ts.domain.InfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
 
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
@@ -1322,6 +1481,10 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 }
 
 func TestUpgrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -1513,14 +1676,14 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	// test upgrade show for 1 server
 	checkUpgradeShow(1, 100, 0)
 	// test upgrade show for 3 servers
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo")
 	// test upgrade show again with 3 different version servers
 	checkUpgradeShow(3, 33, 3)
 	// test upgrade show again with 3 servers of the same version
 	mockedAllServerInfos["s2"].Version = mockedAllServerInfos["s0"].Version
 	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	checkUpgradeShow(3, 100, 0)
 }
 
@@ -1549,8 +1712,8 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
 
-	ts.domain.InfoSyncer().Restart(ctx)
-	ts.domain.InfoSyncer().RestartTopology(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().ServerInfoSyncer().RestartTopology(ctx)
 
 	testUpdateLabels := func() {
 		labels := map[string]string{}
@@ -1568,7 +1731,7 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		require.Equal(t, newLabels, labels)
 	}
 	testStoreTopology := func() {
-		require.NoError(t, ts.domain.InfoSyncer().StoreTopologyInfo(context.Background()))
+		require.NoError(t, ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()))
 	}
 
 	done := make(chan struct{})

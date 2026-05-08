@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -67,13 +68,16 @@ const (
 	// step goes from none -> importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
 	// when used in local sort, it means encode&sort data and then importing the data.
-	JobStepImporting  = "importing"
-	JobStepValidating = "validating"
+	JobStepImporting = "importing"
+	// JobStepResolvingConflicts is the step after importing to resolve conflicts,
+	// it's used in global sort.
+	JobStepResolvingConflicts = "resolving-conflicts"
+	JobStepValidating         = "validating"
 
 	baseQuerySQL = `SELECT
 					id, create_time, start_time, update_time, end_time,
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
-					status, step, summary, error_message
+					status, step, summary, error_message, group_key
 				FROM mysql.tidb_import_jobs`
 )
 
@@ -120,11 +124,17 @@ type JobInfo struct {
 	// If the ingest step is finished, the number of ingested rows will also stored in it.
 	Summary      *Summary
 	ErrorMessage string
+	GroupKey     string
 }
 
 // CanCancel returns whether the job can be cancelled.
 func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
+}
+
+// IsSuccess returns whether the job is successful.
+func (j *JobInfo) IsSuccess() bool {
+	return j.Status == JobStatusFinished
 }
 
 // GetJob returns the job with the given id if the user has privilege.
@@ -189,6 +199,7 @@ func CreateJob(
 	db, table string,
 	tableID int64,
 	user string,
+	groupKey string,
 	parameters *ImportParameters,
 	sourceFileSize int64,
 ) (int64, error) {
@@ -198,9 +209,10 @@ func CreateJob(
 	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err = conn.ExecuteInternal(ctx, `INSERT INTO mysql.tidb_import_jobs
-		(table_schema, table_name, table_id, created_by, parameters, source_file_size, status, step)
-		VALUES (%?, %?, %?, %?, %?, %?, %?, %?);`,
-		db, table, tableID, user, bytes, sourceFileSize, jobStatusPending, jobStepNone)
+		(table_schema, table_name, table_id, group_key, created_by, parameters, source_file_size, status, step)
+		VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?);`,
+		db, table, tableID, groupKey, user, bytes, sourceFileSize, jobStatusPending, jobStepNone)
+
 	if err != nil {
 		return 0, err
 	}
@@ -282,9 +294,9 @@ func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMs
 
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
-		WHERE id = %? AND status = %?;`,
-		jobStatusFailed, errorMsg, summaryStr, jobID, JobStatusRunning)
+			SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
+			WHERE id = %? AND status IN (%?, %?);`,
+		jobStatusFailed, errorMsg, summaryStr, jobID, jobStatusPending, JobStatusRunning)
 	return err
 }
 
@@ -323,6 +335,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	if !row.IsNull(14) {
 		errMsg = row.GetString(14)
 	}
+
 	return &JobInfo{
 		ID:             row.GetInt64(0),
 		CreateTime:     row.GetTime(1),
@@ -339,18 +352,12 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 		Step:           row.GetString(12),
 		Summary:        summary,
 		ErrorMessage:   errMsg,
+		GroupKey:       row.GetString(15),
 	}, nil
 }
 
-// GetAllViewableJobs gets all viewable jobs.
-func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
+func getJobInfoFromSQL(ctx context.Context, conn sqlexec.SQLExecutor, sql string, args ...any) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	sql := baseQuerySQL
-	args := []any{}
-	if !hasSuperPriv {
-		sql += " WHERE created_by = %?"
-		args = append(args, user)
-	}
 	rs, err := conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -370,6 +377,43 @@ func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user stri
 	}
 
 	return ret, nil
+}
+
+// GetJobsByGroupKey gets jobs with given group key.
+// If group key is not specified, it will return all jobs with group key set.
+func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, groupKey string, hasSuperPriv bool) ([]*JobInfo, error) {
+	sql := baseQuerySQL
+	args := []any{}
+	var whereClause []string
+	if !hasSuperPriv {
+		whereClause = append(whereClause, "created_by = %?")
+		args = append(args, user)
+	}
+
+	if groupKey != "" {
+		whereClause = append(whereClause, "GROUP_KEY = %?")
+		args = append(args, groupKey)
+	} else {
+		whereClause = append(whereClause, "GROUP_KEY != ''")
+	}
+
+	if len(whereClause) > 0 {
+		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
+	}
+
+	return getJobInfoFromSQL(ctx, conn, sql, args...)
+}
+
+// GetAllViewableJobs gets all viewable jobs.
+func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
+	sql := baseQuerySQL
+	args := []any{}
+	if !hasSuperPriv {
+		sql += " WHERE created_by = %?"
+		args = append(args, user)
+	}
+
+	return getJobInfoFromSQL(ctx, conn, sql, args...)
 }
 
 // CancelJob cancels import into job. Only a running/paused job can be canceled.

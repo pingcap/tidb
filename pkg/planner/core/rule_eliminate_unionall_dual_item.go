@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // EliminateUnionAllDualItem is trying to eliminate dual item(rowcount=0) in union all case.
@@ -32,7 +31,7 @@ func (*EliminateUnionAllDualItem) Name() string {
 }
 
 // Optimize implement LogicalOptRule's Optimize.
-func (*EliminateUnionAllDualItem) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*EliminateUnionAllDualItem) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	p, planChanged = unionAllEliminateDualItem(p)
 	return p, planChanged, nil

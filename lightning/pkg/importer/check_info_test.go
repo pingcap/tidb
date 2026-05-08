@@ -25,15 +25,16 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -47,7 +48,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	dir := t.TempDir()
 
 	ctx := context.Background()
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	type tableSource struct {
@@ -357,14 +358,14 @@ func TestCheckCSVHeader(t *testing.T) {
 	for _, ca := range cases {
 		rc.checkTemplate = NewSimpleTemplate()
 		cfg.Mydumper.IgnoreColumns = ca.ignoreColumns
-		rc.dbInfos = make(map[string]*checkpoints.TidbDBInfo)
+		rc.dbInfos = make(map[string]*importdef.DBInfo)
 
 		dbMetas := make([]*mydump.MDDatabaseMeta, 0)
 		for db, tbls := range ca.Sources {
 			tblMetas := make([]*mydump.MDTableMeta, 0, len(tbls))
-			dbInfo := &checkpoints.TidbDBInfo{
+			dbInfo := &importdef.DBInfo{
 				Name:   db,
-				Tables: make(map[string]*checkpoints.TidbTableInfo),
+				Tables: make(map[string]*importdef.TableInfo),
 			}
 			rc.dbInfos[db] = dbInfo
 
@@ -374,7 +375,7 @@ func TestCheckCSVHeader(t *testing.T) {
 				core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
 				require.NoError(t, err)
 				core.State = model.StatePublic
-				dbInfo.Tables[tbl.Name] = &checkpoints.TidbTableInfo{
+				dbInfo.Tables[tbl.Name] = &importdef.TableInfo{
 					ID:   core.ID,
 					DB:   db,
 					Name: tbl.Name,
@@ -552,10 +553,10 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.Equal(t, "table(s) [`test1`.`tbl1`, `test2`.`tbl1`] are not empty", tmpl.criticalMsgs[0])
 
 	// init checkpoint with only two of the three tables
-	dbInfos := map[string]*checkpoints.TidbDBInfo{
+	dbInfos := map[string]*importdef.DBInfo{
 		"test1": {
 			Name: "test1",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"tbl1": {
 					Name: "tbl1",
 				},
@@ -563,7 +564,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		},
 		"test2": {
 			Name: "test2",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"tbl1": {
 					Name: "tbl1",
 				},
@@ -602,7 +603,7 @@ func TestCheckTableEmpty(t *testing.T) {
 func TestLocalResource(t *testing.T) {
 	dir := t.TempDir()
 
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")

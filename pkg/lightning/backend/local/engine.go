@@ -42,9 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -125,7 +125,7 @@ type Engine struct {
 	finishedMetaSeq atomic.Int32
 
 	config    backend.LocalEngineConfig
-	tableInfo *checkpoints.TidbTableInfo
+	tableInfo *importdef.TableInfo
 
 	dupDetectOpt common.DupDetectOpt
 
@@ -192,6 +192,32 @@ func (e *Engine) Exist(dataDir string) error {
 		return err
 	}
 	return nil
+}
+
+// finishWrite flushes all data and waits for the background routine to finish.
+// after calling this method, the engine cannot be written anymore. the underlying
+// pebble DB is still kept open for reading.
+func (e *Engine) finishWrite(ctx context.Context) error {
+	e.rLock()
+	if e.closed.Load() {
+		e.rUnlock()
+		return nil
+	}
+
+	err := e.flushEngineWithoutLock(ctx)
+	e.rUnlock()
+
+	// use mutex to make sure we won't close sstMetasChan while other routines
+	// trying to do flush.
+	e.lock(importMutexStateClose)
+	e.closed.Store(true)
+	close(e.sstMetasChan)
+	e.unlock()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.wg.Wait()
+	return e.ingestErr.Get()
 }
 
 func isStateLocked(state importMutexState) bool {
@@ -283,6 +309,11 @@ func (e *Engine) KVStatistics() (totalSize int64, totalKVCount int64) {
 // ImportedStatistics returns the imported kv size and imported kv count.
 func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
+}
+
+// ConflictInfo implements common.Engine.
+func (*Engine) ConflictInfo() engineapi.ConflictInfo {
+	return engineapi.ConflictInfo{}
 }
 
 // ID is the identifier of an engine.
@@ -1309,13 +1340,13 @@ type flushStatus struct {
 	seq   int32
 }
 
-// Flushed implements backend.ChunkFlushStatus.
+// Flushed implements common.ChunkFlushStatus.
 func (f flushStatus) Flushed() bool {
 	return f.seq <= f.local.finishedMetaSeq.Load()
 }
 
-// Close implements backend.ChunkFlushStatus.
-func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+// Close implements common.ChunkFlushStatus.
+func (w *Writer) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	defer w.kvBuffer.Destroy()
 	defer w.engine.localWriters.Delete(w)
 	err := w.flush(ctx)
@@ -1326,7 +1357,7 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	return flushStatus{local: w.engine, seq: w.lastMetaSeq}, err
 }
 
-// IsSynced implements backend.ChunkFlushStatus.
+// IsSynced implements common.ChunkFlushStatus.
 func (w *Writer) IsSynced() bool {
 	return w.batchCount == 0 && w.lastMetaSeq <= w.engine.finishedMetaSeq.Load()
 }
@@ -1568,6 +1599,13 @@ type dbSSTIngester struct {
 }
 
 func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
+	failpoint.InjectCall("beforeMergeSSTs")
+	failpoint.Inject("mockErrInMergeSSTs", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mocked error in mergeSSTs"))
+		}
+	})
+
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {

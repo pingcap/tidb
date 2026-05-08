@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -58,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -628,7 +628,7 @@ func TestVectorExplainTruncate(t *testing.T) {
 		VEC_COSINE_DISTANCE(c, '[11111111111,11111111111.23456789,3.1,5.12456]'),
 		VEC_COSINE_DISTANCE(c, '[-11111111111,-11111111111.23456789,-3.1,-5.12456]')
 	FROM t;`).Check(testkit.Rows(
-		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#3, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#4, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#5`,
+		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#4, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#5, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#6`,
 		`└─TableReader 10000.00 root  data:TableFullScan`,
 		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
 	))
@@ -640,21 +640,21 @@ func TestVectorConstantExplain(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t(c VECTOR);")
 	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
-		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
 		"└─TableReader 10000.00 root  data:TableFullScan",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
-		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
 		"└─TableReader 10000.00 root  data:TableFullScan",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`EXPLAIN format = 'brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
-		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─TopN 10.00 root  Column#4, offset:0, count:10",
+		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"└─TopN 10.00 root  Column#5, offset:0, count:10",
 		"  └─TableReader 10.00 root  data:TopN",
-		"    └─TopN 10.00 cop[tikv]  Column#4, offset:0, count:10",
-		"      └─Projection 10.00 cop[tikv]  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"    └─TopN 10.00 cop[tikv]  Column#5, offset:0, count:10",
+		"      └─Projection 10.00 cop[tikv]  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#5",
 		"        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
@@ -681,12 +681,11 @@ func TestVectorConstantExplain(t *testing.T) {
 	encodedPlanTree := plannercore.EncodeFlatPlan(flat)
 	planTree, err := plancodec.DecodePlan(encodedPlanTree)
 	require.NoError(t, err)
-	fmt.Println(planTree)
-	fmt.Println("++++")
-	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
-	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3`))
-	require.True(t, strings.Contains(planTree, `	└─TableReader_6    	root     	10000  	data:TableFullScan_5`))
-	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
+	// Don't check planTree directly, because it contains execution time info and planner-internal IDs
+	// which are not stable across unrelated optimizer changes.
+	require.Regexp(t, `(?m)^\tProjection_\d+\s+root\s+10000\s+vec_cosine_distance\(test\.t\.c, cast\(\[100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100\.\.\.\(len:401\), vector\)\)->Column#4`, planTree)
+	require.Regexp(t, `(?m)^\t└─TableReader_\d+\s+root\s+10000\s+data:TableFullScan_\d+`, planTree)
+	require.Regexp(t, `(?m)^\t  └─TableFullScan_\d+\s+cop\[tikv\]\s+10000\s+table:t, keep order:false, stats:pseudo`, planTree)
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
@@ -735,11 +734,11 @@ func TestVectorIndexExplain(t *testing.T) {
 	vb.WriteString("]")
 
 	tk.MustQuery(fmt.Sprintf("explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '%s') limit 1", vb.String())).Check(testkit.Rows(
-		`TopN 1.00 root  Column#5, offset:0, count:1`,
+		`TopN 1.00 root  Column#6, offset:0, count:1`,
 		`└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender`,
 		`  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
-		`    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1`,
-		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#5`,
+		`    └─TopN 1.00 mpp[tiflash]  Column#6, offset:0, count:1`,
+		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#6`,
 		`        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
 	))
 }
@@ -1659,8 +1658,22 @@ func TestInfoBuiltin(t *testing.T) {
 		tidbVersionResult += fmt.Sprint(line)
 	}
 	lines := strings.Split(tidbVersionResult, "\n")
-	assert.Equal(t, true, strings.Split(lines[0], " ")[2] == mysql.TiDBReleaseVersion, "errors in 'select tidb_version()'")
-	assert.Equal(t, true, strings.Split(lines[1], " ")[1] == versioninfo.TiDBEdition, "errors in 'select tidb_version()'")
+	tidbVersionInfo := make(map[string]string, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+		parts := strings.SplitN(line, ": ", 2)
+		if len(parts) == 2 {
+			tidbVersionInfo[parts[0]] = parts[1]
+		}
+	}
+	if kerneltype.IsNextGen() {
+		expectedReleaseVersion, err := mysql.BuildTiDBXReleaseVersion(mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion))
+		require.NoError(t, err)
+		require.Equal(t, expectedReleaseVersion, tidbVersionInfo["Release Version"], "errors in 'select tidb_version()'")
+	} else {
+		require.Equal(t, mysql.TiDBReleaseVersion, tidbVersionInfo["Release Version"], "errors in 'select tidb_version()'")
+	}
+	require.Equal(t, versioninfo.TiDBEdition, tidbVersionInfo["Edition"], "errors in 'select tidb_version()'")
 
 	// for row_count
 	tk.MustExec("drop table if exists t")
@@ -1950,26 +1963,31 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 }
 
 func TestTiDBEncodeKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1);")
-	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	err = tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000725f728000000000000001"))
+		Check(testkit.Rows(fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID)))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("7480000000000000725f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows(fmt.Sprintf("74800000000000%04x5f698000000000000001038000000000000001038000000000000001", tbl.Meta().ID)))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000775f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(
+		fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID+2)))
+	rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('74800000000000%04x5f728000000000000001');", tbl.Meta().ID+2))
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1978,14 +1996,15 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
+	err = tk2.QueryToErr(fmt.Sprintf("select tidb_mvcc_info('74800000000000%04x5f728000000000000001');", tbl.Meta().ID+2))
 	require.ErrorContains(t, err, "Access denied")
 	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000775f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(
+		fmt.Sprintf("74800000000000%04x5f728000000000000001", tbl.Meta().ID+2)))
 }
 
 func TestIssue9710(t *testing.T) {
@@ -2102,6 +2121,20 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	rows = tk.MustQuery("explain format = 'brief' select * from test.t where hour(b) > 10").Rows()
 	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
 	require.Equal(t, "gt(hour(cast(test.t.b, time)), 10)", fmt.Sprintf("%v", rows[0][4]))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c0 double, primary key (c0))")
+	tk.MustExec("insert into t0 values (1)")
+	expectedRows := testkit.Rows("1")
+	withPKRows := tk.MustQuery("select c0 from t0 where /* issue:67236 */ atan2((t0.c0 is null), -('a'))").Rows()
+	require.Equal(t, expectedRows, withPKRows)
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c0 double)")
+	tk.MustExec("insert into t0 values (1)")
+	withoutPKRows := tk.MustQuery("select c0 from t0 where /* issue:67236 */ atan2((t0.c0 is null), -('a'))").Rows()
+	require.Equal(t, expectedRows, withoutPKRows)
+	require.Equal(t, withPKRows, withoutPKRows)
 
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
@@ -2734,11 +2767,11 @@ func TestCompareBuiltin(t *testing.T) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a date)")
-	result = tk.MustQuery("desc select a = a from t")
+	result = tk.MustQuery("explain format = 'plan_tree' select a = a from t")
 	result.Check(testkit.Rows(
-		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
-		"└─TableReader_6 10000.00 root  data:TableFullScan_5",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"Projection root  eq(test.t.a, test.t.a)->Column",
+		"└─TableReader root  data:TableFullScan",
+		"  └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval
@@ -2826,7 +2859,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select date("2019-09-12"), date("2019-09-12 12:12:09"), date("2019-09-12 12:12:09.121212");`)
 	result.Check(testkit.Rows("2019-09-12 2019-09-12 2019-09-12"))
 	result = tk.MustQuery(`select date("0000-00-00"), date("0000-00-00 12:12:09"), date("0000-00-00 00:00:00.121212"), date("0000-00-00 00:00:00.000000");`)
-	result.Check(testkit.Rows("<nil> 0000-00-00 0000-00-00 <nil>"))
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select date("aa"), date(12.1), date("");`)
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 
@@ -4424,4 +4457,18 @@ func TestIssue57608(t *testing.T) {
 			"<nil> <nil> <nil>",
 		))
 	}
+}
+
+// This is a testcase for issue #57608, which is to ensure that the return type
+// of expression is deep copied correctly when it needs to be modified.
+func TestDeepCopyRetType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0(c0 int);")
+	tk.MustExec("create table t1(c0 decimal);")
+	tk.MustExec("insert into t1(c0) values (1687);")
+	tk.MustExec("insert  into t0(c0) values (0);")
+	tk.MustExec("create view v0(c0) as select cast((t1.c0 div t1.c0) as decimal) from t1;")
+	tk.MustQuery("select * from v0 inner join t0 on (v0.c0 like cast(v0.c0 as char) <= t0.c0) and (not atan2(t0.c0, v0.c0));").Check(testkit.Rows())
 }

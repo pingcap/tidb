@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -52,7 +52,7 @@ type Common interface {
 	GetClient() kv.Client
 	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
-	GetSessionManager() util.SessionManager
+	GetSessionManager() sessmgr.Manager
 	// GetSQLExecutor returns the sqlexec.SQLExecutor.
 	GetSQLExecutor() sqlexec.SQLExecutor
 	// GetRestrictedSQLExecutor returns the sqlexec.RestrictedSQLExecutor.

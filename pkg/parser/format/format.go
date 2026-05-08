@@ -406,6 +406,14 @@ func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() erro
 	return nil
 }
 
+// WriteKeyWordWithSpecialComments writes a keyword with a special comment wrapped.
+func (ctx *RestoreCtx) WriteKeyWordWithSpecialComments(featureID string, keyWord string) {
+	_ = ctx.WriteWithSpecialComments(featureID, func() error {
+		ctx.WriteKeyWord(keyWord)
+		return nil
+	})
+}
+
 // WriteString writes the string into writer
 // `str` may be wrapped in quotes and escaped according to RestoreFlags.
 func (ctx *RestoreCtx) WriteString(str string) {

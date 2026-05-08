@@ -27,16 +27,17 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -404,7 +405,7 @@ func TestTrafficPrivilege(t *testing.T) {
 	defer server.Close()
 	ctx = fillCtxWithTiProxyAddr(ctx, []int{port})
 	mgr := &mockPrivManager{}
-	privilege.BindPrivilegeManager(suite.execBuilder.ctx, mgr)
+	privilege.BindPrivilegeManager(suite.execBuilder.sctx, mgr)
 
 	cancelTests := []struct {
 		privs []bool
@@ -485,7 +486,7 @@ func newTrafficTestSuite(t *testing.T, chunkSize int) *trafficTestSuite {
 	parser := parser.New()
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().MaxChunkSize = chunkSize
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
 	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
 	return &trafficTestSuite{
@@ -507,7 +508,7 @@ func (suite *trafficTestSuite) build(ctx context.Context, sql string) exec.Execu
 }
 
 func (suite *trafficTestSuite) stmtCtx() *stmtctx.StatementContext {
-	return suite.execBuilder.ctx.GetSessionVars().StmtCtx
+	return suite.execBuilder.sctx.GetSessionVars().StmtCtx
 }
 
 type mockHTTPHandler struct {
@@ -611,14 +612,14 @@ func (m *mockPrivManager) RequestDynamicVerification(activeRoles []*auth.RoleIde
 	return m.Called(activeRoles, privName, grantable).Bool(0)
 }
 
-var _ storage.ExternalStorage = (*mockExternalStorage)(nil)
+var _ storeapi.Storage = (*mockExternalStorage)(nil)
 
 type mockExternalStorage struct {
-	storage.ExternalStorage
+	storeapi.Storage
 	paths []string
 }
 
-func (s *mockExternalStorage) WalkDir(ctx context.Context, _ *storage.WalkOption, fn func(string, int64) error) error {
+func (s *mockExternalStorage) WalkDir(ctx context.Context, _ *storeapi.WalkOption, fn func(string, int64) error) error {
 	for _, path := range s.paths {
 		if err := fn(path, 0); err != nil {
 			return err

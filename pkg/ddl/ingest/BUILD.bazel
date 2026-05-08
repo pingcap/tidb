@@ -29,9 +29,9 @@ go_library(
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/backend/local",
-        "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
+        "//pkg/lightning/importdef",
         "//pkg/lightning/log",
         "//pkg/meta",
         "//pkg/meta/model",
@@ -67,7 +67,7 @@ go_library(
 
 go_test(
     name = "ingest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "checkpoint_test.go",
         "env_test.go",
@@ -77,10 +77,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 26,
+    shard_count = 31,
     deps = [
         ":ingest",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/ingest/testutil",
         "//pkg/ddl/session",
         "//pkg/ddl/testutil",

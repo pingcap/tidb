@@ -22,6 +22,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -349,11 +351,15 @@ func appendLengthValue(buf []byte, val []byte) []byte {
 	return append(buf, val...)
 }
 
-// RemoveKeyspacePrefix is used to remove keyspace prefix from the key.
+// RemoveKeyspacePrefix is used to remove keyspace prefix from the key if it's
+// nextgen kernel.
 func RemoveKeyspacePrefix(key []byte) []byte {
-	// If it is not a UT scenario, the operation to remove the keyspace prefix is performed in client-go,
-	// so there is no need to remove it again.
-	if !intest.InTest {
+	if kerneltype.IsClassic() {
+		return key
+	}
+	// If it is not in UT and not run in standalone TiDB, the removing of the
+	// keyspace prefix from the keys is performed in client-go.
+	if !intest.InTest && !kv.StandAloneTiDB {
 		return key
 	}
 

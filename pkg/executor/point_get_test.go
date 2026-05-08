@@ -229,7 +229,7 @@ func TestPartitionMemCacheReadLock(t *testing.T) {
 }
 
 func TestPointGetLockExistKey(t *testing.T) {
-	testLock := func(rc bool, key string, tableName string) {
+	testLock := func(t *testing.T, rc bool, key string, tableName string) {
 		store := testkit.CreateMockStore(t)
 		tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 
@@ -336,9 +336,11 @@ func TestPointGetLockExistKey(t *testing.T) {
 		{rc: true, key: "unique key"},
 	} {
 		tableName := fmt.Sprintf("t_%d", i)
-		func(rc bool, key string, tableName string) {
-			testLock(rc, key, tableName)
-		}(one.rc, one.key, tableName)
+		t.Run(tableName, func(t *testing.T) {
+			func(rc bool, key string, tableName string) {
+				testLock(t, rc, key, tableName)
+			}(one.rc, one.key, tableName)
+		})
 	}
 }
 

@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config/kerneltype",
+        "//pkg/dxf/framework/schstatus",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/metadef",
@@ -42,10 +43,11 @@ go_test(
     ],
     embed = [":meta"],
     flaky = True,
-    shard_count = 21,
+    shard_count = 24,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/dxf/framework/schstatus",
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/metadef",

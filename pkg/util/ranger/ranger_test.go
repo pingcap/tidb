@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -496,7 +497,7 @@ create table t(
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
@@ -1020,7 +1021,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
@@ -1091,7 +1092,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 			require.NoError(t, err)
@@ -1416,6 +1417,22 @@ create table t(
 			filterConds: "[like(test.t.h, ÿÿ%, 92)]",
 			resultStr:   "[[\"ÿÿ\",\"ÿ\\xc3\\xc0\")]", // The decoding error is ignored.
 		},
+		// CAST AS BINARY on CI column: EQ should use range scan with filter.
+		{
+			indexPos:    4,
+			exprStr:     "f = cast('a' as binary)",
+			accessConds: "[eq(test.t.f, a)]",
+			filterConds: "[eq(test.t.f, a)]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"]]",
+		},
+		// CAST AS BINARY on CI column: IN should use range scan with filter.
+		{
+			indexPos:    4,
+			exprStr:     "f in (cast('a' as binary), cast('B' as binary))",
+			accessConds: "[in(test.t.f, a, B)]",
+			filterConds: "[in(test.t.f, a, B)]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"] [\"\\x00B\",\"\\x00B\"]]",
+		},
 	}
 
 	ctx := context.Background()
@@ -1440,7 +1457,7 @@ create table t(
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
 			require.NoError(t, err)
@@ -1705,9 +1722,9 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		selection, ok := p.(*plannercore.Update).SelectPlan.(*physicalop.PhysicalSelection)
+		selection, ok := p.(*physicalop.Update).SelectPlan.(*physicalop.PhysicalSelection)
 		require.True(t, ok)
-		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
+		_, ok = selection.Children()[0].(*physicalop.PointGetPlan)
 		require.True(t, ok)
 	})
 
@@ -1724,7 +1741,7 @@ func TestTableShardIndex(t *testing.T) {
 		require.NoError(t, err)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		del := p.(*plannercore.Delete)
+		del := p.(*physicalop.Delete)
 		require.Equal(t, "PointGet(Index(test6.uk_expr)[KindUint64 32 KindInt64 45])->Sel([eq(test.test6.b, 46)])->Projection", plannercore.ToString(del.SelectPlan))
 		proj := del.SelectPlan.(*physicalop.PhysicalProjection)
 		//nolint: printexpression
@@ -1914,7 +1931,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	selection := getSelectionFromQuery(t, sctx, sql)
 	conds := selection.Conditions
 	require.Equal(t, 4, len(conds))
-	cols, lengths := expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	res, err := ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
@@ -1922,6 +1939,92 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 		"[]",
 		"[[10 40 70,10 40 80] [10 50 70,10 50 80] [10 60 70,10 60 80] [20 40 70,20 40 80] [20 50 70,20 50 80] [20 60 70,20 60 80] [30 40 70,30 40 80] [30 50 70,30 50 80] [30 60 70,30 60 80]]")
 	checkRangeFallbackAndReset(t, sctx, false)
+
+	t.Run("appending to one emitted range does not corrupt peer ranges", func(t *testing.T) {
+		appendTK := testkit.NewTestKit(t, store)
+		appendTK.MustExec("use test")
+		appendSctx := appendTK.Session()
+		appendRctx := appendSctx.GetRangerCtx()
+		sql := "select * from t1 where a in (10,20,30) and b in (40,50,60)"
+		selection := getSelectionFromQuery(t, appendSctx, sql)
+		conds := selection.Conditions
+		cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+		res, err := ranger.DetachCondAndBuildRangeForIndex(appendRctx, conds, cols, lengths, 0)
+		require.NoError(t, err)
+		require.Len(t, res.Ranges, 9)
+		peer := res.Ranges[1].Clone()
+		anotherPeer := res.Ranges[3].Clone()
+
+		res.Ranges[0].LowVal = append(res.Ranges[0].LowVal, types.NewIntDatum(999))
+		res.Ranges[0].HighVal = append(res.Ranges[0].HighVal, types.NewIntDatum(999))
+		res.Ranges[0].Collators = append(res.Ranges[0].Collators, nil)
+
+		require.Equal(t, peer.LowVal, res.Ranges[1].LowVal)
+		require.Equal(t, peer.HighVal, res.Ranges[1].HighVal)
+		require.NotNil(t, res.Ranges[1].Collators[0])
+		require.NotNil(t, res.Ranges[1].Collators[1])
+		require.Equal(t, anotherPeer.LowVal, res.Ranges[3].LowVal)
+		require.Equal(t, anotherPeer.HighVal, res.Ranges[3].HighVal)
+		require.NotNil(t, res.Ranges[3].Collators[0])
+		require.NotNil(t, res.Ranges[3].Collators[1])
+	})
+
+	t.Run("appending to point-plus-tail ranges does not corrupt peer ranges", func(t *testing.T) {
+		binaryCollator := collate.GetBinaryCollator()
+		pointRanges := ranger.Ranges{
+			{
+				LowVal:     []types.Datum{types.NewIntDatum(10)},
+				HighVal:    []types.Datum{types.NewIntDatum(10)},
+				Collators:  []collate.Collator{binaryCollator},
+				LowExclude: false,
+			},
+			{
+				LowVal:     []types.Datum{types.NewIntDatum(20)},
+				HighVal:    []types.Datum{types.NewIntDatum(20)},
+				Collators:  []collate.Collator{binaryCollator},
+				LowExclude: false,
+			},
+		}
+		tailRanges := ranger.Ranges{
+			{
+				LowVal:      []types.Datum{types.NewIntDatum(40), types.NewIntDatum(70)},
+				HighVal:     []types.Datum{types.NewIntDatum(40), types.NewIntDatum(80)},
+				Collators:   []collate.Collator{binaryCollator, binaryCollator},
+				LowExclude:  false,
+				HighExclude: false,
+			},
+			{
+				LowVal:      []types.Datum{types.NewIntDatum(50), types.NewIntDatum(70)},
+				HighVal:     []types.Datum{types.NewIntDatum(50), types.NewIntDatum(80)},
+				Collators:   []collate.Collator{binaryCollator, binaryCollator},
+				LowExclude:  false,
+				HighExclude: false,
+			},
+		}
+
+		appended, rangeFallback := ranger.AppendRanges2PointRanges(pointRanges, tailRanges, 0)
+		require.False(t, rangeFallback)
+		require.Len(t, appended, 4)
+		require.Equal(t, "[[10 40 70,10 40 80] [10 50 70,10 50 80] [20 40 70,20 40 80] [20 50 70,20 50 80]]", fmt.Sprintf("%v", appended))
+
+		peer := appended[1].Clone()
+		anotherPeer := appended[2].Clone()
+		appended[0].LowVal = append(appended[0].LowVal, types.NewIntDatum(999))
+		appended[0].HighVal = append(appended[0].HighVal, types.NewIntDatum(999))
+		appended[0].Collators = append(appended[0].Collators, nil)
+
+		require.Equal(t, peer.LowVal, appended[1].LowVal)
+		require.Equal(t, peer.HighVal, appended[1].HighVal)
+		require.NotNil(t, appended[1].Collators[0])
+		require.NotNil(t, appended[1].Collators[1])
+		require.NotNil(t, appended[1].Collators[2])
+		require.Equal(t, anotherPeer.LowVal, appended[2].LowVal)
+		require.Equal(t, anotherPeer.HighVal, appended[2].HighVal)
+		require.NotNil(t, appended[2].Collators[0])
+		require.NotNil(t, appended[2].Collators[1])
+		require.NotNil(t, appended[2].Collators[2])
+	})
+
 	quota := res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
@@ -1952,7 +2055,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
-	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
@@ -1973,7 +2076,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
-	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
@@ -1995,7 +2098,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
 	require.Equal(t, 2, len(conds))
-	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
@@ -2041,7 +2144,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
 	require.Equal(t, 4, len(conds))
-	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
@@ -2079,7 +2182,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
-	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
@@ -2100,7 +2203,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
 	require.Equal(t, 1, len(conds))
-	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
@@ -2122,21 +2225,21 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions
 	require.Equal(t, 2, len(conds))
-	cols, lengths = expression.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
-		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
-		"[[\"aa\",\"aa\"] [\"cc\",\"cc\"]]")
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		`[["aa" "bb" "ee","aa" "bb" "ee"] ["cc" "dd" "ee","cc" "dd" "ee"]]`)
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[]",
-		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
-		"[[NULL,+inf]]")
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		`[["aa" "bb","aa" "bb"] ["cc" "dd","cc" "dd"]]`)
 	checkRangeFallbackAndReset(t, sctx, true)
 }
 
@@ -2204,6 +2307,17 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota := ranges.MemUsage() - 1
+	peer := ranges[1].Clone()
+	anotherPeer := ranges[3].Clone()
+	ranges[0].LowVal = append(ranges[0].LowVal, types.NewStringDatum("tail-low"))
+	ranges[0].HighVal = append(ranges[0].HighVal, types.NewStringDatum("tail-high"))
+	ranges[0].Collators = append(ranges[0].Collators, nil)
+	require.Equal(t, peer.LowVal, ranges[1].LowVal)
+	require.Equal(t, peer.HighVal, ranges[1].HighVal)
+	require.NotNil(t, ranges[1].Collators[0])
+	require.Equal(t, anotherPeer.LowVal, ranges[3].LowVal)
+	require.Equal(t, anotherPeer.HighVal, ranges[3].HighVal)
+	require.NotNil(t, ranges[3].Collators[0])
 	ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, quota)
 	require.NoError(t, err)
 	require.Equal(t, "[[NULL,+inf]]", fmt.Sprintf("%v", ranges))
@@ -2345,7 +2459,7 @@ create table t(
 		for i, cond := range selection.Conditions {
 			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		require.NotNil(t, cols)
 		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
 		require.NoError(t, err)
@@ -2389,11 +2503,11 @@ func TestIssue40997(t *testing.T) {
             AND db_id < '62813'
         )
     )
-	`).Check(testkit.Rows(
-		"IndexLookUp_8 1.25 root  ",
-		"├─IndexRangeScan_6(Build) 1.25 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
-	))
+	`).CheckAt([]int{1, 2, 3, 4}, [][]any{
+		{"1.25", "root", "", ""},
+		{"1.25", "cop[tikv]", "table:t71706696, index:dt_2(dt, db_id, tbl_id)", "range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo"},
+		{"1.25", "cop[tikv]", "table:t71706696", "keep order:false, stats:pseudo"},
+	})
 }
 
 func TestIssue50051(t *testing.T) {
@@ -2509,7 +2623,7 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
 			}
-			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
 			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
 			require.NoError(t, err)
@@ -2517,4 +2631,33 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 			require.Equal(t, tt.minAccessCondsForDNFCond, res.MinAccessCondsForDNFCond)
 		})
 	}
+}
+
+func TestBinCollationRangeForIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (f varchar(10) collate utf8mb4_general_ci, index idx_f(f))")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	sctx := tk.Session()
+	rctx := sctx.GetRangerCtx()
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+
+	// Test DetachSimpleCondAndBuildRangeForIndex with binary collation EQ.
+	// This exercises the shouldReserve path in the !considerDNF branch of detachCNFCondAndBuildRangeForIndex.
+	sql := "select * from t where f = cast('abc' as binary)"
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := selection.Conditions
+	cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	require.NotNil(t, cols)
+
+	ranges, accessConds, remainedConds, err := ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, accessConds))
+	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
+	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00C\"]]", fmt.Sprintf("%v", ranges))
 }

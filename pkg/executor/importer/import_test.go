@@ -16,7 +16,9 @@ package importer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/user"
@@ -29,15 +31,20 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -46,6 +53,14 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
+
+type keyspaceOnlyStore struct {
+	tidbkv.Storage
+}
+
+func (keyspaceOnlyStore) GetKeyspace() string {
+	return ""
+}
 
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{
@@ -57,7 +72,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
 	}
-	vardef.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket")
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
@@ -68,11 +83,17 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
+	require.Equal(t, OnDupKeyModeError, plan.OnDupKey)
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
-	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
+	if kerneltype.IsNextGen() {
+		require.Equal(t, config.DefaultBatchSize, plan.MaxEngineSize)
+	} else {
+		require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	}
+
+	require.Equal(t, "s3://bucket/dxf/", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(context.Background(), 10, nil)
 	require.Equal(t, 5, plan.ThreadCnt)
@@ -132,6 +153,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
+	require.Equal(t, OnDupKeyModeError, plan.OnDupKey, sql)
 	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
@@ -147,10 +169,14 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store("")
 	})
+	sqlCapture := sql + ", " + onDupKeyOption + "='capture'"
+	stmt, err = p.ParseOneStmt(sqlCapture, "", "")
+	require.NoError(t, err, sqlCapture)
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
-	require.NoError(t, err, sql)
-	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI, sql)
+	require.NoError(t, err, sqlCapture)
+	require.Equal(t, "s3://bucket/path/dxf/", plan.CloudStorageURI, sqlCapture)
+	require.Equal(t, OnDupKeyModeCapture, plan.OnDupKey, sqlCapture)
 
 	// override cloud storage uri using option
 	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
@@ -168,6 +194,21 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3)
 	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
+	// override with azure
+	sql3a := sql + ", " + cloudStorageURIOption + "='azure://container/path2'"
+	stmt, err = p.ParseOneStmt(sql3a, "", "")
+	require.NoError(t, err, sql3a)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql3a)
+	require.Equal(t, "azure://container/path2", plan.CloudStorageURI, sql3a)
+	sql3b := sql + ", " + cloudStorageURIOption + "='azblob://container/path3'"
+	stmt, err = p.ParseOneStmt(sql3b, "", "")
+	require.NoError(t, err, sql3b)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql3b)
+	require.Equal(t, "azblob://container/path3", plan.CloudStorageURI, sql3b)
 	// override with empty string, force use local sort
 	sql4 := sql + ", " + cloudStorageURIOption + "=''"
 	stmt, err = p.ParseOneStmt(sql4, "", "")
@@ -176,6 +217,37 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql4)
 	require.Equal(t, "", plan.CloudStorageURI, sql4)
+}
+
+func TestInitOptionsDisallowOnDuplicateKeyWithLocalSort(t *testing.T) {
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
+
+	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
+		options := []*plannercore.LoadDataOpt{}
+		var err error
+		for _, opt := range inOptions {
+			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
+			if opt.Value != nil {
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
+				require.NoError(t, err)
+			}
+			options = append(options, &loadDataOpt)
+		}
+		return options
+	}
+
+	sql := "import into t from '/file.csv' with on_duplicate_key='capture'"
+	stmt, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	vardef.CloudStorageURI.Store("")
+	plan := &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
+	require.ErrorContains(t, err, onDupKeyOption)
+	require.ErrorContains(t, err, "local sort")
 }
 
 func TestAdjustOptions(t *testing.T) {
@@ -199,6 +271,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.CloudStorageURI = "s3://bucket/path"
 	plan.adjustOptions(16)
 	require.True(t, plan.DisableTiKVImportMode)
+}
+
+func TestGetConflictHandlingMode(t *testing.T) {
+	plan := &Plan{}
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
+
+	plan.OnDupKey = OnDupKeyModeCapture
+	require.Equal(t, OnDupKeyModeCapture, plan.GetOnDupKeyMode())
+
+	plan.OnDupKey = OnDupKeyModeError
+	require.Equal(t, OnDupKeyModeError, plan.GetOnDupKeyMode())
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -241,21 +324,21 @@ func TestInitParameters(t *testing.T) {
 	// test redacted
 	p := &Plan{
 		Format: DataFormatCSV,
-		Path:   "s3://bucket/path?access-key=111111&secret-access-key=222222",
+		Path:   "azure://bucket/path?account-name=test-account&sas-token=111111",
 	}
 	require.NoError(t, p.initParameters(&plannercore.ImportInto{
 		Options: []*plannercore.LoadDataOpt{
 			{
 				Name: cloudStorageURIOption,
 				Value: &expression.Constant{
-					Value: types.NewStringDatum("s3://this-is-for-storage/path?access-key=aaaaaa&secret-access-key=bbbbbb"),
+					Value: types.NewStringDatum("azblob://this-is-for-storage/path?account-name=test-account&sas_token=bbbbbb"),
 				},
 			},
 		},
 	}))
-	urlEqual(t, "s3://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx", p.Parameters.FileLocation)
+	urlEqual(t, "azure://bucket/path?account-name=test-account&sas-token=xxxxxx", p.Parameters.FileLocation)
 	require.Len(t, p.Parameters.Options, 1)
-	urlEqual(t, "s3://this-is-for-storage/path?access-key=xxxxxx&secret-access-key=xxxxxx",
+	urlEqual(t, "azblob://this-is-for-storage/path?account-name=test-account&sas_token=xxxxxx",
 		p.Parameters.Options[cloudStorageURIOption].(string))
 
 	// test other options
@@ -293,7 +376,186 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
 
+func newParquetPlanAndControllerForTest(ctx context.Context, t *testing.T, sctx *mock.Context) (*Plan, *LoadDataController, error) {
+	t.Helper()
+	sctx.Store = keyspaceOnlyStore{}
+
+	node, err := parser.New().ParseOneStmt("create table t(a timestamp)", "", "")
+	require.NoError(t, err)
+	tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	tblInfo.State = model.StatePublic
+	table := tables.MockTableFromMeta(tblInfo)
+
+	fileName := filepath.Join(t.TempDir(), "data.parquet")
+	require.NoError(t, os.WriteFile(fileName, nil, 0o644))
+	format := DataFormatParquet
+	plan, err := NewImportPlan(ctx, sctx, plannercore.ImportInto{
+		Path:   fileName,
+		Format: &format,
+		Table: &resolve.TableNameW{
+			TableName: &ast.TableName{
+				Schema: ast.NewCIStr("test"),
+				Name:   ast.NewCIStr("t"),
+			},
+			DBInfo: &model.DBInfo{
+				Name: ast.NewCIStr("test"),
+				ID:   1,
+			},
+		},
+	}.Init(sctx.GetPlanCtx()), table)
+	require.NoError(t, err)
+
+	controller, err := NewLoadDataController(plan, table, &ASTArgs{})
+	return plan, controller, err
+}
+
+func TestImportPlanParquetLocation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("import_plan_parquet_location", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+		sctx.GetSessionVars().TimeZone = asiaShanghai
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(asiaShanghai)
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.NoError(t, err)
+		require.Equal(t, "Asia/Shanghai", plan.LocationID)
+		require.NotNil(t, controller.ParquetLocation())
+		require.Equal(t, "Asia/Shanghai", controller.ParquetLocation().String())
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		require.NoError(t, controller.InitDataFiles(ctx))
+		require.Len(t, controller.dataFiles, 1)
+		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
+	})
+
+	t.Run("import_plan_parquet_fixed_offset_location", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "+08:00"))
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.NoError(t, err)
+		require.Equal(t, "+08:00", plan.LocationID)
+		require.NotNil(t, controller.ParquetLocation())
+		_, offset := time.Now().In(controller.ParquetLocation()).Zone()
+		require.Equal(t, 8*3600, offset)
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		require.NoError(t, controller.InitDataFiles(ctx))
+		require.Len(t, controller.dataFiles, 1)
+		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
+	})
+
+	t.Run("import_plan_parquet_named_fixed_zone_location_is_rejected", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		loc := time.FixedZone("UTC+8", 8*3600)
+		sctx.GetSessionVars().TimeZone = loc
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.Equal(t, "UTC+8", plan.LocationID)
+		require.Nil(t, controller)
+		require.ErrorContains(t, err, "invalid location UTC+8")
+	})
+
+	t.Run("import_plan_parquet_unnamed_fixed_zone_location", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		loc := time.FixedZone("", -6*3600)
+		sctx.GetSessionVars().TimeZone = loc
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.NoError(t, err)
+		require.Equal(t, "-06:00", plan.LocationID)
+		require.NotNil(t, controller.ParquetLocation())
+		_, offset := time.Now().In(controller.ParquetLocation()).Zone()
+		require.Equal(t, -6*3600, offset)
+	})
+
+	t.Run("legacy_import_task_meta_without_location_id_uses_utc", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+		sctx.GetSessionVars().TimeZone = asiaShanghai
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(asiaShanghai)
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.NoError(t, err)
+		taskMetaBytes, err := json.Marshal(struct {
+			Plan *Plan
+		}{
+			Plan: plan,
+		})
+		require.NoError(t, err)
+
+		var taskMeta map[string]any
+		require.NoError(t, json.Unmarshal(taskMetaBytes, &taskMeta))
+		planMeta, ok := taskMeta["Plan"].(map[string]any)
+		require.True(t, ok)
+		delete(planMeta, "LocationID")
+		legacyTaskMetaBytes, err := json.Marshal(taskMeta)
+		require.NoError(t, err)
+
+		var legacyTaskMeta struct {
+			Plan Plan
+		}
+		require.NoError(t, json.Unmarshal(legacyTaskMetaBytes, &legacyTaskMeta))
+		require.Empty(t, legacyTaskMeta.Plan.LocationID)
+
+		legacyController, err := NewLoadDataController(&legacyTaskMeta.Plan, controller.Table, &ASTArgs{})
+		require.NoError(t, err)
+		require.Same(t, time.UTC, legacyController.ParquetLocation())
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		require.NoError(t, legacyController.InitDataFiles(ctx))
+		require.Len(t, legacyController.dataFiles, 1)
+		require.Same(t, time.UTC, legacyController.dataFiles[0].ParquetMeta.Loc)
+	})
+}
+
+func TestInitCompressedFiles(t *testing.T) {
+	username, err := user.Current()
+	require.NoError(t, err)
+	if username.Name == "root" {
+		t.Skip("it cannot run as root")
+	}
+	tempDir := t.TempDir()
+	ctx := context.Background()
+
+	for i := range 2048 {
+		fileName := filepath.Join(tempDir, fmt.Sprintf("test_%d.csv.gz", i))
+		require.NoError(t, os.WriteFile(fileName, []byte{}, 0o644))
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return(250)`)
+	c := LoadDataController{
+		Plan: &Plan{
+			Format:         DataFormatCSV,
+			InImportInto:   true,
+			Charset:        &defaultCharacterSet,
+			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			FieldNullDef:   defaultFieldNullDef,
+			Parameters:     &ImportParameters{},
+		},
+		logger: zap.NewExample(),
+	}
+
+	c.Path = filepath.Join(tempDir, "*.gz")
+	require.NoError(t, c.InitDataFiles(ctx))
+}
+
 func TestSupportedSuffixForServerDisk(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("nextgen doesn't support import from server disk")
+	}
 	username, err := user.Current()
 	require.NoError(t, err)
 	if username.Name == "root" {
@@ -425,6 +687,8 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy"},
 		},
 	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
 	for _, testcase := range testcases {
 		for _, fileName := range testcase.fileNames {
 			c.Format = DataFormatAuto
@@ -475,6 +739,29 @@ func TestParseFileType(t *testing.T) {
 			require.Equal(t, tc.expected, actual)
 		})
 	}
+
+	t.Run("unsupported parser format returns unsupported-format error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		filePath := filepath.Join(tmpDir, "data.txt")
+		require.NoError(t, os.WriteFile(filePath, []byte("1\n"), 0o644))
+
+		_, err := newLoadDataParser(
+			context.Background(),
+			zap.NewNop(),
+			"unsupported",
+			0,
+			nil,
+			&config.CSVConfig{},
+			nil,
+			LoadDataReaderInfo{
+				Opener: func(context.Context) (io.ReadSeekCloser, error) {
+					return os.Open(filePath)
+				},
+			},
+		)
+		require.True(t, exeerrors.ErrLoadDataUnsupportedFormat.Equal(err))
+		require.False(t, exeerrors.ErrLoadDataWrongFormatConfig.Equal(err))
+	})
 }
 
 func TestGetDefMaxEngineSize(t *testing.T) {

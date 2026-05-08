@@ -28,15 +28,14 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	fstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -81,7 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -120,6 +119,7 @@ type ShowExec struct {
 
 	ImportJobID       *int64
 	DistributionJobID *int64
+	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
 
 type showTableRegionRowItem struct {
@@ -232,7 +232,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowEvents:
 		// empty result
 	case ast.ShowStatsExtended:
-		return e.fetchShowStatsExtended(ctx)
+		return errors.New("Extended statistics feature has been removed")
 	case ast.ShowStatsMeta:
 		return e.fetchShowStatsMeta(ctx)
 	case ast.ShowStatsHistograms:
@@ -289,8 +289,12 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
+	case ast.ShowImportGroups:
+		return e.fetchShowImportGroups(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
@@ -346,6 +350,9 @@ func (e *ShowExec) fetchShowBind() error {
 		return cmpResult > 0
 	})
 	for _, hint := range bindings {
+		if hint == nil { // if the binding cache doesn't have enough memory, it might return nil
+			continue
+		}
 		stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
 		if err != nil {
 			return err
@@ -787,7 +794,7 @@ func (e *ShowExec) fetchShowIndex() error {
 		return errors.Trace(err)
 	}
 
-	statsTbl := h.GetTableStats(tb.Meta())
+	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
@@ -986,7 +993,7 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
+		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) || v.InternalSessionVariable {
 			continue
 		}
 		value, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), v.Name)
@@ -1076,7 +1083,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col.Hidden {
+		if col == nil || col.Hidden {
 			continue
 		}
 		if needAddComma {
@@ -1258,6 +1265,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		if idxInfo.FullTextInfo != nil {
 			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
 		}
+		if idxInfo.ConditionExprString != "" {
+			fmt.Fprintf(buf, " WHERE %s", idxInfo.ConditionExprString)
+		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
@@ -1409,8 +1419,80 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
-	// add partition info here.
-	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+	var parse *parser.Parser
+	// Show table region split policy
+	if tableInfo.TableSplitPolicy != nil {
+		parse = parser.New()
+		buf.WriteString("\n/*T![region_split] ")
+		buf.WriteString("SPLIT BETWEEN (")
+
+		policy := tableInfo.TableSplitPolicy
+
+		for i, val := range policy.Lower {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		buf.WriteString(") AND (")
+
+		for i, val := range policy.Upper {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
+		buf.WriteString(" */")
+	}
+
+	// Show index region split policies
+	for _, indexInfo := range tableInfo.Indices {
+		if indexInfo.RegionSplitPolicy == nil {
+			continue
+		}
+		if parse == nil {
+			parse = parser.New()
+		}
+
+		policy := indexInfo.RegionSplitPolicy
+		buf.WriteString("\n/*T![region_split] ")
+
+		fmt.Fprintf(buf, "SPLIT ")
+		if indexInfo.Name.O == mysql.PrimaryKeyName {
+			fmt.Fprintf(buf, "PRIMARY KEY ")
+		} else {
+			fmt.Fprintf(buf, "INDEX ")
+		}
+		fmt.Fprintf(buf, "%s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
+
+		for i, val := range policy.Lower {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		buf.WriteString(") AND (")
+
+		for i, val := range policy.Upper {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
+		buf.WriteString(" */")
+	}
 
 	if tableInfo.TTLInfo != nil {
 		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
@@ -1466,6 +1548,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			return err
 		}
 	}
+
+	if tableInfo.Affinity != nil {
+		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
+	}
+
+	// add partition info here.
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -2403,18 +2492,22 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
-	result.AppendNull(1) // group key, which will be filled in next PR
+	if info.GroupKey == "" {
+		result.AppendNull(1)
+	} else {
+		result.AppendString(1, info.GroupKey)
+	}
+
 	result.AppendString(2, info.Parameters.FileLocation)
 	result.AppendString(3, fullTableName)
 	result.AppendInt64(4, info.TableID)
 	result.AppendString(5, info.Step)
 	result.AppendString(6, info.Status)
 	result.AppendString(7, units.BytesSize(float64(info.SourceFileSize)))
-
 	if runInfo != nil {
 		// running import job
 		result.AppendUint64(8, uint64(runInfo.ImportRows))
-	} else if info.Status == importer.JobStatusFinished {
+	} else if info.IsSuccess() {
 		// successful import job
 		result.AppendUint64(8, uint64(info.Summary.ImportedRows))
 	} else {
@@ -2422,7 +2515,19 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 		result.AppendNull(8)
 	}
 
-	result.AppendString(9, info.ErrorMessage)
+	if info.IsSuccess() {
+		msgItems := make([]string, 0, 1)
+		if info.Summary.ConflictRowCnt > 0 {
+			msgItems = append(msgItems, fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictRowCnt))
+		}
+		if info.Summary.TooManyConflicts {
+			msgItems = append(msgItems, "Too many conflicted rows, checksum skipped.")
+		}
+		result.AppendString(9, strings.Join(msgItems, " "))
+	} else {
+		result.AppendString(9, info.ErrorMessage)
+	}
+
 	result.AppendTime(10, info.CreateTime)
 	if info.StartTime.IsZero() {
 		result.AppendNull(11)
@@ -2450,14 +2555,19 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 		return
 	}
 
-	result.AppendTime(14, runInfo.UpdateTime)
+	// update time of run info comes from subtask summary, but checksum step don't
+	// have period updated summary.
+	updateTime := runInfo.UpdateTime
+	if updateTime.IsZero() {
+		updateTime = info.UpdateTime
+	}
+	result.AppendTime(14, updateTime)
 	result.AppendString(15, proto.Step2Str(proto.ImportInto, runInfo.Step))
 	result.AppendString(16, runInfo.ProcessedSize())
 	result.AppendString(17, runInfo.TotalSize())
 	result.AppendString(18, runInfo.Percent())
-	speed, eta := runInfo.SpeedAndETA()
-	result.AppendString(19, speed)
-	result.AppendString(20, eta)
+	result.AppendString(19, runInfo.SpeedStr())
+	result.AppendString(20, runInfo.ETA())
 }
 
 func handleImportJobInfo(
@@ -2475,20 +2585,10 @@ func handleImportJobInfo(
 		if err != nil {
 			return err
 		}
-		// UpdateTime is updated when the job is switching to the next step
-		runInfo.StartTime = info.UpdateTime
 		if runInfo.Status == proto.TaskStateAwaitingResolution {
 			info.Status = string(runInfo.Status)
 			info.ErrorMessage = runInfo.ErrorMsg
 		}
-
-		failpoint.Inject("mockUpdateTime", func(val failpoint.Value) {
-			if v, ok := val.(int); ok {
-				ti := time.Now()
-				runInfo.StartTime = types.NewTime(types.FromGoTime(ti), mysql.TypeTimestamp, 0)
-				runInfo.UpdateTime = types.NewTime(types.FromGoTime(ti.Add(time.Duration(v)*time.Second)), mysql.TypeTimestamp, 0)
-			}
-		})
 	}
 	FillOneImportJobInfo(result, info, runInfo)
 	return nil
@@ -2589,8 +2689,113 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 	return nil
 }
 
+type groupInfo struct {
+	groupKey   string
+	jobCount   int64
+	pending    int64
+	running    int64
+	completed  int64
+	failed     int64
+	canceled   int64
+	createTime types.Time
+	updateTime types.Time
+}
+
+func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
+	sctx := e.Ctx()
+
+	var hasSuperPriv bool
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		hasSuperPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	}
+	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
+	taskManager, err := fstorage.GetTaskManager()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return err
+	}
+
+	var infos []*importer.JobInfo
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.GetSQLExecutor()
+		var err2 error
+		infos, err2 = importer.GetJobsByGroupKey(ctx, exec, sctx.GetSessionVars().User.String(), e.ImportGroupKey, hasSuperPriv)
+		return err2
+	}); err != nil {
+		return err
+	}
+
+	groupMap := make(map[string]*groupInfo)
+	for _, info := range infos {
+		if _, ok := groupMap[info.GroupKey]; !ok {
+			groupMap[info.GroupKey] = &groupInfo{
+				groupKey:   info.GroupKey,
+				createTime: types.ZeroTime,
+				updateTime: types.ZeroTime,
+			}
+		}
+
+		updateTime := types.ZeroTime
+		// See FillOneImportJobInfo, we make the update time calculation same with SHOW IMPORT JOBS.
+		if info.Status == importer.JobStatusRunning {
+			runInfo, err := importinto.GetRuntimeInfoForJob(ctx, sctx.GetSessionVars().Location(), info.ID)
+			if err != nil {
+				return err
+			}
+			updateTime = runInfo.UpdateTime
+			if updateTime.IsZero() {
+				updateTime = info.UpdateTime
+			}
+		}
+
+		gInfo := groupMap[info.GroupKey]
+		if !info.CreateTime.IsZero() && (gInfo.createTime.IsZero() || info.CreateTime.Compare(gInfo.createTime) < 0) {
+			gInfo.createTime = info.CreateTime
+		}
+		if updateTime.Compare(gInfo.updateTime) > 0 {
+			gInfo.updateTime = updateTime
+		}
+
+		// See pkg/executor/importer/job.go for job status
+		gInfo.jobCount++
+		switch info.Status {
+		case "pending":
+			gInfo.pending++
+		case "running":
+			gInfo.running++
+		case "finished":
+			gInfo.completed++
+		case "failed":
+			gInfo.failed++
+		case "cancelled":
+			gInfo.canceled++
+		}
+	}
+
+	for _, gInfo := range groupMap {
+		e.result.AppendString(0, gInfo.groupKey)
+		e.result.AppendInt64(1, gInfo.jobCount)
+		e.result.AppendInt64(2, gInfo.pending)
+		e.result.AppendInt64(3, gInfo.running)
+		e.result.AppendInt64(4, gInfo.completed)
+		e.result.AppendInt64(5, gInfo.failed)
+		e.result.AppendInt64(6, gInfo.canceled)
+		if gInfo.createTime.IsZero() {
+			e.result.AppendNull(7)
+		} else {
+			e.result.AppendTime(7, gInfo.createTime)
+		}
+		if gInfo.updateTime.IsZero() {
+			e.result.AppendNull(8)
+		} else {
+			e.result.AppendTime(8, gInfo.updateTime)
+		}
+	}
+	return nil
+}
+
 // fetchShowImportJobs fills the result with the schema:
-// {"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+// {"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 // "Phase", "Status", "Source_File_Size", "Imported_Rows",
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
@@ -2692,4 +2897,13 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 		return err
 	}
 	return fn(sysCtx)
+}
+
+func formatSplitValue(parser *parser.Parser, buf *bytes.Buffer, val string) error {
+	stmts, _, err := parser.ParseSQL("select " + val)
+	if err == nil {
+		expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
+		expr.Format(buf)
+	}
+	return err
 }

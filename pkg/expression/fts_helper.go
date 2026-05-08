@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -32,10 +34,8 @@ func ContainsFullTextSearchFn(expr Expression) bool {
 		if x.FuncName.L == ast.FTSMatchWord {
 			return true
 		}
-		for _, arg := range x.GetArgs() {
-			if ContainsFullTextSearchFn(arg) {
-				return true
-			}
+		if slices.ContainsFunc(x.GetArgs(), ContainsFullTextSearchFn) {
+			return true
 		}
 	}
 	return false

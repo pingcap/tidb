@@ -25,7 +25,9 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -39,17 +41,18 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1333,9 +1336,9 @@ func (fse fakeSQLExecutor) ExecRestrictedSQL(_ context.Context, _ []sqlexec.Opti
 func TestInitSchemasReplaceForDDL(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.ToSlash(t.TempDir())
-	backend, err := storage.ParseBackend("local://"+path, nil)
+	backend, err := objstore.ParseBackend("local://"+path, nil)
 	require.NoError(t, err)
-	stg, err := storage.New(ctx, backend, nil)
+	stg, err := objstore.New(ctx, backend, nil)
 	require.NoError(t, err)
 
 	{
@@ -1367,7 +1370,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		s := utiltest.CreateRestoreSchemaSuite(t)
 		tk := testkit.NewTestKit(t, s.Mock.Storage)
-		tk.Exec(session.CreateTiDBPITRIDMapTable)
+		tk.Exec(metadef.CreateTiDBPITRIDMapTable)
 		g := gluetidb.New()
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
@@ -1433,11 +1436,27 @@ func getDBMap() map[int64]*stream.DBReplace {
 	return replaces
 }
 
+func mustMarshalPITRIDMapBackupMeta(t *testing.T, schemaVersion uint32) []byte {
+	t.Helper()
+
+	backupMeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: schemaVersion,
+		ClusterVersion:      "8.5.6",
+		BrVersion:           "v8.5.6",
+		DbMaps: (&stream.TableMappingManager{
+			DBReplaceMap: getDBMap(),
+		}).ToProto(),
+	}
+	data, err := proto.Marshal(backupMeta)
+	require.NoError(t, err)
+	return data
+}
+
 func TestPITRIDMap(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.MustExec(session.CreateTiDBPITRIDMapTable)
+	tk.MustExec(metadef.CreateTiDBPITRIDMapTable)
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
@@ -1477,9 +1496,31 @@ func TestPITRIDMap(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		err = se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %?;",
+			uint64(0), uint64(2), uint64(3))
+		require.NoError(t, err)
+		for startIdx, segmentID := 0, 0; startIdx < len(data); segmentID += 1 {
+			endIdx := min(startIdx+logclient.PITRIdMapBlockSize, len(data))
+			err = se.ExecuteInternal(ctx,
+				"REPLACE INTO mysql.tidb_pitr_id_map (restore_id, restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?, %?);",
+				uint64(0), uint64(2), uint64(3), segmentID, data[startIdx:endIdx],
+			)
+			require.NoError(t, err)
+			startIdx = endIdx
+		}
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnStorage(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in next-gen, system tables have reserved and fixed table ID, cannot be dropped")
+	}
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -1488,7 +1529,7 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
-	backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+	backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
 	require.NoError(t, err)
 	err = client.SetStorage(ctx, backend, nil)
 	require.NoError(t, err)
@@ -1501,7 +1542,7 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
 	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
-	backend2, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()+"/temp_another"), nil)
+	backend2, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()+"/temp_another"), nil)
 	require.NoError(t, err)
 	err = client2.SetStorage(ctx, backend2, nil)
 	require.NoError(t, err)
@@ -1531,19 +1572,34 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+		backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		require.NoError(t, err)
+		storage, err := objstore.New(ctx, backend, nil)
+		require.NoError(t, err)
+		err = client.SetStorage(ctx, backend, nil)
+		require.NoError(t, err)
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), data))
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.MustExec(session.CreateTiDBPITRIDMapTable)
+	tk.MustExec(metadef.CreateTiDBPITRIDMapTable)
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
 	client.SetUseCheckpoint()
-	stg, err := storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()))
+	stg, err := objstore.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()))
 	require.NoError(t, err)
 	logCheckpointMetaManager := checkpoint.NewLogStorageMetaManager(
 		stg, nil, 123, "test", 1)
@@ -1557,7 +1613,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
 	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
-	stg, err = storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()) + "/temp_another")
+	stg, err = objstore.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()) + "/temp_another")
 	require.NoError(t, err)
 	logCheckpointMetaManager2 := checkpoint.NewLogStorageMetaManager(
 		stg, nil, 123, "test", 1)
@@ -2164,7 +2220,7 @@ func TestRepairIngestIndex(t *testing.T) {
 			RowCount:   100,
 			RawArgs:    args,
 			ReorgMeta: &model.DDLReorgMeta{
-				ReorgTp: model.ReorgTypeLitMerge,
+				ReorgTp: model.ReorgTypeIngest,
 			},
 			BinlogInfo: &model.HistoryInfo{
 				TableInfo: &model.TableInfo{
@@ -2318,6 +2374,177 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 		}
 	}
 	require.Equal(t, 3, existsCount)
+}
+
+func TestRepairIngestIndexWithForeignKey(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("create table test.parent (id int, index i2(id))")
+	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
+	g := gluetidb.New()
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
+	client.SetUseCheckpoint()
+
+	fakeJob := func(
+		schemaName string,
+		tableName string,
+		tableID int64,
+		indexID int64,
+		indexName string,
+		columnName string,
+		args json.RawMessage,
+	) *model.Job {
+		return &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: schemaName,
+			TableName:  tableName,
+			TableID:    tableID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RowCount:   100,
+			RawArgs:    args,
+			ReorgMeta: &model.DDLReorgMeta{
+				ReorgTp: model.ReorgTypeIngest,
+			},
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{
+					Indices: []*model.IndexInfo{
+						{
+							ID:   indexID,
+							Name: ast.NewCIStr(indexName),
+							Columns: []*model.IndexColumn{{
+								Name: ast.NewCIStr(columnName),
+							}},
+						},
+					},
+				},
+			},
+		}
+	}
+	stg, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	logStorageMetaManager := checkpoint.NewLogStorageMetaManager(stg, nil, 123, "test", 1)
+
+	{
+		infoSchema := s.Mock.InfoSchema()
+		childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID)),
+		), false))
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
+		), false))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		require.NoError(t, err)
+
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
+		sqls, err := logStorageMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
+		require.NoError(t, err)
+		require.Len(t, sqls.FKSQLs, 1)
+		sqls.FKSQLs[0].FKID = newChildTableInfo.ForeignKeys[0].ID
+		if sqls.SQLs[0].TableName == childTableInfo.Name {
+			sqls.SQLs[0].IndexID = newChildTableInfo.Indices[0].ID
+			sqls.SQLs[1].IndexID = newParentTableInfo.Indices[0].ID
+		} else {
+			sqls.SQLs[0].IndexID = newParentTableInfo.Indices[0].ID
+			sqls.SQLs[1].IndexID = newChildTableInfo.Indices[0].ID
+		}
+		err = logStorageMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, sqls)
+		require.NoError(t, err)
+	}
+	{
+		infoSchema := s.Mock.InfoSchema()
+		childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		require.NoError(t, err)
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
+	}
+	{
+		require.NoError(t, logStorageMetaManager.RemoveCheckpointData(ctx))
+		infoSchema := s.Mock.InfoSchema()
+		childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index", `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
+		}()
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID)),
+		), false))
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
+		), false))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index", `return(true)`))
+		defer func() {
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index")
+		}()
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index", `return(true)`))
+		defer func() {
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index")
+		}()
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index"))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
+		require.NoError(t, err)
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
+	}
 }
 
 type mockBatchProcessor struct {

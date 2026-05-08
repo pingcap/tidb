@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -595,7 +595,7 @@ func (p *mockSession) GetSessionVars() *variable.SessionVars {
 	return p.Context.GetSessionVars()
 }
 
-func (p *mockSession) GetSessionManager() util.SessionManager {
+func (p *mockSession) GetSessionManager() sessmgr.Manager {
 	return nil
 }
 

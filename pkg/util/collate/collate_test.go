@@ -49,6 +49,7 @@ func testKeyTable(t *testing.T, collations []string, tests []keyTable) {
 		for _, test := range tests {
 			comment := fmt.Sprintf("key %v, using %v", test.Str, c)
 			require.Equal(t, test.Expect[i], collator.Key(test.Str), comment)
+			require.Equal(t, test.Expect[i], collator.ImmutableKey(test.Str), comment)
 		}
 	}
 }

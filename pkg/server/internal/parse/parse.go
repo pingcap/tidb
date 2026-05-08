@@ -18,10 +18,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
+	"strconv"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -128,13 +133,28 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		if num, null, intOff := util2.ParseLengthEncodedInt(data[offset:]); !null {
-			offset += intOff // Length of variable length encoded integer itself in bytes
-			row := data[offset : offset+int(num)]
-			attrs, err := parseAttrs(row)
+		num, null, intOff := util2.ParseLengthEncodedInt(data[offset:])
+		offset += intOff // Length of variable length encoded integer itself in bytes
+		if !null {
+			if num > 1<<20 { // 1 MiB hard limit
+				return errors.New("connection refused: session connection attributes exceed the 1 MiB hard limit")
+			}
+			end := offset + int(num)
+			if end > len(data) {
+				logutil.Logger(ctx).Error("malformed connection attributes packet",
+					zap.Int("offset", offset),
+					zap.Uint64("attrLength", num),
+					zap.Int("dataLen", len(data)))
+				return mysql.ErrMalformPacket
+			}
+			row := data[offset:end]
+			attrs, warningsText, err := parseAttrs(row)
 			if err != nil {
 				logutil.Logger(ctx).Warn("parse attrs failed", zap.Error(err))
 				return nil
+			}
+			if warningsText != "" {
+				logutil.Logger(ctx).Debug(warningsText)
 			}
 			packet.Attrs = attrs
 			offset += int(num) // Length of attributes
@@ -148,22 +168,142 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 	return nil
 }
 
-func parseAttrs(data []byte) (map[string]string, error) {
-	attrs := make(map[string]string)
+// reservedConnAttrTruncated is injected by TiDB when connection attributes
+// are truncated. A client-provided key with the same name may be overwritten
+// when truncation happens.
+const reservedConnAttrTruncated = "_truncated"
+
+var standardConnAttrs = map[string]struct{}{
+	"_client_name":    {},
+	"_client_version": {},
+	"_os":             {},
+	"_pid":            {},
+	"_platform":       {},
+}
+
+type connAttrKV struct {
+	key   string
+	value string
+}
+
+type decodedConnAttrs struct {
+	items                       []connAttrKV
+	totalSize                   int64
+	hasDeprecatedUnderscoreAttr bool
+}
+
+func parseAttrs(data []byte) (map[string]string, string, error) {
+	if vardef.ConnectAttrsSize.Load() == 0 {
+		return map[string]string{}, "", nil
+	}
+
+	decoded, err := decodeConnAttrs(data)
+	if err != nil {
+		return map[string]string{}, "", err
+	}
+	attrs, warningsText := applyConnAttrsPolicyAndMetrics(decoded, vardef.ConnectAttrsSize.Load())
+	return attrs, warningsText, nil
+}
+
+func decodeConnAttrs(data []byte) (decodedConnAttrs, error) {
+	decoded := decodedConnAttrs{items: make([]connAttrKV, 0)}
 	pos := 0
+
 	for pos < len(data) {
 		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return attrs, err
-		}
-		pos += off
-		value, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
-		if err != nil {
-			return attrs, err
+			return decoded, err
 		}
 		pos += off
 
-		attrs[string(key)] = string(value)
+		value, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
+		if err != nil {
+			return decoded, err
+		}
+		pos += off
+
+		keyStr := string(key)
+		valueStr := string(value)
+
+		decoded.items = append(decoded.items, connAttrKV{key: keyStr, value: valueStr})
+		decoded.totalSize += int64(len(key)) + int64(len(value))
+
+		if !decoded.hasDeprecatedUnderscoreAttr && strings.HasPrefix(keyStr, "_") {
+			if _, ok := standardConnAttrs[keyStr]; !ok {
+				decoded.hasDeprecatedUnderscoreAttr = true
+			}
+		}
 	}
-	return attrs, nil
+
+	return decoded, nil
+}
+
+func applyConnAttrsPolicyAndMetrics(decoded decodedConnAttrs, limit int64) (map[string]string, string) {
+	attrs := make(map[string]string)
+	effectiveLimit := normalizeConnectAttrsLimit(limit)
+
+	var totalSize int64
+	var acceptedSize int64
+	truncated := false
+
+	for _, item := range decoded.items {
+		kvSize := int64(len(item.key)) + int64(len(item.value))
+		totalSize += kvSize
+		if totalSize > effectiveLimit {
+			if !truncated {
+				truncated = true
+				vardef.ConnectAttrsLost.Add(1)
+			}
+			continue
+		}
+		if !truncated {
+			attrs[item.key] = item.value
+			acceptedSize += kvSize
+		}
+	}
+
+	updateConnectAttrsLongestSeen(decoded.totalSize)
+
+	warnings := make([]string, 0, 2)
+	if decoded.hasDeprecatedUnderscoreAttr {
+		warnings = append(warnings,
+			"custom connection attributes with leading underscore are deprecated and will be rejected in a future release")
+	}
+	if truncated {
+		truncatedBytes := decoded.totalSize - acceptedSize
+		attrs[reservedConnAttrTruncated] = strconv.FormatInt(truncatedBytes, 10)
+		warnings = append(warnings, fmt.Sprintf(
+			"session connection attributes truncated: total size %d bytes exceeds "+
+				"performance_schema_session_connect_attrs_size (%d), %d bytes were discarded",
+			decoded.totalSize, effectiveLimit, truncatedBytes))
+	}
+	warningsText := strings.Join(warnings, "; ")
+	return attrs, warningsText
+}
+
+func normalizeConnectAttrsLimit(limit int64) int64 {
+	if limit < 0 {
+		// In MySQL, -1 means autosizing. We map it to a maximum of 64KB (65536)
+		// to prevent unconstrained slow log bloating.
+		return 65536
+	}
+	return limit
+}
+
+func updateConnectAttrsLongestSeen(totalSize int64) {
+	// Update LongestSeen only for normal-sized payloads (< 64 KiB).
+	// Abnormally large payloads are still accepted (up to 1 MiB) but should
+	// not skew this monitoring metric.
+	if totalSize >= 65536 {
+		return
+	}
+	for {
+		old := vardef.ConnectAttrsLongestSeen.Load()
+		if totalSize <= old {
+			break
+		}
+		if vardef.ConnectAttrsLongestSeen.CompareAndSwap(old, totalSize) {
+			break
+		}
+	}
 }

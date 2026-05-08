@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -128,6 +129,10 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+		}
+
+		if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, nil); err != nil {
+			logutil.DDLLogger().Error("failed to delete affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
 		}
 
 		// Finish this job.
@@ -582,6 +587,22 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		scatterScope = val
 	}
 	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
+
+	// Create new affinity groups first (critical operation - must succeed)
+	if tblInfo.Affinity != nil {
+		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	// Delete old affinity groups (best-effort cleanup - ignore errors)
+	// TRUNCATE TABLE: always try to delete old table's affinity groups
+	if oldTblInfo.Affinity != nil {
+		if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
+			logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+		}
+	}
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -1094,11 +1115,13 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
+	// Check the validity of the replica count. For example, not exceeding the tiflash store count.
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
 	// We should check this first, in order to avoid creating redundant DDL jobs.
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		logutil.DDLLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
@@ -1119,11 +1142,21 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 		}
 	}
 
-	available := false
-	if tblInfo.TiFlashReplica != nil {
-		available = tblInfo.TiFlashReplica.Available
-	}
 	if replicaInfo.Count > 0 {
+		available := false
+		if args.ResetAvailable {
+			// Reset the available field to false. This is required when fixing the placement rules after native BR.
+			// Because the `available` field may be true after native BR restore, but the user should wait before
+			// TiFlash peers are rebuilt.
+			available = false
+		} else if tblInfo.TiFlashReplica != nil {
+			// If there is already TiFlash replica info, we should keep the Available field.
+			// For example, during the process of increasing the number of TiFlash replicas from 2 to 3,
+			// or decreasing it from 3 to 2, if the `available` field of the original TiFlash replica
+			// is already `True`, its value remains unchanged. In this case, the optimizer can still choose
+			// to route queries to TiFlash for execution, avoiding any impact on service continuity.
+			available = tblInfo.TiFlashReplica.Available
+		}
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:          replicaInfo.Count,
 			LocationLabels: replicaInfo.Labels,
@@ -1713,5 +1746,94 @@ func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	}
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
+	return ver, nil
+}
+
+func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetAlterTableAffinityArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	oldTblInfo := tblInfo.Clone()
+
+	if err = validateTableAffinity(tblInfo, args.Affinity); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	tblInfo.Affinity = args.Affinity
+
+	// Create new affinity groups first (critical operation - must succeed)
+	if tblInfo.Affinity != nil {
+		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	// Delete old affinity groups (best-effort cleanup - ignore errors)
+	// ALTER TABLE AFFINITY: only delete when old table had affinity configuration
+	// This ensures 'ALTER TABLE AFFINITY = 'none'' correctly cleans up stale affinity groups
+	// Skip deletion if the affinity level remains the same to ensure idempotency
+	if oldTblInfo.Affinity != nil {
+		// Only delete if affinity is removed or level changed (same level means same group IDs)
+		if tblInfo.Affinity == nil || oldTblInfo.Affinity.Level != tblInfo.Affinity.Level {
+			if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
+				logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+			}
+		}
+	}
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func (w *worker) onAlterTableSetRegionSplitPolicy(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	args, err := model.GetAlterTableSetRegionSplitPolicyArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	if args.IndexName == "" {
+		// Table-level split (SPLIT BETWEEN)
+		tblInfo.TableSplitPolicy = args.Policy.Clone()
+	} else {
+		// Index split (SPLIT INDEX idx BETWEEN)
+		indexInfo := tblInfo.FindIndexByName(strings.ToLower(args.IndexName))
+		if indexInfo == nil {
+			job.State = model.JobStateCancelled
+			return 0, infoschema.ErrKeyNotExists.GenWithStackByArgs(args.IndexName, tblInfo.Name.O)
+		}
+		indexInfo.RegionSplitPolicy = args.Policy.Clone()
+	}
+
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	scatterScope := vardef.ScatterOff
+	if val, ok := job.GetSystemVars(vardef.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
+	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }

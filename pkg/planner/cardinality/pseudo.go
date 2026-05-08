@@ -33,16 +33,13 @@ const (
 	pseudoBetweenRate = 40
 )
 
-// If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
-const selectionFactor = 0.8
-
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
 func PseudoAvgCountPerValue(t *statistics.Table) float64 {
 	return float64(t.RealtimeCount) / pseudoEqualRate
 }
 
 func pseudoSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, exprs []expression.Expression) float64 {
-	minFactor := selectionFactor
+	minFactor := sctx.GetSessionVars().SelectivityFactor
 	colExists := make(map[string]bool)
 	for _, expr := range exprs {
 		fun, ok := expr.(*expression.ScalarFunction)

@@ -26,10 +26,10 @@ import (
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/tikv/client-go/v2/oracle"
@@ -133,7 +133,7 @@ type Context interface {
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
-	ShowProcess() *util.ProcessInfo
+	ShowProcess() *sessmgr.ProcessInfo
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
 	GetAdvisoryLock(string, int64) error
 	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
@@ -159,6 +159,11 @@ type Context interface {
 	GetCursorTracker() cursor.Tracker
 	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
 	GetCommitWaitGroup() *sync.WaitGroup
+	// GetTraceCtx returns the context bind with trace information.
+	// The trace information is set when entering server/conn.dispatch and reset after dispatch returns.
+	// The context only contains the initial trace information, which is used to track the execution of the current statement.
+	// During the execution of the statement, additional information may be added to the context, like context.WithValue(), that is not included.
+	GetTraceCtx() context.Context
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

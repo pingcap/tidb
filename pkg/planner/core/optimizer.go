@@ -15,7 +15,6 @@
 package core
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -45,20 +44,19 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -73,9 +71,6 @@ var OptimizeAstNodeNoCache func(ctx context.Context, sctx sessionctx.Context, no
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
 
-// IsReadOnly check whether the ast.Node is a read only statement.
-var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
-
 const initialMaxCores uint64 = 10000
 
 var (
@@ -88,7 +83,7 @@ var (
 
 var optRuleList = []base.LogicalOptRule{
 	&GcSubstituter{},
-	&ColumnPruner{},
+	&rule.ColumnPruner{},
 	&ResultReorder{},
 	&rule.BuildKeySolver{},
 	&DecorrelateSolver{},
@@ -96,20 +91,24 @@ var optRuleList = []base.LogicalOptRule{
 	&AggregationEliminator{},
 	&SkewDistinctAggRewriter{},
 	&ProjectionEliminator{},
-	&MaxMinEliminator{},
+	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
+	&rule.JoinKeyTypeCastRewriter{},
 	&OuterJoinEliminator{},
-	&PartitionProcessor{},
-	&CollectPredicateColumnsPoint{},
+	&rule.PartitionProcessor{},
+	&rule.CollectPredicateColumnsPoint{},
 	&AggregationPushDownSolver{},
 	&DeriveTopNFromWindow{},
-	&PredicateSimplification{},
+	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
-	&SyncWaitStatsLoadPoint{},
+	&rule.OrderAwareJoinReorder{},
+	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
-	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&rule.OuterJoinToSemiJoin{},
+	&CorrelateSolver{},
+	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
@@ -262,6 +261,13 @@ func CheckTableMode(node *resolve.NodeW) error {
 	switch node.Node.(type) {
 	case *ast.ShowStmt, *ast.ExplainStmt:
 	default:
+		// Special handling to the `ADMIN CHECKSUM TABLE`, as `IMPORT INTO` will
+		// executes this statement during post checksum to verify data.
+		// TODO: only allow `ADMIN CHECKSUM TABLE` from import into task
+		adminStmt, ok := node.Node.(*ast.AdminStmt)
+		if ok && adminStmt.Tp == ast.AdminChecksumTable {
+			return nil
+		}
 		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
 			if err := dbutil.CheckTableModeIsNormal(tblNameW.Name, tblNameW.TableInfo.Mode); err != nil {
 				return err
@@ -290,7 +296,6 @@ func doOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic b
 
 // CascadesOptimize includes: normalization, cascadesOptimize, and physicalOptimize.
 func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
-	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := normalizeOptimize(ctx, flag, logic)
 	if err != nil {
@@ -313,61 +318,35 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		cost     float64
 		physical base.PhysicalPlan
 	)
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
-	physical, cost, err = impl.ImplementMemoAndCost(cas.GetMemo().GetRootGroup(), &planCounter)
+	physical, cost, err = impl.ImplementMemoAndCost(cas.GetMemo().GetRootGroup())
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
 	finalPlan := postOptimize(ctx, sctx, physical)
-	if sessVars.StmtCtx.EnableOptimizerCETrace {
-		refineCETrace(sctx)
-	}
-	if sessVars.StmtCtx.EnableOptimizeTrace {
-		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
-	}
 	return logic, finalPlan, cost, nil
 }
 
 // VolcanoOptimize includes: logicalOptimize, physicalOptimize
 func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
-	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
+	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 	finalPlan := postOptimize(ctx, sctx, physical)
-
-	if sessVars.StmtCtx.EnableOptimizerCETrace {
-		refineCETrace(sctx)
-	}
-	if sessVars.StmtCtx.EnableOptimizeTrace {
-		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
-	}
 	return logic, finalPlan, cost, nil
 }
 
 func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
-	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
-	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
-		flag |= rule.FlagPruneColumnsAgain
-	}
 	if checkStableResultMode(logic.SCtx()) {
 		flag |= rule.FlagStabilizeResults
 	}
@@ -375,12 +354,23 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+	// InternalSQLScanUserTable is for ttl scan.
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
 		flag |= rule.FlagCollectPredicateColumnsPoint
 		flag |= rule.FlagSyncWaitStatsLoadPoint
 	}
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
+	}
+	// FlagCorrelate is added by the correlate alternative round's flag adjuster,
+	// not here. EnableCorrelateSubquery is an internal flag toggled by the round.
+	// A second column-prune pass is worthwhile when any rule above column
+	// pruning is enabled.
+	if flag&rule.FlagPruneColumns != 0 {
+		const abovePruneColumns = ^(rule.FlagPruneColumns | (rule.FlagPruneColumns - 1))
+		if flag&abovePruneColumns != 0 {
+			flag |= rule.FlagPruneColumnsAgain
+		}
 	}
 	return flag
 }
@@ -392,50 +382,8 @@ func DoOptimize(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.PhysicalPlan, float64, error) {
-	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
 	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
-}
-
-// refineCETrace will adjust the content of CETrace.
-// Currently, it will (1) deduplicate trace records, (2) sort the trace records (to make it easier in the tests) and (3) fill in the table name.
-func refineCETrace(sctx base.PlanContext) {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
-	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) int {
-		if i == nil && j != nil {
-			return -1
-		}
-		if i == nil || j == nil {
-			return 1
-		}
-
-		if c := cmp.Compare(i.TableID, j.TableID); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(i.Type, j.Type); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(i.Expr, j.Expr); c != 0 {
-			return c
-		}
-		return cmp.Compare(i.RowCount, j.RowCount)
-	})
-	traceRecords := stmtCtx.OptimizerCETrace
-	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
-	for _, rec := range traceRecords {
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, rec.TableID)
-		if tbl != nil {
-			rec.TableName = tbl.Meta().Name.O
-			continue
-		}
-		logutil.BgLogger().Warn("Failed to find table in infoschema", zap.String("category", "OptimizerTrace"),
-			zap.Int64("table id", rec.TableID))
-	}
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
@@ -455,10 +403,10 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 		mergeContinuousSelections(child)
 	}
 	// merge continuous selections in a coprocessor task of tiflash
-	tableReader, isTableReader := p.(*PhysicalTableReader)
+	tableReader, isTableReader := p.(*physicalop.PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
-		mergeContinuousSelections(tableReader.tablePlan)
-		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		mergeContinuousSelections(tableReader.TablePlan)
+		tableReader.TablePlans = physicalop.FlattenListPushDownPlan(tableReader.TablePlan)
 	}
 }
 
@@ -486,7 +434,7 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	logutil.BgLogger().Debug("Start runtime filter generator")
 	rfGenerator := &RuntimeFilterGenerator{
 		rfIDGenerator:      &util.IDGenerator{},
-		columnUniqueIDToRF: map[int64][]*RuntimeFilter{},
+		columnUniqueIDToRF: map[int64][]*physicalop.RuntimeFilter{},
 		parentPhysicalPlan: plan,
 	}
 	startRFGenerator := time.Now()
@@ -527,8 +475,8 @@ Rewritten Query: select count(k1) from table
 */
 func countStarRewrite(plan base.PhysicalPlan) {
 	countStarRewriteInternal(plan)
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		countStarRewrite(tableReader.tablePlan)
+	if tableReader, ok := plan.(*physicalop.PhysicalTableReader); ok {
+		countStarRewrite(tableReader.TablePlan)
 	} else {
 		for _, child := range plan.Children() {
 			countStarRewrite(child)
@@ -538,12 +486,12 @@ func countStarRewrite(plan base.PhysicalPlan) {
 
 func countStarRewriteInternal(plan base.PhysicalPlan) {
 	// match pattern any agg(count(constant)) -> tablefullscan(tiflash)
-	var physicalAgg *basePhysicalAgg
+	var physicalAgg *physicalop.BasePhysicalAgg
 	switch x := plan.(type) {
-	case *PhysicalHashAgg:
-		physicalAgg = x.getPointer()
-	case *PhysicalStreamAgg:
-		physicalAgg = x.getPointer()
+	case *physicalop.PhysicalHashAgg:
+		physicalAgg = x.GetPointer()
+	case *physicalop.PhysicalStreamAgg:
+		physicalAgg = x.GetPointer()
 	default:
 		return
 	}
@@ -558,8 +506,8 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 			return
 		}
 	}
-	physicalTableScan, ok := physicalAgg.Children()[0].(*PhysicalTableScan)
-	if !ok || !physicalTableScan.isFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.Schema().Columns) != 1 {
+	physicalTableScan, ok := physicalAgg.Children()[0].(*physicalop.PhysicalTableScan)
+	if !ok || !physicalTableScan.IsFullScan() || physicalTableScan.StoreType != kv.TiFlash || len(physicalTableScan.Schema().Columns) != 1 {
 		return
 	}
 	// rewrite datasource and agg args
@@ -568,7 +516,7 @@ func countStarRewriteInternal(plan base.PhysicalPlan) {
 
 // rewriteTableScanAndAggArgs Pick the narrowest and not null column from table
 // If there is no not null column in Data Source, the row_id or pk column will be retained
-func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
+func rewriteTableScanAndAggArgs(physicalTableScan *physicalop.PhysicalTableScan, aggFuncs []*aggregation.AggFuncDesc) {
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
 
@@ -635,10 +583,10 @@ func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan b
 }
 
 func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+	if tableReader, ok := plan.(*physicalop.PhysicalTableReader); ok {
+		if _, isExchangeSender := tableReader.TablePlan.(*physicalop.PhysicalExchangeSender); isExchangeSender {
 			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*physicalop.BasePhysicalPlan, 1)}
-			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.tablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
+			setupFineGrainedShuffleInternal(ctx, sctx, tableReader.TablePlan, &helper, streamCountInfo, tiflashServerCountInfo)
 		}
 	} else {
 		for _, child := range plan.Children() {
@@ -695,6 +643,10 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 			failpoint.Return(false, 0)
 		}
 	})
+	defer func(begin time.Time) {
+		// if there are any network jitters, this could take a long time.
+		sctx.GetSessionVars().DurationOptimizer.TiFlashInfoFetch = time.Since(begin)
+	}(time.Now())
 	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
 	if err != nil {
 		return false, 0
@@ -835,7 +787,7 @@ func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
 
 func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
 	switch x := plan.(type) {
-	case *PhysicalWindow:
+	case *physicalop.PhysicalWindow:
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
@@ -856,15 +808,15 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 	case *physicalop.PhysicalProjection:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeReceiver:
+	case *physicalop.PhysicalExchangeReceiver:
 		helper.plans = append(helper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalHashAgg:
+	case *physicalop.PhysicalHashAgg:
 		// Todo: allow hash aggregation's output still benefits from fine grained shuffle
 		aggHelper := fineGrainedShuffleHelper{shuffleTarget: hashAgg, plans: []*physicalop.BasePhysicalPlan{}}
 		aggHelper.plans = append(aggHelper.plans, &x.BasePhysicalPlan)
 		setupFineGrainedShuffleInternal(ctx, sctx, x.Children()[0], &aggHelper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalHashJoin:
+	case *physicalop.PhysicalHashJoin:
 		child0 := x.Children()[0]
 		child1 := x.Children()[1]
 		buildChild := child0
@@ -889,7 +841,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 		// don't apply fine grained shuffle for probe side
 		helper.clear()
 		setupFineGrainedShuffleInternal(ctx, sctx, probChild, helper, streamCountInfo, tiflashServerCountInfo)
-	case *PhysicalExchangeSender:
+	case *physicalop.PhysicalExchangeSender:
 		if x.ExchangeType == tipb.ExchangeType_Hash {
 			// Set up stream count for all plans based on shuffle target type.
 			var exchangeColCount = x.Schema().Len()
@@ -951,7 +903,8 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalPlan) {
 	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
-	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
+	case *physicalop.PhysicalApply, *physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
+		*physicalop.PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ GetInnerChildIdx() int }); ok {
 			propagateProbeParents(plan.Children()[1-join.GetInnerChildIdx()], probeParents)
 
@@ -962,18 +915,20 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 			newParents = append(newParents, plan)
 			propagateProbeParents(plan.Children()[join.GetInnerChildIdx()], newParents)
 		}
-	case *PhysicalTableReader:
-		propagateProbeParents(x.tablePlan, probeParents)
-	case *PhysicalIndexReader:
-		propagateProbeParents(x.indexPlan, probeParents)
-	case *PhysicalIndexLookUpReader:
-		propagateProbeParents(x.indexPlan, probeParents)
-		propagateProbeParents(x.tablePlan, probeParents)
-	case *PhysicalIndexMergeReader:
-		for _, pchild := range x.partialPlans {
+	case *physicalop.PhysicalTableReader:
+		propagateProbeParents(x.TablePlan, probeParents)
+	case *physicalop.PhysicalIndexReader:
+		propagateProbeParents(x.IndexPlan, probeParents)
+	case *physicalop.PhysicalIndexLookUpReader:
+		propagateProbeParents(x.IndexPlan, probeParents)
+		propagateProbeParents(x.TablePlan, probeParents)
+	case *physicalop.PhysicalIndexMergeReader:
+		for _, pchild := range x.PartialPlansRaw {
 			propagateProbeParents(pchild, probeParents)
 		}
-		propagateProbeParents(x.tablePlan, probeParents)
+		if x.TablePlan != nil {
+			propagateProbeParents(x.TablePlan, probeParents)
+		}
 	default:
 		for _, child := range plan.Children() {
 			propagateProbeParents(child, probeParents)
@@ -985,27 +940,30 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 	if !sctx.GetSessionVars().EnableParallelApply {
 		return plan
 	}
-	// the parallel apply has three limitation:
-	// 1. the parallel implementation now cannot keep order;
-	// 2. the inner child has to support clone;
-	// 3. if one Apply is in the inner side of another Apply, it cannot be parallel, for example:
+	// The parallel apply has two limitations:
+	// 1. The inner child has to support clone.
+	// 2. If one Apply is in the inner side of another Apply, it cannot be parallel, for example:
 	//		The topology of 3 Apply operators are A1(A2, A3), which means A2 is the outer child of A1
 	//		while A3 is the inner child. Then A1 and A2 can be parallel and A3 cannot.
-	if apply, ok := plan.(*PhysicalApply); ok {
+	// Note: ordering is now preserved via a reorder buffer (KeepOrder=true)
+	// when the outer side requires sorted output, so order is no longer a limitation.
+	if apply, ok := plan.(*physicalop.PhysicalApply); ok {
 		outerIdx := 1 - apply.InnerChildIdx
-		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
-		_, err := SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
-		supportClone := err == nil // limitation 2
-		if noOrder && supportClone {
+		hasOrder := apply.GetChildReqProps(outerIdx).NeedKeepOrder()
+		_, err := physicalop.SafeClone(sctx, apply.Children()[apply.InnerChildIdx])
+		supportClone := err == nil // limitation 1
+		if supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
-		} else {
-			if err != nil {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
-			} else {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel"))
+			// When the outer side requires ordering, use a reorder buffer
+			// in the executor to preserve row order while still running
+			// inner workers in parallel.
+			if hasOrder {
+				apply.KeepOrder = true
 			}
+		} else {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
 		}
-		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
+		// Because of limitation 2, we cannot parallelize Apply operators in this Apply's inner side,
 		// so we only invoke recursively for its outer child.
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
 		return apply
@@ -1022,22 +980,6 @@ func LogicalOptimizeTest(ctx context.Context, flag uint64, logic base.LogicalPla
 }
 
 func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
-	opt := optimizetrace.DefaultLogicalOptimizeOption()
-	vars := logic.SCtx().GetSessionVars()
-	if vars.StmtCtx.EnableOptimizeTrace {
-		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-		tracer := &tracing.LogicalOptimizeTracer{
-			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
-		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
-		defer func() {
-			vars.StmtCtx.OptimizeTracer.Logical = tracer
-		}()
-	}
 	var err error
 	// todo: the normalization rule driven way will be changed as stack-driven.
 	for i, rule := range normalizeRuleList {
@@ -1047,33 +989,19 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		logic, _, err = rule.Optimize(ctx, logic, opt)
+		logic, _, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
 	}
-	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
-	opt := optimizetrace.DefaultLogicalOptimizeOption()
-	vars := logic.SCtx().GetSessionVars()
-	if vars.StmtCtx.EnableOptimizeTrace {
-		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-		tracer := &tracing.LogicalOptimizeTracer{
-			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
-		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
-		defer func() {
-			vars.StmtCtx.OptimizeTracer.Logical = tracer
-		}()
-	}
+	defer func(begin time.Time) {
+		logic.SCtx().GetSessionVars().DurationOptimizer.LogicalOpt = time.Since(begin)
+	}(time.Now())
+
 	var err error
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range logicalRuleList {
@@ -1083,9 +1011,8 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
+		logic, planChanged, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
@@ -1097,15 +1024,13 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	}
 
 	// Trigger the interaction rule
-	for i, rule := range againRuleList {
-		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		logic, _, err = rule.Optimize(ctx, logic, opt)
+	for _, rule := range againRuleList {
+		logic, _, err = rule.Optimize(ctx, logic)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }
 
@@ -1114,14 +1039,16 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
+func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
+	begin := time.Now()
+	defer func() {
+		logic.SCtx().GetSessionVars().DurationOptimizer.PhysicalOpt = time.Since(begin)
+	}()
 	if _, _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
+	// if there are too many indexes, this process might take a relatively long time, track its time cost.
+	logic.SCtx().GetSessionVars().DurationOptimizer.StatsDerive = time.Since(begin)
 
 	preparePossibleProperties(logic)
 
@@ -1130,33 +1057,10 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	opt := optimizetrace.DefaultPhysicalOptimizeOption()
-	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
-	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{
-			PhysicalPlanCostDetails: make(map[string]*tracing.PhysicalPlanCostDetail),
-			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
-		}
-		opt = opt.WithEnableOptimizeTracer(tracer)
-		defer func() {
-			r := recover()
-			if r != nil {
-				panic(r) /* pass panic to upper function to handle */
-			}
-			if err == nil {
-				tracer.RecordFinalPlanTrace(plan.BuildPlanTrace())
-				stmtCtx.OptimizeTracer.Physical = tracer
-			}
-		}()
-	}
-
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.FindBestTask(prop, planCounter, opt)
+	t, err := physicalop.FindBestTask(logic, prop)
 	if err != nil {
 		return nil, 0, err
-	}
-	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
 	}
 	if t.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
@@ -1167,12 +1071,12 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 
 	// collect the warnings from task.
-	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*RootTask).warnings.GetWarnings())
+	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.(*physicalop.RootTask).Warnings.GetWarnings())
 
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, costusage.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
 
@@ -1194,20 +1098,20 @@ func avoidColumnEvaluatorForProjBelowUnion(p base.PhysicalPlan) base.PhysicalPla
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
 func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
-	var pointGet *PointGetPlan
-	var batchPointGet *BatchPointGetPlan
-	var physLock *PhysicalLock
+	var pointGet *physicalop.PointGetPlan
+	var batchPointGet *physicalop.BatchPointGetPlan
+	var physLock *physicalop.PhysicalLock
 	var unionScan *physicalop.PhysicalUnionScan
 	iteratePhysicalPlan(p, func(p base.PhysicalPlan) bool {
 		if len(p.Children()) > 1 {
 			return false
 		}
 		switch x := p.(type) {
-		case *PointGetPlan:
+		case *physicalop.PointGetPlan:
 			pointGet = x
-		case *BatchPointGetPlan:
+		case *physicalop.BatchPointGetPlan:
 			batchPointGet = x
-		case *PhysicalLock:
+		case *physicalop.PhysicalLock:
 			physLock = x
 		case *physicalop.PhysicalUnionScan:
 			unionScan = x
@@ -1222,15 +1126,14 @@ func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.
 	}
 	if physLock != nil {
 		lock, waitTime := getLockWaitTime(sctx, physLock.Lock)
-		if !lock {
-			return p
-		}
-		if pointGet != nil {
-			pointGet.Lock = lock
-			pointGet.LockWaitTime = waitTime
-		} else {
-			batchPointGet.Lock = lock
-			batchPointGet.LockWaitTime = waitTime
+		if lock {
+			if pointGet != nil {
+				pointGet.Lock = lock
+				pointGet.LockWaitTime = waitTime
+			} else {
+				batchPointGet.Lock = lock
+				batchPointGet.LockWaitTime = waitTime
+			}
 		}
 	}
 	return transformPhysicalPlan(p, func(p base.PhysicalPlan) base.PhysicalPlan {
@@ -1262,7 +1165,7 @@ func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base
 
 func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*logicalop.LogicalJoin); ok && len(join.EqualConditions) == 0 {
-		return join.JoinType == logicalop.InnerJoin || join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin
+		return join.JoinType == base.InnerJoin || join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin
 	}
 	return slices.ContainsFunc(p.Children(), existsCartesianProduct)
 }
@@ -1274,51 +1177,175 @@ func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
 		return
 	}
-
-	if checkOverlongColType(sctx, plan) {
+	if disableReuseChunk, continueIterating := checkSkipReuseChunkForOverlongType(sctx, plan); disableReuseChunk || !continueIterating {
 		return
 	}
-
 	for _, child := range plan.Children() {
 		disableReuseChunkIfNeeded(sctx, child)
 	}
 }
 
-// checkOverlongColType Check if read field type is long field.
-func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
+// checkSkipReuseChunkForOverlongType walks the root-side physical plan tree top-down and stops at
+// the first reader / point get boundary. Only those operators materialize rows into the reusable
+// chunk owned by the current statement, so higher-level physical operators only decide whether the
+// traversal should continue.
+func checkSkipReuseChunkForOverlongType(sctx base.PlanContext, plan base.PhysicalPlan) (skipReuseChunk bool, continueIterating bool) {
 	if plan == nil {
-		return false
+		return false, false
 	}
 	switch plan.(type) {
-	case *PhysicalTableReader, *PhysicalIndexReader,
-		*PhysicalIndexLookUpReader, *PhysicalIndexMergeReader, *PointGetPlan:
-		if existsOverlongType(plan.Schema()) {
+	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		if shouldSkipReuseChunkForPhysicalPlan(plan) {
 			sctx.GetSessionVars().ClearAlloc(nil, false)
-			return true
+			return true, false
 		}
+	case *physicalop.PointGetPlan, *physicalop.BatchPointGetPlan:
+		if shouldSkipReuseChunkForPhysicalPlan(plan) {
+			sctx.GetSessionVars().ClearAlloc(nil, false)
+			return true, false
+		}
+	default:
+		// Other physical operators do not read data, so we can continue to iterate.
+		return false, true
 	}
-	return false
+	// Once we reach a reader / point get, its children are nil or stay on the coprocessor side, so
+	// no other root-side operator can affect the reusable-chunk decision.
+	return false, false
 }
 
-// existsOverlongType Check if exists long type column.
-func existsOverlongType(schema *expression.Schema) bool {
+var (
+	// MaxMemoryLimitForOverlongType is the memory limit for overlong type column check.
+	// Why is it not 128 ?
+	// Because many customers allocate a portion of memory to their management programs,
+	// the actual amount of usable memory does not align to 128GB.
+	// TODO: We are also lacking test data for instances with less than 128GB of memory, so we need to plan the rules here.
+	// TODO: internal sql can force to use chunk reuse if we ensure the memory usage is safe.
+	// TODO: We can consider the limit/Topn in the future.
+	MaxMemoryLimitForOverlongType = 120 * size.GB
+	maxFlenForOverlongType        = mysql.MaxBlobWidth * 2
+)
+
+// shouldSkipReuseChunkForPhysicalPlan checks whether one reader / point get should skip chunk reuse
+// because of overlong output columns. The decision is based on retained reusable-chunk memory rather
+// than full query output size.
+//
+// For readers with trusted row-count stats, we estimate:
+//
+//	average size of overlong columns * min(estimated row count, MaxChunkSize)
+//
+// All relaxed paths first require server memory >= MaxMemoryLimitForOverlongType; otherwise chunk
+// reuse is unconditionally disabled. Point gets and batch point gets have an exact operator-level
+// row bound, while non-point readers only take the relaxed path when row-count stats are trusted.
+// Only readers with trusted row-count stats use observed average sizes.
+func shouldSkipReuseChunkForPhysicalPlan(plan base.PhysicalPlan) bool {
+	schema := plan.Schema()
 	if schema == nil {
 		return false
 	}
+	totalFlen := 0
+	overlongColumns := make([]*expression.Column, 0, len(schema.Columns))
 	for _, column := range schema.Columns {
 		switch column.RetType.GetType() {
-		case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		case mysql.TypeLongBlob,
 			mysql.TypeBlob, mysql.TypeJSON, mysql.TypeTiDBVectorFloat32:
+			// These types are still treated as unbounded here, so keep the old conservative behavior.
 			return true
-		case mysql.TypeVarString, mysql.TypeVarchar:
+		case mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeTinyBlob, mysql.TypeMediumBlob:
 			// if the column is varchar and the length of
 			// the column is defined to be more than 1000,
 			// the column is considered a large type and
 			// disable chunk_reuse.
-			if column.RetType.GetFlen() > 1000 {
-				return true
+			if column.RetType.GetFlen() <= 1000 {
+				continue
 			}
+			totalFlen += column.RetType.GetFlen()
+			overlongColumns = append(overlongColumns, column)
 		}
 	}
-	return false
+	if totalFlen == 0 {
+		return false
+	}
+	return !allowReuseChunkForOverlongType(plan, overlongColumns, totalFlen)
+}
+
+// allowReuseChunkForOverlongType applies the relaxed rule for bounded overlong columns. It first
+// checks the host-memory gate, then estimates the retained memory of one reusable chunk instead of
+// the whole result set.
+func allowReuseChunkForOverlongType(plan base.PhysicalPlan, overlongColumns []*expression.Column, totalFlen int) bool {
+	totalMemory, err := memory.MemTotal()
+	if err != nil || totalMemory <= 0 || totalMemory < MaxMemoryLimitForOverlongType {
+		return false
+	}
+	estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(plan)
+	if estimatedRows <= 0 {
+		// Without a trusted row bound, keep the old conservative behavior for non-point readers.
+		return false
+	}
+
+	// Estimate the retained reusable chunk size as rows per chunk * bytes per row.
+	rowsPerReusableChunk := estimatedRows
+	switch plan.(type) {
+	case *physicalop.PointGetPlan:
+	default:
+		rowsPerReusableChunk = min(rowsPerReusableChunk, float64(plan.SCtx().GetSessionVars().MaxChunkSize))
+	}
+
+	statsInfo := plan.StatsInfo()
+	estimatedBytesPerRow := float64(totalFlen)
+	if hasTrustedStats && hasUsableOverlongTypeSizeStats(statsInfo, overlongColumns) {
+		// Real stats let us use the observed average size instead of the schema worst case.
+		estimatedBytesPerRow = getAvgRowSize(statsInfo, overlongColumns)
+	}
+	estimatedReusableChunkBytes := rowsPerReusableChunk * estimatedBytesPerRow
+	return estimatedReusableChunkBytes <= float64(maxFlenForOverlongType)
+}
+
+func hasUsableOverlongTypeSizeStats(statsInfo *property.StatsInfo, overlongColumns []*expression.Column) bool {
+	if statsInfo == nil || statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
+		statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {
+		return false
+	}
+	for _, column := range overlongColumns {
+		colStats := statsInfo.HistColl.GetCol(column.UniqueID)
+		if colStats == nil {
+			return false
+		}
+		// Keep the schema-level fallback when this column would still fall back to EstimateTypeWidth.
+		if !colStats.IsHandle && colStats.TotColSize == 0 && colStats.NullCount != statsInfo.HistColl.RealtimeCount {
+			return false
+		}
+	}
+	return true
+}
+
+// estimateReusableChunkRowsForOverlongType returns the row bound used by the reusable-chunk memory
+// estimate together with a flag indicating whether the caller may use observed average row sizes.
+// Point gets and batch point gets have an exact operator-level row bound. Non-point readers only
+// enter the relaxed path when row-count stats are trusted.
+func estimateReusableChunkRowsForOverlongType(plan base.PhysicalPlan) (estimatedRows float64, hasTrustedStats bool) {
+	statsInfo := plan.StatsInfo()
+	if statsInfo == nil || statsInfo.RowCount <= 0 {
+		return 0, false
+	}
+
+	switch plan.(type) {
+	case *physicalop.PointGetPlan:
+		return math.Ceil(statsInfo.RowCount), true
+	case *physicalop.BatchPointGetPlan:
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo {
+			return math.Ceil(statsInfo.RowCount), false
+		}
+		return math.Ceil(statsInfo.RowCount), true
+	case *physicalop.PhysicalTableReader, *physicalop.PhysicalIndexReader,
+		*physicalop.PhysicalIndexLookUpReader, *physicalop.PhysicalIndexMergeReader:
+		// Non-point readers only take the relaxed path when row-count stats are trusted.
+		if statsInfo.HistColl == nil || statsInfo.HistColl.Pseudo ||
+			statsInfo.HistColl.RealtimeCount == 0 || statsInfo.HistColl.ColNum() == 0 {
+			return 0, false
+		}
+		return math.Ceil(statsInfo.RowCount), true
+	default:
+		return 0, false
+	}
 }

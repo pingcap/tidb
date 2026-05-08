@@ -18,8 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -43,11 +41,6 @@ func (p LogicalShowDDLJobs) Init(ctx base.PlanContext) *LogicalShowDDLJobs {
 // PredicatePushDown inherits the BaseLogicalPlan.<1st> interface.
 
 // PruneColumns inherits the BaseLogicalPlan.<2nd> interface.
-
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalShowDDLJobs) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	return utilfuncp.FindBestTask4LogicalShowDDLJobs(p, prop, planCounter, nil)
-}
 
 // BuildKeyInfo inherits the BaseLogicalPlan.<4th> interface.
 

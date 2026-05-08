@@ -17,7 +17,10 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"math/rand"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,17 +30,25 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/unionexec"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
@@ -419,6 +430,167 @@ select a from t`
 	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
 }
 
+type unionEmptyExec struct {
+	*exec.BaseExecutor
+}
+
+func (e *unionEmptyExec) Open(context.Context) error {
+	return nil
+}
+
+func (e *unionEmptyExec) Next(_ context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	return nil
+}
+
+func (e *unionEmptyExec) Close() error {
+	return nil
+}
+
+type unionPanicExec struct {
+	*exec.BaseExecutor
+	nextEntered chan struct{}
+	panicCh     <-chan struct{}
+}
+
+func (e *unionPanicExec) Open(context.Context) error {
+	return nil
+}
+
+func (e *unionPanicExec) Next(_ context.Context, _ *chunk.Chunk) error {
+	close(e.nextEntered)
+	<-e.panicCh
+	panic("union exec panic during close")
+}
+
+func (e *unionPanicExec) Close() error {
+	return nil
+}
+
+func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
+	fp := "github.com/pingcap/tidb/pkg/executor/unionexec/pauseUnionExecResultPuller"
+	require.NoError(t, failpoint.Enable(fp, "pause"))
+	fpEnabled := true
+	t.Cleanup(func() {
+		if fpEnabled {
+			require.NoError(t, failpoint.Disable(fp))
+		}
+	})
+
+	ctx := mock.NewContext()
+	schema := expression.NewSchema()
+	childBase := exec.NewBaseExecutor(ctx, schema, 0)
+	child := &unionEmptyExec{BaseExecutor: &childBase}
+	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
+	union := &unionexec.UnionExec{
+		BaseExecutor: unionBase,
+		Concurrency:  1,
+	}
+
+	require.NoError(t, exec.Open(context.Background(), union))
+	chk := exec.NewFirstChunk(union)
+
+	nextDone := make(chan struct{})
+	go func() {
+		_ = union.Next(context.Background(), chk)
+		close(nextDone)
+	}()
+
+	select {
+	case <-nextDone:
+		t.Fatalf("union Next returned before workers paused")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = union.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatalf("union Close returned while workers paused")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	require.NoError(t, failpoint.Disable(fp))
+	fpEnabled = false
+
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Close did not return after workers resumed")
+	}
+
+	select {
+	case <-nextDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Next did not return after Close")
+	}
+}
+
+func TestUnionExecCloseReturnsAfterWorkerPanicDuringShutdown(t *testing.T) {
+	ctx := mock.NewContext()
+	schema := expression.NewSchema()
+	panicCh := make(chan struct{})
+	nextEntered := make(chan struct{})
+	childBase := exec.NewBaseExecutor(ctx, schema, 0)
+	child := &unionPanicExec{
+		BaseExecutor: &childBase,
+		nextEntered:  nextEntered,
+		panicCh:      panicCh,
+	}
+	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
+	union := &unionexec.UnionExec{
+		BaseExecutor: unionBase,
+		Concurrency:  1,
+	}
+
+	require.NoError(t, exec.Open(context.Background(), union))
+	chk := exec.NewFirstChunk(union)
+
+	nextDone := make(chan struct{})
+	go func() {
+		_ = union.Next(context.Background(), chk)
+		close(nextDone)
+	}()
+
+	select {
+	case <-nextEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union worker did not enter Next")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		_ = union.Close()
+		close(closeDone)
+	}()
+
+	// Close closes finished before waiting, so once it is blocked here the worker
+	// will hit the sendResult(false) path when it panics.
+	select {
+	case <-closeDone:
+		t.Fatalf("union Close returned before worker panic")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(panicCh)
+
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Close did not return after worker panic")
+	}
+
+	select {
+	case <-nextDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("union Next did not return after worker panic")
+	}
+}
+
 func TestTxnWriteThroughputSLI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -758,4 +930,304 @@ func TestBuildProjectionForIndexJoinPanic(t *testing.T) {
 	}()
 	err := tk.QueryToErr("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a;")
 	require.ErrorContains(t, err, "buildProjectionForIndexJoinPanic")
+}
+
+type IndexLookUpPushDownRunVerifier struct {
+	*testing.T
+	tk          *testkit.TestKit
+	tableName   string
+	indexName   string
+	primaryRows []int
+	hitRate     any
+	msg         string
+}
+
+type RunSelectWithCheckResult struct {
+	SQL         string
+	Rows        [][]any
+	AnalyzeRows [][]any
+}
+
+func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, limit int) RunSelectWithCheckResult {
+	require.NotNil(t, t.tk)
+	require.NotEmpty(t, t.tableName)
+	require.NotEmpty(t, t.indexName)
+	require.NotEmpty(t, t.primaryRows)
+	require.GreaterOrEqual(t, skip, 0)
+	if skip > 0 {
+		require.GreaterOrEqual(t, limit, 0)
+	}
+
+	var hitRate int
+	if r, ok := t.hitRate.(*rand.Rand); ok {
+		hitRate = r.Intn(11)
+	} else {
+		hitRate, ok = t.hitRate.(int)
+		require.True(t, ok)
+	}
+
+	message := fmt.Sprintf("%s, hitRate: %d, where: %s, limit: %d", t.msg, hitRate, where, limit)
+	injectHandleFilter := func(h kv.Handle) bool {
+		if hitRate >= 10 {
+			return true
+		}
+		h64a := fnv.New64a()
+		_, err := h64a.Write(h.Encoded())
+		require.NoError(t, err)
+		return h64a.Sum64()%10 < uint64(hitRate)
+	}
+	var injectCalled atomic.Bool
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter", func(f *func(kv.Handle) bool) {
+		*f = injectHandleFilter
+		injectCalled.Store(true)
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter"))
+	}()
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("select /*+ index_lookup_pushdown(%s, %s)*/ * from %s where ", t.tableName, t.indexName, t.tableName))
+	sb.WriteString(where)
+	if skip > 0 {
+		sb.WriteString(fmt.Sprintf(" limit %d, %d", skip, limit))
+	} else if limit >= 0 {
+		sb.WriteString(fmt.Sprintf(" limit %d", limit))
+	}
+
+	// make sure the query uses index lookup
+	analyzeSQL := "explain analyze " + sb.String()
+	injectCalled.Store(false)
+	analyzeResult := t.tk.MustQuery(analyzeSQL)
+	require.True(t, injectCalled.Load(), message)
+	require.Contains(t, analyzeResult.String(), "LocalIndexLookUp", analyzeSQL+"\n"+analyzeResult.String())
+
+	// get actual result
+	injectCalled.Store(false)
+	rs := t.tk.MustQuery(sb.String())
+	actual := rs.Rows()
+	require.True(t, injectCalled.Load(), message)
+	idSets := make(map[string]struct{}, len(actual))
+	for _, row := range actual {
+		var primaryKey strings.Builder
+		require.Greater(t, len(t.primaryRows), 0)
+		for i, idx := range t.primaryRows {
+			if i > 0 {
+				primaryKey.WriteString("#")
+			}
+			primaryKey.WriteString(row[idx].(string))
+		}
+		id := primaryKey.String()
+		_, dup := idSets[id]
+		require.False(t, dup, "dupID: "+id+", "+message)
+		idSets[row[0].(string)] = struct{}{}
+	}
+
+	// use table scan
+	matchCondList := t.tk.MustQuery(fmt.Sprintf("select /*+ use_index(%s) */* from %s where "+where, t.tableName, t.tableName)).Rows()
+	if limit == 0 || skip >= len(matchCondList) {
+		require.Len(t, actual, 0, message)
+	} else if limit < 0 {
+		// no limit two results should have same members
+		require.ElementsMatch(t, matchCondList, actual, message)
+	} else {
+		expectRowCnt := limit
+		if skip+limit > len(matchCondList) {
+			expectRowCnt = len(matchCondList) - skip
+		}
+		require.Len(t, actual, expectRowCnt, message)
+		require.Subset(t, matchCondList, actual, message)
+	}
+
+	// check in analyze the index is lookup locally
+	message = fmt.Sprintf("%s\n%s\n%s", message, analyzeSQL, analyzeResult.String())
+	analyzeVerified := false
+	localIndexLookUpIndex := -1
+	totalIndexScanCnt := -1
+	localIndexLookUpRowCnt := -1
+	analyzeRows := analyzeResult.Rows()
+	metTableRowIDScan := false
+	for i, row := range analyzeRows {
+		if strings.Contains(row[0].(string), "LocalIndexLookUp") {
+			localIndexLookUpIndex = i
+			continue
+		}
+
+		if strings.Contains(row[0].(string), "TableRowIDScan") && strings.Contains(row[3].(string), "cop[tikv]") {
+			var err error
+			if !metTableRowIDScan {
+				localIndexLookUpRowCnt, err = strconv.Atoi(row[2].(string))
+				require.NoError(t, err, message)
+				require.GreaterOrEqual(t, localIndexLookUpRowCnt, 0)
+				if hitRate == 0 {
+					require.Zero(t, localIndexLookUpRowCnt, message)
+				}
+				// check actRows for LocalIndexLookUp
+				require.Equal(t, analyzeRows[localIndexLookUpIndex][2], row[2], message)
+				// get index scan row count
+				totalIndexScanCnt, err = strconv.Atoi(analyzeRows[localIndexLookUpIndex+1][2].(string))
+				require.NoError(t, err, message)
+				require.GreaterOrEqual(t, totalIndexScanCnt, localIndexLookUpRowCnt)
+				if hitRate >= 10 {
+					require.Equal(t, localIndexLookUpRowCnt, totalIndexScanCnt)
+				}
+				metTableRowIDScan = true
+				continue
+			}
+
+			tidbIndexLookUpRowCnt, err := strconv.Atoi(row[2].(string))
+			require.NoError(t, err, message)
+			if limit < 0 {
+				require.Equal(t, totalIndexScanCnt, localIndexLookUpRowCnt+tidbIndexLookUpRowCnt, message)
+			} else {
+				require.LessOrEqual(t, localIndexLookUpRowCnt+tidbIndexLookUpRowCnt, totalIndexScanCnt, message)
+			}
+			analyzeVerified = true
+			break
+		}
+	}
+	require.True(t, analyzeVerified, analyzeResult.String())
+	return RunSelectWithCheckResult{
+		SQL:         sb.String(),
+		Rows:        actual,
+		AnalyzeRows: analyzeRows,
+	}
+}
+
+func TestIndexLookUpPushDownExec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint primary key, a bigint, b bigint, index a(a))")
+	seed := time.Now().UnixNano()
+	logutil.BgLogger().Info("Run TestIndexLookUpPushDownExec with seed", zap.Int64("seed", seed))
+	r := rand.New(rand.NewSource(seed))
+	v := &IndexLookUpPushDownRunVerifier{
+		T:           t,
+		tk:          tk,
+		tableName:   "t",
+		indexName:   "a",
+		primaryRows: []int{0},
+		hitRate:     r,
+		msg:         fmt.Sprintf("seed: %d", seed),
+	}
+
+	batch := 100
+	total := batch * 20
+	indexValEnd := 100
+	randIndexVal := func() int {
+		return r.Intn(indexValEnd)
+	}
+	for i := 0; i < total; i += batch {
+		values := make([]string, 0, batch)
+		for j := 0; j < batch; j++ {
+			values = append(values, fmt.Sprintf("(%d, %d, %d)", i+j, randIndexVal(), r.Int63()))
+		}
+		tk.MustExec("insert into t values " + strings.Join(values, ","))
+	}
+
+	v.RunSelectWithCheck("1", 0, -1)
+	v.RunSelectWithCheck("1", 0, r.Intn(total*2))
+	v.RunSelectWithCheck("1", total/2, r.Intn(total))
+	v.RunSelectWithCheck("1", total-10, 20)
+	v.RunSelectWithCheck("1", total, 10)
+	v.RunSelectWithCheck("1", 10, 0)
+	v.RunSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, -1)
+	v.RunSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, 25)
+	v.RunSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, -1)
+	v.RunSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, r.Intn(100)+1)
+	v.RunSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, -1)
+	v.RunSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, r.Intn(100)+1)
+	start := randIndexVal()
+	v.RunSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, -1)
+	start = randIndexVal()
+	v.RunSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, r.Intn(50)+1)
+	v.RunSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, -1)
+	v.RunSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
+}
+
+func TestIndexLookUpPushDownPartitionExec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// int handle
+	tk.MustExec("create table tp1 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(b) CLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE (b) (\n" +
+		"    PARTITION p0 VALUES LESS THAN (100),\n" +
+		"    PARTITION p1 VALUES LESS THAN (200),\n" +
+		"    PARTITION p2 VALUES LESS THAN (300),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	// common handle
+	tk.MustExec("create table tp2 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(a, b) CLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE COLUMNS (a) (\n" +
+		"    PARTITION p0 VALUES LESS THAN ('c'),\n" +
+		"    PARTITION p1 VALUES LESS THAN ('e'),\n" +
+		"    PARTITION p2 VALUES LESS THAN ('g'),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	// extra handle
+	tk.MustExec("create table tp3 (\n" +
+		"    a varchar(32),\n" +
+		"    b int,\n" +
+		"    c int,\n" +
+		"    d int,\n" +
+		"    primary key(a, b) NONCLUSTERED,\n" +
+		"    index c(c)\n" +
+		")\n" +
+		"PARTITION BY RANGE COLUMNS (a) (\n" +
+		"    PARTITION p0 VALUES LESS THAN ('c'),\n" +
+		"    PARTITION p1 VALUES LESS THAN ('e'),\n" +
+		"    PARTITION p2 VALUES LESS THAN ('g'),\n" +
+		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
+		")")
+
+	tableNames := []string{"tp1", "tp2", "tp3"}
+	// prepare data
+	for _, tableName := range tableNames {
+		tk.MustExec("insert into " + tableName + " values " +
+			"('a', 10, 1, 100), " +
+			"('b', 20, 2, 200), " +
+			"('c', 110, 3, 300), " +
+			"('d', 120, 4, 400), " +
+			"('e', 210, 5, 500), " +
+			"('f', 220, 6, 600), " +
+			"('g', 330, 5, 700), " +
+			"('h', 340, 5, 800), " +
+			"('i', 450, 5, 900), " +
+			"('j', 550, 6, 1000) ",
+		)
+
+		v := &IndexLookUpPushDownRunVerifier{
+			T:           t,
+			tk:          tk,
+			tableName:   tableName,
+			indexName:   "c",
+			primaryRows: []int{0, 1},
+			msg:         tableName,
+		}
+
+		if tableName == "tp1" {
+			v.primaryRows = []int{1}
+		}
+
+		for _, hitRate := range []int{0, 5, 10} {
+			v.hitRate = hitRate
+			v.RunSelectWithCheck("1", 0, -1)
+		}
+	}
 }

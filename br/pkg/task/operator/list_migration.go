@@ -8,8 +8,8 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/pkg/objstore"
 )
 
 // statusOK make a string like <green>●</green> <bold>{message}</bold>
@@ -18,11 +18,11 @@ func statusOK(message string) string {
 }
 
 func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
-	backend, err := storage.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
+	backend, err := objstore.ParseBackend(cfg.StorageURI, &cfg.BackendOptions)
 	if err != nil {
 		return err
 	}
-	st, err := storage.Create(ctx, backend, false)
+	st, err := objstore.Create(ctx, backend, false)
 	if err != nil {
 		return err
 	}

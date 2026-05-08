@@ -156,8 +156,8 @@ func (w *worker) checkTablesExists(ctx context.Context, now time.Time) bool {
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
-	return slice.AllOf(w.workloadTables, func(i int) bool {
-		return checkTableExistsByIS(ctx, is, w.workloadTables[i].destTable, now)
+	return slice.AllOf(w.workloadTables, func(table repositoryTable) bool {
+		return checkTableExistsByIS(ctx, is, table.destTable, now)
 	})
 }
 

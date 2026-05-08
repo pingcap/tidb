@@ -18,15 +18,15 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/util/filter"
-	"github.com/pingcap/tidb/pkg/util/slice"
 	"go.uber.org/zap"
 )
 
@@ -88,18 +88,18 @@ const (
 )
 
 // ToStorageCompressType converts Compression to storage.CompressType.
-func ToStorageCompressType(compression Compression) (storage.CompressType, error) {
+func ToStorageCompressType(compression Compression) (compressedio.CompressType, error) {
 	switch compression {
 	case CompressionGZ:
-		return storage.Gzip, nil
+		return compressedio.Gzip, nil
 	case CompressionSnappy:
-		return storage.Snappy, nil
+		return compressedio.Snappy, nil
 	case CompressionZStd:
-		return storage.Zstd, nil
+		return compressedio.Zstd, nil
 	case CompressionNone:
-		return storage.NoCompression, nil
+		return compressedio.NoCompression, nil
 	default:
-		return storage.NoCompression,
+		return compressedio.NoCompression,
 			errors.Errorf("compression %d doesn't have related storage compressType", compression)
 	}
 }
@@ -411,10 +411,7 @@ func (regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string) error {
 			if number > pat.NumSubexp() {
 				return errors.Errorf("sub pattern capture '%s' out of range", subVar)
 			}
-		} else if !slice.AnyOf(pat.SubexpNames(), func(i int) bool {
-			// FIXME: we should use re.SubexpIndex here, but not supported in go1.13 yet
-			return pat.SubexpNames()[i] == tmplName
-		}) {
+		} else if !slices.Contains(pat.SubexpNames(), tmplName) {
 			return errors.Errorf("invalid named capture '%s'", subVar)
 		}
 	}

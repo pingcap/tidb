@@ -546,7 +546,6 @@ func TestHiddenColumn(t *testing.T) {
 	tk.MustGetErrMsg("update t set a=1 where c=3 order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
 
 	// `DELETE` statement
-	tk.MustQuery("trace plan delete from t;")
 	tk.MustExec("delete from t;")
 	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("0"))
 	tk.MustExec("insert into t values (1, 3, 5);")
@@ -843,12 +842,12 @@ func TestTxnAssertion(t *testing.T) {
 			expectAssertionErr(level, err)
 		})
 
-		tk.MustExec("set @@tidb_redact_log=MARKER")
+		tk.MustExec("set @@global.tidb_redact_log=MARKER")
 		withFailpoint(fpAdd, func() {
 			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
 			require.Contains(t, err.Error(), "‹")
 		})
-		tk.MustExec("set @@tidb_redact_log=0")
+		tk.MustExec("set @@global.tidb_redact_log=0")
 
 		withFailpoint(fpUpdate, func() {
 			err = tk.ExecToErr("update t set v = v + 1 where id = ?", id2)
@@ -983,7 +982,7 @@ func TestSkipWriteUntouchedIndices(t *testing.T) {
 			key, distinct, err := tbl.Indices()[idx].GenIndexKey(ec, time.UTC, []types.Datum{val}, h, nil)
 			require.NoError(t, err)
 			require.False(t, distinct)
-			indexVal, err := memBuffer.Get(context.TODO(), key)
+			indexVal, err := kv.GetValue(context.TODO(), memBuffer, key)
 			if !exists {
 				require.True(t, kv.ErrNotExist.Equal(err))
 				return

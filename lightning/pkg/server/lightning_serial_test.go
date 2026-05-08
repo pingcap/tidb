@@ -24,7 +24,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -83,7 +83,7 @@ func TestRun(t *testing.T) {
 		},
 	}
 	err = lightning.run(ctx, &cfgCheckpoint, o)
-	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
+	require.EqualError(t, err, "unknown backend ")
 	mock.ExpectQuery("show config").WillReturnError(errors.New("lack privilege"))
 	cfgKeyspaceName := config.NewConfig()
 	cfgKeyspaceName.TikvImporter.Backend = config.BackendLocal

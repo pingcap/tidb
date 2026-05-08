@@ -1103,6 +1103,202 @@ func TestLocate(t *testing.T) {
 	}
 }
 
+func TestFindInSetConstStrlistLookup(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.FindInSet]
+	const padSpaceCollation = "utf8mb4_general_ci"
+
+	// Use utf8mb4_general_ci to verify that FIND_IN_SET should not treat trailing
+	// spaces as equal even under PAD SPACE collations.
+	str := types.NewCollationStringDatum(" ", padSpaceCollation)
+	strlist := types.NewCollationStringDatum("  , , ,", padSpaceCollation)
+	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, strlist}))
+	require.NoError(t, err)
+	findInSetSig, ok := fn.(*builtinFindInSetSig)
+	require.True(t, ok)
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), d.GetInt64())
+	cached := findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached)
+	require.False(t, cached.item.isNull)
+	require.Len(t, cached.item.lookup, 3)
+
+	// Constant strlist lookup map should be reused across evaluations.
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), d.GetInt64())
+	require.Same(t, cached, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	// Vectorized path should use the same semantics and produce first match.
+	require.True(t, findInSetSig.isChildrenVectorized())
+	chk := chunk.NewChunkWithCapacity(nil, 4)
+	chk.SetNumVirtualRows(4)
+	result := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 4)
+	err = vecEvalType(ctx, fn, types.ETInt, chk, result.Column(0))
+	require.NoError(t, err)
+	for i := 0; i < chk.NumRows(); i++ {
+		require.Equal(t, int64(2), result.Column(0).GetInt64(i))
+	}
+
+	str2 := types.NewCollationStringDatum("a", padSpaceCollation)
+	strlist2 := types.NewCollationStringDatum("a,b,a", padSpaceCollation)
+	fn, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str2, strlist2}))
+	require.NoError(t, err)
+	findInSetSig, ok = fn.(*builtinFindInSetSig)
+	require.True(t, ok)
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), d.GetInt64())
+	cached = findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached)
+	require.False(t, cached.item.isNull)
+	require.Len(t, cached.item.lookup, 2)
+
+	require.True(t, findInSetSig.isChildrenVectorized())
+	chk = chunk.NewChunkWithCapacity(nil, 2)
+	chk.SetNumVirtualRows(2)
+	result = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 2)
+	err = vecEvalType(ctx, fn, types.ETInt, chk, result.Column(0))
+	require.NoError(t, err)
+	for i := 0; i < chk.NumRows(); i++ {
+		require.Equal(t, int64(1), result.Column(0).GetInt64(i))
+	}
+	require.Same(t, cached, findInSetSig.constStrlistLookupCache.cached.Load())
+}
+
+func TestFindInSetVecFirstMatchNonConstStrlist(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.FindInSet]
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+	fn, err := fc.getFunction(ctx, []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+	})
+	require.NoError(t, err)
+
+	findInSetSig, ok := fn.(*builtinFindInSetSig)
+	require.True(t, ok)
+	require.True(t, findInSetSig.isChildrenVectorized())
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	input := chunk.NewChunkWithCapacity(colTypes, 4)
+	input.AppendString(0, "a")
+	input.AppendString(1, "b,a,c,a")
+	input.AppendString(0, "a")
+	input.AppendString(1, "a,b,a")
+	input.AppendString(0, "")
+	input.AppendString(1, ",,")
+	input.AppendString(0, "x")
+	input.AppendString(1, "a,b,a")
+
+	expected := []int64{2, 1, 1, 0}
+	for i, want := range expected {
+		d, err := evalBuiltinFunc(fn, ctx, input.GetRow(i))
+		require.NoError(t, err)
+		require.Equalf(t, want, d.GetInt64(), "scalar row %d", i)
+	}
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	result := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, input.NumRows())
+	err = vecEvalType(ctx, fn, types.ETInt, input, result.Column(0))
+	require.NoError(t, err)
+	for i, want := range expected {
+		require.Equalf(t, want, result.Column(0).GetInt64(i), "vectorized row %d", i)
+	}
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+}
+
+func TestFindInSetConstOnlyInContextStrlistLookup(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.FindInSet]
+	const padSpaceCollation = "utf8mb4_general_ci"
+	resetStmtCtx := func() {
+		ctx.GetSessionVars().StmtCtx = ctx.GetSessionVars().InitStatementContext()
+		ctx.ResetSessionAndStmtTimeZone(ctx.GetSessionVars().TimeZone)
+	}
+
+	str := types.NewCollationStringDatum(" ", padSpaceCollation)
+	strTp := types.NewFieldType(mysql.TypeVarString)
+	strTp.SetCharset(charset.CharsetUTF8MB4)
+	strTp.SetCollate(padSpaceCollation)
+	strExpr := &Constant{
+		Value:   str,
+		RetType: strTp,
+	}
+	strlistTp := types.NewFieldType(mysql.TypeVarString)
+	strlistTp.SetCharset(charset.CharsetUTF8MB4)
+	strlistTp.SetCollate(padSpaceCollation)
+	strlistExpr := &Constant{
+		ParamMarker: &ParamMarker{order: 0},
+		RetType:     strlistTp,
+	}
+
+	// ParamMarker.GetType() needs a concrete parameter value during function build.
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewCollationStringDatum("  , , ,", padSpaceCollation))
+
+	fn, err := fc.getFunction(ctx, []Expression{strExpr, strlistExpr})
+	require.NoError(t, err)
+	findInSetSig, ok := fn.(*builtinFindInSetSig)
+	require.True(t, ok)
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewCollationStringDatum("  , , ,", padSpaceCollation))
+	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), d.GetInt64())
+	cached := findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached)
+	require.False(t, cached.item.isNull)
+	require.Len(t, cached.item.lookup, 3)
+
+	// Reuse within one statement context.
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), d.GetInt64())
+	require.Same(t, cached, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	require.True(t, findInSetSig.isChildrenVectorized())
+	chk := chunk.NewChunkWithCapacity(nil, 3)
+	chk.SetNumVirtualRows(3)
+	result := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 3)
+	err = vecEvalType(ctx, fn, types.ETInt, chk, result.Column(0))
+	require.NoError(t, err)
+	for i := 0; i < chk.NumRows(); i++ {
+		require.Equal(t, int64(2), result.Column(0).GetInt64(i))
+	}
+	require.Same(t, cached, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	// New statement context should rebuild the cache.
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewCollationStringDatum(" ,a", padSpaceCollation))
+	resetStmtCtx()
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), d.GetInt64())
+	cached2 := findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached2)
+	require.NotSame(t, cached, cached2)
+
+	// Null strlist in const-only-in-context should return NULL and cache null state.
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewDatum(nil))
+	resetStmtCtx()
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, d.IsNull())
+	cached3 := findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached3)
+	require.True(t, cached3.item.isNull)
+}
+
 func TestTrim(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
@@ -2039,8 +2235,8 @@ func TestFormat(t *testing.T) {
 	require.NoError(t, err)
 	testutil.DatumEqual(t, types.NewDatum(formatTests4.ret), r4)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
-	require.Equal(t, 3, len(warnings))
-	for i := range 3 {
+	require.Equal(t, 2, len(warnings))
+	for i := range 2 {
 		require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[i].Err))
 	}
 	ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
@@ -2762,4 +2958,124 @@ func TestCIWeightString(t *testing.T) {
 	checkResult("utf8mb4_general_ci", generalTests)
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
 	checkResult("utf8mb4_0900_ai_ci", unicode0900Tests)
+}
+
+// TestFormatWithLocale tests the 3-argument version of FORMAT(X, D, locale)
+// with various locales and number formats.
+func TestFormatWithLocale(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.Format]
+
+	tests := []struct {
+		number    any
+		precision any
+		locale    any  // Use 'any' to test NULL locale
+		ret       any  // Expected result
+		warning   bool // True if we expect an 'Unknown locale' warning
+		desc      string
+	}{
+		// --- Style: CommaDot (123,456.78) ---
+		// This is the default fallback for most unhandled locales.
+		{1234567.89, 2, "en_US", "1,234,567.89", false, "CommaDot (en_US) - standard"},
+		{-98765.432, 2, "zh_CN", "-98,765.43", false, "CommaDot (zh_CN) - negative, rounding"},
+		{0.01, 4, "ja_JP", "0.0100", false, "CommaDot (ja_JP) - decimal padding"},
+		{12345, 0, "en_GB", "12,345", false, "CommaDot (en_GB) - no decimal part"},
+		{1.2, 2, "ko_KR", "1.20", false, "CommaDot (ko_KR) - extra locale"},
+		{500.5, 1, "th_TH", "500.5", false, "CommaDot (th_TH) - extra locale"},
+		{7777, 0, "en_AU", "7,777", false, "CommaDot (en_AU) - extra locale"},
+		{-88.88, 2, "zh_TW", "-88.88", false, "CommaDot (zh_TW) - extra locale"},
+		// Fallback locales that MySQL treats as en_US
+		{9876543.21, 1, "es_MX", "9,876,543.2", false, "CommaDot (es_MX) - MySQL fallback"},
+		{3000.14, 2, "ce_RU", "3,000.14", false, "CommaDot (ce_RU) - MySQL fallback"},
+		{4000.1, 1, "ky_KG", "4,000.1", false, "CommaDot (ky_KG) - MySQL fallback"},
+		{200, 2, "aa_DJ", "200.00", false, "CommaDot (aa_DJ) - MySQL fallback"},
+		{7890123.456, 2, "ps_AF", "7,890,123.46", false, "CommaDot (ps_AF) - MySQL fallback"},
+		{12345.67, 2, "an_ES", "12,345.67", false, "CommaDot (an_ES) - MySQL fallback"},
+		{12345.67, 2, "az_AZ", "12,345.67", false, "CommaDot (az_AZ) - MySQL fallback"},
+		{12345.67, 2, "br_FR", "12,345.67", false, "CommaDot (br_FR) - MySQL fallback"},
+		{3000.14, 2, "kv_RU", "3,000.14", false, "CommaDot (kv_RU) - MySQL fallback"},
+		{12345.67, 3, "su_ID", "12,345.670", false, "CommaDot (su_ID) - MySQL fallback"},
+
+		// --- Style: DotComma (123.456,78) ---
+		{7654321.98, 2, "de_DE", "7.654.321,98", false, "DotComma (de_DE) - large number"},
+		{-9.999, 2, "es_ES", "-10,00", false, "DotComma (es_ES) - negative, rounding up to 10"},
+		{"-123.45", 1, "id_ID", "-123,5", false, "DotComma (id_ID) - string input"},
+		{99, 1, "vi_VN", "99,0", false, "DotComma (vi_VN) - extra locale"},
+		{8888.8, 0, "ro_RO", "8.889", false, "DotComma (ro_RO) - extra locale, rounding"},
+		{1234.567, 2, "da_DK", "1.234,57", false, "DotComma (da_DK) - extra locale, rounding"},
+		{555.55, 1, "tr_TR", "555,6", false, "DotComma (tr_TR) - extra locale, rounding"},
+		{1234.56, 2, "nb_NO", "1.234,56", false, "DotComma (nb_NO) - MySQL behavior"},
+		{1234.56, 2, "uk_UA", "1.234,56", false, "DotComma (uk_UA) - MySQL behavior"},
+		{12345.67, 3, "no_NO", "12.345,670", false, "DotComma (no_NO) - MySQL behavior"},
+
+		// --- Style: SpaceComma (123 456,78) ---
+		{-0.88, 1, "ru_RU", "-0,9", false, "SpaceComma (ru_RU) - negative, rounding"},
+		{98765, 0, "sv_SE", "98 765", false, "SpaceComma (sv_SE) - no decimal part"},
+		{2000, 2, "cs_CZ", "2 000,00", false, "SpaceComma (cs_CZ) - extra locale, padding"},
+
+		// --- Style: NoneComma (123456,78) ---
+		{-2.23, 1, "el_GR", "-2,2", false, "NoneComma (el_GR) - negative, rounding"},
+		{44.44, 1, "pt_PT", "44,4", false, "NoneComma (pt_PT) - extra locale"},
+		{12345, 0, "it_IT", "12345", false, "NoneComma (it_IT) - MySQL behavior"},
+		{100.5, 3, "pt_BR", "100,500", false, "NoneComma (pt_BR) - MySQL behavior"},
+		{500000.1, 2, "fr_FR", "500000,10", false, "NoneComma (fr_FR) - MySQL behavior"},
+		{1999.9, 0, "pl_PL", "2000", false, "NoneComma (pl_PL) - MySQL behavior"},
+		{123, 2, "fr_CH", "123,00", false, "NoneComma (fr_CH) - MySQL behavior"},
+		{12345, 0, "de_AT", "12345", false, "NoneComma (de_AT) - MySQL behavior"},
+		{1000000, 2, "bg_BG", "1000000,00", false, "NoneComma (bg_BG) - MySQL behavior"},
+
+		// --- Style: AposDot (123'456.78) ---
+		{4567890.123, 2, "de_CH", "4'567'890.12", false, "AposDot (de_CH) - large number"},
+
+		// --- Style: AposComma (123'456,78) ---
+		{4567890.123, 2, "it_CH", "4'567'890,12", false, "AposComma (it_CH) - MySQL behavior"},
+
+		// --- Style: NoneDot (123456.78) ---
+		{1000000.5, 0, "ar_SA", "1000001", false, "NoneDot (ar_SA) - no grouping, rounding"},
+		{12345.6, 1, "sr_RS", "12345.6", false, "NoneDot (sr_RS) - MySQL behavior"},
+
+		// --- Style: Indian (1,23,45,67,890.123) ---
+		{1234567890.123, 3, "en_IN", "1,23,45,67,890.123", false, "Indian (en_IN) - lakh/crore grouping"},
+		{987654321, 0, "ta_IN", "98,76,54,321", false, "Indian (ta_IN) - no decimal"},
+		{-5000.5, 1, "te_IN", "-5,000.5", false, "Indian (te_IN) - only one separator"},
+
+		// --- Special Cases (Case, NULL, Invalid) ---
+		{12345.67, 2, "dE_dE", "12.345,67", false, "DotComma (de_DE) - case insensitive"},
+		{12345.67, 2, "en_us", "12,345.67", false, "CommaDot (en_US) - case insensitive"},
+
+		// Test NULL locale: should fallback to en_US and produce a warning
+		{12345.67, 2, nil, "12,345.67", true, "NULL locale fallback"},
+
+		// Test an invalid/unmapped locale
+		// Should fallback to en_US (styleCommaDot) and issue a warning.
+		{12345.67, 2, "de_GE", "12,345.67", true, "Invalid locale 'de_GE' fallback"},
+		{12345.67, 2, "non_existent", "12,345.67", true, "Invalid locale 'non_existent' fallback"},
+	}
+
+	for _, tt := range tests {
+		// Clear warnings for each test run
+		ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		// Get function signature
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
+		require.NoError(t, err, "test: %s", tt.desc)
+		require.NotNil(t, f, "test: %s", tt.desc)
+
+		// Evaluate
+		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err, "test: %s", tt.desc)
+
+		// Check result
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), r, "test: %s", tt.desc)
+
+		// Check warnings
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		if tt.warning {
+			require.Len(t, warnings, 1, "test: %s", tt.desc)
+			// Check if it's the 'Unknown locale' warning
+			require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[0].Err), "test: %s", tt.desc)
+		} else {
+			require.Len(t, warnings, 0, "test: %s", tt.desc)
+		}
+	}
 }

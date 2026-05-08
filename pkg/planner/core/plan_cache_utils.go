@@ -22,7 +22,6 @@ import (
 	"hash"
 	"math"
 	"slices"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -133,9 +135,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	prepared := &ast.Prepared{
 		Stmt:     paramStmt,
-		StmtType: ast.GetStmtLabel(paramStmt),
+		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
 
 	var (
 		cacheable bool
@@ -189,10 +192,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	// Collect information for metadata lock.
-	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
-	for id := range vars.StmtCtx.MDLRelatedTableIDs {
+	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
+	for id := range vars.StmtCtx.RelatedTableIDs {
 		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
@@ -220,6 +223,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		HasUsePlanCacheHint: hasUsePlanCacheHint,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
@@ -236,8 +240,60 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, paramCount, nil
 }
 
+// tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
+var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
+
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
-	keys := make([]int64, 0, len(m))
+	n := len(m)
+
+	// Fast path for common cases (covers most scenarios)
+	if n == 0 {
+		return b
+	}
+	if n == 1 {
+		// Single table: no need for allocation or sorting
+		for k, v := range m {
+			b = codec.EncodeInt(b, k)
+			b = codec.EncodeUint(b, v)
+			return b
+		}
+	}
+	if n == 2 {
+		// Two tables: direct comparison without array allocation
+		var k1, k2 int64
+		var v1, v2 uint64
+		i := 0
+		for k, v := range m {
+			if i == 0 {
+				k1, v1 = k, v
+			} else {
+				k2, v2 = k, v
+			}
+			i++
+		}
+		// Ensure sorted order
+		if k1 > k2 {
+			k1, k2 = k2, k1
+			v1, v2 = v2, v1
+		}
+		b = codec.EncodeInt(b, k1)
+		b = codec.EncodeUint(b, v1)
+		b = codec.EncodeInt(b, k2)
+		b = codec.EncodeUint(b, v2)
+		return b
+	}
+
+	// Slow path for multiple tables
+	keys := tableIDSlicePool.Get()[:0]
+	defer tableIDSlicePool.Put(keys)
+
+	// Ensure sufficient capacity
+	if cap(keys) < n {
+		keys = make([]int64, 0, n)
+	}
+
 	for k := range m {
 		keys = append(keys, k)
 	}
@@ -256,9 +312,21 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	binding, ignored := bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
-	if ignored {
-		return "", binding, false, "ignore plan cache by binding", nil
+	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
+}
+
+func newPlanCacheKeyWithMatchedBinding(
+	sctx sessionctx.Context,
+	stmt *PlanCacheStmt,
+	matchedBinding *bindinfo.Binding,
+	bindingMatched bool,
+) (key, binding string, cacheable bool, reason string, err error) {
+	if !bindingMatched && stmt.PreparedAst != nil {
+		matchedBinding, bindingMatched, _ = bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	}
+	if bindingMatched && matchedBinding != nil {
+		// Record the matched binding SQL so the plan cache key reflects the effective hints.
+		binding = matchedBinding.BindSQL
 	}
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
@@ -286,6 +354,13 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	if stmt.SchemaVersion == 0 && !intest.InTest {
 		return "", "", false, "", errors.New("Schema version uninitialized")
 	}
+	if stmt.hasSubquery && !vars.EnablePlanCacheForSubquery {
+		return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
+	}
+	if len(stmt.limits) > 0 && !vars.EnablePlanCacheForParamLimit {
+		return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
+	}
+
 	stmtDB := stmt.StmtDB
 	if stmtDB == "" {
 		stmtDB = vars.CurrentDB
@@ -306,11 +381,37 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the user might switch the prune mode dynamically
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
-	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
-	hash = append(hash, hack.Slice(userName)...)
-	hash = append(hash, hack.Slice(hostName)...)
-	hash = append(hash, hack.Slice(stmtDB)...)
-	hash = append(hash, hack.Slice(stmt.StmtText)...)
+	// precalculate the length of the hash buffer, note each time add an element to the buffer, need
+	// to update hashLen accordingly
+	// basic informations
+	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
+	// schemaVersion + relateVersion + pruneMode
+	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
+	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	if len(stmt.limits) > 0 {
+		// '|' + each limit count/offset takes 8 bytes + '|'
+		hashLen += 2 + len(stmt.limits)*2*8
+	}
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+		// statsVerHash: skipped when a binding is matched and PlanCacheSkipStatsOnBinding is on,
+		// because a binding pins the plan via hints so stats changes cannot alter the chosen plan.
+		hashLen += 8
+	}
+	// dirty tables
+	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
+	// txn status
+	hashLen += 6
+
+	hash := make([]byte, 0, hashLen)
+	// hashInitCap is not used, just for test purposes
+	hashInitCap := cap(hash)
+	hash = append(hash, userName...)
+	hash = append(hash, hostName...)
+	hash = append(hash, stmtDB...)
+	hash = append(hash, stmt.StmtText...)
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
 	hash = append(hash, pruneMode...)
@@ -320,6 +421,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
@@ -331,33 +433,23 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, kv.TiFlash.Name()...)
 	}
 	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
-	hash = append(hash, hack.Slice(binding)...)
-	hash = append(hash, hack.Slice(connCharset)...)
-	hash = append(hash, hack.Slice(connCollation)...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vars.InRestrictedSQL))...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.RestrictedReadOnly.Load()))...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.VarTiDBSuperReadOnly.Load()))...)
+	hash = append(hash, binding...)
+	hash = append(hash, connCharset...)
+	hash = append(hash, connCollation...)
+	hash = append(hash, bool2Byte(vars.InRestrictedSQL))
+	hash = append(hash, bool2Byte(vardef.RestrictedReadOnly.Load()))
+	hash = append(hash, bool2Byte(vardef.VarTiDBSuperReadOnly.Load()))
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 
 	// whether this query has sub-query
-	if stmt.hasSubquery {
-		if !vars.EnablePlanCacheForSubquery {
-			return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
-		}
-		hash = append(hash, '1')
-	} else {
-		hash = append(hash, '0')
-	}
+	hash = append(hash, bool2Byte(stmt.hasSubquery))
 
 	// this variable might affect the plan
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
-		if !vars.EnablePlanCacheForParamLimit {
-			return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
-		}
 		hash = append(hash, '|')
 		for _, node := range stmt.limits {
 			for _, valNode := range []ast.ExprNode{node.Count, node.Offset} {
@@ -379,8 +471,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, '|')
 	}
 
-	// stats ver can affect cached plan
-	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats {
+	// stats ver can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
+	// is enabled — a binding pins the plan via hints, so stats changes cannot alter the chosen plan.
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		var statsVerHash uint64
 		for _, t := range stmt.tables {
 			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
@@ -391,7 +484,11 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// handle dirty tables
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
-		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
+		// Get int64 slice from pool
+		dirtyTableIDs := dirtyTableIDsPool.Get()[:0]
+		if cap(dirtyTableIDs) < len(dirtyTables) {
+			dirtyTableIDs = make([]int64, 0, len(dirtyTables))
+		}
 		for t, dirty := range dirtyTables {
 			if !dirty {
 				continue
@@ -402,6 +499,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		for _, id := range dirtyTableIDs {
 			hash = codec.EncodeInt(hash, id)
 		}
+		// Return slice to pool
+		dirtyTableIDsPool.Put(dirtyTableIDs)
 	}
 
 	// txn status
@@ -412,7 +511,13 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
-	return string(hash), binding, true, "", nil
+	if intest.InTest {
+		if cap(hash) != hashInitCap {
+			panic("unexpected hash buffer realloc in NewPlanCacheKey")
+		}
+	}
+
+	return string(hack.String(hash)), binding, true, "", nil
 }
 
 func bool2Byte(flag bool) byte {
@@ -486,11 +591,11 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	switch x := v.Plan.(type) {
 	case base.PhysicalPlan:
 		sum = x.MemoryUsage()
-	case *Insert:
+	case *physicalop.Insert:
 		sum = x.MemoryUsage()
-	case *Update:
+	case *physicalop.Update:
 		sum = x.MemoryUsage()
-	case *Delete:
+	case *physicalop.Delete:
 		sum = x.MemoryUsage()
 	default:
 		sum = unKnownMemoryUsage
@@ -523,6 +628,11 @@ var planCacheHasherPool = sync.Pool{
 		return sha256.New()
 	},
 }
+
+// dirtyTableIDsPool is a pool for int64 slices used in NewPlanCacheKey.
+var dirtyTableIDsPool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(
@@ -620,7 +730,7 @@ type PointGetExecutorCache struct {
 	// FastPlan is only used for instance plan cache.
 	// To ensure thread-safe, we have to clone each plan before reusing if using instance plan cache.
 	// To reduce the memory allocation and increase performance, we cache the FastPlan here.
-	FastPlan *PointGetPlan
+	FastPlan *physicalop.PointGetPlan
 }
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
@@ -641,6 +751,8 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	// HasUsePlanCacheHint indicates whether this stmt contains the use_plan_cache() hint.
+	HasUsePlanCacheHint bool
 
 	limits      []*ast.Limit
 	hasSubquery bool
@@ -653,6 +765,7 @@ type PlanCacheStmt struct {
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
 
+	// BindingInfo caches normalization results for binding matching across executions.
 	BindingInfo bindinfo.BindingMatchInfo
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
@@ -665,6 +778,57 @@ type PlanCacheStmt struct {
 	// dbName and tbls are used to add metadata lock.
 	dbName []ast.CIStr
 	tbls   []table.Table
+}
+
+// PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.
+// It holds the result of a full Prepare flow so that subsequent Prepares of
+// the same SQL text can skip the expensive Preprocess + PlanBuilder.Build.
+type PrepareStmtCacheEntry struct {
+	Stmt       *PlanCacheStmt
+	Fields     []*resolve.ResultField
+	ParamCount int
+}
+
+// ExtractAndSortParamMarkers extracts ParamMarkerExpr nodes from the AST,
+// sorts them by position, assigns their order indices, and initialises each
+// marker's Datum to NULL (matching the behaviour of GeneratePlanCacheStmtWithAST
+// for prepared statements where the actual parameter values are not yet known).
+func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
+	var extractor paramMarkerExtractor
+	stmtNode.Accept(&extractor)
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
+		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
+	})
+	for i, m := range extractor.markers {
+		m.SetOrder(i)
+		p := m.(*driver.ParamMarkerExpr)
+		p.Datum.SetNull()
+		p.InExecute = false
+	}
+	return extractor.markers
+}
+
+// CollectPlanCacheStmtInfo walks the AST to populate the limits, hasSubquery,
+// and tables fields of stmt. It must be called on the fresh AST after a
+// re-parse so that limit nodes and table references point into the new tree.
+func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, stmtNode ast.StmtNode) {
+	processor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: stmt}
+	stmtNode.Accept(processor)
+}
+
+// DBName returns the dbName field (used for metadata lock during Execute).
+func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
+
+// Tbls returns the tbls field (used for metadata lock during Execute).
+func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
+
+// SetDBNameAndTbls sets the dbName and tbls fields, cloning the input slices
+// so that this PlanCacheStmt owns independent backing arrays. This is required
+// because planCachePreprocess replaces tbls[i] in-place during Execute, and
+// sharing the backing array with a cached template would cause cross-stmt contamination.
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
+	s.dbName = slices.Clone(dbName)
+	s.tbls = slices.Clone(tbls)
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
@@ -727,7 +891,9 @@ func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) 
 	// TODO: enable this fix control switch by default after more test cases are added.
 	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
 		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
-		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) ||
+			isSafePointGetPath4PlanCacheScenario3(path) ||
+			isSafePointGetPath4PlanCacheScenario4(path)) {
 			return true
 		}
 	}
@@ -801,6 +967,40 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 		}
 	}
 	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario4(path *util.AccessPath) bool {
+	// safe scenario 4: each key column corresponds to a single EQ, except one column that corresponds
+	// to a single IN. The IN can appear at the beginning, in the middle, or at the end of the key,
+	// like `a in (1, 2) and b=3 and c=4`, `a=1 and b in (2, 3) and c=4`, or
+	// `a=1 and b=2 and c in (3, 4)`.
+	// This currently supports exactly one IN predicate only.
+	// TODO: support multiple IN predicates, like `a in (1, 2) and b in (3, 4)`, after the plan-cache
+	// safety check and rebuild path can verify the cartesian-product case safely.
+	if len(path.Ranges) <= 0 || len(path.AccessConds) < 2 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	var inExpr *expression.ScalarFunction
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ:
+		case ast.In:
+			// Only one IN predicate is supported in this scenario for now.
+			if inExpr != nil {
+				return false
+			}
+			inExpr = f
+		default:
+			return false
+		}
+	}
+	// The range builder deduplicates IN values, so len(path.Ranges) < len(args)-1 when duplicates exist.
+	// The equality check below relies on that invariant to reject duplicate IN values from plan cache.
+	return inExpr != nil && len(path.Ranges) == len(inExpr.GetArgs())-1
 }
 
 // parseParamTypes get parameters' types in PREPARE statement

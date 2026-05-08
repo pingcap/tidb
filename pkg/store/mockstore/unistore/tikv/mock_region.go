@@ -17,6 +17,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	goerrors "errors"
 	"fmt"
 	"math"
@@ -414,6 +415,8 @@ func (rm *MockRegionManager) SplitArbitrary(keys ...[]byte) {
 		encKey := codec.EncodeBytes(nil, key)
 		splitKeys = append(splitKeys, encKey)
 	}
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	if _, err := rm.splitKeys(splitKeys); err != nil {
 		panic(err)
 	}
@@ -582,6 +585,10 @@ func (rm *MockRegionManager) split(regionID, newRegionID uint64, key []byte, pee
 	old := rm.regions[regionID]
 	rm.mu.RUnlock()
 	oldRegion := old.meta
+	if bytes.Compare(oldRegion.StartKey, key) >= 0 || (len(oldRegion.EndKey) != 0 && bytes.Compare(key, oldRegion.EndKey) >= 0) {
+		return nil, errors.Errorf("split key is out of region range, region start key: %v, end key: %v, split key: %v",
+			hex.EncodeToString(oldRegion.StartKey), hex.EncodeToString(oldRegion.EndKey), hex.EncodeToString(key))
+	}
 	leftMeta := &metapb.Region{
 		Id:       oldRegion.Id,
 		StartKey: oldRegion.StartKey,
@@ -775,7 +782,7 @@ func (pd *MockPD) PutStore(ctx context.Context, store *metapb.Store) error {
 }
 
 // GetStore implements gRPC PDServer.
-func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (pd *MockPD) GetStore(ctx context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
 	return proto.Clone(pd.rm.stores[storeID]).(*metapb.Store), nil
@@ -979,6 +986,9 @@ func newGCState() *gcState {
 	}
 }
 
+// gcStatesManagerSimulator is a mock implementation of GC APIs of PD. Note that it's currently a simple map and
+// assumes keyspace IDs passed here are all valid, without caring about the keyspace metas of the cluster. Neither
+// does it handle redirection logic of keyspaces configured running unified GC.
 type gcStatesManagerSimulator struct {
 	mu               sync.Mutex
 	keyspaceGCStates map[uint32]*gcState
@@ -1240,4 +1250,16 @@ func (c gcStatesClient) GetGCState(ctx context.Context) (pdgc.GCState, error) {
 	res.GCBarriers = gcBarriers
 
 	return res, nil
+}
+
+func (c gcStatesClient) SetGlobalGCBarrier(ctx context.Context, barrierID string, barrierTS uint64, ttl time.Duration) (*pdgc.GlobalGCBarrierInfo, error) {
+	panic("unimplemented")
+}
+
+func (c gcStatesClient) DeleteGlobalGCBarrier(ctx context.Context, barrierID string) (*pdgc.GlobalGCBarrierInfo, error) {
+	panic("unimplemented")
+}
+
+func (c gcStatesClient) GetAllKeyspacesGCStates(ctx context.Context) (pdgc.ClusterGCStates, error) {
+	panic("unimplemented")
 }

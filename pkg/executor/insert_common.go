@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -716,9 +716,13 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
+	// Build the MutRow once and update it in-place after each generated column is
+	// evaluated. Previously MutRowFromDatums was called inside the loop, causing a
+	// full row copy O(columns) allocation for every generated column — O(G*C) total.
+	mutRow := chunk.MutRowFromDatums(row)
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(evalCtx, chunk.MutRowFromDatums(row).ToRow())
+		val, err := e.GenExprs[i].Eval(evalCtx, mutRow.ToRow())
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
@@ -740,6 +744,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
 			return nil, err
 		}
+		// Keep mutRow in sync so subsequent generated columns that reference
+		// already-computed generated columns see the updated value.
+		mutRow.SetDatum(colIdx, row[colIdx])
 	}
 	return row, nil
 }
@@ -806,7 +813,7 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	if err == nil && d.GetInt64() < id {
 		// Auto ID is out of range.
 		sc := ctx.GetSessionVars().StmtCtx
-		insertPlan, ok := sc.GetPlan().(*core.Insert)
+		insertPlan, ok := sc.GetPlan().(*physicalop.Insert)
 		if ok && sc.TypeFlags().TruncateAsWarning() && len(insertPlan.OnDuplicate) > 0 {
 			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
 			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
@@ -1181,7 +1188,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 	if !replace {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 		if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic && e.Ctx().GetSessionVars().LockUnchangedKeys {
-			txnCtx.AddUnchangedKeyForLock(uk.newKey)
+			txnCtx.AddUnchangedKeyForLock(uk.newKey, false)
 		}
 		return true, nil
 	}
@@ -1249,7 +1256,7 @@ func (e *InsertValues) batchCheckAndInsert(
 					if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
 						e.Ctx().GetSessionVars().LockUnchangedKeys {
 						// lock duplicated row key on insert-ignore
-						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
+						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey, false)
 					}
 					continue
 				}

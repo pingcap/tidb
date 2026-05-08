@@ -48,6 +48,7 @@ func TestJobHappyPath(t *testing.T) {
 
 	cases := []struct {
 		action         func(jobID int64)
+		preStartNoOp   bool
 		expectStatus   string
 		expectStep     string
 		expectedRowCnt int64
@@ -57,6 +58,7 @@ func TestJobHappyPath(t *testing.T) {
 			action: func(jobID int64) {
 				require.NoError(t, importer.FinishJob(ctx, conn, jobID, mockSummary(111)))
 			},
+			preStartNoOp:   true,
 			expectStatus:   "finished",
 			expectStep:     "",
 			expectedRowCnt: 111,
@@ -65,6 +67,7 @@ func TestJobHappyPath(t *testing.T) {
 			action: func(jobID int64) {
 				require.NoError(t, importer.FailJob(ctx, conn, jobID, "some error", mockSummary(111)))
 			},
+			preStartNoOp:   false,
 			expectStatus:   "failed",
 			expectStep:     importer.JobStepValidating,
 			expectedErrMsg: "some error",
@@ -92,7 +95,7 @@ func TestJobHappyPath(t *testing.T) {
 
 		// create job
 		jobID, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-			jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+			jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 		require.NoError(t, err)
 		jobInfo.ID = jobID
 		gotJobInfo, err := importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
@@ -105,11 +108,13 @@ func TestJobHappyPath(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(1), cnt)
 
-		// action before start, no effect
-		c.action(jobID)
-		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
-		require.NoError(t, err)
-		jobInfoEqual(t, jobInfo, gotJobInfo)
+		if c.preStartNoOp {
+			// action before start, no effect
+			c.action(jobID)
+			gotJobInfo, err = importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
+			require.NoError(t, err)
+			jobInfoEqual(t, jobInfo, gotJobInfo)
+		}
 
 		// start job
 		require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
@@ -181,7 +186,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// create job
 	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	jobInfo.ID = jobID1
 	gotJobInfo, err := importer.GetJob(ctx, conn, jobID1, jobInfo.CreatedBy, false)
@@ -218,7 +223,7 @@ func TestGetAndCancelJob(t *testing.T) {
 
 	// create another job
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	jobInfo.ID = jobID2
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID2, jobInfo.CreatedBy, false)
@@ -270,6 +275,42 @@ func TestGetAndCancelJob(t *testing.T) {
 	require.Equal(t, jobID2, jobs[1].ID)
 }
 
+func TestFailJobBeforeStart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().GetSQLExecutor()
+
+	jobInfo := &importer.JobInfo{
+		TableSchema: "test",
+		TableName:   "t",
+		TableID:     1,
+		CreatedBy:   "root@%",
+		Parameters: importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		},
+		SourceFileSize: 123,
+	}
+
+	jobID, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
+	require.NoError(t, err)
+
+	require.NoError(t, importer.FailJob(ctx, conn, jobID, "failed before start", mockSummary(0)))
+
+	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
+	require.NoError(t, err)
+	require.Equal(t, "failed", gotJobInfo.Status)
+	require.Equal(t, "failed before start", gotJobInfo.ErrorMessage)
+	require.True(t, gotJobInfo.StartTime.IsZero())
+	require.False(t, gotJobInfo.EndTime.IsZero())
+	require.Equal(t, mockSummary(0), gotJobInfo.Summary)
+
+	cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
+}
+
 func TestJobInfo_CanCancel(t *testing.T) {
 	jobInfo := &importer.JobInfo{}
 	for _, c := range []struct {
@@ -311,12 +352,12 @@ func TestGetJobInfoNullField(t *testing.T) {
 	}
 	// create jobs
 	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	require.NoError(t, importer.StartJob(ctx, conn, jobID1, importer.JobStepImporting))
 	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed", mockSummary(0)))
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
 	gotJobInfos, err := importer.GetAllViewableJobs(ctx, conn, "", true)
 	require.NoError(t, err)

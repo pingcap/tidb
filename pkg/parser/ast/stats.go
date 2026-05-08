@@ -23,6 +23,8 @@ var (
 	_ StmtNode = &DropStatsStmt{}
 	_ StmtNode = &LoadStatsStmt{}
 	_ StmtNode = &RefreshStatsStmt{}
+	_ StmtNode = &LockStatsStmt{}
+	_ StmtNode = &UnlockStatsStmt{}
 )
 
 // AnalyzeTableStmt is used to create table statistics.
@@ -56,6 +58,7 @@ const (
 	AnalyzeOptCMSketchWidth
 	AnalyzeOptNumSamples
 	AnalyzeOptSampleRate
+	AnalyzeOptNDVRate
 )
 
 // AnalyzeOptionString stores the string form of analyze options.
@@ -66,6 +69,7 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
 	AnalyzeOptNumSamples:    "SAMPLES",
 	AnalyzeOptSampleRate:    "SAMPLERATE",
+	AnalyzeOptNDVRate:       "NDVRATE",
 }
 
 // HistogramOperationType is the type for histogram operation.
@@ -358,8 +362,25 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 type RefreshStatsStmt struct {
 	stmtNode
 
-	RefreshObjects []*RefreshObject
+	RefreshObjects []*StatsObject
+	// RefreshMode is non-nil when a refresh strategy is explicitly specified.
+	RefreshMode *RefreshStatsMode
+	// IsClusterWide indicates whether the refresh operation is for the entire cluster.
+	IsClusterWide bool
 }
+
+// RefreshStatsMode represents the refresh strategy requested by the user.
+type RefreshStatsMode int
+
+const (
+	// RefreshStatsModeLite forces a lite statistics refresh.
+	// Same as lite-init-stats=true in the configuration file.
+	RefreshStatsModeLite RefreshStatsMode = iota
+
+	// RefreshStatsModeFull forces a full statistics refresh.
+	// Same as lite-init-stats=false in the configuration file.
+	RefreshStatsModeFull
+)
 
 func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("REFRESH STATS ")
@@ -370,6 +391,22 @@ func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := refreshObject.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore RefreshStatsStmt.RefreshObjects[%d]", index)
 		}
+	}
+	if n.RefreshMode != nil {
+		switch *n.RefreshMode {
+		case RefreshStatsModeLite:
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("LITE")
+		case RefreshStatsModeFull:
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("FULL")
+		default:
+			return errors.Errorf("invalid refresh stats mode: %d", *n.RefreshMode)
+		}
+	}
+	if n.IsClusterWide {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("CLUSTER")
 	}
 	return nil
 }
@@ -383,39 +420,107 @@ func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type RefreshObjectScopeType int
-
-const (
-	// RefreshObjectScopeTable is the scope of a table.
-	RefreshObjectScopeTable RefreshObjectScopeType = iota + 1
-	// RefreshObjectScopeDatabase is the scope of a database.
-	RefreshObjectScopeDatabase
-	// RefreshObjectScopeGlobal is the scope of all databases.
-	RefreshObjectScopeGlobal
-)
-
-type RefreshObject struct {
-	RefreshObjectScope RefreshObjectScopeType
-	DBName             CIStr
-	TableName          CIStr
+func (n *RefreshStatsStmt) Dedup() {
+	n.RefreshObjects = dedupStatsObjects(n.RefreshObjects)
 }
 
-func (o *RefreshObject) Restore(ctx *format.RestoreCtx) error {
-	switch o.RefreshObjectScope {
-	case RefreshObjectScopeTable:
+// DedupFlushObjects removes duplicate or shadowed scoped objects for FLUSH STATS_DELTA.
+func (n *FlushStmt) DedupFlushObjects() {
+	n.FlushObjects = dedupStatsObjects(n.FlushObjects)
+}
+
+func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
+	if len(objects) == 0 {
+		return objects
+	}
+
+	type tableKey struct {
+		dbName    string
+		tableName string
+	}
+
+	dbSeen := make(map[string]struct{})
+	tableSeen := make(map[tableKey]struct{})
+	result := make([]*StatsObject, 0, len(objects))
+
+	for _, obj := range objects {
+		switch obj.StatsObjectScope {
+		// Global scope supersedes everything else. Keep the first global target only.
+		case StatsObjectScopeGlobal:
+			return []*StatsObject{obj}
+		case StatsObjectScopeDatabase:
+			dbKey := obj.DBName.L
+			if _, exists := dbSeen[dbKey]; exists {
+				continue
+			}
+			dbSeen[dbKey] = struct{}{}
+
+			// Remove tables from the same database that might have been added earlier.
+			filtered := result[:0]
+			for _, existing := range result {
+				if existing.StatsObjectScope == StatsObjectScopeTable {
+					existingDBKey := existing.DBName.L
+					if existingDBKey != "" && existingDBKey == dbKey {
+						tblKey := tableKey{dbName: existingDBKey, tableName: existing.TableName.L}
+						delete(tableSeen, tblKey)
+						continue
+					}
+				}
+				filtered = append(filtered, existing)
+			}
+			result = append(filtered, obj)
+		case StatsObjectScopeTable:
+			dbKey := obj.DBName.L
+			if dbKey != "" {
+				if _, exists := dbSeen[dbKey]; exists {
+					continue
+				}
+			}
+			tblKey := tableKey{dbName: dbKey, tableName: obj.TableName.L}
+			if _, exists := tableSeen[tblKey]; exists {
+				continue
+			}
+			tableSeen[tblKey] = struct{}{}
+			result = append(result, obj)
+		}
+	}
+
+	return result
+}
+
+type StatsObjectScopeType int
+
+const (
+	// StatsObjectScopeTable is the scope of a table.
+	StatsObjectScopeTable StatsObjectScopeType = iota + 1
+	// StatsObjectScopeDatabase is the scope of a database.
+	StatsObjectScopeDatabase
+	// StatsObjectScopeGlobal is the scope of all databases.
+	StatsObjectScopeGlobal
+)
+
+type StatsObject struct {
+	StatsObjectScope StatsObjectScopeType
+	DBName           CIStr
+	TableName        CIStr
+}
+
+func (o *StatsObject) Restore(ctx *format.RestoreCtx) error {
+	switch o.StatsObjectScope {
+	case StatsObjectScopeTable:
 		if o.DBName.O != "" {
 			ctx.WriteName(o.DBName.O)
 			ctx.WritePlain(".")
 		}
 		ctx.WriteName(o.TableName.O)
-	case RefreshObjectScopeDatabase:
+	case StatsObjectScopeDatabase:
 		ctx.WriteName(o.DBName.O)
 		ctx.WritePlain(".*")
-	case RefreshObjectScopeGlobal:
+	case StatsObjectScopeGlobal:
 		ctx.WritePlain("*.*")
 	default:
 		// This should never happen.
-		return errors.Errorf("invalid refresh object scope: %d", o.RefreshObjectScope)
+		return errors.Errorf("invalid stats object scope: %d", o.StatsObjectScope)
 	}
 	return nil
 }

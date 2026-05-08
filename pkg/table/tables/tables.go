@@ -72,12 +72,11 @@ type TableCommon struct {
 	fullHiddenColsAndVisibleColumns []*table.Column
 	writableConstraints             []*table.Constraint
 
-	indices                 []table.Index
-	meta                    *model.TableInfo
-	allocs                  autoid.Allocators
-	sequence                *sequenceCommon
-	dependencyColumnOffsets []int
-	Constraints             []*table.Constraint
+	indices     []table.Index
+	meta        *model.TableInfo
+	allocs      autoid.Allocators
+	sequence    *sequenceCommon
+	Constraints []*table.Constraint
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -253,11 +252,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
 	}
-	for _, col := range cols {
-		if col.ChangeStateInfo != nil {
-			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
-		}
-	}
 	t.ResetColumnsCache()
 }
 
@@ -270,7 +264,10 @@ func initTableIndices(t *TableCommon) error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		idx, err := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		if err != nil {
+			return err
+		}
 		intest.AssertFunc(func() bool {
 			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
 			// However, we have an assumption that the specific type of each element in it should always be `*index`.
@@ -281,6 +278,26 @@ func initTableIndices(t *TableCommon) error {
 			return true
 		})
 		t.indices = append(t.indices, idx)
+	}
+	return nil
+}
+
+// checkDataForModifyColumn checks if the data can be stored in the column with changingType.
+// It's used to prevent illegal data being inserted if we want to skip reorg.
+func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
+	if col.ChangingFieldType == nil {
+		return nil
+	}
+
+	data := row[col.Offset]
+	value, err := table.CastColumnValueWithStrictMode(data, col.ChangingFieldType)
+	if err != nil {
+		return err
+	}
+
+	// For the case from VARCHAR -> CHAR
+	if col.ChangingFieldType.GetType() == mysql.TypeString && value.GetString() != data.GetString() {
+		return errors.New("data truncation error during modify column")
 	}
 	return nil
 }
@@ -447,6 +464,10 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	for _, col := range t.Columns {
 		var value types.Datum
 		var err error
+		if err := checkDataForModifyColumn(newData, col); err != nil {
+			return err
+		}
+
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
@@ -484,9 +505,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		checkRowBuffer.AddColVal(value)
 	}
 	// check data constraint
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err := table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err := table.CheckRowConstraint(sctx.GetExprCtx(), constraints, checkRowBuffer.GetRowToCheck(), t.Meta()); err != nil {
 			return err
 		}
 	}
@@ -497,6 +517,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	}
 
 	key := t.RecordKey(h)
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
@@ -509,16 +530,16 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err
@@ -553,10 +574,33 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
+
+		oldDataMeetPartialCondition, err := idx.MeetPartialCondition(oldData)
+		if err != nil {
+			return err
+		}
+		if !oldDataMeetPartialCondition {
+			// If the partial index condition is not met, we don't need to delete it because
+			// it has never been written.
+			continue
+		}
+		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
 			}
+			untouched = false
+			break
+		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
+
+		if !untouched {
 			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
 				return err
@@ -564,7 +608,6 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			if err = idx.Delete(ctx, txn, oldVs, h); err != nil {
 				return err
 			}
-			break
 		}
 	}
 	createIdxOpt := opt.GetCreateIdxOpt()
@@ -586,9 +629,25 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			untouched = false
 			break
 		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
 		if untouched && opt.SkipWriteUntouchedIndices() {
 			continue
 		}
+		newDataMeetPartialCondition, err := idx.MeetPartialCondition(newData)
+		if err != nil {
+			return err
+		}
+		if !newDataMeetPartialCondition {
+			// If the partial index condition is not met, we don't need to build the new index.
+			continue
+		}
+
 		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
 			return err
@@ -772,6 +831,10 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	defer memBuffer.Cleanup(sh)
 
 	for _, col := range t.Columns {
+		if err := checkDataForModifyColumn(r, col); err != nil {
+			return nil, err
+		}
+
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
@@ -822,8 +885,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 	}
-	// check data constraint
-	if err = table.CheckRowConstraintWithDatum(evalCtx, t.WritableConstraint(), r); err != nil {
+	if err = table.CheckRowConstraintWithDatum(sctx.GetExprCtx(), t.WritableConstraint(), r, t.meta); err != nil {
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
@@ -846,7 +908,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 		if err == nil {
 			// If Global Index and reorganization truncate/drop partition, old partition,
-			// Accept and set Assertion key to kv.SetAssertUnknown for overwrite instead
+			// Accept and set Assertion key to kv.AssertUnknown for overwrite instead
 			dupErr := getDuplicateError(t.Meta(), recordID, r)
 			return recordID, dupErr
 		} else if !kv.ErrNotExist.Equal(err) {
@@ -873,15 +935,15 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertExist); err != nil {
 				failpoint.Return(nil, err)
 			}
 		}
 	})
 	if setPresume && !txn.IsPessimistic() {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+		err = setAssertion(txn, key, kv.AssertNotExist)
 	}
 	if err != nil {
 		return nil, err
@@ -943,10 +1005,18 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
-		// We declared `err` here to make sure `indexVals` is assigned with `=` instead of `:=`.
+
+		meetPartialCondition, err := v.MeetPartialCondition(r)
+		if err != nil {
+			return nil, err
+		}
+		if !meetPartialCondition {
+			continue
+		}
+
+		// We should make sure `indexVals` is assigned with `=` instead of `:=`.
 		// The latter one will create a new variable that shadows the outside `indexVals` that makes `indexVals` outside
 		// always nil, and we cannot reuse it.
-		var err error
 		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
 			return nil, err
@@ -982,7 +1052,7 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	if err != nil {
 		return nil, err
 	}
-	value, err := txn.Get(context.TODO(), key)
+	value, err := kv.GetValue(context.TODO(), txn, key)
 	if err != nil {
 		return nil, err
 	}
@@ -1151,6 +1221,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
+	failpoint.InjectCall("duringTableCommonRemoveRecord", t.meta)
 
 	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
 	if ctx.EnableMutationChecker() {
@@ -1177,15 +1248,15 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if ctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err
@@ -1202,6 +1273,20 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().IsColumnarIndex() {
 			continue
 		}
+		intest.AssertFunc(func() bool {
+			// if the index is partial index, it shouldn't have index layout.
+			return !(opt.HasIndexesLayout() && v.Meta().HasCondition())
+		})
+		meetPartialCondition, err := v.MeetPartialCondition(rec)
+		if err != nil {
+			return err
+		}
+		if !meetPartialCondition {
+			// If the partial index condition is not met, we don't need to delete it because
+			// it has never been written.
+			continue
+		}
+
 		var vals []types.Datum
 		if opt.HasIndexesLayout() {
 			vals, err = fetchIndexRow(v.Meta(), rec, nil, opt.GetIndexLayout(v.Meta().ID))
@@ -1225,7 +1310,6 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 	return nil
 }
 
-// buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
 	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
 	if _, err := idx.create(ctx, txn, vals, h, rsData, untouched, opt); err != nil {
@@ -1463,11 +1547,6 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 		return true
 	}
 	return false
-}
-
-// canSkipUpdateBinlog checks whether the column can be skipped or not.
-func (t *TableCommon) canSkipUpdateBinlog(col *table.Column) bool {
-	return col.IsVirtualGenerated()
 }
 
 // FindIndexByColName returns a public table index containing only one column named `name`.
@@ -1780,11 +1859,12 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 }
 
 // BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
+// Currently it's only used for TiFlash.
 func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo, fastScan bool) *tipb.PartitionTableScan {
 	pkColIDs := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
-		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false, false),
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false, true),
 		PrimaryColumnIds: pkColIDs,
 		IsFastScan:       &fastScan,
 	}

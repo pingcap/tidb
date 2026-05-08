@@ -38,46 +38,6 @@ import (
 	"go.opencensus.io/stats/view"
 )
 
-func TestExtendedStatsPrivileges(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("create user 'u1'@'%'")
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
-	ctx := context.Background()
-	_, err = se.Execute(ctx, "set session tidb_enable_extended_stats = on")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1142]ALTER command denied to user 'u1'@'%' for table 't'", err.Error())
-	tk.MustExec("grant alter on test.* to 'u1'@'%'")
-	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 't'", err.Error())
-	tk.MustExec("grant select on test.* to 'u1'@'%'")
-	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1142]ADD STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'", err.Error())
-	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.Execute(ctx, "alter table test.t add stats_extended s1 correlation(a,b)")
-	require.NoError(t, err)
-
-	_, err = se.Execute(ctx, "use test")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1142]DROP STATS_EXTENDED command denied to user 'u1'@'%' for table 'stats_extended'", err.Error())
-	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
-	_, err = se.Execute(ctx, "alter table t drop stats_extended s1")
-	require.NoError(t, err)
-	tk.MustExec("drop user 'u1'@'%'")
-}
-
 func TestUserWithSetNames(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -586,7 +546,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
-	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_drop_gstats"), ast.NewCIStr("test_drop_gstats"))
 	require.NoError(t, err)
@@ -647,13 +607,13 @@ func TestDropStats(t *testing.T) {
 	h := dom.StatsHandle()
 	h.Clear()
 	testKit.MustExec("analyze table t")
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
 	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -668,13 +628,13 @@ func TestDropStats(t *testing.T) {
 	})
 
 	testKit.MustExec("analyze table t")
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.Equal(t, statsTbl.StatsVer, statistics.Version0)
 	statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -709,16 +669,16 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	h := dom.StatsHandle()
 	h.Clear()
 	testKit.MustExec("analyze table t1, t2")
-	statsTbl1 := h.GetTableStats(tableInfo1)
+	statsTbl1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
-	statsTbl2 := h.GetTableStats(tableInfo2)
+	statsTbl2 := h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -726,7 +686,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
 		return false
 	})
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -736,17 +696,17 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	})
 
 	testKit.MustExec("analyze table t1, t2")
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version2)
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version2)
 
 	h.SetLease(1)
 	testKit.MustExec("drop stats t1, t2")
 	require.Nil(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 	require.Equal(t, statsTbl1.StatsVer, statistics.Version0)
 	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
@@ -754,7 +714,7 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 		require.False(t, col.StatsLoadedStatus.IsStatsInitialized())
 		return false
 	})
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetPhysicalTableStats(tableInfo2.ID, tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, statsTbl2.StatsVer, statistics.Version0)
 	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {

@@ -97,6 +97,15 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
 		}
+		if memTable, ok := p.Children()[0].(*physicalop.PhysicalMemTable); ok {
+			if extractor, ok := memTable.Extractor.(*SlowQueryExtractor); ok {
+				end := limit.Offset + limit.Count
+				if end < limit.Offset {
+					end = ^uint64(0)
+				}
+				extractor.SetRowLimitHint(end)
+			}
+		}
 	}
 	return p, err
 }
@@ -216,16 +225,15 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.Physic
 		return nil, errors.Trace(err)
 	}
 	schema := b.buildAggSchema(aggFuncs, groupBys)
-	baseAgg := basePhysicalAgg{
+	baseAgg := physicalop.BasePhysicalAgg{
 		AggFuncs:     aggFuncs,
 		GroupByItems: groupBys,
 	}
-	baseAgg.SetSchema(schema)
 	var partialAgg base.PhysicalPlan
 	if isStreamAgg {
-		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForStream(b.sctx, &property.StatsInfo{}, 0, schema, &property.PhysicalProperty{})
 	} else {
-		partialAgg = baseAgg.initForHash(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForHash(b.sctx, &property.StatsInfo{}, 0, schema, &property.PhysicalProperty{})
 	}
 	return partialAgg, nil
 }
@@ -286,8 +294,8 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
 	}
-	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+	simple := &Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	return &PhysicalPlanWrapper{Inner: simple}, nil
 }
 
 func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {
@@ -298,8 +306,25 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	simple := Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+
+	var innerPlan base.Plan
+	switch x := stmt.(type) {
+	case *ast.AdminStmt:
+		if x.Tp != ast.AdminReloadBindings {
+			return nil, errors.Errorf("unexpected admin statement %s in broadcast query", *e.BroadcastQuery.Query)
+		}
+		innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
+	case *ast.FlushStmt:
+		if x.Tp != ast.FlushStatsDelta {
+			return nil, errors.Errorf("unexpected flush statement %s in broadcast query", *e.BroadcastQuery.Query)
+		}
+		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	case *ast.RefreshStatsStmt:
+		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	default:
+		return nil, errors.Errorf("unexpected statement %s in broadcast query", *e.BroadcastQuery.Query)
+	}
+	return &PhysicalPlanWrapper{Inner: innerPlan}, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, base.PhysicalPlan) {
@@ -324,9 +349,9 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		// Set the expression column unique ID.
 		// Since the expression is build from PB, It has not set the expression column ID yet.
 		schemaCols := memTable.Schema().Columns
-		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
-		for i := range cols {
-			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
+		cols := expression.ExtractAllColumnsFromExpressions(predicates, nil)
+		for _, col := range cols {
+			col.UniqueID = schemaCols[col.Index].UniqueID
 		}
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.Schema(), names, predicates)
 		return predicates, memTable

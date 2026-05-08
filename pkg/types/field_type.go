@@ -194,11 +194,14 @@ func InferParamTypeFromDatum(d *Datum, tp *FieldType) {
 func InferParamTypeFromUnderlyingValue(value any, tp *FieldType) {
 	switch value.(type) {
 	case nil:
-		tp.SetType(mysql.TypeVarString)
-		tp.SetFlen(UnspecifiedLength)
-		tp.SetDecimal(UnspecifiedLength)
-		// Also set the `charset` and `collation` for it, because some function (e.g. `json_object`) will return error
-		// if the argument collation is `binary`.
+		// For NULL parameters, use TypeNull to ensure consistent behavior with literal NULL values
+		// in control flow functions like CASE WHEN. Previously using TypeVarString caused incorrect
+		// type inference in prepared statements (issue #62564).
+		tp.SetType(mysql.TypeNull)
+		tp.SetFlen(0)
+		tp.SetDecimal(0)
+		// Set default charset and collation instead of binary charset to avoid breaking JSON functions
+		// (see PR #54145 which fixed JSON function argument verification issues).
 		tp.SetCharset(mysql.DefaultCharset)
 		tp.SetCollate(mysql.DefaultCollationName)
 	default:

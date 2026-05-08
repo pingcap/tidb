@@ -21,38 +21,44 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestOwnerManager(t *testing.T) {
+	var keyspace string
+	if kerneltype.IsNextGen() {
+		keyspace = "ks_test"
+	}
 	bak := config.GetGlobalConfig().Store
 	t.Cleanup(func() {
 		config.GetGlobalConfig().Store = bak
-		globalOwnerManager = &ownerManager{}
+		globalOwnerManagers = make(map[string]*ownerManager)
 	})
 	config.GetGlobalConfig().Store = config.StoreTypeUniStore
-	globalOwnerManager = &ownerManager{}
+	globalOwnerManagers = make(map[string]*ownerManager)
 	ctx := context.Background()
-	store := &mockEtcdBackend{}
+	store := &mockEtcdBackend{ks: keyspace}
 	require.NoError(t, StartOwnerManager(ctx, store))
-	require.Nil(t, globalOwnerManager.etcdCli)
-	require.Nil(t, globalOwnerManager.ownerMgr)
-	require.Empty(t, globalOwnerManager.id)
-	CloseOwnerManager()
+	require.Nil(t, globalOwnerManagers[keyspace].etcdCli)
+	require.Nil(t, globalOwnerManagers[keyspace].ownerMgr)
+	require.Empty(t, globalOwnerManagers[keyspace].id)
+	CloseOwnerManager(store)
 
 	config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	require.NoError(t, StartOwnerManager(ctx, store))
-	require.NotNil(t, globalOwnerManager.etcdCli)
-	require.NotEmpty(t, globalOwnerManager.id)
-	require.NotNil(t, globalOwnerManager.ownerMgr)
-	CloseOwnerManager()
+	require.NotNil(t, globalOwnerManagers[keyspace].etcdCli)
+	require.NotEmpty(t, globalOwnerManagers[keyspace].id)
+	require.NotNil(t, globalOwnerManagers[keyspace].ownerMgr)
+	CloseOwnerManager(store)
 }
 
 type mockEtcdBackend struct {
 	kv.Storage
 	kv.EtcdBackend
+	ks string
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
@@ -66,4 +72,8 @@ func (mebd *mockEtcdBackend) TLSConfig() *tls.Config {
 func (mebd *mockEtcdBackend) GetCodec() tikv.Codec {
 	c, _ := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
 	return c
+}
+
+func (mebd *mockEtcdBackend) GetKeyspace() string {
+	return mebd.ks
 }

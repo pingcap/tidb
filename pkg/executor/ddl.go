@@ -153,7 +153,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 
 	defer func() {
-		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue = false
+		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Store(false)
 		e.Ctx().GetSessionVars().StmtCtx.DDLJobID = 0
 	}()
 
@@ -231,8 +231,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
 		// otherwise, ErrTableNotExists can be returned before putting this DDL job to the job queue.
-		if (e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
-			!e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue {
+		isDDLJobInQueue := e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Load()
+		if (isDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) || !isDDLJobInQueue {
 			return e.toErr(err)
 		}
 		return err
@@ -356,7 +356,7 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	// Protect important system table from been dropped by a mistake.
 	// I can hardly find a case that a user really need to do this.
 	if dbName.L == "mysql" {
-		return errors.New("Drop 'mysql' database is forbidden")
+		return dbterror.ErrForbiddenDDL.FastGenByArgs("Drop 'mysql' database")
 	}
 
 	err := e.ddlExecutor.DropSchema(e.Ctx(), s)

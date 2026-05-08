@@ -13,14 +13,14 @@ insert into t values (1, 'a'), (2, 'b'), (3, 'C'), (4, 'd'), (5, 'x');
 --error 1062
 insert into t values (3, 'c');
 
-explain format='brief' select * from t use index(idx) where lower(b) = 'c';
+explain format='plan_tree' select * from t use index(idx) where lower(b) = 'c';
 select * from t use index(idx) where lower(b) = 'c';
 
-explain format='brief' select * from t use index(idx) where lower(b) > 'c' order by lower(b);
+explain format='plan_tree' select * from t use index(idx) where lower(b) > 'c' order by lower(b);
 select * from t use index(idx) where lower(b) > 'c' order by lower(b);
 
 --replace_regex /in\(_tidb_tid, [0-9]+\)/in(_tidb_tid, tid0)/
-explain format='brief' select * from t partition(p0) use index(idx) where lower(b) > 'c';
+explain format='plan_tree' select * from t partition(p0) use index(idx) where lower(b) > 'c';
 select * from t partition(p0) use index(idx) where lower(b) > 'c';
 
 

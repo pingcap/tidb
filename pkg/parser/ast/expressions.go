@@ -904,6 +904,8 @@ type PatternLikeOrIlikeExpr struct {
 	IsLike bool
 
 	Escape byte
+	// EscapeExplicit indicates whether ESCAPE clause is specified explicitly.
+	EscapeExplicit bool
 
 	PatChars []byte
 	PatTypes []byte
@@ -933,10 +935,14 @@ func (n *PatternLikeOrIlikeExpr) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while restore PatternLikeOrIlikeExpr.Pattern")
 	}
 
-	escape := string(n.Escape)
-	if escape != "\\" {
+	if n.EscapeExplicit && n.Escape != '\\' {
 		ctx.WriteKeyWord(" ESCAPE ")
-		ctx.WriteString(escape)
+		if n.Escape == 0 {
+			// ESCAPE '' means no escape character
+			ctx.WriteString("")
+		} else {
+			ctx.WriteString(string(n.Escape))
+		}
 	}
 	return nil
 }
@@ -959,7 +965,7 @@ func (n *PatternLikeOrIlikeExpr) Format(w io.Writer) {
 	}
 
 	n.Pattern.Format(w)
-	if n.Escape != '\\' {
+	if n.EscapeExplicit && n.Escape != '\\' {
 		fmt.Fprint(w, " ESCAPE ")
 		fmt.Fprintf(w, "'%c'", n.Escape)
 	}
@@ -1277,6 +1283,8 @@ type VariableExpr struct {
 	Name string
 	// IsGlobal indicates whether this variable is global.
 	IsGlobal bool
+	// IsInstance indicates whether this variable is instance.
+	IsInstance bool
 	// IsSystem indicates whether this variable is a system variable in current session.
 	IsSystem bool
 	// ExplicitScope indicates whether this variable scope is set explicitly.
@@ -1292,6 +1300,8 @@ func (n *VariableExpr) Restore(ctx *format.RestoreCtx) error {
 		if n.ExplicitScope {
 			if n.IsGlobal {
 				ctx.WriteKeyWord("GLOBAL")
+			} else if n.IsInstance {
+				ctx.WriteKeyWord("INSTANCE")
 			} else {
 				ctx.WriteKeyWord("SESSION")
 			}
@@ -1481,34 +1491,45 @@ func (n *SetCollationExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type exprTextPositionCleaner struct {
+type exprCleaner struct {
+	// for Text Position clean.
 	oldTextPos []int
 	restore    bool
+	// for Name.O clean, ast.FuncCallExpr should be case-insensitive.
+	oldOriginFuncName []string
 }
 
-func (e *exprTextPositionCleaner) BeginRestore() {
+func (e *exprCleaner) BeginRestore() {
 	e.restore = true
 }
 
-func (e *exprTextPositionCleaner) Enter(n Node) (node Node, skipChildren bool) {
+func (e *exprCleaner) Enter(n Node) (node Node, skipChildren bool) {
 	if e.restore {
 		n.SetOriginTextPosition(e.oldTextPos[0])
 		e.oldTextPos = e.oldTextPos[1:]
+		if f, ok := n.(*FuncCallExpr); ok {
+			f.FnName.O = e.oldOriginFuncName[0]
+			e.oldOriginFuncName = e.oldOriginFuncName[1:]
+		}
 		return n, false
 	}
 	e.oldTextPos = append(e.oldTextPos, n.OriginTextPosition())
 	n.SetOriginTextPosition(0)
+	if f, ok := n.(*FuncCallExpr); ok {
+		e.oldOriginFuncName = append(e.oldOriginFuncName, f.FnName.O)
+		f.FnName.O = f.FnName.L
+	}
 	return n, false
 }
 
-func (e *exprTextPositionCleaner) Leave(n Node) (node Node, ok bool) {
+func (e *exprCleaner) Leave(n Node) (node Node, ok bool) {
 	return n, true
 }
 
 // ExpressionDeepEqual compares the equivalence of two expressions.
 func ExpressionDeepEqual(a ExprNode, b ExprNode) bool {
-	cleanerA := &exprTextPositionCleaner{}
-	cleanerB := &exprTextPositionCleaner{}
+	cleanerA := &exprCleaner{}
+	cleanerB := &exprCleaner{}
 	a.Accept(cleanerA)
 	b.Accept(cleanerB)
 	result := reflect.DeepEqual(a, b)

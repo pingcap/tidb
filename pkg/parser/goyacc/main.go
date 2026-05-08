@@ -139,10 +139,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cznic/mathutil"
-	"github.com/cznic/sortutil"
-	"github.com/cznic/strutil"
+	"modernc.org/mathutil"
 	parser "modernc.org/parser/yacc"
+	"modernc.org/sortutil"
+	"modernc.org/strutil"
 	"modernc.org/y"
 )
 

@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -36,9 +37,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -709,7 +710,7 @@ func TestIssue33031(t *testing.T) {
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 	require.Regexp(t, "IndexLookUp", explain[1][0])
@@ -751,8 +752,10 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
 	tk.MustExec("create table t1(a int not null)")
 	tk.MustExec("create table t2(a int not null)")
+	tk.MustExec("create table t3(a int)")
 	tk.MustExec("prepare stmt1 from 'select * from t1 where a > ?'")
 	tk.MustExec("set @p0 = 0")
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
@@ -833,6 +836,37 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	require.NoError(t, err)
 	cnt = pb.GetCounter().GetValue()
 	require.Equal(t, float64(6), cnt)
+
+	tk.MustExec("prepare stmt3 from 'select 1 from t3 where a = null'")
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	tk.MustExec("begin")
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	require.Equal(t, float64(6), cnt) // can't reuse the plan created outside the txn
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	cnt = pb.GetCounter().GetValue()
+	require.Equal(t, float64(7), cnt)
+	tk.MustExec("insert into t3 values(null)")
+	// Cached plan is invalid now, it is not chosen and removed. The result must still be empty.
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	cnt = pb.GetCounter().GetValue()
+	require.Equal(t, float64(7), cnt)
+	// Cached plan is reused and must still keep the result empty.
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	cnt = pb.GetCounter().GetValue()
+	require.Equal(t, float64(8), cnt)
+	tk.MustExec("rollback")
+	// Though the cached plan was built in a transaction, it does not impact correctness, so it is reused.
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	cnt = pb.GetCounter().GetValue()
+	require.Equal(t, float64(9), cnt)
 }
 
 func TestPlanCacheSwitchDB(t *testing.T) {
@@ -1349,6 +1383,9 @@ func TestCachedTable(t *testing.T) {
 }
 
 func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1390,6 +1427,9 @@ func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
 }
 
 func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1466,6 +1506,9 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 }
 
 func TestCacheHitInRc(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1581,27 +1624,27 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 		if pruneMode == string(variable.Dynamic) {
-			require.Equal(t, "Selection_7", explain.Rows()[0][0])
+			require.Equal(t, "Selection_6", explain.Rows()[0][0])
 		} else {
-			require.Equal(t, "TableDual_8", explain.Rows()[0][0])
+			require.Equal(t, "TableDual_7", explain.Rows()[0][0])
 		}
 		tk.MustExec(`set @a=-5, @b=112`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-5 7"))
 
 		explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 		if pruneMode == string(variable.Dynamic) {
-			require.Equal(t, "Selection_7", explain.Rows()[0][0])
+			require.Equal(t, "Selection_6", explain.Rows()[0][0])
 			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows())
 		} else {
 			explain.CheckAt([]int{0},
 				[][]any{
-					{"Selection_9"},
-					{"└─Point_Get_8"},
+					{"Selection_8"},
+					{"└─Point_Get_7"},
 				})
 			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
@@ -1634,7 +1677,7 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 1"))
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	require.Equal(t, "Point_Get_1", explain.Rows()[0][0])

@@ -25,6 +25,7 @@ go_library(
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",
         "//br/pkg/stream",
+        "//br/pkg/stream/crr/service",
         "//br/pkg/streamhelper/config",
         "//br/pkg/summary",
         "//br/pkg/task",
@@ -33,7 +34,9 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/version/build",
         "//pkg/config",
+        "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/util",
         "//pkg/util/gctuner",
@@ -55,6 +58,10 @@ go_library(
 
 go_binary(
     name = "br",
+    cgo = select({
+        "@io_bazel_rules_go//go/platform:darwin": True,
+        "//conditions:default": False,
+    }),  #keep
     embed = [":br_lib"],
     visibility = ["//visibility:public"],
 )
@@ -65,6 +72,7 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":br_lib"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

@@ -15,20 +15,25 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	goerrors "errors"
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -39,14 +44,14 @@ import (
 var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
 
 type writeTestSuite struct {
-	store              storage.ExternalStorage
+	store              storeapi.Storage
 	source             kvSource
 	memoryLimit        int
 	beforeCreateWriter func()
 	afterWriterClose   func()
 
 	optionalFilePath string
-	onClose          OnCloseFunc
+	onClose          OnWriterCloseFunc
 }
 
 func writePlainFile(s *writeTestSuite) {
@@ -58,7 +63,7 @@ func writePlainFile(s *writeTestSuite) {
 	_ = s.store.DeleteFile(ctx, filePath)
 	buf := make([]byte, s.memoryLimit)
 	offset := 0
-	flush := func(w storage.ExternalFileWriter) {
+	flush := func(w objectio.Writer) {
 		n, err := w.Write(ctx, buf[:offset])
 		intest.AssertNoError(err)
 		intest.Assert(offset == n)
@@ -87,12 +92,10 @@ func writePlainFile(s *writeTestSuite) {
 	}
 }
 
-func cleanOldFiles(ctx context.Context, store storage.ExternalStorage, subDir string) {
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, subDir)
+func cleanOldFiles(ctx context.Context, store storeapi.Storage, subDir string) {
+	filenames, err := GetAllFileNames(ctx, store, subDir)
 	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, dataFiles)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, statFiles)
+	err = store.DeleteFiles(ctx, filenames)
 	intest.AssertNoError(err)
 }
 
@@ -192,9 +195,9 @@ func TestCompareWriter(t *testing.T) {
 		afterWriterClose:   afterClose,
 	}
 
-	stores := map[string]storage.ExternalStorage{
+	stores := map[string]storeapi.Storage{
 		"external store": externalStore,
-		"memory store":   storage.NewMemStorage(),
+		"memory store":   objstore.NewMemStorage(),
 	}
 	writerTestFn := map[string]func(*writeTestSuite){
 		"plain file":        writePlainFile,
@@ -237,7 +240,7 @@ func TestCompareWriter(t *testing.T) {
 }
 
 type readTestSuite struct {
-	store              storage.ExternalStorage
+	store              storeapi.Storage
 	subDir             string
 	totalKVCnt         int
 	concurrency        int
@@ -249,7 +252,7 @@ type readTestSuite struct {
 
 func readFileSequential(t *testing.T, s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	files, _, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	buf := make([]byte, s.memoryLimit)
@@ -285,9 +288,32 @@ func readFileSequential(t *testing.T, s *readTestSuite) {
 	)
 }
 
+func getKVAndStatFilesByScan(ctx context.Context,
+	store storeapi.Storage,
+	nonPartitionedDir string,
+) ([]string, []string, error) {
+	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	var data, stats []string
+	for _, path := range names {
+		bs := []byte(path)
+		lastIdx := bytes.LastIndexByte(bs, '/')
+		secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
+		parentDir := path[secondLastIdx+1 : lastIdx]
+		if strings.HasSuffix(parentDir, statSuffix) {
+			stats = append(stats, path)
+		} else {
+			data = append(data, path)
+		}
+	}
+	return data, stats, nil
+}
+
 func readFileConcurrently(t *testing.T, s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	files, _, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	conc := min(s.concurrency, len(files))
@@ -336,7 +362,7 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 
 func readMergeIter(t *testing.T, s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	files, _, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	if s.beforeCreateReader != nil {
@@ -347,7 +373,7 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 	var totalSize int
 	readBufSize := s.memoryLimit / len(files)
 	zeroOffsets := make([]uint64, len(files))
-	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 1)
 	intest.AssertNoError(err)
 
 	kvCnt := 0
@@ -446,7 +472,7 @@ func TestReadMergeIterWithoutCheckHotspot(t *testing.T) {
 
 func testCompareReaderWithContent(
 	t *testing.T,
-	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
+	createFn func(store storeapi.Storage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
 	fn func(t *testing.T, suite *readTestSuite),
 ) {
 	store := openTestingStorage(t)
@@ -470,7 +496,7 @@ func testCompareReaderWithContent(
 }
 
 type mergeTestSuite struct {
-	store            storage.ExternalStorage
+	store            storeapi.Storage
 	subDir           string
 	totalKVCnt       int
 	concurrency      int
@@ -484,7 +510,7 @@ type mergeTestSuite struct {
 
 func mergeStep(t *testing.T, s *mergeTestSuite) {
 	ctx := context.Background()
-	datas, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	datas, _, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	mergeOutput := "merge_output"
@@ -496,10 +522,11 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.beforeMerge()
 	}
 
+	wctx := workerpool.NewContext(ctx)
+
 	now := time.Now()
-	err = MergeOverlappingFiles(
-		ctx,
-		datas,
+	op := NewMergeOperator(
+		wctx,
 		s.store,
 		int64(5*size.MB),
 		mergeOutput,
@@ -509,6 +536,13 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.concurrency,
 		s.mergeIterHotspot,
 		engineapi.OnDuplicateKeyIgnore,
+	)
+
+	err = MergeOverlappingFiles(
+		wctx,
+		datas,
+		s.concurrency,
+		op,
 	)
 
 	intest.AssertNoError(err)
@@ -527,7 +561,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 
 func newMergeStep(t *testing.T, s *mergeTestSuite) {
 	ctx := context.Background()
-	datas, stats, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	datas, stats, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	mergeOutput := "merge_output"
@@ -574,7 +608,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 func testCompareMergeWithContent(
 	t *testing.T,
 	concurrency int,
-	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
+	createFn func(store storeapi.Storage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
 	fn func(t *testing.T, suite *mergeTestSuite),
 	p *profiler,
 ) {
@@ -647,7 +681,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	writeExternalOneFile(suite2)
 	t.Logf("minKey: %s, maxKey: %s", minKey, maxKey)
 
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "")
+	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, store, "")
 	intest.AssertNoError(err)
 	intest.Assert(len(dataFiles) == 2)
 
@@ -667,7 +701,14 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	output := &memKVsAndBuffers{}
 	now := time.Now()
 
-	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
+	readRanges, err := getReadRangeFromProps(ctx, [][]byte{startKey, endKey}, statFiles, store)
+	require.NoError(t, err)
+	err = readAllData(
+		ctx, store, dataFiles, statFiles,
+		startKey, endKey,
+		readRanges[0],
+		readRanges[1],
+		smallBlockBufPool, largeBlockBufPool, output)
 	t.Logf("read all data cost: %s", time.Since(now))
 	intest.AssertNoError(err)
 }
@@ -800,7 +841,7 @@ func TestReadAllData(t *testing.T) {
 
 finishCreateFiles:
 
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/")
+	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, store, "/")
 	require.NoError(t, err)
 	require.Equal(t, 2091, len(dataFiles))
 
@@ -816,7 +857,14 @@ finishCreateFiles:
 	output := &memKVsAndBuffers{}
 	p.beforeTest()
 	now := time.Now()
-	err = readAllData(ctx, store, dataFiles, statFiles, readRangeStart, readRangeEnd, smallBlockBufPool, largeBlockBufPool, output)
+	readRanges, err := getReadRangeFromProps(ctx, [][]byte{readRangeStart, readRangeEnd}, statFiles, store)
+	require.NoError(t, err)
+	err = readAllData(
+		ctx, store, dataFiles, statFiles,
+		readRangeStart, readRangeEnd,
+		readRanges[0],
+		readRanges[1],
+		smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
 	elapsed := time.Since(now)

@@ -59,7 +59,7 @@ func (p *NominalSort) MemoryUsage() (sum int64) {
 
 // ResolveIndices implements Plan interface.
 func (p *NominalSort) ResolveIndices() (err error) {
-	return utilfuncp.ResolveIndicesForSort(&p.BasePhysicalPlan)
+	return resolveIndicesForSort(&p.BasePhysicalPlan)
 }
 
 // Attach2Task implements PhysicalPlan interface.

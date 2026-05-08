@@ -19,11 +19,18 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/size"
+)
+
+var (
+	_ base.PhysicalJoin = &PhysicalHashJoin{}
+	_ base.PhysicalJoin = &PhysicalMergeJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexHashJoin{}
+	_ base.PhysicalJoin = &PhysicalIndexMergeJoin{}
 )
 
 // BasePhysicalJoin is the base struct for all physical join operators.
@@ -31,7 +38,7 @@ import (
 type BasePhysicalJoin struct {
 	PhysicalSchemaProducer
 
-	JoinType logicalop.JoinType
+	JoinType base.JoinType
 
 	LeftConditions  expression.CNFExprs
 	RightConditions expression.CNFExprs
@@ -54,7 +61,7 @@ type BasePhysicalJoin struct {
 }
 
 // GetJoinType returns the type of the join operation.
-func (p *BasePhysicalJoin) GetJoinType() logicalop.JoinType {
+func (p *BasePhysicalJoin) GetJoinType() base.JoinType {
 	return p.JoinType
 }
 
@@ -177,4 +184,24 @@ func (p *BasePhysicalJoin) MemoryUsage() (sum int64) {
 		sum += col.MemoryUsage()
 	}
 	return
+}
+
+// BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
+func BuildPhysicalJoinSchema(joinType base.JoinType, join base.PhysicalPlan) *expression.Schema {
+	leftSchema := join.Children()[0].Schema()
+	switch joinType {
+	case base.SemiJoin, base.AntiSemiJoin:
+		return leftSchema.Clone()
+	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
+		newSchema := leftSchema.Clone()
+		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
+		return newSchema
+	}
+	newSchema := expression.MergeSchema(leftSchema, join.Children()[1].Schema())
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
+	} else if joinType == base.RightOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
+	}
+	return newSchema
 }

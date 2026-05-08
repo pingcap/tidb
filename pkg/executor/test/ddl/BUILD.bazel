@@ -10,7 +10,9 @@ go_test(
     flaky = True,
     shard_count = 19,
     deps = [
+        "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/testutil",
         "//pkg/ddl/util",

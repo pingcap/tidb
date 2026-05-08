@@ -19,18 +19,15 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	disttaskStorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
@@ -53,6 +50,7 @@ type BackfillTaskMeta struct {
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
+	MergeTempIndex  bool   `json:"merge_temp_index"`
 
 	Version int `json:"version,omitempty"`
 }
@@ -92,24 +90,15 @@ func (m *BackfillSubTaskMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
 
-func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw []byte) (*BackfillSubTaskMeta, error) {
+func decodeBackfillSubTaskMeta(ctx context.Context, extStore storeapi.Storage, raw []byte) (*BackfillSubTaskMeta, error) {
 	var subtask BackfillSubTaskMeta
 	err := json.Unmarshal(raw, &subtask)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if cloudStorageURI != "" && subtask.ExternalPath != "" {
+	if extStore != nil && subtask.ExternalPath != "" {
 		// read external meta to storage when using global sort
-		backend, err := storage.ParseBackend(cloudStorageURI, nil)
-		if err != nil {
-			return nil, err
-		}
-		extStore, err := storage.NewWithDefaultOpt(ctx, backend)
-		if err != nil {
-			return nil, err
-		}
-		defer extStore.Close()
 		if err := subtask.ReadJSONFromExternalStorage(ctx, extStore, &subtask); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -127,19 +116,10 @@ func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw 
 	return &subtask, nil
 }
 
-func writeExternalBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, subtask *BackfillSubTaskMeta, externalPath string) error {
-	if cloudStorageURI == "" {
+func writeExternalBackfillSubTaskMeta(ctx context.Context, extStore storeapi.Storage, subtask *BackfillSubTaskMeta, externalPath string) error {
+	if extStore == nil {
 		return nil
 	}
-	backend, err := storage.ParseBackend(cloudStorageURI, nil)
-	if err != nil {
-		return err
-	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
-	if err != nil {
-		return err
-	}
-	defer extStore.Close()
 	subtask.ExternalPath = externalPath
 	return subtask.WriteJSONToExternalStorage(ctx, extStore, subtask)
 }
@@ -153,14 +133,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	store := ddlObj.store
 	sessPool := ddlObj.sessPool
 	taskKS := s.task.Keyspace
-	// Although taskKS != config.GetGlobalKeyspaceName() implies running on the system keyspace,
-	// we still check kernel type explicitly to avoid unexpected executions.
-	if keyspace.IsRunningOnSystem() && taskKS != config.GetGlobalKeyspaceName() {
-		taskMgr, err := disttaskStorage.GetTaskManager()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = taskMgr.WithNewSession(func(se sessionctx.Context) error {
+	if ddlObj.store.GetKeyspace() != taskKS {
+		var err error
+		err = s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
 			svr := se.GetSQLServer()
 			store, err = svr.GetKSStore(taskKS)
 			if err != nil {
@@ -199,16 +174,18 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	switch stage {
 	case proto.BackfillStepReadIndex:
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
-		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
+		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, indexInfos, tbl, cloudStorageURI)
+		return newMergeSortExecutor(&s.task.TaskBase, store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
+		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI)
+	case proto.BackfillStepMergeTempIndex:
+		return newMergeTempIndexExecutor(&s.task.TaskBase, jobMeta, store, tbl)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
@@ -254,7 +231,10 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
-	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
+	case proto.BackfillStepReadIndex,
+		proto.BackfillStepMergeSort,
+		proto.BackfillStepWriteAndIngest,
+		proto.BackfillStepMergeTempIndex:
 		return s.newBackfillStepExecutor(task.Step)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
@@ -266,7 +246,7 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
-	return common.IsRetryableError(err) || isRetryableError(err)
+	return common.IsRetryableError(err) || isRetryableError(err, true)
 }
 
 func (s *backfillDistExecutor) Close() {

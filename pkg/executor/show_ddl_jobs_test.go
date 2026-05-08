@@ -17,12 +17,16 @@ package executor
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
 func TestShowCommentsFromJob(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("The parameters are determined automatically in next-gen")
+	}
 	job := &model.Job{}
 	job.Type = model.ActionAddCheckConstraint
 	res := showCommentsFromJob(job)
@@ -50,14 +54,14 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "txn-merge", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:     model.ReorgTypeLitMerge,
+		ReorgTp:     model.ReorgTypeIngest,
 		IsDistReorg: true,
 	}
 	res = showCommentsFromJob(job)
 	require.Equal(t, "ingest, DXF", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 	}
@@ -65,7 +69,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "ingest, DXF, cloud", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 		MaxNodeCount:    5,
@@ -74,7 +78,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "ingest, DXF, cloud, max_node_count=5", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 	}
@@ -85,7 +89,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "ingest, DXF, cloud, thread=8, batch_size=1024, max_write_speed=1048576", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 	}
@@ -96,7 +100,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 	require.Equal(t, "ingest, DXF, cloud", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp:         model.ReorgTypeLitMerge,
+		ReorgTp:         model.ReorgTypeIngest,
 		IsDistReorg:     true,
 		UseCloudStorage: true,
 		TargetScope:     "background",
@@ -109,6 +113,9 @@ func TestShowCommentsFromJob(t *testing.T) {
 }
 
 func TestShowCommentsFromSubJob(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("The parameters are determined automatically in next-gen")
+	}
 	subJob := &model.SubJob{
 		Type: model.ActionAddPrimaryKey,
 	}
@@ -116,7 +123,7 @@ func TestShowCommentsFromSubJob(t *testing.T) {
 	res := showCommentsFromSubjob(subJob, false, false)
 	require.Equal(t, "", res)
 
-	subJob.ReorgTp = model.ReorgTypeLitMerge
+	subJob.ReorgTp = model.ReorgTypeIngest
 	res = showCommentsFromSubjob(subJob, false, false)
 	require.Equal(t, "ingest", res)
 

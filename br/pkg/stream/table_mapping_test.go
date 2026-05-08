@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1106,6 +1107,16 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		require.Contains(t, collector.dbInfos, dbID)
 		require.Equal(t, dbName, collector.dbInfos[dbID].Name.O)
 
+		// Test write cf kvs are more than default cf kvs
+		err = tc.ParseMetaKvAndUpdateIdMapping(writeCFEntry, consts.WriteCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap, dbID)
+		// With WriteCF, the database name should now be set in DBReplace
+		require.Equal(t, dbName, tc.DBReplaceMap[dbID].Name)
+		// Collector should now be called
+		require.Contains(t, collector.dbInfos, dbID)
+		require.Equal(t, dbName, collector.dbInfos[dbID].Name.O)
+
 		// Test table key with DefaultCF
 		pi := model.PartitionInfo{
 			Enable:      true,
@@ -1155,6 +1166,21 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 			Value: tableWriteCFData,
 		}
 
+		err = tc.ParseMetaKvAndUpdateIdMapping(tableWriteCFEntry, consts.WriteCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)
+		// With WriteCF, the table name should now be set in TableReplace
+		require.Equal(t, tableName, tc.DBReplaceMap[dbID].TableMap[tableID].Name)
+		// Collector should now be called
+		require.Contains(t, collector.tableInfos, dbID)
+		require.Contains(t, collector.tableInfos[dbID], tableID)
+		require.Equal(t, tableName, collector.tableInfos[dbID][tableID].Name.O)
+
+		// Verify partition IDs are mapped
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap[tableID].PartitionMap, pt1ID)
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap[tableID].PartitionMap, pt2ID)
+
+		// Test write cf kvs are more than default cf kvs
 		err = tc.ParseMetaKvAndUpdateIdMapping(tableWriteCFEntry, consts.WriteCF, ts, collector)
 		require.NoError(t, err)
 		require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)
@@ -1369,4 +1395,316 @@ func TestReportError(t *testing.T) {
 	require.Error(t, manager.ReportIfError())
 	manager.CleanError(1)
 	require.NoError(t, manager.ReportIfError())
+}
+
+// createMockInfoSchemaWithDBs creates a mock InfoSchema with specified databases
+// This helper function creates an InfoSchema with multiple databases for testing
+func createMockInfoSchemaWithDBs(dbNameToID map[string]int64) infoschema.InfoSchema {
+	// Create DBInfos from the map
+	dbInfos := make([]*model.DBInfo, 0, len(dbNameToID))
+	for name, id := range dbNameToID {
+		// Create a dummy table for this database to make MockInfoSchema work
+		tableInfo := &model.TableInfo{
+			ID:   id*1000 + 1, // Use a unique table ID
+			Name: ast.NewCIStr("dummy_table"),
+			Columns: []*model.ColumnInfo{
+				{
+					ID:     1,
+					Name:   ast.NewCIStr("id"),
+					Offset: 0,
+					State:  model.StatePublic,
+				},
+			},
+			State: model.StatePublic,
+		}
+
+		dbInfo := &model.DBInfo{
+			ID:   id,
+			Name: ast.NewCIStr(name),
+		}
+		dbInfo.Deprecated.Tables = []*model.TableInfo{tableInfo}
+		tableInfo.DBID = id
+		dbInfos = append(dbInfos, dbInfo)
+	}
+
+	// Create InfoSchema with all tables from all databases
+	allTables := make([]*model.TableInfo, 0, len(dbInfos))
+	for _, dbInfo := range dbInfos {
+		allTables = append(allTables, dbInfo.Deprecated.Tables...)
+	}
+
+	// MockInfoSchema creates a single "test" database, so we need a wrapper
+	// to override SchemaByName to return the correct database
+	return &mockInfoSchemaWrapper{
+		InfoSchema: infoschema.MockInfoSchema(allTables),
+		dbNameToID: dbNameToID,
+		dbInfos:    dbInfos,
+	}
+}
+
+// mockInfoSchemaWrapper wraps an InfoSchema and overrides SchemaByName
+// to support multiple databases for testing
+type mockInfoSchemaWrapper struct {
+	infoschema.InfoSchema
+	dbNameToID map[string]int64
+	dbInfos    []*model.DBInfo
+}
+
+func (m *mockInfoSchemaWrapper) SchemaByName(schema ast.CIStr) (val *model.DBInfo, ok bool) {
+	// Check our custom database map first
+	for _, dbInfo := range m.dbInfos {
+		if dbInfo.Name.L == schema.L {
+			return dbInfo, true
+		}
+	}
+	// Fall back to the wrapped InfoSchema (which may have "test" and "mysql" databases)
+	return m.InfoSchema.SchemaByName(schema)
+}
+
+func TestReuseExistingDatabaseIDs(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialMap     map[UpstreamID]*DBReplace
+		infoSchemaDBs  map[string]int64 // db name -> db id
+		expectedMap    map[UpstreamID]*DBReplace
+		expectedReused map[UpstreamID]bool
+	}{
+		{
+			name: "reuse existing database id when name matches",
+			initialMap: map[UpstreamID]*DBReplace{
+				1: NewDBReplace("db1", -1),
+				2: NewDBReplace("db2", -2),
+			},
+			infoSchemaDBs: map[string]int64{
+				"db1": 100,
+				"db2": 200,
+			},
+			expectedMap: map[UpstreamID]*DBReplace{
+				1: {
+					Name:        "db1",
+					DbID:        100,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      true,
+				},
+				2: {
+					Name:        "db2",
+					DbID:        200,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      true,
+				},
+			},
+			expectedReused: map[UpstreamID]bool{
+				1: true,
+				2: true,
+			},
+		},
+		{
+			name: "skip when database name not found in infoschema",
+			initialMap: map[UpstreamID]*DBReplace{
+				1: NewDBReplace("db1", -1),
+				2: NewDBReplace("db2", -2),
+			},
+			infoSchemaDBs: map[string]int64{
+				"db1": 100,
+			},
+			expectedMap: map[UpstreamID]*DBReplace{
+				1: {
+					Name:        "db1",
+					DbID:        100,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      true,
+				},
+				2: {
+					Name:        "db2",
+					DbID:        -2,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      false,
+				},
+			},
+			expectedReused: map[UpstreamID]bool{
+				1: true,
+				2: false,
+			},
+		},
+		{
+			name: "skip when database is filtered out",
+			initialMap: map[UpstreamID]*DBReplace{
+				1: func() *DBReplace {
+					dr := NewDBReplace("db1", -1)
+					dr.FilteredOut = true
+					return dr
+				}(),
+				2: NewDBReplace("db2", -2),
+			},
+			infoSchemaDBs: map[string]int64{
+				"db1": 100,
+				"db2": 200,
+			},
+			expectedMap: map[UpstreamID]*DBReplace{
+				1: {
+					Name:        "db1",
+					DbID:        -1,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: true,
+					Reused:      false,
+				},
+				2: {
+					Name:        "db2",
+					DbID:        200,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      true,
+				},
+			},
+			expectedReused: map[UpstreamID]bool{
+				1: false,
+				2: true,
+			},
+		},
+		{
+			name: "skip when database already has positive id",
+			initialMap: map[UpstreamID]*DBReplace{
+				1: NewDBReplace("db1", 100),
+				2: NewDBReplace("db2", -2),
+			},
+			infoSchemaDBs: map[string]int64{
+				"db1": 999,
+				"db2": 200,
+			},
+			expectedMap: map[UpstreamID]*DBReplace{
+				1: {
+					Name:        "db1",
+					DbID:        100,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      false,
+				},
+				2: {
+					Name:        "db2",
+					DbID:        200,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      true,
+				},
+			},
+			expectedReused: map[UpstreamID]bool{
+				1: false,
+				2: true,
+			},
+		},
+		{
+			name: "case insensitive database name matching",
+			initialMap: map[UpstreamID]*DBReplace{
+				1: NewDBReplace("DB1", -1),
+				2: NewDBReplace("db2", -2),
+			},
+			infoSchemaDBs: map[string]int64{
+				"db1": 100,
+				"DB2": 200,
+			},
+			expectedMap: map[UpstreamID]*DBReplace{
+				1: {
+					Name:        "DB1",
+					DbID:        100,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      true,
+				},
+				2: {
+					Name:        "db2",
+					DbID:        200,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      true,
+				},
+			},
+			expectedReused: map[UpstreamID]bool{
+				1: true,
+				2: true,
+			},
+		},
+		{
+			name: "empty database name should not match",
+			initialMap: map[UpstreamID]*DBReplace{
+				1: NewDBReplace("", -1),
+				2: NewDBReplace("db2", -2),
+			},
+			infoSchemaDBs: map[string]int64{
+				"db2": 200,
+			},
+			expectedMap: map[UpstreamID]*DBReplace{
+				1: {
+					Name:        "",
+					DbID:        -1,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      false,
+				},
+				2: {
+					Name:        "db2",
+					DbID:        200,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: false,
+					Reused:      true,
+				},
+			},
+			expectedReused: map[UpstreamID]bool{
+				1: false,
+				2: true,
+			},
+		},
+		{
+			name:           "empty map should not cause issues",
+			initialMap:     map[UpstreamID]*DBReplace{},
+			infoSchemaDBs:  map[string]int64{"db1": 100},
+			expectedMap:    map[UpstreamID]*DBReplace{},
+			expectedReused: map[UpstreamID]bool{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create manager with initial map
+			tm := NewTableMappingManager()
+			tm.DBReplaceMap = make(map[UpstreamID]*DBReplace)
+			for k, v := range tt.initialMap {
+				// Create a copy to avoid modifying the original
+				dbReplace := &DBReplace{
+					Name:        v.Name,
+					DbID:        v.DbID,
+					TableMap:    make(map[UpstreamID]*TableReplace),
+					FilteredOut: v.FilteredOut,
+					Reused:      v.Reused,
+				}
+				for tk, tv := range v.TableMap {
+					dbReplace.TableMap[tk] = tv
+				}
+				tm.DBReplaceMap[k] = dbReplace
+			}
+
+			// Create mock infoschema
+			mockIS := createMockInfoSchemaWithDBs(tt.infoSchemaDBs)
+
+			// Call the method under test
+			tm.ReuseExistingDatabaseIDs(mockIS)
+
+			// Verify results
+			require.Equal(t, len(tt.expectedMap), len(tm.DBReplaceMap), "number of databases should match")
+
+			for upID, expected := range tt.expectedMap {
+				actual, exists := tm.DBReplaceMap[upID]
+				require.True(t, exists, "database %d should exist", upID)
+				require.Equal(t, expected.Name, actual.Name, "database name should match")
+				require.Equal(t, expected.DbID, actual.DbID, "database ID should match")
+				require.Equal(t, expected.FilteredOut, actual.FilteredOut, "FilteredOut should match")
+				if expectedReused, ok := tt.expectedReused[upID]; ok {
+					require.Equal(t, expectedReused, actual.Reused, "Reused flag should match for db %d", upID)
+				}
+			}
+		})
+	}
 }

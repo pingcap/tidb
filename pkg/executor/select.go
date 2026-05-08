@@ -284,23 +284,58 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	lockWaitTime := e.Ctx().GetSessionVars().LockWaitTimeout
-	if e.Lock.LockType == ast.SelectLockForUpdateNoWait || e.Lock.LockType == ast.SelectLockForShareNoWait {
+	switch e.Lock.LockType {
+	case ast.SelectLockForUpdateNoWait, ast.SelectLockForShareNoWait:
 		lockWaitTime = tikvstore.LockNoWait
-	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
+	case ast.SelectLockForUpdateWaitN:
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
+	}
+
+	if err := checkMaxExecutionTimeExceeded(e.Ctx()); err != nil {
+		return err
 	}
 
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
-	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys))
+	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys), false)
 	if err != nil {
 		return err
 	}
 	return doLockKeys(ctx, e.Ctx(), lockCtx, e.keys...)
 }
 
-func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+// checkMaxExecutionTimeExceeded validates whether the current statement already hit the
+// max_execution_time limit. Centralized here so different executors share the same behaviour.
+func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
+	if sctx == nil {
+		return nil
+	}
+
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil {
+		return nil
+	}
+
+	maxExecTimeMS := sessVars.GetMaxExecutionTime()
+	if maxExecTimeMS == 0 {
+		return nil
+	}
+
+	processInfo := sctx.ShowProcess()
+	if processInfo == nil || processInfo.Time.IsZero() {
+		return nil
+	}
+
+	elapsed := time.Since(processInfo.Time)
+	if elapsed >= time.Duration(maxExecTimeMS)*time.Millisecond {
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+	}
+
+	return nil
+}
+
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inSharedMode bool) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
 	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
 	if err != nil {
@@ -309,6 +344,17 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+	lockCtx.InShareMode = inSharedMode
+
+	// Set max_execution_time deadline for SELECT statements
+	maxExectionTime := seVars.GetMaxExecutionTime()
+	if maxExectionTime > 0 {
+		if processInfo := sctx.ShowProcess(); processInfo != nil {
+			maxExecTimeMs := time.Duration(maxExectionTime) * time.Millisecond
+			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
+		}
+	}
+
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
 		if req == nil {
 			return nil
@@ -495,6 +541,10 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
+
+func (e *LimitExec) open(ctx context.Context) error {
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
@@ -566,7 +616,7 @@ func init() {
 			return nil, err
 		}
 
-		e := newExecutorBuilder(sctx, is, nil)
+		e := newExecutorBuilder(ctx, sctx, is, nil)
 		executor := e.build(p)
 		if e.err != nil {
 			return nil, e.err
@@ -904,30 +954,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.CTEStorageMap.(map[int]*CTEStorages))
 	}
-	if sc.LockTableIDs == nil {
-		sc.LockTableIDs = make(map[int64]struct{})
-	} else {
-		clear(sc.LockTableIDs)
-	}
-	if sc.TableStats == nil {
-		sc.TableStats = make(map[int64]any)
-	} else {
-		clear(sc.TableStats)
-	}
-	if sc.MDLRelatedTableIDs == nil {
-		sc.MDLRelatedTableIDs = make(map[int64]struct{})
-	} else {
-		clear(sc.MDLRelatedTableIDs)
-	}
-	if sc.TblInfo2UnionScan == nil {
-		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
-	} else {
-		clear(sc.TblInfo2UnionScan)
-	}
+	// These maps are lazily initialized at their write sites to avoid
+	// allocation overhead for simple queries (e.g. point-gets) that never
+	// use them.  If already allocated (reused StatementContext), clear to
+	// preserve the backing array for the next complex query.  All read
+	// sites handle nil maps safely (len(nil)==0, range over nil is a no-op).
+	clear(sc.LockTableIDs)
+	clear(sc.TableStats)
+	clear(sc.RelatedTableIDs)
+	clear(sc.TblInfo2UnionScan)
 	sc.IsStaleness = false
-	sc.EnableOptimizeTrace = false
-	sc.OptimizeTracer = nil
-	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
 	sc.ResourceGroupName = vars.ResourceGroupName
@@ -942,6 +978,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.StatsLoad.Timeout = 0
 	sc.StatsLoad.NeededItems = nil
 	sc.StatsLoad.ResultCh = nil
+	sc.MatchSQLBindingCacheKey = nil
+	sc.MatchSQLBindingCache = nil
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
@@ -954,6 +992,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.DiskTracker.Killer = &vars.SQLKiller
+	if vars.InRestrictedSQL && vars.InternalSQLScanUserTable {
+		failpoint.InjectCall("beforeResetSQLKillerForTTLScan", s)
+	}
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID.Store(vars.ConnectionID)
 	vars.ResetRelevantOptVarsAndFixes(false)
@@ -964,6 +1005,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if err != nil {
 			return err
 		}
+		sc.MemSensitive = true
 		_, isAnalyze = prepareStmt.PreparedAst.Stmt.(*ast.AnalyzeTableStmt)
 	} else if _, ok := s.(*ast.AnalyzeTableStmt); ok {
 		isAnalyze = true
@@ -972,6 +1014,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitMemTracker(memory.LabelForAnalyzeMemory, -1)
 		vars.MemTracker.SetBytesLimit(-1)
 		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
+		sc.MemSensitive = true
 	} else {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
@@ -1015,7 +1058,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+		if topsqlstate.TopProfilingEnabled() && prepareStmt.SQLDigest != nil {
 			sc.IsSQLRegistered.Store(true)
 			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}
@@ -1029,10 +1072,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
-		sc.ExplainFormat = explainStmt.Format
+		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
+		sc.ExplainFormat = strings.ToLower(explainStmt.Format)
 		sc.InExplainAnalyzeStmt = explainStmt.Analyze
-		sc.IgnoreExplainIDSuffix = strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief
-		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
+		sc.IgnoreExplainIDSuffix = sc.ExplainFormat == types.ExplainFormatBrief || sc.ExplainFormat == types.ExplainFormatPlanTree
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
 	} else {
 		sc.ExplainFormat = ""
@@ -1040,7 +1084,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
 		sc.InExplainAnalyzeStmt = true
-		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
+		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
+		sc.ExplainFormat = strings.ToLower(explainForStmt.Format)
+		sc.InVerboseExplain = sc.ExplainFormat == types.ExplainFormatVerbose
 	}
 
 	// TODO: Many same bool variables here.
@@ -1057,12 +1103,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
+		sc.MemSensitive = true
 		ResetUpdateStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
 	case *ast.DeleteStmt:
+		sc.MemSensitive = true
 		ResetDeleteStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:
+		sc.MemSensitive = true
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
@@ -1075,7 +1124,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// For single-row INSERT statements, ignore non-strict mode
 		// See https://dev.mysql.com/doc/refman/5.7/en/constraint-invalid-data.html
 		isSingleInsert := len(stmt.Lists) == 1
-		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, (!strictSQLMode && !isSingleInsert) || stmt.IgnoreErr)
+		enableStrictNotNullCheck := vars.EnableStrictNotNullCheck
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !((strictSQLMode || isSingleInsert) && enableStrictNotNullCheck) || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 			!vars.SQLMode.HasErrorForDivisionByZeroMode(),
@@ -1093,15 +1143,22 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode))
 
 	case *ast.LoadDataStmt:
+		sc.MemSensitive = true
 		sc.InLoadDataStmt = true
+		// LOAD DATA has a dedicated LOW_PRIORITY keyword (not the common stmt.Priority field).
+		// Align it with other statements so downstream KV requests can reuse StmtCtx.Priority.
+		if stmt.LowPriority {
+			sc.Priority = mysql.LowPriority
+		}
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.ImportIntoStmt:
+		sc.MemSensitive = true
 		inImportInto = true
 		sc.SetTypeFlags(util.GetTypeFlagsForImportInto(sc.TypeFlags(), vars.SQLMode))
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
-
+		sc.MemSensitive = true
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
@@ -1114,6 +1171,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
+		sc.MemSensitive = true
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).
@@ -1196,7 +1254,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 
 	sc.SetForcePlanCache(fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false))
-	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == "plan_cache")
+	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == types.ExplainFormatPlanCache)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount

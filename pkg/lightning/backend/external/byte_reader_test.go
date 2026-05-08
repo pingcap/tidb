@@ -22,17 +22,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -66,6 +69,42 @@ func (s *mockExtStore) GetFileSize() (int64, error) {
 }
 
 func TestByteReader(t *testing.T) {
+	t.Run("concurrent read allocation is non-blocking", func(t *testing.T) {
+		ctx := context.Background()
+		st := objstore.NewMemStorage()
+		require.NoError(t, st.WriteFile(ctx, "testfile", []byte("abcdef")))
+		rsc, err := st.Open(ctx, "testfile", nil)
+		require.NoError(t, err)
+		br, err := newByteReader(ctx, rsc, 1)
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, br.Close())
+		}()
+
+		pool := membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithBlockSize(1),
+			membuf.WithPoolMemoryLimiter(membuf.NewLimiter(0)),
+		)
+		br.enableConcurrentRead(st, "testfile", 1, 1, pool.NewBuffer())
+
+		errCh := make(chan error, 1)
+		go func() {
+			if err := br.switchConcurrentMode(true); err != nil {
+				errCh <- err
+				return
+			}
+			_, err := br.readNBytes(2)
+			errCh <- err
+		}()
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, membuf.ErrCannotAcquireMemory)
+		case <-time.After(time.Second):
+			require.Fail(t, "switchConcurrentMode blocked on limited memory")
+		}
+	})
+
 	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
 	defer clean()
 
@@ -73,7 +112,7 @@ func TestByteReader(t *testing.T) {
 	err := st.WriteFile(context.Background(), "testfile", []byte("abcde"))
 	require.NoError(t, err)
 
-	newRsc := func() storage.ExternalFileReader {
+	newRsc := func() objectio.Reader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
@@ -170,7 +209,7 @@ func TestUnexpectedEOF(t *testing.T) {
 	err := st.WriteFile(context.Background(), "testfile", []byte("0123456789"))
 	require.NoError(t, err)
 
-	newRsc := func() storage.ExternalFileReader {
+	newRsc := func() objectio.Reader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
@@ -199,7 +238,7 @@ func TestEmptyContent(t *testing.T) {
 	err = st.WriteFile(context.Background(), "testfile", []byte(""))
 	require.NoError(t, err)
 
-	newRsc := func() storage.ExternalFileReader {
+	newRsc := func() objectio.Reader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
@@ -212,12 +251,14 @@ func TestSwitchMode(t *testing.T) {
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
-	st := storage.NewMemStorage()
+	st := objstore.NewMemStorage()
 	// Prepare
+	var kvAndStat [2]string
 	ctx := context.Background()
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
+		SetOnCloseFunc(func(summary *WriterSummary) { kvAndStat = summary.MultipleFilesStats[0].Filenames[0] }).
 		BuildOneFile(st, "/test", "0")
 
 	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
@@ -244,9 +285,9 @@ func TestSwitchMode(t *testing.T) {
 	require.NoError(t, err)
 	pool := membuf.NewPool()
 	ConcurrentReaderBufferSizePerConc = rand.Intn(100) + 1
-	kvReader, err := NewKVReader(context.Background(), "/test/0/one-file", st, 0, 64*1024)
+	kvReader, err := NewKVReader(context.Background(), kvAndStat[0], st, 0, 64*1024)
 	require.NoError(t, err)
-	kvReader.byteReader.enableConcurrentRead(st, "/test/0/one-file", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
+	kvReader.byteReader.enableConcurrentRead(st, kvAndStat[0], 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
 	modeUseCon := false
 	i := 0
 	for {
@@ -259,7 +300,7 @@ func TestSwitchMode(t *testing.T) {
 				modeUseCon = true
 			}
 		}
-		key, val, err := kvReader.nextKV()
+		key, val, err := kvReader.NextKV()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
@@ -271,27 +312,31 @@ func TestSwitchMode(t *testing.T) {
 }
 
 // NewS3WithBucketAndPrefix creates a new S3Storage for testing.
-func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*storage.S3Storage, func()) {
+func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*s3like.Storage, func()) {
 	backend := s3mem.New()
 	faker := gofakes3.New(backend)
 	ts := httptest.NewServer(faker.Server())
 	err := backend.CreateBucket("test")
 	require.NoError(t, err)
 
-	config := aws.NewConfig()
-	config.WithEndpoint(ts.URL)
-	config.WithRegion("region")
-	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
-	config.WithS3ForcePathStyle(true) // Removes need for subdomain
-	svc := s3.New(session.New(), config)
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("region"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy-access", "dummy-secret", "")),
+	)
+	require.NoError(t, err)
 
-	st := storage.NewS3StorageForTest(svc, &backuppb.S3{
+	svc := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+		o.UsePathStyle = true // Removes need for subdomain
+	})
+
+	st := s3store.NewS3StorageForTest(svc, &backuppb.S3{
 		Region:       "region",
 		Bucket:       bucketName,
 		Prefix:       prefixName,
 		Acl:          "acl",
 		Sse:          "sse",
 		StorageClass: "sc",
-	})
+	}, nil)
 	return st, ts.Close
 }

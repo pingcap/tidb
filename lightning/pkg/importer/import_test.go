@@ -24,11 +24,12 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -54,7 +55,7 @@ func TestNewTableRestore(t *testing.T) {
 	p := parser.New()
 	se := tmock.NewContext()
 
-	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{}}
+	dbInfo := &importdef.DBInfo{Name: "mockdb", Tables: map[string]*importdef.TableInfo{}}
 	for i, tc := range testCases {
 		node, err := p.ParseOneStmt(tc.createStmt, "utf8mb4", "utf8mb4_bin")
 		require.NoError(t, err)
@@ -62,7 +63,7 @@ func TestNewTableRestore(t *testing.T) {
 		require.NoError(t, err)
 		tableInfo.State = model.StatePublic
 
-		dbInfo.Tables[tc.name] = &checkpoints.TidbTableInfo{
+		dbInfo.Tables[tc.name] = &importdef.TableInfo{
 			Name: tc.name,
 			DB:   dbInfo.Name,
 			Core: tableInfo,
@@ -79,12 +80,12 @@ func TestNewTableRestore(t *testing.T) {
 }
 
 func TestNewTableRestoreFailure(t *testing.T) {
-	tableInfo := &checkpoints.TidbTableInfo{
+	tableInfo := &importdef.TableInfo{
 		Name: "failure",
 		DB:   "mockdb",
 		Core: &model.TableInfo{},
 	}
-	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{
+	dbInfo := &importdef.DBInfo{Name: "mockdb", Tables: map[string]*importdef.TableInfo{
 		"failure": tableInfo,
 	}}
 	tableName := common.UniqueTable("mockdb", "failure")
@@ -137,7 +138,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		return cfg
 	}
 
-	err = cpdb.Initialize(ctx, newCfg(), map[string]*checkpoints.TidbDBInfo{})
+	err = cpdb.Initialize(ctx, newCfg(), map[string]*importdef.DBInfo{})
 	require.NoError(t, err)
 
 	adjustFuncs := map[string]func(cfg *config.Config){
@@ -181,7 +182,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		cfg := newCfg()
 		cfg.App.CheckRequirements = false
 		fn(cfg)
-		err := cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
+		err := cpdb.Initialize(context.Background(), cfg, map[string]*importdef.DBInfo{})
 		require.NoError(t, err)
 	}
 }
@@ -199,7 +200,7 @@ type panicCheckpointDB struct {
 	checkpoints.DB
 }
 
-func (cp panicCheckpointDB) Initialize(context.Context, *config.Config, map[string]*checkpoints.TidbDBInfo) error {
+func (cp panicCheckpointDB) Initialize(context.Context, *config.Config, map[string]*importdef.DBInfo) error {
 	panic("should not reach here")
 }
 

@@ -19,13 +19,13 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
-	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -37,6 +37,9 @@ var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
 	ConcurrentReaderBufferSizePerConc = int(8 * size.MB)
+	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
+	// external readers within one task.
+	concurrentReaderTotalConcurrency = 256
 	// in readAllData, expected concurrency less than this value will not use
 	// concurrent reader.
 	readAllDataConcThreshold = uint64(4)
@@ -47,7 +50,7 @@ var (
 // data to improve throughput.
 type byteReader struct {
 	ctx           context.Context
-	storageReader storage.ExternalFileReader
+	storageReader objectio.Reader
 
 	// curBuf is either smallBuf or concurrentReader.largeBuf.
 	curBuf       [][]byte
@@ -57,7 +60,7 @@ type byteReader struct {
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
-		store           storage.ExternalStorage
+		store           storeapi.Storage
 		filename        string
 		concurrency     int
 		bufSizePerConc  int
@@ -69,20 +72,18 @@ type byteReader struct {
 		reloadCnt int
 	}
 
-	logger *zap.Logger
-	// monitor the speed of reading from external storage
-	readDurHist  prometheus.Observer
-	readRateHist prometheus.Observer
+	logger               *zap.Logger
+	mergeSortReadCounter prometheus.Counter
 }
 
 func openStoreReaderAndSeek(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	name string,
 	initFileOffset uint64,
 	prefetchSize int,
-) (storage.ExternalFileReader, error) {
-	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{
+) (objectio.Reader, error) {
+	storageReader, err := store.Open(ctx, name, &storeapi.ReaderOption{
 		StartOffset:  aws.Int64(int64(initFileOffset)),
 		PrefetchSize: prefetchSize,
 	})
@@ -97,7 +98,7 @@ func openStoreReaderAndSeek(
 // concurrent reading mode.
 func newByteReader(
 	ctx context.Context,
-	storageReader storage.ExternalFileReader,
+	storageReader objectio.Reader,
 	bufSize int,
 ) (r *byteReader, err error) {
 	defer func() {
@@ -113,11 +114,12 @@ func newByteReader(
 	}
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
+	// When the storage reader is open, a GET request has been made.
 	return r, r.reload()
 }
 
 func (r *byteReader) enableConcurrentRead(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	filename string,
 	concurrency int,
 	bufSizePerConc int,
@@ -199,7 +201,10 @@ func (r *byteReader) switchToConcurrentReader() error {
 
 	readerFields.largeBuf = make([][]byte, readerFields.concurrency)
 	for i := range readerFields.largeBuf {
-		readerFields.largeBuf[i] = readerFields.largeBufferPool.AllocBytes(readerFields.bufSizePerConc)
+		readerFields.largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
+		if err != nil {
+			return err
+		}
 		if readerFields.largeBuf[i] == nil {
 			return errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
 		}
@@ -279,16 +284,13 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 }
 
 func (r *byteReader) reload() error {
-	if r.readDurHist != nil && r.readRateHist != nil {
-		startTime := time.Now()
+	if r.mergeSortReadCounter != nil {
 		defer func() {
-			readSecond := time.Since(startTime).Seconds()
-			size := 0
+			sz := 0
 			for _, b := range r.curBuf {
-				size += len(b)
+				sz += len(b)
 			}
-			r.readDurHist.Observe(readSecond)
-			r.readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
+			r.mergeSortReadCounter.Add(float64(sz))
 		}()
 	}
 	to := r.concurrentReader.expected

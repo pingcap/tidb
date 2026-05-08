@@ -14,7 +14,6 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/distsql/context",
         "//pkg/errctx",
-        "//pkg/errno",
         "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/infoschema/context",
@@ -69,7 +68,7 @@ go_test(
     embed = [":distsql"],
     flaky = True,
     race = "on",
-    shard_count = 29,
+    shard_count = 33,
     deps = [
         "//pkg/distsql/context",
         "//pkg/errctx",

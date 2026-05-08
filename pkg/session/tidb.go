@@ -20,7 +20,6 @@ package session
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -33,12 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
@@ -64,10 +66,18 @@ type domainMap struct {
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil)
+	return dm.getWithEtcdClient(store, nil, nil)
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client) (d *domain.Domain, err error) {
+// GetOrCreateWithEtcdClient gets or creates the domain for store with etcd client.
+//
+// Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
+// the actual schema filter of the returned `Domain` is the one when the domain were created.
+func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, filter)
+}
+
+func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -86,9 +96,9 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 		return
 	}
 
-	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
-	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	planReplayerGCLease := GetPlanReplayerGCLease()
+	ddlLease := vardef.GetSchemaLease()
+	statisticLease := vardef.GetStatsLease()
+	planReplayerGCLease := vardef.GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -97,10 +107,11 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 		factory := getSessionFactory(store)
 		sysFactory := getSessionFactoryWithDom(store)
 		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory,
-			func(targetKS string) pools.Factory {
-				return getCrossKSSessionFactory(store, targetKS)
+			func(targetKS string, schemaValidator validatorapi.Validator) pools.Factory {
+				return getCrossKSSessionFactory(store, targetKS, schemaValidator)
 			},
 			etcdClient,
+			schemaFilter,
 		)
 
 		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
@@ -137,19 +148,6 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-
-	// schemaLease is lease of info schema, we use this to check whether info schema
-	// is valid in SchemaChecker. we also use half of it as info schema reload interval.
-	// Default info schema lease 45s which is init at main, we set it to 1 second
-	// here for tests. you can change it with a proper time, but you must know that
-	// too little may cause badly performance degradation.
-	schemaLease = int64(1 * time.Second)
-
-	// statsLease is the time for reload stats table.
-	statsLease = int64(3 * time.Second)
-
-	// planReplayerGCLease is the time for plan replayer gc.
-	planReplayerGCLease = int64(10 * time.Minute)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
@@ -159,31 +157,9 @@ func ResetStoreForWithTiKVTest(store kv.Storage) {
 	store.SetOption(StoreBootstrappedKey, nil)
 }
 
-// SetSchemaLease changes the default schema lease time for DDL.
-// This function is very dangerous, don't use it if you really know what you do.
-// SetSchemaLease only affects not local storage after bootstrapped.
-func SetSchemaLease(lease time.Duration) {
-	atomic.StoreInt64(&schemaLease, int64(lease))
-}
-
-// SetStatsLease changes the default stats lease time for loading stats info.
-func SetStatsLease(lease time.Duration) {
-	atomic.StoreInt64(&statsLease, int64(lease))
-}
-
-// SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
-func SetPlanReplayerGCLease(lease time.Duration) {
-	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
-}
-
-// GetPlanReplayerGCLease returns the plan replayer gc lease time.
-func GetPlanReplayerGCLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
-}
-
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
-	SetStatsLease(-1)
+	vardef.SetStatsLease(-1)
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -221,13 +197,29 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
 		}
 	}
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddTxnCnt(1)
+	}
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
-	failpoint.Inject("finishStmtError", func() {
-		failpoint.Return(errors.New("occur an error after finishStmt"))
-	})
 	sessVars := se.sessionVars
+	failpoint.Inject("finishStmtError", func(val failpoint.Value) {
+		failCurrentSession := true
+		switch v := val.(type) {
+		case int:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		case int64:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		case uint64:
+			failCurrentSession = v == sessVars.ConnectionID
+		case float64:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		}
+		if failCurrentSession {
+			failpoint.Return(errors.New("occur an error after finishStmt"))
+		}
+	})
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {

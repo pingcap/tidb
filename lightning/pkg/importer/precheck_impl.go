@@ -31,17 +31,19 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -431,14 +433,14 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 		Message:  "Lightning has the correct storage permission",
 	}
 
-	u, err := storage.ParseBackend(ci.cfg.Mydumper.SourceDir, nil)
+	u, err := objstore.ParseBackend(ci.cfg.Mydumper.SourceDir, nil)
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	_, err = storage.New(ctx, u, &storage.ExternalStorageOptions{
-		CheckPermissions: []storage.Permission{
-			storage.ListObjects,
-			storage.GetObject,
+	_, err = objstore.New(ctx, u, &storeapi.Options{
+		CheckPermissions: []storeapi.Permission{
+			storeapi.ListObjects,
+			storeapi.GetObject,
 		},
 	})
 	if err != nil {
@@ -516,7 +518,7 @@ func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*precheck.Check
 		Passed:   true,
 		Message:  "local source dir and temp-kv dir are in different disks",
 	}
-	sourceDir := strings.TrimPrefix(ci.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
+	sourceDir := strings.TrimPrefix(ci.cfg.Mydumper.SourceDir, objstore.LocalURIPrefix)
 	same, err := common.SameDisk(sourceDir, ci.cfg.TikvImporter.SortedKVDir)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -676,7 +678,7 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 }
 
 // checkpointIsValid checks whether we can start this import with this checkpoint.
-func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
+func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*importdef.DBInfo) ([]string, error) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := ci.checkpointsDB.Get(ctx, uniqueName)
@@ -937,7 +939,7 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*precheck.CheckResult, er
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
+func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*importdef.DBInfo) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
 		logutil.Logger(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil

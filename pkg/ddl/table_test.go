@@ -72,9 +72,8 @@ func testRenameTable(
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
-	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	tblInfo.State = model.StateNone
 	return job
 }
@@ -103,8 +102,7 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -139,8 +137,7 @@ func testLockTable(
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -182,9 +179,8 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 	err = d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
 	tblInfo.ID = newTableID
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
@@ -322,9 +318,8 @@ func TestCreateView(t *testing.T) {
 	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: newTblInfo0})
+	checkJobWithHistory(t, ctx, job.ID, nil, newTblInfo0)
 	tblInfo.State = model.StateNone
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
@@ -346,9 +341,8 @@ func TestCreateView(t *testing.T) {
 	err = de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v = getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: newTblInfo1})
+	checkJobWithHistory(t, ctx, job.ID, nil, newTblInfo1)
 	tblInfo.State = model.StateNone
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
@@ -419,8 +413,7 @@ func testAlterCacheTable(
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -445,8 +438,7 @@ func testAlterNoCacheTable(
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 	return job
 }
 
@@ -598,8 +590,7 @@ func TestAlterTTL(t *testing.T) {
 	}
 	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true)))
 
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 
 	// assert the ddlInfo as expected
 	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
@@ -619,8 +610,7 @@ func TestAlterTTL(t *testing.T) {
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.EmptyArgs{}, true)))
 
-	v = getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
+	checkJobWithHistory(t, ctx, job.ID, nil, nil)
 
 	// assert the ddlInfo as expected
 	historyJob, err = ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
@@ -864,7 +854,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	require.ErrorContains(t, err, "Table 'test1.t2' doesn't exist")
 	// refresh meta, validate infoschema store table t2 and schema version increase 1
 	oldSchemaVer := getSchemaVer(t, sctx)
-	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
 	newSchemaVer := getSchemaVer(t, sctx)
 	require.Equal(t, oldSchemaVer+1, newSchemaVer)
 	_, err = domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
@@ -888,7 +878,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
 	require.True(t, ok)
 	// after refresh meta, t3 table info should be not exists in infoschema
-	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
 	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
 	require.False(t, ok)
 	_, ok = domain.InfoSchema().PlacementBundleByPhysicalTableID(clonedTableInfo.ID)
@@ -912,7 +902,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	_, ok = domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
 	require.False(t, ok)
 	// refresh meta, t4 table info should be equal with kv table info
-	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, clonedTableInfo.ID, dbInfo.Name.O, clonedTableInfo.Name.O)
 	infoschemaTableInfo, ok := domain.InfoSchema().TableByID(context.Background(), clonedTableInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, kvTableInfo.ID, infoschemaTableInfo.Meta().ID)
@@ -939,7 +929,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
 	require.True(t, ok)
 	// refresh meta, t4 table info should be equal with kv table info
-	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0)
+	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0, clonedDBInfo.Name.O, model.InvolvingAll)
 	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
 	require.False(t, ok)
 
@@ -960,7 +950,7 @@ func TestRefreshMetaBasic(t *testing.T) {
 	_, ok = domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
 	require.False(t, ok)
 	// refresh meta, test2 db info should exists in infoschema
-	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0)
+	testutil.RefreshMeta(sctx, t, de, clonedDBInfo.ID, 0, clonedDBInfo.Name.O, model.InvolvingAll)
 	infoschemaDBInfo, ok := domain.InfoSchema().SchemaByID(clonedDBInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, kvDBInfo, infoschemaDBInfo)

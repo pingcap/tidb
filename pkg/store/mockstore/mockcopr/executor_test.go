@@ -20,8 +20,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -29,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
@@ -52,7 +56,16 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	tikvStore, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	require.NoError(t, err)
 
-	store, err := mockstorage.NewMockStorage(tikvStore, nil)
+	var keyspaceMeta *keyspacepb.KeyspaceMeta
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+		keyspaceMeta = &keyspacepb.KeyspaceMeta{
+			Id:   uint32(0xFFFFFF) - 1,
+			Name: keyspace.System,
+		}
+	}
+
+	store, err := mockstorage.NewMockStorage(tikvStore, keyspaceMeta)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())

@@ -24,13 +24,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -60,10 +61,13 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore storage.ExternalStorage
+	extStore storeapi.Storage
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
+	tidbUseKeyspaceGC             bool
+	tidbKeyspaceName              string
+	tidbKeyspaceID                uint32
 	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
@@ -75,11 +79,11 @@ type Dumper struct {
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
-		b, err := storage.ParseBackend(path, nil)
+		b, err := objstore.ParseBackend(path, nil)
 		if err != nil {
 			panic(err)
 		}
-		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		s, err := objstore.New(context.Background(), b, &storeapi.Options{})
 		if err != nil {
 			panic(err)
 		}
@@ -132,6 +136,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		resolveAutoConsistency,
 
 		validateResolveAutoConsistency,
+		tidbResolveKeyspaceMetaForGC,
 		tidbSetPDClientForGC,
 		tidbGetSnapshot,
 		tidbStartGCSavepointUpdateService,
@@ -418,6 +423,10 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 		}
 	}
 
+	if err := d.checkPartitionsFlag(tctx, metaConn, allTables); err != nil {
+		return err
+	}
+
 	parser1 := parser.New()
 	for dbName, tables := range allTables {
 		if !conf.NoSchemas {
@@ -480,6 +489,40 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 				err = d.dumpTableData(tctx, metaConn, meta, taskChan)
 				if err != nil {
 					return errors.Trace(err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (d *Dumper) checkPartitionsFlag(tctx *tcontext.Context, conn *BaseConn, allTables DatabaseTables) error {
+	if len(d.conf.Partitions) == 0 {
+		return nil
+	}
+	conf := d.conf
+	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
+		return errors.New("--partitions is only available for TiDB")
+	}
+	if conf.ServerInfo.ServerVersion == nil || conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) < 0 {
+		return errors.New("--partitions requires TiDB version >= v5.0.0")
+	}
+	for dbName, tables := range allTables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			partitions, err := GetPartitionNames(tctx, conn, dbName, table.Name)
+			if err != nil {
+				return err
+			}
+			partitionSet := make(map[string]struct{}, len(partitions))
+			for _, partition := range partitions {
+				partitionSet[strings.ToLower(partition)] = struct{}{}
+			}
+			for _, partition := range conf.Partitions {
+				if _, ok := partitionSet[strings.ToLower(partition)]; !ok {
+					return errors.Errorf("--partitions: partition %s does not exist in table %s.%s", partition, dbName, table.Name)
 				}
 			}
 		}
@@ -725,6 +768,15 @@ func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	if err != nil {
 		return err
 	}
+	if len(d.conf.Partitions) > 0 {
+		for i, partition := range d.conf.Partitions {
+			err = d.dumpWholeTableDirectly(tctx, meta, taskChan, partition, orderByClause, i, len(d.conf.Partitions))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 }
 
@@ -736,6 +788,9 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		conf.ServerInfo.ServerVersion != nil &&
 		(conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 ||
 			(conf.ServerInfo.HasTiKV && conf.ServerInfo.ServerVersion.Compare(*decodeRegionVersion) >= 0)) {
+		if len(d.conf.Partitions) > 0 && conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 {
+			return d.concurrentDumpTiDBPartitionTablesWithTableSample(tctx, conn, meta, taskChan)
+		}
 		err := d.concurrentDumpTiDBTables(tctx, conn, meta, taskChan)
 		// don't retry on context error and successful tasks
 		if err2 := errors.Cause(err); err2 == nil || err2 == context.DeadlineExceeded || err2 == context.Canceled {
@@ -744,6 +799,11 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 			tctx.L().Info("fallback to concurrent dump tables using rows due to some problem. This won't influence the whole dump process",
 				zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		}
+	}
+
+	if len(d.conf.Partitions) > 0 {
+		tctx.L().Warn("--partitions is not compatible with the row-based dump method, skipping fallback")
+		return errors.New("--partitions is not compatible with the row-based dump method")
 	}
 
 	orderByClause, err := buildOrderByClause(tctx, conf, conn, db, tbl, meta.HasImplicitRowID())
@@ -901,6 +961,37 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 	return d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, handleVals, "", 0, len(handleVals)+1)
 }
 
+func (d *Dumper) concurrentDumpTiDBPartitionTablesWithTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
+	db, tbl := meta.DatabaseName(), meta.TableName()
+
+	pkFields, pkColTypes, err := selectTiDBRowKeyFields(tctx, conn, meta, nil)
+	if err != nil {
+		return err
+	}
+
+	cachedHandleVals := make([][][]string, len(d.conf.Partitions))
+	totalChunk := 0
+	for i, partition := range d.conf.Partitions {
+		tctx.L().Debug("dumping TiDB tables with TABLESAMPLE",
+			zap.String("database", db), zap.String("table", tbl), zap.String("partition", partition))
+		handleVals, err := selectTiDBTableSampleForPartition(tctx, conn, meta, pkFields, pkColTypes, partition)
+		if err != nil {
+			return err
+		}
+		cachedHandleVals[i] = handleVals
+		totalChunk += len(handleVals) + 1
+	}
+	startChunk := 0
+	for i, partition := range d.conf.Partitions {
+		err = d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, pkFields, cachedHandleVals[i], partition, startChunk, totalChunk)
+		if err != nil {
+			return err
+		}
+		startChunk += len(cachedHandleVals[i]) + 1
+	}
+	return nil
+}
+
 func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, partitions []string) error {
 	db, tbl := meta.DatabaseName(), meta.TableName()
 	tctx.L().Debug("dumping TiDB tables with TABLE REGIONS for partition table",
@@ -966,13 +1057,13 @@ func (d *Dumper) L() log.Logger {
 	return d.tctx.L()
 }
 
-func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error) {
+func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, partitions ...string) (pkFields []string, pkVals [][]string, err error) {
 	pkFields, pkColTypes, err := selectTiDBRowKeyFields(tctx, conn, meta, nil)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName())
+	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName(), partitions...)
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
@@ -1013,13 +1104,63 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 	return pkFields, pkVals, err
 }
 
-func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string) string {
+func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, pkFields, pkColTypes []string, partition string) ([][]string, error) {
+	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName(), partition)
+	pkValNum := len(pkFields)
+	var iter SQLRowIter
+	rowRec := MakeRowReceiver(pkColTypes)
+	buf := new(bytes.Buffer)
+
+	var pkVals [][]string
+	err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
+		if iter == nil {
+			iter = &rowIter{
+				rows: rows,
+				args: make([]any, pkValNum),
+			}
+		}
+		if err := iter.Decode(rowRec); err != nil {
+			return errors.Trace(err)
+		}
+		pkValRow := make([]string, 0, pkValNum)
+		for _, rec := range rowRec.receivers {
+			rec.WriteToBuffer(buf, true)
+			pkValRow = append(pkValRow, buf.String())
+			buf.Reset()
+		}
+		pkVals = append(pkVals, pkValRow)
+		return nil
+	}, func() {
+		if iter != nil {
+			_ = iter.Close()
+			iter = nil
+		}
+		rowRec = MakeRowReceiver(pkColTypes)
+		pkVals = pkVals[:0]
+		buf.Reset()
+	}, query)
+	if err == nil && iter != nil && iter.Error() != nil {
+		err = iter.Error()
+	}
+
+	return pkVals, err
+}
+
+func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string, partitions ...string) string {
 	template := "SELECT %s FROM `%s`.`%s` TABLESAMPLE REGIONS() ORDER BY %s"
 	quotaPk := make([]string, len(pkFields))
 	for i, s := range pkFields {
 		quotaPk[i] = fmt.Sprintf("`%s`", escapeString(s))
 	}
 	pks := strings.Join(quotaPk, ",")
+	if len(partitions) > 0 {
+		template = "SELECT %s FROM `%s`.`%s` PARTITION(%s) TABLESAMPLE REGIONS() ORDER BY %s"
+		quotedPartitions := make([]string, len(partitions))
+		for i, partition := range partitions {
+			quotedPartitions[i] = fmt.Sprintf("`%s`", escapeString(partition))
+		}
+		return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), strings.Join(quotedPartitions, ","), pks)
+	}
 	return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), pks)
 }
 
@@ -1445,32 +1586,140 @@ func validateResolveAutoConsistency(d *Dumper) error {
 	return nil
 }
 
+// tidbResolveKeyspaceMetaForGC is an initialization step of Dumper.
+//
+// For a premium (keyspace) cluster, cloud control will pass `--pd`.
+// Dumpling resolves the keyspace from information_schema.KEYSPACE_META and uses
+// the keyspace ID for the keyspace-level GC barrier.
+//
+// If KEYSPACE_META reports a classical cluster, `--pd` must not be specified.
+func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
+	tctx, conf, db := d.tctx, d.conf, d.dbHandle
+	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
+		if conf.PDAddr != "" {
+			return errors.New("--pd only supports TiDB keyspace clusters")
+		}
+		return nil
+	}
+
+	keyspaceName, keyspaceID, err := queryCurrentKeyspaceNameAndID(tctx, db)
+	if err != nil {
+		// If the user explicitly passes premium GC parameters, do not ignore this error.
+		if conf.PDAddr != "" {
+			return err
+		}
+
+		// Be compatible with older TiDB versions which may not have KEYSPACE_META.
+		if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok && mysqlErr.Number == ErrNoSuchTable {
+			tctx.L().Info("KEYSPACE_META is not available, treat as classical cluster", log.ShortError(err))
+			return nil
+		}
+		tctx.L().Info("meet some problem while fetching keyspace meta. This won't affect dump process", log.ShortError(err))
+		return nil
+	}
+	tctx.L().Info("resolved keyspace meta",
+		zap.String("keyspace-name", keyspaceName),
+		zap.String("keyspace-id", keyspaceID))
+
+	// Classical cluster.
+	if keyspaceName == "" {
+		if conf.PDAddr != "" {
+			return errors.New("classical cluster must not specify --pd")
+		}
+		return nil
+	}
+
+	// Premium cluster.
+	if conf.PDAddr == "" {
+		return errors.New("premium keyspace cluster requires --pd")
+	}
+	if keyspaceID == "" {
+		return errors.Errorf("empty keyspace id from KEYSPACE_META for keyspace %q", keyspaceName)
+	}
+	parsedID, err := strconv.ParseUint(keyspaceID, 10, 32)
+	if err != nil {
+		return errors.Annotatef(err, "invalid keyspace id %q from KEYSPACE_META", keyspaceID)
+	}
+	d.tidbKeyspaceName = keyspaceName
+	d.tidbKeyspaceID = uint32(parsedID)
+	return nil
+}
+
 // tidbSetPDClientForGC is an initialization step of Dumper.
 func tidbSetPDClientForGC(d *Dumper) error {
-	tctx, si, pool := d.tctx, d.conf.ServerInfo, d.dbHandle
+	tctx, conf, si, pool := d.tctx, d.conf, d.conf.ServerInfo, d.dbHandle
+	d.tidbUseKeyspaceGC = false
 	if si.ServerType != version.ServerTypeTiDB ||
 		si.ServerVersion == nil ||
 		si.ServerVersion.Compare(*gcSafePointVersion) < 0 {
 		return nil
 	}
+
+	// Premium cluster: PD endpoints are passed from cloud control.
+	if d.tidbKeyspaceName != "" {
+		pdAddrs := strings.Split(conf.PDAddr, ",")
+		pdAddrs = slices.DeleteFunc(pdAddrs, func(s string) bool { return strings.TrimSpace(s) == "" })
+		for i := range pdAddrs {
+			pdAddrs[i] = strings.TrimSpace(pdAddrs[i])
+		}
+		if len(pdAddrs) == 0 {
+			return errors.New("invalid --pd: empty PD endpoints")
+		}
+
+		apiCtx := pd.NewAPIContextV2(d.tidbKeyspaceName)
+		pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pdSecurityOptionForGC(conf))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		d.tidbPDClientForGC = pdClient
+		d.tidbUseKeyspaceGC = true
+		return nil
+	}
+
+	// Classical cluster: discover PD endpoints from TiDB.
 	pdAddrs, err := GetPdAddrs(tctx, pool)
 	if err != nil {
 		tctx.L().Info("meet some problem while fetching pd addrs. This won't affect dump process", log.ShortError(err))
 		return nil
 	}
-	if len(pdAddrs) > 0 {
-		doPdGC, err := checkSameCluster(tctx, pool, pdAddrs)
-		if err != nil {
-			tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
-		} else if doPdGC {
-			pdClient, err := pd.NewClientWithContext(tctx, caller.Component("dumpling-gc"), pdAddrs, pd.SecurityOption{})
-			if err != nil {
-				tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
-			}
-			d.tidbPDClientForGC = pdClient
+	if len(pdAddrs) == 0 {
+		return nil
+	}
+
+	doPDGC, err := checkSameCluster(tctx, pool, pdAddrs)
+	if err != nil {
+		tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
+		return nil
+	}
+	if !doPDGC {
+		return nil
+	}
+
+	apiCtx := pd.NewAPIContextV1()
+	pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pdSecurityOptionForGC(conf))
+	if err != nil {
+		tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
+		return nil
+	}
+	d.tidbPDClientForGC = pdClient
+	return nil
+}
+
+func pdSecurityOptionForGC(conf *Config) pd.SecurityOption {
+	return pd.SecurityOption{
+		CAPath:   firstNonEmpty(conf.ClusterSSLCA, conf.Security.CAPath),
+		CertPath: firstNonEmpty(conf.ClusterSSLCert, conf.Security.CertPath),
+		KeyPath:  firstNonEmpty(conf.ClusterSSLKey, conf.Security.KeyPath),
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, val := range vals {
+		if val != "" {
+			return val
 		}
 	}
-	return nil
+	return ""
 }
 
 // tidbGetSnapshot is an initialization step of Dumper.
@@ -1513,7 +1762,11 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 		if err != nil {
 			return err
 		}
-		go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
+		if d.tidbUseKeyspaceGC {
+			go updateKeyspaceGCBarrier(tctx, d.tidbPDClientForGC, d.tidbKeyspaceID, defaultDumpGCSafePointTTL, snapshotTS)
+		} else {
+			go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
+		}
 	} else if si.ServerType == version.ServerTypeTiDB {
 		tctx.L().Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
 			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
@@ -1524,21 +1777,98 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 }
 
 func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int64, snapshotTS uint64) {
-	updateInterval := time.Duration(ttl/2) * time.Second
-	tick := time.NewTicker(updateInterval)
 	dumplingServiceSafePointID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
 	tctx.L().Info("generate dumpling gc safePoint id", zap.String("id", dumplingServiceSafePointID))
+	runGCProtectionUpdater(
+		tctx,
+		ttl,
+		snapshotTS,
+		func(ctx context.Context, protectTS uint64, retryCnt int) error {
+			if retryCnt == 0 {
+				tctx.L().Debug("update PD safePoint limit with ttl",
+					zap.Uint64("safePoint", protectTS),
+					zap.Int64("ttl", ttl))
+			}
+			_, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, ttl, protectTS)
+			if err != nil {
+				tctx.L().Debug("update PD safePoint failed", log.ShortError(err), zap.Int("retryTime", retryCnt))
+			}
+			return err
+		},
+		func(ctx context.Context) {
+			if _, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, 0, 0); err != nil {
+				tctx.L().Debug("remove dumpling gc safePoint failed", log.ShortError(err), zap.String("id", dumplingServiceSafePointID))
+			}
+		},
+	)
+}
+
+func updateKeyspaceGCBarrier(tctx *tcontext.Context, pdClient pd.Client, keyspaceID uint32, ttl int64, snapshotTS uint64) {
+	barrierID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
+	tctx.L().Info("generate dumpling gc barrier id", zap.String("id", barrierID), zap.Uint32("keyspaceID", keyspaceID))
+
+	gcClient := pdClient.GetGCStatesClient(keyspaceID)
+	ttlDuration := time.Duration(ttl) * time.Second
+
+	runGCProtectionUpdater(
+		tctx,
+		ttl,
+		snapshotTS,
+		func(ctx context.Context, protectTS uint64, retryCnt int) error {
+			if retryCnt == 0 {
+				tctx.L().Debug("set keyspace GC barrier with ttl",
+					zap.Uint32("keyspaceID", keyspaceID),
+					zap.Uint64("barrierTS", protectTS),
+					zap.Duration("ttl", ttlDuration))
+			}
+			_, err := gcClient.SetGCBarrier(ctx, barrierID, protectTS, ttlDuration)
+			if err != nil {
+				tctx.L().Warn("set keyspace GC barrier failed", log.ShortError(err),
+					zap.Int("retryTime", retryCnt),
+					zap.Uint32("keyspaceID", keyspaceID))
+			}
+			return err
+		},
+		func(ctx context.Context) {
+			if _, err := gcClient.DeleteGCBarrier(ctx, barrierID); err != nil {
+				tctx.L().Debug("remove dumpling gc barrier failed", log.ShortError(err),
+					zap.String("id", barrierID),
+					zap.Uint32("keyspaceID", keyspaceID))
+			}
+		},
+	)
+}
+
+func runGCProtectionUpdater(
+	tctx *tcontext.Context,
+	ttl int64,
+	snapshotTS uint64,
+	update func(ctx context.Context, protectTS uint64, retryCnt int) error,
+	cleanup func(ctx context.Context),
+) {
+	updateInterval := time.Duration(ttl/2) * time.Second
+	tick := time.NewTicker(updateInterval)
+	defer tick.Stop()
+
+	// Protect `snapshotTS` by keeping the GC protection boundary below it.
+	protectTS := snapshotTS
+	if protectTS > 0 {
+		protectTS--
+	}
+
+	defer func() {
+		// best-effort cleanup (TTL will also expire soon even if this fails)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cleanup(ctx)
+	}()
 
 	for {
-		tctx.L().Debug("update PD safePoint limit with ttl",
-			zap.Uint64("safePoint", snapshotTS),
-			zap.Int64("ttl", ttl))
 		for retryCnt := range 11 {
-			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
+			err := update(tctx, protectTS, retryCnt)
 			if err == nil {
 				break
 			}
-			tctx.L().Debug("update PD safePoint failed", log.ShortError(err), zap.Int("retryTime", retryCnt))
 			select {
 			case <-tctx.Done():
 				return

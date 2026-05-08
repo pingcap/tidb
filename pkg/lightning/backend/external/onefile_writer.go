@@ -17,18 +17,19 @@ package external
 import (
 	"context"
 	"encoding/binary"
+	"math/rand"
 	"path/filepath"
 	"slices"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -46,11 +47,19 @@ var (
 	DefaultOneWriterBlockSize = int(defaultOneWriterMemSizeLimit)
 )
 
+const (
+	// MaxUploadPartCount defines the divisor used when calculating the size of each uploaded part.
+	// Setting it from 10000 to 5000 increases the part size so that the total number of parts stays well below
+	// the S3 multipart upload limit of 10,000 parts, to avoiding the error "TotalPartsExceeded: exceeded total allowed configured MaxUploadParts (10000)".
+	MaxUploadPartCount = 5000
+	logPartNumInterval = 999 // log the part num every 999 parts.
+)
+
 // OneFileWriter is used to write data into external storage
 // with only one file for data and stat.
 type OneFileWriter struct {
 	// storage related.
-	store    storage.ExternalStorage
+	store    storeapi.Storage
 	kvStore  *KeyValueStore
 	kvBuffer *membuf.Buffer
 
@@ -62,12 +71,13 @@ type OneFileWriter struct {
 	// file information.
 	writerID       string
 	filenamePrefix string
+	rnd            *rand.Rand
 	dataFile       string
 	statFile       string
-	dataWriter     storage.ExternalFileWriter
-	statWriter     storage.ExternalFileWriter
+	dataWriter     objectio.Writer
+	statWriter     objectio.Writer
 
-	onClose OnCloseFunc
+	onClose OnWriterCloseFunc
 	closed  bool
 
 	// for duplicate detection.
@@ -80,14 +90,16 @@ type OneFileWriter struct {
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt int
 	dupFile        string
-	dupWriter      storage.ExternalFileWriter
+	dupWriter      objectio.Writer
 	dupKVStore     *KeyValueStore
 
 	minKey []byte
 	maxKey []byte
 
-	logger   *zap.Logger
-	partSize int64
+	logger           *zap.Logger
+	partSize         int64
+	writtenBytes     int64
+	lastLogWriteSize uint64
 }
 
 // lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
@@ -97,17 +109,19 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 		return nil
 	}
 
-	dataFile := filepath.Join(w.filenamePrefix, "one-file")
-	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
+	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
+	dataWriter, err := w.store.Create(ctx, dataFile, &storeapi.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    w.partSize})
+		PartSize:    w.partSize,
+	})
 	if err != nil {
 		return err
 	}
-	statFile := filepath.Join(w.filenamePrefix+statSuffix, "one-file")
-	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
+	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
+	statWriter, err := w.store.Create(ctx, statFile, &storeapi.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    MinUploadPartSize})
+		PartSize:    MinUploadPartSize,
+	})
 	if err != nil {
 		w.logger.Info("create stat writer failed", zap.Error(err))
 		_ = dataWriter.Close(ctx)
@@ -127,8 +141,8 @@ func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
 		return nil
 	}
 
-	dupFile := filepath.Join(w.filenamePrefix+dupSuffix, "one-file")
-	dupWriter, err := w.store.Create(ctx, dupFile, &storage.WriterOption{
+	dupFile := filepath.Join(w.getPartitionedPrefix()+dupSuffix, "one-file")
+	dupWriter, err := w.store.Create(ctx, dupFile, &storeapi.WriterOption{
 		// too many duplicates will cause duplicate resolution part very slow,
 		// we temporarily use 1 as we don't expect too many duplicates, if there
 		// are, it will be slow anyway.
@@ -153,6 +167,17 @@ func (w *OneFileWriter) InitPartSizeAndLogger(ctx context.Context, partSize int6
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	defer func() {
+		if (w.totalSize-w.lastLogWriteSize)/uint64(w.partSize) >= logPartNumInterval {
+			w.logger.Info("one file writer progress",
+				zap.String("writerID", w.writerID),
+				zap.Int64("partSize", w.partSize),
+				zap.Uint64("totalSize", w.totalSize),
+				zap.Uint64("estimatePartNum", w.totalSize/uint64(w.partSize)),
+			)
+			w.lastLogWriteSize = w.totalSize
+		}
+	}()
 	if w.onDup != engineapi.OnDuplicateKeyIgnore {
 		// must be Record or Remove right now
 		return w.handleDupAndWrite(ctx, idxKey, idxVal)
@@ -188,6 +213,7 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 			}
 		case engineapi.OnDuplicateKeyError:
 			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
+			// default is OnDuplicateKeyRemove, we will not write for duplicates.
 		}
 	} else {
 		return w.onNextPivot(ctx, idxKey, idxVal)
@@ -225,7 +251,6 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		return err
 	}
 	// 1. encode data and write to kvStore.
-	writeStartTime := time.Now()
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
@@ -255,10 +280,11 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
-	writeDuration := time.Since(writeStartTime)
-	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("merge_sort_write").Observe(writeDuration.Seconds())
-	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("merge_sort_write").
-		Observe(float64(length) / 1024.0 / 1024.0 / writeDuration.Seconds())
+	w.writtenBytes += int64(length)
+	if w.writtenBytes >= 16*units.MiB {
+		metrics.MergeSortWriteBytes.Add(float64(w.writtenBytes))
+		w.writtenBytes = 0
+	}
 	return nil
 }
 
@@ -293,12 +319,14 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		conflictInfo.Files = []string{w.dupFile}
 	}
 	w.onClose(&WriterSummary{
-		WriterID:           w.writerID,
-		Seq:                0,
-		Min:                minKey,
-		Max:                maxKey,
-		TotalSize:          w.totalSize,
-		TotalCnt:           w.totalCnt,
+		WriterID:  w.writerID,
+		Seq:       0,
+		Min:       minKey,
+		Max:       maxKey,
+		TotalSize: w.totalSize,
+		TotalCnt:  w.totalCnt,
+		// we only write 1 file in OneFileWriter.
+		KVFileCount:        1,
 		MultipleFilesStats: mStats,
 		ConflictInfo:       conflictInfo,
 	})
@@ -345,6 +373,10 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		}
 	}
 	return nil
+}
+
+func (w *OneFileWriter) getPartitionedPrefix() string {
+	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
 }
 
 // caller should make sure the buf is large enough to hold the encoded data.

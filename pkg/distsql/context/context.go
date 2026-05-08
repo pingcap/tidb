@@ -44,6 +44,7 @@ type DistSQLContext struct {
 	OriginalSQL            string
 	KVVars                 *tikvstore.Variables
 	KvExecCounter          *stmtstats.KvExecCounter
+	RUV2Metrics            *execdetails.RUV2Metrics
 	SessionMemTracker      *memory.Tracker
 
 	Location         *time.Location

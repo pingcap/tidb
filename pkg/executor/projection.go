@@ -485,7 +485,7 @@ func recoveryProjection(output *projectionOutput, r any) {
 	if output != nil {
 		output.done <- util.GetRecoverError(r)
 	}
-	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
+	logutil.BgLogger().Warn("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
 }
 
 func readProjection[T any](ch <-chan T, finishCh <-chan struct{}) (t T, isNil bool) {

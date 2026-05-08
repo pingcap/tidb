@@ -347,7 +347,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
 		ctx := context.TODO()
-		if err = se.PrepareTxnCtx(ctx); err != nil {
+		if err = se.PrepareTxnCtx(ctx, nil); err != nil {
 			return err
 		}
 		sctx := se.(sessionctx.Context)
@@ -841,6 +841,8 @@ func TestShowIndex(t *testing.T) {
 		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test_db_state")
 			result, err1 := tk.Exec(showIndexSQL)
 			if err1 != nil {
 				checkErr = err1
@@ -1062,7 +1064,7 @@ func TestParallelAddGeneratedColumnAndAlterModifyColumn(t *testing.T) {
 	tk.MustExec("use test_db_state")
 
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
-	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
+	sql2 := "ALTER TABLE t MODIFY COLUMN a char(16);"
 
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
