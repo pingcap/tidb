@@ -54,7 +54,7 @@ func (conn BufferedReadConn) Peek(n int) ([]byte, error) {
 }
 
 // IsAlive detects the connection is alive or not.
-// return value < 0, means unknow
+// return value < 0, means unknown
 // return value = 0, means not alive
 // return value = 1, means still alive
 func (conn BufferedReadConn) IsAlive() int {
@@ -74,11 +74,15 @@ func (conn BufferedReadConn) IsAlive() int {
 		// the liveness check might be inaccurate - this won't impact the
 		// actual connection state or its operations.
 		_, err = conn.Peek(1)
+		if err == nil {
+			return 1
+		}
 		if err == io.EOF {
 			return 0
 		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
 			return 1
 		}
+		return 0
 	}
 	return -1
 }

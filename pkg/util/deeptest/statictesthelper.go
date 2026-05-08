@@ -142,7 +142,7 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 		for i := range valA.NumField() {
 			h.assertDeepClonedEqual(t, valA.Field(i), valB.Field(i), path+"."+valA.Type().Field(i).Name)
 		}
-	case reflect.Ptr, reflect.UnsafePointer:
+	case reflect.Ptr:
 		if valA.IsNil() && valB.IsNil() {
 			return
 		}
@@ -155,6 +155,19 @@ func (h *staticTestHelper) assertDeepClonedEqual(t require.TestingT, valA, valB 
 		} else {
 			require.NotEqual(t, valA.Pointer(), valB.Pointer(), path+" should be different")
 			h.assertDeepClonedEqual(t, valA.Elem(), valB.Elem(), path)
+		}
+	case reflect.UnsafePointer:
+		if valA.IsNil() && valB.IsNil() {
+			return
+		}
+		// both of them are not nil
+		require.NotEqual(t, 0, valA.Pointer(), path+" should not be nil")
+		require.NotEqual(t, 0, valB.Pointer(), path+" should not be nil")
+
+		if h.shouldComparePointer(path) {
+			require.Equal(t, valA.Pointer(), valB.Pointer(), path+" should be the same")
+		} else {
+			require.NotEqual(t, valA.Pointer(), valB.Pointer(), path+" should be different")
 		}
 	case reflect.Slice:
 		if valA.IsNil() && valB.IsNil() {
