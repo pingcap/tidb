@@ -162,7 +162,26 @@ func TestNextGenS3ExternalID(t *testing.T) {
 		}
 	})
 
+<<<<<<< HEAD
 	t.Run("SEM enabled, set S3 external ID to keyspace name", func(t *testing.T) {
+=======
+	t.Run("SEM enabled, require explicit auth for S3 like store", func(t *testing.T) {
+		for i, fns := range semTestPatternFns {
+			t.Run(fmt.Sprint(i), func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				fns[0](t, tk)
+				t.Cleanup(func() {
+					fns[1](t, tk)
+				})
+				for _, schema := range []string{"s3", "oss"} {
+					tk.MustMatchErrMsg(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket'", schema), `(?i).*Feature 'IMPORT INTO .*without access key/secret access key or role ARN' is not supported when security enhanced mode is enabled`)
+				}
+			})
+		}
+	})
+
+	t.Run("SEM enabled, set external ID to keyspace name", func(t *testing.T) {
+>>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 		bak := config.GetGlobalKeyspaceName()
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = "aaa"
@@ -186,8 +205,15 @@ func TestNextGenS3ExternalID(t *testing.T) {
 					require.Equal(t, "aaa", u.Query().Get(storage.S3ExternalID))
 					panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 				})
+<<<<<<< HEAD
 				err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
 				require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+=======
+				for _, schema := range []string{"s3", "oss"} {
+					err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?access-key=ak&secret-access-key=sk'", schema))
+					require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+				}
+>>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 			})
 		}
 	})
@@ -247,7 +273,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 	t.Run("local sort", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		initFn(t, tk)
-		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket/*.csv'")
+		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket/*.csv?access-key=ak&secret-access-key=sk'")
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 		require.ErrorContains(t, err, "IMPORT INTO with local sort")
 	})
@@ -275,7 +301,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 			"checksum_table",
 			"record_errors",
 		} {
-			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s='1'", option))
+			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv?access-key=ak&secret-access-key=sk' with %s='1'", option))
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 			require.ErrorContains(t, err, option)
 		}
@@ -283,7 +309,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 			"__force_merge_step",
 			"__manual_recovery",
 		} {
-			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s", option))
+			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv?access-key=ak&secret-access-key=sk' with %s", option))
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 			require.ErrorContains(t, err, option)
 		}
