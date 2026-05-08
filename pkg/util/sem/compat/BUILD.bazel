@@ -27,12 +27,8 @@ go_test(
     embed = [":compat"],
     flaky = True,
     deps = [
-<<<<<<< HEAD
         "//br/pkg/storage",
-=======
         "//pkg/config/kerneltype",
-        "//pkg/objstore/s3like",
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/planner/core",

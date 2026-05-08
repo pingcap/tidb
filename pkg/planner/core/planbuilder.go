@@ -4720,37 +4720,21 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		if err != nil {
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
-<<<<<<< HEAD
 		importFromServer = storage.IsLocal(u)
 		// for SEM v2, they are checked by configured rules.
-=======
-		importFromServer = objstore.IsLocal(u)
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
-<<<<<<< HEAD
-			if kerneltype.IsNextGen() && storage.IsS3(u) {
-				if err := checkNextGenS3PathWithSem(u); err != nil {
-					return nil, err
-				}
-			}
-=======
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 		}
 		// a nextgen cluster might be shared by multiple tenants, and they might
 		// share the same AWS role to access import-into source data bucket, this
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
-<<<<<<< HEAD
 		if kerneltype.IsNextGen() && sem.IsEnabled() && storage.IsS3(u) {
-=======
-		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
 			if err := checkNextGenS3PathWithSem(u); err != nil {
 				return nil, err
 			}
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 			values := u.Query()
 			values.Set(storage.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
@@ -6403,22 +6387,16 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	hasSecretAccessKey := false
 	hasRoleARN := false
 	for k := range values {
-<<<<<<< HEAD
-		lowerK := strings.ToLower(k)
-		if lowerK == storage.S3ExternalID {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
-=======
-		normalizedK := objstore.NormalizeQueryParameterKey(k)
+		normalizedK := storage.NormalizeQueryParameterKey(k)
 		switch normalizedK {
-		case s3like.S3ExternalID:
+		case storage.S3ExternalID:
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
-		case s3like.S3AccessKey:
+		case storage.S3AccessKey:
 			hasAccessKey = hasAccessKey || values.Get(k) != ""
-		case s3like.S3SecretAccessKey:
+		case storage.S3SecretAccessKey:
 			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
-		case s3like.S3RoleARN:
+		case storage.S3RoleARN:
 			hasRoleARN = hasRoleARN || values.Get(k) != ""
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 		}
 	}
 

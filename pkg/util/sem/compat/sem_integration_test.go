@@ -18,12 +18,8 @@ import (
 	"net/url"
 	"testing"
 
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/storage"
-=======
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/objstore/s3like"
->>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
