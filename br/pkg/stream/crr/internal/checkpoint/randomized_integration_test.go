@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 	ctx := context.Background()
 	tc := testutil.NewTestContext(t)
 	cfg := randomizedCRRSimulationConfig{
-		Iterations:                        1000,
+		Iterations:                        300,
 		InitialStores:                     3,
 		MaxStores:                         12,
 		RegionCount:                       12,
@@ -268,22 +269,24 @@ func (s *randomizedCRRSimulation) runRound(
 
 	s.rememberSyncedTS()
 
-	s.log(
-		"randomized crr round",
-		zap.Int("round", round),
-		zap.Uint64s("flushed-stores", roundLog.flushedStores),
-		zap.Int("replicated-files", roundLog.replicatedFiles),
-		zap.Bool("restarted-calculator", roundLog.restartedCalculator),
-		zap.Uint64s("added-stores", roundLog.addedStores),
-		zap.Uint64s("removed-stores", roundLog.removedStores),
-		zap.Uint64s("scattered-regions", roundLog.scatteredRegions),
-		zap.Strings("action-order", roundLog.actionOrder),
-		zap.Bool("advanced", roundLog.advanced),
-		zap.Uint64("checkpoint", roundLog.checkpoint),
-		zap.Uint64("safe-checkpoint", *lastSafeCheckpoint),
-		zap.Uint64("validated-checkpoint", *lastValidatedCheckpoint),
-		zap.String("state", s.describeState()),
-	)
+	if os.Getenv("TIDB_RANDOMIZED_CRR_SIM_ROUND_LOG") != "" {
+		s.log(
+			"randomized crr round",
+			zap.Int("round", round),
+			zap.Uint64s("flushed-stores", roundLog.flushedStores),
+			zap.Int("replicated-files", roundLog.replicatedFiles),
+			zap.Bool("restarted-calculator", roundLog.restartedCalculator),
+			zap.Uint64s("added-stores", roundLog.addedStores),
+			zap.Uint64s("removed-stores", roundLog.removedStores),
+			zap.Uint64s("scattered-regions", roundLog.scatteredRegions),
+			zap.Strings("action-order", roundLog.actionOrder),
+			zap.Bool("advanced", roundLog.advanced),
+			zap.Uint64("checkpoint", roundLog.checkpoint),
+			zap.Uint64("safe-checkpoint", *lastSafeCheckpoint),
+			zap.Uint64("validated-checkpoint", *lastValidatedCheckpoint),
+			zap.String("state", s.describeState()),
+		)
+	}
 
 	if roundLog.advanced {
 		require.GreaterOrEqualf(

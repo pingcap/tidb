@@ -16,6 +16,7 @@ package main
 
 import (
 	"os"
+	"syscall"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -48,6 +49,26 @@ func TestMain(m *testing.M) {
 func TestRunMain(t *testing.T) {
 	if isCoverageServer == "1" {
 		main()
+	}
+}
+
+func TestExitCodeForSignal(t *testing.T) {
+	tests := []struct {
+		name string
+		sig  os.Signal
+		want int
+	}{
+		{name: "SIGINT", sig: syscall.SIGINT, want: exitCodeInt},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: exitCodeOK},
+		{name: "SIGHUP", sig: syscall.SIGHUP, want: exitCodeOK},
+		{name: "SIGQUIT", sig: syscall.SIGQUIT, want: exitCodeOK},
+		{name: "nil", sig: nil, want: exitCodeOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, exitCodeForSignal(tt.sig))
+		})
 	}
 }
 

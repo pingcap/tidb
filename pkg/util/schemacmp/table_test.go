@@ -20,18 +20,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	_ "github.com/pingcap/tidb/pkg/planner"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/schemacmp"
 	"github.com/stretchr/testify/require"
 )
 
-func toTableInfo(parser *parser.Parser, sctx sessionctx.Context, createTableStmt string) (*model.TableInfo, error) {
+func toTableInfo(parser *parser.Parser, createTableStmt string) (*model.TableInfo, error) {
 	node, err := parser.ParseOneStmt(createTableStmt, "", "")
 	if err != nil {
 		return nil, err
@@ -40,7 +38,9 @@ func toTableInfo(parser *parser.Parser, sctx sessionctx.Context, createTableStmt
 	if !ok {
 		return nil, errors.New("not a create table statement")
 	}
-	return ddl.MockTableInfo(sctx, createStmtNode, 1)
+	// The test cases contain "zero" date/time default values like `0000-00-00`,
+	// which are rejected under StrictMode/NoZeroDateMode in the default context.
+	return ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), createStmtNode)
 }
 
 func checkDecodeFieldTypes(t *testing.T, info *model.TableInfo, tt schemacmp.Table) {
@@ -55,7 +55,6 @@ func checkDecodeFieldTypes(t *testing.T, info *model.TableInfo, tt schemacmp.Tab
 
 func TestJoinSchemas(t *testing.T) {
 	p := parser.New()
-	sctx := mock.NewContext()
 	testCases := []struct {
 		name    string
 		a       string
@@ -178,11 +177,18 @@ func TestJoinSchemas(t *testing.T) {
 			join: "CREATE TABLE tb3 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8 COLLATE utf8_bin)",
 		},
 		{
-			name:    "DM_040",
-			a:       "CREATE TABLE tb1 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8 COLLATE utf8_bin)",
-			b:       "CREATE TABLE tb2 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8mb4 COLLATE utf8mb4_bin)",
-			cmpErr:  `.*"col1".*distinct singletons.*`,
-			joinErr: `.*"col1".*distinct singletons.*`,
+			name: "DM_040",
+			a:    "CREATE TABLE tb1 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8 COLLATE utf8_bin)",
+			b:    "CREATE TABLE tb2 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8mb4 COLLATE utf8mb4_bin)",
+			cmp:  -1,
+			join: "CREATE TABLE tb3 (a INT, b VARCHAR(10), col1 VARCHAR(10) CHARSET utf8mb4 COLLATE utf8mb4_bin)",
+		},
+		{
+			name: "latin1_to_utf8mb4",
+			a:    "CREATE TABLE tb1 (a INT, col1 VARCHAR(10) CHARSET latin1 COLLATE latin1_bin)",
+			b:    "CREATE TABLE tb2 (a INT, col1 VARCHAR(10) CHARSET utf8mb4 COLLATE utf8mb4_bin)",
+			cmp:  -1,
+			join: "CREATE TABLE tb3 (a INT, col1 VARCHAR(10) CHARSET utf8mb4 COLLATE utf8mb4_bin)",
 		},
 		{
 			name: "DM_041/1",
@@ -248,11 +254,11 @@ func TestJoinSchemas(t *testing.T) {
 			join:   "CREATE TABLE tb3 (a INT, b VARCHAR(10), c INT DEFAULT 1)",
 		},
 		{
-			name:    "DM_061",
-			a:       "CREATE TABLE tb1 (a INT, b VARCHAR(10))",
-			b:       "CREATE TABLE tb2 (a INT, b VARCHAR(10) CHARSET utf8)",
-			cmpErr:  `.*"b".*distinct singletons.*`,
-			joinErr: `.*"b".*distinct singletons.*`,
+			name: "DM_061",
+			a:    "CREATE TABLE tb1 (a INT, b VARCHAR(10))",
+			b:    "CREATE TABLE tb2 (a INT, b VARCHAR(10) CHARSET utf8)",
+			cmp:  1,
+			join: "CREATE TABLE tb3 (a INT, b VARCHAR(10))",
 		},
 		{
 			name: "DM_066",
@@ -432,9 +438,9 @@ func TestJoinSchemas(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tia, err := toTableInfo(p, sctx, tc.a)
+		tia, err := toTableInfo(p, tc.a)
 		require.NoError(t, err)
-		tib, err := toTableInfo(p, sctx, tc.b)
+		tib, err := toTableInfo(p, tc.b)
 		require.NoError(t, err)
 
 		a := schemacmp.Encode(tia)
@@ -443,7 +449,7 @@ func TestJoinSchemas(t *testing.T) {
 		checkDecodeFieldTypes(t, tib, b)
 		var j schemacmp.Table
 		if len(tc.joinErr) == 0 {
-			tij, err := toTableInfo(p, sctx, tc.join)
+			tij, err := toTableInfo(p, tc.join)
 			require.NoError(t, err)
 			j = schemacmp.Encode(tij)
 		}
@@ -497,21 +503,38 @@ func TestJoinSchemas(t *testing.T) {
 
 func TestTableString(t *testing.T) {
 	p := parser.New()
-	sctx := mock.NewContext()
-	ti, err := toTableInfo(p, sctx, "CREATE TABLE tb (a INT, b INT)")
-	require.NoError(t, err)
 
-	charsets := []string{"", mysql.DefaultCharset}
-	collates := []string{"", mysql.DefaultCollationName}
-	for _, charset := range charsets {
-		for _, collate := range collates {
-			ti.Charset = charset
-			ti.Collate = collate
-			sql := strings.ToLower(schemacmp.Encode(ti).String())
-			require.Equal(t, charset != "", strings.Contains(sql, "charset"))
-			require.Equal(t, collate != "", strings.Contains(sql, "collate"))
-			_, err := toTableInfo(p, sctx, sql)
-			require.NoError(t, err)
-		}
+	// [input, expect]
+	cases := [][2]string{
+		{
+			"CREATE TABLE tb (a INT, b INT)",
+			// the `tbl` name is hardcoded, it's not used.
+			"create table `tbl`(`a` int(11), `b` int(11)) collate utf8mb4_bin",
+		},
+		{
+			"CREATE TABLE tb (a VARCHAR(20) CHARACTER SET utf8, b INT)",
+			"create table `tbl`(`a` varchar(20) character set utf8 collate utf8_bin, `b` int(11)) collate utf8mb4_bin",
+		},
+		{
+			"CREATE TABLE tb (a VARCHAR(20), b INT) COLLATE utf8mb4_general_ci",
+			"create table `tbl`(`a` varchar(20) character set utf8mb4 collate utf8mb4_general_ci, `b` int(11)) collate utf8mb4_general_ci",
+		},
+		{
+			"CREATE TABLE tb (a VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b INT)",
+			"create table `tbl`(`a` varchar(20) character set utf8mb4 collate utf8mb4_general_ci, `b` int(11)) collate utf8mb4_bin",
+		},
+		{"CREATE TABLE tb (a VARCHAR(20)) CHARSET=binary", "create table `tbl`(`a` varbinary(20)) collate binary"},
+		{"CREATE TABLE tb (a VARCHAR(20)) COLLATE=binary", "create table `tbl`(`a` varbinary(20)) collate binary"},
+		{
+			"CREATE TABLE tb (a VARCHAR(20)) CHARSET=binary COLLATE=binary",
+			"create table `tbl`(`a` varbinary(20)) collate binary",
+		},
+	}
+
+	for _, tc := range cases {
+		ti, err := toTableInfo(p, tc[0])
+		require.NoError(t, err)
+		sql := strings.ToLower(schemacmp.Encode(ti).String())
+		require.Equal(t, tc[1], sql)
 	}
 }

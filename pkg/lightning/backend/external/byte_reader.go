@@ -201,7 +201,10 @@ func (r *byteReader) switchToConcurrentReader() error {
 
 	readerFields.largeBuf = make([][]byte, readerFields.concurrency)
 	for i := range readerFields.largeBuf {
-		readerFields.largeBuf[i] = readerFields.largeBufferPool.AllocBytes(readerFields.bufSizePerConc)
+		readerFields.largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
+		if err != nil {
+			return err
+		}
 		if readerFields.largeBuf[i] == nil {
 			return errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
 		}

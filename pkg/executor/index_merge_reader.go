@@ -191,7 +191,7 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 		}
 		for i, idx := range e.indexes {
 			if idx != nil && idx.Global {
-				keyRange, err := distsql.IndexRangesToKVRangesWithDesc(e.ctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, indexColDescFlags(idx), e.ranges[i])
+				keyRange, err := distsql.IndexRangesToKVRangesWithDesc(e.sctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, indexColDescFlags(idx), e.ranges[i])
 				if err != nil {
 					return err
 				}
