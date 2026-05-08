@@ -44,6 +44,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	indexJoinPruneMinProbeRows = 100000.0
+	indexJoinPruneMinBuildRows = 100.0
+)
+
 // exhaustPhysicalPlans generates all possible plans that can match the required property.
 // It will return:
 // 1. All possible plans that can match the required property.
@@ -513,7 +518,13 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 		count := buildRows
 		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
-	if enableRatioPrune && shouldPruneIndexJoinByScanRatio(p.SCtx().GetSessionVars().IndexJoinMaxProbeScanRatio, buildRows, avgInnerRowCnt, p.Children()[1-outerIdx]) {
+	if enableRatioPrune && shouldPruneIndexJoinByScanRatio(
+		p.SCtx().GetSessionVars().IndexJoinMaxScanRowsRatio,
+		buildRows,
+		avgInnerRowCnt,
+		p.Children()[outerIdx],
+		p.Children()[1-outerIdx],
+	) {
 		return nil
 	}
 	// for pk path
@@ -547,19 +558,35 @@ func getProbeFullScanRowsForIndexJoinPrune(p base.LogicalPlan) float64 {
 	return 0
 }
 
-func shouldPruneIndexJoinByScanRatio(threshold, buildRows, probeRowsOne float64, probe base.LogicalPlan) bool {
-	if threshold <= 0 || buildRows <= 1 {
+func hasPseudoStatsForIndexJoinPrune(p base.LogicalPlan) bool {
+	stats := p.StatsInfo()
+	return stats == nil || stats.HistColl == nil || stats.HistColl.Pseudo
+}
+
+func shouldPruneIndexJoinByScanRatio(
+	threshold, buildRows, probeRowsOne float64,
+	build, probe base.LogicalPlan,
+) bool {
+	if threshold <= 0 || buildRows < indexJoinPruneMinBuildRows {
+		return false
+	}
+	if hasPseudoStatsForIndexJoinPrune(build) || hasPseudoStatsForIndexJoinPrune(probe) {
 		return false
 	}
 	innerFullScanRows := getProbeFullScanRowsForIndexJoinPrune(probe)
 	if innerFullScanRows <= 0 {
 		return false
 	}
-	probeRowsTot := buildRows * probeRowsOne
-	if probeRowsTot <= 0 {
+	indexJoinProbeRows := buildRows * probeRowsOne
+	if indexJoinProbeRows < indexJoinPruneMinProbeRows {
 		return false
 	}
-	return probeRowsTot/innerFullScanRows >= threshold
+	indexJoinScanRows := buildRows + indexJoinProbeRows
+	hashJoinScanRows := buildRows + innerFullScanRows
+	if hashJoinScanRows <= 0 {
+		return false
+	}
+	return indexJoinScanRows/hashJoinScanRows >= threshold
 }
 
 func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *property.PhysicalProperty) bool {

@@ -285,6 +285,7 @@
   {
     "name": "TestReproHashJoinIssue",
     "cases": [
+      "explain format = 'brief' SELECT COUNT(*) FROM t_small s STRAIGHT_JOIN t_big b ON b.id1 = s.id4 WHERE s.id1 = '10001' AND s.id2 = 0 AND s.id3 = 123456789 AND b.id2 = 10001 AND b.id3 = 0 AND b.id4 = 20991231;",
       "explain format = 'brief' SELECT COUNT(*) FROM t_small s STRAIGHT_JOIN t_big b ON b.id1 = s.id4 WHERE s.id1 = '10001' AND s.id2 = 0 AND s.id3 = 123456789 AND b.id2 = 10001 AND b.id3 = 0 AND b.id4 = 20991231;"
     ]
   },

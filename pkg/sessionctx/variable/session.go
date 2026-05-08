@@ -1135,7 +1135,7 @@ type SessionVars struct {
 	MergeJoinCostFactor        float64
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
-	IndexJoinMaxProbeScanRatio float64
+	IndexJoinMaxScanRowsRatio  float64
 	SelectivityFactor          float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
@@ -2383,7 +2383,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MergeJoinCostFactor:              vardef.DefOptMergeJoinCostFactor,
 		HashJoinCostFactor:               vardef.DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:              vardef.DefOptIndexJoinCostFactor,
-		IndexJoinMaxProbeScanRatio:       vardef.DefOptIndexJoinMaxProbeScanRatio,
+		IndexJoinMaxScanRowsRatio:        vardef.DefOptIndexJoinMaxScanRowsRatio,
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
