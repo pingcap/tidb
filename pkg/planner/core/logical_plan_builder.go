@@ -261,7 +261,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	b.optFlag |= rule.FlagMaxMinEliminate
 	b.optFlag |= rule.FlagPushDownTopN
 	// when we eliminate the max and min we may add `is not null` filter.
-	b.optFlag |= rule.FlagPredicatePushDown
+	b.optFlag |= rule.FlagPredicatePushDown | rule.FlagCTEPredicatePushDown
 	b.optFlag |= rule.FlagEliminateAgg
 	b.optFlag |= rule.FlagEliminateProjection
 
@@ -748,7 +748,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// built (see below), where a tighter check is applied.
 	isLateral := containsLateralTableSource(joinNode.Right)
 
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagJoinKeyTypeCast
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagCTEPredicatePushDown | rule.FlagJoinKeyTypeCast
 	// Don't enable join reorder for LATERAL (similar to StraightJoin)
 	// LATERAL has order dependencies: right side can reference left side
 	if !isLateral {
@@ -994,7 +994,7 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	// is conservative and will only transform patterns it can prove are semantically equivalent.
 	// Complex cases (aggregates with correlation, non-deterministic functions, etc.) will
 	// remain as Apply and use nested loop execution.
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagCTEPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
 
 	ap := logicalop.LogicalApply{
 		LogicalJoin:   logicalop.LogicalJoin{JoinType: joinType},
@@ -1341,7 +1341,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 }
 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
-	b.optFlag |= rule.FlagPredicatePushDown
+	b.optFlag |= rule.FlagPredicatePushDown | rule.FlagCTEPredicatePushDown
 	b.optFlag |= rule.FlagDeriveTopNFromWindow
 	b.optFlag |= rule.FlagPredicateSimplification
 	if b.curClause != havingClause {
@@ -4793,16 +4793,19 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 
 			if cte.cteClass == nil {
 				cte.cteClass = &logicalop.CTEClass{
-					IsDistinct:               cte.isDistinct,
-					SeedPartLogicalPlan:      cte.seedLP,
-					RecursivePartLogicalPlan: cte.recurLP,
-					IDForStorage:             cte.storageID,
-					OptFlag:                  cte.optFlag,
-					HasLimit:                 hasLimit,
-					LimitBeg:                 limitBeg,
-					LimitEnd:                 limitEnd,
-					PushDownPredicates:       make([]expression.Expression, 0),
-					ColumnMap:                make(map[string]*expression.Column),
+					IsDistinct:                 cte.isDistinct,
+					SeedPartLogicalPlan:        cte.seedLP,
+					RecursivePartLogicalPlan:   cte.recurLP,
+					IDForStorage:               cte.storageID,
+					OptFlag:                    cte.optFlag,
+					HasLimit:                   hasLimit,
+					LimitBeg:                   limitBeg,
+					LimitEnd:                   limitEnd,
+					PushDownPredicates:         make([]expression.Expression, 0),
+					ConsumerPushDownPredicates: make([]expression.CNFExprs, 0),
+					PredicatePushDownCounter:   make(map[string]*logicalop.CTEPredicateCounter),
+					CommonPushDownPredicates:   make(expression.CNFExprs, 0),
+					ColumnMap:                  make(map[string]*expression.Column),
 				}
 			}
 			var p base.LogicalPlan
@@ -5690,7 +5693,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tab
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp base.JoinType, markNoDecorrelate bool) base.LogicalPlan {
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagCTEPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
 	ap := logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len()))
@@ -5712,7 +5715,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPl
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan base.LogicalPlan, condition []expression.Expression,
 	asScalar, not, considerRewrite, markNoDecorrelate bool) (base.LogicalPlan, error) {
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagCTEPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not, considerRewrite)
 	if err != nil {

@@ -30,6 +30,7 @@ const (
 	FlagConstantPropagation
 	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
+	FlagCTEPredicatePushDown
 	FlagJoinKeyTypeCast
 	FlagEliminateOuterJoin
 	FlagPartitionProcessor
@@ -52,5 +53,6 @@ const (
 
 func setPredicatePushDownFlag(u uint64) uint64 {
 	u |= FlagPredicatePushDown
+	u |= FlagCTEPredicatePushDown
 	return u
 }

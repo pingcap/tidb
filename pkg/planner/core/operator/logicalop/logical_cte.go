@@ -42,6 +42,12 @@ type LogicalCTE struct {
 	OnlyUsedAsStorage bool
 }
 
+// CTEPredicateCounter tracks how many CTE consumers push down the same predicate.
+type CTEPredicateCounter struct {
+	Expr  expression.Expression
+	Count int
+}
+
 // Init only assigns type and context.
 func (p LogicalCTE) Init(ctx base.PlanContext, offset int) *LogicalCTE {
 	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeCTE, &p, offset)
@@ -68,10 +74,19 @@ type CTEClass struct {
 	LimitBeg  uint64
 	LimitEnd  uint64
 	IsInApply bool
-	// PushDownPredicates may be push-downed by different references.
+	// PushDownPredicates stores one CNF branch per consumer for the shared-execution path.
+	// It preserves the original branch semantics used by Sequence-based MPP shared CTE.
 	PushDownPredicates []expression.Expression
-	ColumnMap          map[string]*expression.Column
-	IsOuterMostCTE     bool
+	// ConsumerPushDownPredicates stores one pushed CNF predicate group per CTE consumer.
+	ConsumerPushDownPredicates []expression.CNFExprs
+	// PredicatePushDownCounter tracks how many times each predicate is pushed from CTE consumers.
+	PredicatePushDownCounter map[string]*CTEPredicateCounter
+	// PredicatePushDownTotal records how many CTE consumers attempted predicate pushdown.
+	PredicatePushDownTotal int
+	// CommonPushDownPredicates stores the CNF predicates shared by all consumers.
+	CommonPushDownPredicates expression.CNFExprs
+	ColumnMap                map[string]*expression.Column
+	IsOuterMostCTE           bool
 }
 
 const emptyCTEClassSize = int64(unsafe.Sizeof(CTEClass{}))
@@ -90,8 +105,22 @@ func (cc *CTEClass) MemoryUsage() (sum int64) {
 		sum += cc.RecursivePartPhysicalPlan.MemoryUsage()
 	}
 
+	for _, exprs := range cc.ConsumerPushDownPredicates {
+		for _, expr := range exprs {
+			sum += expr.MemoryUsage()
+		}
+	}
 	for _, expr := range cc.PushDownPredicates {
 		sum += expr.MemoryUsage()
+	}
+	for _, expr := range cc.CommonPushDownPredicates {
+		sum += expr.MemoryUsage()
+	}
+	for key, counter := range cc.PredicatePushDownCounter {
+		sum += size.SizeOfString + int64(len(key)) + size.SizeOfPointer
+		if counter != nil && counter.Expr != nil {
+			sum += counter.Expr.MemoryUsage()
+		}
 	}
 	for key, val := range cc.ColumnMap {
 		sum += size.SizeOfString + int64(len(key)) + size.SizeOfPointer + val.MemoryUsage()
@@ -125,16 +154,41 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression) ([]ex
 			pushedPredicates = append(pushedPredicates[0:i], pushedPredicates[i+1:]...)
 		}
 	}
-	if len(pushedPredicates) == 0 {
-		p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.NewOne())
+	if p.SCtx().GetSessionVars().EnableMPPSharedCTEExecution {
+		if len(pushedPredicates) == 0 {
+			p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.NewOne())
+			return predicates, p.Self(), nil
+		}
+		newPred := make([]expression.Expression, 0, len(pushedPredicates))
+		for _, predicate := range pushedPredicates {
+			resolved := ruleutil.ResolveExprAndReplace(predicate.Clone(), p.Cte.ColumnMap)
+			newPred = append(newPred, resolved)
+		}
+		p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
 		return predicates, p.Self(), nil
 	}
-	newPred := make([]expression.Expression, 0, len(predicates))
-	for i := range pushedPredicates {
-		newPred = append(newPred, pushedPredicates[i].Clone())
-		newPred[i] = ruleutil.ResolveExprAndReplace(newPred[i], p.Cte.ColumnMap)
+	newPred := make(expression.CNFExprs, 0, len(pushedPredicates))
+	seen := make(map[string]struct{}, len(pushedPredicates))
+	for _, predicate := range pushedPredicates {
+		resolved := ruleutil.ResolveExprAndReplace(predicate.Clone(), p.Cte.ColumnMap)
+		key := string(resolved.CanonicalHashCode())
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		newPred = append(newPred, resolved)
+		counter := p.Cte.PredicatePushDownCounter[key]
+		if counter == nil {
+			p.Cte.PredicatePushDownCounter[key] = &CTEPredicateCounter{
+				Expr:  resolved,
+				Count: 1,
+			}
+			continue
+		}
+		counter.Count++
 	}
-	p.Cte.PushDownPredicates = append(p.Cte.PushDownPredicates, expression.ComposeCNFCondition(p.SCtx().GetExprCtx(), newPred...))
+	p.Cte.PredicatePushDownTotal++
+	p.Cte.ConsumerPushDownPredicates = append(p.Cte.ConsumerPushDownPredicates, newPred)
 	return predicates, p.Self(), nil
 }
 
@@ -181,9 +235,9 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	var err error
 	if p.Cte.SeedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
-		if len(p.Cte.PushDownPredicates) > 0 {
-			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.Cte.PushDownPredicates...)
-			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
+		conditions := p.Cte.GetPushDownCondition(p.SCtx())
+		if len(conditions) > 0 {
+			newSel := LogicalSelection{Conditions: conditions}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.Cte.SeedPartLogicalPlan)
 			p.Cte.SeedPartLogicalPlan = newSel
 			p.Cte.OptFlag = ruleutil.SetPredicatePushDownFlag(p.Cte.OptFlag)
@@ -236,6 +290,36 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		}
 	}
 	return p.StatsInfo(), true, nil
+}
+
+// GetPushDownCondition builds the effective pushed predicate list for the CTE producer.
+func (cc *CTEClass) GetPushDownCondition(ctx base.PlanContext) []expression.Expression {
+	if len(cc.PushDownPredicates) > 0 {
+		return []expression.Expression{expression.ComposeDNFCondition(ctx.GetExprCtx(), cc.PushDownPredicates...)}
+	}
+	conditions := make([]expression.Expression, 0, len(cc.CommonPushDownPredicates)+1)
+	for _, expr := range cc.CommonPushDownPredicates {
+		conditions = append(conditions, expr)
+	}
+	if len(cc.ConsumerPushDownPredicates) == 0 {
+		return conditions
+	}
+
+	residualBranches := make([]expression.Expression, 0, len(cc.ConsumerPushDownPredicates))
+	for _, consumerCNF := range cc.ConsumerPushDownPredicates {
+		if len(consumerCNF) == 0 {
+			return conditions
+		}
+		residualBranches = append(residualBranches, expression.ComposeCNFCondition(ctx.GetExprCtx(), consumerCNF...))
+	}
+	if len(residualBranches) == 1 {
+		conditions = append(conditions, residualBranches[0])
+		return conditions
+	}
+	if len(residualBranches) > 1 {
+		conditions = append(conditions, expression.ComposeDNFCondition(ctx.GetExprCtx(), residualBranches...))
+	}
+	return conditions
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

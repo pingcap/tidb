@@ -95,6 +95,7 @@ var optRuleList = []base.LogicalOptRule{
 	&rule.ConstantPropagationSolver{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
+	&CommonCTEPredicatePushDownSolver{},
 	&rule.JoinKeyTypeCastRewriter{},
 	&OuterJoinEliminator{},
 	&rule.PartitionProcessor{},

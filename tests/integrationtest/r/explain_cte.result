@@ -361,16 +361,16 @@ limit 100;
 id	task	access object	operator info
 TopN	root		Column, Column, Column, Column, offset:0, count:100
 └─HashJoin	root		inner join, equal:[eq(Column, Column)], other cond:gt(case(gt(Column, 0), div(Column, Column), 0.000000), case(gt(Column, 0), div(Column, Column), 0.000000))
-  ├─Selection(Build)	root		eq(Column, "w"), eq(Column, 2002), not(isnull(Column))
+  ├─Selection(Build)	root		eq(Column, "w"), eq(Column, 2002)
   │ └─CTEFullScan	root	CTE:year_total AS t_w_secyear	data:CTE_0
   └─HashJoin(Probe)	root		inner join, equal:[eq(Column, Column)]
-    ├─Selection(Build)	root		eq(Column, "w"), eq(Column, 2001), gt(Column, 0), not(isnull(Column))
+    ├─Selection(Build)	root		eq(Column, "w"), eq(Column, 2001), gt(Column, 0)
     │ └─CTEFullScan	root	CTE:year_total AS t_w_firstyear	data:CTE_0
     └─HashJoin(Probe)	root		inner join, equal:[eq(Column, Column)]
-      ├─Selection(Build)	root		eq(Column, "s"), eq(Column, 2002), not(isnull(Column))
-      │ └─CTEFullScan	root	CTE:year_total AS t_s_secyear	data:CTE_0
-      └─Selection(Probe)	root		eq(Column, "s"), eq(Column, 2001), gt(Column, 0), not(isnull(Column))
-        └─CTEFullScan	root	CTE:year_total AS t_s_firstyear	data:CTE_0
+      ├─Selection(Build)	root		eq(Column, "s"), eq(Column, 2001), gt(Column, 0)
+      │ └─CTEFullScan	root	CTE:year_total AS t_s_firstyear	data:CTE_0
+      └─Selection(Probe)	root		eq(Column, "s"), eq(Column, 2002)
+        └─CTEFullScan	root	CTE:year_total AS t_s_secyear	data:CTE_0
 CTE_0	root		Non-Recursive CTE
 └─Union(Seed Part)	root		
   ├─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, s->Column
@@ -427,13 +427,13 @@ from version1 v1, version2 v2
 where v1.bench_type =v2.bench_type;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(explain_cte.t1.bench_type, explain_cte.t1.bench_type)]
-├─Selection(Build)	root		eq(explain_cte.t1.version, "6.0.0"), not(isnull(explain_cte.t1.bench_type))
+├─Selection(Build)	root		eq(explain_cte.t1.version, "6.0.0")
 │ └─CTEFullScan	root	CTE:all_data	data:CTE_0
-└─Selection(Probe)	root		eq(explain_cte.t1.version, "5.4.0"), not(isnull(explain_cte.t1.bench_type))
+└─Selection(Probe)	root		eq(explain_cte.t1.version, "5.4.0")
   └─CTEFullScan	root	CTE:all_data	data:CTE_0
 CTE_0	root		Non-Recursive CTE
 └─TableReader(Seed Part)	root		data:Selection
-  └─Selection	cop[tikv]		or(and(eq(explain_cte.t1.version, "5.4.0"), not(isnull(explain_cte.t1.bench_type))), and(eq(explain_cte.t1.version, "6.0.0"), not(isnull(explain_cte.t1.bench_type))))
+  └─Selection	cop[tikv]		not(isnull(explain_cte.t1.bench_type)), or(eq(explain_cte.t1.version, "5.4.0"), eq(explain_cte.t1.version, "6.0.0"))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists tbl;
 create table tbl (id int);
@@ -441,10 +441,8 @@ explain format='plan_tree' with t1 as (select id from tbl), t2 as (select a.id f
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(explain_cte.tbl.id, explain_cte.tbl.id)]
 ├─HashAgg(Build)	root		group by:explain_cte.tbl.id, funcs:firstrow(explain_cte.tbl.id)->explain_cte.tbl.id
-│ └─Selection	root		not(isnull(explain_cte.tbl.id))
-│   └─CTEFullScan	root	CTE:t2	data:CTE_1
-└─Selection(Probe)	root		not(isnull(explain_cte.tbl.id))
-  └─CTEFullScan	root	CTE:t2	data:CTE_1
+│ └─CTEFullScan	root	CTE:t2	data:CTE_1
+└─CTEFullScan(Probe)	root	CTE:t2	data:CTE_1
 CTE_1	root		Non-Recursive CTE
 └─HashJoin(Seed Part)	root		inner join, equal:[eq(explain_cte.tbl.id, explain_cte.tbl.id)]
   ├─Selection(Build)	root		not(isnull(explain_cte.tbl.id))

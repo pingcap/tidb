@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -29,6 +30,10 @@ import (
 
 // PPDSolver stands for Predicate Push Down.
 type PPDSolver struct{}
+
+// CommonCTEPredicatePushDownSolver extracts the common predicate subset shared by all
+// pushed CTE consumer predicates, so the shared producer can apply that subset once.
+type CommonCTEPredicatePushDownSolver struct{}
 
 // exprPrefixAdder is the wrapper struct to add tidb_shard(x) = val for `OrigConds`
 // `cols` is the index columns for a unique shard index
@@ -49,6 +54,176 @@ func (*PPDSolver) Optimize(_ context.Context, lp base.LogicalPlan) (base.Logical
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*PPDSolver) Name() string {
 	return "predicate_push_down"
+}
+
+// Optimize implements base.LogicalOptRule.<0th> interface.
+func (*CommonCTEPredicatePushDownSolver) Optimize(_ context.Context, lp base.LogicalPlan) (base.LogicalPlan, bool, error) {
+	if containsLogicalSequence(lp) {
+		// LogicalSequence encodes the dependency order among shared CTE producers.
+		// The current common-predicate extraction only reasons about consumer-local
+		// pushed CNF groups, so applying it before sequence-aware optimization can
+		// break MPP shared CTE planning.
+		return lp, false, nil
+	}
+	lp, planChanged := extractCommonCTEPredicates(lp)
+	return lp, planChanged, nil
+}
+
+// Name implements base.LogicalOptRule.<1st> interface.
+func (*CommonCTEPredicatePushDownSolver) Name() string {
+	return "common_cte_predicate_push_down"
+}
+
+func containsLogicalSequence(lp base.LogicalPlan) bool {
+	if _, ok := lp.(*logicalop.LogicalSequence); ok {
+		return true
+	}
+	for _, child := range lp.Children() {
+		if containsLogicalSequence(child) {
+			return true
+		}
+	}
+	if cteReader, ok := lp.(*logicalop.LogicalCTE); ok {
+		if containsLogicalSequence(cteReader.Cte.SeedPartLogicalPlan) {
+			return true
+		}
+		if cteReader.Cte.RecursivePartLogicalPlan != nil && containsLogicalSequence(cteReader.Cte.RecursivePartLogicalPlan) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractCommonCTEPredicates(lp base.LogicalPlan) (base.LogicalPlan, bool) {
+	visited := make(map[int]*logicalop.CTEClass)
+	collectCTEClasses(lp, visited)
+
+	planChanged := false
+	for _, cte := range visited {
+		if cte.PredicatePushDownTotal <= 1 {
+			if len(cte.CommonPushDownPredicates) > 0 {
+				cte.CommonPushDownPredicates = nil
+				planChanged = true
+			}
+			continue
+		}
+		common, residuals := splitCommonCTEPredicates(cte)
+		if !sameCNFExprs(cte.CommonPushDownPredicates, common) {
+			cte.CommonPushDownPredicates = common
+			planChanged = true
+		}
+		for i := range residuals {
+			if !sameCNFExprs(cte.ConsumerPushDownPredicates[i], residuals[i]) {
+				cte.ConsumerPushDownPredicates[i] = residuals[i]
+				planChanged = true
+			}
+		}
+	}
+
+	lp, consumerChanged := removeCommonPredicateFromCTEConsumers(lp)
+	return lp, planChanged || consumerChanged
+}
+
+func collectCTEClasses(lp base.LogicalPlan, visited map[int]*logicalop.CTEClass) {
+	if cteReader, ok := lp.(*logicalop.LogicalCTE); ok {
+		cte := cteReader.Cte
+		if _, exists := visited[cte.IDForStorage]; exists {
+			return
+		}
+		visited[cte.IDForStorage] = cte
+		collectCTEClasses(cte.SeedPartLogicalPlan, visited)
+		if cte.RecursivePartLogicalPlan != nil {
+			collectCTEClasses(cte.RecursivePartLogicalPlan, visited)
+		}
+		return
+	}
+	for _, child := range lp.Children() {
+		collectCTEClasses(child, visited)
+	}
+}
+
+func splitCommonCTEPredicates(cte *logicalop.CTEClass) (expression.CNFExprs, []expression.CNFExprs) {
+	predicateGroups := cte.ConsumerPushDownPredicates
+	common := make(expression.CNFExprs, 0, len(predicateGroups[0]))
+	commonKeys := make(map[string]struct{}, len(predicateGroups[0]))
+	for _, expr := range predicateGroups[0] {
+		key := string(expr.CanonicalHashCode())
+		counter := cte.PredicatePushDownCounter[key]
+		if counter == nil || counter.Count != cte.PredicatePushDownTotal {
+			continue
+		}
+		common = append(common, counter.Expr)
+		commonKeys[key] = struct{}{}
+	}
+
+	residuals := make([]expression.CNFExprs, len(predicateGroups))
+	for groupIdx, group := range predicateGroups {
+		residuals[groupIdx] = make(expression.CNFExprs, 0, len(group))
+		for _, expr := range group {
+			if _, isCommon := commonKeys[string(expr.CanonicalHashCode())]; isCommon {
+				continue
+			}
+			residuals[groupIdx] = append(residuals[groupIdx], expr)
+		}
+	}
+	return common, residuals
+}
+
+func sameCNFExprs(lhs, rhs expression.CNFExprs) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+	for i := range lhs {
+		if !expression.ExpressionsSemanticEqual(lhs[i], rhs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func removeCommonPredicateFromCTEConsumers(lp base.LogicalPlan) (base.LogicalPlan, bool) {
+	planChanged := false
+	for i, child := range lp.Children() {
+		newChild, childChanged := removeCommonPredicateFromCTEConsumers(child)
+		if childChanged {
+			lp.SetChild(i, newChild)
+			planChanged = true
+		}
+	}
+
+	selection, ok := lp.(*logicalop.LogicalSelection)
+	if !ok || len(selection.Children()) == 0 {
+		return lp, planChanged
+	}
+	cte, ok := selection.Children()[0].(*logicalop.LogicalCTE)
+	if !ok || len(cte.Cte.CommonPushDownPredicates) == 0 {
+		return lp, planChanged
+	}
+
+	commonKeys := make(map[string]struct{}, len(cte.Cte.CommonPushDownPredicates))
+	for _, expr := range cte.Cte.CommonPushDownPredicates {
+		commonKeys[string(expr.CanonicalHashCode())] = struct{}{}
+	}
+
+	conditions := make([]expression.Expression, 0, len(selection.Conditions))
+	selectionChanged := false
+	for _, cond := range selection.Conditions {
+		normalized := ruleutil.ResolveExprAndReplace(cond.Clone(), cte.Cte.ColumnMap)
+		if _, ok := commonKeys[string(normalized.CanonicalHashCode())]; ok {
+			selectionChanged = true
+			continue
+		}
+		conditions = append(conditions, cond)
+	}
+	if !selectionChanged {
+		return lp, planChanged
+	}
+	if len(conditions) == 0 {
+		return cte, true
+	}
+
+	selection.Conditions = conditions
+	return selection, true
 }
 
 // addPrefix4ShardIndexes add expression prefix for shard index. e.g. an index is test.uk(tidb_shard(a), a).
