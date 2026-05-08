@@ -6504,6 +6504,7 @@ def go_deps():
         name = "com_github_pingcap_errors",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/errors",
+<<<<<<< HEAD
         sha256 = "b696ac3d19b74bd6c3454048767bf145c7d8b4d24c55337b27d2e0960d948949",
         strip_prefix = "github.com/pingcap/errors@v0.11.5-0.20250523034308-74f78ae071ee",
         urls = [
@@ -6511,6 +6512,15 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20250523034308-74f78ae071ee.zip",
             "https://cache.hawkingrei.com/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20250523034308-74f78ae071ee.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20250523034308-74f78ae071ee.zip",
+=======
+        sha256 = "8843ed815adc22e020095250e3d0ac3e2ffd974260dbb58c050491bb3ba2f926",
+        strip_prefix = "github.com/pingcap/errors@v0.11.5-0.20260508054701-306e305bcf41",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20260508054701-306e305bcf41.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20260508054701-306e305bcf41.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20260508054701-306e305bcf41.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/errors/com_github_pingcap_errors-v0.11.5-0.20260508054701-306e305bcf41.zip",
+>>>>>>> f30c9a6d858 (*: update pingcap/errors for verbose stack formatting (#68221))
         ],
     )
     go_repository(

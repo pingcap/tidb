@@ -106,7 +106,11 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":tidb-server_lib"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 2,
+=======
+    shard_count = 6,
+>>>>>>> f30c9a6d858 (*: update pingcap/errors for verbose stack formatting (#68221))
     deps = [
         "//pkg/config",
         "//pkg/parser/mysql",
