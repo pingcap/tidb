@@ -476,7 +476,7 @@ func completePhysicalIndexJoin(physic *physicalop.PhysicalIndexJoin, rt *physica
 }
 
 // enumerateIndexJoinByOuterIdx will enumerate temporary index joins by index join prop required for its inner child.
-func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
+func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.PhysicalProperty, outerIdx int, enableRatioPrune bool) (joins []base.PhysicalPlan) {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	stats0, stats1, schema0, schema1 := getJoinChildStatsAndSchema(ge, p)
 	var outerSchema *expression.Schema
@@ -513,7 +513,7 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 		count := buildRows
 		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
-	if shouldPruneIndexJoinByScanRatio(p.SCtx().GetSessionVars().IndexJoinMaxProbeScanRatio, buildRows, avgInnerRowCnt, p.Children()[1-outerIdx]) {
+	if enableRatioPrune && shouldPruneIndexJoinByScanRatio(p.SCtx().GetSessionVars().IndexJoinMaxProbeScanRatio, buildRows, avgInnerRowCnt, p.Children()[1-outerIdx]) {
 		return nil
 	}
 	// for pk path
@@ -1148,7 +1148,7 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 
 // tryToEnumerateIndexJoin returns all available index join family plans by
 // pushing IndexJoinProp down to the inner side during enumeration.
-func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty, enableRatioPrune bool) []base.PhysicalPlan {
 	if prop.IndexJoinProp != nil {
 		// Avoid nested index join enumeration under an index join inner side.
 		return nil
@@ -1168,10 +1168,10 @@ func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProp
 	// according join type to enumerate index join with inner children's indexJoinProp.
 	candidates := make([]base.PhysicalPlan, 0, 2)
 	if supportLeftOuter {
-		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 0)...)
+		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 0, enableRatioPrune)...)
 	}
 	if supportRightOuter {
-		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 1)...)
+		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 1, enableRatioPrune)...)
 	}
 	// Pre-Handle hints and variables about index join, which try to detect the contradictory hint and variables
 	// The priority is: force hints like TIDB_INLJ > filter hints like NO_INDEX_JOIN > variables and rec warns.
@@ -1193,6 +1193,13 @@ func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProp
 	// handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
 	// hint is specified in the query. So we can do it in physic enumeration phase here.
 	return handleFilterIndexJoinHints(p, candidates)
+}
+
+func hasForceIndexJoinFamilyHint(p *logicalop.LogicalJoin) bool {
+	return p.PreferAny(
+		h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner,
+	)
 }
 
 func enumerationContainIndexJoin(candidates [][]base.PhysicalPlan) bool {
@@ -2078,6 +2085,11 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		}
 	}
 
+	hashJoins, forced := getHashJoins(super, prop)
+	if forced && len(hashJoins) > 0 {
+		return hashJoins, true, nil
+	}
+
 	if !p.IsNAAJ() && prop.IndexJoinProp == nil { // gen merge join and index join only when non-naaj and index join prop is nil
 		// naaj refuse merge join and index join.
 		stats0, stats1, _, _ := getJoinChildStatsAndSchema(ge, p)
@@ -2087,7 +2099,8 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		}
 		joins = append(joins, mergeJoins...)
 
-		indexJoins := tryToEnumerateIndexJoin(super, prop)
+		enableRatioPrune := (len(hashJoins) > 0 || len(mergeJoins) > 0) && !hasForceIndexJoinFamilyHint(p)
+		indexJoins := tryToEnumerateIndexJoin(super, prop, enableRatioPrune)
 		joins = append(joins, indexJoins...)
 
 		failpoint.Inject("MockOnlyEnableIndexHashJoinV2", func(val failpoint.Value) {
@@ -2103,10 +2116,6 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		})
 	}
 
-	hashJoins, forced := getHashJoins(super, prop)
-	if forced && len(hashJoins) > 0 {
-		return hashJoins, true, nil
-	}
 	joins = append(joins, hashJoins...)
 
 	if p.PreferJoinType > 0 {
