@@ -20,6 +20,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -322,7 +322,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// latestSchemaVersion + sqlMode + timeZoneOffset + isolationReadEngines + selectLimit
 	hashLen += 8 + 8 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
-	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 * 5 + 8 + 2
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
@@ -366,9 +366,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, binding...)
 	hash = append(hash, connCharset...)
 	hash = append(hash, connCollation...)
-	hash = append(hash, bool2Byte(vars.InRestrictedSQL))
-	hash = append(hash, bool2Byte(vardef.RestrictedReadOnly.Load()))
-	hash = append(hash, bool2Byte(vardef.VarTiDBSuperReadOnly.Load()))
+	hash = append(hash, strconv.FormatBool(vars.InRestrictedSQL)...)
+	hash = append(hash, strconv.FormatBool(variable.RestrictedReadOnly.Load())...)
+	hash = append(hash, strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load())...)
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 
