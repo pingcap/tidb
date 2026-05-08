@@ -2252,6 +2252,22 @@ func (a *havingWindowAndOrderbyExprResolver) popCurClause() {
 	a.prevClause = a.prevClause[:len(a.prevClause)-1]
 }
 
+func (a *havingWindowAndOrderbyExprResolver) isUnresolvedSPVariable(v *ast.ColumnNameExpr) bool {
+	if a.curClause != havingClause || v.Name.Schema.L != "" || v.Name.Table.L != "" || a.p == nil {
+		return false
+	}
+	sctx := a.p.SCtx()
+	if sctx == nil {
+		return false
+	}
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil || !sessVars.GetCallProcedure() {
+		return false
+	}
+	_, _, notFind := sessVars.GetProcedureVariable(v.Name.Name.L)
+	return !notFind
+}
+
 // Enter implements Visitor interface.
 func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
 	switch n.(type) {
@@ -2455,6 +2471,9 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				if idx >= 0 {
 					return n, true
 				}
+			}
+			if a.isUnresolvedSPVariable(v) {
+				return n, true
 			}
 			a.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
 			return node, false

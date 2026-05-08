@@ -747,6 +747,41 @@ end`)
 	})
 }
 
+func TestExplainAnalyzeRoutineDoesNotLeakProcedureVarPushdownWarning(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec("create table t_explain_routine_log(msg varchar(16))")
+	tk.MustExec("create table t_explain_routine_fund(code varchar(48), km varchar(8), key idx_code(code))")
+	tk.MustExec("create table t_explain_routine_gzb(d int, code varchar(48), km varchar(8), en_sz decimal(23,4), key idx_code(code))")
+	tk.MustExec("insert into t_explain_routine_fund values ('F001', '2301')")
+	tk.MustExec("insert into t_explain_routine_gzb values (20260422, 'F001', '2301', 12.34)")
+	tk.MustExec(`create function f_explain_routine_param_subquery(p_fundcode varchar(48), p_date int) returns decimal(23,4)
+begin
+	declare result decimal(23,4);
+	insert into t_explain_routine_log values ('before');
+	select sum(en_sz) into result from (
+		select sum(a.en_sz) as en_sz
+		from (select code, km from t_explain_routine_fund where code = p_fundcode) c
+		left join t_explain_routine_gzb a
+			on a.d = cast(p_date as signed) and a.code = p_fundcode and a.km = c.km
+		union all
+		select sum(a.en_sz) as en_sz
+		from (select code, km from t_explain_routine_fund where code = p_fundcode) c
+		left join t_explain_routine_gzb a
+			on a.d = cast(p_date as signed) and a.code = p_fundcode and a.km = c.km
+	) u;
+	insert into t_explain_routine_log values ('after');
+	return result;
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_param_subquery('F001', 20260422) for stmt 3").Rows())
+	require.NotEmpty(t, rows)
+
+	warnings := rowsToStrings(tk.MustQuery("show warnings").Rows())
+	for _, row := range warnings {
+		require.NotContains(t, strings.ToLower(strings.Join(row, " ")), "getprocedurevar", "warnings=%v", warnings)
+	}
+}
+
 func TestExplainAnalyzeRoutineNestedReadOnlyCall(t *testing.T) {
 	tk := setupExplainRoutineTestKit(t)
 	tk.MustExec(`create procedure p_explain_routine_nested_helper(id int)
