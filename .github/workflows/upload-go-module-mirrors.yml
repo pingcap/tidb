@@ -47,4 +47,4 @@ jobs:
             -e GOOGLE_APPLICATION_CREDENTIALS=/credentials/gcs-credentials.json \
             -v "${GOOGLE_APPLICATION_CREDENTIALS}:/credentials/gcs-credentials.json:ro" \
             -v "${PWD}/pr:/workspace:ro" \
-            us-west1-docker.pkg.dev/gcp-compute-dev/gcp-computer-dev/tidb-mirror-uploader:20260508
+            us-docker.pkg.dev/gcp-compute-dev/tidb-ci-public/tidb-mirror-uploader:20260508
