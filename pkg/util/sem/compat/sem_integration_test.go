@@ -58,6 +58,16 @@ func TestRestrictedSQL(t *testing.T) {
 			return
 		}
 
+<<<<<<< HEAD
+=======
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser", Hostname: "localhost"}, nil, nil, nil))
+		if kerneltype.IsNextGen() {
+			tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'", "IMPORT INTO with explicit external ID")
+			tk.MustQuery("select * from test.t").Check(testkit.Rows())
+			return
+		}
+
+>>>>>>> 84548dbcc17 (importinto: require S3-like auth for nextgen import (#68231))
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)

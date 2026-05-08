@@ -45,6 +45,12 @@ import (
 var HardcodedChunkSize = 5 * 1024 * 1024
 
 const (
+	// S3AccessKey is the key for the access key used in S3 operations.
+	S3AccessKey = "access-key"
+	// S3SecretAccessKey is the key for the secret access key used in S3 operations.
+	S3SecretAccessKey = "secret-access-key"
+	// S3RoleARN is the key for the role ARN used in S3 operations.
+	S3RoleARN = "role-arn"
 	// S3ExternalID is the key for the external ID used in S3 operations.
 	S3ExternalID = "external-id"
 

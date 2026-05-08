@@ -183,7 +183,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 			continue
 		}
 		param := params[0]
-		normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", "-"))
+		normalizedKey := NormalizeQueryParameterKey(key)
 		if f, ok := tagToField[normalizedKey]; ok {
 			field := o.Field(f.index)
 			switch f.kind {
@@ -201,6 +201,12 @@ func ExtractQueryParameters(u *url.URL, options any) {
 
 	// Clean up the URL finally.
 	u.RawQuery = ""
+}
+
+// NormalizeQueryParameterKey normalizes object storage URL query parameter keys
+// to match backend option tags.
+func NormalizeQueryParameterKey(key string) string {
+	return strings.ToLower(strings.ReplaceAll(key, "_", "-"))
 }
 
 // FormatBackendURL obtains the raw URL which can be used the reconstruct the
