@@ -29,8 +29,6 @@ const (
 	starterName         = "starter"
 )
 
-const unsetMode int32 = -1
-
 // Mode is the deployment mode of the TiDB instance. It is only allowed when
 // kerneltype.IsNextGen returns true.
 type Mode int32
@@ -48,17 +46,9 @@ const (
 
 var currentMode atomic.Int32
 
-func init() {
-	currentMode.Store(unsetMode)
-}
-
 // Get returns the current deployment mode.
 func Get() Mode {
-	mode := currentMode.Load()
-	if mode == unsetMode {
-		return Premium
-	}
-	return Mode(mode)
+	return Mode(currentMode.Load())
 }
 
 // IsPremiumReserved returns true if the current deployment mode is PremiumReserved.
@@ -71,10 +61,10 @@ func IsStarter() bool {
 	return kerneltype.IsNextGen() && Get() == Starter
 }
 
-// Set initializes the current deployment mode.
+// Set updates the current deployment mode.
 //
-// The deployment mode is initialized during TiDB startup and cannot be changed
-// after it is set.
+// The deployment mode is initialized during TiDB startup and should not be
+// changed during runtime.
 func Set(mode Mode) error {
 	if !kerneltype.IsNextGen() {
 		return fmt.Errorf("deploy mode can only be set for nextgen TiDB")
@@ -82,18 +72,8 @@ func Set(mode Mode) error {
 	if !mode.Valid() {
 		return fmt.Errorf("invalid deploy mode %d", mode)
 	}
-	for {
-		current := currentMode.Load()
-		if current != unsetMode {
-			if Mode(current) == mode {
-				return nil
-			}
-			return fmt.Errorf("deploy mode cannot be changed after it is set")
-		}
-		if currentMode.CompareAndSwap(unsetMode, int32(mode)) {
-			return nil
-		}
-	}
+	currentMode.Store(int32(mode))
+	return nil
 }
 
 // Parse returns the deployment mode for the given string.

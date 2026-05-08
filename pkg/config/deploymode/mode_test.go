@@ -68,9 +68,9 @@ func TestModeTOML(t *testing.T) {
 }
 
 func TestCurrentMode(t *testing.T) {
-	original := currentMode.Load()
+	original := Get()
 	t.Cleanup(func() {
-		currentMode.Store(original)
+		currentMode.Store(int32(original))
 	})
 
 	if !kerneltype.IsNextGen() {
@@ -90,10 +90,9 @@ func TestCurrentMode(t *testing.T) {
 	require.Equal(t, PremiumReserved, Get())
 	require.True(t, IsPremiumReserved())
 	require.False(t, IsStarter())
-	require.NoError(t, Set(PremiumReserved))
-	require.ErrorContains(t, Set(Starter), "deploy mode cannot be changed after it is set")
-	require.Equal(t, PremiumReserved, Get())
-	require.True(t, IsPremiumReserved())
-	require.False(t, IsStarter())
+	require.NoError(t, Set(Starter))
+	require.Equal(t, Starter, Get())
+	require.False(t, IsPremiumReserved())
+	require.True(t, IsStarter())
 	require.ErrorContains(t, Set(Mode(100)), "invalid deploy mode")
 }
