@@ -99,15 +99,9 @@ func TestInitDeployMode(t *testing.T) {
 		t.Skip("only for nextgen kernel")
 	}
 
-	original := deploymode.Get()
-	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(original))
-	})
-
 	cfg := config.NewConfig()
-	cfg.DeployMode = deploymode.PremiumReserved
 	require.NoError(t, initDeployMode(cfg))
-	require.Equal(t, deploymode.PremiumReserved, deploymode.Get())
+	require.Equal(t, deploymode.Premium, deploymode.Get())
 
 	cfg.DeployMode = deploymode.Mode(100)
 	require.ErrorContains(t, initDeployMode(cfg), "invalid deploy mode")

@@ -29,7 +29,8 @@
 //
 // Starter is a deployment mode for supporting a large number of small tenants.
 //
-// Deploy mode is stored in TiDB component config. This can make the deploy mode
+// Deploy mode is initialized during TiDB startup and cannot be changed after it
+// is set. It is stored in TiDB component config, which can make the deploy mode
 // inconsistent across TiDB instances if different instances are started with
 // different config values. The tradeoff is intentional: keeping deploy mode in
 // TiDB config avoids changing other components and avoids maintaining separate
