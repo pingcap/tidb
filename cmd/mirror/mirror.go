@@ -39,6 +39,11 @@ import (
 
 const gcpBucket = "pingcapmirror"
 
+const (
+	mirrorWorkspaceEnv = "MIRROR_WORKSPACE"
+	mirrorGoBinaryEnv  = "MIRROR_GO_BINARY"
+)
+
 // downloadedModule captures `go mod download -json` output.
 type downloadedModule struct {
 	Path    string `json:"Path"`
@@ -112,6 +117,31 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+func workspaceFile(path string) (string, error) {
+	if workspace := os.Getenv(mirrorWorkspaceEnv); workspace != "" {
+		file := filepath.Join(workspace, path)
+		if _, err := os.Stat(file); err != nil {
+			return "", fmt.Errorf("failed to locate %s in %s: %w", path, workspace, err)
+		}
+		return file, nil
+	}
+	return bazel.Runfile(path)
+}
+
+func goBinary() (string, error) {
+	if gobin := os.Getenv(mirrorGoBinaryEnv); gobin != "" {
+		return gobin, nil
+	}
+	return bazel.Runfile("bin/go")
+}
+
+func workspaceRoot() (string, error) {
+	if workspace := os.Getenv(mirrorWorkspaceEnv); workspace != "" {
+		return workspace, nil
+	}
+	return bazel.RunfilesPath()
+}
+
 func uploadFile(ctx context.Context, client *storage.Client, localPath, remotePath string) error {
 	if !isUpload {
 		return nil
@@ -149,16 +179,22 @@ func createTmpDir() (tmpdir string, err error) {
 	if err != nil {
 		return
 	}
-	gomod, err := bazel.Runfile("go.mod")
+	gomod, err := workspaceFile("go.mod")
 	if err != nil {
 		return
 	}
-	gosum, err := bazel.Runfile("go.sum")
+	gosum, err := workspaceFile("go.sum")
 	if err != nil {
 		return
 	}
-	parsergomod := strings.Replace(gomod, "go.mod", "pkg/parser/go.mod", 1)
-	parsergosum := strings.Replace(gosum, "go.sum", "pkg/parser/go.sum", 1)
+	parsergomod, err := workspaceFile("pkg/parser/go.mod")
+	if err != nil {
+		return
+	}
+	parsergosum, err := workspaceFile("pkg/parser/go.sum")
+	if err != nil {
+		return
+	}
 	err = copyFile(gomod, filepath.Join(tmpdir, "go.mod"))
 	if err != nil {
 		return
@@ -178,7 +214,7 @@ func createTmpDir() (tmpdir string, err error) {
 func downloadZips(
 	tmpdir string, listed map[string]listedModule,
 ) (map[string]downloadedModule, error) {
-	gobin, err := bazel.Runfile("bin/go")
+	gobin, err := goBinary()
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +256,7 @@ func downloadZips(
 }
 
 func listAllModules(tmpdir string) (map[string]listedModule, error) {
-	gobin, err := bazel.Runfile("bin/go")
+	gobin, err := goBinary()
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +289,7 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 }
 
 func getExistingMirrors() (map[string]DownloadableArtifact, error) {
-	depsbzl, err := bazel.Runfile("DEPS.bzl")
+	depsbzl, err := workspaceFile("DEPS.bzl")
 	if err != nil {
 		return nil, err
 	}
@@ -282,11 +318,11 @@ func modulePathToBazelRepoName(mod string) string {
 }
 
 func dumpPatchArgsForRepo(repoName string) error {
-	runfiles, err := bazel.RunfilesPath()
+	workspace, err := workspaceRoot()
 	if err != nil {
 		return err
 	}
-	candidate := filepath.Join(runfiles, "build", "patches", repoName+".patch")
+	candidate := filepath.Join(workspace, "build", "patches", repoName+".patch")
 	if _, err := os.Stat(candidate); err == nil {
 		fmt.Printf(`        patch_args = ["-p1"],
         patches = [

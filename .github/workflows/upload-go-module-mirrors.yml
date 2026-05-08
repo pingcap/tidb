@@ -4,10 +4,14 @@ on:
   pull_request_target:
     branches:
       - master
+    paths:
+      - go.mod
+      - go.sum
+      - pkg/parser/go.mod
+      - pkg/parser/go.sum
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   upload:
@@ -22,9 +26,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: pr
           persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: pr/go.mod
+          cache: false
       - name: Upload Go Module Mirrors
         env:
-          GH_TOKEN: ${{ github.token }}
           GCS_MIRROR_SA_KEY: ${{ secrets.GCS_MIRROR_SA_KEY }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcs-credentials.json
         run: |
@@ -40,11 +48,23 @@ jobs:
           chmod 600 "${GOOGLE_APPLICATION_CREDENTIALS}"
           sed -i '/bazel-cache/d' pr/DEPS.bzl
           sed -i '/ats.apps.svc/d' pr/DEPS.bzl
-          sed -i '/bazel-cache/d' pr/WORKSPACE
-          sed -i '/ats.apps.svc/d' pr/WORKSPACE
+
+          goroot="$(go env GOROOT)"
+          mirror_tmp="${RUNNER_TEMP}/tidb-mirror"
+          mkdir -p "${mirror_tmp}/go-build" "${mirror_tmp}/go-mod"
 
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e GOCACHE=/tmp/go-build \
+            -e GOMODCACHE=/tmp/go-mod \
             -e GOOGLE_APPLICATION_CREDENTIALS=/credentials/gcs-credentials.json \
+            -e GOROOT="${goroot}" \
+            -e HOME=/tmp \
+            -e MIRROR_GO_BINARY="${goroot}/bin/go" \
+            -e MIRROR_WORKSPACE=/workspace \
+            -v "${goroot}:${goroot}:ro" \
             -v "${GOOGLE_APPLICATION_CREDENTIALS}:/credentials/gcs-credentials.json:ro" \
+            -v "${mirror_tmp}:/tmp" \
             -v "${PWD}/pr:/workspace:ro" \
-            us-docker.pkg.dev/gcp-compute-dev/tidb-ci-public/tidb-mirror-uploader:20260508
+            us-docker.pkg.dev/gcp-compute-dev/tidb-ci-public/tidb-mirror-uploader:20260508 \
+            --mirror --upload
