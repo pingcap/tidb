@@ -22,8 +22,7 @@ RUN go install github.com/bazelbuild/bazelisk@latest
 RUN bazelisk build --norun_validations //cmd/mirror && \
     mirror_bin="$(bazelisk cquery --output=files //cmd/mirror | head -n 1)" && \
     mkdir -p /opt/tidb-mirror && \
-    cp "${mirror_bin}" /opt/tidb-mirror/mirror && \
-    cp -a "${mirror_bin}.runfiles" /opt/tidb-mirror/runfiles
+    cp "${mirror_bin}" /opt/tidb-mirror/mirror
 
 FROM debian:bookworm-slim
 
@@ -31,7 +30,10 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
+COPY --from=builder /usr/local/go /usr/local/go
 COPY --from=builder /opt/tidb-mirror /opt/tidb-mirror
 COPY .github/docker/go-module-mirror/entrypoint.sh /usr/local/bin/tidb-mirror-upload
+
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 ENTRYPOINT ["/usr/local/bin/tidb-mirror-upload"]

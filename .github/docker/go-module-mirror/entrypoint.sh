@@ -2,38 +2,36 @@
 set -euo pipefail
 
 workspace="${MIRROR_WORKSPACE:-/workspace}"
-base_runfiles="/opt/tidb-mirror/runfiles"
 runfiles="$(mktemp -d)"
+runfiles_workspace="${runfiles}/tidb"
 
-cp -a "${base_runfiles}/." "${runfiles}/"
-
-runfiles_workspace="$(
-  find "${runfiles}" -mindepth 2 -maxdepth 2 -name DEPS.bzl -exec dirname {} \; | head -n 1
-)"
-if [[ -z "${runfiles_workspace}" ]]; then
-  echo "failed to locate mirror runfiles workspace" >&2
+if [[ ! -d "${workspace}" ]]; then
+  echo "workspace ${workspace} does not exist" >&2
   exit 1
 fi
 
-for path in \
-  DEPS.bzl \
-  go.mod \
-  go.sum \
-  pkg/parser/go.mod \
-  pkg/parser/go.sum
-do
+mkdir -p "${runfiles_workspace}/bin"
+ln -sf /usr/local/go/bin/go "${runfiles_workspace}/bin/go"
+
+link_runfile() {
+  local path="$1"
   if [[ -f "${workspace}/${path}" ]]; then
     mkdir -p "${runfiles_workspace}/$(dirname "${path}")"
-    cp "${workspace}/${path}" "${runfiles_workspace}/${path}"
+    ln -sf "${workspace}/${path}" "${runfiles_workspace}/${path}"
   fi
-done
+}
+
+link_runfile DEPS.bzl
+link_runfile go.mod
+link_runfile go.sum
+link_runfile pkg/parser/go.mod
+link_runfile pkg/parser/go.sum
 
 if [[ -d "${workspace}/build/patches" ]]; then
   mkdir -p "${runfiles_workspace}/build"
-  rm -rf "${runfiles_workspace}/build/patches"
-  cp -a "${workspace}/build/patches" "${runfiles_workspace}/build/patches"
+  ln -sfn "${workspace}/build/patches" "${runfiles_workspace}/build/patches"
 fi
 
 export RUNFILES_DIR="${runfiles}"
-export TEST_WORKSPACE="$(basename "${runfiles_workspace}")"
+export TEST_WORKSPACE="tidb"
 exec /opt/tidb-mirror/mirror --mirror --upload "$@"
