@@ -652,21 +652,23 @@ func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 //
 // For TiDB root tasks:
 //
-//	plan-cost = child-cost + hash-mem-cost + (agg-cost + group-cost + hash-build-cpu-cost + hash-probe-cost) / concurrency
+//	plan-cost = child-cost + hash-mem-cost + agg-cost + group-cost + (hash-build-cpu-cost + hash-probe-cost) / concurrency
 //
-// All CPU work (aggregation, grouping, hash key computation, probing) is parallelized
-// across partial workers that each process a disjoint subset of input rows, so these
-// costs are divided by concurrency. However, the hash table memory cost is placed outside
-// the division: each partial worker maintains its own hash table, so total memory
-// consumption scales with outputRows (NDV) regardless of concurrency. For high-NDV
-// GROUP BY with an available ordered index, this memory penalty makes StreamAgg
-// (which uses ~constant memory) the preferred plan.
+// Aggregation and grouping evaluate per input row regardless of how many partial
+// workers run concurrently: the workers consume from a shared upstream channel and
+// in practice are I/O-bound on the cop output, so the /concurrency discount the model
+// would otherwise imply is not realized. They sit outside the division. Hash-build
+// and hash-probe genuinely parallelize across the partitioned hash table and stay
+// under /concurrency.
 //
-// The memory penalty is only applied when the HashAgg's child can provide ordering on
-// the GROUP BY keys naturally (e.g., from an ordered index scan). When no such ordering
-// is available, the StreamAgg alternative would need an explicit Sort whose own cost
-// already correctly disfavors it, so adding the memory penalty here would double-count
-// and steer the optimizer toward Sort+StreamAgg even when HashAgg is genuinely cheaper.
+// The hash table memory cost is also placed outside the division: each partial worker
+// maintains its own hash table, so total memory consumption scales with outputRows
+// (NDV) regardless of concurrency. The memory penalty is only applied when the
+// HashAgg's child can provide ordering on the GROUP BY keys naturally (e.g., from an
+// ordered index scan). When no such ordering is available, the StreamAgg alternative
+// would need an explicit Sort whose own cost already correctly disfavors it, so adding
+// the memory penalty here would double-count and steer the optimizer toward
+// Sort+StreamAgg even when HashAgg is genuinely cheaper.
 //
 // For TiFlash MPP and TiKV cop tasks, data is either partitioned across nodes (MPP) or
 // processed single-threaded on TiKV (cop). All costs use the original formula:
@@ -717,8 +719,8 @@ func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.Tas
 			func() string {
 				return fmt.Sprintf("hashkey(%v*%v*%v)+hashbuild(%v*%v)", outputRows, nKeys, cpuFactor, outputRows, cpuFactor)
 			})
-		p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, hashMemCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCPUCost, hashProbeCost), concurrency))
+		p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, hashMemCost, aggCost, groupCost,
+			costusage.DivCostVer2(costusage.SumCostVer2(hashBuildCPUCost, hashProbeCost), concurrency))
 	} else {
 		// MPP and cop tasks: data is either partitioned (MPP) or processed by a single
 		// TiKV thread (cop), so the TiDB root concurrency factor does not apply.

@@ -759,7 +759,7 @@
       {
         "SQL": "explain format = 'plan_tree' select count(a), max(t) from t1 where a>3",
         "Plan": [
-          " HashAgg           root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
+          " StreamAgg         root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
           " └─TableReader     root         ",
           "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
@@ -900,7 +900,7 @@
       {
         "SQL": "explain format = 'plan_tree' select count(a), max(t) from t1 where a>3",
         "Plan": [
-          " HashAgg               root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
+          " StreamAgg             root         funcs:count(test.t1.a)->?, funcs:max(test.t1.t)->?",
           " └─TableReader         root         ",
           "   └─ExchangeSender    cop[tiflash] ",
           "     └─Selection       cop[tiflash] gt(test.t1.a, ?)",

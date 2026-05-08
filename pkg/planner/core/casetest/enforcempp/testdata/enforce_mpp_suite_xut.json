@@ -345,10 +345,9 @@
         "SQL": "explain format = 'plan_tree' SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
         "Plan": [
           "HashAgg root  group by:Column, funcs:count(Column)->Column",
-          "└─Projection root  test.t.a->Column, md5(cast(test.t.a, var_string(20)))->Column",
-          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "└─IndexReader root  index:HashAgg",
+          "  └─HashAgg cop[tikv]  group by:md5(cast(test.t.a, var_string(20))), funcs:count(test.t.a)->Column",
+          "    └─IndexFullScan cop[tikv] table:t, index:idx(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
@@ -1229,7 +1228,7 @@
       {
         "SQL": "explain format = 'plan_tree' select count(distinct b), json_objectagg(d,c) from t;",
         "Plan": [
-          "HashAgg root  funcs:count(distinct Column)->Column, funcs:json_objectagg(Column, Column)->Column",
+          "StreamAgg root  funcs:count(distinct Column)->Column, funcs:json_objectagg(Column, Column)->Column",
           "└─Projection root  test.t.b->Column, cast(test.t.d, var_string(10))->Column, test.t.c->Column",
           "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",

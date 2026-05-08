@@ -128,7 +128,7 @@ func TestParallelApplyWarnning(t *testing.T) {
 				`  ├─TableReader(Build) root  data:TableFullScan`,
 				`  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`,
 				`  └─Selection(Probe) root  Column`,
-				`    └─HashAgg root  funcs:count(1)->Column`,
+				`    └─StreamAgg root  funcs:count(1)->Column`,
 				"      └─IndexJoin root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
 				"        ├─IndexReader(Build) root  index:IndexFullScan",
 				"        │ └─IndexFullScan cop[tikv] table:t2, index:idx(a) keep order:false, stats:pseudo",

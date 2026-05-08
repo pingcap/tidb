@@ -868,6 +868,69 @@ func TestHashAggMemCostNotDividedByConcurrency(t *testing.T) {
 	})
 }
 
+func TestHashAggSkinnyHighNDVPicksStreamAgg(t *testing.T) {
+	// For skinny output rows the hash-table memory penalty alone is small
+	// (concurrency * outputRows * 16 bytes * 0.2). What flips the choice is
+	// that aggCost + groupCost are NOT divided by concurrency at the root:
+	// HashAgg's partial workers consume from a shared upstream channel and in
+	// practice are I/O-bound, so the /concurrency speedup the model would
+	// otherwise imply is not realized. Verify that high-NDV GROUP BY with two
+	// int columns and an available covering index naturally picks StreamAgg.
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		store := tk.Session().GetStore()
+		defer func() {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("drop table if exists t_skinny")
+			dom.StatsHandle().Clear()
+		}()
+
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_skinny")
+		tk.MustExec("create table t_skinny (a int, b int, c int, key iab(a, b))")
+
+		// 100% NDV on (a, b): a unique, b = a. We need enough rows that the
+		// /concurrency discount on aggCost+groupCost (which option 1 removes)
+		// is large enough to dominate the comparison — at small scale, IndexScan
+		// cost differences alone already favor StreamAgg.
+		const n = 50000
+		const batch = 5000
+		for i := 0; i < n; i += batch {
+			var buf strings.Builder
+			buf.WriteString("insert into t_skinny (a,b,c) values ")
+			for j := 0; j < batch; j++ {
+				if j > 0 {
+					buf.WriteString(",")
+				}
+				v := i + j
+				fmt.Fprintf(&buf, "(%d,%d,%d)", v, v, v%10)
+			}
+			tk.MustExec(buf.String())
+		}
+		tk.MustExec("analyze table t_skinny")
+
+		q := "select a, b from t_skinny use index(iab) group by a, b"
+
+		hashRows := tk.MustQuery("explain format=verbose select /*+ HASH_AGG() */ " + q[len("select "):]).Rows()
+		hashCost, err := strconv.ParseFloat(hashRows[0][2].(string), 64)
+		require.NoError(t, err)
+
+		streamRows := tk.MustQuery("explain format=verbose select /*+ STREAM_AGG() */ " + q[len("select "):]).Rows()
+		streamCost, err := strconv.ParseFloat(streamRows[0][2].(string), 64)
+		require.NoError(t, err)
+
+		require.Less(t, streamCost, hashCost,
+			"StreamAgg (cost=%.2f) should be cheaper than HashAgg (cost=%.2f) for skinny high-NDV GROUP BY with an index — aggCost+groupCost must be outside /concurrency at root",
+			streamCost, hashCost)
+
+		// The optimizer's natural choice (no hint) should also be StreamAgg.
+		naturalRows := tk.MustQuery("explain format=verbose " + q).Rows()
+		naturalTop := naturalRows[0][0].(string)
+		require.Contains(t, naturalTop, "StreamAgg",
+			"optimizer should naturally pick StreamAgg for skinny high-NDV GROUP BY, got top operator %q", naturalTop)
+	})
+}
+
 func TestHashAggMemCostGatedOnFreeOrdering(t *testing.T) {
 	// Companion to TestHashAggMemCostNotDividedByConcurrency: verify that the
 	// HashAgg memory penalty is gated on whether the child can naturally
