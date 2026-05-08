@@ -309,7 +309,6 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 	return nil
 }
 
-
 func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	exitCh := make(chan struct{})
 	workCh := make(chan *indexMergeTableTask, 1)
