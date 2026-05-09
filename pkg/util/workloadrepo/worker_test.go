@@ -148,10 +148,6 @@ func waitForTables(ctx context.Context, t *testing.T, wrk *worker, now time.Time
 	}, time.Minute, time.Second)
 }
 
-func anchorPartitionTestTime(now time.Time) time.Time {
-	return time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
-}
-
 func TestRaceToCreateTablesWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 
@@ -638,22 +634,27 @@ func buildPartitionString(partitions []time.Time) string {
 	return sb.String()
 }
 
-func createTableWithParts(ctx context.Context, t *testing.T, tk *testkit.TestKit, tbl *repositoryTable,
-	sess sessionctx.Context, partitions []time.Time) {
+func createTableWithPartsByExec(ctx context.Context, t *testing.T, tbl *repositoryTable,
+	sess sessionctx.Context, partitions []time.Time, exec func(string)) {
 	createSQL, err := buildCreateQuery(ctx, sess, tbl)
 	require.NoError(t, err)
 	createSQL += buildPartitionString(partitions)
-	tk.MustExec(createSQL)
+	exec(createSQL)
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
+}
+
+func createTableWithParts(ctx context.Context, t *testing.T, tk *testkit.TestKit, tbl *repositoryTable,
+	sess sessionctx.Context, partitions []time.Time) {
+	createTableWithPartsByExec(ctx, t, tbl, sess, partitions, func(createSQL string) {
+		tk.MustExec(createSQL)
+	})
 }
 
 func createTableWithPartsForSession(ctx context.Context, t *testing.T, se sessionapi.Session, tbl *repositoryTable,
 	sess sessionctx.Context, partitions []time.Time) {
-	createSQL, err := buildCreateQuery(ctx, sess, tbl)
-	require.NoError(t, err)
-	createSQL += buildPartitionString(partitions)
-	session.MustExec(t, se, createSQL)
-	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
+	createTableWithPartsByExec(ctx, t, tbl, sess, partitions, func(createSQL string) {
+		session.MustExec(t, se, createSQL)
+	})
 }
 
 func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
@@ -689,7 +690,10 @@ func TestCreatePartition(t *testing.T) {
 
 	wrk.fillInTableNames()
 
-	now := anchorPartitionTestTime(time.Now())
+	now := time.Now()
+	// The test builds date-based partitions with AddDate and TO_DAYS, so anchor at noon to avoid
+	// instability around wall-clock day boundaries.
+	now = time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
 
 	/* Tables without partitions are not currently supported. */
 
