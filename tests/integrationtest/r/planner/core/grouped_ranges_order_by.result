@@ -1479,3 +1479,61 @@ id	a	b	c
 3	2	1	30
 11	4	5	35
 12	4	4	45
+# IndexMerge partial table path with grouped ranges and UnionScan
+drop table if exists t_im_table_path;
+create table t_im_table_path (
+a int not null,
+b int default null,
+c int not null,
+d int not null,
+padding varchar(100) default null,
+primary key (a, c, d) clustered,
+key idx_b_c (b, c)
+);
+insert into t_im_table_path values
+(1, 1, 10, 1, 'row1'), (1, 2, 20, 2, 'row2'),
+(2, 1, 30, 3, 'row3'), (2, 2, 40, 4, 'row4'),
+(1, 3, 50, 5, 'row5'), (3, 1, 60, 6, 'row6'),
+(3, 2, 70, 7, 'row7'), (1, 1, 5, 8, 'row8'),
+(2, 3, 15, 9, 'row9'), (3, 3, 25, 10, 'row10'),
+(4, 5, 35, 11, 'row11'), (4, 4, 45, 12, 'row12'),
+(5, 5, 55, 13, 'row13'), (2, 5, 65, 14, 'row14'),
+(5, 1, 75, 15, 'row15'), (6, 5, 85, 16, 'row16');
+analyze table t_im_table_path;
+explain format = 'brief' select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+id	estRows	task	access object	operator info
+IndexMerge	7.00	root		type: union, limit embedded(offset:0, count:7)
+├─Limit(Build)	3.00	cop[tikv]		offset:0, count:7
+│ └─TableRangeScan	3.00	cop[tikv]	table:t_im_table_path	range:[1,1], [4,4], keep order:true
+├─Limit(Build)	6.44	cop[tikv]		offset:0, count:7
+│ └─IndexRangeScan	6.44	cop[tikv]	table:t_im_table_path, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
+└─TableRowIDScan(Probe)	7.00	cop[tikv]	table:t_im_table_path	keep order:false
+select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+a	b	c	d
+1	1	5	8
+1	1	10	1
+2	3	15	9
+1	2	20	2
+3	3	25	10
+2	1	30	3
+4	5	35	11
+begin;
+insert into t_im_table_path values (4, 5, 1, 17, 'uncommitted-low'), (7, 5, 95, 18, 'uncommitted-high');
+explain format = 'brief' select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+id	estRows	task	access object	operator info
+Limit	7.00	root		offset:0, count:7
+└─UnionScan	7.00	root		or(in(planner__core__grouped_ranges_order_by.t_im_table_path.a, 1, 4), in(planner__core__grouped_ranges_order_by.t_im_table_path.b, 1, 3, 5))
+  └─IndexMerge	7.00	root		type: union
+    ├─TableRangeScan(Build)	3.00	cop[tikv]	table:t_im_table_path	range:[1,1], [4,4], keep order:true
+    ├─IndexRangeScan(Build)	6.44	cop[tikv]	table:t_im_table_path, index:idx_b_c(b, c)	range:[1,1], [3,3], [5,5], keep order:true
+    └─TableRowIDScan(Probe)	7.00	cop[tikv]	table:t_im_table_path	keep order:false
+select /*+ use_index_merge(t_im_table_path, primary, idx_b_c) */ a,b,c,d from t_im_table_path where a in (1, 4) or b in (1, 3, 5) order by c limit 7;
+a	b	c	d
+4	5	1	17
+1	1	5	8
+1	1	10	1
+2	3	15	9
+1	2	20	2
+3	3	25	10
+2	1	30	3
+rollback;

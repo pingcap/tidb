@@ -114,10 +114,10 @@ type IndexMergeReaderExecutor struct {
 
 	// partialWorkerKVRanges stores the pre-built kv ranges for each partial worker. This field unifies the previous
 	// keyRanges and partitionKeyRanges fields.
-	// partialWorkerKVRanges[i] is for the i-th partial plan, and consists of multiple grouped kv ranges (wchi may come
-	// from partitions, grouped ranges from IN conditions, or both). Each group is a kvRangesWithPhysicalTblID.
-	// Note that IndexMergeReaderExecutor doesn't rely on this field for partial table path, but memIndexMergeReader
-	// need this, so we still build this field for all partial paths.
+	// partialWorkerKVRanges[i] is for the i-th partial path, and consists of one or multiple grouped kv ranges (which
+	// may come from partitions, grouped ranges from IN conditions, or both). Each group is a kvRangesWithPhysicalTblID.
+	// Note that IndexMergeReaderExecutor only uses this for partial index paths and doesn't rely on this field for
+	// partial table paths, but memIndexMergeReader needs this, so we still build this field for all partial paths.
 	partialWorkerKVRanges [][]*kvRangesWithPhysicalTblID // partial paths -> grouped kv ranges -> kv ranges
 
 	// All fields above are immutable.
@@ -249,13 +249,18 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 	for i, plan := range e.partialPlans {
 		// Determine grouped ranges: use GroupedRanges from the physical plan if available,
 		// otherwise wrap the flat ranges as a single group.
-		var groupedRanges [][]*ranger.Range
-		var isIdxScan bool
-		if x, ok := plan[0].(*physicalop.PhysicalIndexScan); ok {
+		var (
+			groupedRanges [][]*ranger.Range
+			isIdxScan     bool
+		)
+		switch x := plan[0].(type) {
+		case *physicalop.PhysicalIndexScan:
 			isIdxScan = true
 			groupedRanges = x.GroupedRanges
+		case *physicalop.PhysicalTableScan:
+			groupedRanges = x.GroupedRanges
 		}
-		if groupedRanges == nil {
+		if len(groupedRanges) == 0 {
 			groupedRanges = [][]*ranger.Range{e.ranges[i]}
 		}
 
