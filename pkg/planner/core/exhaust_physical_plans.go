@@ -565,8 +565,10 @@ func hasPseudoStatsForIndexJoinPrune(p base.LogicalPlan) bool {
 
 // shouldPruneIndexJoinByScanRatio decides whether to drop index-join candidates by
 // comparing estimated scan rows:
-//   index-join scans ~= buildRows + buildRows*probeRowsOne
-//   hash-join scans  ~= buildRows + innerFullScanRows
+//
+//	index-join scans ~= buildRows + buildRows*probeRowsOne
+//	hash-join scans  ~= buildRows + innerFullScanRows
+//
 // We only apply this pruning when:
 // 1) session threshold > 0,
 // 2) build/probe stats are non-pseudo,
