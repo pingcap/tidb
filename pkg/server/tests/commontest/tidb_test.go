@@ -3506,6 +3506,7 @@ func TestIssue57531(t *testing.T) {
 
 func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
+	enableFastConnectionAliveMonitor(t)
 
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("drop table if exists issue57531_insert")
@@ -3554,6 +3555,7 @@ func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
 
 func TestClientDisconnectCancelsAutocommitInsertPrewrite(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
+	enableFastConnectionAliveMonitor(t)
 
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("drop table if exists issue57531_prewrite")
@@ -3598,6 +3600,16 @@ func TestClientDisconnectCancelsAutocommitInsertPrewrite(t *testing.T) {
 		err = dbt.GetDB().QueryRowContext(context.Background(), "select count(*) from issue57531_prewrite").Scan(&cnt)
 		require.NoError(t, err)
 		require.Equal(t, 0, cnt)
+	})
+}
+
+func enableFastConnectionAliveMonitor(t *testing.T) {
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/server/mockConnectionAliveMonitorInterval",
+		`return(1)`,
+	))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/mockConnectionAliveMonitorInterval"))
 	})
 }
 

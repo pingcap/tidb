@@ -2112,9 +2112,11 @@ func (cc *clientConn) setSQLKillerConnectionAlive() func() {
 
 func (cc *clientConn) monitorConnectionAlive(isAlive func() bool, stop <-chan struct{}) {
 	checkInterval := time.Second
-	if intest.InTest {
-		checkInterval = time.Millisecond
-	}
+	failpoint.Inject("mockConnectionAliveMonitorInterval", func(val failpoint.Value) {
+		if interval, ok := val.(int); ok {
+			checkInterval = time.Duration(interval) * time.Millisecond
+		}
+	})
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 	for {
