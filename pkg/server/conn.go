@@ -2090,27 +2090,37 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 	}
 }
 
+// setSQLKillerConnectionAlive installs a connection-liveness probe on the
+// session SQLKiller and starts a background monitor for the current statement.
+// The returned cleanup is idempotent and must be called when the statement is
+// done to stop the monitor and clear the probe.
 func (cc *clientConn) setSQLKillerConnectionAlive() func() {
 	fn := func() bool {
 		if cc.bufReadConn != nil {
+			// IsAlive returns 0 only when the connection is known dead. Treat
+			// unknown states as alive so we do not interrupt queries
+			// conservatively when the liveness check itself cannot run.
 			return cc.bufReadConn.IsAlive() != 0
 		}
 		return true
 	}
 	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
 	stopMonitor := make(chan struct{})
-	go cc.monitorConnectionAlive(fn, stopMonitor)
+	doneMonitor := make(chan struct{})
+	go cc.monitorConnectionAlive(fn, stopMonitor, doneMonitor)
 
 	var clearOnce sync.Once
 	return func() {
 		clearOnce.Do(func() {
 			close(stopMonitor)
+			<-doneMonitor
 			cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
 		})
 	}
 }
 
-func (cc *clientConn) monitorConnectionAlive(isAlive func() bool, stop <-chan struct{}) {
+func (cc *clientConn) monitorConnectionAlive(isAlive func() bool, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
 	checkInterval := time.Second
 	failpoint.Inject("mockConnectionAliveMonitorInterval", func(val failpoint.Value) {
 		if interval, ok := val.(int); ok {
@@ -2123,6 +2133,11 @@ func (cc *clientConn) monitorConnectionAlive(isAlive func() bool, stop <-chan st
 		select {
 		case <-ticker.C:
 			if !isAlive() {
+				select {
+				case <-stop:
+					return
+				default:
+				}
 				cc.ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 				cc.cancelDispatch()
 				return
@@ -2187,6 +2202,7 @@ func (cc *clientConn) handleStmt(
 	monitoringConnectionAlive := shouldMonitorConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
 	if monitoringConnectionAlive {
 		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
 	}
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	if rs == nil || err != nil {
@@ -2224,6 +2240,7 @@ func (cc *clientConn) handleStmt(
 		}
 		if !monitoringConnectionAlive {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
 		}
 		cc.ctx.GetSessionVars().SQLKiller.SetFinishFunc(
 			func() {
@@ -2233,7 +2250,6 @@ func (cc *clientConn) handleStmt(
 		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
 		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		defer cc.ctx.GetSessionVars().SQLKiller.ClearFinishFunc()
-		defer clearConnectionAlive()
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}

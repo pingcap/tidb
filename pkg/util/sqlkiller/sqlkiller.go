@@ -220,7 +220,7 @@ func (killer *SQLKiller) HandleSignal() error {
 		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
 			killer.lastCheckTime.Store(&now)
 			if !(*fn)() {
-				atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
+				killer.sendKillSignal(QueryInterrupted)
 			}
 		}
 	}
@@ -238,7 +238,7 @@ func (killer *SQLKiller) HandleSignal() error {
 func (killer *SQLKiller) CheckConnectionAlive() {
 	fn := killer.IsConnectionAlive.Load()
 	if fn != nil && !(*fn)() {
-		atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
+		killer.sendKillSignal(QueryInterrupted)
 	}
 }
 

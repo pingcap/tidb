@@ -316,6 +316,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		monitoringConnectionAlive = shouldMonitorConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
 		if monitoringConnectionAlive {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
 		}
 	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
@@ -326,8 +327,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	if rs != nil {
 		if !monitoringConnectionAlive {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
 		}
-		defer clearConnectionAlive()
 		defer func() {
 			if !lazy {
 				rs.Close()
