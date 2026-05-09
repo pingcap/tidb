@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	meter_config "github.com/pingcap/metering_sdk/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -1046,6 +1047,43 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		require.Equal(t, tt.valid, conf.Valid() == nil)
 	}
+}
+
+func TestDeployModeConfig(t *testing.T) {
+	conf := NewConfig()
+	require.Equal(t, deploymode.Premium, conf.DeployMode)
+	require.NoError(t, conf.Valid())
+
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
+
+	if kerneltype.IsClassic() {
+		require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"`), 0644))
+		conf = NewConfig()
+		require.ErrorContains(t, conf.Load(configFile), "deploy-mode can only be configured for nextgen TiDB")
+
+		conf = NewConfig()
+		conf.DeployMode = deploymode.PremiumReserved
+		require.ErrorContains(t, conf.Valid(), "deploy-mode can only be configured for nextgen TiDB")
+		return
+	}
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"`), 0644))
+
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
 }
 
 func TestConflictInstanceConfig(t *testing.T) {
