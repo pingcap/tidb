@@ -130,7 +130,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	v := preprocessor{
 		ctx:                ctx,
 		sctx:               sctx,
-		tableAliasInJoin:   make([]map[string]any, 0),
+		tableAliasInJoin:   make([]map[tableAliasKey]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		lockSelectCtxStack: make([]lockSelectCtx, 0),
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
@@ -236,7 +236,7 @@ type preprocessor struct {
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
-	tableAliasInJoin []map[string]any
+	tableAliasInJoin []map[tableAliasKey]any
 	preprocessWith   *preprocessWith
 
 	// lockSelectCtxStack tracks lock-clause resolution state for each SELECT. Each level keeps both
@@ -1138,7 +1138,7 @@ func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 
 func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	if p.flag&parentIsJoin == 0 {
-		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]any))
+		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[tableAliasKey]any))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
 	isOracleMode := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
@@ -1155,23 +1155,26 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	p.flag |= parentIsJoin
 }
 
-func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]any) error {
+func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[tableAliasKey]any) error {
 	if ts, ok := node.(*ast.TableSource); ok {
 		tabName := ts.AsName
+		key := tableAliasKey{name: tabName.L}
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
-					tabName = ast.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
+					tabName = ast.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.O, tableNode.Name.O))
+					key = tableAliasKey{schema: tableNode.Schema.L, name: tableNode.Name.L, qualified: true}
 				} else {
 					tabName = tableNode.Name
+					key = tableAliasKey{name: tableNode.Name.L}
 				}
 			}
 		}
-		_, exists := tableAliases[tabName.L]
+		_, exists := tableAliases[key]
 		if len(tabName.L) != 0 && exists {
 			return plannererrors.ErrNonUniqTable.GenWithStackByArgs(tabName)
 		}
-		tableAliases[tabName.L] = nil
+		tableAliases[key] = nil
 	}
 	return nil
 }
@@ -1833,7 +1836,7 @@ type lockSelectCtx struct {
 	// clause. They skip handleTableName because they are resolved later against the FROM clause.
 	lockClauseTables map[*ast.TableName]struct{}
 	aliasMap         map[string]lockRef
-	qualifiedMap     map[string]lockRef
+	qualifiedMap     map[schemaTableKey]lockRef
 	// orderedRefs preserves the left-to-right FROM order for unqualified OF fallback.
 	// For example, `FROM db1.t, db2.t` records `db1.t` before `db2.t`, so fallback resolution for `FOR UPDATE OF t` will try `db1.t` first.
 	// When both aliased and unaliased entries share the same base name, checkLockClauseTables first
@@ -1850,7 +1853,7 @@ func newLockSelectCtx(lockTables []*ast.TableName) lockSelectCtx {
 	return lockSelectCtx{
 		lockClauseTables: lockClauseTables,
 		aliasMap:         make(map[string]lockRef),
-		qualifiedMap:     make(map[string]lockRef),
+		qualifiedMap:     make(map[schemaTableKey]lockRef),
 		orderedRefs:      make([]lockRef, 0),
 	}
 }
@@ -1864,7 +1867,7 @@ func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
 		c.aliasMap[asName.L] = ref
 	}
 	if tableName.Schema.L != "" {
-		qualifiedKey := tableName.Schema.L + "." + tableName.Name.L
+		qualifiedKey := schemaTableKey{schema: tableName.Schema.L, table: tableName.Name.L}
 		// Prefer an exact unaliased `schema.table` entry. If only aliased references exist in FROM,
 		// keep one as the backward-compatibility fallback for `OF schema.table`.
 		if asName.L == "" || c.qualifiedMap[qualifiedKey].table == nil {
@@ -1872,7 +1875,7 @@ func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
 		}
 		if asName.L != "" {
 			// Keep backward compatibility for `OF schema.table` while also supporting `OF schema.alias`.
-			c.qualifiedMap[tableName.Schema.L+"."+asName.L] = ref
+			c.qualifiedMap[schemaTableKey{schema: tableName.Schema.L, table: asName.L}] = ref
 		}
 	}
 	c.orderedRefs = append(c.orderedRefs, ref)
@@ -1919,8 +1922,7 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 		var matchedByAlias bool
 
 		if ref.Schema.L != "" {
-			name = ref.Schema.L + "." + ref.Name.L
-			matched = lockCtx.qualifiedMap[name]
+			matched = lockCtx.qualifiedMap[schemaTableKey{schema: ref.Schema.L, table: ref.Name.L}]
 			matchedByAlias = matched.alias.L != "" && ref.Name.L == matched.alias.L
 			if matchedByAlias {
 				ref.IsAlias = true

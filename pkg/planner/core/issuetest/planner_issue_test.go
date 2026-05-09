@@ -147,6 +147,37 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		tk.MustQuery("select * from v")
 	}
 
+	// issue-68164-dotted-schema-table-keys
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("drop database if exists `a`")
+		tk.MustExec("drop database if exists `a.b`")
+		tk.MustExec("drop database if exists `v`")
+		tk.MustExec("drop database if exists `v.b`")
+		tk.MustExec("create database `a`")
+		tk.MustExec("create database `a.b`")
+		tk.MustExec("create table `a`.`b.c` (id int primary key)")
+		tk.MustExec("create table `a.b`.`c` (id int primary key)")
+		tk.MustExec("insert into `a`.`b.c` values (1)")
+		tk.MustExec("insert into `a.b`.`c` values (2)")
+		tk.MustQuery("select * from `a`.`b.c`, `a.b`.`c` for update of `a.b`.`c`").
+			Check(testkit.Rows("1 2"))
+		tk.MustQuery("select t2.id from `a`.`b.c` as t1, `a.b`.`c` as t2 for update of `a.b`.`c`").
+			Check(testkit.Rows("2"))
+		tk.MustQuery("show warnings").CheckContain("Use the alias 't2'")
+
+		tk.MustExec("create database `v`")
+		tk.MustExec("create database `v.b`")
+		tk.MustExec("create view `v`.`b.c` as select 1 as id")
+		tk.MustExec("create view `v.b`.`c` as select * from `v`.`b.c`")
+		tk.MustQuery("select * from `v.b`.`c`").Check(testkit.Rows("1"))
+
+		tk.MustExec("drop database `a`")
+		tk.MustExec("drop database `a.b`")
+		tk.MustExec("drop database `v`")
+		tk.MustExec("drop database `v.b`")
+	}
+
 	// index-merge-with-generated-column
 	{
 		tk := prepareSharedTestKit(t)

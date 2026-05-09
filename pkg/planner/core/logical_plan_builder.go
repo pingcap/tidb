@@ -5480,20 +5480,20 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 
 // checkRecursiveView checks whether this view is recursively defined.
 func (b *PlanBuilder) checkRecursiveView(dbName ast.CIStr, tableName ast.CIStr) (func(), error) {
-	viewFullName := dbName.L + "." + tableName.L
+	viewFullName := schemaTableKey{schema: dbName.L, table: tableName.L}
 	if b.buildingViewStack == nil {
-		b.buildingViewStack = set.NewStringSet()
+		b.buildingViewStack = make(map[schemaTableKey]struct{})
 	}
 	// If this view has already been on the building stack, it means
 	// this view contains a recursive definition.
-	if b.buildingViewStack.Exist(viewFullName) {
+	if _, ok := b.buildingViewStack[viewFullName]; ok {
 		return nil, plannererrors.ErrViewRecursive.GenWithStackByArgs(dbName.O, tableName.O)
 	}
 	// If the view is being renamed, we return the mysql compatible error message.
 	if b.capFlag&renameView != 0 && viewFullName == b.renamingViewName {
 		return nil, plannererrors.ErrNoSuchTable.GenWithStackByArgs(dbName.O, tableName.O)
 	}
-	b.buildingViewStack.Insert(viewFullName)
+	b.buildingViewStack[viewFullName] = struct{}{}
 	return func() { delete(b.buildingViewStack, viewFullName) }, nil
 }
 
