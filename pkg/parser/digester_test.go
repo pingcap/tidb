@@ -330,6 +330,41 @@ func TestDigestHashNotEqForSimpleSQL(t *testing.T) {
 	}
 }
 
+func BenchmarkNormalizeForBinding(b *testing.B) {
+	benchmarks := []struct {
+		name   string
+		input  string
+		expect string
+	}{
+		{
+			name:  "simple_in_list",
+			input: "select * from t where a in(1, 2, 3)",
+		},
+		{
+			name:  "parenthesized_or",
+			input: "select pid from t where ((id=1) and ((ptype=1) or (ptype=2))) order by pid limit 10",
+		},
+		{
+			name:  "between",
+			input: "select * from t where a between b and (c and d)",
+		},
+		{
+			name:  "scalar_subquery",
+			input: "select * from t where (select 1 where a = 1)",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				parser.NormalizeForBinding(bm.input, false)
+			}
+		})
+	}
+}
+
 func TestGenDigest(t *testing.T) {
 	hash := genRandDigest("abc")
 	digest := parser.NewDigest(hash)
