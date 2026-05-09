@@ -128,7 +128,12 @@ run_sql_as user2 "123456" "select count(*) from db2.t1" || true
 check_contains "SELECT command denied to user"
 # user3 can only query db1.t1 using ssl
 # ci env uses mariadb client, ssl flag is different with mysql client
-run_sql_as user3 "123456" "select count(*) from db1.t1" || true
+# In release-8.5-20260116-v8.5.5, it seems SSL was enabled by default due to unknown reason...
+disable_ssl="--ssl-mode=DISABLED"
+if mysql --version | grep 'MariaDB'; then
+    disable_ssl="--skip-ssl"
+fi
+run_sql_as user3 "123456" "select count(*) from db1.t1" "$disable_ssl" || true
 check_contains "Access denied for user"
 run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl
 check_contains "count(*): 2"
