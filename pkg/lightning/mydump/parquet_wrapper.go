@@ -20,6 +20,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -40,6 +41,15 @@ var (
 	// latency can dominate read time. 128 MiB is an heuristic value which we can
 	// tolerate the extra memory usage for row group.
 	rowGroupInMemoryThreshold = 128 * units.MiB
+
+	// wholeFileInMemoryThreshold controls when we preload the entire parquet
+	// file with a single read. Footer parsing and row-group reads then share
+	// the same buffer, removing the second range GET that the row-group
+	// in-memory path would otherwise issue and absorbing arrow-go's footer
+	// seek pattern locally. Useful when a job imports many small files where
+	// per-file open overhead dominates. Beyond this size the saved opens
+	// shrink relative to the actual data read, so we keep this conservative.
+	wholeFileInMemoryThreshold = 8 * units.MiB
 )
 
 type readerAtSeekerCloser interface {
@@ -159,6 +169,17 @@ func newInMemoryReaderBase(
 	return base, base.loadRowGroup(ctx, store, path)
 }
 
+// newInMemoryReaderBaseFromBytes wraps an already-loaded buffer covering the
+// whole file. ReadAt receives absolute file offsets so we anchor rowGroup at
+// [0, len(buf)), which makes the buffer indexable by the same offsets the
+// arrow column metadata reports.
+func newInMemoryReaderBaseFromBytes(buf []byte) *inMemoryReaderBase {
+	return &inMemoryReaderBase{
+		rowGroup: rowGroupRange{start: 0, end: int64(len(buf))},
+		buffer:   buf,
+	}
+}
+
 func (r *inMemoryReaderBase) ReadAt(p []byte, off int64) (int, error) {
 	start := off - r.rowGroup.start
 	groupSize := r.rowGroup.end - r.rowGroup.start
@@ -239,6 +260,67 @@ func (w *inMemoryParquetWrapper) Seek(offset int64, whence int) (int64, error) {
 
 func (*inMemoryParquetWrapper) Close() error {
 	return nil
+}
+
+// columnReaderBuilder constructs a per-column reader for one row group.
+type columnReaderBuilder func(c int) (readerAtSeekerCloser, error)
+
+// inMemoryColumnBuilder returns a builder that serves every column from the
+// supplied in-memory buffer. Used by both the whole-file path (base spans
+// the entire file) and the per-row-group preload path (base spans one row
+// group).
+func inMemoryColumnBuilder(base *inMemoryReaderBase, ranges rowGroupRange, fileSize int64) columnReaderBuilder {
+	return func(c int) (readerAtSeekerCloser, error) {
+		return &inMemoryParquetWrapper{
+			base:     base,
+			pos:      ranges.columnStarts[c],
+			fileSize: fileSize,
+		}, nil
+	}
+}
+
+// streamingColumnBuilder returns a builder that issues one range GET per
+// column. Used when the row group is too large to preload.
+func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path string, ranges rowGroupRange) columnReaderBuilder {
+	return func(c int) (readerAtSeekerCloser, error) {
+		return newParquetWrapper(ctx, store, path,
+			&storeapi.ReaderOption{
+				StartOffset: &ranges.columnStarts[c],
+				EndOffset:   &ranges.columnEnds[c],
+			})
+	}
+}
+
+// newFooterReader chooses how to feed parquet footer parsing.
+//
+// For files small enough to fit in memory, it consumes r in a single read
+// and returns a wrapper backed by the in-memory buffer. The same buffer is
+// returned via base so later row-group reads can reuse it without a second
+// range GET. closer is a no-op in this case because r has been fully
+// consumed and closed.
+//
+// Otherwise it returns a streaming wrapper over r and a closer that releases
+// r when the parser is done with it.
+func newFooterReader(r storeapi.ReadSeekCloser, meta ParquetFileMeta) (
+	wrapper parquet.ReaderAtSeeker,
+	base *inMemoryReaderBase,
+	closer func() error,
+	err error,
+) {
+	if meta.FileSize > 0 && meta.FileSize <= int64(wholeFileInMemoryThreshold) {
+		buf := make([]byte, meta.FileSize)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			_ = r.Close()
+			return nil, nil, nil, errors.Trace(err)
+		}
+		if err := r.Close(); err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		base = newInMemoryReaderBaseFromBytes(buf)
+		wrapper = &inMemoryParquetWrapper{base: base, fileSize: meta.FileSize}
+		return wrapper, base, func() error { return nil }, nil
+	}
+	return &parquetWrapper{ReadSeekCloser: r}, nil, r.Close, nil
 }
 
 // Copied from https://github.com/apache/arrow-go/blob/bbf7ab7523a6411e25c7a08566a40e8759cc6c13/parquet/file/row_group_reader.go

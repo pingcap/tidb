@@ -1260,6 +1260,72 @@ func TestParquetParserWrapper(t *testing.T) {
 	}
 }
 
+func TestParquetParserWholeFileInMemory(t *testing.T) {
+	const rowCnt = 64
+	dir := t.TempDir()
+	fileName := "whole-file.parquet"
+
+	pc := []ParquetColumn{
+		{
+			Name:      "v",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					defLevels[i] = 1
+					vals[i] = int64(i)
+				}
+				return vals, defLevels
+			},
+		},
+	}
+	require.NoError(t, WriteParquetFile(dir, fileName, pc, rowCnt))
+
+	info, err := os.Stat(filepath.Join(dir, fileName))
+	require.NoError(t, err)
+	fileSize := info.Size()
+
+	read := func(meta ParquetFileMeta) *ParquetParser {
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, meta)
+		for i := range rowCnt {
+			require.NoError(t, parser.ReadRow())
+			require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
+		}
+		require.ErrorIs(t, parser.ReadRow(), io.EOF)
+		return parser
+	}
+
+	// FileSize known and below threshold: whole-file path engages.
+	t.Run("engages_when_file_fits_threshold", func(t *testing.T) {
+		origThreshold := wholeFileInMemoryThreshold
+		wholeFileInMemoryThreshold = int(fileSize) + 1
+		defer func() { wholeFileInMemoryThreshold = origThreshold }()
+
+		parser := read(ParquetFileMeta{FileSize: fileSize})
+		require.NotNil(t, parser.wholeFileBase, "expected whole-file in-memory path")
+	})
+
+	// FileSize unset: parser falls back to streaming, whole-file base must
+	// stay nil so we don't accidentally claim mode 3.
+	t.Run("skipped_when_file_size_unknown", func(t *testing.T) {
+		parser := read(ParquetFileMeta{})
+		require.Nil(t, parser.wholeFileBase)
+	})
+
+	// FileSize larger than threshold: stay on the streaming / per-row-group
+	// path even though we know the size.
+	t.Run("skipped_when_file_exceeds_threshold", func(t *testing.T) {
+		origThreshold := wholeFileInMemoryThreshold
+		wholeFileInMemoryThreshold = int(fileSize) - 1
+		defer func() { wholeFileInMemoryThreshold = origThreshold }()
+
+		parser := read(ParquetFileMeta{FileSize: fileSize})
+		require.Nil(t, parser.wholeFileBase)
+	})
+}
+
 // getStringFromParquetByteOld is the previous implementation used to convert
 // parquet byte to string. It's only used to generate expected results in tests.
 func getStringFromParquetByteOld(rawBytes []byte, scale int) string {

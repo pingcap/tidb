@@ -97,6 +97,11 @@ type MDTableMeta struct {
 type ParquetFileMeta struct {
 	allocator memory.Allocator
 	Loc       *time.Location
+	// FileSize is the size of the underlying parquet file in bytes. When > 0
+	// it lets the parser short-circuit the streaming read path for files that
+	// fit in memory. Zero means "unknown"; the parser falls back to the
+	// streaming wrapper.
+	FileSize int64
 }
 
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
