@@ -159,6 +159,49 @@ func TestNormalize(t *testing.T) {
 	)
 	require.Equal(t, normalizedScalarSubqueryWithParens, normalizedScalarSubquery)
 	require.Equal(t, digestScalarSubquery.String(), parser.DigestNormalized(normalizedScalarSubquery).String())
+
+	extraBindingParenCases := []struct {
+		input  string
+		expect string
+	}{
+		// BETWEEN operands: all three positions can contain boolean expressions.
+		{
+			"select * from t where a between (b and c) and d",
+			"select * from `t` where `a` between ( `b` and `c` ) and `d`",
+		},
+		{
+			"select * from t where (a and b) between c and d",
+			"select * from `t` where ( `a` and `b` ) between `c` and `d`",
+		},
+		{
+			"select * from t where a between b and ((c and d))",
+			"select * from `t` where `a` between `b` and ( `c` and `d` )",
+		},
+		{
+			"select * from t where (a between b and c) and (d = e)",
+			"select * from `t` where ( `a` between `b` and `c` ) and `d` = `e`",
+		},
+
+		// Scalar subqueries: keep exactly the required subquery wrapper while still
+		// allowing redundant outer wrappers to be reduced.
+		{
+			"select * from t where ((select 1 where a = 1))",
+			"select * from `t` where ( select ? where `a` = ? )",
+		},
+		{
+			"select * from t where ((select 1 where a = 1) = 1)",
+			"select * from `t` where ( select ? where `a` = ? ) = ?",
+		},
+		{
+			"select * from t where (with cte as (select 1) select * from cte)",
+			"select * from `t` where ( with `cte` as ( select ? ) select * from `cte` )",
+		},
+	}
+	for _, tc := range extraBindingParenCases {
+		normalized, digest := parser.NormalizeDigestForBinding(tc.input)
+		require.Equal(t, tc.expect, normalized, tc.input)
+		require.Equal(t, digest.String(), parser.DigestNormalized(normalized).String(), tc.input)
+	}
 }
 
 func TestNormalizeRedact(t *testing.T) {
