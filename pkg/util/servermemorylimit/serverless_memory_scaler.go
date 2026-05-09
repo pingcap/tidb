@@ -228,12 +228,12 @@ func (ms *serverlessMemoryScaler) report(stat *runtime.MemStats, limit uint64) {
 	client := &http.Client{Timeout: time.Second}
 	res, err := client.Post("http://"+ms.nodeIP+":4040/report", "application/json", bytes.NewReader(data))
 	if err != nil {
-		logutil.BgLogger().Error("report memory usage failed", zap.Error(err))
+		logutil.BgLogger().Warn("report memory usage failed", zap.Error(err))
 		return
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		logutil.BgLogger().Error("report memory usage failed", zap.Int("status", res.StatusCode))
+		logutil.BgLogger().Warn("report memory usage failed", zap.Int("status", res.StatusCode))
 	}
 }
 
@@ -248,12 +248,12 @@ func (ms *serverlessMemoryScaler) scaleMemory(to uint64) bool {
 	client := &http.Client{Timeout: time.Second}
 	res, err := client.Post("http://"+ms.nodeIP+":4040/scale", "application/json", bytes.NewReader(data))
 	if err != nil {
-		logutil.BgLogger().Error("scale memory failed", zap.Error(err))
+		logutil.BgLogger().Warn("scale memory failed", zap.Error(err))
 		return false
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		logutil.BgLogger().Error("scale memory failed", zap.Int("status", res.StatusCode))
+		logutil.BgLogger().Warn("scale memory failed", zap.Int("status", res.StatusCode))
 		return false
 	}
 	logutil.BgLogger().Info("scale memory success", zap.Uint64("limit", to))
