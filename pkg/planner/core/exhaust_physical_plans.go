@@ -2126,7 +2126,7 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		}
 		joins = append(joins, mergeJoins...)
 
-		enableRatioPrune := (len(hashJoins) > 0 || len(mergeJoins) > 0) && !hasForceIndexJoinFamilyHint(p)
+		enableRatioPrune := len(hashJoins) > 0 && !hasForceIndexJoinFamilyHint(p)
 		indexJoins := tryToEnumerateIndexJoin(super, prop, enableRatioPrune)
 		joins = append(joins, indexJoins...)
 
