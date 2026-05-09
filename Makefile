@@ -257,8 +257,7 @@ else
 endif
 
 .PHONY: server_failpoint
-server_failpoint: ## Build TiDB server binary with failpoints enabled
-server_failpoint: failpoint-enable
+server_failpoint: failpoint-enable ## Build TiDB server binary with failpoints enabled
 	$(SERVER_BUILD_CMD) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
