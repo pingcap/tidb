@@ -132,6 +132,20 @@ func TestRangeDerivation(t *testing.T) {
 			})
 			plan.Check(testkit.Rows(output[i].Plan...))
 		}
+
+		testKit.MustExec("drop table if exists issue68055")
+		testKit.MustExec("create table issue68055 (id int primary key, order_id bigint, key idx_order_id(order_id))")
+		testKit.MustQuery("explain format = 'plan_tree' select /* issue:68055 */ * from issue68055 where order_id = ''").Check(testkit.Rows(
+			"IndexReader root  index:IndexRangeScan",
+			"└─IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo"))
+		testKit.MustQuery("explain format = 'plan_tree' delete /* issue:68055 */ from issue68055 where order_id = ''").Check(testkit.Rows(
+			"Delete root  N/A",
+			"└─IndexReader root  index:IndexRangeScan",
+			"  └─IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo"))
+		testKit.MustQuery("explain format = 'plan_tree' update /* issue:68055 */ issue68055 set id = id where order_id = ''").Check(testkit.Rows(
+			"Update root  N/A",
+			"└─IndexReader root  index:IndexRangeScan",
+			"  └─IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo"))
 	})
 }
 
