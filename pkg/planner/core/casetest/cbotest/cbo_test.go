@@ -171,7 +171,7 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			")")
 		tk.MustExec("insert into t_small(id1, id2, id3, id4) values " + buildReproHashJoinIssueSmallRows(1000))
 		tk.MustExec("insert into t_big(id1, id2, id3, id4, id5) values " + buildReproHashJoinIssueBigRows(1000))
-		tk.MustExec("analyze table t_small, t_big")
+		tk.MustExec("analyze table t_small, t_big all columns")
 		tk.MustExec("set @@session.tidb_cost_model_version = 2")
 		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 100")
 		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = 0.1")
