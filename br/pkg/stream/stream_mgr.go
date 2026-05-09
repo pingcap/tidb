@@ -404,6 +404,7 @@ func FastUnmarshalMetaData(
 	startTS uint64,
 	endTS uint64,
 	metaDataWorkerPoolSize uint,
+	skipCondition func(filename string) bool,
 	fn func(path string, rawMetaData []byte) error,
 ) error {
 	log.Info("use workers to speed up reading metadata files", zap.Uint("workers", metaDataWorkerPoolSize))
@@ -421,6 +422,9 @@ func FastUnmarshalMetaData(
 				zap.Uint64("startTs", startTS),
 				zap.Uint64("endTs", endTS),
 			)
+			return nil
+		}
+		if skipCondition(path) {
 			return nil
 		}
 		pool.ApplyOnErrorGroup(eg, func() error {

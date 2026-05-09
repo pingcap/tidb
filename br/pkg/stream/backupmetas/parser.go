@@ -48,6 +48,14 @@ type ParsedName struct {
 	MaxTS                 uint64
 }
 
+type ShiftTSStatus uint8
+
+const (
+	ShiftTSFound ShiftTSStatus = iota
+	ShiftTSNotFound
+	ShiftTSInvalidStats
+)
+
 func ParseName(fileName string) (ParsedName, error) {
 	switch {
 	case taggedBackupMetaPattern.MatchString(fileName):
@@ -57,6 +65,24 @@ func ParseName(fileName string) (ParsedName, error) {
 	default:
 		return ParsedName{}, errors.Errorf("invalid backupmeta file name format: %s", fileName)
 	}
+}
+
+func (parsedName *ParsedName) CalculateShiftTS(startTS uint64, restoreTS uint64) (uint64, ShiftTSStatus) {
+	if parsedName.MinTS > restoreTS || parsedName.MaxTS < startTS {
+		return 0, ShiftTSNotFound
+	}
+	if parsedName.MinBeginTsInDefaultCf == 0 || parsedName.MinBeginTsInDefaultCf > parsedName.MinTS {
+		return 0, ShiftTSInvalidStats
+	}
+	return parsedName.MinBeginTsInDefaultCf, ShiftTSFound
+}
+
+// TryParseTaggedBackupMetaFileName parses the tagged backupmeta file-name format.
+func TryParseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
+	if !taggedBackupMetaPattern.MatchString(fileName) {
+		return ParsedName{}, errors.Errorf("invalid latest backupmeta file name format: %s", fileName)
+	}
+	return parseTaggedBackupMetaFileName(fileName)
 }
 
 func parseLegacyBackupMetaFileName(fileName string) (ParsedName, error) {

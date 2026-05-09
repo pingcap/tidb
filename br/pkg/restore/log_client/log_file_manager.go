@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/encryption"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -180,15 +181,37 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 		// use start ts to calculate shift start ts
 		lm.startTS,
 		lm.restoreTS,
-		lm.metadataDownloadBatchSize, func(path string, raw []byte) error {
+		lm.metadataDownloadBatchSize,
+		func(filename string) bool {
+			parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(filename)
+			if err != nil {
+				return false
+			}
+			ts, status := parsedName.CalculateShiftTS(lm.startTS, lm.restoreTS)
+			switch status {
+			case backupmetas.ShiftTSFound:
+			case backupmetas.ShiftTSNotFound:
+				return true
+			default:
+				return false
+			}
+			shiftTS.Lock()
+			if !shiftTS.exists || shiftTS.value > ts {
+				shiftTS.value = ts
+				shiftTS.exists = true
+			}
+			shiftTS.Unlock()
+			return true
+		},
+		func(filename string, raw []byte) error {
 			m, err := lm.helper.ParseToMetadata(raw)
 			if err != nil {
 				return err
 			}
-			log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
+			log.Info("read meta from storage and parse", zap.String("path", filename), zap.Uint64("min-ts", m.MinTs),
 				zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-			ts, ok := stream.UpdateShiftTS(m, lm.startTS, lm.restoreTS)
+			ts, ok := stream.UpdateShiftTSFromMetadata(m, lm.startTS, lm.restoreTS)
 			shiftTS.Lock()
 			if ok && (!shiftTS.exists || shiftTS.value > ts) {
 				shiftTS.value = ts
@@ -206,7 +229,7 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 		lm.withMigrationBuilder.SetShiftStartTS(lm.shiftStartTS)
 		return nil
 	}
-	lm.shiftStartTS = shiftTS.value
+	lm.shiftStartTS = min(lm.startTS, shiftTS.value)
 	lm.withMigrationBuilder.SetShiftStartTS(lm.shiftStartTS)
 	return nil
 }
@@ -330,18 +353,6 @@ func (lm *LogFileManager) LoadDDLFiles(ctx context.Context) ([]Log, error) {
 	mg := lm.FilterMetaFiles(m)
 
 	return lm.collectDDLFilesAndPrepareCache(ctx, mg)
-}
-
-type loadDMLFilesConfig struct {
-	Statistic *logFilesStatistic
-}
-
-type loadDMLFilesOption func(*loadDMLFilesConfig)
-
-func lDOptWithStatistics(s *logFilesStatistic) loadDMLFilesOption {
-	return func(c *loadDMLFilesConfig) {
-		c.Statistic = s
-	}
 }
 
 // LoadDMLFiles loads all DML files needs to be restored in the restoration.
