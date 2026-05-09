@@ -15,12 +15,17 @@
 package servermemorylimit
 
 import (
+	"runtime/debug"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,4 +73,93 @@ func TestMemoryUsageOpsHistory(t *testing.T) {
 		checkResult(rows[i-3], i)
 	}
 	require.Equal(t, GlobalMemoryOpsHistoryManager.offsets, 3)
+}
+
+func TestServerlessMemoryScalerConfig(t *testing.T) {
+	prevServerMemoryLimit := memory.ServerMemoryLimit.Load()
+	prevServerMemoryLimitOriginText := memory.ServerMemoryLimitOriginText.Load()
+	prevPercentage := gctuner.GlobalMemoryLimitTuner.GetPercentage()
+	prevGoMemLimit := debug.SetMemoryLimit(-1)
+	defer func() {
+		memory.ServerMemoryLimit.Store(prevServerMemoryLimit)
+		memory.ServerMemoryLimitOriginText.Store(prevServerMemoryLimitOriginText)
+		gctuner.GlobalMemoryLimitTuner.SetPercentage(prevPercentage)
+		debug.SetMemoryLimit(prevGoMemLimit)
+	}()
+	if kerneltype.IsNextGen() {
+		prevDeployMode := deploymode.Get()
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(prevDeployMode))
+		})
+	}
+	gctuner.GlobalMemoryLimitTuner.SetPercentage(0.7)
+
+	t.Run("non-starter mode does not read env memory limits", func(t *testing.T) {
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(deploymode.Premium))
+		}
+		memory.ServerMemoryLimit.Store(1234)
+		t.Setenv(serverlessEnvMinMemoryLimit, "1073741824")
+		t.Setenv(serverlessEnvMaxMemoryLimit, "2147483648")
+
+		scaler, ok := newServerlessMemoryScaler(make(chan struct{}))
+		require.False(t, ok)
+		require.Nil(t, scaler)
+		require.Equal(t, uint64(1234), memory.ServerMemoryLimit.Load())
+	})
+
+	t.Run("starter mode initializes memory limit without scaler loop", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("Starter deploy mode requires nextgen kernel")
+		}
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		t.Setenv(serverlessEnvNamespace, "")
+		t.Setenv(serverlessEnvPodName, "")
+		t.Setenv(serverlessEnvNodeIP, "")
+		t.Setenv(serverlessEnvMinMemoryLimit, "1073741824")
+		t.Setenv(serverlessEnvMaxMemoryLimit, "2147483648")
+		t.Setenv(serverlessEnvDisableMemoryShrink, "true")
+		t.Setenv(serverlessEnvMemoryShrinkCooldown, "5m")
+
+		scaler, ok := newServerlessMemoryScaler(make(chan struct{}))
+		require.False(t, ok)
+		require.Nil(t, scaler)
+		require.Equal(t, uint64(1073741824), memory.ServerMemoryLimit.Load())
+		require.Equal(t, "1073741824", memory.ServerMemoryLimitOriginText.Load())
+	})
+
+	t.Run("starter mode starts scaler loop when pod env is present", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("Starter deploy mode requires nextgen kernel")
+		}
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		t.Setenv(serverlessEnvNamespace, "ns")
+		t.Setenv(serverlessEnvPodName, "pod")
+		t.Setenv(serverlessEnvNodeIP, "127.0.0.1")
+		t.Setenv(serverlessEnvMinMemoryLimit, "1073741824")
+		t.Setenv(serverlessEnvMaxMemoryLimit, "2147483648")
+		t.Setenv(serverlessEnvDisableMemoryShrink, "false")
+		t.Setenv(serverlessEnvMemoryShrinkCooldown, "30s")
+
+		scaler, ok := newServerlessMemoryScaler(make(chan struct{}))
+		require.True(t, ok)
+		require.NotNil(t, scaler)
+		defer scaler.stop()
+		require.Equal(t, "ns", scaler.namespace)
+		require.Equal(t, "pod", scaler.podName)
+		require.Equal(t, "127.0.0.1", scaler.nodeIP)
+		require.Equal(t, uint64(1073741824), scaler.minMemoryLimit)
+		require.Equal(t, uint64(2147483648), scaler.maxMemoryLimit)
+		require.False(t, scaler.disableMemoryShrink)
+		require.Equal(t, 30*time.Second, scaler.memoryShrinkCooldown)
+	})
+
+	t.Run("non-positive shrink cooldown disables shrink", func(t *testing.T) {
+		t.Setenv(serverlessEnvDisableMemoryShrink, "false")
+		t.Setenv(serverlessEnvMemoryShrinkCooldown, "0s")
+
+		disableMemoryShrink, memoryShrinkCooldown := loadServerlessMemoryShrinkConfig()
+		require.True(t, disableMemoryShrink)
+		require.Equal(t, defaultServerlessMemoryShrinkCooldown, memoryShrinkCooldown)
+	})
 }

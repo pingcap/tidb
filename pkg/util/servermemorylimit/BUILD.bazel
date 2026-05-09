@@ -2,13 +2,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "servermemorylimit",
-    srcs = ["servermemorylimit.go"],
+    srcs = [
+        "serverless_memory_scaler.go",
+        "servermemorylimit.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/servermemorylimit",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/deploymode",
         "//pkg/parser/mysql",
         "//pkg/session/sessmgr",
         "//pkg/types",
+        "//pkg/util/gctuner",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/sqlkiller",
@@ -26,8 +31,12 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
         "//pkg/session/sessmgr",
         "//pkg/types",
+        "//pkg/util/gctuner",
+        "//pkg/util/memory",
         "@com_github_stretchr_testify//require",
     ],
 )

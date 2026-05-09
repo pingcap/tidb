@@ -43,8 +43,11 @@ var (
 
 // Handle is the handler for server memory limit.
 type Handle struct {
-	exitCh chan struct{}
-	sm     atomic.Value
+	exitCh                   chan struct{}
+	sm                       atomic.Value
+	serverlessMu             sync.Mutex
+	serverlessScaler         *serverlessMemoryScaler
+	serverlessStartAttempted bool
 }
 
 // NewServerMemoryLimitHandle builds a new server memory limit handler.
@@ -73,9 +76,11 @@ func (smqh *Handle) Run() {
 	for {
 		select {
 		case <-ticker.C:
+			smqh.updateServerlessMemoryScaler()
 			memory.HandleGlobalMemArbitratorRuntime()
 			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryLimit.Load(), sm)
 		case <-smqh.exitCh:
+			smqh.stopServerlessMemoryScaler()
 			return
 		}
 	}
