@@ -563,6 +563,16 @@ func hasPseudoStatsForIndexJoinPrune(p base.LogicalPlan) bool {
 	return stats == nil || stats.HistColl == nil || stats.HistColl.Pseudo
 }
 
+// shouldPruneIndexJoinByScanRatio decides whether to drop index-join candidates by
+// comparing estimated scan rows:
+//   index-join scans ~= buildRows + buildRows*probeRowsOne
+//   hash-join scans  ~= buildRows + innerFullScanRows
+// We only apply this pruning when:
+// 1) session threshold > 0,
+// 2) build/probe stats are non-pseudo,
+// 3) build/probe rows pass minimal gates to avoid over-pruning on tiny inputs.
+// If indexJoinScanRows/hashJoinScanRows >= threshold, index join is considered too
+// expensive in scan volume and gets pruned.
 func shouldPruneIndexJoinByScanRatio(
 	threshold, buildRows, probeRowsOne float64,
 	build, probe base.LogicalPlan,
