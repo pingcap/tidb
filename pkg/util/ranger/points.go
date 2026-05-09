@@ -71,14 +71,6 @@ func (rp *point) String() string {
 	return fmt.Sprintf("%v%s", val, symbol)
 }
 
-func (rp *point) Clone(value types.Datum) *point {
-	return &point{
-		value: value,
-		excl:  rp.excl,
-		start: rp.start,
-	}
-}
-
 func rangePointCmp(tc types.Context, a, b *point, collator collate.Collator) (int, error) {
 	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
 		return rangePointEnumCmp(a, b)

@@ -221,36 +221,36 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 	if err != nil {
 		return point, errors.Trace(err)
 	}
-	npoint := point.Clone(casted)
+	point.value = casted
 	if valCmpCasted == 0 {
-		return npoint, nil
+		return point, nil
 	}
-	if npoint.start {
-		if npoint.excl {
+	if point.start {
+		if point.excl {
 			if valCmpCasted < 0 {
 				// e.g. "a > 1.9" convert to "a >= 2".
-				npoint.excl = false
+				point.excl = false
 			}
 		} else {
 			if valCmpCasted > 0 {
 				// e.g. "a >= 1.1 convert to "a > 1"
-				npoint.excl = true
+				point.excl = true
 			}
 		}
 	} else {
-		if npoint.excl {
+		if point.excl {
 			if valCmpCasted > 0 {
 				// e.g. "a < 1.1" convert to "a <= 1"
-				npoint.excl = false
+				point.excl = false
 			}
 		} else {
 			if valCmpCasted < 0 {
 				// e.g. "a <= 1.9" convert to "a < 2"
-				npoint.excl = true
+				point.excl = true
 			}
 		}
 	}
-	return npoint, nil
+	return point, nil
 }
 
 func getRangesTotalDatumSize(ranges Ranges) (sum int64) {
