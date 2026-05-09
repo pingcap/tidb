@@ -2141,6 +2141,9 @@ func (cc *clientConn) cancelDispatch() {
 }
 
 func shouldMonitorConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
 	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
 		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
 		if err != nil || prepared.PreparedAst == nil {

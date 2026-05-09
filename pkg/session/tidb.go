@@ -275,6 +275,9 @@ func isLoadDataLocal(sql sqlexec.Statement) bool {
 }
 
 func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
+	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
 	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
 	if err != nil || stmt == nil {
 		return false
