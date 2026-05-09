@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -801,22 +800,22 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 
 func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
-	originCfg := config.GetGlobalConfig()
+	originNodeResource := storage.GetNodeResource()
 	t.Cleanup(func() {
-		config.StoreGlobalConfig(originCfg)
+		storage.SetNodeResource(originNodeResource)
 	})
 
 	// when no node
 	_, err := sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
+	storage.SetNodeResource(proto.NewNodeResource(0, 0, 0))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	_, err = sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed node have enough resource")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	storage.SetNodeResource(proto.NewNodeResource(8, 8, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4001", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 	nodes, err := sm.GetAllNodes(ctx)
@@ -827,7 +826,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", "background"))
 
@@ -888,10 +887,10 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	require.NoError(t, sm.InitMeta(ctx, ":4001", "background"))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	storage.SetNodeResource(proto.NewNodeResource(8, 8, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", ""))
 	cpuCount, err = sm.GetCPUCountOfNode(ctx)
@@ -904,7 +903,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
 
-	sm.SetDXFCPUCount(5)
+	storage.SetNodeResource(proto.NewNodeResource(5, 5, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4004", "background"))
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
@@ -917,7 +916,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	}
 	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 5}, limitedNode)
 
-	sm.SetDXFCPUCount(1)
+	storage.SetNodeResource(proto.NewNodeResource(1, 1, 100))
 	require.NoError(t, sm.RecoverMeta(ctx, ":4004", ""))
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)

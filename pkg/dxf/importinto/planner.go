@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -700,7 +701,7 @@ func getRangeSplitter(
 	defRegionSplitSize, defRegionSplitKeys := handle.GetDefaultRegionSplitConfig()
 	regionSplitSize = max(regionSplitSize, defRegionSplitSize)
 	regionSplitKeys = max(regionSplitKeys, defRegionSplitKeys)
-	nodeRc := handle.GetNodeResource()
+	nodeRc := storage.GetNodeResource()
 	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.Logger(ctx).Info("split kv range with split size and keys",
 		zap.Int64("region-split-size", regionSplitSize),

@@ -18,17 +18,37 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
+
+var nodeResource atomic.Pointer[proto.NodeResource]
+
+// GetNodeResource gets the node resource.
+func GetNodeResource() *proto.NodeResource {
+	return nodeResource.Load()
+}
+
+// SetNodeResource sets the node resource.
+func SetNodeResource(rc *proto.NodeResource) {
+	nodeResource.Store(rc)
+}
+
+func getDXFCPUCount() int {
+	if rc := GetNodeResource(); rc != nil {
+		return rc.TotalCPU
+	}
+	return 0
+}
 
 // InitMeta insert the manager information into dist_framework_meta.
 func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string) error {
@@ -39,11 +59,11 @@ func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string
 
 // InitMetaSession insert the manager information into dist_framework_meta.
 // if the record exists, update the cpu_count and role.
-func (mgr *TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
+func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := mgr.getDXFCPUCount()
+	cpuCount := getDXFCPUCount()
 	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
@@ -61,7 +81,7 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := mgr.getDXFCPUCount()
+	cpuCount := getDXFCPUCount()
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
@@ -69,18 +89,6 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 		update cpu_count = %?`,
 		execID, role, cpuCount, cpuCount)
 	return err
-}
-
-// SetDXFCPUCount sets the usable DXF CPU count for dist_framework_meta.
-func (mgr *TaskManager) SetDXFCPUCount(cpuCount int) {
-	mgr.dxfCPUCount.Store(int64(cpuCount))
-}
-
-func (mgr *TaskManager) getDXFCPUCount() int {
-	if cpuCount := mgr.dxfCPUCount.Load(); cpuCount > 0 {
-		return int(cpuCount)
-	}
-	return cpu.GetCPUCount()
 }
 
 // DeleteDeadNodes deletes the dead nodes from mysql.dist_framework_meta.
@@ -250,4 +258,9 @@ func (mgr *TaskManager) getCPUCountOfNodeByRole(
 		return 0, errors.New("no managed node have enough resource for dist task")
 	}
 	return cpuCount, nil
+}
+
+func init() {
+	// domain initializes this at runtime. Keep a default for tests that don't start domain.
+	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
 }
