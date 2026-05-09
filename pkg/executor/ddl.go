@@ -166,7 +166,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.CreateMaterializedViewStmt:
 		err = e.ddlExecutor.CreateMaterializedView(e.Ctx(), x)
 	case *ast.CreateMaterializedViewLogStmt:
-		err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), x)
+		_, err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), x, "")
 	case *ast.AlterMaterializedViewStmt:
 		err = e.ddlExecutor.AlterMaterializedView(e.Ctx(), x)
 	case *ast.AlterMaterializedViewLogStmt:

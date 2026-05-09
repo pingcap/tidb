@@ -570,9 +570,24 @@ func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
 		return stmt.(*ast.CreateMaterializedViewLogStmt)
 	}
 
-	err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next date_add(now(), interval 1 hour)"))
+	_, err := tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with 1 next date_add(now(), interval 1 hour)"), "test_mlog")
 	require.ErrorContains(t, err, "PURGE START WITH expression must return DATETIME/TIMESTAMP")
 
-	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
+	_, err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"), "test_mlog")
 	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+}
+
+func TestCreateMaterializedViewLogRejectExistingMLogName(t *testing.T) {
+	tracker := schematracker.NewSchemaTracker(2)
+	tracker.CreateTestDB(nil)
+	execCreate(t, tracker, "create table test.t (a int)")
+	execCreate(t, tracker, "create table test.test_mlog (a int)")
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("create materialized view log on test.t (a)", "", "")
+	require.NoError(t, err)
+
+	_, err = tracker.CreateMaterializedViewLog(sctx, stmt.(*ast.CreateMaterializedViewLogStmt), "test_mlog")
+	require.True(t, infoschema.ErrTableExists.Equal(err), err)
 }

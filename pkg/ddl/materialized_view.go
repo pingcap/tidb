@@ -66,8 +66,9 @@ var (
 	MLogShortTableNameSeq atomic.Uint64
 )
 
-// TODO(xzx) add ut for this function
 // GenerateMLogTableName generates an available mlog table name for the base table.
+//
+// TODO(xzx) add ut for this function
 func GenerateMLogTableName(
 	baseTableName pmodel.CIStr,
 	checkTableExistence func(pmodel.CIStr) (bool, error),
@@ -155,6 +156,15 @@ func getExistenceOfMLogTableNameChecker(
 		}
 		return false, err
 	}
+}
+
+// GetExistenceOfMLogTableNameChecker returns a checker for whether an mlog table name already exists.
+func GetExistenceOfMLogTableNameChecker(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+) func(pmodel.CIStr) (bool, error) {
+	return getExistenceOfMLogTableNameChecker(ctx, is, schemaName)
 }
 
 // GetMLogTableByBaseTable returns the mlog table recorded on the base table metadata.
