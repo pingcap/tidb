@@ -66,8 +66,9 @@ var (
 	MLogShortTableNameSeq atomic.Uint64
 )
 
-// BuildMaterializedViewLogTableName builds an available mlog table name for the base table.
-func BuildMaterializedViewLogTableName(
+// TODO(xzx) add ut for this function
+// GenerateMLogTableName generates an available mlog table name for the base table.
+func GenerateMLogTableName(
 	baseTableName pmodel.CIStr,
 	checkTableExistence func(pmodel.CIStr) (bool, error),
 ) (pmodel.CIStr, error) {
@@ -80,7 +81,7 @@ func BuildMaterializedViewLogTableName(
 		suffix := baseTableName.O[len(materializedViewLogTablePrefix):]
 		for {
 			var err error
-			number, err := nextMaterializedViewLogTableNameNumber(
+			number, err := nextMLogTableNameNumber(
 				&MLogTableNameSeq,
 				"materialized view log table name number is out of range",
 			)
@@ -104,9 +105,10 @@ func BuildMaterializedViewLogTableName(
 		return candidate, nil
 	}
 
+	// TODO(xzx) more ut for this code
 	for {
 		var err error
-		number, err := nextMaterializedViewLogTableNameNumber(
+		number, err := nextMLogTableNameNumber(
 			&MLogShortTableNameSeq,
 			"materialized view log short table name number is out of range",
 		)
@@ -127,7 +129,7 @@ func BuildMaterializedViewLogTableName(
 	}
 }
 
-func nextMaterializedViewLogTableNameNumber(counter *atomic.Uint64, outOfRangeErr string) (uint64, error) {
+func nextMLogTableNameNumber(counter *atomic.Uint64, outOfRangeErr string) (uint64, error) {
 	if counter.Load() == math.MaxUint64 {
 		return 0, errors.New(outOfRangeErr)
 	}
@@ -138,7 +140,7 @@ func nextMaterializedViewLogTableNameNumber(counter *atomic.Uint64, outOfRangeEr
 	return next, nil
 }
 
-func getExistenceOfMLogTableChecker(
+func getExistenceOfMLogTableNameChecker(
 	ctx context.Context,
 	is infoschema.InfoSchema,
 	schemaName pmodel.CIStr,
@@ -155,17 +157,17 @@ func getExistenceOfMLogTableChecker(
 	}
 }
 
-// ResolveMLogTableByBaseTable returns the mlog table recorded on the base table metadata.
-func ResolveMLogTableByBaseTable(
+// GetMLogTableByBaseTable returns the mlog table recorded on the base table metadata.
+func GetMLogTableByBaseTable(
 	ctx context.Context,
 	is infoschema.InfoSchema,
 	schemaName pmodel.CIStr,
 	baseTableMeta *model.TableInfo,
 ) (table.Table, error) {
-	return resolveMLogTableByBaseTable(ctx, is, schemaName, baseTableMeta)
+	return getMLogTableByBaseTable(ctx, is, schemaName, baseTableMeta)
 }
 
-func resolveMLogTableByBaseTable(
+func getMLogTableByBaseTable(
 	ctx context.Context,
 	is infoschema.InfoSchema,
 	schemaName pmodel.CIStr,
@@ -191,13 +193,13 @@ func resolveMLogTableByBaseTable(
 			baseTableMeta.Name.O,
 		)
 	}
-	mlogName := mlogTable.Meta().Name
+
 	mlogInfo := mlogTable.Meta().MaterializedViewLog
 	if mlogInfo == nil || mlogInfo.BaseTableID != baseTableMeta.ID {
 		return nil, errors.Errorf(
 			"table %s.%s is not a materialized view log for base table %s.%s",
 			schemaName.O,
-			mlogName.O,
+			mlogTable.Meta().Name.O,
 			schemaName.O,
 			baseTableMeta.Name.O,
 		)
@@ -387,7 +389,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	baseTableID := baseTable.Meta().ID
 
-	mlogTable, err := resolveMLogTableByBaseTable(e.ctx, is, baseTableName.Schema, baseTable.Meta())
+	mlogTable, err := getMLogTableByBaseTable(e.ctx, is, baseTableName.Schema, baseTable.Meta())
 	if err != nil {
 		return err
 	}
@@ -578,7 +580,7 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 
-	mlogTable, err := resolveMLogTableByBaseTable(e.ctx, is, schemaName, baseTable.Meta())
+	mlogTable, err := getMLogTableByBaseTable(e.ctx, is, schemaName, baseTable.Meta())
 	if err != nil {
 		return err
 	}
@@ -702,7 +704,7 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 
-	mlogTable, err := resolveMLogTableByBaseTable(e.ctx, is, schemaName, baseTable.Meta())
+	mlogTable, err := getMLogTableByBaseTable(e.ctx, is, schemaName, baseTable.Meta())
 	if err != nil {
 		return err
 	}

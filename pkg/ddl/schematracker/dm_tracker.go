@@ -256,7 +256,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		return infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Name.O))
 	}
 
-	mlogNameCIStr, err := ddl.BuildMaterializedViewLogTableName(
+	mlogNameCIStr, err := ddl.GenerateMLogTableName(
 		baseTable.Name,
 		func(tableName pmodel.CIStr) (bool, error) {
 			if _, err := d.TableByName(context.Background(), schemaName, tableName); err == nil {

@@ -1089,9 +1089,9 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Meta().Name.O))
 	}
 
-	mlogNameCIStr, err := BuildMaterializedViewLogTableName(
+	mlogNameCIStr, err := GenerateMLogTableName(
 		baseTable.Meta().Name,
-		getExistenceOfMLogTableChecker(e.ctx, is, schemaName),
+		getExistenceOfMLogTableNameChecker(e.ctx, is, schemaName),
 	)
 	if err != nil {
 		return err

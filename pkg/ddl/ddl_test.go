@@ -194,18 +194,18 @@ func TestBuildMaterializedViewLogTableName(t *testing.T) {
 		return ok, nil
 	}
 
-	name, err := BuildMaterializedViewLogTableName(pmodel.NewCIStr("$mlog$base_table_name"), tableExists)
+	name, err := GenerateMLogTableName(pmodel.NewCIStr("$mlog$base_table_name"), tableExists)
 	require.NoError(t, err)
 	require.Equal(t, "$mlog$2base_table_name", name.O)
 	require.Equal(t, uint64(2), MLogTableNameSeq.Load())
 
-	name, err = BuildMaterializedViewLogTableName(pmodel.NewCIStr(strings.Repeat("表", mysql.MaxTableNameLength)), tableExists)
+	name, err = GenerateMLogTableName(pmodel.NewCIStr(strings.Repeat("表", mysql.MaxTableNameLength)), tableExists)
 	require.NoError(t, err)
 	require.Equal(t, "$mlog$2", name.O)
 	require.Equal(t, uint64(2), MLogShortTableNameSeq.Load())
 
 	MLogTableNameSeq.Store(math.MaxUint64)
-	_, err = nextMaterializedViewLogTableNameNumber(&MLogTableNameSeq, "out of range")
+	_, err = nextMLogTableNameNumber(&MLogTableNameSeq, "out of range")
 	require.ErrorContains(t, err, "out of range")
 }
 

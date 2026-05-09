@@ -1953,7 +1953,7 @@ func (e *PurgeMaterializedViewLogExec) resolvePurgeMaterializedViewLogMeta(
 	}
 	baseTableMeta = baseTable.Meta()
 
-	mlogTable, err := ddl.ResolveMLogTableByBaseTable(context.Background(), is, schemaName, baseTableMeta)
+	mlogTable, err := ddl.GetMLogTableByBaseTable(context.Background(), is, schemaName, baseTableMeta)
 	if err != nil {
 		return schemaName, baseTableMeta, mlogName, 0, nil, err
 	}
