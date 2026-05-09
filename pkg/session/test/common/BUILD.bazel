@@ -9,7 +9,7 @@ go_test(
         "prepare_dedup_cache_test.go",
     ],
     flaky = True,
-    shard_count = 10,
+    shard_count = 15,
     deps = [
         "//pkg/config",
         "//pkg/expression",
