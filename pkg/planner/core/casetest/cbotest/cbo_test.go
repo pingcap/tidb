@@ -17,6 +17,7 @@ package cbotest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -168,9 +169,12 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
 			"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
 			")")
-		require.NoError(t, testkit.LoadTableStats("repro_hash_join_issue_t_small.json", dom))
-		require.NoError(t, testkit.LoadTableStats("repro_hash_join_issue_t_big.json", dom))
+		tk.MustExec("insert into t_small(id1, id2, id3, id4) values " + buildReproHashJoinIssueSmallRows(1000))
+		tk.MustExec("insert into t_big(id1, id2, id3, id4, id5) values " + buildReproHashJoinIssueBigRows(1000))
+		tk.MustExec("analyze table t_small, t_big")
 		tk.MustExec("set @@session.tidb_cost_model_version = 2")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 100")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = 0.1")
 
 		var inputReproHashJoinIssue []string
 		var outputReproHashJoinIssue []struct {
@@ -193,6 +197,8 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			plan.Check(testkit.Rows(outputReproHashJoinIssue[i].Plan...))
 		}
 		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio = 0")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = default")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = default")
 
 		// issue:59563
 		tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
@@ -794,4 +800,22 @@ func TestIndexJoinPreferIndexCoversMoreJoinKeyCols(t *testing.T) {
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
+}
+
+func buildReproHashJoinIssueSmallRows(n int) string {
+	vals := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		// Keep predicates on t_small selective while preserving >=100 build rows.
+		vals = append(vals, fmt.Sprintf("('10001', 0, 123456789, %d)", i%10))
+	}
+	return strings.Join(vals, ",")
+}
+
+func buildReproHashJoinIssueBigRows(n int) string {
+	vals := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		// Low cardinality on id1 makes each outer-row probe hit many inner rows.
+		vals = append(vals, fmt.Sprintf("(%d, 10001, 0, 20991231, %d)", i%10, i))
+	}
+	return strings.Join(vals, ",")
 }

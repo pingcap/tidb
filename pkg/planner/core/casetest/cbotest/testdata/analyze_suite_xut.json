@@ -612,12 +612,12 @@
         "Ratio": 0,
         "Plan": [
           "HashAgg 1.00 root  funcs:count(1)->Column#16",
-          "└─IndexHashJoin 1230902.53 root  inner join, inner:IndexReader, outer key:repro_hash_join_issue.t_small.id4, inner key:repro_hash_join_issue.t_big.id1, equal cond:eq(repro_hash_join_issue.t_small.id4, repro_hash_join_issue.t_big.id1)",
-          "  ├─TableReader(Build) 1355.80 root  data:Selection",
-          "  │ └─Selection 1355.80 cop[tikv]  eq(repro_hash_join_issue.t_small.id1, \"10001\"), eq(repro_hash_join_issue.t_small.id2, 0), eq(repro_hash_join_issue.t_small.id3, 123456789)",
-          "  │   └─TableFullScan 4899.00 cop[tikv] table:s keep order:false",
-          "  └─IndexReader(Probe) 1230902.53 root  index:IndexRangeScan",
-          "    └─IndexRangeScan 1230902.53 cop[tikv] table:b, index:idx_id1_id2_id3_id4_id5(id1, id2, id3, id4, id5) range: decided by [eq(repro_hash_join_issue.t_big.id1, repro_hash_join_issue.t_small.id4) eq(repro_hash_join_issue.t_big.id2, 10001) eq(repro_hash_join_issue.t_big.id3, 0) eq(repro_hash_join_issue.t_big.id4, 20991231)], keep order:false"
+          "└─IndexHashJoin 100000.00 root  inner join, inner:IndexReader, outer key:repro_hash_join_issue.t_small.id4, inner key:repro_hash_join_issue.t_big.id1, equal cond:eq(repro_hash_join_issue.t_small.id4, repro_hash_join_issue.t_big.id1)",
+          "  ├─TableReader(Build) 1000.00 root  data:Selection",
+          "  │ └─Selection 1000.00 cop[tikv]  eq(repro_hash_join_issue.t_small.id1, \"10001\"), eq(repro_hash_join_issue.t_small.id2, 0), eq(repro_hash_join_issue.t_small.id3, 123456789)",
+          "  │   └─TableFullScan 1000.00 cop[tikv] table:s keep order:false",
+          "  └─IndexReader(Probe) 100000.00 root  index:IndexRangeScan",
+          "    └─IndexRangeScan 100000.00 cop[tikv] table:b, index:idx_id1_id2_id3_id4_id5(id1, id2, id3, id4, id5) range: decided by [eq(repro_hash_join_issue.t_big.id1, repro_hash_join_issue.t_small.id4) eq(repro_hash_join_issue.t_big.id2, 10001) eq(repro_hash_join_issue.t_big.id3, 0) eq(repro_hash_join_issue.t_big.id4, 20991231)], keep order:false"
         ]
       },
       {
@@ -625,13 +625,13 @@
         "Ratio": 0.5,
         "Plan": [
           "HashAgg 1.00 root  funcs:count(1)->Column#16",
-          "└─HashJoin 1230902.53 root  inner join, equal:[eq(repro_hash_join_issue.t_small.id4, repro_hash_join_issue.t_big.id1)]",
-          "  ├─TableReader(Build) 1355.80 root  data:Selection",
-          "  │ └─Selection 1355.80 cop[tikv]  eq(repro_hash_join_issue.t_small.id1, \"10001\"), eq(repro_hash_join_issue.t_small.id2, 0), eq(repro_hash_join_issue.t_small.id3, 123456789)",
-          "  │   └─TableFullScan 4899.00 cop[tikv] table:s keep order:false",
-          "  └─IndexReader(Probe) 2214298.99 root  index:Selection",
-          "    └─Selection 2214298.99 cop[tikv]  eq(repro_hash_join_issue.t_big.id2, 10001), eq(repro_hash_join_issue.t_big.id3, 0), eq(repro_hash_join_issue.t_big.id4, 20991231)",
-          "      └─IndexFullScan 2234295.00 cop[tikv] table:b, index:idx_id1_id2_id3_id4_id5(id1, id2, id3, id4, id5) keep order:false"
+          "└─HashJoin 100000.00 root  inner join, equal:[eq(repro_hash_join_issue.t_small.id4, repro_hash_join_issue.t_big.id1)]",
+          "  ├─TableReader(Build) 1000.00 root  data:Selection",
+          "  │ └─Selection 1000.00 cop[tikv]  eq(repro_hash_join_issue.t_small.id1, \"10001\"), eq(repro_hash_join_issue.t_small.id2, 0), eq(repro_hash_join_issue.t_small.id3, 123456789)",
+          "  │   └─TableFullScan 1000.00 cop[tikv] table:s keep order:false",
+          "  └─IndexReader(Probe) 1000.00 root  index:Selection",
+          "    └─Selection 1000.00 cop[tikv]  eq(repro_hash_join_issue.t_big.id2, 10001), eq(repro_hash_join_issue.t_big.id3, 0), eq(repro_hash_join_issue.t_big.id4, 20991231)",
+          "      └─IndexFullScan 1000.00 cop[tikv] table:b, index:idx_id1_id2_id3_id4_id5(id1, id2, id3, id4, id5) keep order:false"
         ]
       }
     ]
