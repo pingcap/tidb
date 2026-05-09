@@ -87,4 +87,19 @@ func TestTaskBaseGetRuntimeSlots(t *testing.T) {
 	require.Equal(t, 2, task.GetRuntimeSlots())
 	task.Step = StepTwo
 	require.Equal(t, 4, task.GetRuntimeSlots())
+
+	resource := NewNodeResource(16, 1600, 100)
+	limited := resource.LimitDXFResource(30)
+	require.Equal(t, 5, limited.TotalCPU)
+	require.Equal(t, int64(500), limited.TotalMem)
+	require.Equal(t, resource.TotalDisk, limited.TotalDisk)
+
+	full := resource.LimitDXFResource(100)
+	require.Equal(t, 16, full.TotalCPU)
+	require.Equal(t, int64(1600), full.TotalMem)
+	require.Equal(t, resource.TotalDisk, full.TotalDisk)
+
+	small := NewNodeResource(2, 200, 100).LimitDXFResource(10)
+	require.Equal(t, 1, small.TotalCPU)
+	require.Equal(t, int64(100), small.TotalMem)
 }

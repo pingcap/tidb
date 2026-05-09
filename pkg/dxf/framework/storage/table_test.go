@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -800,6 +801,10 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 
 func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
+	originCfg := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originCfg)
+	})
 
 	// when no node
 	_, err := sm.GetCPUCountOfNode(ctx)
@@ -898,6 +903,31 @@ func TestDistFrameworkMeta(t *testing.T) {
 	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "background")
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
+
+	sm.SetDXFCPUCount(5)
+	require.NoError(t, sm.InitMeta(ctx, ":4004", "background"))
+	nodes, err = sm.GetAllNodes(ctx)
+	require.NoError(t, err)
+	var limitedNode proto.ManagedNode
+	for _, n := range nodes {
+		if n.ID == ":4004" {
+			limitedNode = n
+			break
+		}
+	}
+	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 5}, limitedNode)
+
+	sm.SetDXFCPUCount(1)
+	require.NoError(t, sm.RecoverMeta(ctx, ":4004", ""))
+	nodes, err = sm.GetAllNodes(ctx)
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.ID == ":4004" {
+			limitedNode = n
+			break
+		}
+	}
+	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 1}, limitedNode)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {

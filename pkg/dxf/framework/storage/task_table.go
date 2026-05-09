@@ -129,7 +129,8 @@ type TaskHandle interface {
 
 // TaskManager is the manager of task and subtask.
 type TaskManager struct {
-	sePool util.SessionPool
+	sePool      util.SessionPool
+	dxfCPUCount atomic.Int64
 }
 
 var _ SessionExecutor = &TaskManager{}

@@ -39,11 +39,11 @@ func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string
 
 // InitMetaSession insert the manager information into dist_framework_meta.
 // if the record exists, update the cpu_count and role.
-func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
+func (mgr *TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := cpu.GetCPUCount()
+	cpuCount := mgr.getDXFCPUCount()
 	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
@@ -61,7 +61,7 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := cpu.GetCPUCount()
+	cpuCount := mgr.getDXFCPUCount()
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
@@ -69,6 +69,18 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 		update cpu_count = %?`,
 		execID, role, cpuCount, cpuCount)
 	return err
+}
+
+// SetDXFCPUCount sets the usable DXF CPU count for dist_framework_meta.
+func (mgr *TaskManager) SetDXFCPUCount(cpuCount int) {
+	mgr.dxfCPUCount.Store(int64(cpuCount))
+}
+
+func (mgr *TaskManager) getDXFCPUCount() int {
+	if cpuCount := mgr.dxfCPUCount.Load(); cpuCount > 0 {
+		return int(cpuCount)
+	}
+	return cpu.GetCPUCount()
 }
 
 // DeleteDeadNodes deletes the dead nodes from mysql.dist_framework_meta.
