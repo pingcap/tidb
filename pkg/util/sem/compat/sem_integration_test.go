@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -51,6 +52,12 @@ func TestRestrictedSQL(t *testing.T) {
 		tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=abc'", "is not supported when security enhanced mode is enabled")
 
 		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "semuser", Hostname: "localhost"}, nil, nil, nil))
+		if kerneltype.IsNextGen() {
+			tk.MustContainErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'", "IMPORT INTO with explicit external ID")
+			tk.MustQuery("select * from test.t").Check(testkit.Rows())
+			return
+		}
+
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
