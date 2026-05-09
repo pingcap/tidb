@@ -366,6 +366,14 @@ func TestPrepareGC(t *testing.T) {
 
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
+	lastRunBefore, err := s.gcWorker.loadTime(gcLastRunTimeKey)
+	require.NoError(t, err)
+	require.NotNil(t, lastRunBefore)
+	safePointBefore, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.NotNil(t, safePointBefore)
+	timeEqual(t, safePointBefore.Add(gcDefaultLifeTime), now, 2*time.Second)
+
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare(gcContext())
 	require.NoError(t, err)
@@ -375,7 +383,9 @@ func TestPrepareGC(t *testing.T) {
 	require.NotNil(t, lastRun)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 	require.NoError(t, err)
-	timeEqual(t, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
+	require.Equal(t, *lastRunBefore, *lastRun)
+	require.Equal(t, *safePointBefore, *safePoint)
+	timeEqual(t, safePoint.Add(gcDefaultLifeTime), *lastRun, 2*time.Second)
 
 	// Change GC run interval.
 	err = s.gcWorker.saveDuration(gcRunIntervalKey, time.Minute*5)
@@ -397,14 +407,15 @@ func TestPrepareGC(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 	s.oracle.AddOffset(time.Minute * 40)
-	now, err = s.gcWorker.getOracleTime()
-	require.NoError(t, err)
 	ok, _, err = s.gcWorker.prepare(gcContext())
 	require.NoError(t, err)
 	require.True(t, ok)
+	lastRun, err = s.gcWorker.loadTime(gcLastRunTimeKey)
+	require.NoError(t, err)
+	require.NotNil(t, lastRun)
 	safePoint, err = s.gcWorker.loadTime(gcSafePointKey)
 	require.NoError(t, err)
-	timeEqual(t, safePoint.Add(time.Minute*30), now, 2*time.Second)
+	timeEqual(t, safePoint.Add(time.Minute*30), *lastRun, 2*time.Second)
 
 	// Change GC concurrency.
 	concurrency, err := s.gcWorker.loadGCConcurrencyWithDefault()

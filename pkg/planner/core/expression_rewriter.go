@@ -2534,23 +2534,30 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		stackLen := len(er.ctxStack)
 		param1 := er.ctxStack[stackLen-2]
 		param2 := er.ctxStack[stackLen-1]
-		// param1 = param2
-		funcCompare, err := er.constructBinaryOpFunction(param1, param2, ast.EQ)
+		// Build the comparison with cloned operands. The comparison branch may refine
+		// argument types or wrap casts, while NULLIF must still return the original
+		// first-argument semantics when the comparison is false.
+		funcCompare, err := er.constructBinaryOpFunction(param1.Clone(), param2.Clone(), ast.EQ)
 		if err != nil {
 			er.err = err
 			return true
 		}
-		// NULL
-		nullTp := types.NewFieldType(mysql.TypeNull)
-		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
-		nullTp.SetFlen(flen)
-		nullTp.SetDecimal(decimal)
+		// NULLIF returns the first argument when the comparison is false, otherwise NULL.
+		// Keep the NULL branch as TypeNull so IF inherits the return type from the
+		// value branch instead of aggregating it with a typed NULL and rewriting metadata.
+		valueBranch := param1.Clone()
+		retTp := valueBranch.GetType(er.sctx.GetEvalCtx()).Clone()
+		retTp.DelFlag(mysql.NotNullFlag)
+		if !retTp.EvalType().IsStringKind() {
+			retTp.SetCharset(charset.CharsetBin)
+			retTp.SetCollate(charset.CollationBin)
+		}
+		setExprRetType(valueBranch, retTp.Clone())
 		paramNull := &expression.Constant{
 			Value:   types.NewDatum(nil),
-			RetType: nullTp,
+			RetType: types.NewFieldType(mysql.TypeNull),
 		}
-		// if(param1 = param2, NULL, param1)
-		funcIf, err := er.newFunction(ast.If, v.Type.DeepCopy(), funcCompare, paramNull, param1)
+		funcIf, err := er.newFunction(ast.If, retTp, funcCompare, paramNull, valueBranch)
 		if err != nil {
 			er.err = err
 			return true
@@ -2560,6 +2567,19 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func setExprRetType(expr expression.Expression, retTp *types.FieldType) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		x.RetType = retTp
+	case *expression.CorrelatedColumn:
+		x.RetType = retTp
+	case *expression.Constant:
+		x.RetType = retTp
+	case *expression.ScalarFunction:
+		x.RetType = retTp
 	}
 }
 
