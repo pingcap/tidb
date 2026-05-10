@@ -720,14 +720,27 @@ func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.Tas
 		// canonical "high-NDV GROUP BY with an available ordered cop[tikv] index"
 		// case where StreamAgg has a real shot at outperforming HashAgg. They
 		// only apply when:
-		//   - the HashAgg has at least one GROUP BY item (otherwise it's a
-		//     single-result aggregation and the choice doesn't matter), AND
+		//   - the HashAgg has at least one GROUP BY item OR at least one
+		//     DISTINCT aggregate (count(DISTINCT a), group_concat(DISTINCT a),
+		//     ...). DISTINCT aggregates internally deduplicate values into a
+		//     hash set whose size scales with NDV, so the same memory/CPU
+		//     argument applies even when GroupByItems is empty. Ungrouped
+		//     non-DISTINCT aggregation produces a single result with O(1)
+		//     state and can use the original formula, AND
 		//   - the child can actually deliver ordered input that StreamAgg could
 		//     consume (cop[tikv] base-table path; MPP scans don't preserve order).
-		// In other configurations (ungrouped, MPP-backed, sort-required) keep
-		// the original formula so MPP plans and other established choices are
-		// not unfairly disfavored against a hypothetical StreamAgg.
-		applyStreamAggGuard := nKeys > 0 && childCanProvideOrderForStreamAgg(p.Children()[0])
+		// In other configurations (single-result non-DISTINCT, MPP-backed,
+		// sort-required) keep the original formula so MPP plans and other
+		// established choices are not unfairly disfavored against a
+		// hypothetical StreamAgg.
+		hasDistinctAgg := false
+		for _, fn := range p.AggFuncs {
+			if fn.HasDistinct {
+				hasDistinctAgg = true
+				break
+			}
+		}
+		applyStreamAggGuard := (nKeys > 0 || hasDistinctAgg) && childCanProvideOrderForStreamAgg(p.Children()[0])
 		if applyStreamAggGuard {
 			hashMemCost := costusage.NewCostVer2(option, memFactor,
 				concurrency*outputRows*outputRowSize*memFactor.Value,

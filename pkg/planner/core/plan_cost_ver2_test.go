@@ -868,6 +868,55 @@ func TestHashAggMemCostNotDividedByConcurrency(t *testing.T) {
 	})
 }
 
+func TestHashAggCountDistinctPicksStreamAgg(t *testing.T) {
+	// `select count(distinct a) from t` produces a single output row but its
+	// hash table holds NDV(a) entries internally, so the same high-NDV-with-
+	// ordered-index case applies. Verify the cost-model adjustments fire
+	// (gated on hasDistinctAgg) and the optimizer picks StreamAgg over the
+	// indexed path even though there is no GROUP BY clause.
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		store := tk.Session().GetStore()
+		defer func() {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("drop table if exists t_distinct")
+			dom.StatsHandle().Clear()
+		}()
+
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_distinct")
+		tk.MustExec("create table t_distinct (a int, b int, key ka(a))")
+		const n = 50000
+		const batch = 5000
+		for i := 0; i < n; i += batch {
+			var buf strings.Builder
+			buf.WriteString("insert into t_distinct (a,b) values ")
+			for j := 0; j < batch; j++ {
+				if j > 0 {
+					buf.WriteString(",")
+				}
+				v := i + j
+				fmt.Fprintf(&buf, "(%d,%d)", v, v%10)
+			}
+			tk.MustExec(buf.String())
+		}
+		tk.MustExec("analyze table t_distinct")
+
+		q := "select count(distinct a) from t_distinct use index(ka)"
+		hashRows := tk.MustQuery("explain format=verbose select /*+ HASH_AGG() */ " + q[len("select "):]).Rows()
+		hashCost, err := strconv.ParseFloat(hashRows[0][2].(string), 64)
+		require.NoError(t, err)
+
+		streamRows := tk.MustQuery("explain format=verbose select /*+ STREAM_AGG() */ " + q[len("select "):]).Rows()
+		streamCost, err := strconv.ParseFloat(streamRows[0][2].(string), 64)
+		require.NoError(t, err)
+
+		require.Less(t, streamCost, hashCost,
+			"StreamAgg (cost=%.2f) should be cheaper than HashAgg (cost=%.2f) for high-NDV count(DISTINCT a) with an index — DISTINCT aggregates must trigger the same gate as GROUP BY",
+			streamCost, hashCost)
+	})
+}
+
 func TestHashAggSkinnyHighNDVPicksStreamAgg(t *testing.T) {
 	// For skinny output rows the hash-table memory penalty alone is small
 	// (concurrency * outputRows * 16 bytes * 0.2). What flips the choice is
