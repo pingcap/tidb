@@ -39,9 +39,9 @@ func (e *Exec) buildMinMaxMerger(
 		return nil, errors.Annotatef(err, "%s mapping expression nullability", mapping.AggFunc.Name)
 	}
 	if exprNullable {
-		if len(mapping.DependencyColID) != 5 {
+		if len(mapping.DependencyColID) != 4 && len(mapping.DependencyColID) != 5 {
 			return nil, errors.Errorf(
-				"%s(nullable expr) requires final-count dependency (exactly 5 dependencies), got %d",
+				"%s(nullable expr) expects 4 or 5 dependencies, got %d",
 				mapping.AggFunc.Name,
 				len(mapping.DependencyColID),
 			)
@@ -128,7 +128,7 @@ func (e *Exec) buildMinMaxMerger(
 		retTp:         retTp,
 		countRef:      depRef{},
 	}
-	if exprNullable {
+	if exprNullable && len(mapping.DependencyColID) == 5 {
 		countColID := mapping.DependencyColID[4]
 		countExprTp, err := resolveFieldTypeByColID(countColID, childTypes)
 		if err != nil {
@@ -145,6 +145,8 @@ func (e *Exec) buildMinMaxMerger(
 			return nil, errors.Annotatef(err, "%s mapping final-count dependency col %d", mapping.AggFunc.Name, countColID)
 		}
 	} else {
+		// Fall back to count(*) when there is no explicit COUNT(expr) dependency. For nullable
+		// MIN/MAX this may trigger extra recomputes, but remains semantically correct.
 		countAllRowsColID := e.AggMappings[0].ColID[0]
 		countAllRowsTp, err := resolveFieldTypeByColID(countAllRowsColID, childTypes)
 		if err != nil {
