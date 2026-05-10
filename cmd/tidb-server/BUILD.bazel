@@ -107,7 +107,7 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":tidb-server_lib"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
