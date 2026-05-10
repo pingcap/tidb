@@ -36,6 +36,7 @@ go_library(
         "//pkg/metrics/common",
         "//pkg/parser/terror",
         "//pkg/timer/metrics",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/promutil",
         "@com_github_pingcap_errors//:errors",
@@ -43,6 +44,12 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_model//go",
         "@com_github_tikv_client_go_v2//metrics",
+        "@com_github_tikv_client_go_v2//util/collectors",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//channelz/grpc_channelz_v1",
+        "@org_golang_google_grpc//channelz/service",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//test/bufconn",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -57,11 +64,16 @@ go_test(
     ],
     embed = [":metrics"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 4,
+=======
+    shard_count = 8,
+>>>>>>> 3969c851fff (metrics: enhance diagnostic capabilities for gRPC network issues (#67811))
     deps = [
         "//pkg/parser/terror",
         "//pkg/statistics/handle/cache",
         "//pkg/testkit/testsetup",
+        "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
