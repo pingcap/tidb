@@ -102,7 +102,12 @@ func GenerateMLogTableName(
 		candidate = pmodel.NewCIStr(materializedViewLogTablePrefix + baseTableName.O)
 	}
 
-	if utf8.RuneCountInString(candidate.L) <= mysql.MaxTableNameLength {
+	exists, err := checkTableExistence(candidate)
+	if err != nil {
+		return pmodel.CIStr{}, err
+	}
+
+	if !exists && utf8.RuneCountInString(candidate.L) <= mysql.MaxTableNameLength {
 		return candidate, nil
 	}
 
