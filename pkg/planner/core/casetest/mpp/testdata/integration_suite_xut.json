@@ -1779,9 +1779,9 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin mpp[tiflash]  semi join, left side:ExchangeReceiver, equal:[eq(test.tt.b1, test.t.c3)]",
-          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c3, collate: binary]",
+          "  └─HashJoin mpp[tiflash]  semi join, left side:ExchangeReceiver, equal:[eq(test.tt.b1, test.t.c3)], stream_count: 8",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  stream_count: 8",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.c3, collate: binary], stream_count: 8",
           "    │   └─Projection mpp[tiflash]  test.t.c3",
           "    │     └─Selection mpp[tiflash]  lt(test.t.c1, test.t.c2)",
           "    │       └─TableFullScan mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1797,9 +1797,9 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  Column",
-          "    └─HashAgg mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column)->Column",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.b1, collate: binary]",
+          "    └─HashAgg mpp[tiflash]  group by:test.tt.b1, funcs:sum(Column)->Column, stream_count: 8",
+          "      └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tt.b1, collate: binary], stream_count: 8",
           "          └─HashAgg mpp[tiflash]  group by:test.tt.b1, funcs:count(1)->Column",
           "            └─TableFullScan mpp[tiflash] table:tt keep order:false, stats:pseudo"
         ]

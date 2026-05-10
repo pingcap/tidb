@@ -1228,7 +1228,7 @@
       {
         "SQL": "explain format = 'plan_tree' select count(distinct b), json_objectagg(d,c) from t;",
         "Plan": [
-          "StreamAgg root  funcs:count(distinct Column)->Column, funcs:json_objectagg(Column, Column)->Column",
+          "HashAgg root  funcs:count(distinct Column)->Column, funcs:json_objectagg(Column, Column)->Column",
           "└─Projection root  test.t.b->Column, cast(test.t.d, var_string(10))->Column, test.t.c->Column",
           "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",

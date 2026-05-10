@@ -650,7 +650,7 @@ func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 
 // getPlanCostVer24PhysicalHashAgg returns the plan-cost of this sub-plan.
 //
-// For TiDB root tasks:
+// For TiDB root tasks WITH a GROUP BY:
 //
 //	plan-cost = child-cost + hash-mem-cost + agg-cost + group-cost + (hash-build-cpu-cost + hash-probe-cost) / concurrency
 //
@@ -670,10 +670,15 @@ func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 // the memory penalty here would double-count and steer the optimizer toward
 // Sort+StreamAgg even when HashAgg is genuinely cheaper.
 //
-// For TiFlash MPP and TiKV cop tasks, data is either partitioned across nodes (MPP) or
-// processed single-threaded on TiKV (cop). All costs use the original formula:
+// For TiDB root tasks WITHOUT a GROUP BY (single-result aggregation), and for TiFlash
+// MPP and TiKV cop tasks, all costs use the original formula:
 //
 //	plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
+//
+// Ungrouped aggregations produce a single output row, so neither the agg+group
+// placement nor the hash-table memory penalty change the qualitative comparison
+// between HashAgg and StreamAgg there. MPP partitions data across nodes and cop runs
+// single-threaded on TiKV, so the TiDB root concurrency factor does not apply.
 func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalHashAgg)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -701,26 +706,38 @@ func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.Tas
 	}
 
 	if taskType == property.RootTaskType {
-		var hashMemCost costusage.CostVer2
-		if childCanProvideOrderForStreamAgg(p.Children()[0]) {
-			hashMemCost = costusage.NewCostVer2(option, memFactor,
-				concurrency*outputRows*outputRowSize*memFactor.Value,
-				func() string {
-					return fmt.Sprintf("hashmem(%v*%v*%v*%v)", concurrency, outputRows, outputRowSize, memFactor)
-				})
-		} else {
-			hashMemCost = costusage.ZeroCostVer2
-		}
-		// hashBuildCost includes memory; subtract it out so we don't double-count.
-		// Recompute just the CPU portion of hash build (key computation + build).
 		nKeys := float64(len(p.GroupByItems))
-		hashBuildCPUCost := costusage.NewCostVer2(option, cpuFactor,
-			outputRows*nKeys*cpuFactor.Value+outputRows*cpuFactor.Value,
-			func() string {
-				return fmt.Sprintf("hashkey(%v*%v*%v)+hashbuild(%v*%v)", outputRows, nKeys, cpuFactor, outputRows, cpuFactor)
-			})
-		p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, hashMemCost, aggCost, groupCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(hashBuildCPUCost, hashProbeCost), concurrency))
+		// The agg+group placement and hash-table memory penalty are aimed at the
+		// canonical "high-NDV GROUP BY with an available ordered index" case where
+		// StreamAgg might genuinely outperform HashAgg. For ungrouped aggregation
+		// (no GROUP BY) there is a single output row, so neither knob can change
+		// the qualitative comparison meaningfully — apply the changes only when
+		// GROUP BY items are present, otherwise keep the original formula.
+		if nKeys > 0 {
+			var hashMemCost costusage.CostVer2
+			if childCanProvideOrderForStreamAgg(p.Children()[0]) {
+				hashMemCost = costusage.NewCostVer2(option, memFactor,
+					concurrency*outputRows*outputRowSize*memFactor.Value,
+					func() string {
+						return fmt.Sprintf("hashmem(%v*%v*%v*%v)", concurrency, outputRows, outputRowSize, memFactor)
+					})
+			} else {
+				hashMemCost = costusage.ZeroCostVer2
+			}
+			// hashBuildCost includes memory; subtract it out so we don't double-count.
+			// Recompute just the CPU portion of hash build (key computation + build).
+			hashBuildCPUCost := costusage.NewCostVer2(option, cpuFactor,
+				outputRows*nKeys*cpuFactor.Value+outputRows*cpuFactor.Value,
+				func() string {
+					return fmt.Sprintf("hashkey(%v*%v*%v)+hashbuild(%v*%v)", outputRows, nKeys, cpuFactor, outputRows, cpuFactor)
+				})
+			p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, hashMemCost, aggCost, groupCost,
+				costusage.DivCostVer2(costusage.SumCostVer2(hashBuildCPUCost, hashProbeCost), concurrency))
+		} else {
+			// Ungrouped aggregation: original formula.
+			p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost,
+				costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
+		}
 	} else {
 		// MPP and cop tasks: data is either partitioned (MPP) or processed by a single
 		// TiKV thread (cop), so the TiDB root concurrency factor does not apply.
