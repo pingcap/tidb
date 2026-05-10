@@ -112,6 +112,22 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	sf, ok = mvFilterMutations[1].(*expression.ScalarFunction)
 	require.True(t, ok)
 	require.Equal(t, sf.FuncName.L, ast.JSONMemberOf)
+
+	t.Run("mv index hint keeps working with in access filter", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(`create table t (
+			a int,
+			b varchar(30),
+			c float,
+			j json,
+			pk int primary key,
+			key mvi1(c, (cast(j->'$.a' as unsigned array)), b)
+		)`)
+
+		tk.MustQuery(`explain format='brief' select /*+ use_index_merge(t, mvi1) */ * from t
+			where c in (1, 2, 3) and json_overlaps(j->'$.a', '[4,5,6]')`).
+			MultiCheckContain([]string{"IndexMerge", "index:mvi1"})
+	})
 }
 
 func TestMultiMVIndexRandom(t *testing.T) {

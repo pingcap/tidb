@@ -1660,7 +1660,7 @@
         "SQL": "explain format = 'plan_tree' select * from t where a = 1 OR a = 2",
         "DynamicPlan": [
           "TableReader root partition:p1,P2 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:t range:[1,1], [2,2], keep order:false"
+          "└─TableRangeScan cop[tikv] table:t range:[1,2], keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
@@ -1738,32 +1738,32 @@
         "SQL": "explain format = 'plan_tree' select * from t where b IN (2,3,4)",
         "DynamicPlan": [
           "IndexReader root partition:all index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:t, index:b(b) range:[2,2], [3,3], [4,4], keep order:false"
+          "└─IndexRangeScan cop[tikv] table:t, index:b(b) range:[2,4], keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─IndexReader root  index:IndexRangeScan",
-          "│ └─IndexRangeScan cop[tikv] table:t, partition:P0, index:b(b) range:[2,2], [3,3], [4,4], keep order:false",
+          "│ └─IndexRangeScan cop[tikv] table:t, partition:P0, index:b(b) range:[2,4], keep order:false",
           "├─IndexReader root  index:IndexRangeScan",
-          "│ └─IndexRangeScan cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], [3,3], [4,4], keep order:false",
+          "│ └─IndexRangeScan cop[tikv] table:t, partition:p1, index:b(b) range:[2,4], keep order:false",
           "└─IndexReader root  index:IndexRangeScan",
-          "  └─IndexRangeScan cop[tikv] table:t, partition:P2, index:b(b) range:[2,2], [3,3], [4,4], keep order:false"
+          "  └─IndexRangeScan cop[tikv] table:t, partition:P2, index:b(b) range:[2,4], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t where b IN (2,3)",
         "DynamicPlan": [
           "IndexReader root partition:all index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:t, index:b(b) range:[2,2], [3,3], keep order:false"
+          "└─IndexRangeScan cop[tikv] table:t, index:b(b) range:[2,3], keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─IndexReader root  index:IndexRangeScan",
-          "│ └─IndexRangeScan cop[tikv] table:t, partition:P0, index:b(b) range:[2,2], [3,3], keep order:false",
+          "│ └─IndexRangeScan cop[tikv] table:t, partition:P0, index:b(b) range:[2,3], keep order:false",
           "├─IndexReader root  index:IndexRangeScan",
-          "│ └─IndexRangeScan cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], [3,3], keep order:false",
+          "│ └─IndexRangeScan cop[tikv] table:t, partition:p1, index:b(b) range:[2,3], keep order:false",
           "└─IndexReader root  index:IndexRangeScan",
-          "  └─IndexRangeScan cop[tikv] table:t, partition:P2, index:b(b) range:[2,2], [3,3], keep order:false"
+          "  └─IndexRangeScan cop[tikv] table:t, partition:P2, index:b(b) range:[2,3], keep order:false"
         ]
       },
       {
@@ -2464,7 +2464,7 @@
         "SQL": "select * from thash3 where a in (1,2) and 1 = 1",
         "DynamicPlan": [
           "TableReader root partition:p0,p1 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:thash3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:thash3 range:[1,2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
@@ -2560,11 +2560,11 @@
         "SQL": "select * from trange3 where a in (1,2) and 1 = 1",
         "DynamicPlan": [
           "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:trange3 range:[1,2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader root  data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange3, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:trange3, partition:p0 range:[1,2], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -2645,7 +2645,7 @@
         "SQL": "select * from trange3 partition(p1) where a in (1,2)",
         "DynamicPlan": [
           "TableReader root partition:dual data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:trange3 range:[1,2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableDual root  rows:0"
@@ -2656,11 +2656,11 @@
         "SQL": "select * from trange3 partition(p0,p1) where a in (1,2)",
         "DynamicPlan": [
           "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:trange3 range:[1,2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader root  data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:trange3, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:trange3, partition:p0 range:[1,2], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -2671,11 +2671,11 @@
         "SQL": "select * from tlist3 where a in (1,2) and 1 = 1",
         "DynamicPlan": [
           "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader root  data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3, partition:p0 range:[1,2], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -2704,11 +2704,11 @@
         "SQL": "select * from tlist3 where a in (1,2) and 1 = 1 order by a",
         "DynamicPlan": [
           "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:true, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,2], keep order:true, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader root  data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3, partition:p0 range:[1,1], [2,2], keep order:true, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3, partition:p0 range:[1,2], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -2719,11 +2719,11 @@
         "SQL": "select * from tlist3 where a in (1,2) and 1 = 1 order by a desc",
         "DynamicPlan": [
           "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:true, desc, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,2], keep order:true, desc, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader root  data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3, partition:p0 range:[1,1], [2,2], keep order:true, desc, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3, partition:p0 range:[1,2], keep order:true, desc, stats:pseudo"
         ],
         "Result": [
           "2 0",
@@ -2748,7 +2748,7 @@
         "SQL": "select * from tlist3 partition(p1) where a in (1,2)",
         "DynamicPlan": [
           "TableReader root partition:dual data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableDual root  rows:0"
@@ -2759,11 +2759,11 @@
         "SQL": "select * from tlist3 partition(p0,p1) where a in (1,2)",
         "DynamicPlan": [
           "TableReader root partition:p0 data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3 range:[1,2], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "TableReader root  data:TableRangeScan",
-          "└─TableRangeScan cop[tikv] table:tlist3, partition:p0 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "└─TableRangeScan cop[tikv] table:tlist3, partition:p0 range:[1,2], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 0",
@@ -2775,15 +2775,15 @@
         "DynamicPlan": [
           "Projection root  test.issue45889._tidb_rowid, test.issue45889.a",
           "└─TableReader root partition:all data:TableRangeScan",
-          "  └─TableRangeScan cop[tikv] table:issue45889 range:[7,7], [8,8], keep order:false, stats:pseudo"
+          "  └─TableRangeScan cop[tikv] table:issue45889 range:[7,8], keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Projection root  test.issue45889._tidb_rowid, test.issue45889.a",
           "└─PartitionUnion root  ",
           "  ├─TableReader root  data:TableRangeScan",
-          "  │ └─TableRangeScan cop[tikv] table:issue45889, partition:p0 range:[7,7], [8,8], keep order:false, stats:pseudo",
+          "  │ └─TableRangeScan cop[tikv] table:issue45889, partition:p0 range:[7,8], keep order:false, stats:pseudo",
           "  └─TableReader root  data:TableRangeScan",
-          "    └─TableRangeScan cop[tikv] table:issue45889, partition:p1 range:[7,7], [8,8], keep order:false, stats:pseudo"
+          "    └─TableRangeScan cop[tikv] table:issue45889, partition:p1 range:[7,8], keep order:false, stats:pseudo"
         ],
         "Result": [
           "7 3",

@@ -809,8 +809,8 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
 	tk.MustQuery("explain format = 'brief' select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
 		"IndexMerge 33.99 root  type: union",
-		"├─TableRangeScan(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
-		"├─IndexRangeScan(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
+		"├─TableRangeScan(Build) 4.00 cop[tikv] table:reproduce range:[0,3], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,2], keep order:false, stats:pseudo",
 		"└─TableRowIDScan(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
 
 	// This function should return successfully

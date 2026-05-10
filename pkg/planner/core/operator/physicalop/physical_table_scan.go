@@ -155,6 +155,26 @@ type PhysicalTableScan struct {
 
 const emptyPhysicalTableScanSize = int64(unsafe.Sizeof(PhysicalTableScan{}))
 
+func coalesceConsecutivePointScanRanges(sctx base.PlanContext, ranges ranger.Ranges) ranger.Ranges {
+	if len(ranges) < 2 {
+		return ranges
+	}
+	for _, ran := range ranges {
+		if ran.Width() != 1 || !ran.IsPoint(sctx.GetRangerCtx()) {
+			return ranges
+		}
+	}
+	cloned := make(ranger.Ranges, 0, len(ranges))
+	for _, ran := range ranges {
+		cloned = append(cloned, ran.Clone())
+	}
+	merged, err := ranger.UnionRanges(sctx.GetRangerCtx(), cloned, true)
+	if err != nil {
+		return ranges
+	}
+	return merged
+}
+
 // GetPhysicalScan4LogicalTableScan returns PhysicalTableScan for the LogicalTableScan.
 func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
@@ -165,7 +185,7 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 		DBName:          ds.DBName,
 		isPartition:     ds.PartitionDefIdx != nil,
 		PhysicalTableID: ds.PhysicalTableID,
-		Ranges:          s.Ranges,
+		Ranges:          coalesceConsecutivePointScanRanges(s.SCtx(), s.Ranges),
 		AccessCondition: s.AccessConds,
 		TblCols:         ds.TblCols,
 		TblColHists:     ds.TblColHists,
@@ -184,7 +204,7 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 		DBName:          ds.DBName,
 		isPartition:     ds.PartitionDefIdx != nil,
 		PhysicalTableID: ds.PhysicalTableID,
-		Ranges:          path.Ranges,
+		Ranges:          coalesceConsecutivePointScanRanges(ds.SCtx(), path.Ranges),
 		AccessCondition: path.AccessConds,
 		StoreType:       path.StoreType,
 		HandleCols:      ds.HandleCols,

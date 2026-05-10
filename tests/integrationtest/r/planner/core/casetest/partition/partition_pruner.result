@@ -908,7 +908,7 @@ abc	2
 explain format = 'brief' select * from t where b in (1,2);
 id	estRows	task	access object	operator info
 IndexLookUp	2.00	root	partition:p1,p2	
-├─IndexRangeScan(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,2], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where b in (1,2) and a like '%a%';
 a	b
@@ -916,7 +916,7 @@ abc	2
 explain format = 'brief' select * from t where b in (1,2) and a like '%a%';
 id	estRows	task	access object	operator info
 IndexLookUp	1.60	root	partition:p1,p2	
-├─IndexRangeScan(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,2], keep order:false, stats:pseudo
 └─Selection(Probe)	1.60	cop[tikv]		like(issue42135.t.a, "%a%", 92)
   └─TableRowIDScan	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;

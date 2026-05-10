@@ -1301,25 +1301,38 @@ func checkAccessFilter4IdxCol(
 	}
 
 	// else: non virtual column
-	if sf.FuncName.L != ast.EQ { // only support EQ now
-		return false, unspecifiedFilterTp
-	}
 	args := sf.GetArgs()
-	var argCol *expression.Column
-	var argConst *expression.Constant
-	if c, isCol := args[0].(*expression.Column); isCol {
-		if con, isCon := args[1].(*expression.Constant); isCon {
-			argCol, argConst = c, con
+	switch sf.FuncName.L {
+	case ast.EQ:
+		var argCol *expression.Column
+		var argConst *expression.Constant
+		if c, isCol := args[0].(*expression.Column); isCol {
+			if con, isCon := args[1].(*expression.Constant); isCon {
+				argCol, argConst = c, con
+			}
+		} else if c, isCol := args[1].(*expression.Column); isCol {
+			if con, isCon := args[0].(*expression.Constant); isCon {
+				argCol, argConst = c, con
+			}
 		}
-	} else if c, isCol := args[1].(*expression.Column); isCol {
-		if con, isCon := args[0].(*expression.Constant); isCon {
-			argCol, argConst = c, con
+		if argCol == nil || argConst == nil {
+			return false, unspecifiedFilterTp
 		}
-	}
-	if argCol == nil || argConst == nil {
-		return false, unspecifiedFilterTp
-	}
-	if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
+		if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
+			return true, eqOnNonMVColTp
+		}
+	case ast.In:
+		// Treat point-IN as a normal access filter so MVI path generation still works after
+		// predicate simplification rewrites OR-of-EQ on a leading normal index column into IN.
+		argCol, ok := args[0].(*expression.Column)
+		if !ok || !argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
+			return false, unspecifiedFilterTp
+		}
+		for _, arg := range args[1:] {
+			if _, ok := arg.(*expression.Constant); !ok {
+				return false, unspecifiedFilterTp
+			}
+		}
 		return true, eqOnNonMVColTp
 	}
 	return false, unspecifiedFilterTp

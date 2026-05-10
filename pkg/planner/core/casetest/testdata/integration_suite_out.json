@@ -248,7 +248,7 @@
         "Result": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─TableRangeScan mpp[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "  └─TableRangeScan mpp[tiflash] table:t range:[1,2], keep order:false, stats:pseudo"
         ]
       }
     ]

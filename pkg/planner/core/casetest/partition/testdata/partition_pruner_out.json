@@ -1087,7 +1087,7 @@
           "│   └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3,3], keep order:false, stats:pseudo",
           "└─IndexReader(Probe) root partition:p1 index:Selection",
           "  └─Selection cop[tikv]  not(isnull(test_partition_1.t2.id))",
-          "    └─IndexRangeScan cop[tikv] table:t2, index:a(a, b, id) range:[6,6], [7,7], [8,8], keep order:false, stats:pseudo"
+          "    └─IndexRangeScan cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1112,7 +1112,7 @@
           "│   └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3,3], keep order:false, stats:pseudo",
           "└─IndexReader(Probe) root partition:p0 index:Selection",
           "  └─Selection cop[tikv]  not(isnull(test_partition_1.t2.id))",
-          "    └─IndexRangeScan cop[tikv] table:t2, index:a(a, b, id) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo"
+          "    └─IndexRangeScan cop[tikv] table:t2, index:a(a, b, id) range:[1,3], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1295,7 +1295,7 @@
           "└─HashAgg root  group by:Column, Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
           "  └─Union root  ",
           "    ├─IndexReader root partition:p0 index:IndexRangeScan",
-          "    │ └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+          "    │ └─IndexRangeScan cop[tikv] table:t1, index:a(a, b, id) range:[1,3], keep order:false, stats:pseudo",
           "    └─IndexReader root partition:p1 index:Selection",
           "      └─Selection cop[tikv]  in(test_partition_1.t1.b, 6, 7, 8)",
           "        └─IndexFullScan cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"

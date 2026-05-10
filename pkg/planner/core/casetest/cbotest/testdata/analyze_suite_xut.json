@@ -299,7 +299,7 @@
       [
         "TableReader_11 2.00 root  MppVersion: 3, data:ExchangeSender_10",
         "└─ExchangeSender_10 2.00 mpp[tiflash]  ExchangeType: PassThrough",
-        "  └─TableRangeScan_9 2.00 mpp[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
+        "  └─TableRangeScan_9 2.00 mpp[tiflash] table:t range:[1,2], keep order:false, stats:pseudo"
       ]
     ]
   },

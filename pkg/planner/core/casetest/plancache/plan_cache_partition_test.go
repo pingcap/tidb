@@ -197,7 +197,7 @@ func runNonPreparedPlanCachePartitionIndex(t *testing.T, tk *testkit.TestKit, ta
 	tk.MustExec(fmt.Sprintf(`analyze table %s`, tableName))
 	tk.MustQuery(fmt.Sprintf(`explain format='plan_cache' select * from %s where a IN (2,1,4,1,1,5,5)`, tableName)).CheckAt([]int{1, 2, 3, 4}, [][]any{
 		{"4.00", "root", "partition:p1,p2", ""},
-		{"4.00", "cop[tikv]", "table:" + tableName + ", index:PRIMARY(a)", "range:[1,1], [2,2], [4,4], [5,5], keep order:false"},
+		{"4.00", "cop[tikv]", "table:" + tableName + ", index:PRIMARY(a)", "range:[1,2], [4,5], keep order:false"},
 		{"4.00", "cop[tikv]", "table:" + tableName, "keep order:false"},
 	})
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)

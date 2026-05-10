@@ -117,7 +117,7 @@
           "IndexMerge root partition:p0,p1 type: intersection",
           "├─IndexRangeScan(Build) cop[tikv] table:t4, index:ia(a) range:(10,+inf], keep order:false",
           "├─IndexRangeScan(Build) cop[tikv] table:t4, index:ibc(b, c) range:[20 -inf,20 35), keep order:false",
-          "├─IndexRangeScan(Build) cop[tikv] table:t4, index:id(d) range:[1,1], [3,3], [8,8], [9,9], keep order:false",
+          "├─IndexRangeScan(Build) cop[tikv] table:t4, index:id(d) range:[1,1], [3,3], [8,9], keep order:false",
           "├─IndexRangeScan(Build) cop[tikv] table:t4, index:ie(e) range:[100,100], keep order:false",
           "└─TableRowIDScan(Probe) cop[tikv] table:t4 keep order:false"
         ],
@@ -177,7 +177,7 @@
           "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:PRIMARY(s1) range:[\"UJ\\x00A\",\"UJ\\x00B\"), keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:is2(s2) range:(\"abc\",+inf], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:is3(s3) range:(\"cba\",+inf], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:is4(s4) range:[\"aA\",\"aA\"], [\"??\",\"??\"], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t8, index:is4(s4) range:[\"aA\",\"??\"], keep order:false, stats:pseudo",
           "  └─Selection(Probe) cop[tikv]  gt(test.t8.s3, \"cba\"), like(test.t8.s1, \"啊A%\", 92)",
           "    └─TableRowIDScan cop[tikv] table:t8 keep order:false, stats:pseudo"
         ],
@@ -417,13 +417,13 @@
           "├─IndexMerge root  type: intersection",
           "│ ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p0, index:ia(a) range:(10,+inf], keep order:false",
           "│ ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p0, index:ibc(b, c) range:[20 -inf,20 35), keep order:false",
-          "│ ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p0, index:id(d) range:[1,1], [3,3], [8,8], [9,9], keep order:false",
+          "│ ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p0, index:id(d) range:[1,1], [3,3], [8,9], keep order:false",
           "│ ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p0, index:ie(e) range:[100,100], keep order:false",
           "│ └─TableRowIDScan(Probe) cop[tikv] table:t4, partition:p0 keep order:false",
           "└─IndexMerge root  type: intersection",
           "  ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p1, index:ia(a) range:(10,+inf], keep order:false",
           "  ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p1, index:ibc(b, c) range:[20 -inf,20 35), keep order:false",
-          "  ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p1, index:id(d) range:[1,1], [3,3], [8,8], [9,9], keep order:false",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p1, index:id(d) range:[1,1], [3,3], [8,9], keep order:false",
           "  ├─IndexRangeScan(Build) cop[tikv] table:t4, partition:p1, index:ie(e) range:[100,100], keep order:false",
           "  └─TableRowIDScan(Probe) cop[tikv] table:t4, partition:p1 keep order:false"
         ],
