@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/tidbvar"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -116,7 +115,7 @@ func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (nodeCount 
 		// shouldn't happen normally as every node will register itself to the meta
 		// table.
 		logutil.BgLogger().Warn("no managed nodes found, use local node CPU count instead")
-		cpuCount = cpu.GetCPUCount()
+		cpuCount = storage.GetDXFCPUCount()
 	} else {
 		cpuCount = nodes[0].CPUCount
 	}

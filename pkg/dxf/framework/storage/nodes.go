@@ -43,7 +43,8 @@ func SetNodeResource(rc *proto.NodeResource) {
 	nodeResource.Store(rc)
 }
 
-func getDXFCPUCount() int {
+// GetDXFCPUCount returns the cpu count usable to DXF.
+func GetDXFCPUCount() int {
 	if rc := GetNodeResource(); rc != nil {
 		return rc.TotalCPU
 	}
@@ -63,7 +64,7 @@ func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, 
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := getDXFCPUCount()
+	cpuCount := GetDXFCPUCount()
 	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
@@ -81,7 +82,7 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := getDXFCPUCount()
+	cpuCount := GetDXFCPUCount()
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
