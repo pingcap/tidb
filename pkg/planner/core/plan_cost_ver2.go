@@ -620,17 +620,24 @@ func getPlanCostVer24PhysicalStreamAgg(pp base.PhysicalPlan, taskType property.T
 }
 
 // childCanProvideOrderForStreamAgg returns true if child preserves ordering
-// through to a base-table access path.
+// through to a base-table cop[tikv] access path that StreamAgg could realistically
+// use as an ordered input.
 //
-// This is a conservative approximation: a base-table access path may still
+// This is a conservative approximation: a cop[tikv] base-table path may still
 // need a Sort if no index covers the GROUP BY columns. The planner's
 // possible-property tracking already filters out StreamAgg alternatives that
 // can't be satisfied by an index, so the false-positive rate in practice is
 // low, and we accept the small over-count to avoid threading TableInfo
 // through the cost path.
+//
+// MPP-backed PhysicalTableReader is excluded: TiFlash MPP scans do not preserve
+// row order, so StreamAgg cannot consume that output without an explicit Sort.
+// Treating an MPP child as "free ordering" would let the cost-model changes
+// (memory penalty + agg/group placement) wrongly disfavor HashAgg over MPP
+// versus a cop[tikv]+StreamAgg alternative.
 func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 	for cur := child; cur != nil; {
-		switch cur.(type) {
+		switch v := cur.(type) {
 		case *physicalop.PhysicalProjection, *physicalop.PhysicalSelection,
 			*physicalop.PhysicalUnionScan:
 			children := cur.Children()
@@ -638,8 +645,10 @@ func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 				return false
 			}
 			cur = children[0]
+		case *physicalop.PhysicalTableReader:
+			return v.ReadReqType != physicalop.MPP
 		case *physicalop.PhysicalIndexReader, *physicalop.PhysicalIndexLookUpReader,
-			*physicalop.PhysicalIndexMergeReader, *physicalop.PhysicalTableReader:
+			*physicalop.PhysicalIndexMergeReader:
 			return true
 		default:
 			return false
@@ -708,22 +717,23 @@ func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.Tas
 	if taskType == property.RootTaskType {
 		nKeys := float64(len(p.GroupByItems))
 		// The agg+group placement and hash-table memory penalty are aimed at the
-		// canonical "high-NDV GROUP BY with an available ordered index" case where
-		// StreamAgg might genuinely outperform HashAgg. For ungrouped aggregation
-		// (no GROUP BY) there is a single output row, so neither knob can change
-		// the qualitative comparison meaningfully — apply the changes only when
-		// GROUP BY items are present, otherwise keep the original formula.
-		if nKeys > 0 {
-			var hashMemCost costusage.CostVer2
-			if childCanProvideOrderForStreamAgg(p.Children()[0]) {
-				hashMemCost = costusage.NewCostVer2(option, memFactor,
-					concurrency*outputRows*outputRowSize*memFactor.Value,
-					func() string {
-						return fmt.Sprintf("hashmem(%v*%v*%v*%v)", concurrency, outputRows, outputRowSize, memFactor)
-					})
-			} else {
-				hashMemCost = costusage.ZeroCostVer2
-			}
+		// canonical "high-NDV GROUP BY with an available ordered cop[tikv] index"
+		// case where StreamAgg has a real shot at outperforming HashAgg. They
+		// only apply when:
+		//   - the HashAgg has at least one GROUP BY item (otherwise it's a
+		//     single-result aggregation and the choice doesn't matter), AND
+		//   - the child can actually deliver ordered input that StreamAgg could
+		//     consume (cop[tikv] base-table path; MPP scans don't preserve order).
+		// In other configurations (ungrouped, MPP-backed, sort-required) keep
+		// the original formula so MPP plans and other established choices are
+		// not unfairly disfavored against a hypothetical StreamAgg.
+		applyStreamAggGuard := nKeys > 0 && childCanProvideOrderForStreamAgg(p.Children()[0])
+		if applyStreamAggGuard {
+			hashMemCost := costusage.NewCostVer2(option, memFactor,
+				concurrency*outputRows*outputRowSize*memFactor.Value,
+				func() string {
+					return fmt.Sprintf("hashmem(%v*%v*%v*%v)", concurrency, outputRows, outputRowSize, memFactor)
+				})
 			// hashBuildCost includes memory; subtract it out so we don't double-count.
 			// Recompute just the CPU portion of hash build (key computation + build).
 			hashBuildCPUCost := costusage.NewCostVer2(option, cpuFactor,
@@ -734,7 +744,6 @@ func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.Tas
 			p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, hashMemCost, aggCost, groupCost,
 				costusage.DivCostVer2(costusage.SumCostVer2(hashBuildCPUCost, hashProbeCost), concurrency))
 		} else {
-			// Ungrouped aggregation: original formula.
 			p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost,
 				costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
 		}
