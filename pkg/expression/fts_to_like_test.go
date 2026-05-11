@@ -310,3 +310,32 @@ func TestBuildFTSToILikeExpressionFromBuiltin(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+func TestScalarExprSupportedByFlashRejectsNonDefaultFTSModifier(t *testing.T) {
+	// The tipb pushdown protocol does not serialize the FTS modifier; TiFlash
+	// reconstructs the signature with the default (natural-language) modifier.
+	// scalarExprSupportedByFlash must therefore mark non-default-modifier
+	// FTSMysqlMatchAgainst as NOT Flash-supported even though the function
+	// name is generally Flash-pushdown-eligible. This is defense in depth on
+	// top of the planner's modifier guard in matchAgainstToBuiltin.
+	ctx := mock.NewContext()
+	naturalMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
+	booleanMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierBooleanMode)
+	queryExpansion := ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode | ast.FulltextSearchModifierWithQueryExpansion)
+
+	cases := []struct {
+		name     string
+		modifier ast.FulltextSearchModifier
+		want     bool
+	}{
+		{"natural-language mode is Flash-supported", naturalMode, true},
+		{"boolean mode is not Flash-supported", booleanMode, false},
+		{"with-query-expansion is not Flash-supported", queryExpansion, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sf := newFTSMatchAgainstForTest(t, ctx, "mysql", 1, tc.modifier)
+			require.Equal(t, tc.want, scalarExprSupportedByFlash(ctx.GetEvalCtx(), sf))
+		})
+	}
+}
