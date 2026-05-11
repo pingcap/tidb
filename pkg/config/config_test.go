@@ -1162,6 +1162,50 @@ max-allowed-packet = %d`, packetSize)), 0644))
 	StoreGlobalConfig(conf)
 	require.Equal(t, uint64(DefMaxAllowedPacket), GetMaxAllowedPacket())
 
+	t.Run("adjust starter config with full TLS env", func(t *testing.T) {
+		conf := NewConfig()
+		t.Setenv(EnvClusterCA, "/tmp/cluster-ca.pem")
+		t.Setenv(EnvClusterCert, "/tmp/cluster-cert.pem")
+		t.Setenv(EnvClusterKey, "/tmp/cluster-key.pem")
+		t.Setenv(EnvSQLCA, "/tmp/sql-ca.pem")
+		t.Setenv(EnvSQLCert, "/tmp/sql-cert.pem")
+		t.Setenv(EnvSQLKey, "/tmp/sql-key.pem")
+		require.NoError(t, conf.AdjustStarterConfig(true))
+		require.Equal(t, "/tmp/cluster-ca.pem", conf.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/cluster-cert.pem", conf.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/cluster-key.pem", conf.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/sql-ca.pem", conf.Security.SSLCA)
+		require.Equal(t, "/tmp/sql-cert.pem", conf.Security.SSLCert)
+		require.Equal(t, "/tmp/sql-key.pem", conf.Security.SSLKey)
+	})
+
+	t.Run("adjust starter config keeps CA when env overrides cert and key", func(t *testing.T) {
+		conf := NewConfig()
+		conf.Security.ClusterSSLCA = "/tmp/config-cluster-ca.pem"
+		conf.Security.ClusterSSLCert = "/tmp/config-cluster-cert.pem"
+		conf.Security.ClusterSSLKey = "/tmp/config-cluster-key.pem"
+		conf.Security.SSLCA = "/tmp/config-sql-ca.pem"
+		conf.Security.SSLCert = "/tmp/config-sql-cert.pem"
+		conf.Security.SSLKey = "/tmp/config-sql-key.pem"
+		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
+		t.Setenv(EnvClusterKey, "/tmp/env-cluster-key.pem")
+		t.Setenv(EnvSQLCert, "/tmp/env-sql-cert.pem")
+		t.Setenv(EnvSQLKey, "/tmp/env-sql-key.pem")
+		require.NoError(t, conf.AdjustStarterConfig(true))
+		require.Equal(t, "/tmp/config-cluster-ca.pem", conf.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/env-cluster-cert.pem", conf.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/env-cluster-key.pem", conf.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/config-sql-ca.pem", conf.Security.SSLCA)
+		require.Equal(t, "/tmp/env-sql-cert.pem", conf.Security.SSLCert)
+		require.Equal(t, "/tmp/env-sql-key.pem", conf.Security.SSLKey)
+	})
+
+	t.Run("adjust starter config rejects incomplete TLS env", func(t *testing.T) {
+		conf := NewConfig()
+		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
+		require.ErrorContains(t, conf.AdjustStarterConfig(true), "CLUSTER_CERT and CLUSTER_KEY must be set together")
+	})
+
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)

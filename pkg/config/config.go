@@ -115,6 +115,18 @@ const (
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
+	// EnvClusterCA is the system env name for cluster CA path.
+	EnvClusterCA = "CLUSTER_CA"
+	// EnvClusterCert is the system env name for cluster cert path.
+	EnvClusterCert = "CLUSTER_CERT"
+	// EnvClusterKey is the system env name for cluster key path.
+	EnvClusterKey = "CLUSTER_KEY"
+	// EnvSQLCA is the system env name for SQL CA path.
+	EnvSQLCA = "SQL_CA"
+	// EnvSQLCert is the system env name for SQL cert path.
+	EnvSQLCert = "SQL_CERT"
+	// EnvSQLKey is the system env name for SQL key path.
+	EnvSQLKey = "SQL_KEY"
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
@@ -1363,11 +1375,75 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
 	}
+	if err := cfg.AdjustStarterConfig(cfg.DeployMode == deploymode.Starter); err != nil {
+		fmt.Fprintln(os.Stderr, "invalid security env vars", err)
+		os.Exit(1)
+	}
 	if configCheck {
 		fmt.Println("config check successful")
 		os.Exit(0)
 	}
 	StoreGlobalConfig(cfg)
+}
+
+// AdjustStarterConfig applies starter-only security overrides.
+func (c *Config) AdjustStarterConfig(isStarter bool) error {
+	if !isStarter {
+		return nil
+	}
+	return c.adjustSecurityConfig()
+}
+
+func (c *Config) adjustSecurityConfig() error {
+	clusterCAPath := os.Getenv(EnvClusterCA)
+	clusterCertPath := os.Getenv(EnvClusterCert)
+	clusterKeyPath := os.Getenv(EnvClusterKey)
+	clusterCAOverridden := len(clusterCAPath) > 0
+	clusterCertOverridden := len(clusterCertPath) > 0
+	clusterKeyOverridden := len(clusterKeyPath) > 0
+	if len(clusterCAPath) > 0 {
+		c.Security.ClusterSSLCA = clusterCAPath
+	}
+	if len(clusterCertPath) > 0 {
+		c.Security.ClusterSSLCert = clusterCertPath
+	}
+	if len(clusterKeyPath) > 0 {
+		c.Security.ClusterSSLKey = clusterKeyPath
+	}
+	if clusterCAOverridden || clusterCertOverridden || clusterKeyOverridden {
+		if clusterCertOverridden != clusterKeyOverridden {
+			return errors.New("CLUSTER_CERT and CLUSTER_KEY must be set together")
+		}
+		if len(c.Security.ClusterSSLCA) > 0 && (len(c.Security.ClusterSSLCert) == 0 || len(c.Security.ClusterSSLKey) == 0) {
+			return errors.New("both CLUSTER_CERT and CLUSTER_KEY must be set when CLUSTER_CA is set")
+		}
+	}
+
+	sqlCAPath := os.Getenv(EnvSQLCA)
+	sqlCertPath := os.Getenv(EnvSQLCert)
+	sqlKeyPath := os.Getenv(EnvSQLKey)
+	sqlCAOverridden := len(sqlCAPath) > 0
+	sqlCertOverridden := len(sqlCertPath) > 0
+	sqlKeyOverridden := len(sqlKeyPath) > 0
+	if len(sqlCAPath) > 0 {
+		c.Security.SSLCA = sqlCAPath
+	}
+	if len(sqlCertPath) > 0 {
+		c.Security.SSLCert = sqlCertPath
+	}
+	if len(sqlKeyPath) > 0 {
+		c.Security.SSLKey = sqlKeyPath
+	}
+	if sqlCAOverridden || sqlCertOverridden || sqlKeyOverridden {
+		if sqlCertOverridden != sqlKeyOverridden {
+			return errors.New("SQL_CERT and SQL_KEY must be set together")
+		}
+		if len(c.Security.SSLCA) > 0 && (len(c.Security.SSLCert) == 0 || len(c.Security.SSLKey) == 0) {
+			return errors.New("both SQL_CERT and SQL_KEY must be set when SQL_CA is set")
+		}
+	}
+
+	return nil
 }
 
 // RemovedVariableCheck checks if the config file contains any items
