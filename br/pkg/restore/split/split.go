@@ -241,14 +241,12 @@ func scanRegionsLimitWithRetry(
 func PaginateScanRegionWithCodecAware(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
+	var encodeRegionRange func([]byte, []byte) ([]byte, []byte)
 	if codecCli := client.GetCodecPDClient(); codecCli != nil {
 		var err error
 		cd := codecCli.GetCodec()
-		startKey, err = cd.DecodeKey(startKey)
-		if err != nil {
-			return nil, err
-		}
-		endKey, err = cd.DecodeKey(endKey)
+		encodeRegionRange = cd.EncodeRegionRange
+		startKey, endKey, err = cd.DecodeRange(startKey, endKey)
 		if err != nil {
 			return nil, err
 		}
@@ -256,7 +254,23 @@ func PaginateScanRegionWithCodecAware(
 		startKey = codec.EncodeBytes(nil, startKey)
 		endKey = codec.EncodeBytes(nil, endKey)
 	}
-	return PaginateScanRegion(ctx, client, startKey, endKey, limit)
+	regions, err := PaginateScanRegion(ctx, client, startKey, endKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	if encodeRegionRange != nil {
+		encodeRegionKeys(regions, encodeRegionRange)
+	}
+	return regions, nil
+}
+
+func encodeRegionKeys(regions []*RegionInfo, encodeRegionRange func([]byte, []byte) ([]byte, []byte)) {
+	for _, region := range regions {
+		if region == nil || region.Region == nil {
+			continue
+		}
+		region.Region.StartKey, region.Region.EndKey = encodeRegionRange(region.Region.StartKey, region.Region.EndKey)
+	}
 }
 
 // PaginateScanRegion scan regions with a limit pagination and return all regions
