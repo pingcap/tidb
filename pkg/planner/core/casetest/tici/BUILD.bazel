@@ -5,11 +5,12 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "stats_test.go",
         "tici_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/config",
         "//pkg/ddl/ingest/testutil",
