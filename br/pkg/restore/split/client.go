@@ -591,11 +591,7 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 func (c *pdClient) getEncodedKeysFn(start, end []byte) (encodedStart, encodedEnd []byte, err error) {
 	if codecCli := c.GetCodecPDClient(); codecCli != nil {
 		cd := codecCli.GetCodec()
-		encodedStart, err = cd.DecodeKey(start)
-		if err != nil {
-			return nil, nil, err
-		}
-		encodedEnd, err = cd.DecodeKey(end)
+		encodedStart, encodedEnd, err = cd.DecodeRange(start, end)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -643,6 +639,9 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 		regions, err := PaginateScanRegion(ctx, c, scanStart, scanEnd, ScanRegionPaginationLimit)
 		if err != nil {
 			return err
+		}
+		if codecCli := c.GetCodecPDClient(); codecCli != nil {
+			encodeRegionKeys(regions, codecCli.GetCodec().EncodeRegionRange)
 		}
 		log.Info("paginate scan regions",
 			zap.Int("count", len(regions)),
