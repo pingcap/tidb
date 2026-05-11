@@ -1550,6 +1550,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	lockedLastPurgedTSOReady := false
 	purgeJobID := uint64(0)
 	purgeHistRunningInserted := false
+	txnStarted := false
+	txnFinished := false
 	defer func() {
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
@@ -1641,9 +1643,20 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	defer func() {
 		stopTaskMonitor()
 	}()
+	defer func() {
+		if !txnStarted || txnFinished {
+			return
+		}
+		_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+		txnFinished = true
+	}()
 
 	finalizeFailure := func(purgeErr error) error {
 		purgeFailedReason, finalErr := taskCancelController.normalizeTaskFailure(purgeErr)
+		if txnStarted && !txnFinished {
+			_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+			txnFinished = true
+		}
 		if !purgeHistRunningInserted {
 			return errors.Trace(finalErr)
 		}
@@ -1698,10 +1711,10 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if _, err = sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
 		return errors.Trace(err)
 	}
+	txnStarted = true
 
 	lastPurgedTSO, hasLastPurgedTSO, err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID)
 	if err != nil {
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 		return err
 	}
 	lockedLastPurgedTSO = lastPurgedTSO
@@ -1709,7 +1722,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 
 	txn, err := purgeSctx.Txn(true)
 	if err != nil {
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 		return errors.Trace(err)
 	}
 	purgeStartTS := txn.StartTS()
@@ -1726,7 +1738,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		purgeMethod,
 		histTime(purgeStart),
 	); err != nil {
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 		return errors.Trace(err)
 	}
 	purgeHistRunningInserted = true
@@ -1746,14 +1757,12 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		},
 	)
 	if err != nil {
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 		return finalizeFailure(err)
 	}
 	failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
 
 	publicMVIDs, buildingMVIDs, err := collectDependentMViewIDsForMLogPurge(kctx, sqlExec, baseTableMeta, mlogID)
 	if err != nil {
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 		return finalizeFailure(err)
 	}
 	safePurgeTSO, err = calcMaterializedViewLogSafePurgeTSO(
@@ -1766,7 +1775,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		buildingMVIDs,
 	)
 	if err != nil {
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 		return finalizeFailure(err)
 	}
 	skipDeleteByCheckpoint := lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
@@ -1784,7 +1792,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			totalPurgeRows += batchPurgeRows
 			failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
 			if batchErr != nil {
-				_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
 				return finalizeFailure(batchErr)
 			}
 			if batchPurgeRows < batchSize {
@@ -1806,7 +1813,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		},
 	)
 	if err != nil {
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 		return finalizeFailure(err)
 	}
 	var lastPurgedTSOToPersist *uint64
@@ -1821,12 +1827,12 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		nextTime,
 		shouldUpdateNextTime,
 	); err != nil {
-		_, _ = sqlExec.ExecuteInternal(kctx, "ROLLBACK")
 		return finalizeFailure(err)
 	}
 	if _, err = sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
 		return finalizeFailure(err)
 	}
+	txnFinished = true
 
 	if err := finalizeSuccess(); err != nil {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
