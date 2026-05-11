@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -71,6 +72,7 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	atomic2 "go.uber.org/atomic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -682,6 +684,10 @@ func (c *mockPdClient) GetTS(ctx context.Context) (int64, int64, error) {
 
 func (c *mockPdClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
+}
+
+func (c *mockPdClient) WithCallerComponent(component caller.Component) pd.Client {
+	return c
 }
 
 type mockGrpcErr struct{}
@@ -2422,6 +2428,65 @@ func TestCheckDiskAvail(t *testing.T) {
 	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
 	err = checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+}
+
+func TestBackendCloseWithoutTiKVClient(t *testing.T) {
+	localStoreDir := t.TempDir()
+	b := &Backend{
+		BackendConfig: BackendConfig{
+			LocalStoreDir: localStoreDir,
+		},
+		engineMgr: &engineManager{
+			BackendConfig: BackendConfig{
+				LocalStoreDir: localStoreDir,
+			},
+			externalEngine: map[uuid.UUID]engineapi.Engine{},
+			bufferPool:     membuf.NewPool(),
+			logger:         log.L(),
+		},
+		importClientFactory: &mockImportClientFactory{},
+	}
+
+	require.NotPanics(t, b.Close)
+}
+
+func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
+	oldNewEtcdSafePointKV := newEtcdSafePointKV
+	oldNewTiKVRPCClient := newTiKVRPCClient
+	oldNewTiKVStore := newTiKVStore
+	defer func() {
+		newEtcdSafePointKV = oldNewEtcdSafePointKV
+		newTiKVRPCClient = oldNewTiKVRPCClient
+		newTiKVStore = oldNewTiKVStore
+	}()
+
+	var safePointKVCalls, rpcClientCalls, kvStoreCalls int
+	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
+		safePointKVCalls++
+		return tikv.NewMockSafePointKV(), nil
+	}
+	newTiKVRPCClient = func(_ ...tikv.ClientOpt) tikv.Client {
+		rpcClientCalls++
+		return tikv.NewRPCClient()
+	}
+	newTiKVStore = func(_ string, _ pd.Client, _ tikv.SafePointKV, _ tikv.Client, _ ...tikv.Option) (*tikv.KVStore, error) {
+		kvStoreCalls++
+		return nil, errors.New("mock kv store error")
+	}
+
+	b := &Backend{
+		pdCliForTiKV: tikv.NewCodecPDClient(tikv.ModeTxn, &mockPdClient{}),
+		pdAddrs:      []string{"127.0.0.1:2379"},
+		tls:          &common.TLS{},
+	}
+
+	dupeController, err := b.GetDupeController(1, nil)
+	require.Nil(t, dupeController)
+	require.ErrorContains(t, err, "mock kv store error")
+	require.Equal(t, 1, safePointKVCalls)
+	require.Equal(t, 1, rpcClientCalls)
+	require.Equal(t, 1, kvStoreCalls)
+	require.Nil(t, b.tikvCli)
 }
 
 type mockStoreHelper struct{}
