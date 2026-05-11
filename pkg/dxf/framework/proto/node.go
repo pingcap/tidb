@@ -64,6 +64,8 @@ func getLimitedDXFCPU(totalCPU int, limit int) int {
 	if totalCPU <= 0 || limit >= 100 {
 		return totalCPU
 	}
+	// use CEIL might cause the real limit to be higher than the given limit.
+	// as DXF use slots or CPU cores as the unit of resource, that's acceptable.
 	usableCPU := int(math.Ceil(float64(totalCPU) * float64(limit) / 100))
 	if usableCPU < 1 {
 		return 1
