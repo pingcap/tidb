@@ -1035,7 +1035,7 @@ ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 	))
 }
 
-func TestUpgradeVersion255MaskingPolicy(t *testing.T) {
+func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
