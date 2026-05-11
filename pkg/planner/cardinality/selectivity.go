@@ -267,8 +267,17 @@ func Selectivity(
 					// receives. BuildFTSToILikeExpressionFromBuiltin returns an error
 					// for the multi-column case to keep that path explicit here.
 					if substitute, err := expression.BuildFTSToILikeExpressionFromBuiltin(ctx.GetExprCtx(), x); err == nil {
-						if subSF, ok := substitute.(*expression.ScalarFunction); ok {
-							notCoveredStrMatch[i] = subSF
+						switch sub := substitute.(type) {
+						case *expression.ScalarFunction:
+							notCoveredStrMatch[i] = sub
+							continue
+						case *expression.Constant:
+							// AGAINST(NULL) and empty-string search produce a
+							// constant substitute (Constant 0). Route to the
+							// constants bucket so the stats engine recognizes
+							// it as constant-false (selectivity 0) instead of
+							// applying the str-match default (0.1).
+							notCoveredConstants[i] = sub
 							continue
 						}
 					}
