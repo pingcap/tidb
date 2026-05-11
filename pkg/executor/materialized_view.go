@@ -1548,7 +1548,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	safePurgeTSO := uint64(0)
 	lockedLastPurgedTSO := uint64(0)
 	lockedLastPurgedTSOReady := false
-	deleteLoopCompleted := false
 	purgeJobID := uint64(0)
 	purgeHistRunningInserted := false
 	defer func() {
@@ -1789,17 +1788,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				return finalizeFailure(batchErr)
 			}
 			if batchPurgeRows < batchSize {
-				deleteLoopCompleted = true
 				break
 			}
 		}
-	} else {
-		deleteLoopCompleted = true
-	}
-
-	if !deleteLoopCompleted {
-		_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
-		return finalizeFailure(errors.New("purge materialized view log: delete loop did not complete"))
 	}
 
 	nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
