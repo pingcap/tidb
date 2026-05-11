@@ -71,6 +71,7 @@ go_library(
         "rule_topn_push_down.go",
         "runtime_filter_generator.go",
         "scalar_subq_expression.go",
+        "schema_table_key.go",
         "show_predicate_extractor.go",
         "stats.go",
         "stringer.go",
