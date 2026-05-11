@@ -23,163 +23,51 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-// ftsSearchTerm represents a single term in a Boolean fulltext search query.
+// ftsSearchTerm represents a single token in a boolean-mode FTS search string
+// surviving the strict-subset validator: a plain alphanumeric word optionally
+// prefixed with `+` (required) or `-` (excluded).
 type ftsSearchTerm struct {
 	word       string
-	isRequired bool // Has '+' prefix
-	isExcluded bool // Has '-' prefix
-	// Note: Phrases (wrapped in quotes) and prefix wildcards ('*' suffix) are parsed but not
-	// treated differently from regular terms because LIKE %term% already matches the term anywhere.
-	// Proper phrase/prefix matching would require REGEXP to enforce word boundaries, which we
-	// avoid for simplicity.
+	isRequired bool
+	isExcluded bool
 }
 
-// parseFTSBooleanSearchString parses a Boolean mode search string into individual terms.
+// parseFTSBooleanSearchString splits a boolean-mode search string into terms.
+// Inputs reach this function only after ValidateFTSSearchStringForLikeFallback
+// has accepted them, so every whitespace-separated field is either a bare
+// alphanumeric word or `+word`/`-word`.
 func parseFTSBooleanSearchString(text string) []ftsSearchTerm {
-	var terms []ftsSearchTerm
-	var current strings.Builder
-	inQuote := false
-	phraseIsRequired := false
-	phraseIsExcluded := false
-	i := 0
-
-	for i < len(text) {
-		ch := text[i]
-
-		switch ch {
-		case '"':
-			if inQuote {
-				// End of phrase
-				// NOTE: Phrase matching in MySQL full-text search finds the exact phrase as a sequence
-				// of words (word boundaries are enforced). Using LIKE %phrase%, we cannot perfectly
-				// enforce word boundaries without REGEXP. For example, "quick brown" would match
-				// "aquick brownie" which MySQL full-text search would not match. This is an acceptable
-				// limitation for a fallback implementation.
-				phrase := current.String()
-				if phrase != "" {
-					terms = append(terms, ftsSearchTerm{
-						word:       phrase,
-						isRequired: phraseIsRequired,
-						isExcluded: phraseIsExcluded,
-					})
-				}
-				current.Reset()
-				inQuote = false
-				phraseIsRequired = false
-				phraseIsExcluded = false
-			} else {
-				// Check for leading operator before the quote (e.g., +"phrase" or -"phrase")
-				if current.Len() > 0 {
-					prefix := current.String()
-					// Only extract operator if prefix is exactly "+" or "-"
-					// Otherwise, treat it as a regular word
-					if prefix == "+" {
-						phraseIsRequired = true
-					} else if prefix == "-" {
-						phraseIsExcluded = true
-					} else {
-						// Not an operator, parse as a regular word first
-						terms = append(terms, parseFTSSearchTerm(prefix))
-					}
-					current.Reset()
-				}
-				// Start of phrase
-				inQuote = true
-			}
-			i++
-		case ' ', '\t', '\n', '\r':
-			if inQuote {
-				current.WriteByte(ch)
-			} else if current.Len() > 0 {
-				// End of word
-				word := current.String()
-				terms = append(terms, parseFTSSearchTerm(word))
-				current.Reset()
-			}
-			i++
-		default:
-			current.WriteByte(ch)
-			i++
-		}
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return nil
 	}
-
-	// Handle remaining content
-	if current.Len() > 0 {
-		if inQuote {
-			// Unclosed quote, treat as phrase and preserve operator flags
-			phrase := current.String()
-			if phrase != "" {
-				terms = append(terms, ftsSearchTerm{
-					word:       phrase,
-					isRequired: phraseIsRequired,
-					isExcluded: phraseIsExcluded,
-				})
-			}
-		} else {
-			word := current.String()
-			terms = append(terms, parseFTSSearchTerm(word))
-		}
+	terms := make([]ftsSearchTerm, 0, len(fields))
+	for _, w := range fields {
+		terms = append(terms, parseFTSSearchTerm(w))
 	}
-
 	return terms
 }
 
-// parseFTSSearchTerm parses a single search term (not in quotes) and extracts operators.
+// parseFTSSearchTerm parses a single boolean-mode token. The strict-subset
+// validator guarantees `word`, `+word`, or `-word` with an alphanumeric body,
+// so only the leading operator needs interpretation.
 func parseFTSSearchTerm(word string) ftsSearchTerm {
 	if word == "" {
 		return ftsSearchTerm{}
 	}
-
-	term := ftsSearchTerm{word: word}
-
-	// Check for leading operators
-	if word[0] == '+' {
-		term.isRequired = true
-		word = word[1:]
-	} else if word[0] == '-' {
-		term.isExcluded = true
-		word = word[1:]
+	switch word[0] {
+	case '+':
+		return ftsSearchTerm{word: word[1:], isRequired: true}
+	case '-':
+		return ftsSearchTerm{word: word[1:], isExcluded: true}
 	}
-
-	// Strip MySQL relevance modifiers >, <, ~ (treat term as optional in LIKE fallback).
-	// ~ in MySQL Boolean FTS decreases the relevance of a term without excluding it;
-	// >, < adjust the relevance contribution. All three map to "optional" here.
-	if len(word) > 0 && (word[0] == '>' || word[0] == '<' || word[0] == '~') {
-		word = word[1:]
-	}
-
-	// Strip grouping parentheses that MySQL uses for sub-expression grouping
-	word = strings.Trim(word, "()")
-
-	// Check for trailing wildcard and strip it (we don't use it differently, see struct comment)
-	if len(word) > 0 && word[len(word)-1] == '*' {
-		word = word[:len(word)-1]
-	}
-
-	term.word = word
-	return term
-}
-
-// stripFTSTokenPunctuation removes leading and trailing non-word characters from a
-// natural-language search token so that punctuation attached to a word by the
-// tokenizer (e.g. "MySQL," → "MySQL") is not included in the LIKE pattern.
-// Non-ASCII bytes (> 127) are treated as word characters so multi-byte UTF-8
-// characters pass through unchanged.
-func stripFTSTokenPunctuation(word string) string {
-	start := 0
-	for start < len(word) && !isFTSWordByte(word[start]) {
-		start++
-	}
-	end := len(word)
-	for end > start && !isFTSWordByte(word[end-1]) {
-		end--
-	}
-	return word[start:end]
+	return ftsSearchTerm{word: word}
 }
 
 // isFTSWordByte returns true for alphanumeric ASCII and non-ASCII bytes.
 // Punctuation including underscore is NOT a word character, consistent with
-// MySQL's built-in FTS tokenizer which treats _ as a word separator.
+// MySQL's built-in FTS tokenizer which treats _ as a word separator. Used by
+// ValidateFTSSearchStringForLikeFallback to gate the LIKE rewrite.
 func isFTSWordByte(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c > 127
 }
@@ -209,19 +97,60 @@ func escapeFTSLikePattern(term string) string {
 	return result.String()
 }
 
+// ValidateFTSSearchStringForLikeFallback reports whether searchText falls
+// inside the strict subset that the LIKE fallback is allowed to translate.
+// The supported subset is, by mode:
+//
+//   - Boolean mode: each whitespace-separated token must be `word`, `+word`,
+//     or `-word`, where `word` consists of ASCII alphanumeric characters or
+//     non-ASCII UTF-8 bytes (the same definition used by isFTSWordByte).
+//   - Natural-language mode: each whitespace-separated token must be a `word`
+//     of the same alphanumeric form (no leading +/- operators).
+//
+// An empty or whitespace-only search string is valid; BuildFTSToILikeExpression
+// short-circuits to a constant-0 result for it.
+//
+// Anything outside this subset (phrases, * prefix, > < ~ relevance modifiers,
+// () grouping, mid-word punctuation like `xx-yy`, etc.) is rejected because
+// MySQL FTS tokenizes those constructs in ways that differ from a substring
+// LIKE match. The planner uses this signal to skip the LIKE fallback for
+// rejected strings; the native FTSMysqlMatchAgainst builtin can still serve
+// the query when an FTS index is available.
+func ValidateFTSSearchStringForLikeFallback(searchText string, modifier ast.FulltextSearchModifier) error {
+	isBoolean := modifier.IsBooleanMode()
+	for _, token := range strings.Fields(searchText) {
+		body := token
+		if isBoolean && (body[0] == '+' || body[0] == '-') {
+			body = body[1:]
+		}
+		if body == "" {
+			return ErrNotSupportedYet.GenWithStackByArgs(
+				"MATCH...AGAINST search term '" + token + "' is not supported in the LIKE fallback")
+		}
+		for i := range len(body) {
+			if !isFTSWordByte(body[i]) {
+				return ErrNotSupportedYet.GenWithStackByArgs(
+					"MATCH...AGAINST search term '" + token + "' is not supported in the LIKE fallback")
+			}
+		}
+	}
+	return nil
+}
+
 // BuildFTSToILikeExpression converts a MATCH...AGAINST input (a list of column
 // expressions, the search-string literal, and the parsed modifier) into an
 // equivalent ILIKE-based predicate expression.
 //
 // Two callers share this conversion:
-//   - the planner's MATCH...AGAINST LIKE fallback rewrite, used as the
-//     executable plan when the "fts-native" alternative round is not viable;
+//   - the planner's MATCH...AGAINST LIKE fallback rewrite, used by the
+//     "fts-like-fallback" alternative round when round 1 reports that the
+//     native FTSMysqlMatchAgainst builtin cannot serve a predicate-context
+//     MATCH (no FTS index on a TiFlash replica, modifier not pushdown-supported);
 //   - selectivity estimation, which substitutes the same ILIKE form for the
-//     opaque FTSMysqlMatchAgainst builtin so the two alternative rounds
-//     compete on cost using the same column-stats-derived row estimate
-//     (the native builtin cannot be evaluated in TiDB and would otherwise
-//     fall through to a flat default selectivity that ignores the column's
-//     histogram).
+//     opaque FTSMysqlMatchAgainst builtin so round 1's cost is computed from
+//     column statistics rather than a flat default — the native builtin
+//     cannot be evaluated in TiDB and would otherwise fall through to a
+//     SelectivityFactor (0.8) that ignores the column's histogram.
 //
 // Returns an integer (0/1) typed expression suitable for direct use as a
 // filter predicate.
@@ -246,129 +175,153 @@ func BuildFTSToILikeExpression(
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST WITH QUERY EXPANSION is not supported in the LIKE fallback")
 	}
 
-	zeroIntConst := func() Expression {
-		return &Constant{
-			Value:   types.NewIntDatum(0),
-			RetType: types.NewFieldType(mysql.TypeTiny),
-		}
+	// Reject search strings outside the strict supported subset before we
+	// translate. Callers that want a graceful fallback (e.g. the planner
+	// redirecting to the native builtin, or selectivity estimation falling
+	// through to a default estimate) should call this validator directly and
+	// react to its error.
+	if err := ValidateFTSSearchStringForLikeFallback(searchText, modifier); err != nil {
+		return nil, err
 	}
 
 	if searchText == "" {
-		return zeroIntConst(), nil
+		return ftsZeroIntConst(), nil
 	}
 
 	if modifier.IsBooleanMode() {
-		terms := parseFTSBooleanSearchString(searchText)
-		if len(terms) == 0 {
-			return zeroIntConst(), nil
-		}
+		return buildFTSBooleanModeILikeExpression(ctx, columns, searchText)
+	}
+	if modifier.IsNaturalLanguageMode() {
+		return buildFTSNaturalLanguageModeILikeExpression(ctx, columns, searchText)
+	}
+	return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST modifier is not supported in the LIKE fallback")
+}
 
-		var required, excluded, optional []ftsSearchTerm
-		for _, term := range terms {
-			if term.word == "" {
-				continue
-			}
-			if term.isRequired {
-				required = append(required, term)
-			} else if term.isExcluded {
-				excluded = append(excluded, term)
-			} else {
-				optional = append(optional, term)
-			}
-		}
+// ftsZeroIntConst returns the constant-0 tiny-int expression used whenever
+// the LIKE fallback can prove no row will match (empty search string, all
+// terms tokenized away, or boolean-mode "only excluded" queries).
+func ftsZeroIntConst() Expression {
+	return &Constant{
+		Value:   types.NewIntDatum(0),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}
+}
 
-		// MySQL Boolean mode: a query with only excluded terms ("-a -b") returns
-		// an empty result set. The LIKE fallback must match this: when there are
-		// no required and no optional terms, no row can possibly satisfy the
-		// search, so return a constant FALSE immediately.
-		if len(required) == 0 && len(optional) == 0 && len(excluded) > 0 {
-			return zeroIntConst(), nil
-		}
-
-		var allPredicates []Expression
-
-		// For each required term: (col1 ILIKE %term% OR col2 ILIKE %term% ...)
-		for _, term := range required {
-			var termColumnPreds []Expression
-			for _, column := range columns {
-				pred, err := buildFTSILikePredicate(ctx, column, term.word)
-				if err != nil {
-					return nil, err
-				}
-				termColumnPreds = append(termColumnPreds, pred)
-			}
-			if len(termColumnPreds) > 0 {
-				allPredicates = append(allPredicates, ComposeDNFCondition(ctx, termColumnPreds...))
-			}
-		}
-
-		// For each excluded term: NOT(col1 ILIKE %term% OR col2 ILIKE %term% ...)
-		for _, term := range excluded {
-			var termColumnPreds []Expression
-			for _, column := range columns {
-				pred, err := buildFTSILikePredicate(ctx, column, term.word)
-				if err != nil {
-					return nil, err
-				}
-				termColumnPreds = append(termColumnPreds, pred)
-			}
-			if len(termColumnPreds) > 0 {
-				notPred, err := NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny),
-					ComposeDNFCondition(ctx, termColumnPreds...))
-				if err != nil {
-					return nil, err
-				}
-				allPredicates = append(allPredicates, notPred)
-			}
-		}
-
-		// For optional terms: since LIKE cannot rank, treat optionals as a
-		// positive filter when no required terms exist.
-		// - required>0: ignore optionals (required terms already anchor the result)
-		// - required==0, excluded==0: at least one optional must match (pure optional query)
-		// - required==0, excluded>0: at least one optional must match AND excluded terms
-		//   must be absent; AND the optional-DNF into allPredicates below
-		if len(optional) > 0 && len(required) == 0 {
-			var allOptionalPreds []Expression
-			for _, term := range optional {
-				for _, column := range columns {
-					pred, err := buildFTSILikePredicate(ctx, column, term.word)
-					if err != nil {
-						return nil, err
-					}
-					allOptionalPreds = append(allOptionalPreds, pred)
-				}
-			}
-			if len(allOptionalPreds) > 0 {
-				optionalDNF := ComposeDNFCondition(ctx, allOptionalPreds...)
-				if len(excluded) == 0 {
-					return optionalDNF, nil
-				}
-				allPredicates = append(allPredicates, optionalDNF)
-			}
-		}
-
-		if len(allPredicates) == 0 {
-			return zeroIntConst(), nil
-		}
-
-		return ComposeCNFCondition(ctx, allPredicates...), nil
+// buildFTSBooleanModeILikeExpression handles `IN BOOLEAN MODE`. Required
+// terms become an AND of per-term column-DNFs, excluded terms become NOT over
+// per-term column-DNFs, and optional terms anchor the result only when no
+// required terms exist (since LIKE cannot rank).
+func buildFTSBooleanModeILikeExpression(ctx BuildContext, columns []Expression, searchText string) (Expression, error) {
+	terms := parseFTSBooleanSearchString(searchText)
+	if len(terms) == 0 {
+		return ftsZeroIntConst(), nil
 	}
 
-	// Natural Language Mode: split into words and OR them together.
+	var required, excluded, optional []ftsSearchTerm
+	for _, term := range terms {
+		if term.word == "" {
+			continue
+		}
+		if term.isRequired {
+			required = append(required, term)
+		} else if term.isExcluded {
+			excluded = append(excluded, term)
+		} else {
+			optional = append(optional, term)
+		}
+	}
+
+	// MySQL Boolean mode: a query with only excluded terms ("-a -b") returns
+	// an empty result set. The LIKE fallback must match this: when there are
+	// no required and no optional terms, no row can possibly satisfy the
+	// search, so return a constant FALSE immediately.
+	if len(required) == 0 && len(optional) == 0 && len(excluded) > 0 {
+		return ftsZeroIntConst(), nil
+	}
+
+	var allPredicates []Expression
+
+	// For each required term: (col1 ILIKE %term% OR col2 ILIKE %term% ...)
+	for _, term := range required {
+		var termColumnPreds []Expression
+		for _, column := range columns {
+			pred, err := buildFTSILikePredicate(ctx, column, term.word)
+			if err != nil {
+				return nil, err
+			}
+			termColumnPreds = append(termColumnPreds, pred)
+		}
+		if len(termColumnPreds) > 0 {
+			allPredicates = append(allPredicates, ComposeDNFCondition(ctx, termColumnPreds...))
+		}
+	}
+
+	// For each excluded term: NOT(col1 ILIKE %term% OR col2 ILIKE %term% ...)
+	for _, term := range excluded {
+		var termColumnPreds []Expression
+		for _, column := range columns {
+			pred, err := buildFTSILikePredicate(ctx, column, term.word)
+			if err != nil {
+				return nil, err
+			}
+			termColumnPreds = append(termColumnPreds, pred)
+		}
+		if len(termColumnPreds) > 0 {
+			notPred, err := NewFunction(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny),
+				ComposeDNFCondition(ctx, termColumnPreds...))
+			if err != nil {
+				return nil, err
+			}
+			allPredicates = append(allPredicates, notPred)
+		}
+	}
+
+	// For optional terms: since LIKE cannot rank, treat optionals as a
+	// positive filter when no required terms exist.
+	// - required>0: ignore optionals (required terms already anchor the result)
+	// - required==0, excluded==0: at least one optional must match (pure optional query)
+	// - required==0, excluded>0: at least one optional must match AND excluded terms
+	//   must be absent; AND the optional-DNF into allPredicates below
+	if len(optional) > 0 && len(required) == 0 {
+		var allOptionalPreds []Expression
+		for _, term := range optional {
+			for _, column := range columns {
+				pred, err := buildFTSILikePredicate(ctx, column, term.word)
+				if err != nil {
+					return nil, err
+				}
+				allOptionalPreds = append(allOptionalPreds, pred)
+			}
+		}
+		if len(allOptionalPreds) > 0 {
+			optionalDNF := ComposeDNFCondition(ctx, allOptionalPreds...)
+			if len(excluded) == 0 {
+				return optionalDNF, nil
+			}
+			allPredicates = append(allPredicates, optionalDNF)
+		}
+	}
+
+	if len(allPredicates) == 0 {
+		return ftsZeroIntConst(), nil
+	}
+
+	return ComposeCNFCondition(ctx, allPredicates...), nil
+}
+
+// buildFTSNaturalLanguageModeILikeExpression handles the default
+// natural-language mode by splitting the search string into whitespace
+// tokens and OR-ing per-column per-word ILIKE predicates together.
+func buildFTSNaturalLanguageModeILikeExpression(ctx BuildContext, columns []Expression, searchText string) (Expression, error) {
 	words := strings.Fields(searchText)
 	if len(words) == 0 {
-		return zeroIntConst(), nil
+		return ftsZeroIntConst(), nil
 	}
 
 	var columnPredicates []Expression
 	for _, column := range columns {
 		var wordPredicates []Expression
 		for _, word := range words {
-			word = stripFTSTokenPunctuation(word)
-			if word == "" {
-				continue
-			}
 			pred, err := buildFTSILikePredicate(ctx, column, word)
 			if err != nil {
 				return nil, err
@@ -381,7 +334,7 @@ func BuildFTSToILikeExpression(
 	}
 
 	if len(columnPredicates) == 0 {
-		return zeroIntConst(), nil
+		return ftsZeroIntConst(), nil
 	}
 
 	return ComposeDNFCondition(ctx, columnPredicates...), nil
@@ -394,6 +347,14 @@ func BuildFTSToILikeExpression(
 // stats engine; substituting an equivalent ILIKE expression lets the engine
 // reuse its TopN/histogram-based estimation paths instead of falling back
 // to a flat default that ignores column statistics.
+//
+// Restricted to single-column MATCH: GetSelectivityByFilter only estimates
+// expressions over a single column, so a multi-column substituted ILIKE would
+// be declined by the stats engine and fall through to the same str-match
+// default that the un-substituted FTS expression already receives. Returning
+// an error for the multi-column case lets the selectivity caller's existing
+// err-check fall through cleanly, without producing a substitute that would
+// never improve the estimate.
 func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction) (Expression, error) {
 	if fts == nil || fts.FuncName.L != ast.FTSMysqlMatchAgainst {
 		return nil, errors.Errorf("expected %s, got %v", ast.FTSMysqlMatchAgainst, fts)
@@ -401,6 +362,9 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 	args := fts.GetArgs()
 	if len(args) < 2 {
 		return nil, errors.Errorf("%s expects at least 2 args, got %d", ast.FTSMysqlMatchAgainst, len(args))
+	}
+	if len(args) > 2 {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
 	}
 	againstConst, ok := args[0].(*Constant)
 	if !ok {

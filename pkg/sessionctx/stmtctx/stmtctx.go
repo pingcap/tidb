@@ -486,17 +486,20 @@ type StatementContext struct {
 	// build round encountered a non-correlated IN subquery eligible for the
 	// correlate-to-Apply alternative.
 	AlternativeLogicalPlanPreferCorrelate bool
-	// AlternativeLogicalPlanFTSLikeFallback is a mode flag set before the
-	// first build round when alternative logical plans are enabled. When true,
-	// the expression rewriter converts MATCH...AGAINST to LIKE predicates
-	// (predicate contexts only) instead of the native FTSMysqlMatchAgainst builtin.
+	// AlternativeLogicalPlanFTSLikeFallback is a mode flag controlling how the
+	// expression rewriter handles MATCH...AGAINST in predicate contexts. When
+	// false (the default, matching Alt-disabled behavior) the rewriter emits
+	// the native FTSMysqlMatchAgainst builtin. When true, the rewriter emits
+	// ILIKE-based predicates instead.
+	//
+	// Round 1 always runs with this flag false. If the build phase finds any
+	// predicate-context MATCH that cannot be served natively (no FTS index on a
+	// matched column / no TiFlash replica / modifier not pushdown-supported),
+	// optimize.go invalidates the round-1 plan and sets this flag so the
+	// "fts-like-fallback" alternative round fires with the rewriter switched
+	// to ILIKE. The flag survives subsequent rounds so any further re-rewrite
+	// (correlate, etc.) keeps using ILIKE for the affected MATCHes.
 	AlternativeLogicalPlanFTSLikeFallback bool
-	// AlternativeLogicalPlanHasFTSWithTiFlash is set during the first (ILIKE)
-	// build round when a MATCH...AGAINST expression is encountered AND the
-	// matched columns' table has TiFlash replicas. This triggers the "fts-native"
-	// alternative round so the native FTS builtin (pushed to TiFlash) can compete
-	// on cost against the ILIKE plan.
-	AlternativeLogicalPlanHasFTSWithTiFlash bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -677,7 +680,6 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
 	sc.AlternativeLogicalPlanFTSLikeFallback = false
-	sc.AlternativeLogicalPlanHasFTSWithTiFlash = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 }
 

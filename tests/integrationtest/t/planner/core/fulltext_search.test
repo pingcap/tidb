@@ -24,10 +24,17 @@ select id, title from articles where match(title) against('+MySQL +tutorial' in 
 # Test 4: Boolean Mode - Excluded Terms
 select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
 
-# Test 5: Boolean Mode - Prefix Wildcard
+# Test 5: Boolean Mode - Prefix Wildcard is rejected by the strict subset (LIKE
+# cannot enforce word-start boundaries; MySQL FTS would only match words
+# starting with the prefix). Falls back to native FTS path; without an FTS
+# index, surfaces the rewrite error.
+-- error 1235
 select id, title from articles where match(title) against('Optim*' in boolean mode);
 
-# Test 6: Boolean Mode - Exact Phrase
+# Test 6: Boolean Mode - Exact Phrase is rejected by the strict subset (LIKE
+# cannot enforce word boundaries inside a phrase). Falls back to native FTS
+# path; without an FTS index, surfaces the rewrite error.
+-- error 1235
 select id, title from articles where match(title, body) against('"MySQL tutorial"' in boolean mode);
 
 # Test 7: Boolean Mode - Complex Query
@@ -51,7 +58,11 @@ select id, title from articles where match(title) against('MySQL');
 # Test 12: Natural Language Mode with single word
 select id, title from articles where match(title) against('PostgreSQL');
 
-# Test 13: Test escaping of special LIKE characters
+# Test 13: Special characters in search strings are rejected by the strict
+# subset (MySQL FTS treats %, _, \, : etc. as word separators or operators,
+# so a substring LIKE on them would produce results inconsistent with MySQL
+# FTS tokenization). Each rejection falls back to the native FTS path; without
+# an FTS index, surfaces the rewrite error.
 drop table if exists special_chars;
 create table special_chars (id int primary key, content varchar(200));
 insert into special_chars values
@@ -61,16 +72,16 @@ insert into special_chars values
   (4, 'Path is C:\\Windows\\System32'),
   (5, 'Normal text without special chars');
 
-# Test searching for literal % character
+-- error 1235
 select id, content from special_chars where match(content) against('100%');
 
-# Test searching for literal _ character
+-- error 1235
 select id, content from special_chars where match(content) against('test_file');
 
-# Test searching for literal \ character
+-- error 1235
 select id, content from special_chars where match(content) against('C:\\Windows');
 
-# Test Boolean mode with special characters
+-- error 1235
 select id, content from special_chars where match(content) against('+100% +Progress' in boolean mode);
 
 drop table if exists special_chars;
@@ -78,20 +89,23 @@ drop table if exists special_chars;
 # Test 14: Boolean mode - only excluded terms (no required/optional)
 select id, title from articles where match(title) against('-PostgreSQL -Security' in boolean mode);
 
-# Test 15: Boolean mode - unclosed quote (should treat as phrase)
+# Test 15: Boolean mode - quote is rejected by the strict subset.
+-- error 1235
 select id, title from articles where match(title) against('"MySQL tutorial' in boolean mode);
 
 # Test 16: Boolean mode - mixed whitespace (tabs and newlines)
 select id, title from articles where match(title) against('+MySQL	+tutorial
 -Security' in boolean mode);
 
-# Test 17: Boolean mode - empty word after operator removal (+* should be ignored)
+# Test 17: Boolean mode - `*` is rejected by the strict subset.
+-- error 1235
 select id, title from articles where match(title) against('+MySQL +* tutorial' in boolean mode);
 
 # Test 18: Boolean mode - multiple excluded terms
 select id, title from articles where match(title) against('+MySQL -PostgreSQL -Security -Well' in boolean mode);
 
-# Test 19: Boolean mode - all term types combined
+# Test 19: Boolean mode - mixed `*` and quoted phrase are rejected.
+-- error 1235
 select id, title from articles where match(title) against('+MySQL -Security tutorial "How To" Optim*' in boolean mode);
 
 # Test 20: Natural language mode - only whitespace
@@ -101,13 +115,16 @@ select id, title from articles where match(title) against('
 # Test 21: Natural language mode - multiple spaces between words
 select id, title from articles where match(title) against('MySQL     tutorial    PostgreSQL');
 
-# Test 22: Boolean mode - required phrase with + operator
+# Test 22: Boolean mode - required phrase rejected by strict subset.
+-- error 1235
 select id, title from articles where match(title) against('+"MySQL Tutorial"' in boolean mode);
 
-# Test 23: Boolean mode - excluded phrase with - operator
+# Test 23: Boolean mode - excluded phrase rejected by strict subset.
+-- error 1235
 select id, title from articles where match(title) against('-"MySQL Tutorial"' in boolean mode);
 
-# Test 24: Boolean mode - mix of required/excluded phrases and words
+# Test 24: Boolean mode - phrase mixed with words rejected by strict subset.
+-- error 1235
 select id, title from articles where match(title) against('+MySQL +"How To" -PostgreSQL' in boolean mode);
 
 # Test 25: Boolean mode - optional + excluded (optional treated as required filter)
@@ -116,16 +133,21 @@ select id, title from articles where match(title) against('tutorial -Security' i
 # Test 26: Boolean mode - optional + excluded with multiple optionals
 select id, title from articles where match(title) against('tutorial PostgreSQL -Security' in boolean mode);
 
-# Test 27: Natural language mode - punctuation attached to tokens is stripped
+# Test 27: Natural language mode - punctuation in tokens rejected by strict
+# subset. MySQL FTS would tokenize away the punctuation, but a substring LIKE
+# would include it, so we refuse the rewrite.
+-- error 1235
 select id, title from articles where match(title) against('MySQL, PostgreSQL.');
 
-# Test 28: Boolean mode - MySQL relevance modifiers > < treated as optional
+# Test 28: Boolean mode - relevance modifiers > < rejected by strict subset.
+-- error 1235
 select id, title from articles where match(title) against('>MySQL <Security' in boolean mode);
 
 # Test 29: AGAINST(NULL) returns no matches
 select id, title from articles where match(title) against(NULL);
 
-# Test 30: Boolean mode - ~ (negation ranking) treated as optional term
+# Test 30: Boolean mode - relevance modifier ~ rejected by strict subset.
+-- error 1235
 select id, title from articles where match(title) against('~Security ~PostgreSQL' in boolean mode);
 
 # Test 31: WITH QUERY EXPANSION is not supported in the LIKE fallback
@@ -149,6 +171,54 @@ select a.id, a.title from articles a inner join articles a2 on a.id = a2.id and 
 # Test 36: MATCH on non-string column errors
 -- error 1235
 select id from articles where match(id) against('MySQL');
+
+# Test 36a: A non-string MATCH column AND a search string that fails the strict
+# subset must surface the column-type error (more actionable), not the
+# search-term-unsupported error.
+-- error 1235
+select id from articles where match(id) against('xx-yy');
+
+# Test 36b: Multi-MATCH in the same predicate with no FTS index on either
+# column. Round 1 sees both MATCHes as non-viable and the fts-like-fallback
+# alternative round must take over; if round 1's native plan were not
+# discarded, executing FTSMysqlMatchAgainst with no FTS index would error.
+select id, title from articles
+where match(title) against('MySQL') and match(body) against('PostgreSQL');
+
+# Test 36c: NOT MATCH is still a direct-boolean position (NOT is a passthrough
+# ancestor), so the LIKE rewrite applies.
+select id, title from articles where not match(title) against('MySQL');
+
+# Test 36d: Parenthesized MATCH is still a direct-boolean position.
+select id, title from articles where (match(title) against('MySQL'));
+
+# Test 36e: Scalar-position MATCH — MATCH IS NULL. The LIKE rewrite would
+# return a 0/1 integer where the native form returns a float (possibly NULL),
+# so this must fall through to the native builtin and error at execution
+# without an FTS index. Pre-PR behavior preserved.
+# (MATCH ... AGAINST(...) IS NULL requires parens to satisfy the parser.)
+-- error 1105
+select id, title from articles where (match(title) against('MySQL')) is null;
+
+# Test 36f: Scalar-position MATCH — relevance score threshold. Native returns
+# the score, LIKE would return 0/1; substituting 0/1 here would silently
+# include every matching row regardless of the threshold. Falls through to
+# native. (Parens required to satisfy the parser.)
+-- error 1105
+select id, title from articles where (match(title) against('MySQL')) > 0.5;
+
+# Test 36g: Scalar-position MATCH — explicit comparison to 0. Native returns
+# the score (≥0). Coincidentally a LIKE 0/1 result agrees on "no match"
+# rows, but we still route to native to preserve relevance-score semantics
+# uniformly across scalar positions.
+-- error 1105
+select id, title from articles where (match(title) against('MySQL')) = 0;
+
+# Test 36h: Scalar-position MATCH inside CASE WHEN. The WHEN expression takes
+# a boolean condition, but the MATCH is buried under the CASE node, which is
+# a non-boolean ancestor. Falls through to native.
+-- error 1105
+select id, title from articles where (case when match(title) against('MySQL') then 1 else 0 end) = 1;
 
 # Test 37: Plan cache - prepared statement with literal AGAINST IS cacheable.
 # The LIKE rewrite bakes the search string into pattern constants; for a true
@@ -181,6 +251,34 @@ set @@tidb_enable_prepared_plan_cache=DEFAULT;
 # Note: user variables in AGAINST (e.g., AGAINST(@search)) are rejected at
 # rewrite time as a non-constant search string, so they never reach the
 # plan-cache decision and need no separate cache-skip coverage here.
+
+# Test 39: Non-default modifier in a scoring context (SELECT field). LIKE
+# cannot produce a float relevance score so it can't rescue this; the modifier
+# guard in matchAgainstToBuiltin must error at plan time rather than emit a
+# native FTS expression that TiFlash would silently execute as natural-language
+# mode (the tipb pushdown protocol drops the modifier).
+-- error 1235
+select id, match(title) against('+MySQL' in boolean mode) as score from articles;
+
+# Test 40: Non-default modifier in ORDER BY (scoring context). Same guard.
+-- error 1235
+select id, title from articles order by match(title) against('+MySQL' in boolean mode) desc;
+
+# Test 41: Non-default modifier in a scalar predicate position (IS NULL).
+# Even with alternative logical plans enabled, the LIKE round only rewrites
+# direct-boolean MATCHes; the scalar position falls through to native, which
+# must reject the modifier rather than mistranslate it on TiFlash.
+-- error 1235
+select id, title from articles where (match(title) against('+MySQL' in boolean mode)) is null;
+
+# Test 42: Boolean mode in WHERE with alternative logical plans disabled.
+# Without the fts-like-fallback rescue, native is the final plan, so the
+# modifier guard must fire. (Pre-PR this query would push to TiFlash and
+# silently execute as natural-language mode.)
+set @@tidb_opt_enable_alternative_logical_plans=OFF;
+-- error 1235
+select id, title from articles where match(title) against('+MySQL' in boolean mode);
+set @@tidb_opt_enable_alternative_logical_plans=ON;
 
 # Cleanup
 set @@tidb_opt_enable_alternative_logical_plans=OFF;

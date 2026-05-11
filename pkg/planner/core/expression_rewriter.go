@@ -704,6 +704,67 @@ func (er *expressionRewriter) canTreatInSubqueryAsExistsForFilter(planCtx *exprR
 	return true
 }
 
+// inDirectMatchBooleanContext reports whether the MATCH...AGAINST currently
+// being rewritten sits in a position where its boolean (0/1) result is
+// directly consumed as a predicate — i.e. every ancestor up to the WHERE /
+// HAVING / JOIN ON root is one of: parentheses, AND, OR, or NOT.
+//
+// Any other ancestor (comparison `= 0` / `> 0.5`, `IS NULL`, CASE, arithmetic,
+// XOR, scalar function, etc.) means MATCH is being used as a scalar relevance
+// score, where the LIKE rewrite's 0/1 output would diverge from the native
+// float score and silently produce wrong rows. In those positions the
+// rewriter must fall through to the native FTSMysqlMatchAgainst builtin,
+// which preserves the relevance-score semantics (and errors at execution if
+// no FTS index is available — the same behavior the user would see with
+// alternative logical plans disabled).
+func (er *expressionRewriter) inDirectMatchBooleanContext() bool {
+	if er.planCtx == nil {
+		return false
+	}
+	switch er.planCtx.builder.curClause {
+	case whereClause, havingClause, onClause:
+	default:
+		return false
+	}
+	if len(er.astNodeStack) == 0 {
+		return false
+	}
+	for i := len(er.astNodeStack) - 2; i >= 0; i-- {
+		switch n := er.astNodeStack[i].(type) {
+		case *ast.ParenthesesExpr:
+		case *ast.BinaryOperationExpr:
+			if n.Op != opcode.LogicAnd && n.Op != opcode.LogicOr {
+				return false
+			}
+		case *ast.UnaryOperationExpr:
+			if n.Op != opcode.Not && n.Op != opcode.Not2 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// matchHasLikeFallbackRescue reports whether matchAgainstToBuiltin is being
+// invoked in a position where the alt-rounds driver will discard the produced
+// plan and rebuild via the fts-like-fallback round. It is used by the modifier
+// guard in matchAgainstToBuiltin to allow native emission of a non-default
+// modifier when round 1's plan is destined for discard anyway. The rescue
+// conditions mirror the ones in matchAgainstToExpression that trigger
+// MarkNonViableFTSMatch — alternative logical plans enabled AND a direct
+// boolean predicate context.
+func (er *expressionRewriter) matchHasLikeFallbackRescue() bool {
+	if er.planCtx == nil || er.planCtx.builder == nil || er.planCtx.builder.ctx == nil {
+		return false
+	}
+	if !er.planCtx.builder.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		return false
+	}
+	return er.inDirectMatchBooleanContext()
+}
+
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np base.LogicalPlan, planCtx *exprRewriterPlanCtx, l, r expression.Expression, not, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	if er.asScalar || not {
@@ -2375,45 +2436,43 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		return
 	}
 
-	// When alternative logical plans are enabled, AlternativeLogicalPlanFTSLikeFallback
-	// is set before the first build round and the expression rewriter converts
-	// MATCH...AGAINST to ILIKE predicates — but ONLY in filter/predicate clauses
-	// (WHERE, HAVING, JOIN ON). In scoring contexts (SELECT field list, ORDER BY)
-	// the result must be a float relevance score; the 0/1 ILIKE result would be
-	// semantically wrong and silently corrupt ORDER BY MATCH(...) DESC results.
-	// Those contexts always use the native FTSMysqlMatchAgainst builtin.
+	// Default behavior (Alt-disabled or Alt-enabled round 1) is to emit the
+	// native FTSMysqlMatchAgainst builtin. The alternative-rounds driver flips
+	// AlternativeLogicalPlanFTSLikeFallback to true and re-runs the build
+	// only when round 1 reported a direct-boolean-context MATCH that the
+	// native builtin cannot serve (no FTS index on a TiFlash replica /
+	// modifier not pushdown-supported). In that second pass the rewriter
+	// emits ILIKE for direct-boolean-context MATCH only — scoring contexts
+	// (SELECT field list / ORDER BY) and scalar predicate positions
+	// (IS NULL, comparisons, CASE, arithmetic) need the float relevance
+	// score, so they keep using the native builtin and will error at
+	// execution if no FTS index exists there.
 	//
-	// When this is the first (ILIKE) round and the matched columns' table has
-	// TiFlash replicas, the HasFTSWithTiFlash signal is set so the "fts-native"
-	// alternative round is triggered. That round rebuilds the plan with the native
-	// builtin everywhere so TiFlash FTS can compete on cost.
+	// "Direct boolean context" requires that every ancestor up to the
+	// WHERE/HAVING/ON root is AND/OR/NOT/parens — see inDirectMatchBooleanContext.
+	// Limiting the LIKE rewrite to that subset preserves the 0/1-vs-float
+	// distinction: in scalar positions, `MATCH(...) IS NULL`, `MATCH(...) > 0.5`,
+	// etc. would silently produce wrong rows if the LIKE rewrite's integer
+	// result were substituted for the native float score.
+	//
+	// Round 1 also has to record viability before committing to native: if
+	// any boolean-context MATCH is non-viable, the resulting plan would
+	// fail at execution. The rewriter records that on the planBuilder so the
+	// round driver can invalidate the plan and trigger the fallback round.
 	useLikeFallback := false
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
-		if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
-			// Only rewrite to ILIKE in predicate (filter) clauses.
-			// SELECT field list and ORDER BY expect a float relevance score;
-			// the 0/1 ILIKE result must not substitute it.
-			switch er.planCtx.builder.curClause {
-			case whereClause, havingClause, onClause:
+		if er.inDirectMatchBooleanContext() {
+			if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
+				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
 				useLikeFallback = true
-			}
-
-			// Signal the "fts-native" alternative round only when this MATCH is
-			// in a predicate context that actually rewrites to ILIKE — that is
-			// the only situation where the second round can produce a plan that
-			// differs from the first. In scoring contexts (SELECT field list /
-			// ORDER BY) the rewriter uses the native builtin in both rounds, so
-			// triggering the extra round adds planning overhead without ever
-			// changing the chosen plan.
-			//
-			// When fired, the viability check additionally requires that every
-			// matched column's table has an available TiFlash replica AND the
-			// column is covered by a public FULLTEXT index; otherwise the native
-			// path would degenerate into a full TiFlash scan, so we leave the
-			// flag clear and the LIKE fallback wins by default.
-			if useLikeFallback && !sessVars.StmtCtx.AlternativeLogicalPlanHasFTSWithTiFlash {
-				er.checkFTSNativeViability(v.Modifier, numCols, stackLen, sessVars)
+			} else if sessVars.EnableAlternativeLogicalPlans && !er.ftsNativeViable(v.Modifier, numCols, stackLen) {
+				// Round 1 (native) but this boolean-context MATCH cannot run
+				// natively. Mark the build so the driver invalidates this plan and
+				// triggers fts-like-fallback. The rewrite continues with the native
+				// builtin to keep round 1 internally consistent; that plan is
+				// discarded after build completes.
+				er.planCtx.builder.MarkNonViableFTSMatch()
 			}
 		}
 	}
@@ -2425,10 +2484,9 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	}
 }
 
-// checkFTSNativeViability sets AlternativeLogicalPlanHasFTSWithTiFlash only
-// when the native FTSMysqlMatchAgainst builtin can plausibly be served on
-// TiFlash for every column referenced in MATCH(...). It walks the resolved
-// column FieldNames sitting on ctxNameStk (stack layout is
+// ftsNativeViable reports whether the MATCH(...) currently being rewritten
+// can be served on TiFlash by the native FTSMysqlMatchAgainst builtin. It
+// walks the resolved column FieldNames sitting on ctxNameStk (stack layout is
 // [..., col1, ..., colN, against]) and requires for each column:
 //   - the originating table has an available TiFlash replica;
 //   - the column is covered by a public FULLTEXT index on that table.
@@ -2438,31 +2496,28 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 // (only ScalarFuncSig_FTSMatchExpression is emitted regardless of modifier),
 // so a native plan that wins on cost would execute on TiFlash with the modifier
 // silently dropped. Until the modifier is carried in the pushdown protocol, we
-// leave the flag clear for those modifiers and let the LIKE fallback win.
-//
-// Any unresolved column or any column failing any of the above checks leaves
-// the flag clear, so the "fts-native" alternative round is skipped and the
-// LIKE fallback wins by default.
-func (er *expressionRewriter) checkFTSNativeViability(modifier ast.FulltextSearchModifier, numCols, stackLen int, sessVars *variable.SessionVars) {
+// treat those modifiers as non-viable for native pushdown.
+func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
 	if numCols <= 0 {
-		return
+		return false
 	}
 	if !ftsModifierAllowsNativePushdown(modifier) {
-		return
+		return false
 	}
 	builder := er.planCtx.builder
+	sessVars := builder.ctx.GetSessionVars()
 	nameStart := stackLen - numCols - 1
 	for i := range numCols {
 		name := er.ctxNameStk[nameStart+i]
 		if name == nil {
-			return
+			return false
 		}
 		tblName := name.OrigTblName
 		if tblName.L == "" {
 			tblName = name.TblName
 		}
 		if tblName.L == "" {
-			return
+			return false
 		}
 		dbName := name.DBName
 		if dbName.L == "" {
@@ -2470,20 +2525,20 @@ func (er *expressionRewriter) checkFTSNativeViability(modifier ast.FulltextSearc
 		}
 		tblInfo, err := builder.is.TableInfoByName(dbName, tblName)
 		if err != nil {
-			return
+			return false
 		}
 		if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available || tblInfo.TiFlashReplica.Count == 0 {
-			return
+			return false
 		}
 		colName := name.OrigColName
 		if colName.L == "" {
 			colName = name.ColName
 		}
 		if !tableHasPublicFTSIndexOnColumn(tblInfo, colName.L) {
-			return
+			return false
 		}
 	}
-	sessVars.StmtCtx.AlternativeLogicalPlanHasFTSWithTiFlash = true
+	return true
 }
 
 // ftsModifierAllowsNativePushdown reports whether an FTS modifier can be
@@ -2516,6 +2571,21 @@ func tableHasPublicFTSIndexOnColumn(tblInfo *model.TableInfo, columnNameL string
 // builtin scalar function which can be pushed down to TiFlash for execution
 // against a fulltext index.
 func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
+	// Reject non-default modifiers when native is the final plan. The tipb
+	// pushdown protocol (see expression/distsql_builtin.go for the explicit
+	// note) does not serialize the FTS modifier, so TiFlash would silently
+	// execute Boolean-mode / query-expansion searches as natural-language
+	// mode. Until the modifier rides through pushdown, refuse to emit
+	// native here unless the alt-rounds driver is expected to discard this
+	// emission and rebuild via the fts-like-fallback round (which handles
+	// Boolean mode correctly via ILIKE; query expansion still errors there
+	// with a specific message).
+	if !ftsModifierAllowsNativePushdown(v.Modifier) && !er.matchHasLikeFallbackRescue() {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs(
+			"MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)")
+		return
+	}
+
 	against := er.ctxStack[stackLen-1]
 	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
 
@@ -2552,17 +2622,6 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 		return
 	}
 
-	// The search string is baked into LIKE pattern constants at plan-build time.
-	// A cached plan would reuse the first execution's patterns for all subsequent
-	// executions, producing wrong results when the AGAINST argument is mutable
-	// across executions (a `?` parameter marker or a deferred expression such as
-	// a user variable). For a true literal the baked pattern is stable, so the
-	// plan is safe to cache; only mark it non-cacheable when the constant could
-	// vary at execution time.
-	if expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
-		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
-	}
-
 	searchText, err := constExpr.Eval(er.sctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		er.err = err
@@ -2584,6 +2643,11 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 		return
 	}
 
+	// Reject non-string matched columns before any other LIKE-specific checks
+	// so the column-type error always wins. If we ran the strict-subset
+	// validator first, a query like MATCH(int_col) AGAINST('a-b') would
+	// surface "search term 'a-b' is not supported" — accurate but less
+	// actionable than "non-string column".
 	columns := make([]expression.Expression, numCols)
 	for i := range numCols {
 		col := er.ctxStack[stackLen-numCols-1+i]
@@ -2592,6 +2656,33 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 			return
 		}
 		columns[i] = col
+	}
+
+	// The LIKE fallback only translates a strict subset of MySQL FTS search
+	// strings (alphanumeric words, optionally prefixed with + or - in boolean
+	// mode). Anything outside that subset would tokenize differently in MySQL
+	// FTS than a substring LIKE match, so refuse it here. If the same MATCH
+	// is independently native-viable (FTS index + supported modifier),
+	// delegate to the native builtin so TiFlash serves it correctly; otherwise
+	// surface the error to the user.
+	if err := expression.ValidateFTSSearchStringForLikeFallback(searchText.GetString(), v.Modifier); err != nil {
+		if er.ftsNativeViable(v.Modifier, numCols, stackLen) {
+			er.matchAgainstToBuiltin(v, numCols, stackLen)
+			return
+		}
+		er.err = err
+		return
+	}
+
+	// The search string is baked into LIKE pattern constants at plan-build time.
+	// A cached plan would reuse the first execution's patterns for all subsequent
+	// executions, producing wrong results when the AGAINST argument is mutable
+	// across executions (a `?` parameter marker or a deferred expression such as
+	// a user variable). For a true literal the baked pattern is stable, so the
+	// plan is safe to cache; only mark it non-cacheable when the constant could
+	// vary at execution time.
+	if expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
+		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
 	}
 
 	er.ctxStackPop(numCols + 1)
