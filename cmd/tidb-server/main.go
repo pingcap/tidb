@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -284,6 +285,10 @@ func initFlagSet() *flag.FlagSet {
 	return fset
 }
 
+func initDeployMode(cfg *config.Config) error {
+	return deploymode.Set(cfg.DeployMode)
+}
+
 func main() {
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
@@ -297,6 +302,9 @@ func main() {
 		}
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
+	if kerneltype.IsNextGen() {
+		terror.MustNil(initDeployMode(config.GetGlobalConfig()))
+	}
 	if *version {
 		mustInitVersions()
 		fmt.Println(printer.GetTiDBInfo())

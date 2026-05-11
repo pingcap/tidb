@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/bindinfo",
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
@@ -109,6 +110,7 @@ go_test(
     shard_count = 6,
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",
