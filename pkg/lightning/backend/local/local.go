@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"math"
@@ -128,6 +129,16 @@ var (
 	// ForcePartitionRegionThreshold is the threshold of regions to force partition range.
 	// It is exported for testing.
 	ForcePartitionRegionThreshold = 100
+
+	newEtcdSafePointKV = func(addrs []string, tlsConfig *tls.Config, opts ...tikvclient.SafePointKVOpt) (tikvclient.SafePointKV, error) {
+		return tikvclient.NewEtcdSafePointKV(addrs, tlsConfig, opts...)
+	}
+	newTiKVRPCClient = func(opts ...tikvclient.ClientOpt) tikvclient.Client {
+		return tikvclient.NewRPCClient(opts...)
+	}
+	newTiKVStore = func(uuid string, pdClient pd.Client, spkv tikvclient.SafePointKV, rpcClient tikvclient.Client, opt ...tikvclient.Option) (*tikvclient.KVStore, error) {
+		return tikvclient.NewKVStore(uuid, pdClient, spkv, rpcClient, opt...)
+	}
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -531,12 +542,15 @@ func (c *BackendConfig) SetWorkerConcurrency(concurrency int) {
 
 // Backend is a local backend.
 type Backend struct {
-	pdCli     pd.Client
-	pdHTTPCli pdhttp.Client
-	splitCli  split.SplitClient
-	tikvCli   *tikvclient.KVStore
-	tls       *common.TLS
-	tikvCodec tikvclient.Codec
+	pdCli        pd.Client
+	pdHTTPCli    pdhttp.Client
+	splitCli     split.SplitClient
+	pdCliForTiKV *tikvclient.CodecPDClient
+	pdAddrs      []string
+	tikvCli      *tikvclient.KVStore
+	tikvCliMu    sync.Mutex
+	tls          *common.TLS
+	tikvCodec    tikvclient.Codec
 
 	collector execute.Collector
 
@@ -578,10 +592,7 @@ func NewBackend(
 ) (b *Backend, err error) {
 	var (
 		pdCli                pd.Client
-		spkv                 *tikvclient.EtcdSafePointKV
 		pdCliForTiKV         *tikvclient.CodecPDClient
-		rpcCli               tikvclient.Client
-		tikvCli              *tikvclient.KVStore
 		pdHTTPCli            pdhttp.Client
 		importClientFactory  *importClientFactoryImpl
 		multiIngestSupported bool
@@ -596,21 +607,8 @@ func NewBackend(
 		if pdHTTPCli != nil {
 			pdHTTPCli.Close()
 		}
-		if tikvCli != nil {
-			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
-			// close tikvCli will close all of them.
-			_ = tikvCli.Close()
-		} else {
-			if rpcCli != nil {
-				_ = rpcCli.Close()
-			}
-			if spkv != nil {
-				_ = spkv.Close()
-			}
-			// pdCliForTiKV wraps pdCli, so we only need close pdCli
-			if pdCli != nil {
-				pdCli.Close()
-			}
+		if pdCli != nil {
+			pdCli.Close()
 		}
 	}()
 	config.adjust()
@@ -633,12 +631,6 @@ func NewBackend(
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 
-	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(pdAddrs, tls.TLSConfig())
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
-
 	if config.KeyspaceName == "" {
 		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
 	} else {
@@ -649,11 +641,6 @@ func NewBackend(
 	}
 
 	tikvCodec := pdCliForTiKV.GetCodec()
-	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
-	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
 	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
 		pdCli.GetServiceDiscovery(),
@@ -669,12 +656,13 @@ func NewBackend(
 
 	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	local := &Backend{
-		pdCli:     pdCli,
-		pdHTTPCli: pdHTTPCli,
-		splitCli:  splitCli,
-		tikvCli:   tikvCli,
-		tls:       tls,
-		tikvCodec: tikvCodec,
+		pdCli:        pdCli,
+		pdHTTPCli:    pdHTTPCli,
+		splitCli:     splitCli,
+		pdCliForTiKV: pdCliForTiKV,
+		pdAddrs:      append([]string(nil), pdAddrs...),
+		tls:          tls,
+		tikvCodec:    tikvCodec,
 
 		BackendConfig: config,
 
@@ -815,15 +803,68 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 
 // Close the local backend.
 func (local *Backend) Close() {
-	local.engineMgr.close()
-	local.importClientFactory.close()
+	if local.engineMgr != nil {
+		local.engineMgr.close()
+	}
+	if local.importClientFactory != nil {
+		local.importClientFactory.close()
+	}
 
-	_ = local.tikvCli.Close()
-	local.pdHTTPCli.Close()
-	local.pdCli.Close()
+	local.tikvCliMu.Lock()
+	tikvCli := local.tikvCli
+	local.tikvCli = nil
+	local.tikvCliMu.Unlock()
+
+	if tikvCli != nil {
+		_ = tikvCli.Close()
+	}
+	if local.pdHTTPCli != nil {
+		local.pdHTTPCli.Close()
+	}
+	if local.pdCli != nil {
+		local.pdCli.Close()
+	}
 	if local.nextgenHTTPCli != nil {
 		local.nextgenHTTPCli.CloseIdleConnections()
 	}
+}
+
+func (local *Backend) getTiKVClient() (*tikvclient.KVStore, error) {
+	local.tikvCliMu.Lock()
+	defer local.tikvCliMu.Unlock()
+
+	if local.tikvCli != nil {
+		return local.tikvCli, nil
+	}
+	if local.pdCliForTiKV == nil {
+		return nil, common.ErrCreateKVClient.Wrap(errors.New("TiKV client prerequisites are not initialized")).GenWithStackByArgs()
+	}
+
+	var tlsConfig *tls.Config
+	var rpcOpts []tikvclient.ClientOpt
+	if local.tls != nil {
+		tlsConfig = local.tls.TLSConfig()
+		rpcOpts = append(rpcOpts, tikvclient.WithSecurity(local.tls.ToTiKVSecurityConfig()))
+	}
+	rpcOpts = append(rpcOpts, tikvclient.WithCodec(local.tikvCodec))
+
+	spkv, err := newEtcdSafePointKV(local.pdAddrs, tlsConfig)
+	if err != nil {
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+	rpcCli := newTiKVRPCClient(rpcOpts...)
+	tikvCli, err := newTiKVStore("lightning-local-backend", local.pdCliForTiKV, spkv, rpcCli)
+	if err != nil {
+		if rpcCli != nil {
+			_ = rpcCli.Close()
+		}
+		if spkv != nil {
+			_ = spkv.Close()
+		}
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+	local.tikvCli = tikvCli
+	return tikvCli, nil
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -1755,10 +1796,14 @@ func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 }
 
 // GetDupeController returns a new dupe controller.
-func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) *DupeController {
+func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) (*DupeController, error) {
+	tikvCli, err := local.getTiKVClient()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return &DupeController{
 		splitCli:            local.splitCli,
-		tikvCli:             local.tikvCli,
+		tikvCli:             tikvCli,
 		tikvCodec:           local.tikvCodec,
 		errorMgr:            errorMgr,
 		dupeConcurrency:     dupeConcurrency,
@@ -1767,7 +1812,7 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 		importClientFactory: local.importClientFactory,
 		resourceGroupName:   local.ResourceGroupName,
 		taskType:            local.TaskType,
-	}
+	}, nil
 }
 
 // UnsafeImportAndReset forces the backend to import the content of an engine
