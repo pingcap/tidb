@@ -1292,9 +1292,9 @@ func (local *Backend) generateJobForRange(
 		return nil, nil
 	}
 
-	startKey := codec.EncodeBytes([]byte{}, pairStart)
-	endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
-	regions, err := split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
+	startKey := pairStart
+	endKey := nextKey(pairEnd)
+	regions, err := split.PaginateScanRegionWithCodecAware(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
 		tidblogutil.Logger(ctx).Error("scan region failed",
 			log.ShortError(err), zap.Int("region_len", len(regions)),

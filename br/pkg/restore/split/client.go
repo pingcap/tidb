@@ -588,6 +588,24 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 	return len(regionInfo.PendingPeers) == 0, nil
 }
 
+func (c *pdClient) getEncodedKeysFn(start, end []byte) (encodedStart, encodedEnd []byte, err error) {
+	if codecCli := c.GetCodecPDClient(); codecCli != nil {
+		cd := codecCli.GetCodec()
+		encodedStart, err = cd.DecodeKey(start)
+		if err != nil {
+			return nil, nil, err
+		}
+		encodedEnd, err = cd.DecodeKey(end)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		encodedStart = codec.EncodeBytesExt(nil, start, c.isRawKv)
+		encodedEnd = codec.EncodeBytesExt(nil, end, c.isRawKv)
+	}
+	return encodedStart, encodedEnd, nil
+}
+
 func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
 	if len(sortedSplitKeys) == 0 {
 		return nil, nil
@@ -597,12 +615,14 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 	// sortedSplitKeys length is 1, scan region may return empty result. So we
 	// increase the end key a bit. If the end key is on the region boundaries, it
 	// will be skipped by getSplitKeysOfRegions.
-	scanStart := codec.EncodeBytesExt(nil, sortedSplitKeys[0], c.isRawKv)
 	lastKey := kv.Key(sortedSplitKeys[len(sortedSplitKeys)-1])
 	if len(lastKey) > 0 {
 		lastKey = lastKey.Next()
 	}
-	scanEnd := codec.EncodeBytesExt(nil, lastKey, c.isRawKv)
+	scanStart, scanEnd, err := c.getEncodedKeysFn(sortedSplitKeys[0], lastKey)
+	if err != nil {
+		return nil, err
+	}
 
 	// mu protects ret, retrySplitKeys, lastSplitErr
 	mu := sync.Mutex{}
@@ -610,13 +630,15 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 	retrySplitKeys := make([][]byte, 0, len(sortedSplitKeys))
 	var lastSplitErr error
 
-	err := utils.WithRetryReturnLastErr(ctx, func() error {
+	err = utils.WithRetryReturnLastErr(ctx, func() error {
 		ret = ret[:0]
 
 		if len(retrySplitKeys) > 0 {
-			scanStart = codec.EncodeBytesExt(nil, retrySplitKeys[0], c.isRawKv)
 			lastKey2 := kv.Key(retrySplitKeys[len(retrySplitKeys)-1])
-			scanEnd = codec.EncodeBytesExt(nil, lastKey2.Next(), c.isRawKv)
+			scanStart, scanEnd, err = c.getEncodedKeysFn(retrySplitKeys[0], lastKey2.Next())
+			if err != nil {
+				return err
+			}
 		}
 		regions, err := PaginateScanRegion(ctx, c, scanStart, scanEnd, ScanRegionPaginationLimit)
 		if err != nil {
