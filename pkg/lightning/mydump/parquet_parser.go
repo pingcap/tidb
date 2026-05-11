@@ -320,9 +320,9 @@ type ParquetParser struct {
 
 	rowGroup *rowGroupParser
 
-	// wholeFileBase holds the file preloaded by NewParquetParser, when
-	// applicable, so getBuilder can skip another range GET.
-	wholeFileBase *inMemoryReaderBase
+	// smallFileBase holds the buffer preloaded by NewParquetParser when the
+	// file fits smallFileThreshold, so getBuilder can skip another range GET.
+	smallFileBase *inMemoryReaderBase
 
 	rowPool *zeropool.Pool[[]types.Datum]
 
@@ -412,7 +412,7 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 }
 
 // getBuilder picks a column-reader strategy for the current row group:
-// whole-file buffer if preloaded, per-row-group preload if it fits the
+// small-file buffer if preloaded, per-row-group preload if it fits the
 // threshold, otherwise streaming.
 func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
@@ -422,8 +422,8 @@ func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, e
 	fileSize := pp.fileMeta.GetSourceFileSize()
 
 	switch {
-	case pp.wholeFileBase != nil:
-		return inMemoryColumnBuilder(pp.wholeFileBase, ranges, fileSize), nil
+	case pp.smallFileBase != nil:
+		return inMemoryColumnBuilder(pp.smallFileBase, ranges, fileSize), nil
 	case ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold):
 		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
 		if err != nil {
@@ -616,15 +616,11 @@ func NewParquetParser(
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
 
-	wrapper, wholeFileBase, closeWrapper, err := newFooterReader(r, meta)
+	wrapper, smallFileBase, closeWrapper, err := newFooterReader(r, meta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer func() { _ = closeWrapper() }()
-	if wholeFileBase != nil {
-		logger.Debug("use whole-file in-memory reader for parquet file",
-			zap.String("path", path), zap.Int64("size", meta.FileSize))
-	}
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
@@ -727,7 +723,7 @@ func NewParquetParser(
 		alloc:         allocator,
 		logger:        logger,
 		rowPool:       &pool,
-		wholeFileBase: wholeFileBase,
+		smallFileBase: smallFileBase,
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
