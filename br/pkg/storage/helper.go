@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"net/http"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -25,14 +26,25 @@ func ValidateCloudStorageURI(ctx context.Context, uri string) error {
 	if err != nil {
 		return err
 	}
-	_, err = New(ctx, b, &ExternalStorageOptions{
+	// To make goleak happy.
+	httpCli := http.Client{
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+		},
+	}
+	storage, err := New(ctx, b, &ExternalStorageOptions{
+		HTTPClient: &httpCli,
 		CheckPermissions: []Permission{
 			ListObjects,
 			GetObject,
 			AccessBuckets,
 		},
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	storage.Close()
+	return nil
 }
 
 // activeUploadWorkerCnt is the active upload worker count, it only works for GCS.
