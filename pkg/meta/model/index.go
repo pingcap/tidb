@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -284,6 +285,51 @@ type IndexInfo struct {
 	// 2=v2 with partition ID in key only (TODO).
 	GlobalIndexVersion uint8              `json:"global_index_version,omitempty"`
 	RegionSplitPolicy  *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
+	// Version is a monotonic feature fence for the index metadata format.
+	// 0 = legacy; all features representable in older TiDB versions.
+	// 1 = uses per-column descending order (any Columns[i].Desc == true).
+	// An older TiDB reading an index with Version greater than maxKnownIndexVersion
+	// must refuse to serve queries against it to avoid returning wrong results.
+	Version uint8 `json:"version,omitempty"`
+}
+
+// maxKnownIndexVersion is the highest IndexInfo.Version this TiDB binary understands.
+// Bump this when adding index-level features that older binaries cannot safely ignore.
+const maxKnownIndexVersion uint8 = 1
+
+// IsServable reports whether this TiDB binary can safely serve queries against
+// the index. It returns false if the index metadata uses a newer format version
+// than this binary knows about — the caller should surface a clear error rather
+// than risk returning wrong rows.
+func (index *IndexInfo) IsServable() bool {
+	return index.Version <= maxKnownIndexVersion
+}
+
+// UnservableErr returns the error to surface when an unservable index is
+// encountered during query planning or DDL. The message names the index and
+// the version mismatch so an operator can tell whether to upgrade TiDB or
+// drop the index before downgrading.
+func (index *IndexInfo) UnservableErr(tableName string) error {
+	return errors.Errorf(
+		"index `%s`%s uses metadata version %d, which is newer than this TiDB binary supports (max %d); upgrade TiDB or DROP INDEX to roll back",
+		index.Name.O, formatTableQualifier(tableName), index.Version, maxKnownIndexVersion)
+}
+
+func formatTableQualifier(tableName string) string {
+	if tableName == "" {
+		return ""
+	}
+	return " on table `" + tableName + "`"
+}
+
+// HasDescColumn reports whether any column of the index is stored in descending order.
+func (index *IndexInfo) HasDescColumn() bool {
+	for _, col := range index.Columns {
+		if col.Desc {
+			return true
+		}
+	}
+	return false
 }
 
 // Hash64 implement HashEquals interface.
@@ -498,6 +544,10 @@ type IndexColumn struct {
 	Length int `json:"length"`
 	// Whether this index column use changing type
 	UseChangingType bool `json:"using_changing_type,omitempty"`
+	// Desc indicates that this index column is stored in descending order.
+	// False (the zero value) means ascending order; this preserves backward
+	// compatibility with schemas written before descending indexes were supported.
+	Desc bool `json:"desc,omitempty"`
 }
 
 // Clone clones IndexColumn.

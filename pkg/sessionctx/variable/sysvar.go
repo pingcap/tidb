@@ -2002,6 +2002,12 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableForeignKey.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableDescendingIndex, Value: BoolToOnOff(vardef.DefTiDBEnableDescendingIndex), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		vardef.EnableDescendingIndex.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableDescendingIndex.Load()), nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {

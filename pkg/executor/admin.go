@@ -818,7 +818,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	}
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
-	keyRanges, err := distsql.IndexRangesToKVRanges(e.Ctx().GetDistSQLCtx(), e.physicalID, e.index.Meta().ID, ranges)
+	keyRanges, err := distsql.IndexRangesToKVRangesWithDesc(e.Ctx().GetDistSQLCtx(), e.physicalID, e.index.Meta().ID, indexColDescFlags(e.index.Meta()), ranges)
 	if err != nil {
 		return nil, err
 	}

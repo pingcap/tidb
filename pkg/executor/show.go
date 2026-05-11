@@ -885,13 +885,17 @@ func (e *ShowExec) fetchShowIndex() error {
 				ndv = colStats.NDV
 			}
 
+			collation := "A"
+			if col.Desc {
+				collation = "D"
+			}
 			e.appendRow([]any{
 				tb.Meta().Name.O,       // Table
 				nonUniq,                // Non_unique
 				idx.Meta().Name.O,      // Key_name
 				i + 1,                  // Seq_in_index
 				colName,                // Column_name
-				"A",                    // Collation
+				collation,              // Collation
 				ndv,                    // Cardinality
 				subPart,                // Sub_part
 				nil,                    // Packed
@@ -1249,6 +1253,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 				if c.Length != types.UnspecifiedLength {
 					colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
 				}
+			}
+			if c.Desc {
+				colInfo += " DESC"
 			}
 			cols = append(cols, colInfo)
 		}

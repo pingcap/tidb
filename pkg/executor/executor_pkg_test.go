@@ -64,7 +64,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
-	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
+	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, nil, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
 	require.NoError(t, err)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
@@ -94,7 +94,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, nil, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -116,7 +116,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, nil, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {

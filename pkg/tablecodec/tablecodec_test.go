@@ -375,6 +375,89 @@ func TestCutKeyNew(t *testing.T) {
 	require.Equal(t, types.NewIntDatum(100), handleVal)
 }
 
+func TestGenIndexKeyWithDescColumns(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:   1,
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{ID: 1, Name: ast.NewCIStr("a"), Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+			{ID: 2, Name: ast.NewCIStr("b"), Offset: 1, FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		},
+	}
+	// Ascending-only index: the DESC-aware code path must produce byte-for-
+	// byte identical output to the ordinary path so existing indexes read by
+	// older TiDB binaries keep working.
+	ascIdx := &model.IndexInfo{
+		ID:   10,
+		Name: ast.NewCIStr("idx_asc"),
+		Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("a"), Offset: 0, Length: types.UnspecifiedLength},
+			{Name: ast.NewCIStr("b"), Offset: 1, Length: types.UnspecifiedLength},
+		},
+	}
+	// Mixed composite: a ASC, b DESC. The second column's bytes must be
+	// bitwise-complemented relative to the ascending encoding so a forward
+	// RocksDB iterator yields (a ASC, b DESC) row order.
+	mixedIdx := &model.IndexInfo{
+		ID:   11,
+		Name: ast.NewCIStr("idx_mixed"),
+		Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("a"), Offset: 0, Length: types.UnspecifiedLength, Desc: false},
+			{Name: ast.NewCIStr("b"), Offset: 1, Length: types.UnspecifiedLength, Desc: true},
+		},
+		Version: 1,
+	}
+
+	loc := time.UTC
+	vals := []types.Datum{types.NewIntDatum(5), types.NewIntDatum(7)}
+
+	ascKey, _, err := GenIndexKey(loc, tblInfo, ascIdx, tblInfo.ID, vals, kv.IntHandle(1), nil)
+	require.NoError(t, err)
+
+	// Recreate an all-ascending key using EncodeKeyWithDesc(nil) to assert
+	// the fast path and the DESC-aware path agree bit-for-bit.
+	explicitAsc, _, err := GenIndexKey(loc, tblInfo, &model.IndexInfo{
+		ID: ascIdx.ID, Name: ascIdx.Name, Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("a"), Offset: 0, Length: types.UnspecifiedLength, Desc: false},
+			{Name: ast.NewCIStr("b"), Offset: 1, Length: types.UnspecifiedLength, Desc: false},
+		},
+	}, tblInfo.ID, vals, kv.IntHandle(1), nil)
+	require.NoError(t, err)
+	require.Equal(t, ascKey, explicitAsc, "all-ASC desc flags must match EncodeKey's output")
+
+	mixedKey, _, err := GenIndexKey(loc, tblInfo, mixedIdx, tblInfo.ID, vals, kv.IntHandle(1), nil)
+	require.NoError(t, err)
+
+	// The two keys share the table/index prefix plus column a's encoding,
+	// and diverge on column b: the mixed key has b's bytes complemented.
+	require.NotEqual(t, ascKey, mixedKey, "mixed-direction index must produce different bytes")
+
+	// Re-encode the column region ourselves and compare against the
+	// trailing portion of each generated key (the prefix is identical
+	// because we supplied the same tblInfo/idxID).
+	ascCols, err := codec.EncodeKey(loc, nil, vals...)
+	require.NoError(t, err)
+	mixedCols, err := codec.EncodeKeyWithDesc(loc, nil, []bool{false, true}, vals...)
+	require.NoError(t, err)
+	// Locate each column region inside the generated keys: the prefix length is
+	// identical for both because we supplied the same tblInfo/idxID.
+	require.True(t, len(ascKey) >= len(ascCols))
+	require.True(t, len(mixedKey) >= len(mixedCols))
+	require.Equal(t, ascCols, ascKey[len(ascKey)-len(ascCols)-9:len(ascKey)-9],
+		"ASC index column bytes must match EncodeKey output (9 bytes trailing handle suffix)")
+	require.Equal(t, mixedCols, mixedKey[len(mixedKey)-len(mixedCols)-9:len(mixedKey)-9],
+		"mixed index column bytes must match EncodeKeyWithDesc output")
+
+	// Decoding round-trip: cut past the column bytes using DESC-aware cutter.
+	colRegion := mixedKey[len(mixedKey)-len(mixedCols)-9 : len(mixedKey)-9]
+	rem, d0, err := codec.DecodeOneWithDesc(colRegion, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), d0.GetInt64())
+	_, d1, err := codec.DecodeOneWithDesc(rem, true)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), d1.GetInt64())
+}
+
 func TestCutKey(t *testing.T) {
 	colIDs := []int64{1, 2, 3}
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}

@@ -57,6 +57,26 @@ const (
 // IntHandleFlag is only used to encode int handle key.
 const IntHandleFlag = intFlag
 
+// IsDescFlag reports whether b is a leading flag byte from an EncodeKeyWithDesc
+// descending-column encoding (the bitwise complement of one of the ascending
+// flag bytes supported by peek/DecodeOne). Callers that received column bytes
+// from a heterogeneous source (e.g. tablecodec.DecodeIndexKV mixes key-derived
+// and value-derived bytes) can use this to decide whether the bytes need to be
+// un-complemented before being interpreted as a regular memcomparable datum.
+// See pingcap/tidb#2519.
+func IsDescFlag(b byte) bool {
+	switch b {
+	case ^NilFlag, ^bytesFlag, ^compactBytesFlag, ^intFlag, ^uintFlag,
+		^floatFlag, ^decimalFlag, ^durationFlag:
+		return true
+	}
+	return false
+}
+
+// isDescFlag is the unexported alias kept for in-package call sites that
+// predate IsDescFlag.
+func isDescFlag(b byte) bool { return IsDescFlag(b) }
+
 const (
 	sizeUint64  = unsafe.Sizeof(uint64(0))
 	sizeUint8   = unsafe.Sizeof(uint8(0))
@@ -305,6 +325,103 @@ func sizeInt(comparable1 bool) int {
 // For decimal type, datum must set datum's length and frac.
 func EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
 	return encode(loc, b, v, true)
+}
+
+// EncodeKeyWithDesc is like EncodeKey, but bitwise-complements the encoded
+// bytes of every datum whose corresponding entry in desc is true. Complementing
+// a memcomparable-encoded datum reverses its byte comparison order, so a
+// forward iterator over keys built this way yields descending order for those
+// columns. Columns whose desc entry is false (or whose index is past len(desc))
+// are encoded identically to EncodeKey, preserving mixed-direction composite
+// indexes like INDEX(a ASC, b DESC). See pingcap/tidb#2519.
+//
+// Returns an error if any DESC column has a Kind whose underlying encoding is
+// not memcomparable in the sense that "complement of encoded bytes" preserves
+// reverse order — currently KindMysqlJSON and KindVectorFloat32. Those types
+// aren't usable as ordinary index columns anyway (json/vector indexes go
+// through their own pipeline), but the explicit rejection prevents a
+// caller from accidentally producing keys whose comparison semantics would
+// be undefined.
+func EncodeKeyWithDesc(loc *time.Location, b []byte, desc []bool, v ...types.Datum) ([]byte, error) {
+	for i := range v {
+		isDesc := i < len(desc) && desc[i]
+		if isDesc {
+			switch v[i].Kind() {
+			case types.KindMysqlJSON, types.KindVectorFloat32:
+				return b, errors.Errorf(
+					"descending-order encoding is not supported for column kind %v; this kind has no memcomparable form whose bitwise complement preserves reverse order",
+					v[i].Kind())
+			}
+		}
+		start := len(b)
+		var err error
+		b, err = encode(loc, b, v[i:i+1], true)
+		if err != nil {
+			return b, err
+		}
+		if isDesc {
+			for j := start; j < len(b); j++ {
+				b[j] ^= 0xFF
+			}
+		}
+	}
+	return b, nil
+}
+
+// DecodeOneWithDesc decodes a single datum from a byte slice produced by
+// EncodeKeyWithDesc. When desc is false it is equivalent to DecodeOne; when
+// true it inverts the encoded bytes and dispatches through the existing
+// decoder, so all types supported by DecodeOne work unchanged.
+//
+// This allocates a scratch buffer to hold the complemented prefix. Callers on
+// hot paths that decode many consecutive descending columns should consider a
+// streaming variant; none of the current callsites are hot enough to justify
+// the added complexity.
+func DecodeOneWithDesc(b []byte, desc bool) (remain []byte, d types.Datum, err error) {
+	if !desc {
+		return DecodeOne(b)
+	}
+	if len(b) < 1 {
+		return nil, d, errors.New("invalid encoded key")
+	}
+	// peek() inspects the flag byte and computes the encoded length, so we
+	// complement b into a scratch buffer first. A full copy keeps the logic
+	// simple — DecodeOne handles every type uniformly on the scratch copy.
+	cp := make([]byte, len(b))
+	for i := range b {
+		cp[i] = b[i] ^ 0xFF
+	}
+	rem, d, err := DecodeOne(cp)
+	if err != nil {
+		return nil, d, errors.Trace(err)
+	}
+	consumed := len(b) - len(rem)
+	return b[consumed:], d, nil
+}
+
+// CutOneWithDesc cuts the first encoded datum from b, where the column may be
+// stored with descending-complemented bytes (desc=true). It is equivalent to
+// CutOne when desc is false. Used by index-key decoders that only need to
+// advance past a column without materialising its value.
+func CutOneWithDesc(b []byte, desc bool) (data []byte, remain []byte, err error) {
+	if !desc {
+		return CutOne(b)
+	}
+	if len(b) < 1 {
+		return nil, nil, errors.New("invalid encoded key")
+	}
+	// peek() in cmpl-space gives the encoded length. We only need one byte of
+	// scratch (the flag) plus up to the encoded length for variable-length
+	// types, so take the minimum slice needed.
+	cp := make([]byte, len(b))
+	for i := range b {
+		cp[i] = b[i] ^ 0xFF
+	}
+	l, err := peek(cp)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return b[:l], b[l:], nil
 }
 
 // EncodeValue appends the encoded values to byte slice b, returning the appended
@@ -1511,6 +1628,34 @@ func peek(b []byte) (length int, err error) {
 		l, err = types.PeekBytesAsJSON(b)
 	case vectorFloat32Flag:
 		l, err = types.PeekBytesAsVectorFloat32(b)
+	// Descending-order flags (pingcap/tidb#2519). EncodeKeyWithDesc writes
+	// bitwise-complemented bytes, so the leading flag becomes ^original. We
+	// compute the length of the column exactly as for the ascending variant
+	// because complement preserves byte count. Variable-length types need to
+	// walk group markers in complement space — we do so by complementing a
+	// scratch copy of the body.
+	case ^NilFlag:
+		// NULL in descending encoding has no body bytes.
+	case ^intFlag, ^uintFlag, ^floatFlag, ^durationFlag:
+		l = 8
+	case ^bytesFlag:
+		tmp := make([]byte, len(b))
+		for i := range b {
+			tmp[i] = b[i] ^ 0xFF
+		}
+		l, err = peekBytes(tmp)
+	case ^compactBytesFlag:
+		tmp := make([]byte, len(b))
+		for i := range b {
+			tmp[i] = b[i] ^ 0xFF
+		}
+		l, err = peekCompactBytes(tmp)
+	case ^decimalFlag:
+		tmp := make([]byte, len(b))
+		for i := range b {
+			tmp[i] = b[i] ^ 0xFF
+		}
+		l, err = types.DecimalPeak(tmp)
 	default:
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}
@@ -1584,6 +1729,10 @@ type Decoder struct {
 
 	// buf is only used for DecodeBytes to avoid the cost of makeslice.
 	buf []byte
+	// descBuf is a reusable scratch buffer for the descending-column
+	// auto-detect path so a per-row index scan does not allocate a fresh
+	// slice for every DESC column it decodes (pingcap/tidb#2519).
+	descBuf []byte
 }
 
 // NewDecoder creates a Decoder.
@@ -1595,9 +1744,44 @@ func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
 }
 
 // DecodeOne decodes one value to chunk and returns the remained bytes.
+//
+// Descending-order columns (pingcap/tidb#2519) are written as bitwise-
+// complemented memcomparable bytes. Their leading flag byte is the bit-
+// complement of the ascending flag (e.g. intFlag=0x03 becomes 0xFC, NilFlag
+// =0x00 becomes 0xFF). When the input begins with one of those complemented
+// flags we transparently invert just the bytes this column consumes and fall
+// through to the ascending switch — callers need no schema awareness. The
+// 0xFA collision between ^floatFlag and maxFlag is not observable on stored
+// rows because maxFlag only appears in range sentinels, which never reach
+// this decoder.
 func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
+	}
+	if isDescFlag(b[0]) {
+		length, err := peek(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Reuse decoder.descBuf instead of allocating a fresh scratch slice
+		// per DESC column. This is on the per-row decode hot path; for a
+		// composite DESC index every row would otherwise drop a few-hundred-
+		// byte allocation. The buffer's contents are not referenced after
+		// the recursive DecodeOne call returns, so reuse is safe even for
+		// variable-length types whose decoded form (Bytes) gets copied into
+		// the chunk inside the ASC branch.
+		if cap(decoder.descBuf) < length {
+			decoder.descBuf = make([]byte, length)
+		} else {
+			decoder.descBuf = decoder.descBuf[:length]
+		}
+		for i := range length {
+			decoder.descBuf[i] = b[i] ^ 0xFF
+		}
+		if _, err := decoder.DecodeOne(decoder.descBuf, colIdx, ft); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return b[length:], nil
 	}
 	chk := decoder.chk
 	flag := b[0]
