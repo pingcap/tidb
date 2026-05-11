@@ -964,7 +964,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		var needRetry bool
 		minReplicaNum := uint64(math.MaxUint64)
 		for _, task := range tasks {
-			rpcCtx, unavailableReason, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
+			rpcCtx, unavailableDetail, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -975,9 +975,17 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			// same as rpc error.
 			if rpcCtx == nil {
 				needRetry = true
-				logutil.BgLogger().Info("retry for TiFlash peer with region missing",
+				fields := []zap.Field{
 					zap.Uint64("region id", task.region.GetID()),
-					zap.String("reason", unavailableReason.String()))
+					zap.String("reason", unavailableDetail.Reason.String()),
+				}
+				if len(unavailableDetail.StoreIDs) > 0 {
+					fields = append(fields, zap.Uint64s("store_ids", unavailableDetail.StoreIDs))
+				}
+				if len(unavailableDetail.PeerIDs) > 0 {
+					fields = append(fields, zap.Uint64s("peer_ids", unavailableDetail.PeerIDs))
+				}
+				logutil.BgLogger().Info("retry for TiFlash peer with region missing", fields...)
 				// Probably all the regions are invalid. Make the loop continue and mark all the regions invalid.
 				// Then `splitRegion` will reloads these regions.
 				continue
