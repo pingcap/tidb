@@ -143,8 +143,18 @@ select id, title from articles where match(title) against('MySQL, PostgreSQL.');
 -- error 1235
 select id, title from articles where match(title) against('>MySQL <Security' in boolean mode);
 
-# Test 29: AGAINST(NULL) returns no matches
+# Test 29: AGAINST(NULL) returns no matches.
 select id, title from articles where match(title) against(NULL);
+
+# Test 29a: NOT MATCH(...) AGAINST(NULL). Native MATCH on NULL returns NULL
+# (builtin_fts.go evalReal), so NOT NULL = NULL filters the row — i.e. zero
+# rows. Previously the LIKE rewrite emitted Constant(0) for the NULL search
+# so NOT(0) = 1 admitted every row, diverging from MySQL three-valued logic.
+# The fix emits Constant(NULL) instead.
+select id, title from articles where not match(title) against(NULL);
+
+# Test 29b: AGAINST(NULL) inside parens (still a direct-boolean position).
+select id, title from articles where (match(title) against(NULL));
 
 # Test 30: Boolean mode - relevance modifier ~ rejected by strict subset.
 -- error 1235
@@ -246,6 +256,25 @@ select @@last_plan_from_cache;
 set @q='PostgreSQL';
 execute st_fts using @q;
 deallocate prepare st_fts;
+set @@tidb_enable_prepared_plan_cache=DEFAULT;
+
+# Test 38a: Prepared statement with a NULL first bind followed by a non-NULL
+# bind. Pre-fix the LIKE fallback's NULL fast-path emitted Constant(0) and
+# ran BEFORE the plan-cache skip check, so the prepared plan could cache a
+# constant-false plan that a later non-NULL bind would silently reuse,
+# returning zero rows instead of the matching ones. The fix moves the
+# plan-cache skip ahead of the NULL fast-path (so mutable AGAINST always
+# disables caching) and changes the NULL emission to Constant(NULL) (so
+# NULL three-valued logic is preserved). After the fix, the second execute
+# must return the PostgreSQL row, and @@last_plan_from_cache must be 0.
+set @@tidb_enable_prepared_plan_cache=1;
+prepare st_fts_null from 'select id, title from articles where match(title) against(?)';
+set @q = NULL;
+execute st_fts_null using @q;
+set @q = 'PostgreSQL';
+execute st_fts_null using @q;
+select @@last_plan_from_cache;
+deallocate prepare st_fts_null;
 set @@tidb_enable_prepared_plan_cache=DEFAULT;
 
 # Note: user variables in AGAINST (e.g., AGAINST(@search)) are rejected at

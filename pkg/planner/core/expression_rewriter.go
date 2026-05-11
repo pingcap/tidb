@@ -2622,6 +2622,19 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 		return
 	}
 
+	// The LIKE fallback bakes the search value into the produced plan — either
+	// as ILIKE pattern constants (non-NULL case) or as a Constant(NULL)
+	// short-circuit. A cached plan would reuse the first execution's baked
+	// value for later executions, producing wrong results whenever the AGAINST
+	// argument is mutable: a `?` parameter marker, a user variable, or another
+	// deferred expression. In particular, a NULL first bind would bake a
+	// Constant(NULL) plan and reuse it for a later non-NULL bind. Mark the
+	// plan non-cacheable here, before the NULL fast-path and before Eval, so
+	// the skip applies uniformly across all branches below.
+	if expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
+		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
+	}
+
 	searchText, err := constExpr.Eval(er.sctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		er.err = err
@@ -2629,10 +2642,16 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 	}
 
 	if searchText.IsNull() {
-		// NULL search string matches nothing, consistent with native FTS behavior.
+		// NULL search yields NULL in MySQL FTS semantics
+		// (builtin_fts.go evalReal returns isNull=true for NULL args), so we
+		// emit Constant(NULL) rather than Constant(0). This preserves
+		// three-valued logic under NOT — NOT NULL = NULL filters the row —
+		// and under IS NULL / IS NOT NULL. A literal Constant(0) would make
+		// NOT(MATCH...) admit every row when the search is NULL, diverging
+		// from native semantics.
 		er.ctxStackPop(numCols + 1)
 		er.ctxStackAppend(&expression.Constant{
-			Value:   types.NewIntDatum(0),
+			Value:   types.Datum{},
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}, types.EmptyName)
 		return
@@ -2672,17 +2691,6 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 		}
 		er.err = err
 		return
-	}
-
-	// The search string is baked into LIKE pattern constants at plan-build time.
-	// A cached plan would reuse the first execution's patterns for all subsequent
-	// executions, producing wrong results when the AGAINST argument is mutable
-	// across executions (a `?` parameter marker or a deferred expression such as
-	// a user variable). For a true literal the baked pattern is stable, so the
-	// plan is safe to cache; only mark it non-cacheable when the constant could
-	// vary at execution time.
-	if expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
-		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
 	}
 
 	er.ctxStackPop(numCols + 1)

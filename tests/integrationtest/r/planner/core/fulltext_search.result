@@ -120,6 +120,10 @@ select id, title from articles where match(title) against('>MySQL <Security' in 
 Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '>MySQL' is not supported in the LIKE fallback'
 select id, title from articles where match(title) against(NULL);
 id	title
+select id, title from articles where not match(title) against(NULL);
+id	title
+select id, title from articles where (match(title) against(NULL));
+id	title
 select id, title from articles where match(title) against('~Security ~PostgreSQL' in boolean mode);
 Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term '~Security' is not supported in the LIKE fallback'
 select id, title from articles where match(title) against('MySQL' with query expansion);
@@ -205,6 +209,20 @@ execute st_fts using @q;
 id	title
 4	MySQL vs. PostgreSQL
 deallocate prepare st_fts;
+set @@tidb_enable_prepared_plan_cache=DEFAULT;
+set @@tidb_enable_prepared_plan_cache=1;
+prepare st_fts_null from 'select id, title from articles where match(title) against(?)';
+set @q = NULL;
+execute st_fts_null using @q;
+id	title
+set @q = 'PostgreSQL';
+execute st_fts_null using @q;
+id	title
+4	MySQL vs. PostgreSQL
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st_fts_null;
 set @@tidb_enable_prepared_plan_cache=DEFAULT;
 select id, match(title) against('+MySQL' in boolean mode) as score from articles;
 Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'
