@@ -668,6 +668,7 @@ type mockPdClient struct {
 	pd.Client
 	stores  []*metapb.Store
 	regions []*router.Region
+	closed  bool
 }
 
 func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
@@ -688,6 +689,10 @@ func (c *mockPdClient) GetClusterID(ctx context.Context) uint64 {
 
 func (c *mockPdClient) WithCallerComponent(component caller.Component) pd.Client {
 	return c
+}
+
+func (c *mockPdClient) Close() {
+	c.closed = true
 }
 
 type mockGrpcErr struct{}
@@ -2454,13 +2459,21 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	oldNewEtcdSafePointKV := newEtcdSafePointKV
 	oldNewTiKVRPCClient := newTiKVRPCClient
 	oldNewTiKVStore := newTiKVStore
+	oldNewPDClient := newPDClient
 	defer func() {
 		newEtcdSafePointKV = oldNewEtcdSafePointKV
 		newTiKVRPCClient = oldNewTiKVRPCClient
 		newTiKVStore = oldNewTiKVStore
+		newPDClient = oldNewPDClient
 	}()
 
-	var safePointKVCalls, rpcClientCalls, kvStoreCalls int
+	var pdClientCalls, safePointKVCalls, rpcClientCalls, kvStoreCalls int
+	inputPDCli := &mockPdClient{}
+	tikvPDCli := &mockPdClient{}
+	newPDClient = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+		pdClientCalls++
+		return tikvPDCli, nil
+	}
 	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
 		safePointKVCalls++
 		return tikv.NewMockSafePointKV(), nil
@@ -2469,23 +2482,28 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 		rpcClientCalls++
 		return tikv.NewRPCClient()
 	}
-	newTiKVStore = func(_ string, _ pd.Client, _ tikv.SafePointKV, _ tikv.Client, _ ...tikv.Option) (*tikv.KVStore, error) {
+	newTiKVStore = func(_ string, pdCli pd.Client, _ tikv.SafePointKV, _ tikv.Client, _ ...tikv.Option) (*tikv.KVStore, error) {
 		kvStoreCalls++
+		require.NotSame(t, inputPDCli, pdCli)
 		return nil, errors.New("mock kv store error")
 	}
 
 	b := &Backend{
-		pdCliForTiKV: tikv.NewCodecPDClient(tikv.ModeTxn, &mockPdClient{}),
-		pdAddrs:      []string{"127.0.0.1:2379"},
-		tls:          &common.TLS{},
+		pdCli:     inputPDCli,
+		pdAddrs:   []string{"127.0.0.1:2379"},
+		tls:       &common.TLS{},
+		tikvCodec: keyspace.CodecV1,
 	}
 
 	dupeController, err := b.GetDupeController(1, nil)
 	require.Nil(t, dupeController)
 	require.ErrorContains(t, err, "mock kv store error")
+	require.Equal(t, 1, pdClientCalls)
 	require.Equal(t, 1, safePointKVCalls)
 	require.Equal(t, 1, rpcClientCalls)
 	require.Equal(t, 1, kvStoreCalls)
+	require.False(t, inputPDCli.closed)
+	require.True(t, tikvPDCli.closed)
 	require.Nil(t, b.tikvCli)
 }
 

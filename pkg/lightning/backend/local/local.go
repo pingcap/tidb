@@ -72,7 +72,6 @@ import (
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
-	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -136,9 +135,8 @@ var (
 	newTiKVRPCClient = func(opts ...tikvclient.ClientOpt) tikvclient.Client {
 		return tikvclient.NewRPCClient(opts...)
 	}
-	newTiKVStore = func(uuid string, pdClient pd.Client, spkv tikvclient.SafePointKV, rpcClient tikvclient.Client, opt ...tikvclient.Option) (*tikvclient.KVStore, error) {
-		return tikvclient.NewKVStore(uuid, pdClient, spkv, rpcClient, opt...)
-	}
+	newTiKVStore = tikvclient.NewKVStore
+	newPDClient  = pd.NewClientWithContext
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -542,15 +540,14 @@ func (c *BackendConfig) SetWorkerConcurrency(concurrency int) {
 
 // Backend is a local backend.
 type Backend struct {
-	pdCli        pd.Client
-	pdHTTPCli    pdhttp.Client
-	splitCli     split.SplitClient
-	pdCliForTiKV *tikvclient.CodecPDClient
-	pdAddrs      []string
-	tikvCli      *tikvclient.KVStore
-	tikvCliMu    sync.Mutex
-	tls          *common.TLS
-	tikvCodec    tikvclient.Codec
+	pdCli     pd.Client
+	pdHTTPCli pdhttp.Client
+	splitCli  split.SplitClient
+	pdAddrs   []string
+	tikvCli   *tikvclient.KVStore
+	tikvCliMu sync.Mutex
+	tls       *common.TLS
+	tikvCodec tikvclient.Codec
 
 	collector execute.Collector
 
@@ -583,16 +580,40 @@ var (
 	}
 )
 
+// PDClientOptions returns the PD client options required by the local backend.
+func PDClientOptions() []opt.ClientOption {
+	return []opt.ClientOption{
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
+		// If the time too short, we may scatter a region many times, because
+		// the interface `ScatterRegions` may time out.
+		opt.WithCustomTimeoutOption(60 * time.Second),
+	}
+}
+
+// NewCodecPDClient creates a codec-aware transaction PD client for the target keyspace.
+func NewCodecPDClient(pdCli pd.Client, keyspaceName string) (*tikvclient.CodecPDClient, error) {
+	if keyspaceName == "" {
+		return tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli), nil
+	}
+	return tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, keyspaceName)
+}
+
+func pdSecurityOption(tls *common.TLS) pd.SecurityOption {
+	if tls == nil {
+		return pd.SecurityOption{}
+	}
+	return tls.ToPDSecurityOption()
+}
+
 // NewBackend creates new connections to tikv.
 func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdSvcDiscovery sd.ServiceDiscovery,
+	pdCli pd.Client,
+	tikvCodec tikvclient.Codec,
 ) (b *Backend, err error) {
 	var (
-		pdCli                pd.Client
-		pdCliForTiKV         *tikvclient.CodecPDClient
 		pdHTTPCli            pdhttp.Client
 		importClientFactory  *importClientFactoryImpl
 		multiIngestSupported bool
@@ -607,43 +628,14 @@ func NewBackend(
 		if pdHTTPCli != nil {
 			pdHTTPCli.Close()
 		}
-		if pdCli != nil {
-			pdCli.Close()
-		}
 	}()
 	config.adjust()
-	var pdAddrs []string
-	if pdSvcDiscovery != nil {
-		pdAddrs = pdSvcDiscovery.GetServiceURLs()
-		// TODO(lance6716): if PD client can support creating a client with external
-		// service discovery, we can directly pass pdSvcDiscovery.
-	} else {
-		pdAddrs = strings.Split(config.PDAddr, ",")
-	}
-	pdCli, err = pd.NewClientWithContext(
-		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
-		opt.WithGRPCDialOptions(maxCallMsgSize...),
-		// If the time too short, we may scatter a region many times, because
-		// the interface `ScatterRegions` may time out.
-		opt.WithCustomTimeoutOption(60*time.Second),
-	)
-	if err != nil {
-		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
-	}
+	pdSvcDiscovery := pdCli.GetServiceDiscovery()
+	pdAddrs := pdSvcDiscovery.GetServiceURLs()
 
-	if config.KeyspaceName == "" {
-		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
-	} else {
-		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, config.KeyspaceName)
-		if err != nil {
-			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
-		}
-	}
-
-	tikvCodec := pdCliForTiKV.GetCodec()
 	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
-		pdCli.GetServiceDiscovery(),
+		pdSvcDiscovery,
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
@@ -656,13 +648,12 @@ func NewBackend(
 
 	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	local := &Backend{
-		pdCli:        pdCli,
-		pdHTTPCli:    pdHTTPCli,
-		splitCli:     splitCli,
-		pdCliForTiKV: pdCliForTiKV,
-		pdAddrs:      append([]string(nil), pdAddrs...),
-		tls:          tls,
-		tikvCodec:    tikvCodec,
+		pdCli:     pdCli,
+		pdHTTPCli: pdHTTPCli,
+		splitCli:  splitCli,
+		pdAddrs:   append([]string(nil), pdAddrs...),
+		tls:       tls,
+		tikvCodec: tikvCodec,
 
 		BackendConfig: config,
 
@@ -821,9 +812,6 @@ func (local *Backend) Close() {
 	if local.pdHTTPCli != nil {
 		local.pdHTTPCli.Close()
 	}
-	if local.pdCli != nil {
-		local.pdCli.Close()
-	}
 	if local.nextgenHTTPCli != nil {
 		local.nextgenHTTPCli.CloseIdleConnections()
 	}
@@ -835,9 +823,6 @@ func (local *Backend) getTiKVClient() (*tikvclient.KVStore, error) {
 
 	if local.tikvCli != nil {
 		return local.tikvCli, nil
-	}
-	if local.pdCliForTiKV == nil {
-		return nil, common.ErrCreateKVClient.Wrap(errors.New("TiKV client prerequisites are not initialized")).GenWithStackByArgs()
 	}
 
 	var tlsConfig *tls.Config
@@ -852,8 +837,19 @@ func (local *Backend) getTiKVClient() (*tikvclient.KVStore, error) {
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
+	pdCliForTiKV, err := newPDClient(context.Background(), caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
+	if err != nil {
+		_ = spkv.Close()
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+	codecPDCli, err := NewCodecPDClient(pdCliForTiKV, local.KeyspaceName)
+	if err != nil {
+		pdCliForTiKV.Close()
+		_ = spkv.Close()
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
 	rpcCli := newTiKVRPCClient(rpcOpts...)
-	tikvCli, err := newTiKVStore("lightning-local-backend", local.pdCliForTiKV, spkv, rpcCli)
+	tikvCli, err := newTiKVStore("lightning-local-backend", codecPDCli, spkv, rpcCli)
 	if err != nil {
 		if rpcCli != nil {
 			_ = rpcCli.Close()
@@ -861,6 +857,7 @@ func (local *Backend) getTiKVClient() (*tikvclient.KVStore, error) {
 		if spkv != nil {
 			_ = spkv.Close()
 		}
+		codecPDCli.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	local.tikvCli = tikvCli
