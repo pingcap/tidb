@@ -241,7 +241,7 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
-	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
+	be, err := local.NewBackend(ctx, tls, *cfg, pdCli, store.GetCodec())
 	return cfg, be, err
 }
 
