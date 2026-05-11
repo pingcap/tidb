@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 // GetScheduleStatus returns the schedule status.
@@ -114,8 +115,9 @@ func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (nodeCount 
 	if len(nodes) == 0 {
 		// shouldn't happen normally as every node will register itself to the meta
 		// table.
-		logutil.BgLogger().Warn("no managed nodes found, use local node CPU count instead")
 		cpuCount = storage.GetDXFCPUCount()
+		logutil.BgLogger().Warn("no managed nodes found, use local usable CPU count instead",
+			zap.Int("usableCPUCount", cpuCount))
 	} else {
 		cpuCount = nodes[0].CPUCount
 	}

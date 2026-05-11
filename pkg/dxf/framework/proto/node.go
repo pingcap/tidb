@@ -49,16 +49,17 @@ func NewNodeResource(totalCPU int, totalMem int64, totalDisk uint64) *NodeResour
 
 // LimitDXFResource returns the resource available to DXF under the given percentage limit.
 func (nr *NodeResource) LimitDXFResource(limit int) *NodeResource {
-	usableCPU := LimitDXFCPU(nr.TotalCPU, limit)
+	usableCPU := getLimitedDXFCPU(nr.TotalCPU, limit)
 	if usableCPU == nr.TotalCPU || nr.TotalCPU <= 0 {
 		return NewNodeResource(nr.TotalCPU, nr.TotalMem, nr.TotalDisk)
 	}
 	usableMem := int64(float64(usableCPU) / float64(nr.TotalCPU) * float64(nr.TotalMem))
+	// we don't support limiting disk for now. so will keep it as is.
 	return NewNodeResource(usableCPU, usableMem, nr.TotalDisk)
 }
 
-// LimitDXFCPU returns the CPU slots available to DXF under the given percentage limit.
-func LimitDXFCPU(totalCPU int, limit int) int {
+// getLimitedDXFCPU returns the CPU slots available to DXF under the given percentage limit.
+func getLimitedDXFCPU(totalCPU int, limit int) int {
 	if totalCPU <= 0 || limit >= 100 {
 		return totalCPU
 	}
