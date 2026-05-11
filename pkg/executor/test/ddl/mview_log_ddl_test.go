@@ -1444,6 +1444,25 @@ func TestPurgeMaterializedViewLogManualCancelAfterPartialSuccess(t *testing.T) {
 		return fmt.Sprint(rows[0][0]) == "1"
 	}, 10*time.Second, 100*time.Millisecond)
 
+	purgeJobID := fmt.Sprint(tkObserver.MustQuery(fmt.Sprintf(
+		"select PURGE_JOB_ID from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running' limit 1",
+		mlogID,
+	)).Rows()[0][0])
+	cancelObservedCh := make(chan struct{}, 1)
+	cancelObservedFailpoint := "github.com/pingcap/tidb/pkg/executor/mvTaskMonitorCancelRequested"
+	expectedMonitorName := fmt.Sprintf("mlog-purge-%s", purgeJobID)
+	require.NoError(t, failpoint.EnableCall(cancelObservedFailpoint, func(monitorName string) {
+		if monitorName == expectedMonitorName {
+			select {
+			case cancelObservedCh <- struct{}{}:
+			default:
+			}
+		}
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable(cancelObservedFailpoint))
+	}()
+
 	requester := "'partial_cancel_req'@'stage-d'"
 	tkObserver.MustExec(
 		`UPDATE mysql.tidb_mlog_purge_hist
@@ -1455,6 +1474,12 @@ WHERE MLOG_ID = ?
 		requester,
 		mlogID,
 	)
+
+	select {
+	case <-cancelObservedCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for purge task monitor to observe manual cancel request")
+	}
 
 	require.NoError(t, failpoint.Disable(pauseFailpoint))
 	paused = false
