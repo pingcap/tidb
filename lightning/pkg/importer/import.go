@@ -400,11 +400,11 @@ func NewImportControllerWithPauser(
 			}
 		}
 
+		// simple wraps PD client, so no need to close it separately.
 		pdCliForTiKV, err := local.NewCodecPDClient(pdCli, p.KeyspaceName)
 		if err != nil {
 			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
 		}
-		tikvCodec := pdCliForTiKV.GetCodec()
 
 		initGlobalConfig(tls.ToTiKVSecurityConfig())
 
@@ -445,7 +445,7 @@ func NewImportControllerWithPauser(
 			raftKV2SwitchModeDuration = cfg.Cron.SwitchMode.Duration
 		}
 		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, p.TaskType, raftKV2SwitchModeDuration)
-		backendObj, err = local.NewBackend(ctx, tls, backendConfig, pdCli, tikvCodec)
+		backendObj, err = local.NewBackend(ctx, tls, backendConfig, pdCliForTiKV)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
