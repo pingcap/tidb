@@ -236,6 +236,29 @@ func scanRegionsLimitWithRetry(
 	return batch, mustLeader, err
 }
 
+// PaginateScanRegionWithCodecAware is similar to PaginateScanRegion, but it
+// will consider whether it's using codec PD client.
+func PaginateScanRegionWithCodecAware(
+	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
+) ([]*RegionInfo, error) {
+	if codecCli := client.GetCodecPDClient(); codecCli != nil {
+		var err error
+		cd := codecCli.GetCodec()
+		startKey, err = cd.DecodeKey(startKey)
+		if err != nil {
+			return nil, err
+		}
+		endKey, err = cd.DecodeKey(endKey)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		startKey = codec.EncodeBytes(nil, startKey)
+		endKey = codec.EncodeBytes(nil, endKey)
+	}
+	return PaginateScanRegion(ctx, client, startKey, endKey, limit)
+}
+
 // PaginateScanRegion scan regions with a limit pagination and return all regions
 // at once. The returned regions are continuous and cover the key range. If not,
 // or meet errors, it will retry internally.
