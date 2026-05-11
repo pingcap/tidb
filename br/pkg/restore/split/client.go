@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
@@ -106,6 +107,16 @@ type SplitClient interface {
 	// The first return value is always the number of regions that are not finished
 	// scattering no matter what the error is.
 	WaitRegionsScattered(ctx context.Context, regionInfos []*RegionInfo) (notFinished int, err error)
+	// GetCodecPDClient returns the underlying codec PD client if one is used.
+	// normal PD client require the KEYs passed in to be encoded in memory
+	// comparable way through codec.EncodeBytes. if we are using keyspace, it
+	// requires the keyspace prefix already included before codec.EncodeBytes.
+	//
+	// codec PD client will do the same encode internally, but it requires the keys
+	// to be the same as the keys encoded by KV encoder, i.e. there is no additional
+	// encode from codec.EncodeBytes, and if it's codec V2, the passed key should
+	// NOT contain the keyspace.
+	GetCodecPDClient() *tikvclient.CodecPDClient
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -167,6 +178,17 @@ func NewClient(
 		opt(cli)
 	}
 	return cli
+}
+
+func (c *pdClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	if c == nil {
+		return nil
+	}
+	codecPDClient, ok := c.client.(*tikvclient.CodecPDClient)
+	if !ok {
+		return nil
+	}
+	return codecPDClient
 }
 
 func (c *pdClient) needScatter(ctx context.Context) bool {
