@@ -33,6 +33,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -139,6 +140,26 @@ type RegionHandler struct {
 // NewRegionHandler creates a new RegionHandler.
 func NewRegionHandler(tool *handler.TikvHandlerTool) *RegionHandler {
 	return &RegionHandler{tool}
+}
+
+// RegionCacheRegionHandler is the handler for querying region cache debug information.
+type RegionCacheRegionHandler struct {
+	*handler.TikvHandlerTool
+}
+
+// NewRegionCacheRegionHandler creates a new RegionCacheRegionHandler.
+func NewRegionCacheRegionHandler(tool *handler.TikvHandlerTool) *RegionCacheRegionHandler {
+	return &RegionCacheRegionHandler{tool}
+}
+
+// StoreCacheHandler is the handler for querying store cache debug information.
+type StoreCacheHandler struct {
+	*handler.TikvHandlerTool
+}
+
+// NewStoreCacheHandler creates a new StoreCacheHandler.
+func NewStoreCacheHandler(tool *handler.TikvHandlerTool) *StoreCacheHandler {
+	return &StoreCacheHandler{tool}
 }
 
 // TableHandler is the handler for list table's regions.
@@ -257,6 +278,8 @@ const (
 	// OpMvccGetByTxn is the operation for getting mvcc value by txn.
 	OpMvccGetByTxn = "txn"
 )
+
+const storeIDParam = "storeID"
 
 // ServeHTTP handles request of list a database or table's schemas.
 func (ValueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -380,6 +403,57 @@ type RegionDetail struct {
 	RangeDetail `json:",inline"`
 	RegionID    uint64              `json:"region_id"`
 	Frames      []*helper.FrameItem `json:"frames"`
+}
+
+type RegionCachePeerStoreInfo struct {
+	Peer                *metapb.Peer `json:"peer,omitempty"`
+	StoreID             uint64       `json:"store_id"`
+	Addr                string       `json:"addr"`
+	PeerAddr            string       `json:"peer_addr"`
+	StatusAddr          string       `json:"status_addr"`
+	StoreType           string       `json:"store_type"`
+	ResolveState        string       `json:"resolve_state"`
+	LivenessState       string       `json:"liveness_state"`
+	StoreEpoch          uint32       `json:"store_epoch"`
+	IsSlow              bool         `json:"is_slow"`
+	ClientSideSlowScore int64        `json:"client_side_slow_score"`
+	TiKVSideSlowScore   int64        `json:"tikv_side_slow_score"`
+}
+
+// RegionCacheInfo is the response data for one cached region entry.
+type RegionCacheInfo struct {
+	RangeDetail    `json:",inline"`
+	RegionID       uint64                     `json:"region_id"`
+	RegionEpoch    *metapb.RegionEpoch        `json:"region_epoch,omitempty"`
+	RegionVersion  uint64                     `json:"region_version"`
+	RegionConfVer  uint64                     `json:"region_conf_ver"`
+	LeaderPeerID   uint64                     `json:"leader_peer_id"`
+	LeaderStoreID  uint64                     `json:"leader_store_id"`
+	TTL            int64                      `json:"ttl"`
+	Expired        bool                       `json:"expired"`
+	Valid          bool                       `json:"valid"`
+	InvalidReason  string                     `json:"invalid_reason"`
+	SyncFlags      int32                      `json:"sync_flags"`
+	SyncFlagNames  []string                   `json:"sync_flag_names,omitempty"`
+	BucketVersion  uint64                     `json:"bucket_version"`
+	BucketKeyCount int                        `json:"bucket_key_count"`
+	Peers          []*metapb.Peer             `json:"peers"`
+	PeerStores     []RegionCachePeerStoreInfo `json:"peer_stores"`
+}
+
+type StoreCacheInfo struct {
+	StoreID             uint64               `json:"store_id"`
+	Addr                string               `json:"addr"`
+	PeerAddr            string               `json:"peer_addr"`
+	StatusAddr          string               `json:"status_addr"`
+	StoreType           string               `json:"store_type"`
+	ResolveState        string               `json:"resolve_state"`
+	LivenessState       string               `json:"liveness_state"`
+	Labels              []*metapb.StoreLabel `json:"labels"`
+	IsSlow              bool                 `json:"is_slow"`
+	ClientSideSlowScore int64                `json:"client_side_slow_score"`
+	TiKVSideSlowScore   int64                `json:"tikv_side_slow_score"`
+	EstimatedWaitMs     int64                `json:"estimated_wait_ms"`
 }
 
 // addTableInRange insert a table into RegionDetail
@@ -1601,6 +1675,114 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	handler.WriteData(w, regionDetail)
+}
+
+// ServeHTTP handles request of region cache debug information.
+func (h RegionCacheRegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	regionIDStr, ok := params[handler.RegionID]
+	if !ok {
+		handler.WriteError(w, errors.New("missing regionID in URL path"))
+		return
+	}
+	regionID, err := strconv.ParseUint(regionIDStr, 0, 64)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	info, found := h.RegionCache.GetCachedRegionDebugInfoByID(regionID)
+	if !found {
+		handler.WriteErrorWithCode(w, http.StatusNotFound, errors.Errorf("region %d not found in region cache", regionID))
+		return
+	}
+	regionVersion := uint64(0)
+	regionConfVer := uint64(0)
+	if info.RegionEpoch != nil {
+		regionVersion = info.RegionEpoch.GetVersion()
+		regionConfVer = info.RegionEpoch.GetConfVer()
+	}
+	resp := &RegionCacheInfo{
+		RangeDetail:    createRangeDetail(info.StartKey, info.EndKey),
+		RegionID:       info.RegionID,
+		RegionEpoch:    info.RegionEpoch,
+		RegionVersion:  regionVersion,
+		RegionConfVer:  regionConfVer,
+		LeaderPeerID:   info.LeaderPeerID,
+		LeaderStoreID:  info.LeaderStoreID,
+		TTL:            info.TTL,
+		Expired:        info.Expired,
+		Valid:          info.Valid,
+		InvalidReason:  info.InvalidReason,
+		SyncFlags:      info.SyncFlags,
+		SyncFlagNames:  info.SyncFlagNames,
+		BucketVersion:  info.BucketVersion,
+		BucketKeyCount: info.BucketKeyCount,
+		Peers:          info.Peers,
+		PeerStores:     convertCachedPeerStoreInfos(info.PeerStores),
+	}
+	handler.WriteData(w, resp)
+}
+
+// ServeHTTP handles request of store cache debug information.
+func (h StoreCacheHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	storeIDStr, ok := params[storeIDParam]
+	if !ok {
+		handler.WriteError(w, errors.New("missing storeID in URL path"))
+		return
+	}
+	storeID, err := strconv.ParseUint(storeIDStr, 0, 64)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	info, found := h.RegionCache.GetCachedStoreDebugInfoByID(storeID)
+	if !found {
+		handler.WriteErrorWithCode(w, http.StatusNotFound, errors.Errorf("store %d not found in store cache", storeID))
+		return
+	}
+	handler.WriteData(w, convertCachedStoreDebugInfo(info))
+}
+
+func convertCachedPeerStoreInfos(cachedInfos []tikv.CachedRegionPeerStoreDebugInfo) []RegionCachePeerStoreInfo {
+	infos := make([]RegionCachePeerStoreInfo, 0, len(cachedInfos))
+	for _, info := range cachedInfos {
+		infos = append(infos, RegionCachePeerStoreInfo{
+			Peer:                info.Peer,
+			StoreID:             info.StoreID,
+			Addr:                info.Addr,
+			PeerAddr:            info.PeerAddr,
+			StatusAddr:          info.StatusAddr,
+			StoreType:           info.StoreType,
+			ResolveState:        info.ResolveState,
+			LivenessState:       info.LivenessState,
+			StoreEpoch:          info.StoreEpoch,
+			IsSlow:              info.IsSlow,
+			ClientSideSlowScore: info.ClientSideSlowScore,
+			TiKVSideSlowScore:   info.TiKVSideSlowScore,
+		})
+	}
+	return infos
+}
+
+func convertCachedStoreDebugInfo(cachedInfo *tikv.CachedStoreDebugInfo) *StoreCacheInfo {
+	if cachedInfo == nil {
+		return nil
+	}
+	return &StoreCacheInfo{
+		StoreID:             cachedInfo.StoreID,
+		Addr:                cachedInfo.Addr,
+		PeerAddr:            cachedInfo.PeerAddr,
+		StatusAddr:          cachedInfo.StatusAddr,
+		StoreType:           cachedInfo.StoreType,
+		ResolveState:        cachedInfo.ResolveState,
+		LivenessState:       cachedInfo.LivenessState,
+		Labels:              cachedInfo.Labels,
+		IsSlow:              cachedInfo.IsSlow,
+		ClientSideSlowScore: cachedInfo.ClientSideSlowScore,
+		TiKVSideSlowScore:   cachedInfo.TiKVSideSlowScore,
+		EstimatedWaitMs:     cachedInfo.EstimatedWaitMs,
+	}
 }
 
 // parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish

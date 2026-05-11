@@ -317,6 +317,88 @@ func TestRangesAPI(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestRegionCacheRegionAPI(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	ts.prepareData(t)
+
+	regionCacheData := ts.getOneCachedRegionInfoForTable(t)
+	regionID := regionCacheData.RegionID
+	require.Equal(t, regionID, regionCacheData.RegionID)
+	require.NotEmpty(t, regionCacheData.Peers)
+	require.NotEmpty(t, regionCacheData.PeerStores)
+
+	notFoundResp, err := ts.FetchStatus("/region-cache/regions/0")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, notFoundResp.StatusCode)
+	require.NoError(t, notFoundResp.Body.Close())
+
+	badRequestResp, err := ts.FetchStatus("/region-cache/regions/xxx")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, badRequestResp.StatusCode)
+	require.NoError(t, badRequestResp.Body.Close())
+}
+
+func TestStoreCacheAPI(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	ts.prepareData(t)
+
+	regionCacheData := ts.getOneCachedRegionInfoForTable(t)
+
+	storeResp, err := ts.FetchStatus(fmt.Sprintf("/store-cache/stores/%d", regionCacheData.LeaderStoreID))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, storeResp.StatusCode)
+	defer func() { require.NoError(t, storeResp.Body.Close()) }()
+
+	var storeCacheData tikvhandler.StoreCacheInfo
+	err = json.NewDecoder(storeResp.Body).Decode(&storeCacheData)
+	require.NoError(t, err)
+	require.Equal(t, regionCacheData.LeaderStoreID, storeCacheData.StoreID)
+	require.NotEmpty(t, storeCacheData.ResolveState)
+	require.NotEmpty(t, storeCacheData.StoreType)
+
+	notFoundResp, err := ts.FetchStatus("/store-cache/stores/0")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, notFoundResp.StatusCode)
+	require.NoError(t, notFoundResp.Body.Close())
+
+	badRequestResp, err := ts.FetchStatus("/store-cache/stores/xxx")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, badRequestResp.StatusCode)
+	require.NoError(t, badRequestResp.Body.Close())
+}
+
+func (ts *basicHTTPHandlerTestSuite) getOneCachedRegionInfoForTable(t *testing.T) tikvhandler.RegionCacheInfo {
+	resp, err := ts.FetchStatus("/tables/tidb/t/regions")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	decoder := json.NewDecoder(resp.Body)
+
+	var tableRegions tikvhandler.TableRegions
+	err = decoder.Decode(&tableRegions)
+	require.NoError(t, err)
+	require.NotEmpty(t, tableRegions.RecordRegions)
+	for _, region := range tableRegions.RecordRegions {
+		regionResp, err := ts.FetchStatus(fmt.Sprintf("/region-cache/regions/%d", region.ID))
+		require.NoError(t, err)
+		if regionResp.StatusCode != http.StatusOK {
+			require.NoError(t, regionResp.Body.Close())
+			continue
+		}
+		defer func() { require.NoError(t, regionResp.Body.Close()) }()
+		var regionCacheData tikvhandler.RegionCacheInfo
+		err = json.NewDecoder(regionResp.Body).Decode(&regionCacheData)
+		require.NoError(t, err)
+		return regionCacheData
+	}
+	require.FailNowf(t, "no cached region found", "none of %d table regions is present in region cache", len(tableRegions.RecordRegions))
+	return tikvhandler.RegionCacheInfo{}
+}
+
 func (ts *basicHTTPHandlerTestSuite) regionContainsTable(t *testing.T, regionID uint64, tableID int64) bool {
 	resp, err := ts.FetchStatus(fmt.Sprintf("/regions/%d", regionID))
 	require.NoError(t, err)

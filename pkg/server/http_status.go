@@ -302,6 +302,8 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/regions/meta", tikvhandler.NewRegionHandler(tikvHandlerTool)).Name("RegionsMeta")
 		router.Handle("/regions/hot", tikvhandler.NewRegionHandler(tikvHandlerTool)).Name("RegionHot")
 		router.Handle("/regions/{regionID}", tikvhandler.NewRegionHandler(tikvHandlerTool))
+		router.Handle("/region-cache/regions/{regionID}", tikvhandler.NewRegionCacheRegionHandler(tikvHandlerTool)).Name("RegionCache")
+		router.Handle("/store-cache/stores/{storeID}", tikvhandler.NewStoreCacheHandler(tikvHandlerTool)).Name("StoreCache")
 	}
 
 	// HTTP path for get MVCC info

@@ -739,6 +739,18 @@ timezone.*
      curl http://{TiDBIP}:10080/txn-gc-states
      ```
 
+43. Get region cache debug information by region ID (cache-only, no forced PD reload):
+
+     ```shell
+     curl http://{TiDBIP}:10080/region-cache/regions/{regionID}
+     ```
+
+44. Get store cache debug information by store ID (cache-only):
+
+     ```shell
+     curl http://{TiDBIP}:10080/store-cache/stores/{storeID}
+     ```
+
 ## Test-only APIs (enableTestAPI failpoint)
 
 These APIs are only registered when the `enableTestAPI` failpoint is enabled.
