@@ -1473,6 +1473,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		ResourceControlContext: &kvrpcpb.ResourceControlContext{
 			ResourceGroupName: rgName,
 		},
+		RequestSource: b.req.RequestSource.GetRequestSource(),
 	})
 	if b.req.ResourceGroupTagger != nil {
 		b.req.ResourceGroupTagger.Build(req)

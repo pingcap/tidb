@@ -1033,7 +1033,10 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(
 	req := tikvrpc.NewRequest(tikvrpc.CmdUnsafeDestroyRange, &kvrpcpb.UnsafeDestroyRangeRequest{
 		StartKey: startKey,
 		EndKey:   endKey,
-	}, kvrpcpb.Context{DiskFullOpt: kvrpcpb.DiskFullOpt_AllowedOnAlmostFull})
+	}, kvrpcpb.Context{
+		DiskFullOpt:   kvrpcpb.DiskFullOpt_AllowedOnAlmostFull,
+		RequestSource: tikvutil.BuildRequestSource(true, kv.InternalTxnGC, ""),
+	})
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(stores))
@@ -1403,6 +1406,8 @@ func (w *GCWorker) broadcastGCSafePoint(ctx context.Context, gcSafePoint uint64)
 func (w *GCWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdGC, &kvrpcpb.GCRequest{
 		SafePoint: safePoint,
+	}, kvrpcpb.Context{
+		RequestSource: tikvutil.BuildRequestSource(true, kv.InternalTxnGC, ""),
 	})
 
 	resp, err := w.tikvStore.SendReq(bo, req, region, gcTimeout)

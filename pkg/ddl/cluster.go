@@ -49,6 +49,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -492,6 +493,8 @@ func SendPrepareFlashbackToVersionRPC(
 			EndKey:   endKey,
 			StartTs:  startTS,
 			Version:  flashbackTS,
+		}, kvrpcpb.Context{
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnDDL, ""),
 		})
 
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
@@ -587,6 +590,8 @@ func SendFlashbackToVersionRPC(
 			EndKey:   endKey,
 			StartTs:  startTS,
 			CommitTs: commitTS,
+		}, kvrpcpb.Context{
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnDDL, ""),
 		})
 
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)

@@ -125,6 +125,7 @@ type pdClient struct {
 	onSplit          func(key [][]byte)
 	splitConcurrency int
 	splitBatchKeyCnt int
+	requestSource    string
 }
 
 type ClientOptionalParameter func(*pdClient)
@@ -140,6 +141,13 @@ func WithRawKV() ClientOptionalParameter {
 func WithOnSplit(onSplit func(key [][]byte)) ClientOptionalParameter {
 	return func(c *pdClient) {
 		c.onSplit = onSplit
+	}
+}
+
+// WithRequestSource sets the request source for the split client.
+func WithRequestSource(source string) ClientOptionalParameter {
+	return func(c *pdClient) {
+		c.requestSource = source
 	}
 }
 
@@ -309,6 +317,7 @@ func splitRegionWithFailpoint(
 	client tikvpb.TikvClient,
 	keys [][]byte,
 	isRawKv bool,
+	requestSource string,
 ) (*kvrpcpb.SplitRegionResponse, error) {
 	failpoint.Inject("not-leader-error", func(injectNewLeader failpoint.Value) {
 		log.Debug("failpoint not-leader-error injected.")
@@ -334,9 +343,10 @@ func splitRegionWithFailpoint(
 	})
 	return client.SplitRegion(ctx, &kvrpcpb.SplitRegionRequest{
 		Context: &kvrpcpb.Context{
-			RegionId:    regionInfo.Region.Id,
-			RegionEpoch: regionInfo.Region.RegionEpoch,
-			Peer:        peer,
+			RegionId:      regionInfo.Region.Id,
+			RegionEpoch:   regionInfo.Region.RegionEpoch,
+			Peer:          peer,
+			RequestSource: requestSource,
 		},
 		SplitKeys: keys,
 		IsRawKv:   isRawKv,
@@ -406,7 +416,7 @@ func sendSplitRegionRequest(
 	}
 	defer conn.Close()
 	client := tikvpb.NewTikvClient(conn)
-	resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys, c.isRawKv)
+	resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys, c.isRawKv, c.requestSource)
 	if err != nil {
 		return false, nil, err
 	}

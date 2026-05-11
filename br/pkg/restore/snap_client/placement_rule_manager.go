@@ -31,8 +31,10 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -91,7 +93,7 @@ func NewPlacementRuleManager(ctx context.Context, pdClient pd.Client, pdHTTPCli 
 	return &onlinePlacementRuleManager{
 		// toolClient reuse the split.SplitClient to do miscellaneous things. It doesn't
 		// call split related functions so set the arguments to arbitrary values.
-		toolClient: split.NewClient(pdClient, pdHTTPCli, tlsConf, maxSplitKeysOnce, 3),
+		toolClient: split.NewClient(pdClient, pdHTTPCli, tlsConf, maxSplitKeysOnce, 3, split.WithRequestSource(kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR))),
 
 		restoreStores: restoreStores,
 		restoreTables: make(map[int64]struct{}),

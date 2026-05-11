@@ -425,7 +425,9 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	//nolint: prealloc
 	var result []*deadlockpb.WaitForEntry
 	for _, store := range stores {
-		resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.GetAddr(), tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
+		resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.GetAddr(), tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}, kvrpcpb.Context{
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnAdmin, ""),
+		}), time.Second*30)
 		if err != nil {
 			logutil.BgLogger().Warn("query lock wait info failed", zap.Error(err))
 			continue

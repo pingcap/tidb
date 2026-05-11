@@ -37,7 +37,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
@@ -362,6 +364,7 @@ func (rc *SnapClient) SplitPoints(
 	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
 		onProgress(int64(len(keys)))
 	}))
+	splitClientOpts = append(splitClientOpts, split.WithRequestSource(kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR)))
 	// TODO seems duplicate with metaClient.
 	if isRawKv {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
