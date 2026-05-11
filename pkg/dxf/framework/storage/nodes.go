@@ -236,7 +236,7 @@ func (mgr *TaskManager) getCPUCountOfNodeByRole(
 	ctx context.Context,
 	se sessionctx.Context,
 	role string,
-	arbitarary bool,
+	arbitrary bool,
 ) (int, error) {
 	nodes, err := mgr.getAllNodesWithSession(ctx, se)
 	if err != nil {
@@ -247,7 +247,7 @@ func (mgr *TaskManager) getCPUCountOfNodeByRole(
 	}
 	var cpuCount int
 	for _, n := range nodes {
-		if !arbitarary && n.Role != role {
+		if !arbitrary && n.Role != role {
 			continue
 		}
 		if n.CPUCount > 0 {

@@ -54,7 +54,8 @@ func (nr *NodeResource) LimitDXFResource(limit int) *NodeResource {
 		return NewNodeResource(nr.TotalCPU, nr.TotalMem, nr.TotalDisk)
 	}
 	usableMem := int64(float64(usableCPU) / float64(nr.TotalCPU) * float64(nr.TotalMem))
-	// we don't support limiting disk for now. so will keep it as is.
+	// this feature is for premium based cluster, in which we are only support
+	// global sort, there is no local disk. so we leave the disk as is.
 	return NewNodeResource(usableCPU, usableMem, nr.TotalDisk)
 }
 
