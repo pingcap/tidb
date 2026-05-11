@@ -213,8 +213,8 @@ func NewTableImporter(
 	}
 
 	backendConfig := e.getLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
-	pdCli := kvStore.(tidbkv.StorageWithPD).GetPDClient()
-	localBackend, err := local.NewBackend(ctx, tls, backendConfig, pdCli, kvStore.GetCodec())
+	pdCli := kvStore.(tidbkv.StorageWithPD).GetPDClient().(*tikv.CodecPDClient)
+	localBackend, err := local.NewBackend(ctx, tls, backendConfig, pdCli)
 	if err != nil {
 		return nil, err
 	}

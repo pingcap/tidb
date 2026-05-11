@@ -610,8 +610,7 @@ func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdCli pd.Client,
-	tikvCodec tikvclient.Codec,
+	codecPDCli *tikvclient.CodecPDClient,
 ) (b *Backend, err error) {
 	var (
 		pdHTTPCli            pdhttp.Client
@@ -630,7 +629,7 @@ func NewBackend(
 		}
 	}()
 	config.adjust()
-	pdSvcDiscovery := pdCli.GetServiceDiscovery()
+	pdSvcDiscovery := codecPDCli.GetServiceDiscovery()
 	pdAddrs := pdSvcDiscovery.GetServiceURLs()
 
 	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
@@ -638,22 +637,22 @@ func NewBackend(
 		pdSvcDiscovery,
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
+	splitCli := split.NewClient(codecPDCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
-	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, codecPDCli, importClientFactory)
 	if err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
 	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	local := &Backend{
-		pdCli:     pdCli,
+		pdCli:     codecPDCli,
 		pdHTTPCli: pdHTTPCli,
 		splitCli:  splitCli,
 		pdAddrs:   append([]string(nil), pdAddrs...),
 		tls:       tls,
-		tikvCodec: tikvCodec,
+		tikvCodec: codecPDCli.GetCodec(),
 
 		BackendConfig: config,
 
