@@ -1379,15 +1379,96 @@ func TestPurgeMaterializedViewLogDeleteErrorAfterPartialSuccess(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockPurgeMaterializedViewLogDeleteErr"))
 	}()
 
-	tk.MustExec("purge materialized view log on t_purge_partial_delete_err")
-	require.Equal(t, uint64(1), tk.Session().AffectedRows())
-	tk.CheckLastMessage("Rows inserted: 0  Updated: 0  Deleted: 1")
-	tk.MustQuery("show warnings").CheckContain("stopped after deleting 1 rows due to error: mock purge mlog delete error")
+	err = tk.ExecToErr("purge materialized view log on t_purge_partial_delete_err")
+	require.ErrorContains(t, err, "mock purge mlog delete error")
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_partial_delete_err`").Check(testkit.Rows("2"))
-	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
-		Check(testkit.Rows("success 1"))
+	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS, PURGE_FAILED_REASON like '%%mock purge mlog delete error%%' from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("failed 1 1"))
 	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO is null, NEXT_TIME from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("1 " + beforeNextTime))
+}
+
+func TestPurgeMaterializedViewLogManualCancelAfterPartialSuccess(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tkObserver := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tkObserver.MustExec("use test")
+
+	tk.MustExec("create table t_purge_partial_delete_cancel (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_partial_delete_cancel (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_partial_delete_cancel values (1, 10), (2, 20), (3, 30)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_partial_delete_cancel"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	beforeNextTime := fmt.Sprint(tk.MustQuery(fmt.Sprintf("select NEXT_TIME from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).Rows()[0][0])
+	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 1")
+
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
+	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
+	}()
+
+	pauseFailpoint := "github.com/pingcap/tidb/pkg/executor/pausePurgeMaterializedViewLogAfterDeleteBatch"
+	require.NoError(t, failpoint.Enable(pauseFailpoint, "pause"))
+	paused := true
+	defer func() {
+		if paused {
+			require.NoError(t, failpoint.Disable(pauseFailpoint))
+		}
+	}()
+
+	errCh := make(chan error, 1)
+	go func() {
+		tkPurge := testkit.NewTestKit(t, store)
+		tkPurge.MustExec("use test")
+		tkPurge.MustExec("set @@session.tidb_mlog_purge_batch_size = 1")
+		errCh <- tkPurge.ExecToErr("purge materialized view log on t_purge_partial_delete_cancel")
+	}()
+
+	require.Eventually(t, func() bool {
+		rows := tkObserver.MustQuery("select count(*) from `$mlog$t_purge_partial_delete_cancel`").Rows()
+		return fmt.Sprint(rows[0][0]) == "2"
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		rows := tkObserver.MustQuery(fmt.Sprintf(
+			"select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running'",
+			mlogID,
+		)).Rows()
+		return fmt.Sprint(rows[0][0]) == "1"
+	}, 10*time.Second, 100*time.Millisecond)
+
+	requester := "'partial_cancel_req'@'stage-d'"
+	tkObserver.MustExec(
+		`UPDATE mysql.tidb_mlog_purge_hist
+SET CANCEL_REQUESTED_AT = NOW(6),
+	CANCEL_REQUESTED_BY = ?
+WHERE MLOG_ID = ?
+  AND PURGE_STATUS = 'running'
+  AND CANCEL_REQUESTED_AT IS NULL`,
+		requester,
+		mlogID,
+	)
+
+	require.NoError(t, failpoint.Disable(pauseFailpoint))
+	paused = false
+
+	err = <-errCh
+	require.Error(t, err)
+	require.ErrorContains(t, err, "materialized view task canceled manually")
+
+	tkObserver.MustQuery("select count(*) from `$mlog$t_purge_partial_delete_cancel`").Check(testkit.Rows("2"))
+	tkObserver.MustQuery(fmt.Sprintf(
+		"select PURGE_STATUS, PURGE_ROWS, PURGE_FAILED_REASON from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		mlogID,
+	)).Check(testkit.Rows("failed 1 cancelled manually by " + requester))
+	tkObserver.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO is null, NEXT_TIME from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows("1 " + beforeNextTime))
 }
 

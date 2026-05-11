@@ -1783,27 +1783,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				batchSize,
 			)
 			totalPurgeRows += batchPurgeRows
+			failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
 			if batchErr != nil {
 				_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
-				if totalPurgeRows > 0 {
-					if histErr := finalizeSuccess(); histErr != nil {
-						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
-							errors.Annotate(histErr, "purge materialized view log: deleted rows but failed to finalize purge history"),
-						)
-					}
-					applyMVRefreshStmtResult(
-						e.Ctx().GetSessionVars().StmtCtx,
-						newMVRefreshStmtResultFromWriteCounts(0, 0, totalPurgeRows),
-					)
-					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
-						"purge materialized view log on %s.%s stopped after deleting %d rows due to error: %v; LAST_PURGED_TSO and NEXT_TIME were not advanced, please retry later",
-						schemaName.O,
-						s.Table.Name.O,
-						totalPurgeRows,
-						batchErr,
-					))
-					return nil
-				}
 				return finalizeFailure(batchErr)
 			}
 			if batchPurgeRows < batchSize {
