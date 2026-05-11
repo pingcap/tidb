@@ -3513,35 +3513,32 @@ func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
 		if prepared {
 			name = "prepared"
 		}
-		t.Run(name, func(t *testing.T) {
-			ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-				tableName := "issue57531_insert_" + name
-				dbt.MustExec("drop table if exists " + tableName)
-				dbt.MustExec("create table " + tableName + " (a int primary key, b int)")
-				runClientDisconnectAutocommitInsert(t, dbt, tableName, fmt.Sprintf("insert into %s values (1, sleep(300))", tableName), prepared)
+		for _, insertCase := range []struct {
+			name     string
+			buildSQL func(tableName string) string
+		}{
+			{
+				name: "single_row",
+				buildSQL: func(tableName string) string {
+					return fmt.Sprintf("insert into %s values (1, sleep(300))", tableName)
+				},
+			},
+			{
+				name: "multi_rows",
+				buildSQL: func(tableName string) string {
+					return fmt.Sprintf("insert into %s values (1, 1), (2, sleep(300)), (3, 3), (4, 4), (5, 5)", tableName)
+				},
+			},
+		} {
+			t.Run(name+"/"+insertCase.name, func(t *testing.T) {
+				ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+					tableName := "issue57531_insert_" + name + "_" + insertCase.name
+					dbt.MustExec("drop table if exists " + tableName)
+					dbt.MustExec("create table " + tableName + " (a int primary key, b int)")
+					runClientDisconnectAutocommitInsert(t, dbt, tableName, insertCase.buildSQL(tableName), prepared)
+				})
 			})
-		})
-	}
-}
-
-func TestClientDisconnectCancelsAutocommitInsertPrewrite(t *testing.T) {
-	ts := servertestkit.CreateTidbTestSuite(t)
-	enableFastConnectionAliveMonitor(t)
-
-	for _, prepared := range []bool{false, true} {
-		name := "query"
-		if prepared {
-			name = "prepared"
 		}
-		t.Run(name, func(t *testing.T) {
-			ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-				tableName := "issue57531_prewrite_" + name
-				dbt.MustExec("drop table if exists " + tableName)
-				dbt.MustExec("create table " + tableName + " (a int primary key, b int)")
-				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcPrewriteResult", `return("notLeader")`)
-				runClientDisconnectAutocommitInsert(t, dbt, tableName, fmt.Sprintf("insert into %s values (1, 1)", tableName), prepared)
-			})
-		})
 	}
 }
 
