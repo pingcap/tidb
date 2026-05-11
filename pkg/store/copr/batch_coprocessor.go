@@ -976,7 +976,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			if rpcCtx == nil {
 				needRetry = true
 				fields := []zap.Field{
-					zap.Uint64("region id", task.region.GetID()),
+					zap.Uint64("region_id", task.region.GetID()),
 					zap.String("reason", unavailableDetail.Reason.String()),
 				}
 				if len(unavailableDetail.StoreIDs) > 0 {
