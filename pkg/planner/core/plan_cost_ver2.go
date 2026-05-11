@@ -619,8 +619,59 @@ func getPlanCostVer24PhysicalStreamAgg(pp base.PhysicalPlan, taskType property.T
 	return p.PlanCostVer2, nil
 }
 
-// getPlanCostVer24PhysicalHashAgg returns the plan-cost of this sub-plan, which is:
-// plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
+// childCanProvideOrderForStreamAgg returns true if child preserves ordering
+// through to a base-table access path.
+//
+// This is a conservative approximation: a base-table access path may still
+// need a Sort if no index covers the GROUP BY columns. The planner's
+// possible-property tracking already filters out StreamAgg alternatives that
+// can't be satisfied by an index, so the false-positive rate in practice is
+// low, and we accept the small over-count to avoid threading TableInfo
+// through the cost path.
+func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
+	for cur := child; cur != nil; {
+		switch cur.(type) {
+		case *physicalop.PhysicalProjection, *physicalop.PhysicalSelection,
+			*physicalop.PhysicalUnionScan:
+			children := cur.Children()
+			if len(children) != 1 {
+				return false
+			}
+			cur = children[0]
+		case *physicalop.PhysicalIndexReader, *physicalop.PhysicalIndexLookUpReader,
+			*physicalop.PhysicalIndexMergeReader, *physicalop.PhysicalTableReader:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// getPlanCostVer24PhysicalHashAgg returns the plan-cost of this sub-plan.
+//
+// For TiDB root tasks:
+//
+//	plan-cost = child-cost + hash-mem-cost + (agg-cost + group-cost + hash-build-cpu-cost + hash-probe-cost) / concurrency
+//
+// All CPU work (aggregation, grouping, hash key computation, probing) is parallelized
+// across partial workers that each process a disjoint subset of input rows, so these
+// costs are divided by concurrency. However, the hash table memory cost is placed outside
+// the division: each partial worker maintains its own hash table, so total memory
+// consumption scales with outputRows (NDV) regardless of concurrency. For high-NDV
+// GROUP BY with an available ordered index, this memory penalty makes StreamAgg
+// (which uses ~constant memory) the preferred plan.
+//
+// The memory penalty is only applied when the HashAgg's child can provide ordering on
+// the GROUP BY keys naturally (e.g., from an ordered index scan). When no such ordering
+// is available, the StreamAgg alternative would need an explicit Sort whose own cost
+// already correctly disfavors it, so adding the memory penalty here would double-count
+// and steer the optimizer toward Sort+StreamAgg even when HashAgg is genuinely cheaper.
+//
+// For TiFlash MPP and TiKV cop tasks, data is either partitioned across nodes (MPP) or
+// processed single-threaded on TiKV (cop). All costs use the original formula:
+//
+//	plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
 func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalHashAgg)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -647,7 +698,35 @@ func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.Tas
 		return costusage.ZeroCostVer2, err
 	}
 
-	p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
+	if taskType == property.RootTaskType {
+		var hashMemCost costusage.CostVer2
+		if childCanProvideOrderForStreamAgg(p.Children()[0]) {
+			hashMemCost = costusage.NewCostVer2(option, memFactor,
+				concurrency*outputRows*outputRowSize*memFactor.Value,
+				func() string {
+					return fmt.Sprintf("hashmem(%v*%v*%v*%v)", concurrency, outputRows, outputRowSize, memFactor)
+				})
+		} else {
+			hashMemCost = costusage.ZeroCostVer2
+		}
+		// hashBuildCost includes memory; subtract it out so we don't double-count.
+		// Recompute just the CPU portion of hash build (key computation + build).
+		nKeys := float64(len(p.GroupByItems))
+		hashBuildCPUCost := costusage.NewCostVer2(option, cpuFactor,
+			outputRows*nKeys*cpuFactor.Value+outputRows*cpuFactor.Value,
+			func() string {
+				return fmt.Sprintf("hashkey(%v*%v*%v)+hashbuild(%v*%v)", outputRows, nKeys, cpuFactor, outputRows, cpuFactor)
+			})
+		p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, hashMemCost,
+			costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCPUCost, hashProbeCost), concurrency))
+	} else {
+		// MPP and cop tasks: data is either partitioned (MPP) or processed by a single
+		// TiKV thread (cop), so the TiDB root concurrency factor does not apply.
+		// Use the original formula where all costs are divided by concurrency (for MPP)
+		// or treated as single-threaded work (for cop, where concurrency=1 effectively).
+		p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost,
+			costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
+	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashAggCostFactor)

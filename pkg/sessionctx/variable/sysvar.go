@@ -2544,6 +2544,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictNotNullCheck, Value: BoolToOnOff(vardef.DefTiDBEnableStrictNotNullCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableStrictNotNullCheck = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableVectorizedExpression, Value: BoolToOnOff(vardef.DefEnableVectorizedExpression), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableVectorizedExpression = TiDBOptOn(val)
 		return nil

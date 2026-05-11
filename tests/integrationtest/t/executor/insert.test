@@ -1679,6 +1679,34 @@ INSERT IGNORE INTO t1 VALUES (127);
 INSERT IGNORE INTO t1 VALUES (127);
 show warnings;
 
+# Test tidb_enable_strict_not_null_check
+drop table if exists t1;
+create table t1 (id int primary key, col1 varchar(10) not null default '');
+set session sql_mode = '';
+set session tidb_enable_strict_not_null_check = off;
+insert into t1 values (1,null),(2,null);
+insert into t1 values (3, null);
+select * from t1;
+set session tidb_enable_strict_not_null_check = on;
+insert into t1 values (4,null),(5,null);
+-- error 1048
+insert into t1 values (6, null);
+select * from t1;
+set session sql_mode = 'STRICT_TRANS_TABLES';
+set session tidb_enable_strict_not_null_check = off;
+insert into t1 values (6,null),(7,null);
+insert into t1 values (8, null);
+select * from t1;
+set session tidb_enable_strict_not_null_check = on;
+-- error 1048
+insert into t1 values (9, null),(10,null);
+-- error 1048
+insert into t1 values (9, null);
+select * from t1;
+set session tidb_enable_strict_not_null_check = default;
+set session sql_mode = default;
+drop table t1;
+
 # Testing Timestamp and invalid dates and DST transitions
 --enable_warnings
 SET @old_time_zone = @@time_zone;

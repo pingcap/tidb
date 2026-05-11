@@ -256,6 +256,11 @@ else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
+.PHONY: server_failpoint
+server_failpoint: failpoint-enable ## Build TiDB server binary with failpoints enabled
+	$(SERVER_BUILD_CMD) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+
 .PHONY: init-submodule
 init-submodule:
 	git submodule init && git submodule update --force
