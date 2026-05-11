@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/pd/client/constants"
@@ -46,6 +47,8 @@ func HoldRestart() {
 
 // ReleaseRestart releases the restart barrier, allowing a pending restart to proceed.
 func ReleaseRestart() {
+	failpoint.Inject("beforeReleaseRestart", func() {})
+
 	restartHoldState.mu.Lock()
 	defer restartHoldState.mu.Unlock()
 
