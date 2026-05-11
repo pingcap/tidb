@@ -96,6 +96,11 @@ type Insert struct {
 
 	FKChecks   []*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
+
+	// Returning stores the RETURNING clause expression list.
+	Returning       []expression.Expression
+	ReturningSchema *expression.Schema `plan-cache-clone:"shallow"`
+	ReturningNames  types.NameSlice    `plan-cache-clone:"shallow"`
 }
 
 // Init initializes Insert.
@@ -172,6 +177,11 @@ type Update struct {
 
 	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
+
+	// Returning stores the RETURNING clause expression list.
+	Returning       []expression.Expression
+	ReturningSchema *expression.Schema `plan-cache-clone:"shallow"`
+	ReturningNames  types.NameSlice    `plan-cache-clone:"shallow"`
 }
 
 // Init initializes Update.
@@ -222,6 +232,11 @@ type Delete struct {
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
 
 	IgnoreErr bool
+
+	// Returning stores the RETURNING clause expression list.
+	Returning       []expression.Expression
+	ReturningSchema *expression.Schema `plan-cache-clone:"shallow"`
+	ReturningNames  types.NameSlice    `plan-cache-clone:"shallow"`
 }
 
 // Init initializes Delete.
