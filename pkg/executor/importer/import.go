@@ -1743,8 +1743,6 @@ func newLoadDataParser(
 			nil,
 		)
 	case DataFormatParquet:
-		// Surface the file size so NewParquetParser can decide whether to
-		// preload the whole file in a single read.
 		parquetMeta := dataFileInfo.Remote.ParquetMeta
 		parquetMeta.FileSize = dataFileInfo.Remote.FileSize
 		parser, err = mydump.NewParquetParser(

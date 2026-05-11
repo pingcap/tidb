@@ -320,9 +320,8 @@ type ParquetParser struct {
 
 	rowGroup *rowGroupParser
 
-	// wholeFileBase is non-nil when the whole file was preloaded into memory
-	// during NewParquetParser. In that case getBuilder serves column readers
-	// directly from this buffer instead of issuing another range GET.
+	// wholeFileBase holds the file preloaded by NewParquetParser, when
+	// applicable, so getBuilder can skip another range GET.
 	wholeFileBase *inMemoryReaderBase
 
 	rowPool *zeropool.Pool[[]types.Datum]
@@ -412,13 +411,9 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-// getBuilder picks one of three column-reader strategies for the current
-// row group:
-//   - whole-file in-memory: NewParquetParser already preloaded the entire
-//     file, so every column is served from that buffer with no extra GET;
-//   - per-row-group in-memory: the row group fits the threshold, fetch it
-//     once with a single batched read and share across columns;
-//   - streaming: too large to preload, issue one ranged GET per column.
+// getBuilder picks a column-reader strategy for the current row group:
+// whole-file buffer if preloaded, per-row-group preload if it fits the
+// threshold, otherwise streaming.
 func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {

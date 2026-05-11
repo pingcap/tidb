@@ -42,14 +42,10 @@ var (
 	// tolerate the extra memory usage for row group.
 	rowGroupInMemoryThreshold = 128 * units.MiB
 
-	// wholeFileInMemoryThreshold controls when we preload the entire parquet
-	// file with a single read. Footer parsing and row-group reads then share
-	// the same buffer, removing the second range GET that the row-group
-	// in-memory path would otherwise issue and absorbing arrow-go's footer
-	// seek pattern locally. Useful when a job imports many small files where
-	// per-file open overhead dominates. Beyond this size the saved opens
-	// shrink relative to the actual data read, so we keep this conservative.
-	wholeFileInMemoryThreshold = 8 * units.MiB
+	// smallFileThreshold preloads the entire file in one read when its size
+	// is at or below this value, so footer parsing and row-group reads share
+	// the same buffer.
+	smallFileThreshold = 8 * units.MiB
 )
 
 type readerAtSeekerCloser interface {
@@ -169,10 +165,8 @@ func newInMemoryReaderBase(
 	return base, base.loadRowGroup(ctx, store, path)
 }
 
-// newInMemoryReaderBaseFromBytes wraps an already-loaded buffer covering the
-// whole file. ReadAt receives absolute file offsets so we anchor rowGroup at
-// [0, len(buf)), which makes the buffer indexable by the same offsets the
-// arrow column metadata reports.
+// newInMemoryReaderBaseFromBytes wraps an already-loaded whole-file buffer.
+// rowGroup spans [0, len(buf)) so ReadAt can use absolute file offsets.
 func newInMemoryReaderBaseFromBytes(buf []byte) *inMemoryReaderBase {
 	return &inMemoryReaderBase{
 		rowGroup: rowGroupRange{start: 0, end: int64(len(buf))},
@@ -265,10 +259,7 @@ func (*inMemoryParquetWrapper) Close() error {
 // columnReaderBuilder constructs a per-column reader for one row group.
 type columnReaderBuilder func(c int) (readerAtSeekerCloser, error)
 
-// inMemoryColumnBuilder returns a builder that serves every column from the
-// supplied in-memory buffer. Used by both the whole-file path (base spans
-// the entire file) and the per-row-group preload path (base spans one row
-// group).
+// inMemoryColumnBuilder serves every column from an in-memory buffer.
 func inMemoryColumnBuilder(base *inMemoryReaderBase, ranges rowGroupRange, fileSize int64) columnReaderBuilder {
 	return func(c int) (readerAtSeekerCloser, error) {
 		return &inMemoryParquetWrapper{
@@ -279,8 +270,7 @@ func inMemoryColumnBuilder(base *inMemoryReaderBase, ranges rowGroupRange, fileS
 	}
 }
 
-// streamingColumnBuilder returns a builder that issues one range GET per
-// column. Used when the row group is too large to preload.
+// streamingColumnBuilder issues one range GET per column.
 func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path string, ranges rowGroupRange) columnReaderBuilder {
 	return func(c int) (readerAtSeekerCloser, error) {
 		return newParquetWrapper(ctx, store, path,
@@ -291,23 +281,17 @@ func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path st
 	}
 }
 
-// newFooterReader chooses how to feed parquet footer parsing.
-//
-// For files small enough to fit in memory, it consumes r in a single read
-// and returns a wrapper backed by the in-memory buffer. The same buffer is
-// returned via base so later row-group reads can reuse it without a second
-// range GET. closer is a no-op in this case because r has been fully
-// consumed and closed.
-//
-// Otherwise it returns a streaming wrapper over r and a closer that releases
-// r when the parser is done with it.
+// newFooterReader returns the reader used for parquet footer parsing.
+// For small files it consumes r in one read and returns a buffer-backed
+// wrapper plus the same buffer via base, so later row-group reads can
+// reuse it. Otherwise it returns a streaming wrapper and a closer for r.
 func newFooterReader(r storeapi.ReadSeekCloser, meta ParquetFileMeta) (
 	wrapper parquet.ReaderAtSeeker,
 	base *inMemoryReaderBase,
 	closer func() error,
 	err error,
 ) {
-	if meta.FileSize > 0 && meta.FileSize <= int64(wholeFileInMemoryThreshold) {
+	if meta.FileSize > 0 && meta.FileSize <= int64(smallFileThreshold) {
 		buf := make([]byte, meta.FileSize)
 		if _, err := io.ReadFull(r, buf); err != nil {
 			_ = r.Close()
