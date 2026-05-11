@@ -262,8 +262,8 @@ func startMVTaskMonitor(
 					zap.Error(err),
 				)
 			} else if requested {
-				failpoint.InjectCall("mvTaskMonitorCancelRequested", monitorName)
 				taskCancelController.requestManualCancelByRequester(requester)
+				failpoint.InjectCall("mvTaskMonitorCancelRequested", monitorName)
 				return
 			}
 
