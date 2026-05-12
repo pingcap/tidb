@@ -754,6 +754,10 @@ ltrim
 make_set
 makedate
 maketime
+mask_date
+mask_full
+mask_null
+mask_partial
 md5
 microsecond
 mid

@@ -38,7 +38,7 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
 
 	require.NotEmpty(t, names)
-	require.Equal(t, "a5ce0716b778fb8e0b488d3a11c402d8a8224191757a9e02ece80895d5d67e05", hex.EncodeToString(sum[:]))
+	require.Equal(t, "2f98859182beafd7ed640052ef9ab8b38c2e38d6de0422047d1d0b10f785b47e", hex.EncodeToString(sum[:]))
 
 	for name := range nullRejectRejectNullTests {
 		require.Contains(t, names, name)
