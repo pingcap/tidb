@@ -269,7 +269,7 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 			physTblID   int64
 			isCommonHdl bool
 		}
-		var tables []tblInfo
+		tables := make([]tblInfo, 0, max(len(e.prunedPartitions), 1))
 		if isIdxScan && e.partitionTableMode && e.indexes[i] != nil && e.indexes[i].Global {
 			tables = []tblInfo{{physTblID: e.table.Meta().ID, isCommonHdl: e.table.Meta().IsCommonHandle}}
 		} else if e.partitionTableMode {
