@@ -11056,13 +11056,13 @@ def go_deps():
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-        sha256 = "99df0ad90183debc80aee0b7489648574c6baa0c1cf5da37aaf591cf2e2d426a",
-        strip_prefix = "golang.org/x/sys@v0.42.0",
+        sha256 = "f1fa1052808e6bd6eb9c5372c053b2370a582532fac5d6a4600e7a6fab190ff3",
+        strip_prefix = "golang.org/x/sys@v0.44.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/sys/org_golang_x_sys-v0.42.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/sys/org_golang_x_sys-v0.42.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.42.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.42.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/sys/org_golang_x_sys-v0.44.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/sys/org_golang_x_sys-v0.44.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.44.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.44.0.zip",
         ],
     )
     go_repository(
