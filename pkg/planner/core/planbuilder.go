@@ -5395,7 +5395,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
-		b.renamingViewName = schemaTableKey{schema: v.ViewName.Schema.L, table: v.ViewName.Name.L}
+		b.renamingViewName = newSchemaTableKey(v.ViewName.Schema, v.ViewName.Name)
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView

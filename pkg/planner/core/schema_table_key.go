@@ -14,13 +14,36 @@
 
 package core
 
+import "github.com/pingcap/tidb/pkg/parser/ast"
+
+// These keys represent SQL identifier identity. Keep all matching keys and
+// key-derived diagnostics on the normalized CIStr.L fields.
 type schemaTableKey struct {
 	schema string
 	table  string
+}
+
+func newSchemaTableKey(schema, table ast.CIStr) schemaTableKey {
+	return schemaTableKey{schema: schema.L, table: table.L}
 }
 
 type tableAliasKey struct {
 	schema    string
 	name      string
 	qualified bool
+}
+
+func newTableAliasKey(name ast.CIStr) tableAliasKey {
+	return tableAliasKey{name: name.L}
+}
+
+func newQualifiedTableAliasKey(schema, name ast.CIStr) tableAliasKey {
+	return tableAliasKey{schema: schema.L, name: name.L, qualified: true}
+}
+
+func (k tableAliasKey) displayName() ast.CIStr {
+	if k.qualified {
+		return ast.NewCIStr(k.schema + "." + k.name)
+	}
+	return ast.NewCIStr(k.name)
 }

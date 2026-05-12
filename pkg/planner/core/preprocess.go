@@ -1158,15 +1158,15 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[tableAliasKey]any) error {
 	if ts, ok := node.(*ast.TableSource); ok {
 		tabName := ts.AsName
-		key := tableAliasKey{name: tabName.L}
+		key := newTableAliasKey(tabName)
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
-					key = tableAliasKey{schema: tableNode.Schema.L, name: tableNode.Name.L, qualified: true}
-					tabName = ast.NewCIStr(fmt.Sprintf("%s.%s", key.schema, key.name))
+					key = newQualifiedTableAliasKey(tableNode.Schema, tableNode.Name)
+					tabName = key.displayName()
 				} else {
 					tabName = tableNode.Name
-					key = tableAliasKey{name: tableNode.Name.L}
+					key = newTableAliasKey(tableNode.Name)
 				}
 			}
 		}
@@ -1867,7 +1867,7 @@ func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
 		c.aliasMap[asName.L] = ref
 	}
 	if tableName.Schema.L != "" {
-		qualifiedKey := schemaTableKey{schema: tableName.Schema.L, table: tableName.Name.L}
+		qualifiedKey := newSchemaTableKey(tableName.Schema, tableName.Name)
 		// Prefer an exact unaliased `schema.table` entry. If only aliased references exist in FROM,
 		// keep one as the backward-compatibility fallback for `OF schema.table`.
 		if asName.L == "" || c.qualifiedMap[qualifiedKey].table == nil {
@@ -1875,7 +1875,7 @@ func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
 		}
 		if asName.L != "" {
 			// Keep backward compatibility for `OF schema.table` while also supporting `OF schema.alias`.
-			c.qualifiedMap[schemaTableKey{schema: tableName.Schema.L, table: asName.L}] = ref
+			c.qualifiedMap[newSchemaTableKey(tableName.Schema, asName)] = ref
 		}
 	}
 	c.orderedRefs = append(c.orderedRefs, ref)
@@ -1922,7 +1922,7 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 		var matchedByAlias bool
 
 		if ref.Schema.L != "" {
-			matched = lockCtx.qualifiedMap[schemaTableKey{schema: ref.Schema.L, table: ref.Name.L}]
+			matched = lockCtx.qualifiedMap[newSchemaTableKey(ref.Schema, ref.Name)]
 			matchedByAlias = matched.alias.L != "" && ref.Name.L == matched.alias.L
 			if matchedByAlias {
 				ref.IsAlias = true

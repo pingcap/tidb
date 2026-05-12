@@ -5480,7 +5480,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 
 // checkRecursiveView checks whether this view is recursively defined.
 func (b *PlanBuilder) checkRecursiveView(dbName ast.CIStr, tableName ast.CIStr) (func(), error) {
-	viewFullName := schemaTableKey{schema: dbName.L, table: tableName.L}
+	viewFullName := newSchemaTableKey(dbName, tableName)
 	if b.buildingViewStack == nil {
 		b.buildingViewStack = make(map[schemaTableKey]struct{})
 	}
