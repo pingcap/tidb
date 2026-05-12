@@ -325,13 +325,14 @@ func runPreparedPlanCacheRedactExplain(t *testing.T, tk *testkit.TestKit) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax",
-		" └─IndexJoin_18 1.00 root  inner join, inner:IndexLookUp_32, outer key:test.warehouse.w_id, inner key:test.customer.c_w_id, equal cond:eq(test.warehouse.w_id, test.customer.c_w_id)]",
-		"  ├─Point_Get_33(Build) 1.00 root table:warehouse handle:936",
-		"  └─IndexLookUp_32(Probe) 1.00 root  ",
-		"    ├─Selection_31(Build) 1.00 cop[tikv]  eq(test.customer.c_w_id, 936)",
-		"    │ └─IndexRangeScan_29 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range: decided by [eq(test.customer.c_w_id, test.warehouse.w_id) eq(test.customer.c_d_id, 7) eq(test.customer.c_id, 158)], keep order:false, stats:pseudo",
-		"    └─TableRowIDScan_30(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo"))
+		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_28, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_28(Probe) 37.46 root  ",
+		"  ├─Selection_27(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_25 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_26(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 	tk.MustExec(`deallocate prepare stmt1`)
 }
 
@@ -413,7 +414,7 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
 			{"Projection_9"},
-			{"└─HashJoin_23"},
+			{"└─HashJoin_11"},
 			{"  ├─IndexReader_25(Build)"},
 			{"  │ └─IndexRangeScan_24"}, // RangeScan instead of FullScan
 			{"  └─TableReader_31(Probe)"},
