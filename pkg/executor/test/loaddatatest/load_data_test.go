@@ -624,12 +624,6 @@ func (p *loadDataIsPessimisticProbe) Read(b []byte) (int, error) {
 
 func (p *loadDataIsPessimisticProbe) Close() error { return p.inner.Close() }
 
-// TestLoadDataLocalUsesPessimisticTxn asserts that LOAD DATA LOCAL INFILE runs
-// on the pessimistic txn provider, even under default session config
-// (tidb_txn_mode=PESSIMISTIC + autocommit=ON, which otherwise lets
-// decideTxnMode fall through to the optimistic provider). Running on the
-// optimistic provider is what enables the session-level retry path that
-// produced the "drain connection failed in load data" symptom in production.
 func TestLoadDataLocalUsesPessimisticTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
