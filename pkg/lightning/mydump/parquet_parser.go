@@ -864,12 +864,17 @@ func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 	return nb
 }
 
-func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64, error) {
-	if fileMeta == nil || fileMeta.NumRowGroups() == 0 {
+// preloadBufferBytes reports the in-memory buffer that the parser pre-allocates
+// outside the tracking allocator for the first row group. The estimator adds
+// this to the tracked peak so concurrency sizing matches runtime behavior.
+func (pp *ParquetParser) preloadBufferBytes() (int64, error) {
+	if pp.smallFileBase != nil {
+		return int64(len(pp.smallFileBase.buffer)), nil
+	}
+	if pp.fileMeta == nil || pp.fileMeta.NumRowGroups() == 0 {
 		return 0, nil
 	}
-
-	rgRange, err := rowGroupRangeFromMeta(fileMeta, 0)
+	rgRange, err := rowGroupRangeFromMeta(pp.fileMeta, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -882,11 +887,14 @@ func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64
 
 // EstimateParquetReaderMemory estimates the peak memory usage for parsing a
 // single parquet file by reading through the first row group with a tracking
-// allocator. Returns the peak memory in bytes.
+// allocator. Returns the peak memory in bytes. fileSize must match the runtime
+// ParquetFileMeta.FileSize so the estimator and the parser pick the same
+// preload strategy (whole-file vs per-row-group vs streaming).
 func EstimateParquetReaderMemory(
 	ctx context.Context,
 	store storeapi.Storage,
 	path string,
+	fileSize int64,
 ) (int64, error) {
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
@@ -894,7 +902,7 @@ func EstimateParquetReaderMemory(
 	}
 
 	allocator := &trackingAllocator{}
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
+	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator, FileSize: fileSize})
 	if err != nil {
 		_ = r.Close()
 		return 0, err
@@ -908,7 +916,7 @@ func EstimateParquetReaderMemory(
 		return 0, nil
 	}
 
-	preloadBufferBytes, err := estimateInMemoryRowGroupBufferBytes(meta)
+	preloadBufferBytes, err := parser.preloadBufferBytes()
 	if err != nil {
 		return 0, err
 	}

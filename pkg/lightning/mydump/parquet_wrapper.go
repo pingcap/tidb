@@ -297,9 +297,7 @@ func newFooterReader(r storeapi.ReadSeekCloser, meta ParquetFileMeta) (
 			_ = r.Close()
 			return nil, nil, nil, errors.Trace(err)
 		}
-		if err := r.Close(); err != nil {
-			return nil, nil, nil, errors.Trace(err)
-		}
+		_ = r.Close()
 		base = newInMemoryReaderBaseFromBytes(buf)
 		wrapper = &inMemoryParquetWrapper{base: base, fileSize: meta.FileSize}
 		return wrapper, base, func() error { return nil }, nil

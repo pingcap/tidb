@@ -97,8 +97,10 @@ type MDTableMeta struct {
 type ParquetFileMeta struct {
 	allocator memory.Allocator
 	Loc       *time.Location
-	// FileSize is the parquet file size in bytes. When > 0 the parser may
-	// preload the whole file; 0 means unknown (streaming path).
+	// FileSize is the parquet file size in bytes. It only gates the whole-file
+	// preload strategy in getBuilder: > 0 and <= smallFileThreshold enables it,
+	// 0 disables it. The per-row-group in-memory preload still applies based on
+	// rowGroupInMemoryThreshold regardless of this value.
 	FileSize int64
 }
 
