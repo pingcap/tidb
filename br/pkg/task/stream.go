@@ -53,6 +53,7 @@ import (
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1719,28 +1720,29 @@ func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, uint64, error) {
-	_, s, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
+	rootBackend, rootStorage, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	ref := &taskrepo.SnapshotStorageRef{
+		BackupID:    cfg.BackupID,
+		RootBackend: rootBackend,
+		RootStorage: rootStorage,
+	}
+	if err := ref.Validate(ctx); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	backupMetaBytes, err := ref.GetBackupMetaBytes(ctx, &cfg.CipherInfo)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	decryptedMetaData, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-
-	backupmeta := &backuppb.BackupMeta{}
-	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-
 	// start and end are identical in full backup, pick random one
-	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
+	return backupMeta.GetEndVersion(), backupMeta.GetClusterId(), nil
 }
 
 func parseFullBackupTablesStorage(

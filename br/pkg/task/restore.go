@@ -26,10 +26,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
@@ -254,6 +256,8 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	Layout          repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
+	BackupID        repo.BackupID               `json:"backup-id" toml:"backup-id"`
 
 	UseCheckpoint     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
 	upstreamClusterID uint64 `json:"-" toml:"-"`
@@ -333,6 +337,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
 	}
+	if len(cfg.FullBackupStorage) == 0 && (flags.Changed("storage-layout") || flags.Changed("backup-id")) {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s and --%s require --%s for point restore",
+			"storage-layout",
+			"backup-id",
+			FlagStreamFullBackupStorage,
+		)
+	}
 
 	if cfg.PitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
 		return errors.Trace(err)
@@ -406,6 +418,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
 	}
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.BackupID, err = taskrepo.ParseSnapshotBackupIDFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	cfg.WaitTiflashReady, err = flags.GetBool(FlagWaitTiFlashReady)
 	if err != nil {
@@ -415,6 +435,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
+	}
+	if err := taskrepo.ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
+		return err
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
@@ -778,10 +801,24 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	u, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	resolvedStorage := &taskrepo.SnapshotStorageRef{
+		BackupID:    cfg.BackupID,
+		RootBackend: u,
+		RootStorage: s,
+	}
+	if err := resolvedStorage.Validate(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	u = resolvedStorage.RootBackend
+	s = resolvedStorage.MetadataStorage()
 	if cfg.CheckRequirements {
 		err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient())
 		log.Info("Checking incompatible TiCDC changefeeds before restoring.",

@@ -35,6 +35,7 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/util",
         "//pkg/util/table-filter",
+        "@com_github_gogo_protobuf//proto",
         "@com_github_google_btree//:btree",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
@@ -58,8 +59,9 @@ go_library(
 
 go_test(
     name = "backup_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
+        "client_request_test.go",
         "client_test.go",
         "main_test.go",
         "schema_test.go",
@@ -68,13 +70,15 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 15,
+    shard_count = 16,
     deps = [
+        "//br/pkg/checkpoint",
         "//br/pkg/conn",
         "//br/pkg/gluetidb/mock",
         "//br/pkg/metautil",
         "//br/pkg/mock",
         "//br/pkg/pdutil",
+        "//br/pkg/repo",
         "//br/pkg/rtree",
         "//br/pkg/storage",
         "//br/pkg/utils",

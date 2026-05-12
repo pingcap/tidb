@@ -215,7 +215,10 @@ func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb
 	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, reader.cipher, outputFn)
 }
 
-func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+func (reader *MetaReader) walkDataFiles(
+	ctx context.Context,
+	output func(*backuppb.File),
+) error {
 	// Read backupmeta v1 data files.
 	for _, f := range reader.backupMeta.Files {
 		output(f)
@@ -326,6 +329,12 @@ func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 	return *reader.backupMeta
 }
 
+// ReadDataFiles reads the physical data files from the backupmeta.
+// This function is compatible with the old backupmeta.
+func (reader *MetaReader) ReadDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+	return reader.walkDataFiles(ctx, output)
+}
+
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
 func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
@@ -398,7 +407,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 		fileMap = make(map[int64][]*backuppb.File)
 		go func() {
 			defer close(fileCh)
-			err := reader.readDataFiles(cctx, func(file *backuppb.File) {
+			err := reader.walkDataFiles(cctx, func(file *backuppb.File) {
 				select {
 				case <-cctx.Done():
 				case fileCh <- file:

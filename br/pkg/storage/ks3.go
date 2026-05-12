@@ -49,6 +49,11 @@ type KS3Storage struct {
 	options *backuppb.S3
 }
 
+// Features implements FeatureProvider.
+func (*KS3Storage) Features() Features {
+	return FeatureSupportsStartAfter
+}
+
 // NewKS3Storage initialize a new s3 storage for metadata.
 func NewKS3Storage(
 	ctx context.Context,
@@ -381,6 +386,9 @@ func (rs *KS3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(stri
 		Prefix:  aws.String(prefix),
 		MaxKeys: int64p(maxKeys),
 	}
+	if opt.StartAfter != "" {
+		req.Marker = aws.String(path.Join(rs.options.Prefix, opt.StartAfter))
+	}
 
 	for {
 		res, err := rs.svc.ListObjectsWithContext(ctx, req)
@@ -398,6 +406,9 @@ func (rs *KS3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(stri
 			path = strings.TrimPrefix(path, "/")
 			itemSize := *r.Size
 
+			if opt.StartAfter != "" && path <= opt.StartAfter {
+				continue
+			}
 			// filter out ks3's empty directory items
 			if itemSize <= 0 && strings.HasSuffix(path, "/") {
 				log.Info("this path is an empty directory and cannot be opened in S3.  Skip it", zap.String("path", path))

@@ -28,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
@@ -91,6 +93,8 @@ type BackupConfig struct {
 	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
+	SkipPrompt       bool              `json:"skip-prompt" toml:"skip-prompt"`
+	Layout           repo.Layout       `json:"storage-layout" toml:"storage-layout"`
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
@@ -184,6 +188,14 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 		return errors.Trace(err)
 	}
 	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.SkipPrompt, err = flags.GetBool(flagYes)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -335,6 +347,7 @@ type immutableBackupConfig struct {
 	LastBackupTS  uint64 `json:"last-backup-ts"`
 	IgnoreStats   bool   `json:"ignore-stats"`
 	UseCheckpoint bool   `json:"use-checkpoint"`
+	Layout        string `json:"storage-layout,omitempty"`
 
 	storage.BackendOptions
 	Storage      string              `json:"storage"`
@@ -352,6 +365,7 @@ func (cfg *BackupConfig) Hash() ([]byte, error) {
 		LastBackupTS:  cfg.LastBackupTS,
 		IgnoreStats:   cfg.IgnoreStats,
 		UseCheckpoint: cfg.UseCheckpoint,
+		Layout:        snapshotBackupLayoutHashTag(cfg.Layout),
 
 		BackendOptions: cfg.BackendOptions,
 		Storage:        cfg.Storage,
@@ -369,6 +383,13 @@ func (cfg *BackupConfig) Hash() ([]byte, error) {
 	hash := sha256.Sum256(data)
 
 	return hash[:], nil
+}
+
+func snapshotBackupLayoutHashTag(layout repo.Layout) string {
+	if !layout.IsRepo() {
+		return ""
+	}
+	return layout.String()
 }
 
 func isFullBackup(cmdName string) bool {
@@ -415,6 +436,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
 		if err != nil {
+			if cfg.Layout.IsRepo() {
+				return errors.Annotate(err, "repo snapshot backup requires checkpoint support")
+			}
 			log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
 			cfg.UseCheckpoint = false
 		}
@@ -448,22 +472,57 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,
 	}
-	if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
-		return errors.Trace(err)
-	}
-	// if checkpoint mode is unused at this time but there is checkpoint meta,
-	// CheckCheckpoint will stop backing up
 	cfgHash, err := cfg.Hash()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = client.CheckCheckpoint(cfgHash)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = client.SetLockFile(ctx)
-	if err != nil {
-		return errors.Trace(err)
+	var (
+		preparedStorage        *taskrepo.PreparedRepoSnapshotBackup
+		perStoreBackupAdapters []backup.PerStoreBackupAdapter
+	)
+	if cfg.Layout.IsRepo() {
+		if err = client.SetStorage(ctx, u, &opts); err != nil {
+			return errors.Trace(err)
+		}
+		preparedStorage, err = taskrepo.PrepareRepoSnapshotBackup(ctx, glue.GetConsole(g), u, client.GetBaseStorage(), taskrepo.SnapshotBackupStorageParams{
+			UseCheckpoint: cfg.UseCheckpoint,
+			SkipPrompt:    cfg.SkipPrompt,
+			ConfigHash:    cfgHash,
+			CreatedBy:     taskrepo.RepoCreatedBy(g.GetVersion()),
+			AllocateBackupID: func(ctx context.Context) (repo.BackupID, error) {
+				backupTS, err := client.GetCurrentTS(ctx)
+				if err != nil {
+					return 0, errors.Annotate(err, "allocate repo backup id")
+				}
+				backupID, err := repo.NewBackupID(backupTS)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				return backupID, nil
+			},
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		client.SetMetadataStorage(preparedStorage.MetadataStorage())
+		perStoreBackupAdapters = append(perStoreBackupAdapters, preparedStorage)
+		if err := taskrepo.ActivateSnapshotBackupResume(ctx, client, preparedStorage, cfgHash); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
+			return errors.Trace(err)
+		}
+		// if checkpoint mode is unused at this time but there is checkpoint meta,
+		// CheckCheckpoint will stop backing up
+		err = client.CheckCheckpoint(cfgHash)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = client.SetLockFile(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	// if use checkpoint and gcTTL is the default value
 	// update gcttl to checkpoint's default gc ttl
@@ -593,6 +652,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 		err = metawriter.FlushBackupMeta(ctx)
 		if err == nil {
+			gcSafePointKeeperRemovable = true
+			if preparedStorage != nil {
+				log.Info("completed repo snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))
+				g.Record("backup id", uint64(preparedStorage.BackupID))
+			}
 			summary.SetSuccessStatus(true)
 		}
 		return err
@@ -651,21 +715,32 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	if cfg.UseCheckpoint {
-		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges, safePointID, progressCallBack); err != nil {
+		checkpointBackupID := uint64(0)
+		if preparedStorage != nil {
+			if err = taskrepo.WritePendingSnapshot(ctx, preparedStorage.RootStorage, preparedStorage.PendingMarkerPath); err != nil {
+				return errors.Trace(err)
+			}
+			checkpointBackupID = uint64(preparedStorage.BackupID)
+		}
+		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, checkpointBackupID, ranges, safePointID, progressCallBack); err != nil {
 			return errors.Trace(err)
 		}
 		defer func() {
 			if !gcSafePointKeeperRemovable {
-				log.Info("wait for flush checkpoint...")
+				log.Info("wait for checkpoint flush and keep it for resume")
 				client.WaitForFinishCheckpoint(ctx, true)
-			} else {
-				log.Info("start to remove checkpoint data for backup")
-				client.WaitForFinishCheckpoint(ctx, false)
-				if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
-					log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
-				} else {
-					log.Info("the checkpoint data for backup is removed.")
-				}
+				return
+			}
+			log.Info("start to remove checkpoint data for backup")
+			client.WaitForFinishCheckpoint(ctx, false)
+			if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
+				log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
+				return
+			}
+			log.Info("the checkpoint data for backup is removed.")
+			if preparedStorage != nil {
+				log.Info("repo pending marker is kept for later stale-marker cleanup",
+					zap.String("path", preparedStorage.PendingMarkerPath))
 			}
 		}()
 	}
@@ -686,7 +761,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack, perStoreBackupAdapters)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -724,8 +799,15 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	// Since backupmeta is flushed on the external storage,
-	// we can remove the gc safepoint keeper
+	// we can remove the gc safepoint keeper and let the deferred checkpoint
+	// cleanup remove checkpoint data. For repo backups, the pending marker
+	// intentionally outlives this backup and is retired by later stale-marker
+	// cleanup or snapshot deletion.
 	gcSafePointKeeperRemovable = true
+	if preparedStorage != nil {
+		log.Info("completed repo snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))
+		g.Record("backup id", uint64(preparedStorage.BackupID))
+	}
 
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()
@@ -794,6 +876,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 func DefaultBackupConfig(commonConfig Config) BackupConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
 	DefineBackupFlags(fs)
+	taskrepo.DefineSnapshotRepoWriterFlags(fs)
 	cfg := BackupConfig{}
 	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {

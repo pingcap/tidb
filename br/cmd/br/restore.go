@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
@@ -182,6 +183,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -196,6 +198,7 @@ func newDBRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }
 
@@ -209,6 +212,7 @@ func newTableRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }
 
@@ -251,5 +255,6 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
 	task.DefineStreamRestoreFlags(command)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }

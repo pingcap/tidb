@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/google/btree"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -69,6 +71,16 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+// PerStoreBackupAdapter rewrites per-store backup requests and responses.
+//
+// BackupRanges passes a store-local copy of the shared request to RewriteStoreRequest.
+// When the request contains a storage backend, its proto is cloned before any adapter
+// runs so adapters can safely mutate it in place.
+type PerStoreBackupAdapter interface {
+	RewriteStoreRequest(storeID uint64, request *backuppb.BackupRequest) error
+	RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error)
+}
+
 type MainBackupLoop struct {
 	BackupSender
 
@@ -84,6 +96,26 @@ type MainBackupLoop struct {
 
 	ProgressCallBack        func()
 	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
+	PerStoreBackupAdapters  []PerStoreBackupAdapter
+}
+
+func (l *MainBackupLoop) buildStoreBackupReq(storeID uint64) (backuppb.BackupRequest, error) {
+	request := l.BackupReq
+	if len(l.PerStoreBackupAdapters) == 0 {
+		return request, nil
+	}
+
+	// The loop-wide request is shared across stores and retries. Clone the backend
+	// before applying any store-specific rewrite so later retries still start clean.
+	if request.StorageBackend != nil {
+		request.StorageBackend = proto.Clone(request.StorageBackend).(*backuppb.StorageBackend)
+	}
+	for _, adapter := range l.PerStoreBackupAdapters {
+		if err := adapter.RewriteStoreRequest(storeID, &request); err != nil {
+			return backuppb.BackupRequest{}, errors.Trace(err)
+		}
+	}
+	return request, nil
 }
 
 type MainBackupSender struct{}
@@ -253,9 +285,15 @@ mainLoop:
 				reset = true
 				continue mainLoop
 			}
+			storeReq, err := loop.buildStoreBackupReq(storeID)
+			if err != nil {
+				handleCancel()
+				mainCancel()
+				return errors.Trace(err)
+			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+			loop.SendAsync(mainCtx, round, storeID, storeReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
@@ -308,13 +346,20 @@ mainLoop:
 						continue mainLoop
 					}
 
+					storeReq, err := loop.buildStoreBackupReq(storeID)
+					if err != nil {
+						handleCancel()
+						mainCancel()
+						return errors.Trace(err)
+					}
+
 					// cancel the former collect goroutine
 					handleCancel()
 					ch := make(chan *ResponseAndStore)
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
-					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
+					loop.SendAsync(mainCtx, round, storeID, storeReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 					// re-create context for new handler loop
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
@@ -338,7 +383,7 @@ mainLoop:
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
-				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree)
+				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree, loop.PerStoreBackupAdapters)
 				if err != nil {
 					// if error occurred here, stop the backup process
 					// because only 3 kinds of errors will be returned here:
@@ -363,9 +408,14 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage    storage.ExternalStorage
-	backend    *backuppb.StorageBackend
-	apiVersion kvrpcpb.APIVersion
+	// Most backups use one external storage, so these two fields normally point to the same object.
+	// Repo snapshot backups split them on purpose:
+	//   - storage keeps the original/root backend view for data files and repo-level operations.
+	//   - metaStorage is the metadata view used for backupmeta/checkpoint/lock files.
+	storage     storage.ExternalStorage
+	metaStorage storage.ExternalStorage
+	backend     *backuppb.StorageBackend
+	apiVersion  kvrpcpb.APIVersion
 
 	cipher           *backuppb.CipherInfo
 	checkpointMeta   *checkpoint.CheckpointMetadataForBackup
@@ -450,7 +500,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 
 // SetLockFile set write lock file.
 func (bc *Client) SetLockFile(ctx context.Context) error {
-	return bc.storage.WriteFile(ctx, metautil.LockFile,
+	return bc.GetStorage().WriteFile(ctx, metautil.LockFile,
 		[]byte("DO NOT DELETE\n"+
 			"This file exists to remind other backup jobs won't use this path"))
 }
@@ -482,8 +532,18 @@ func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 	return bc.backend
 }
 
-// GetStorage gets storage for this backup.
+// GetStorage is the historical accessor kept for existing callers.
+// It returns the storage used for backup metadata/checkpoint/lock files;
+// callers that need the original/root backend view should use GetBaseStorage.
 func (bc *Client) GetStorage() storage.ExternalStorage {
+	if bc.metaStorage != nil {
+		return bc.metaStorage
+	}
+	return bc.storage
+}
+
+// GetBaseStorage gets the original storage created from the configured backend before any metadata view rewrite.
+func (bc *Client) GetBaseStorage() storage.ExternalStorage {
 	return bc.storage
 }
 
@@ -548,8 +608,25 @@ func (bc *Client) CheckCheckpoint(hash []byte) error {
 	return nil
 }
 
+// LoadCheckpointMetadataFromStorage loads backup checkpoint metadata from the given storage.
+func (bc *Client) LoadCheckpointMetadataFromStorage(ctx context.Context, storage storage.ExternalStorage) error {
+	if storage == nil {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "checkpoint storage is missing")
+	}
+	checkpointMeta, err := checkpoint.LoadCheckpointMetadata(ctx, storage)
+	if err != nil {
+		return errors.Annotate(err, "load checkpoint metadata")
+	}
+	bc.checkpointMeta = checkpointMeta
+	return nil
+}
+
 func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType] {
 	return bc.checkpointRunner
+}
+
+func (bc *Client) GetCheckpointMetadata() *checkpoint.CheckpointMetadataForBackup {
+	return bc.checkpointMeta
 }
 
 // StartCheckpointMeta will
@@ -560,6 +637,7 @@ func (bc *Client) StartCheckpointRunner(
 	ctx context.Context,
 	cfgHash []byte,
 	backupTS uint64,
+	backupID uint64,
 	ranges []rtree.Range,
 	safePointID string,
 	progressCallBack func(),
@@ -569,11 +647,12 @@ func (bc *Client) StartCheckpointRunner(
 			GCServiceId: safePointID,
 			ConfigHash:  cfgHash,
 			BackupTS:    backupTS,
+			BackupID:    backupID,
 			Ranges:      ranges,
 		}
 
 		// sync the checkpoint meta to the external storage at first
-		if err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, bc.checkpointMeta); err != nil {
+		if err := checkpoint.SaveCheckpointMetadata(ctx, bc.GetStorage(), bc.checkpointMeta); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -586,7 +665,7 @@ func (bc *Client) StartCheckpointRunner(
 		}
 	}
 
-	bc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForBackup(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
+	bc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForBackup(ctx, bc.GetStorage(), bc.cipher, bc.mgr.GetPDClient())
 	return errors.Trace(err)
 }
 
@@ -630,7 +709,7 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func()) (map[string]rtree.RangeTree, error) {
 	rangeDataMap := make(map[string]rtree.RangeTree)
 
-	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) {
+	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.GetStorage(), bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) {
 		rangeTree, exists := rangeDataMap[groupKey]
 		if !exists {
 			rangeTree = rtree.NewRangeTree()
@@ -657,7 +736,13 @@ func (bc *Client) SetStorage(
 
 	bc.backend = backend
 	bc.storage, err = storage.New(ctx, backend, opts)
+	bc.metaStorage = bc.storage
 	return errors.Trace(err)
+}
+
+// SetMetadataStorage overrides what GetStorage returns for metadata/checkpoint/lock files.
+func (bc *Client) SetMetadataStorage(storage storage.ExternalStorage) {
+	bc.metaStorage = storage
 }
 
 // GetClusterID returns the cluster ID of the tidb cluster to backup.
@@ -1083,6 +1168,7 @@ func (bc *Client) BackupRanges(
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(),
+	perStoreBackupAdapters []PerStoreBackupAdapter,
 ) error {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
@@ -1106,13 +1192,14 @@ func (bc *Client) BackupRanges(
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
 
 	mainBackupLoop := &MainBackupLoop{
-		BackupSender:       &MainBackupSender{},
-		BackupReq:          request,
-		Concurrency:        concurrency,
-		GlobalProgressTree: &globalProgressTree,
-		ReplicaReadLabel:   replicaReadLabel,
-		StateNotifier:      stateNotifier,
-		ProgressCallBack:   progressCallBack,
+		BackupSender:           &MainBackupSender{},
+		BackupReq:              request,
+		Concurrency:            concurrency,
+		GlobalProgressTree:     &globalProgressTree,
+		ReplicaReadLabel:       replicaReadLabel,
+		StateNotifier:          stateNotifier,
+		PerStoreBackupAdapters: perStoreBackupAdapters,
+		ProgressCallBack:       progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.
 		GetBackupClientCallBack: func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {
@@ -1155,11 +1242,28 @@ func (bc *Client) getBackupStores(ctx context.Context, replicaReadLabel map[stri
 	return targetStores, nil
 }
 
+func rewriteStoreResponseFiles(
+	adapters []PerStoreBackupAdapter,
+	storeID uint64,
+	files []*backuppb.File,
+) ([]*backuppb.File, error) {
+	rewritten := files
+	for _, adapter := range adapters {
+		var err error
+		rewritten, err = adapter.RewriteStoreResponseFiles(storeID, rewritten)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return rewritten, nil
+}
+
 func (bc *Client) OnBackupResponse(
 	ctx context.Context,
 	r *ResponseAndStore,
 	errContext *utils.ErrorContext,
 	globalProgressTree *rtree.ProgressRangeTree,
+	adapters []PerStoreBackupAdapter,
 ) (*txnlock.Lock, error) {
 	if r == nil || r.GetResponse() == nil {
 		return nil, nil
@@ -1168,6 +1272,13 @@ func (bc *Client) OnBackupResponse(
 	resp := r.GetResponse()
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
+		if len(adapters) > 0 && len(resp.Files) > 0 {
+			files, err := rewriteStoreResponseFiles(adapters, storeID, resp.Files)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			resp.Files = files
+		}
 		start := time.Now()
 		pr, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
 		logutil.CL(ctx).Debug("find the range tree contains response ranges", zap.Duration("take", time.Since(start)))
@@ -1189,6 +1300,13 @@ func (bc *Client) OnBackupResponse(
 				logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
 				return nil, err
 			}
+			failpoint.Inject("backup-response-error-after-checkpoint", func(val failpoint.Value) {
+				msg, ok := val.(string)
+				if !ok || msg == "" {
+					msg = "failpoint: backup response error after checkpoint"
+				}
+				failpoint.Return(nil, errors.New(msg))
+			})
 		}
 		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
 		apiVersion := resp.ApiVersion

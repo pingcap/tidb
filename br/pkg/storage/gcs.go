@@ -114,6 +114,11 @@ type GCSStorage struct {
 	clientCancel context.CancelFunc
 }
 
+// Features implements FeatureProvider.
+func (*GCSStorage) Features() Features {
+	return FeatureSupportsStartAfter
+}
+
 // GetBucketHandle gets the handle to the GCS API on the bucket.
 func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
 	i := s.idx.Inc() % int64(len(s.handles))
@@ -263,6 +268,9 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	}
 
 	query := &storage.Query{Prefix: prefix}
+	if opt.StartAfter != "" {
+		query.StartOffset = path.Join(s.gcs.Prefix, opt.StartAfter)
+	}
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
 	if err != nil {
@@ -283,6 +291,9 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		path := strings.TrimPrefix(attrs.Name, s.gcs.Prefix)
 		// trim the prefix '/' to ensure that the path returned is consistent with the local storage
 		path = strings.TrimPrefix(path, "/")
+		if opt.StartAfter != "" && path <= opt.StartAfter {
+			continue
+		}
 		if err = fn(path, attrs.Size); err != nil {
 			return errors.Trace(err)
 		}

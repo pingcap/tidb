@@ -83,6 +83,11 @@ type S3Storage struct {
 	options *backuppb.S3
 }
 
+// Features implements FeatureProvider.
+func (*S3Storage) Features() Features {
+	return FeatureSupportsStartAfter
+}
+
 // GetS3APIHandle gets the handle to the S3 API.
 func (rs *S3Storage) GetS3APIHandle() s3iface.S3API {
 	return rs.svc
@@ -700,6 +705,9 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		Prefix:  aws.String(prefix),
 		MaxKeys: aws.Int64(maxKeys),
 	}
+	if opt.StartAfter != "" {
+		req.Marker = aws.String(path.Join(rs.options.Prefix, opt.StartAfter))
+	}
 
 	for {
 		// FIXME: We can't use ListObjectsV2, it is not universally supported.
@@ -729,6 +737,9 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			path = strings.TrimPrefix(path, "/")
 			itemSize := *r.Size
 
+			if opt.StartAfter != "" && path <= opt.StartAfter {
+				continue
+			}
 			// filter out s3's empty directory items
 			if itemSize <= 0 && strings.HasSuffix(path, "/") {
 				log.Info("this path is an empty directory and cannot be opened in S3.  Skip it", zap.String("path", path))

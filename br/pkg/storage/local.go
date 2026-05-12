@@ -40,6 +40,11 @@ func (l *LocalStorage) Base() string {
 	return l.base
 }
 
+// Features implements FeatureProvider.
+func (*LocalStorage) Features() Features {
+	return FeatureSupportsStartAfter
+}
+
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {
@@ -141,10 +146,15 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 			return nil
 		}
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
-		// so use Rel to convert to relative path to l.base
-		path, _ = filepath.Rel(l.base, path)
+		// so use Rel to convert to relative path to the directory being walked (base)
+		relativeToBase, _ := filepath.Rel(base, path)
+		if !strings.HasPrefix(relativeToBase, opt.ObjPrefix) {
+			return nil
+		}
 
-		if !strings.HasPrefix(path, opt.ObjPrefix) {
+		// Convert to relative path from l.base for consistency with cloud storage.
+		path, _ = filepath.Rel(l.base, path)
+		if opt.StartAfter != "" && filepath.ToSlash(path) <= filepath.ToSlash(opt.StartAfter) {
 			return nil
 		}
 

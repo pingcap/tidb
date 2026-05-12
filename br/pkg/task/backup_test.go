@@ -7,6 +7,7 @@ import (
 	"time"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -141,6 +142,12 @@ func TestBackupConfigHash(t *testing.T) {
 	{
 		testCfg := *cfg
 		testCfg.UseCheckpoint = false
+		hashCheck(t, &testCfg, originalHash, false)
+	}
+
+	{
+		testCfg := *cfg
+		testCfg.Layout = repo.LayoutRepo
 		hashCheck(t, &testCfg, originalHash, false)
 	}
 

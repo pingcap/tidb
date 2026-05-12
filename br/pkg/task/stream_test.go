@@ -24,8 +24,10 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
@@ -218,6 +220,39 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	logInfo, err := getLogRange(context.TODO(), &cfg)
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
+}
+
+func TestGetFullBackupTSReadsRepoMetadataStorage(t *testing.T) {
+	ctx := context.Background()
+	testDir := t.TempDir()
+	st, err := storage.NewLocalStorage(testDir)
+	require.NoError(t, err)
+
+	backupID := repo.BackupID(0x1234)
+	_, err = repo.EnsureRepo(ctx, st, "test")
+	require.NoError(t, err)
+	require.NoError(t, st.WriteFile(ctx, metautil.MetaFile, []byte("not-backupmeta")))
+
+	metaStorage := repo.NewPrefixedStorage(st, repo.SnapshotMetadataDir(backupID))
+	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+	metaWriter := metautil.NewMetaWriter(metaStorage, metautil.MetaFileSize, false, "", cipher)
+	metaWriter.Update(func(m *backuppb.BackupMeta) {
+		m.EndVersion = 123456
+		m.ClusterId = 42
+	})
+	require.NoError(t, metaWriter.FlushBackupMeta(ctx))
+
+	fullBackupTS, clusterID, err := getFullBackupTS(ctx, &RestoreConfig{
+		Config: Config{
+			CipherInfo: *cipher,
+		},
+		FullBackupStorage: testDir,
+		Layout:            repo.LayoutRepo,
+		BackupID:          backupID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(123456), fullBackupTS)
+	require.Equal(t, uint64(42), clusterID)
 }
 
 func TestGetExternalStorageOptions(t *testing.T) {
