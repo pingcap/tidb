@@ -17,31 +17,32 @@ package ddl_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 func TestMaskingPolicyDDLBasic(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key auto_increment, c char(120))")
 
 	tk.MustExec("create masking policy p on t(c) as c")
-	tk.MustQuery("select policy_name, db_name, table_name, column_name, expression, status, function_type from mysql.tidb_masking_policy where policy_name = 'p'").
-		Check(testkit.Rows("p test t c `c` ENABLE CUSTOM"))
+	tk.MustQuery("select policy_name, db_name, table_name, column_name, expression, status, masking_type, restrict_on from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("p test t c `c` ENABLED CUSTOM NONE"))
 
 	tk.MustExec("alter table t disable masking policy p")
 	tk.MustQuery("select status from mysql.tidb_masking_policy where policy_name = 'p'").
-		Check(testkit.Rows("DISABLE"))
+		Check(testkit.Rows("DISABLED"))
 
 	tk.MustExec("alter table t enable masking policy p")
 	tk.MustQuery("select status from mysql.tidb_masking_policy where policy_name = 'p'").
-		Check(testkit.Rows("ENABLE"))
+		Check(testkit.Rows("ENABLED"))
 
 	tk.MustExec("create or replace masking policy p on t(c) as mask_full(c)")
-	tk.MustQuery("select function_type from mysql.tidb_masking_policy where policy_name = 'p'").
-		Check(testkit.Rows("FULL"))
+	tk.MustQuery("select masking_type from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("MASK_FULL"))
 
 	tk.MustExec("alter table t drop masking policy p")
 	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p'").
@@ -57,7 +58,7 @@ func TestMaskingPolicyCaseExpression(t *testing.T) {
 
 	tk.MustExec("create masking policy p_case on t(c) as case when current_user() = 'root' then c else 'xxx' end enable")
 	tk.MustQuery("select policy_name, status from mysql.tidb_masking_policy where policy_name = 'p_case'").
-		Check(testkit.Rows("p_case ENABLE"))
+		Check(testkit.Rows("p_case ENABLED"))
 	tk.MustQuery("select expression like 'CASE WHEN %' from mysql.tidb_masking_policy where policy_name = 'p_case'").
 		Check(testkit.Rows("1"))
 	tk.MustQuery("select expression like '%CURRENT_USER()%' from mysql.tidb_masking_policy where policy_name = 'p_case'").

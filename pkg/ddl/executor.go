@@ -1831,12 +1831,28 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			// NOTE: we do not check `if not exists` and `if exists` for ForeignKey now.
 			err = e.DropForeignKey(sctx, ident, ast.NewCIStr(spec.Name))
 		case ast.AlterTableAddMaskingPolicy:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
 			err = e.AddMaskingPolicy(sctx, ident, spec)
 		case ast.AlterTableEnableMaskingPolicy:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
 			err = e.AlterTableMaskingPolicyState(sctx, ident, spec, true)
 		case ast.AlterTableDisableMaskingPolicy:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
 			err = e.AlterTableMaskingPolicyState(sctx, ident, spec, false)
 		case ast.AlterTableDropMaskingPolicy:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
 			err = e.DropMaskingPolicy(sctx, ident, spec)
 		case ast.AlterTableModifyColumn:
 			err = e.ModifyColumn(ctx, sctx, ident, spec)
@@ -6414,7 +6430,16 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 		return errors.Trace(err)
 	}
 
-	policyInfo, err := buildMaskingPolicyInfo(ctx, schema, tbl, stmt.PolicyName, stmt.Column.Name, stmt.Expr, stmt.MaskingPolicyState)
+	policyInfo, err := buildMaskingPolicyInfo(
+		ctx,
+		schema,
+		tbl,
+		stmt.PolicyName,
+		stmt.Column.Name,
+		stmt.Expr,
+		stmt.RestrictOps,
+		stmt.MaskingPolicyState,
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6428,7 +6453,7 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 	default:
 		onExist = OnExistError
 	}
-	return e.createMaskingPolicyWithInfo(ctx, policyInfo, onExist)
+	return e.createMaskingPolicyWithInfo(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyInfo, onExist)
 }
 
 func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
@@ -6436,11 +6461,31 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 	if err != nil {
 		return errors.Trace(err)
 	}
-	policyInfo, err := buildMaskingPolicyInfo(ctx, schema, tbl, spec.MaskingPolicyName, spec.MaskingPolicyColumn.Name, spec.MaskingPolicyExpr, spec.MaskingPolicyState)
+	policyInfo, err := buildMaskingPolicyInfo(
+		ctx,
+		schema,
+		tbl,
+		spec.MaskingPolicyName,
+		spec.MaskingPolicyColumn.Name,
+		spec.MaskingPolicyExpr,
+		spec.MaskingPolicyRestrictOps,
+		spec.MaskingPolicyState,
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.createMaskingPolicyWithInfo(ctx, policyInfo, OnExistError)
+	return e.createMaskingPolicyWithInfo(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyInfo, OnExistError)
+}
+
+func (e *executor) getMaskingPolicyByNameForTable(tableID int64, cols []*model.ColumnInfo, policyName ast.CIStr) (*model.MaskingPolicyInfo, bool) {
+	is := e.infoCache.GetLatest()
+	for _, col := range cols {
+		policy, ok := is.MaskingPolicyByTableColumn(tableID, col.ID)
+		if ok && policy != nil && policy.Name.L == policyName.L {
+			return policy, true
+		}
+	}
+	return nil, false
 }
 
 func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
@@ -6449,12 +6494,9 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName)
+	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
 		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
-	}
-	if policy.TableID != tbl.Meta().ID {
-		return errors.Errorf("masking policy %s doesn't belong to table %s", policyName.O, tbl.Meta().Name.O)
 	}
 
 	status := model.MaskingPolicyStatusEnable
@@ -6474,10 +6516,15 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 		Type:           model.ActionAlterMaskingPolicy,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: policy.DBName.L,
-			Table:    policy.TableName.L,
-		}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.MaskingPolicyArgs{
@@ -6493,12 +6540,9 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName)
+	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if !ok {
 		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
-	}
-	if policy.TableID != tbl.Meta().ID {
-		return errors.Errorf("masking policy %s doesn't belong to table %s", policyName.O, tbl.Meta().Name.O)
 	}
 
 	job := &model.Job{
@@ -6510,10 +6554,15 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 		Type:           model.ActionDropMaskingPolicy,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: policy.DBName.L,
-			Table:    policy.TableName.L,
-		}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.MaskingPolicyArgs{
@@ -6523,10 +6572,16 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
 
-func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *model.MaskingPolicyInfo, onExist OnExist) error {
+func (e *executor) createMaskingPolicyWithInfo(
+	ctx sessionctx.Context,
+	tableID int64,
+	cols []*model.ColumnInfo,
+	policy *model.MaskingPolicyInfo,
+	onExist OnExist,
+) error {
 	is := e.infoCache.GetLatest()
-	if existPolicy, ok := is.MaskingPolicyByName(policy.Name); ok {
-		if existPolicy.TableID != policy.TableID || existPolicy.ColumnID != policy.ColumnID {
+	if existPolicy, ok := e.getMaskingPolicyByNameForTable(tableID, cols, policy.Name); ok {
+		if existPolicy.ColumnID != policy.ColumnID {
 			return errors.Errorf("masking policy %s already exists on another column", existPolicy.Name.O)
 		}
 		err := errors.Errorf("masking policy %s already exists", policy.Name.O)
@@ -6542,12 +6597,6 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *m
 		return errors.Errorf("masking policy already exists on column %s", existPolicy.ColumnName.O)
 	}
 
-	policyID, err := e.genMaskingPolicyID()
-	if err != nil {
-		return err
-	}
-	policy.ID = policyID
-
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaName:     policy.DBName.L,
@@ -6556,10 +6605,15 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *m
 		Type:           model.ActionCreateMaskingPolicy,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
-			Database: policy.DBName.L,
-			Table:    policy.TableName.L,
-		}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.MaskingPolicyArgs{
@@ -6952,19 +7006,6 @@ func (e *executor) genPlacementPolicyID() (int64, error) {
 		m := meta.NewMutator(txn)
 		var err error
 		ret, err = m.GenPlacementPolicyID()
-		return err
-	})
-
-	return ret, err
-}
-
-func (e *executor) genMaskingPolicyID() (int64, error) {
-	var ret int64
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, e.store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		var err error
-		ret, err = m.GenMaskingPolicyID()
 		return err
 	})
 
