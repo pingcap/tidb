@@ -23,6 +23,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -113,6 +114,7 @@ func NewCollector(
 	encoder *importer.TableKVEncoder,
 	globalSet, localSet *BoundedHandleSet,
 	sharedTotalFileSize *atomic.Int64,
+	progressCollector execute.Collector,
 	trafficRec TrafficRecorder,
 ) *Collector {
 	// Safety check: if caller doesn't pass the shared counter, allocate one to
@@ -129,7 +131,7 @@ func NewCollector(
 		hdlSet:              localSet,
 		sharedTotalFileSize: sharedTotalFileSize,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, progressCollector, logger)
 	var h Handler
 	if kvGroup == external.DataKVGroup {
 		h = NewDataKVHandler(base)

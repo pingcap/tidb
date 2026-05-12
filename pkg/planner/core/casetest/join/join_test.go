@@ -15,6 +15,9 @@
 package join
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -155,6 +158,30 @@ func TestJoinSimplifyCondition(t *testing.T) {
 				"  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
 				"  │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
 				"  └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"))
+
+		const largeInListThreshold = 10000
+		const largeInListLength = largeInListThreshold + 1
+		var inListBuilder strings.Builder
+		for i := 1; i <= largeInListLength; i++ {
+			if i > 1 {
+				inListBuilder.WriteByte(',')
+			}
+			inListBuilder.WriteString(strconv.Itoa(i))
+		}
+
+		rows := tk.MustQuery("explain format = 'plan_tree' select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 join t2 on t1.a = t2.a " +
+			"where t2.b = 1 or t2.c in (" + inListBuilder.String() + ")").Rows()
+		require.NotEmpty(t, rows)
+
+		// The join hint should keep this query on IndexJoin family, and the large IN-list
+		// predicate should stay at root instead of cop[tikv] on the probe side.
+		plan := fmt.Sprint(rows)
+		require.True(t,
+			strings.Contains(plan, "IndexJoin") || strings.Contains(plan, "IndexHashJoin") || strings.Contains(plan, "IndexMergeJoin"),
+			"expected index join family plan under INL_HASH_JOIN hint")
+		require.Contains(t, plan, "Selection(Probe) root")
+		require.Contains(t, plan, "or(eq(test.t2.b, 1), in(test.t2.c")
+		require.NotContains(t, plan, "Selection(Probe) cop[tikv]  or(eq(test.t2.b, 1), in(test.t2.c")
 	})
 }
 
@@ -320,5 +347,21 @@ JOIN
 			`      └─Selection cop[tikv]  not(isnull(test.t3_issue60076.b))`,
 			`        └─TableFullScan cop[tikv] table:t3_issue60076 keep order:false, stats:pseudo`))
 		tk.MustQuery(`show warnings`).Check(testkit.Rows())
+
+		tk.MustExec(`create table t_int_issue67366 (id int primary key auto_increment, val varchar(100))`)
+		tk.MustExec(`create table t_varchar_issue67366 (id varchar(20) primary key, info text)`)
+		tk.MustQuery(`explain format='plan_tree' select /* issue:67366 */ count(*) from t_int_issue67366 join t_varchar_issue67366 on t_int_issue67366.id = t_varchar_issue67366.id`).CheckContain("cast(test.t_varchar_issue67366.id, bigint(20) BINARY)")
+		tk.MustQuery(`show warnings`).Check(testkit.Rows(
+			`Warning 1105 Implicit type or collation conversion on join keys (test.t_int_issue67366.id = test.t_varchar_issue67366.id) may make indexes unusable`,
+		))
+
+		tk.MustExec(`drop table if exists issue66859_t0, issue66859_t1, issue66859_t2`)
+		tk.MustExec(`create table issue66859_t0(c0 int)`)
+		tk.MustExec(`create table issue66859_t1 like issue66859_t0`)
+		tk.MustExec(`create index i0 on issue66859_t1((5))`)
+		tk.MustExec(`insert into issue66859_t0(c0) values(-1)`)
+		tk.MustQuery(`select /* issue:66859 */ issue66859_t0.c0 as ref0, issue66859_t1.c0 as ref2
+			from issue66859_t0 left join issue66859_t1 on issue66859_t0.c0 = issue66859_t1.c0
+			where 5 >= issue66859_t0.c0`).Check(testkit.Rows("-1 <nil>"))
 	})
 }

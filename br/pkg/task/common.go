@@ -909,6 +909,12 @@ func ReadBackupMeta(
 		return nil, nil, nil, errors.Annotate(err,
 			"parse backupmeta failed because of wrong aes cipher")
 	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
+		if cfg.CheckRequirements {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
+	}
 	return u, s, backupMeta, nil
 }
 

@@ -252,3 +252,28 @@ id	estRows	estCost	costFormula	actRows	task	access object	execution info	operato
 TableReader_7	3323.33	13580.23	((((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00)) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
 └─Selection_6	3323.33	203703.50	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00)	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
   └─TableFullScan_5	10000.00	203703.50	((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+drop table if exists t_idx;
+create table t_idx (b int, c int, d varchar(200), e varchar(200), primary key (b, c) clustered);
+insert into t_idx select n*100+m*10+p, n*100+m*10+p, repeat('d',200), repeat('e',200) from (select 0 n union all select 1 union all select 2 union all select 3 union all select 4 union all select 5 union all select 6 union all select 7 union all select 8 union all select 9) a, (select 0 m union all select 1 union all select 2 union all select 3 union all select 4 union all select 5 union all select 6 union all select 7 union all select 8 union all select 9) b, (select 0 p union all select 1 union all select 2 union all select 3 union all select 4 union all select 5 union all select 6 union all select 7 union all select 8 union all select 9) c;
+analyze table t_idx;
+explain format='brief' select b, max(d), max(e) from t_idx group by b;
+id	estRows	task	access object	operator info
+Projection	1000.00	root		planner__core__plan_cost_ver2.t_idx.b, Column#6, Column#7
+└─StreamAgg	1000.00	root		group by:planner__core__plan_cost_ver2.t_idx.b, funcs:max(Column#11)->Column#6, funcs:max(Column#12)->Column#7, funcs:firstrow(planner__core__plan_cost_ver2.t_idx.b)->planner__core__plan_cost_ver2.t_idx.b
+  └─TableReader	1000.00	root		data:StreamAgg
+    └─StreamAgg	1000.00	cop[tikv]		group by:planner__core__plan_cost_ver2.t_idx.b, funcs:max(planner__core__plan_cost_ver2.t_idx.d)->Column#11, funcs:max(planner__core__plan_cost_ver2.t_idx.e)->Column#12
+      └─TableFullScan	1000.00	cop[tikv]	table:t_idx	keep order:true
+drop table if exists t_join_a, t_join_b;
+create table t_join_a (k int, v int, c varchar(200));
+create table t_join_b (k int, w int, d varchar(200));
+explain format='brief' select t_join_a.v, max(t_join_a.c), max(t_join_b.d) from t_join_a join t_join_b on t_join_a.k = t_join_b.k group by t_join_a.v;
+id	estRows	task	access object	operator info
+Projection	7992.00	root		planner__core__plan_cost_ver2.t_join_a.v, Column#11, Column#12
+└─HashAgg	7992.00	root		group by:planner__core__plan_cost_ver2.t_join_a.v, funcs:max(planner__core__plan_cost_ver2.t_join_a.c)->Column#11, funcs:max(planner__core__plan_cost_ver2.t_join_b.d)->Column#12, funcs:firstrow(planner__core__plan_cost_ver2.t_join_a.v)->planner__core__plan_cost_ver2.t_join_a.v
+  └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t_join_a.k, planner__core__plan_cost_ver2.t_join_b.k)]
+    ├─TableReader(Build)	9990.00	root		data:Selection
+    │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t_join_b.k))
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t_join_b	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t_join_a.k))
+        └─TableFullScan	10000.00	cop[tikv]	table:t_join_a	keep order:false, stats:pseudo

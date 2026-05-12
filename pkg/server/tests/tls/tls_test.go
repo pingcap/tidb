@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/pem"
 	"math/big"
 	"net/http"
@@ -31,6 +32,8 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	tidbserver "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
@@ -38,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/tests/servertestkit"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
+	tidbtls "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/stretchr/testify/require"
 )
 
@@ -181,6 +185,17 @@ func isTLSExpiredError(err error) bool {
 }
 
 func TestTLSVerify(t *testing.T) {
+	originalCfg := *config.GetGlobalConfig()
+	originalDeployMode := deploymode.Get()
+	originalRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&originalCfg)
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(originalDeployMode))
+		}
+		tidbtls.RequireSecureTransport.Store(originalRequireSecureTransport)
+	})
+
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	dir := t.TempDir()
@@ -201,27 +216,82 @@ func TestTLSVerify(t *testing.T) {
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := testserverclient.NewTestServerClient()
-	cfg := util2.NewTestConfig()
-	cfg.Port = cli.Port
-	cfg.Socket = dir + "/tidbtest.sock"
-	cfg.Status.ReportStatus = false
-	cfg.Security = config.Security{
-		SSLCA:   fileName("ca-cert.pem"),
-		SSLCert: fileName("server-cert.pem"),
-		SSLKey:  fileName("server-key.pem"),
-	}
-	tidbserver.RunInGoTestChan = make(chan struct{})
-	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
-	require.NoError(t, err)
-	server.SetDomain(ts.Domain)
-	defer server.Close()
-
-	go func() {
-		err := server.Run(nil)
+	execSQL := func(overrider func(*mysql.Config), stmt string) error {
+		dsn := cli.GetDSN(overrider)
+		db, err := sql.Open("mysql", dsn)
 		require.NoError(t, err)
+		defer func() {
+			err := db.Close()
+			require.NoError(t, err)
+		}()
+		_, err = db.Exec(stmt)
+		if err != nil {
+			return errors.Annotate(err, "dsn:"+dsn)
+		}
+		return nil
+	}
+	queryString := func(overrider func(*mysql.Config), query string) (string, error) {
+		dsn := cli.GetDSN(overrider)
+		db, err := sql.Open("mysql", dsn)
+		require.NoError(t, err)
+		defer func() {
+			err := db.Close()
+			require.NoError(t, err)
+		}()
+		var value string
+		err = db.QueryRow(query).Scan(&value)
+		if err != nil {
+			return "", errors.Annotate(err, "dsn:"+dsn)
+		}
+		return value, nil
+	}
+	newServerConfig := func(starterMode bool) *config.Config {
+		cfg := util2.NewTestConfig()
+		cfg.Port = 0
+		cfg.Socket = dir + "/tidbtest.sock"
+		cfg.Status.ReportStatus = false
+		if starterMode {
+			cfg.DeployMode = deploymode.Starter
+		}
+		cfg.Security = config.Security{
+			SSLCA:   fileName("ca-cert.pem"),
+			SSLCert: fileName("server-cert.pem"),
+			SSLKey:  fileName("server-key.pem"),
+		}
+		return cfg
+	}
+	startServer := func(cfg *config.Config) (*tidbserver.Server, func()) {
+		cfgCopy := *cfg
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(cfgCopy.DeployMode))
+		}
+		config.StoreGlobalConfig(&cfgCopy)
+
+		tidbserver.RunInGoTestChan = make(chan struct{})
+		server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
+		require.NoError(t, err)
+		server.SetDomain(ts.Domain)
+
+		go func() {
+			err := server.Run(nil)
+			require.NoError(t, err)
+		}()
+		<-tidbserver.RunInGoTestChan
+		cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+		return server, func() {
+			server.Close()
+		}
+	}
+
+	cfg := newServerConfig(false)
+	_, closeServer := startServer(cfg)
+	firstServerClosed := false
+	defer func() {
+		if !firstServerClosed {
+			closeServer()
+		}
 	}()
-	<-tidbserver.RunInGoTestChan
-	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.RunTestTLSConnection(t, nil)
 	require.NoError(t, err)
@@ -273,6 +343,33 @@ func TestTLSVerify(t *testing.T) {
 		config.DBName = "test"
 	})
 	require.NoError(t, err)
+
+	err = execSQL(connOverrider, "SET GLOBAL require_secure_transport = 0")
+	require.NoError(t, err)
+	closeServer()
+	firstServerClosed = true
+
+	if kerneltype.IsNextGen() {
+		// In starter mode, the sysvar read path still reports ON even when the
+		// underlying atomic stays false.
+		tidbtls.RequireSecureTransport.Store(false)
+		starterCfg := newServerConfig(true)
+		_, closeServer = startServer(starterCfg)
+		defer closeServer()
+		globalRequireSecureTransport, err := queryString(connOverrider, "SELECT @@global.require_secure_transport")
+		require.NoError(t, err)
+		require.Contains(t, []string{"ON", "1"}, globalRequireSecureTransport)
+
+		err = cli.RunTestEnableSecureTransport(t, nil)
+		require.ErrorContains(t, err, "require_secure_transport can not be set in starter mode")
+		err = cli.RunTestEnableSecureTransport(t, connOverrider)
+		require.ErrorContains(t, err, "require_secure_transport can not be set in starter mode")
+
+		err = cli.RunTestTLSConnection(t, nil)
+		require.NoError(t, err)
+		err = cli.RunTestTLSConnection(t, connOverrider)
+		require.NoError(t, err)
+	}
 }
 func TestTLSBasic(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)

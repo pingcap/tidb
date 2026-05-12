@@ -27,6 +27,7 @@ import (
 	stderrs "errors"
 	"fmt"
 	"iter"
+	"maps"
 	"math"
 	"math/rand"
 	"regexp"
@@ -109,7 +110,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
-	drivertxn "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -1127,15 +1127,19 @@ func (*session) isTxnRetryableError(err error) bool {
 }
 
 func isEndTxnStmt(stmt ast.StmtNode, vars *variable.SessionVars) (bool, error) {
-	switch n := stmt.(type) {
+	resolvedStmt, err := resolvePreparedStmt(stmt, vars)
+	if err != nil {
+		return false, err
+	}
+	if resolvedStmt == nil {
+		return false, nil
+	}
+	if resolvedStmt != stmt {
+		return isEndTxnStmt(resolvedStmt, vars)
+	}
+	switch resolvedStmt.(type) {
 	case *ast.RollbackStmt, *ast.CommitStmt:
 		return true, nil
-	case *ast.ExecuteStmt:
-		ps, err := plannercore.GetPreparedStmt(n, vars)
-		if err != nil {
-			return false, err
-		}
-		return isEndTxnStmt(ps.PreparedAst.Stmt, vars)
 	}
 	return false, nil
 }
@@ -2228,6 +2232,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	prevSQL := s.sessionVars.StmtCtx.OriginalSQL
 	prevStmtType := s.sessionVars.StmtCtx.StmtType
 	prevTables := s.sessionVars.StmtCtx.Tables
+	prevRUV2Metrics := s.sessionVars.RUV2Metrics
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		s.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
@@ -2240,6 +2245,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
+		s.sessionVars.RUV2Metrics = prevRUV2Metrics
 		s.sessionVars.MemTracker.Detach()
 	}, nil
 }
@@ -2419,6 +2425,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
+	ctx = execdetails.ContextWithMissingExecDetailsInitialized(ctx)
 
 	if err := s.PrepareTxnCtx(ctx, stmtNode); err != nil {
 		return nil, err
@@ -2435,12 +2442,16 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
-	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-	if ruv2Metrics == nil {
-		ruv2Metrics = execdetails.NewRUV2Metrics()
-		ctx = context.WithValue(ctx, execdetails.RUV2MetricsCtxKey, ruv2Metrics)
+	// ResetContextOfStmt clears SQLKiller, so honor a canceled caller before executing the next statement.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 	sessVars.RUV2Metrics = ruv2Metrics
+	bypass := shouldBypass(ctx, stmtNode, sessVars)
+	if ruv2Metrics != nil {
+		ruv2Metrics.SetBypass(bypass)
+	}
 	if pending := sessVars.RUV2PendingSessionParserTotal.Swap(0); pending > 0 && ruv2Metrics != nil {
 		ruv2Metrics.AddSessionParserTotal(pending)
 	}
@@ -2489,11 +2500,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	})
 
 	var stmtLabel string
-	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
-		if err == nil && prepareStmt.PreparedAst != nil {
-			stmtLabel = stmtctx.GetStmtLabel(ctx, prepareStmt.PreparedAst.Stmt)
-		}
+	if resolvedStmt, err := resolvePreparedStmt(stmtNode, s.sessionVars); err == nil && resolvedStmt != nil {
+		stmtLabel = stmtctx.GetStmtLabel(ctx, resolvedStmt)
 	}
 	if stmtLabel == "" {
 		stmtLabel = stmtctx.GetStmtLabel(ctx, stmtNode)
@@ -2731,6 +2739,52 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 	}
 	return recordSet, nil
+}
+
+var isNextGenForRUV2 = kerneltype.IsNextGen
+
+func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.StmtNode, error) {
+	if stmt == nil {
+		return nil, nil
+	}
+	execStmt, ok := stmt.(*ast.ExecuteStmt)
+	if !ok {
+		return stmt, nil
+	}
+	if vars == nil {
+		return nil, nil
+	}
+	prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+	if err != nil {
+		return nil, err
+	}
+	if prepareStmt == nil || prepareStmt.PreparedAst == nil {
+		return nil, nil
+	}
+	return prepareStmt.PreparedAst.Stmt, nil
+}
+
+func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
+	switch kv.GetInternalSourceType(ctx) {
+	case kv.InternalTxnOthers:
+		return true
+	case kv.InternalTxnStats:
+		return isNextGenForRUV2() && isAnalyzeStatementForRUV2(stmtNode, sessVars)
+	default:
+		return false
+	}
+}
+
+func isAnalyzeStatementForRUV2(stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
+	if stmtNode == nil || sessVars == nil {
+		return false
+	}
+	resolvedStmt, err := resolvePreparedStmt(stmtNode, sessVars)
+	if err != nil || resolvedStmt == nil {
+		return false
+	}
+	_, ok := resolvedStmt.(*ast.AnalyzeTableStmt)
+	return ok
 }
 
 func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
@@ -3074,6 +3128,7 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 	// the session state.
 	err = finishStmt(context.Background(), rs.se, nil, rs.sql)
 	if err != nil {
+		cursorHandle.Close()
 		err2 := detachedRS.Close()
 		if err2 != nil {
 			logutil.BgLogger().Error("close detached record set failed", zap.Error(err2))
@@ -3127,6 +3182,37 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err = sessiontxn.GetTxnManager(s).AdviseWarmup(); err != nil {
 		return
 	}
+
+	var dedupKey string
+	if s.sessionVars.EnableCachePrepareStmt {
+		// Session-level prepare dedup cache: if the same SQL text has been prepared
+		// before in this session (with the same charset/collation/currentDB), reuse
+		// the already-built PlanCacheStmt and skip the expensive Preprocess+Build.
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		dedupKey = variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB, s.sessionVars.SQLMode)
+		if v := s.sessionVars.GetPrepareStmtDedupCache(dedupKey); v != nil {
+			cached := v.(*plannercore.PrepareStmtCacheEntry)
+			is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+			if cached.Stmt.SchemaVersion == is.SchemaMetaVersion() {
+				newStmt, rebuildErr := s.rebuildFromPrepareCache(ctx, cached, sql, charset, collation)
+				if rebuildErr == nil {
+					stmtID = s.sessionVars.GetNextPreparedStmtID()
+					if err = s.sessionVars.AddPreparedStmt(stmtID, newStmt); err != nil {
+						s.rollbackOnError(ctx)
+						return
+					}
+					paramCount = cached.ParamCount
+					fields = cached.Fields
+					s.rollbackOnError(ctx)
+					return
+				}
+				// Re-parse or rebuild failed; fall through to the full prepare path.
+				logutil.Logger(ctx).Warn("prepare stmt dedup cache rebuild failed, fallback to full prepare", zap.Error(rebuildErr))
+			}
+			// Schema version changed; fall through and re-cache below.
+		}
+	}
+
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	// Rollback even if err is nil.
@@ -3135,7 +3221,105 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err != nil {
 		return
 	}
+
+	// Store the result in the dedup cache for future Prepares of the same SQL.
+	if s.sessionVars.EnableCachePrepareStmt {
+		if prepareExec.Stmt != nil {
+			s.sessionVars.SetPrepareStmtDedupCache(dedupKey, &plannercore.PrepareStmtCacheEntry{
+				Stmt:       prepareExec.Stmt.(*plannercore.PlanCacheStmt),
+				Fields:     prepareExec.Fields,
+				ParamCount: prepareExec.ParamCount,
+			})
+		}
+	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
+}
+
+// rebuildFromPrepareCache constructs a new PlanCacheStmt from a cached entry,
+// re-parsing the SQL to obtain an independent AST (with fresh ParamMarkerExpr
+// nodes) while skipping only the expensive PlanBuilder.Build step.
+// Preprocess is still executed to build a fresh ResolveCtx whose tableNames map
+// is keyed by the new AST's TableName pointers; reusing the cached ResolveCtx
+// would cause nil-deref panics on plan-cache miss because the old pointer keys
+// would not match the newly-parsed AST nodes.
+func (s *session) rebuildFromPrepareCache(
+	ctx context.Context,
+	cached *plannercore.PrepareStmtCacheEntry,
+	sql, charset, collation string,
+) (*plannercore.PlanCacheStmt, error) {
+	stmts, _, err := s.ParseSQL(ctx, sql,
+		parser.CharsetConnection(charset),
+		parser.CollationConnection(collation),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(stmts) != 1 {
+		return nil, errors.New("unexpected statement count after re-parse")
+	}
+	stmtNode := stmts[0]
+
+	// Extract fresh param markers from the new AST and initialise them to NULL.
+	markers := plannercore.ExtractAndSortParamMarkers(stmtNode)
+
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+
+	// Run Preprocess to build a fresh ResolveCtx aligned with the new AST.
+	// This is the only way to populate ResolveCtx.tableNames with the new
+	// AST's *ast.TableName pointer keys without re-running the full Build.
+	ret := &plannercore.PreprocessorReturn{InfoSchema: is}
+	nodeW := resolve.NewNodeW(stmtNode)
+	if err = plannercore.Preprocess(ctx, s, nodeW, plannercore.InPrepare,
+		plannercore.WithPreprocessorReturn(ret)); err != nil {
+		return nil, err
+	}
+	// Defensive: if schema changed between our earlier check and Preprocess,
+	// fall through to the full prepare path.
+	if ret.InfoSchema.SchemaMetaVersion() != cached.Stmt.SchemaVersion {
+		return nil, errors.New("schema version changed during rebuild")
+	}
+
+	newStmt := &plannercore.PlanCacheStmt{
+		// Fields derived from the new AST:
+		PreparedAst: &ast.Prepared{
+			Stmt:     stmtNode,
+			StmtType: cached.Stmt.PreparedAst.StmtType,
+		},
+		Params: markers,
+
+		// Fresh ResolveCtx whose tableNames keys match the new AST pointers.
+		ResolveCtx: nodeW.GetResolveContext(),
+
+		// Immutable fields – safe to share with the cached template:
+		StmtDB:              cached.Stmt.StmtDB,
+		StmtText:            cached.Stmt.StmtText,
+		VisitInfos:          cached.Stmt.VisitInfos,
+		NormalizedSQL:       cached.Stmt.NormalizedSQL,
+		SQLDigest:           cached.Stmt.SQLDigest,
+		ForUpdateRead:       cached.Stmt.ForUpdateRead,
+		SnapshotTSEvaluator: cached.Stmt.SnapshotTSEvaluator,
+		StmtCacheable:       cached.Stmt.StmtCacheable,
+		UncacheableReason:   cached.Stmt.UncacheableReason,
+		SchemaVersion:       cached.Stmt.SchemaVersion,
+
+		// Mutable containers – clone so each stmt has independent state:
+		RelateVersion: maps.Clone(cached.Stmt.RelateVersion),
+		// PointGet is zeroed (per-execution executor state must not leak).
+		// NormalizedPlan / PlanDigest are left as zero values; they will be
+		// populated on the first plan-cache miss during Execute.
+	}
+
+	// Walk the new AST to populate limits, hasSubquery, and tables.
+	// These fields hold pointers into the AST, so they must refer to the
+	// newly-parsed tree rather than the cached one.
+	plannercore.CollectPlanCacheStmtInfo(ctx, is, newStmt, stmtNode)
+
+	// dbName and tbls are only read during Execute (not written to by
+	// CollectPlanCacheStmtInfo since that populates tables, not tbls).
+	// Clone them so that planCachePreprocess can safely replace tbls[i].
+	newStmt.SetDBNameAndTbls(cached.Stmt.DBName(), cached.Stmt.Tbls())
+
+	return newStmt, nil
 }
 
 // ExecutePreparedStmt executes a prepared statement.
@@ -3293,7 +3477,6 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			KVVars:                 vars.KVVars,
 			KvExecCounter:          sc.KvExecCounter,
 			RUV2Metrics:            vars.RUV2Metrics,
-			RUV2RPCInterceptor:     drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics),
 			SessionMemTracker:      vars.MemTracker,
 
 			Location:         sc.TimeZone(),
@@ -3349,7 +3532,6 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	}
 	if dctx.RUV2Metrics != vars.RUV2Metrics {
 		dctx.RUV2Metrics = vars.RUV2Metrics
-		dctx.RUV2RPCInterceptor = drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics)
 	}
 
 	return dctx
@@ -4770,20 +4952,11 @@ func (s *session) shouldUsePessimisticAutoCommit(stmtNode ast.StmtNode) bool {
 }
 
 // isDMLStatement checks if the given statement should use pessimistic-auto-commit.
-// It handles EXECUTE unwrapping and properly handles EXPLAIN statements by checking their inner statement.
+// It unwraps EXECUTE statements and properly handles EXPLAIN statements by checking their inner statement.
 func (s *session) isDMLStatement(stmtNode ast.StmtNode) bool {
-	if stmtNode == nil {
+	actualStmt, err := resolvePreparedStmt(stmtNode, s.GetSessionVars())
+	if err != nil || actualStmt == nil {
 		return false
-	}
-
-	// Handle EXECUTE statements - unwrap to get the actual prepared statement
-	actualStmt := stmtNode
-	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
-		if err != nil || prepareStmt == nil {
-			return false
-		}
-		actualStmt = prepareStmt.PreparedAst.Stmt
 	}
 
 	// For EXPLAIN statements, check the underlying statement

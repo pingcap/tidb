@@ -12,6 +12,10 @@ port = 4000
 # Registered store name, [tikv, mocktikv, unistore]
 store = "unistore"
 
+# Deployment mode, [premium, premium_reserved, starter]. It is initialized during
+# startup and cannot be changed after it is set.
+deploy-mode = "premium"
+
 # TiDB storage path.
 path = "/tmp/tidb"
 

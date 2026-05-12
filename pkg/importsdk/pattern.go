@@ -158,13 +158,21 @@ func longestCommonSuffix(strs []string, prefixLen int) string {
 	return suffix
 }
 
-// generatePrefixSuffixPattern returns a wildcard pattern that matches all and only the given paths
-// by finding the longest common prefix and suffix among them, and placing a '*' wildcard in between.
-func generatePrefixSuffixPattern(paths []string) string {
+func generateFlatPrefixSuffixPattern(paths []string) string {
 	if len(paths) == 0 {
 		return ""
 	}
 	if len(paths) == 1 {
+		return paths[0]
+	}
+	allSame := true
+	for _, p := range paths[1:] {
+		if p != paths[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
 		return paths[0]
 	}
 
@@ -172,4 +180,39 @@ func generatePrefixSuffixPattern(paths []string) string {
 	suffix := longestCommonSuffix(paths, len(prefix))
 
 	return prefix + "*" + suffix
+}
+
+// generatePrefixSuffixPattern returns a wildcard pattern that matches all and only the given paths.
+// When all paths have the same number of '/'-separated components, it generates the wildcard
+// component by component so every '*' stays within a single path segment, which is required by
+// filepath.Match.
+func generatePrefixSuffixPattern(paths []string) string {
+	if len(paths) <= 1 {
+		return generateFlatPrefixSuffixPattern(paths)
+	}
+
+	componentCount := -1
+	pathComponents := make([][]string, 0, len(paths))
+	for _, p := range paths {
+		components := strings.Split(p, "/")
+		if componentCount == -1 {
+			componentCount = len(components)
+		} else if len(components) != componentCount {
+			return generateFlatPrefixSuffixPattern(paths)
+		}
+		pathComponents = append(pathComponents, components)
+	}
+	if componentCount <= 1 {
+		return generateFlatPrefixSuffixPattern(paths)
+	}
+
+	componentPatterns := make([]string, 0, componentCount)
+	for componentIdx := range componentCount {
+		componentValues := make([]string, 0, len(pathComponents))
+		for _, components := range pathComponents {
+			componentValues = append(componentValues, components[componentIdx])
+		}
+		componentPatterns = append(componentPatterns, generateFlatPrefixSuffixPattern(componentValues))
+	}
+	return strings.Join(componentPatterns, "/")
 }

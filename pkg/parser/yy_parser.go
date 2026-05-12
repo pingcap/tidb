@@ -103,6 +103,18 @@ type Parser struct {
 	yyVAL  *yySymType
 }
 
+// setNodeText sets the raw text on a parsed AST node and propagates the
+// NO_BACKSLASH_ESCAPES SQL mode so that Text() can correctly handle
+// backslash escapes when converting binary string literals to hex.
+func (parser *Parser) setNodeText(n interface {
+	SetText(charset.Encoding, string)
+}, text string) {
+	n.SetText(parser.lexer.client, text)
+	if setter, ok := n.(interface{ SetNoBackslashEscapes(bool) }); ok {
+		setter.SetNoBackslashEscapes(parser.lexer.sqlMode.HasNoBackslashEscapesMode())
+	}
+}
+
 func yySetOffset(yyVAL *yySymType, offset int) {
 	if yyVAL.expr != nil {
 		yyVAL.expr.SetOriginTextPosition(offset)

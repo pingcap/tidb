@@ -138,6 +138,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
 
 	var (
 		cacheable bool
@@ -222,6 +223,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		HasUsePlanCacheHint: hasUsePlanCacheHint,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
@@ -310,7 +312,19 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	if matchedBinding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo); matched {
+	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
+}
+
+func newPlanCacheKeyWithMatchedBinding(
+	sctx sessionctx.Context,
+	stmt *PlanCacheStmt,
+	matchedBinding *bindinfo.Binding,
+	bindingMatched bool,
+) (key, binding string, cacheable bool, reason string, err error) {
+	if !bindingMatched && stmt.PreparedAst != nil {
+		matchedBinding, bindingMatched, _ = bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	}
+	if bindingMatched && matchedBinding != nil {
 		// Record the matched binding SQL so the plan cache key reflects the effective hints.
 		binding = matchedBinding.BindSQL
 	}
@@ -373,8 +387,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
 	// schemaVersion + relateVersion + pruneMode
 	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
-	// latestSchemaVersion + sqlMode + timeZoneOffset + isolationReadEngines + selectLimit
-	hashLen += 8 + 8 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
 	if len(stmt.limits) > 0 {
@@ -407,6 +421,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
@@ -736,6 +751,8 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	// HasUsePlanCacheHint indicates whether this stmt contains the use_plan_cache() hint.
+	HasUsePlanCacheHint bool
 
 	limits      []*ast.Limit
 	hasSubquery bool
@@ -761,6 +778,57 @@ type PlanCacheStmt struct {
 	// dbName and tbls are used to add metadata lock.
 	dbName []ast.CIStr
 	tbls   []table.Table
+}
+
+// PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.
+// It holds the result of a full Prepare flow so that subsequent Prepares of
+// the same SQL text can skip the expensive Preprocess + PlanBuilder.Build.
+type PrepareStmtCacheEntry struct {
+	Stmt       *PlanCacheStmt
+	Fields     []*resolve.ResultField
+	ParamCount int
+}
+
+// ExtractAndSortParamMarkers extracts ParamMarkerExpr nodes from the AST,
+// sorts them by position, assigns their order indices, and initialises each
+// marker's Datum to NULL (matching the behaviour of GeneratePlanCacheStmtWithAST
+// for prepared statements where the actual parameter values are not yet known).
+func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
+	var extractor paramMarkerExtractor
+	stmtNode.Accept(&extractor)
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
+		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
+	})
+	for i, m := range extractor.markers {
+		m.SetOrder(i)
+		p := m.(*driver.ParamMarkerExpr)
+		p.Datum.SetNull()
+		p.InExecute = false
+	}
+	return extractor.markers
+}
+
+// CollectPlanCacheStmtInfo walks the AST to populate the limits, hasSubquery,
+// and tables fields of stmt. It must be called on the fresh AST after a
+// re-parse so that limit nodes and table references point into the new tree.
+func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, stmtNode ast.StmtNode) {
+	processor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: stmt}
+	stmtNode.Accept(processor)
+}
+
+// DBName returns the dbName field (used for metadata lock during Execute).
+func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
+
+// Tbls returns the tbls field (used for metadata lock during Execute).
+func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
+
+// SetDBNameAndTbls sets the dbName and tbls fields, cloning the input slices
+// so that this PlanCacheStmt owns independent backing arrays. This is required
+// because planCachePreprocess replaces tbls[i] in-place during Execute, and
+// sharing the backing array with a cached template would cause cross-stmt contamination.
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
+	s.dbName = slices.Clone(dbName)
+	s.tbls = slices.Clone(tbls)
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
@@ -823,7 +891,9 @@ func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) 
 	// TODO: enable this fix control switch by default after more test cases are added.
 	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
 		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
-		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) ||
+			isSafePointGetPath4PlanCacheScenario3(path) ||
+			isSafePointGetPath4PlanCacheScenario4(path)) {
 			return true
 		}
 	}
@@ -897,6 +967,40 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 		}
 	}
 	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario4(path *util.AccessPath) bool {
+	// safe scenario 4: each key column corresponds to a single EQ, except one column that corresponds
+	// to a single IN. The IN can appear at the beginning, in the middle, or at the end of the key,
+	// like `a in (1, 2) and b=3 and c=4`, `a=1 and b in (2, 3) and c=4`, or
+	// `a=1 and b=2 and c in (3, 4)`.
+	// This currently supports exactly one IN predicate only.
+	// TODO: support multiple IN predicates, like `a in (1, 2) and b in (3, 4)`, after the plan-cache
+	// safety check and rebuild path can verify the cartesian-product case safely.
+	if len(path.Ranges) <= 0 || len(path.AccessConds) < 2 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	var inExpr *expression.ScalarFunction
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ:
+		case ast.In:
+			// Only one IN predicate is supported in this scenario for now.
+			if inExpr != nil {
+				return false
+			}
+			inExpr = f
+		default:
+			return false
+		}
+	}
+	// The range builder deduplicates IN values, so len(path.Ranges) < len(args)-1 when duplicates exist.
+	// The equality check below relies on that invariant to reject duplicate IN values from plan cache.
+	return inExpr != nil && len(path.Ranges) == len(inExpr.GetArgs())-1
 }
 
 // parseParamTypes get parameters' types in PREPARE statement

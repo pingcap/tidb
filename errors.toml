@@ -216,6 +216,11 @@ error = '''
 failed to update PD
 '''
 
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
+'''
+
 ["BR:PiTR:ErrInvalidTaskInfo"]
 error = '''
 task info is invalid
@@ -394,6 +399,11 @@ checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d
 ["Lightning:Checkpoint:ErrCheckpointNotFound"]
 error = '''
 checkpoint not found
+'''
+
+["Lightning:Checkpoint:ErrCheckpointTableNotFound"]
+error = '''
+checkpoint for table %s not found
 '''
 
 ["Lightning:Checkpoint:ErrCleanCheckpoint"]

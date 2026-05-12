@@ -824,6 +824,10 @@ type SessionVars struct {
 	SysErrorCount uint16
 	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
 	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
+	// prepareStmtDedupCache caches PlanCacheStmt templates keyed by SQL text +
+	// charset + collation + currentDB to skip redundant Parse+Preprocess+Build
+	// on repeated COM_STMT_PREPARE for the same SQL within a session.
+	prepareStmtDedupCache *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]any
 	PreparedStmtNameToID map[string]uint32
@@ -1218,8 +1222,16 @@ type SessionVars struct {
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
+	// EnableCorrelateSubquery is an internal flag (not user-facing) toggled by the
+	// correlate alternative round to enable conversion of non-correlated semi-joins
+	// to correlated Apply during plan building.
+	EnableCorrelateSubquery bool
+
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
+
+	// EnableStrictNotNullCheck enables strict not-null check for single-row insert in non-strict mode.
+	EnableStrictNotNullCheck bool
 
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
@@ -1264,6 +1276,9 @@ type SessionVars struct {
 
 	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
 	TiDBOptEnableAdvancedJoinReorder bool
+
+	// TiDBOptJoinReorderThroughProj enables join reorder to look through projections.
+	TiDBOptJoinReorderThroughProj bool
 
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
@@ -1364,6 +1379,8 @@ type SessionVars struct {
 
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
+	// EnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
+	EnableNoBackslashEscapesInLike bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
@@ -1625,6 +1642,9 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
 
+	// PlanCacheStrategy controls plan cache strategy.
+	PlanCacheStrategy string
+
 	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
 	EnableFuzzyBinding bool
 
@@ -1879,6 +1899,9 @@ type SessionVars struct {
 
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
+
+	// EnableCachePrepareStmt indicates whether to cache prepare stmt in plan cache.
+	EnableCachePrepareStmt bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -2390,11 +2413,13 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
+		TiDBOptJoinReorderThroughProj:    vardef.DefTiDBOptJoinReorderThroughProj,
 		TiDBOptJoinReorderThroughSel:     vardef.DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                    config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:            vardef.DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:           vardef.DefWaitSplitRegionTimeout,
 		enableIndexMerge:                 vardef.DefTiDBEnableIndexMerge,
+		EnableNoBackslashEscapesInLike:   vardef.DefTiDBEnableNoBackslashEscapesInLike,
 		NoopFuncsMode:                    TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
 		replicaRead:                      kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:               vardef.DefTiDBAllowRemoveAutoInc,
@@ -2409,6 +2434,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		WindowingUseHighPrecision:        true,
 		PrevFoundInPlanCache:             vardef.DefTiDBFoundInPlanCache,
 		FoundInPlanCache:                 vardef.DefTiDBFoundInPlanCache,
+		PlanCacheStrategy:                vardef.DefTiDBPlanCacheStrategy,
 		PrevFoundInBinding:               vardef.DefTiDBFoundInBinding,
 		FoundInBinding:                   vardef.DefTiDBFoundInBinding,
 		SelectLimit:                      math.MaxUint64,
@@ -2459,6 +2485,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
+		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -2886,6 +2913,37 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	}
 	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
 	return stmt
+}
+
+// PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
+// Including charset, collation, currentDB and sqlMode ensures that the cached
+// PlanCacheStmt is only reused when the session context that affects parsing,
+// name-resolution and cacheability decisions is identical. sqlMode is included
+// because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
+// IsASTCacheable (which computes StmtCacheable) runs on that AST.
+func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+	var modeBuf [8]byte
+	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+}
+
+// GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
+// or nil when the cache is empty or the key is not found.
+func (s *SessionVars) GetPrepareStmtDedupCache(key string) any {
+	if s.prepareStmtDedupCache == nil {
+		return nil
+	}
+	v, _ := s.prepareStmtDedupCache.Get(planCacheStmtKey(key))
+	return v
+}
+
+// SetPrepareStmtDedupCache stores a PrepareStmtCacheEntry under the given key.
+// The cache is lazily initialized and bounded by SessionPlanCacheSize (LRU eviction).
+func (s *SessionVars) SetPrepareStmtDedupCache(key string, val any) {
+	if s.prepareStmtDedupCache == nil {
+		s.prepareStmtDedupCache = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
+	}
+	s.prepareStmtDedupCache.Put(planCacheStmtKey(key), val)
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
