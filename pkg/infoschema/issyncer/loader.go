@@ -483,12 +483,10 @@ func (*Loader) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 	return allResourceGroups, nil
 }
 
-func (*Loader) fetchMaskingPolicies(m meta.Reader) ([]*model.MaskingPolicyInfo, error) {
-	allPolicies, err := m.ListMaskingPolicies()
-	if err != nil {
-		return nil, err
-	}
-	return allPolicies, nil
+func (*Loader) fetchMaskingPolicies(_ meta.Reader) ([]*model.MaskingPolicyInfo, error) {
+	// Masking policies are loaded lazily from mysql.tidb_masking_policy in infoschema.
+	// Keep the loader API shape unchanged for minimal phase4 churn.
+	return nil, nil
 }
 
 func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {

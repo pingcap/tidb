@@ -92,12 +92,8 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return nil, applyCreateOrAlterResourceGroup(b, m, diff)
 	case model.ActionDropResourceGroup:
 		return applyDropResourceGroup(b, m, diff), nil
-	case model.ActionCreateMaskingPolicy:
-		return nil, applyCreateMaskingPolicy(b, m, diff)
-	case model.ActionAlterMaskingPolicy:
-		return applyAlterMaskingPolicy(b, m, diff)
-	case model.ActionDropMaskingPolicy:
-		return applyDropMaskingPolicy(b, diff.SchemaID), nil
+	case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
+		return applyMaskingPolicyChange(b, m, diff)
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
@@ -412,6 +408,11 @@ func applyRecoverTable(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int
 	return tblIDs, nil
 }
 
+func applyMaskingPolicyChange(b *Builder, _ meta.Reader, _ *model.SchemaDiff) ([]int64, error) {
+	b.infoSchema.resetMaskingPolicyCache()
+	return nil, nil
+}
+
 func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSchemaID, ntID int64) error {
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
@@ -614,7 +615,33 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			return nil, errors.Trace(err)
 		}
 	}
+	if needRefreshMaskingPoliciesForTableDiff(diff.Type) {
+		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return tblIDs, nil
+}
+
+func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionCreateMaskingPolicy,
+		model.ActionAlterMaskingPolicy,
+		model.ActionDropMaskingPolicy,
+		model.ActionDropTable,
+		model.ActionDropColumn,
+		model.ActionModifyColumn,
+		model.ActionRenameTable,
+		model.ActionRenameTables:
+		return true
+	default:
+		return false
+	}
+}
+
+func refreshMaskingPoliciesForTableIDs(b *Builder, _ ...int64) error {
+	b.infoSchema.resetMaskingPolicyCache()
+	return nil
 }
 
 // getKeptAllocators get allocators that is not changed by the DDL.
@@ -1004,8 +1031,17 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.ruleBundleMap = maps.Clone(oldIS.ruleBundleMap)
 	b.infoSchema.policyMap = oldIS.ClonePlacementPolicies()
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
-	b.infoSchema.maskingPolicyMap = oldIS.CloneMaskingPoliciesByName()
-	b.infoSchema.maskingPolicyTableColumnMap = oldIS.CloneMaskingPoliciesByTableColumn()
+	oldIS.maskingPolicyMutex.RLock()
+	b.infoSchema.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo, len(oldIS.maskingPolicyTableColumnMap))
+	for tableID, colMap := range oldIS.maskingPolicyTableColumnMap {
+		b.infoSchema.maskingPolicyTableColumnMap[tableID] = maps.Clone(colMap)
+	}
+	b.infoSchema.maskingPoliciesLoaded = oldIS.maskingPoliciesLoaded
+	if oldIS.maskingPoliciesLoadCh != nil {
+		b.infoSchema.maskingPoliciesLoaded = false
+	}
+	b.infoSchema.maskingPoliciesLoadCh = nil
+	oldIS.maskingPolicyMutex.RUnlock()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 
