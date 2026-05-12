@@ -249,7 +249,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace, ast.Substring, ast.Mid, ast.Translate, ast.MaskFull, ast.MaskNull:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0])
 	case ast.MaskPartial:
-		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
+		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[3])
 	case ast.InsertFunc:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[3])
 	case ast.Lpad, ast.Rpad:

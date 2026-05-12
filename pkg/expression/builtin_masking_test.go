@@ -32,10 +32,27 @@ func TestMaskFull(t *testing.T) {
 	require.NoError(t, err)
 	d, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.Equal(t, "XXXX", d.GetString())
+	require.Equal(t, "XXX", d.GetString())
+
+	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{"abc", "*"})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "***", d.GetString())
+
+	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{"abc", "**"})...)
+	require.NoError(t, err)
+	_, err = f.Eval(ctx, chunk.Row{})
+	require.Error(t, err)
 
 	dateInput := types.NewTime(types.FromDate(2020, 1, 2, 0, 0, 0, 0), mysql.TypeDate, 0)
 	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{dateInput})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "1970-01-01", d.GetMysqlTime().String())
+
+	f, err = newFunctionForTest(ctx, ast.MaskFull, primitiveValsToConstants(ctx, []any{dateInput, "*"})...)
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -61,7 +78,7 @@ func TestMaskFull(t *testing.T) {
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.Equal(t, int64(1970), d.GetInt64())
+	require.Equal(t, int64(0), d.GetInt64())
 }
 
 func TestMaskNull(t *testing.T) {
@@ -71,29 +88,48 @@ func TestMaskNull(t *testing.T) {
 	d, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.KindNull, d.Kind())
+
+	f, err = newFunctionForTest(ctx, ast.MaskNull, primitiveValsToConstants(ctx, []any{123})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, d.Kind())
+
+	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decArg := &Constant{Value: types.NewDecimalDatum(types.NewDecFromStringForTest("85000.00")), RetType: decType}
+	f, err = newFunctionForTest(ctx, ast.MaskNull, decArg)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, d.Kind())
 }
 
 func TestMaskPartial(t *testing.T) {
 	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", "*", 1, 3})...)
+	f, err := newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", 1, 2, "*"})...)
 	require.NoError(t, err)
 	d, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "a***ef", d.GetString())
 
-	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", "*", 6, 3})...)
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", 6, 0, "*"})...)
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "abcdef", d.GetString())
 
-	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", "*", 2, 0})...)
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", 0, 0, "*"})...)
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.Equal(t, "abcdef", d.GetString())
+	require.Equal(t, "******", d.GetString())
 
-	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", "**", 1, 2})...)
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", 1, 2, "**"})...)
+	require.NoError(t, err)
+	_, err = f.Eval(ctx, chunk.Row{})
+	require.Error(t, err)
+
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", -1, 0, "*"})...)
 	require.NoError(t, err)
 	_, err = f.Eval(ctx, chunk.Row{})
 	require.Error(t, err)

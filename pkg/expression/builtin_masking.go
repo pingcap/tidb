@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-const maskFullStringDefault = "XXXX"
-
 type maskFullFunctionClass struct {
 	baseFunctionClass
 }
@@ -34,13 +32,21 @@ func (c *maskFullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 	argType := args[0].GetType(ctx.GetEvalCtx())
 	evalTp := argType.EvalType()
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTp, argType.Clone())
+	argTps := []types.EvalType{evalTp}
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETString)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
 	bf.tp = argType.Clone()
 	switch evalTp {
 	case types.ETString:
+		maskArgIsBinary := len(args) == 2 && types.IsBinaryStr(args[1].GetType(ctx.GetEvalCtx()))
+		if types.IsBinaryStr(argType) || maskArgIsBinary {
+			return &builtinMaskFullBinarySig{bf}, nil
+		}
 		return &builtinMaskFullStringSig{bf}, nil
 	case types.ETDatetime, types.ETTimestamp:
 		if !types.IsTypeTime(argType.GetType()) {
@@ -76,11 +82,54 @@ func (b *builtinMaskFullStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinMaskFullStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	_, isNull, err := b.args[0].EvalString(ctx, row)
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	return maskFullStringDefault, false, nil
+	maskRune := "X"
+	if len(b.args) == 2 {
+		mask, isNull, err := b.args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+		maskRunes := []rune(mask)
+		if len(maskRunes) != 1 {
+			return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
+		}
+		maskRune = string(maskRunes[0])
+	}
+	return strings.Repeat(maskRune, len([]rune(str))), false, nil
+}
+
+type builtinMaskFullBinarySig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskFullBinarySig) Clone() builtinFunc {
+	newSig := &builtinMaskFullBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskFullBinarySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", true, err
+	}
+	mask := "X"
+	if len(b.args) == 2 {
+		mask, isNull, err = b.args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+		if len(mask) != 1 {
+			return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
+		}
+	}
+	return strings.Repeat(mask, len(str)), false, nil
 }
 
 type builtinMaskFullTimeSig struct {
@@ -152,7 +201,7 @@ func (b *builtinMaskFullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	if isNull || err != nil {
 		return 0, true, err
 	}
-	return 1970, false, nil
+	return 0, false, nil
 }
 
 type maskNullFunctionClass struct {
@@ -184,10 +233,11 @@ func (c *maskNullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		}
 		return &builtinMaskNullDurationSig{bf}, nil
 	case types.ETInt:
-		if argType.GetType() != mysql.TypeYear {
-			return nil, errIncorrectArgs.GenWithStackByArgs("mask_null")
-		}
 		return &builtinMaskNullIntSig{bf}, nil
+	case types.ETReal:
+		return &builtinMaskNullRealSig{bf}, nil
+	case types.ETDecimal:
+		return &builtinMaskNullDecimalSig{bf}, nil
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("mask_null")
 	}
@@ -289,6 +339,52 @@ func (b *builtinMaskNullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	return 0, true, nil
 }
 
+type builtinMaskNullRealSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskNullRealSig) Clone() builtinFunc {
+	newSig := &builtinMaskNullRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskNullRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	_, _, err := b.args[0].EvalReal(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	// mask_null(col) always return null, so it equal to just check error
+	return 0, true, nil
+}
+
+type builtinMaskNullDecimalSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskNullDecimalSig) Clone() builtinFunc {
+	newSig := &builtinMaskNullDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskNullDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
+	_, isNull, err := b.args[0].EvalDecimal(ctx, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if isNull {
+		return nil, true, nil
+	}
+	return nil, true, nil
+}
+
 type maskPartialFunctionClass struct {
 	baseFunctionClass
 }
@@ -297,13 +393,13 @@ func (c *maskPartialFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
 	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp = argType.Clone()
-	if types.IsBinaryStr(argType) || types.IsBinaryStr(args[1].GetType(ctx.GetEvalCtx())) {
+	if types.IsBinaryStr(argType) || types.IsBinaryStr(args[3].GetType(ctx.GetEvalCtx())) {
 		return &builtinMaskPartialSig{bf}, nil
 	}
 	return &builtinMaskPartialUTF8Sig{bf}, nil
@@ -327,34 +423,32 @@ func (b *builtinMaskPartialSig) evalString(ctx EvalContext, row chunk.Row) (stri
 	if isNull || err != nil {
 		return "", true, err
 	}
-	pad, isNull, err := b.args[1].EvalString(ctx, row)
+	preserveLeft, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	start, isNull, err := b.args[2].EvalInt(ctx, row)
+	preserveRight, isNull, err := b.args[2].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	length, isNull, err := b.args[3].EvalInt(ctx, row)
+	pad, isNull, err := b.args[3].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if start < 0 {
+	if preserveLeft < 0 || preserveRight < 0 {
 		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_partial")
 	}
 	if len(pad) != 1 {
 		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_partial")
 	}
 	total := int64(len(str))
-	if length <= 0 || start >= total {
+	if preserveLeft+preserveRight >= total {
 		return str, false, nil
 	}
-	end := start + length
-	if end > total {
-		end = total
-	}
-	maskLen := int(end - start)
-	return str[:start] + strings.Repeat(pad, maskLen) + str[end:], false, nil
+	maskLen := int(total - preserveLeft - preserveRight)
+	leftEnd := int(preserveLeft)
+	rightStart := int(total - preserveRight)
+	return str[:leftEnd] + strings.Repeat(pad, maskLen) + str[rightStart:], false, nil
 }
 
 type builtinMaskPartialUTF8Sig struct {
@@ -375,19 +469,19 @@ func (b *builtinMaskPartialUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return "", true, err
 	}
-	pad, isNull, err := b.args[1].EvalString(ctx, row)
+	preserveLeft, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	start, isNull, err := b.args[2].EvalInt(ctx, row)
+	preserveRight, isNull, err := b.args[2].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	length, isNull, err := b.args[3].EvalInt(ctx, row)
+	pad, isNull, err := b.args[3].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if start < 0 {
+	if preserveLeft < 0 || preserveRight < 0 {
 		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_partial")
 	}
 	padRunes := []rune(pad)
@@ -396,16 +490,14 @@ func (b *builtinMaskPartialUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (
 	}
 	runes := []rune(str)
 	total := int64(len(runes))
-	if length <= 0 || start >= total {
+	if preserveLeft+preserveRight >= total {
 		return str, false, nil
 	}
-	end := start + length
-	if end > total {
-		end = total
-	}
-	maskLen := int(end - start)
+	maskLen := int(total - preserveLeft - preserveRight)
+	leftEnd := int(preserveLeft)
+	rightStart := int(total - preserveRight)
 	maskChar := string(padRunes[0])
-	return string(runes[:start]) + strings.Repeat(maskChar, maskLen) + string(runes[end:]), false, nil
+	return string(runes[:leftEnd]) + strings.Repeat(maskChar, maskLen) + string(runes[rightStart:]), false, nil
 }
 
 type maskDateFunctionClass struct {

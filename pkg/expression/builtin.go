@@ -663,7 +663,7 @@ var funcs = map[string]functionClass{
 	ast.Greatest: &greatestFunctionClass{baseFunctionClass{ast.Greatest, 2, -1}},
 	ast.Least:    &leastFunctionClass{baseFunctionClass{ast.Least, 2, -1}},
 	ast.Interval: &intervalFunctionClass{baseFunctionClass{ast.Interval, 2, -1}},
-	ast.MaskFull:    &maskFullFunctionClass{baseFunctionClass{ast.MaskFull, 1, 1}},
+	ast.MaskFull:    &maskFullFunctionClass{baseFunctionClass{ast.MaskFull, 1, 2}},
 	ast.MaskPartial: &maskPartialFunctionClass{baseFunctionClass{ast.MaskPartial, 4, 4}},
 	ast.MaskNull:    &maskNullFunctionClass{baseFunctionClass{ast.MaskNull, 1, 1}},
 	ast.MaskDate:    &maskDateFunctionClass{baseFunctionClass{ast.MaskDate, 2, 2}},
