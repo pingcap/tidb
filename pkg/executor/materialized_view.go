@@ -1819,34 +1819,21 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	skipDeleteByCheckpoint := lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
 	if !skipDeleteByCheckpoint && safePurgeTSO > 0 {
-		throttleCfg, err := loadMLogPurgeThrottleConfig(kctx, e.Ctx().GetSessionVars())
-		if err != nil {
-			return finalizeFailure(err)
-		}
-		throttleDeadline, err := deriveMLogPurgeThrottleDeadline(
+		throttlePlan = tryBuildMLogPurgeThrottlePlanBestEffort(
 			kctx,
+			e.Ctx().GetSessionVars(),
 			scheduleEvalSctx,
 			purgeSctx,
-			mlogInfo,
-			isInternalSQL,
-			schemaName.O,
-			mlogName.O,
-			lockedNextTime,
-		)
-		if err != nil {
-			return finalizeFailure(err)
-		}
-		throttlePlan = tryBuildMLogPurgeThrottlePlan(
-			kctx,
 			countSQLExec,
 			countSessVars,
+			mlogInfo,
+			isInternalSQL,
 			schemaName.O,
 			mlogName.O,
 			lockedLastPurgedTSO,
 			lockedLastPurgedTSOReady,
 			safePurgeTSO,
-			throttleDeadline,
-			throttleCfg,
+			lockedNextTime,
 		)
 		if throttlePlan != nil {
 			effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
@@ -1876,9 +1863,15 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			}
 			if throttlePlan != nil {
 				if sleepErr := throttlePlan.maybeSleep(kctx, deleteLoopStart, totalPurgeRows); sleepErr != nil {
-					_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
-					txnFinished = true
-					return finalizeFailure(sleepErr)
+					logutil.BgLogger().Warn(
+						"purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge",
+						zap.String("schemaName", schemaName.O),
+						zap.String("tableName", mlogName.O),
+						zap.Uint64("safePurgeTSO", safePurgeTSO),
+						zap.Error(sleepErr),
+					)
+					throttlePlan = nil
+					effectiveBatchSize = batchSize
 				}
 			}
 		}
@@ -2274,6 +2267,11 @@ func deriveMLogPurgeThrottleDeadline(
 	mlogName string,
 	fallbackNextTime *time.Time,
 ) (*time.Time, error) {
+	failpoint.Inject("mockMLogPurgeAdaptiveDeadlineErr", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(nil, errors.New("mock adaptive purge deadline error"))
+		}
+	})
 	var adaptiveDeadline *time.Time
 	now := time.Now().UTC()
 	if mlogPurgeAdaptiveMaxBudget > 0 {
@@ -2373,6 +2371,67 @@ func tryBuildMLogPurgeThrottlePlan(
 		pendingRows:        pendingRows,
 		effectiveBatchSize: effectiveBatchSize,
 	}
+}
+
+func tryBuildMLogPurgeThrottlePlanBestEffort(
+	kctx context.Context,
+	sessVars *variable.SessionVars,
+	evalSctx sessionctx.Context,
+	templateSctx sessionctx.Context,
+	sqlExec sqlexec.SQLExecutor,
+	countSessVars *variable.SessionVars,
+	mlogInfo *model.MaterializedViewLogInfo,
+	isInternalSQL bool,
+	schemaName string,
+	mlogName string,
+	lastPurgedTSO uint64,
+	hasLastPurgedTSO bool,
+	safePurgeTSO uint64,
+	fallbackNextTime *time.Time,
+) *mlogPurgeThrottlePlan {
+	throttleCfg, err := loadMLogPurgeThrottleConfig(kctx, sessVars)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"purge materialized view log: failed to load adaptive throttle config, fallback to unthrottled purge",
+			zap.String("schemaName", schemaName),
+			zap.String("tableName", mlogName),
+			zap.Uint64("safePurgeTSO", safePurgeTSO),
+			zap.Error(err),
+		)
+		return nil
+	}
+	throttleDeadline, err := deriveMLogPurgeThrottleDeadline(
+		kctx,
+		evalSctx,
+		templateSctx,
+		mlogInfo,
+		isInternalSQL,
+		schemaName,
+		mlogName,
+		fallbackNextTime,
+	)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"purge materialized view log: failed to derive adaptive throttle deadline, fallback to unthrottled purge",
+			zap.String("schemaName", schemaName),
+			zap.String("tableName", mlogName),
+			zap.Uint64("safePurgeTSO", safePurgeTSO),
+			zap.Error(err),
+		)
+		return nil
+	}
+	return tryBuildMLogPurgeThrottlePlan(
+		kctx,
+		sqlExec,
+		countSessVars,
+		schemaName,
+		mlogName,
+		lastPurgedTSO,
+		hasLastPurgedTSO,
+		safePurgeTSO,
+		throttleDeadline,
+		throttleCfg,
+	)
 }
 
 func calcMLogPurgeAdaptiveBatchSize(targetRate float64) int64 {
@@ -2487,6 +2546,11 @@ func (p *mlogPurgeThrottlePlan) maybeSleep(
 	start time.Time,
 	totalDeletedRows int64,
 ) error {
+	failpoint.Inject("mockMLogPurgeAdaptiveSleepErr", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(errors.New("mock adaptive purge sleep error"))
+		}
+	})
 	if p == nil || p.targetRate <= 0 || totalDeletedRows <= 0 {
 		return nil
 	}
