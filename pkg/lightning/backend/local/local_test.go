@@ -2531,7 +2531,6 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	require.Same(t, ctx, pdClientCtx)
 	require.ErrorContains(t, err, context.Canceled.Error())
 	require.Nil(t, b.tikvCli)
-
 }
 
 type mockStoreHelper struct{}
