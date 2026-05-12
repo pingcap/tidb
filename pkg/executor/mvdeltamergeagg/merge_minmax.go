@@ -358,6 +358,34 @@ func cmpFloat64(a, b float64) int {
 	}
 }
 
+func redactUint64Value(v uint64) string {
+	return redact.Value(strconv.FormatUint(v, 10))
+}
+
+func redactInt64Value(v int64) string {
+	return redact.Value(strconv.FormatInt(v, 10))
+}
+
+func redactFloat32Value(v float32) string {
+	return redact.Value(strconv.FormatFloat(float64(v), 'g', -1, 32))
+}
+
+func redactFloat64Value(v float64) string {
+	return redact.Value(strconv.FormatFloat(v, 'g', -1, 64))
+}
+
+func redactDecimalValue(v *types.MyDecimal) string {
+	return redact.Value(v.String())
+}
+
+func redactTimeValue(v types.Time) string {
+	return redact.Value(v.String())
+}
+
+func redactDurationValue(v int64) string {
+	return redactInt64Value(v)
+}
+
 type minMaxIntMerger struct {
 	minMaxMergerBase
 }
@@ -456,8 +484,8 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
-					zap.String("add_val", redact.Value(strconv.FormatInt(addedVals[rowIdx], 10))),
-					zap.String("remove_val", redact.Value(strconv.FormatInt(removedVals[rowIdx], 10))),
+					zap.String("add_val", redactInt64Value(addedVals[rowIdx])),
+					zap.String("remove_val", redactInt64Value(removedVals[rowIdx])),
 				)
 				return errors.Errorf(
 					"invalid min/max int fast-path state (remove-dominant without old value) at row %d",
@@ -473,9 +501,9 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
-					zap.String("old_val", redact.Value(strconv.FormatInt(oldVals[rowIdx], 10))),
-					zap.String("add_val", redact.Value(strconv.FormatInt(addedVals[rowIdx], 10))),
-					zap.String("remove_val", redact.Value(strconv.FormatInt(removedVals[rowIdx], 10))),
+					zap.String("old_val", redactInt64Value(oldVals[rowIdx])),
+					zap.String("add_val", redactInt64Value(addedVals[rowIdx])),
+					zap.String("remove_val", redactInt64Value(removedVals[rowIdx])),
 				)
 				return errors.Errorf(
 					"invalid min/max int fast-path state (remove-dominant outranks old value) at row %d",
@@ -582,10 +610,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 					decision = minMaxDecisionRecompute
 				} else {
 					cmpOld := cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
-					if !m.isMax {
-						cmpOld = -cmpOld
-					}
-					if cmpOld > 0 {
+					if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 						decision = minMaxDecisionRecompute
 					}
 				}
@@ -595,25 +620,39 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 				decision = minMaxDecisionUseAdded
 			} else {
 				cmpOld := cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
-				if !m.isMax {
-					cmpOld = -cmpOld
-				}
-				if cmpOld > 0 {
+				if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 					decision = minMaxDecisionUseAdded
 				}
 			}
 		} else {
 			if !oldExists {
+				logutil.BgLogger().Error(
+					"invalid min/max uint fast-path state (remove-dominant without old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("add_val", redactUint64Value(addedVals[rowIdx])),
+					zap.String("remove_val", redactUint64Value(removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max uint fast-path state (remove-dominant without old value) at row %d",
 					rowIdx,
 				)
 			}
 			cmpOld := cmp.Compare(removedVals[rowIdx], oldVals[rowIdx])
-			if !m.isMax {
-				cmpOld = -cmpOld
-			}
-			if cmpOld > 0 {
+			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+				logutil.BgLogger().Error(
+					"invalid min/max uint fast-path state (remove-dominant outranks old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int("cmp_old", cmpOld),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("old_val", redactUint64Value(oldVals[rowIdx])),
+					zap.String("add_val", redactUint64Value(addedVals[rowIdx])),
+					zap.String("remove_val", redactUint64Value(removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max uint fast-path state (remove-dominant outranks old value) at row %d",
 					rowIdx,
@@ -719,10 +758,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 					decision = minMaxDecisionRecompute
 				} else {
 					cmpOld := cmpFloat32(addedVals[rowIdx], oldVals[rowIdx])
-					if !m.isMax {
-						cmpOld = -cmpOld
-					}
-					if cmpOld > 0 {
+					if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 						decision = minMaxDecisionRecompute
 					}
 				}
@@ -732,25 +768,39 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 				decision = minMaxDecisionUseAdded
 			} else {
 				cmpOld := cmpFloat32(addedVals[rowIdx], oldVals[rowIdx])
-				if !m.isMax {
-					cmpOld = -cmpOld
-				}
-				if cmpOld > 0 {
+				if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 					decision = minMaxDecisionUseAdded
 				}
 			}
 		} else {
 			if !oldExists {
+				logutil.BgLogger().Error(
+					"invalid min/max float32 fast-path state (remove-dominant without old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("add_val", redactFloat32Value(addedVals[rowIdx])),
+					zap.String("remove_val", redactFloat32Value(removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max float32 fast-path state (remove-dominant without old value) at row %d",
 					rowIdx,
 				)
 			}
 			cmpOld := cmpFloat32(removedVals[rowIdx], oldVals[rowIdx])
-			if !m.isMax {
-				cmpOld = -cmpOld
-			}
-			if cmpOld > 0 {
+			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+				logutil.BgLogger().Error(
+					"invalid min/max float32 fast-path state (remove-dominant outranks old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int("cmp_old", cmpOld),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("old_val", redactFloat32Value(oldVals[rowIdx])),
+					zap.String("add_val", redactFloat32Value(addedVals[rowIdx])),
+					zap.String("remove_val", redactFloat32Value(removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max float32 fast-path state (remove-dominant outranks old value) at row %d",
 					rowIdx,
@@ -856,10 +906,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 					decision = minMaxDecisionRecompute
 				} else {
 					cmpOld := cmpFloat64(addedVals[rowIdx], oldVals[rowIdx])
-					if !m.isMax {
-						cmpOld = -cmpOld
-					}
-					if cmpOld > 0 {
+					if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 						decision = minMaxDecisionRecompute
 					}
 				}
@@ -869,25 +916,39 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 				decision = minMaxDecisionUseAdded
 			} else {
 				cmpOld := cmpFloat64(addedVals[rowIdx], oldVals[rowIdx])
-				if !m.isMax {
-					cmpOld = -cmpOld
-				}
-				if cmpOld > 0 {
+				if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 					decision = minMaxDecisionUseAdded
 				}
 			}
 		} else {
 			if !oldExists {
+				logutil.BgLogger().Error(
+					"invalid min/max float64 fast-path state (remove-dominant without old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("add_val", redactFloat64Value(addedVals[rowIdx])),
+					zap.String("remove_val", redactFloat64Value(removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max float64 fast-path state (remove-dominant without old value) at row %d",
 					rowIdx,
 				)
 			}
 			cmpOld := cmpFloat64(removedVals[rowIdx], oldVals[rowIdx])
-			if !m.isMax {
-				cmpOld = -cmpOld
-			}
-			if cmpOld > 0 {
+			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+				logutil.BgLogger().Error(
+					"invalid min/max float64 fast-path state (remove-dominant outranks old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int("cmp_old", cmpOld),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("old_val", redactFloat64Value(oldVals[rowIdx])),
+					zap.String("add_val", redactFloat64Value(addedVals[rowIdx])),
+					zap.String("remove_val", redactFloat64Value(removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max float64 fast-path state (remove-dominant outranks old value) at row %d",
 					rowIdx,
@@ -993,10 +1054,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 					decision = minMaxDecisionRecompute
 				} else {
 					cmpOld := addedVals[rowIdx].Compare(&oldVals[rowIdx])
-					if !m.isMax {
-						cmpOld = -cmpOld
-					}
-					if cmpOld > 0 {
+					if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 						decision = minMaxDecisionRecompute
 					}
 				}
@@ -1006,25 +1064,39 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 				decision = minMaxDecisionUseAdded
 			} else {
 				cmpOld := addedVals[rowIdx].Compare(&oldVals[rowIdx])
-				if !m.isMax {
-					cmpOld = -cmpOld
-				}
-				if cmpOld > 0 {
+				if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 					decision = minMaxDecisionUseAdded
 				}
 			}
 		} else {
 			if !oldExists {
+				logutil.BgLogger().Error(
+					"invalid min/max decimal fast-path state (remove-dominant without old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("add_val", redactDecimalValue(&addedVals[rowIdx])),
+					zap.String("remove_val", redactDecimalValue(&removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max decimal fast-path state (remove-dominant without old value) at row %d",
 					rowIdx,
 				)
 			}
 			cmpOld := removedVals[rowIdx].Compare(&oldVals[rowIdx])
-			if !m.isMax {
-				cmpOld = -cmpOld
-			}
-			if cmpOld > 0 {
+			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+				logutil.BgLogger().Error(
+					"invalid min/max decimal fast-path state (remove-dominant outranks old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int("cmp_old", cmpOld),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("old_val", redactDecimalValue(&oldVals[rowIdx])),
+					zap.String("add_val", redactDecimalValue(&addedVals[rowIdx])),
+					zap.String("remove_val", redactDecimalValue(&removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max decimal fast-path state (remove-dominant outranks old value) at row %d",
 					rowIdx,
@@ -1130,10 +1202,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 					decision = minMaxDecisionRecompute
 				} else {
 					cmpOld := addedVals[rowIdx].Compare(oldVals[rowIdx])
-					if !m.isMax {
-						cmpOld = -cmpOld
-					}
-					if cmpOld > 0 {
+					if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 						decision = minMaxDecisionRecompute
 					}
 				}
@@ -1143,25 +1212,39 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 				decision = minMaxDecisionUseAdded
 			} else {
 				cmpOld := addedVals[rowIdx].Compare(oldVals[rowIdx])
-				if !m.isMax {
-					cmpOld = -cmpOld
-				}
-				if cmpOld > 0 {
+				if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 					decision = minMaxDecisionUseAdded
 				}
 			}
 		} else {
 			if !oldExists {
+				logutil.BgLogger().Error(
+					"invalid min/max time fast-path state (remove-dominant without old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("add_val", redactTimeValue(addedVals[rowIdx])),
+					zap.String("remove_val", redactTimeValue(removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max time fast-path state (remove-dominant without old value) at row %d",
 					rowIdx,
 				)
 			}
 			cmpOld := removedVals[rowIdx].Compare(oldVals[rowIdx])
-			if !m.isMax {
-				cmpOld = -cmpOld
-			}
-			if cmpOld > 0 {
+			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+				logutil.BgLogger().Error(
+					"invalid min/max time fast-path state (remove-dominant outranks old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int("cmp_old", cmpOld),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("old_val", redactTimeValue(oldVals[rowIdx])),
+					zap.String("add_val", redactTimeValue(addedVals[rowIdx])),
+					zap.String("remove_val", redactTimeValue(removedVals[rowIdx])),
+				)
 				return errors.Errorf(
 					"invalid min/max time fast-path state (remove-dominant outranks old value) at row %d",
 					rowIdx,
@@ -1267,10 +1350,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 					decision = minMaxDecisionRecompute
 				} else {
 					cmpOld := cmp.Compare(int64(addedVals[rowIdx]), int64(oldVals[rowIdx]))
-					if !m.isMax {
-						cmpOld = -cmpOld
-					}
-					if cmpOld > 0 {
+					if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 						decision = minMaxDecisionRecompute
 					}
 				}
@@ -1280,25 +1360,39 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 				decision = minMaxDecisionUseAdded
 			} else {
 				cmpOld := cmp.Compare(int64(addedVals[rowIdx]), int64(oldVals[rowIdx]))
-				if !m.isMax {
-					cmpOld = -cmpOld
-				}
-				if cmpOld > 0 {
+				if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 					decision = minMaxDecisionUseAdded
 				}
 			}
 		} else {
 			if !oldExists {
+				logutil.BgLogger().Error(
+					"invalid min/max duration fast-path state (remove-dominant without old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("add_val", redactDurationValue(int64(addedVals[rowIdx]))),
+					zap.String("remove_val", redactDurationValue(int64(removedVals[rowIdx]))),
+				)
 				return errors.Errorf(
 					"invalid min/max duration fast-path state (remove-dominant without old value) at row %d",
 					rowIdx,
 				)
 			}
 			cmpOld := cmp.Compare(int64(removedVals[rowIdx]), int64(oldVals[rowIdx]))
-			if !m.isMax {
-				cmpOld = -cmpOld
-			}
-			if cmpOld > 0 {
+			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+				logutil.BgLogger().Error(
+					"invalid min/max duration fast-path state (remove-dominant outranks old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int("cmp_old", cmpOld),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("old_val", redactDurationValue(int64(oldVals[rowIdx]))),
+					zap.String("add_val", redactDurationValue(int64(addedVals[rowIdx]))),
+					zap.String("remove_val", redactDurationValue(int64(removedVals[rowIdx]))),
+				)
 				return errors.Errorf(
 					"invalid min/max duration fast-path state (remove-dominant outranks old value) at row %d",
 					rowIdx,
@@ -1411,10 +1505,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 					decision = minMaxDecisionRecompute
 				} else {
 					cmpOld := m.collator.Compare(addVal, oldVal)
-					if !m.isMax {
-						cmpOld = -cmpOld
-					}
-					if cmpOld > 0 {
+					if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 						decision = minMaxDecisionRecompute
 					}
 				}
@@ -1424,25 +1515,39 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 				decision = minMaxDecisionUseAdded
 			} else {
 				cmpOld := m.collator.Compare(addVal, oldVal)
-				if !m.isMax {
-					cmpOld = -cmpOld
-				}
-				if cmpOld > 0 {
+				if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 					decision = minMaxDecisionUseAdded
 				}
 			}
 		} else {
 			if !oldExists {
+				logutil.BgLogger().Error(
+					"invalid min/max string fast-path state (remove-dominant without old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("add_val", redact.Value(addVal)),
+					zap.String("remove_val", redact.Value(removeVal)),
+				)
 				return errors.Errorf(
 					"invalid min/max string fast-path state (remove-dominant without old value) at row %d",
 					rowIdx,
 				)
 			}
 			cmpOld := m.collator.Compare(removeVal, oldVal)
-			if !m.isMax {
-				cmpOld = -cmpOld
-			}
-			if cmpOld > 0 {
+			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+				logutil.BgLogger().Error(
+					"invalid min/max string fast-path state (remove-dominant outranks old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int("cmp_old", cmpOld),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("old_val", redact.Value(oldVal)),
+					zap.String("add_val", redact.Value(addVal)),
+					zap.String("remove_val", redact.Value(removeVal)),
+				)
 				return errors.Errorf(
 					"invalid min/max string fast-path state (remove-dominant outranks old value) at row %d",
 					rowIdx,
