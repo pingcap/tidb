@@ -120,7 +120,11 @@ func ValidateFTSSearchStringForLikeFallback(searchText string, modifier ast.Full
 	isBoolean := modifier.IsBooleanMode()
 	for _, token := range strings.Fields(searchText) {
 		body := token
-		if isBoolean && (body[0] == '+' || body[0] == '-') {
+		// strings.Fields never returns an empty token (consecutive whitespace
+		// is collapsed), so body[0] is safe today. Keep the len(body) > 0
+		// guard explicit so the indexing is obviously bounded and the check
+		// stays correct if the tokenization ever changes.
+		if isBoolean && len(body) > 0 && (body[0] == '+' || body[0] == '-') {
 			body = body[1:]
 		}
 		if body == "" {
