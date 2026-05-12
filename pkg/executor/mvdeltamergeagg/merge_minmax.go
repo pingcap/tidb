@@ -16,6 +16,7 @@ package mvdeltamergeagg
 
 import (
 	"cmp"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -23,6 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
+	"go.uber.org/zap"
 )
 
 func (e *Exec) buildMinMaxMerger(
@@ -277,35 +281,37 @@ func (m *minMaxMergerBase) resolveColumns(
 	return
 }
 
-func (*minMaxMergerBase) rowCounts(rowIdx int, countCol, addedCntCol, removedCntCol *chunk.Column) (shouldExist bool, addedCnt, removedCnt int64, err error) {
-	finalCnt, err := readNonNegativeCount(countCol, rowIdx)
-	if err != nil {
-		return false, 0, 0, err
+func (*minMaxMergerBase) validateCountColumnsNotNull(numRows int, countCol, addedCntCol, removedCntCol *chunk.Column) error {
+	if rowIdx := firstNullRow(countCol, numRows); rowIdx >= 0 {
+		return errors.Errorf("count is null at row %d", rowIdx)
+	}
+	if rowIdx := firstNullRow(addedCntCol, numRows); rowIdx >= 0 {
+		return errors.Errorf("count is null at row %d", rowIdx)
+	}
+	if rowIdx := firstNullRow(removedCntCol, numRows); rowIdx >= 0 {
+		return errors.Errorf("count is null at row %d", rowIdx)
+	}
+	return nil
+}
+
+func (*minMaxMergerBase) rowCounts(rowIdx int, countVals, addedCntVals, removedCntVals []int64) (shouldExist bool, addedCnt, removedCnt int64, err error) {
+	finalCnt := countVals[rowIdx]
+	if finalCnt < 0 {
+		return false, 0, 0, errors.Errorf("count becomes negative (%d) at row %d", finalCnt, rowIdx)
 	}
 	if finalCnt == 0 {
 		return false, 0, 0, nil
 	}
-	addedCnt, err = readNonNegativeCount(addedCntCol, rowIdx)
-	if err != nil {
-		return
+	addedCnt = addedCntVals[rowIdx]
+	if addedCnt < 0 {
+		return false, 0, 0, errors.Errorf("count becomes negative (%d) at row %d", addedCnt, rowIdx)
 	}
-	removedCnt, err = readNonNegativeCount(removedCntCol, rowIdx)
-	if err != nil {
-		return
+	removedCnt = removedCntVals[rowIdx]
+	if removedCnt < 0 {
+		return false, 0, 0, errors.Errorf("count becomes negative (%d) at row %d", removedCnt, rowIdx)
 	}
 	shouldExist = true
 	return
-}
-
-func readNonNegativeCount(col *chunk.Column, rowIdx int) (int64, error) {
-	if col.IsNull(rowIdx) {
-		return 0, errors.Errorf("count is null at row %d", rowIdx)
-	}
-	v := col.Int64s()[rowIdx]
-	if v < 0 {
-		return 0, errors.Errorf("count becomes negative (%d) at row %d", v, rowIdx)
-	}
-	return v, nil
 }
 
 type minMaxDecision uint8
@@ -313,102 +319,8 @@ type minMaxDecision uint8
 const (
 	minMaxDecisionUseOld minMaxDecision = iota
 	minMaxDecisionUseAdded
-	minMaxDecisionUseNull
 	minMaxDecisionRecompute
 )
-
-func chooseDeltaSource(isMax bool, addExists, delExists bool, cmpAddDel int) (deltaExists, addIsDelta, delIsDelta, chooseAdded bool) {
-	switch {
-	case addExists && delExists:
-		switch {
-		case cmpAddDel == 0:
-			return true, true, true, true
-		case cmpAddDel > 0:
-			if isMax {
-				return true, true, false, true
-			}
-			return true, false, true, false
-		default:
-			if isMax {
-				return true, false, true, false
-			}
-			return true, true, false, true
-		}
-	case addExists:
-		return true, true, false, true
-	case delExists:
-		return true, false, true, false
-	default:
-		return false, false, false, false
-	}
-}
-
-func decideMinMaxFast(
-	isMax bool,
-	oldExists bool,
-	addIsDelta bool,
-	delIsDelta bool,
-	cmpDeltaOld int,
-	addedCnt int64,
-	removedCnt int64,
-) minMaxDecision {
-	deltaExists := addIsDelta || delIsDelta
-	if !oldExists {
-		if !deltaExists {
-			return minMaxDecisionRecompute
-		}
-		// With no old value, a delete-only dominator cannot produce a valid fast result.
-		if !addIsDelta {
-			return minMaxDecisionRecompute
-		}
-		// Dominator may disappear when added and removed are tied on value.
-		if delIsDelta && addedCnt <= removedCnt {
-			return minMaxDecisionRecompute
-		}
-		return minMaxDecisionUseAdded
-	}
-	if !deltaExists {
-		return minMaxDecisionUseOld
-	}
-
-	if isMax {
-		switch {
-		case cmpDeltaOld < 0:
-			return minMaxDecisionUseOld
-		case cmpDeltaOld > 0:
-			if !delIsDelta {
-				return minMaxDecisionUseAdded
-			}
-			if addIsDelta && addedCnt > removedCnt {
-				return minMaxDecisionUseAdded
-			}
-			return minMaxDecisionRecompute
-		default:
-			if delIsDelta && (!addIsDelta || removedCnt > addedCnt) {
-				return minMaxDecisionRecompute
-			}
-			return minMaxDecisionUseOld
-		}
-	}
-
-	switch {
-	case cmpDeltaOld > 0:
-		return minMaxDecisionUseOld
-	case cmpDeltaOld < 0:
-		if !delIsDelta {
-			return minMaxDecisionUseAdded
-		}
-		if addIsDelta && addedCnt > removedCnt {
-			return minMaxDecisionUseAdded
-		}
-		return minMaxDecisionRecompute
-	default:
-		if delIsDelta && (!addIsDelta || removedCnt > addedCnt) {
-			return minMaxDecisionRecompute
-		}
-		return minMaxDecisionUseOld
-	}
-}
 
 func prepareMinMaxRecomputeRows(workerData *mvMergeAggWorkerData, mappingIdx int) ([]int, error) {
 	if workerData == nil {
@@ -463,6 +375,12 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 		return err
 	}
 	numRows := input.NumRows()
+	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	addedCntVals := addedCntCol.Int64s()
+	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeInt64(numRows, false)
 	resultVals := resultCol.Int64s()
@@ -470,7 +388,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 	addedVals := addedCol.Int64s()
 	removedVals := removedCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
 		if err != nil {
 			return err
 		}
@@ -480,23 +398,96 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 		}
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
-		delExists := !removedCol.IsNull(rowIdx)
+		removeExists := !removedCol.IsNull(rowIdx)
 
-		cmpAddDel := 0
-		if addExists && delExists {
-			cmpAddDel = cmp.Compare(addedVals[rowIdx], removedVals[rowIdx])
-		}
-		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
-		cmpDeltaOld := 0
-		if oldExists && deltaExists {
-			if chooseAdded {
-				cmpDeltaOld = cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
+		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		chooseAddRemove := 0
+		// sameExtremumValue means added and removed share the same extremum value.
+		sameExtremumValue := false
+		if addExists != removeExists {
+			if addExists {
+				chooseAddRemove = 1
 			} else {
-				cmpDeltaOld = cmp.Compare(removedVals[rowIdx], oldVals[rowIdx])
+				chooseAddRemove = -1
+			}
+		} else if addExists && removeExists {
+			if m.isMax {
+				chooseAddRemove = cmp.Compare(addedVals[rowIdx], removedVals[rowIdx])
+			} else {
+				chooseAddRemove = cmp.Compare(removedVals[rowIdx], addedVals[rowIdx])
+			}
+			if chooseAddRemove == 0 {
+				chooseAddRemove = cmp.Compare(addedCnt, removedCnt)
+				sameExtremumValue = true
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		decision := minMaxDecisionUseOld
+		if chooseAddRemove == 0 {
+			if sameExtremumValue {
+				// added/removed have the same extremum value and the same count.
+				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
+				// than that value, this value may disappear after merge, and MV-log delta
+				// aggregates do not carry the replacement extremum value.
+				// In this case, recompute is required.
+				if !oldExists {
+					decision = minMaxDecisionRecompute
+				} else {
+					cmpOld := cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
+					if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+						decision = minMaxDecisionRecompute
+					}
+				}
+			}
+		} else if chooseAddRemove > 0 {
+			if !oldExists {
+				decision = minMaxDecisionUseAdded
+			} else {
+				cmpOld := cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
+				if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+					decision = minMaxDecisionUseAdded
+				}
+			}
+		} else {
+			if !oldExists {
+				logutil.BgLogger().Error(
+					"invalid min/max int fast-path state (remove-dominant without old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("add_val", redact.Value(strconv.FormatInt(addedVals[rowIdx], 10))),
+					zap.String("remove_val", redact.Value(strconv.FormatInt(removedVals[rowIdx], 10))),
+				)
+				return errors.Errorf(
+					"invalid min/max int fast-path state (remove-dominant without old value) at row %d",
+					rowIdx,
+				)
+			}
+			cmpOld := cmp.Compare(removedVals[rowIdx], oldVals[rowIdx])
+			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
+				logutil.BgLogger().Error(
+					"invalid min/max int fast-path state (remove-dominant outranks old value)",
+					zap.Int("row", rowIdx),
+					zap.Bool("is_max", m.isMax),
+					zap.Int("cmp_old", cmpOld),
+					zap.Int64("added_cnt", addedCnt),
+					zap.Int64("removed_cnt", removedCnt),
+					zap.String("old_val", redact.Value(strconv.FormatInt(oldVals[rowIdx], 10))),
+					zap.String("add_val", redact.Value(strconv.FormatInt(addedVals[rowIdx], 10))),
+					zap.String("remove_val", redact.Value(strconv.FormatInt(removedVals[rowIdx], 10))),
+				)
+				return errors.Errorf(
+					"invalid min/max int fast-path state (remove-dominant outranks old value) at row %d",
+					rowIdx,
+				)
+			}
+			if cmpOld == 0 {
+				decision = minMaxDecisionRecompute
+			}
+		}
+
+		switch decision {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -504,23 +495,10 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 				resultCol.SetNull(rowIdx, true)
 			}
 		case minMaxDecisionUseAdded:
-			switch {
-			case addExists:
-				resultVals[rowIdx] = addedVals[rowIdx]
-			case delExists:
-				resultVals[rowIdx] = removedVals[rowIdx]
-			default:
-				resultCol.SetNull(rowIdx, true)
-			}
-		case minMaxDecisionUseNull:
-			resultCol.SetNull(rowIdx, true)
+			resultVals[rowIdx] = addedVals[rowIdx]
 		default:
 			recomputeRows = append(recomputeRows, rowIdx)
-			if oldExists {
-				resultVals[rowIdx] = oldVals[rowIdx]
-			} else {
-				resultCol.SetNull(rowIdx, true)
-			}
+			resultCol.SetNull(rowIdx, true)
 		}
 	}
 	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
@@ -545,6 +523,12 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return err
 	}
 	numRows := input.NumRows()
+	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	addedCntVals := addedCntCol.Int64s()
+	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeUint64(numRows, false)
 	resultVals := resultCol.Uint64s()
@@ -552,7 +536,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	addedVals := addedCol.Uint64s()
 	removedVals := removedCol.Uint64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
 		if err != nil {
 			return err
 		}
@@ -562,23 +546,85 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		}
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
-		delExists := !removedCol.IsNull(rowIdx)
+		removeExists := !removedCol.IsNull(rowIdx)
 
-		cmpAddDel := 0
-		if addExists && delExists {
-			cmpAddDel = cmp.Compare(addedVals[rowIdx], removedVals[rowIdx])
-		}
-		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
-		cmpDeltaOld := 0
-		if oldExists && deltaExists {
-			if chooseAdded {
-				cmpDeltaOld = cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
+		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		chooseAddRemove := 0
+		// sameExtremumValue means added and removed share the same extremum value.
+		sameExtremumValue := false
+		if addExists != removeExists {
+			if addExists {
+				chooseAddRemove = 1
 			} else {
-				cmpDeltaOld = cmp.Compare(removedVals[rowIdx], oldVals[rowIdx])
+				chooseAddRemove = -1
+			}
+		} else if addExists && removeExists {
+			if m.isMax {
+				chooseAddRemove = cmp.Compare(addedVals[rowIdx], removedVals[rowIdx])
+			} else {
+				chooseAddRemove = cmp.Compare(removedVals[rowIdx], addedVals[rowIdx])
+			}
+			if chooseAddRemove == 0 {
+				chooseAddRemove = cmp.Compare(addedCnt, removedCnt)
+				sameExtremumValue = true
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		decision := minMaxDecisionUseOld
+		if chooseAddRemove == 0 {
+			if sameExtremumValue {
+				// added/removed have the same extremum value and the same count.
+				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
+				// than that value, this value may disappear after merge, and MV-log delta
+				// aggregates do not carry the replacement extremum value.
+				// In this case, recompute is required.
+				if !oldExists {
+					decision = minMaxDecisionRecompute
+				} else {
+					cmpOld := cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
+					if !m.isMax {
+						cmpOld = -cmpOld
+					}
+					if cmpOld > 0 {
+						decision = minMaxDecisionRecompute
+					}
+				}
+			}
+		} else if chooseAddRemove > 0 {
+			if !oldExists {
+				decision = minMaxDecisionUseAdded
+			} else {
+				cmpOld := cmp.Compare(addedVals[rowIdx], oldVals[rowIdx])
+				if !m.isMax {
+					cmpOld = -cmpOld
+				}
+				if cmpOld > 0 {
+					decision = minMaxDecisionUseAdded
+				}
+			}
+		} else {
+			if !oldExists {
+				return errors.Errorf(
+					"invalid min/max uint fast-path state (remove-dominant without old value) at row %d",
+					rowIdx,
+				)
+			}
+			cmpOld := cmp.Compare(removedVals[rowIdx], oldVals[rowIdx])
+			if !m.isMax {
+				cmpOld = -cmpOld
+			}
+			if cmpOld > 0 {
+				return errors.Errorf(
+					"invalid min/max uint fast-path state (remove-dominant outranks old value) at row %d",
+					rowIdx,
+				)
+			}
+			if cmpOld == 0 {
+				decision = minMaxDecisionRecompute
+			}
+		}
+
+		switch decision {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -586,23 +632,10 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 				resultCol.SetNull(rowIdx, true)
 			}
 		case minMaxDecisionUseAdded:
-			switch {
-			case addExists:
-				resultVals[rowIdx] = addedVals[rowIdx]
-			case delExists:
-				resultVals[rowIdx] = removedVals[rowIdx]
-			default:
-				resultCol.SetNull(rowIdx, true)
-			}
-		case minMaxDecisionUseNull:
-			resultCol.SetNull(rowIdx, true)
+			resultVals[rowIdx] = addedVals[rowIdx]
 		default:
 			recomputeRows = append(recomputeRows, rowIdx)
-			if oldExists {
-				resultVals[rowIdx] = oldVals[rowIdx]
-			} else {
-				resultCol.SetNull(rowIdx, true)
-			}
+			resultCol.SetNull(rowIdx, true)
 		}
 	}
 	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
@@ -627,6 +660,12 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
+	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	addedCntVals := addedCntCol.Int64s()
+	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeFloat32(numRows, false)
 	resultVals := resultCol.Float32s()
@@ -634,7 +673,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Float32s()
 	removedVals := removedCol.Float32s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
 		if err != nil {
 			return err
 		}
@@ -644,23 +683,85 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		}
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
-		delExists := !removedCol.IsNull(rowIdx)
+		removeExists := !removedCol.IsNull(rowIdx)
 
-		cmpAddDel := 0
-		if addExists && delExists {
-			cmpAddDel = cmpFloat32(addedVals[rowIdx], removedVals[rowIdx])
-		}
-		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
-		cmpDeltaOld := 0
-		if oldExists && deltaExists {
-			if chooseAdded {
-				cmpDeltaOld = cmpFloat32(addedVals[rowIdx], oldVals[rowIdx])
+		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		chooseAddRemove := 0
+		// sameExtremumValue means added and removed share the same extremum value.
+		sameExtremumValue := false
+		if addExists != removeExists {
+			if addExists {
+				chooseAddRemove = 1
 			} else {
-				cmpDeltaOld = cmpFloat32(removedVals[rowIdx], oldVals[rowIdx])
+				chooseAddRemove = -1
+			}
+		} else if addExists && removeExists {
+			if m.isMax {
+				chooseAddRemove = cmpFloat32(addedVals[rowIdx], removedVals[rowIdx])
+			} else {
+				chooseAddRemove = cmpFloat32(removedVals[rowIdx], addedVals[rowIdx])
+			}
+			if chooseAddRemove == 0 {
+				chooseAddRemove = cmp.Compare(addedCnt, removedCnt)
+				sameExtremumValue = true
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		decision := minMaxDecisionUseOld
+		if chooseAddRemove == 0 {
+			if sameExtremumValue {
+				// added/removed have the same extremum value and the same count.
+				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
+				// than that value, this value may disappear after merge, and MV-log delta
+				// aggregates do not carry the replacement extremum value.
+				// In this case, recompute is required.
+				if !oldExists {
+					decision = minMaxDecisionRecompute
+				} else {
+					cmpOld := cmpFloat32(addedVals[rowIdx], oldVals[rowIdx])
+					if !m.isMax {
+						cmpOld = -cmpOld
+					}
+					if cmpOld > 0 {
+						decision = minMaxDecisionRecompute
+					}
+				}
+			}
+		} else if chooseAddRemove > 0 {
+			if !oldExists {
+				decision = minMaxDecisionUseAdded
+			} else {
+				cmpOld := cmpFloat32(addedVals[rowIdx], oldVals[rowIdx])
+				if !m.isMax {
+					cmpOld = -cmpOld
+				}
+				if cmpOld > 0 {
+					decision = minMaxDecisionUseAdded
+				}
+			}
+		} else {
+			if !oldExists {
+				return errors.Errorf(
+					"invalid min/max float32 fast-path state (remove-dominant without old value) at row %d",
+					rowIdx,
+				)
+			}
+			cmpOld := cmpFloat32(removedVals[rowIdx], oldVals[rowIdx])
+			if !m.isMax {
+				cmpOld = -cmpOld
+			}
+			if cmpOld > 0 {
+				return errors.Errorf(
+					"invalid min/max float32 fast-path state (remove-dominant outranks old value) at row %d",
+					rowIdx,
+				)
+			}
+			if cmpOld == 0 {
+				decision = minMaxDecisionRecompute
+			}
+		}
+
+		switch decision {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -668,23 +769,10 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 				resultCol.SetNull(rowIdx, true)
 			}
 		case minMaxDecisionUseAdded:
-			switch {
-			case addExists:
-				resultVals[rowIdx] = addedVals[rowIdx]
-			case delExists:
-				resultVals[rowIdx] = removedVals[rowIdx]
-			default:
-				resultCol.SetNull(rowIdx, true)
-			}
-		case minMaxDecisionUseNull:
-			resultCol.SetNull(rowIdx, true)
+			resultVals[rowIdx] = addedVals[rowIdx]
 		default:
 			recomputeRows = append(recomputeRows, rowIdx)
-			if oldExists {
-				resultVals[rowIdx] = oldVals[rowIdx]
-			} else {
-				resultCol.SetNull(rowIdx, true)
-			}
+			resultCol.SetNull(rowIdx, true)
 		}
 	}
 	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
@@ -709,6 +797,12 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
+	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	addedCntVals := addedCntCol.Int64s()
+	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeFloat64(numRows, false)
 	resultVals := resultCol.Float64s()
@@ -716,7 +810,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Float64s()
 	removedVals := removedCol.Float64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
 		if err != nil {
 			return err
 		}
@@ -726,23 +820,85 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		}
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
-		delExists := !removedCol.IsNull(rowIdx)
+		removeExists := !removedCol.IsNull(rowIdx)
 
-		cmpAddDel := 0
-		if addExists && delExists {
-			cmpAddDel = cmpFloat64(addedVals[rowIdx], removedVals[rowIdx])
-		}
-		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
-		cmpDeltaOld := 0
-		if oldExists && deltaExists {
-			if chooseAdded {
-				cmpDeltaOld = cmpFloat64(addedVals[rowIdx], oldVals[rowIdx])
+		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		chooseAddRemove := 0
+		// sameExtremumValue means added and removed share the same extremum value.
+		sameExtremumValue := false
+		if addExists != removeExists {
+			if addExists {
+				chooseAddRemove = 1
 			} else {
-				cmpDeltaOld = cmpFloat64(removedVals[rowIdx], oldVals[rowIdx])
+				chooseAddRemove = -1
+			}
+		} else if addExists && removeExists {
+			if m.isMax {
+				chooseAddRemove = cmpFloat64(addedVals[rowIdx], removedVals[rowIdx])
+			} else {
+				chooseAddRemove = cmpFloat64(removedVals[rowIdx], addedVals[rowIdx])
+			}
+			if chooseAddRemove == 0 {
+				chooseAddRemove = cmp.Compare(addedCnt, removedCnt)
+				sameExtremumValue = true
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		decision := minMaxDecisionUseOld
+		if chooseAddRemove == 0 {
+			if sameExtremumValue {
+				// added/removed have the same extremum value and the same count.
+				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
+				// than that value, this value may disappear after merge, and MV-log delta
+				// aggregates do not carry the replacement extremum value.
+				// In this case, recompute is required.
+				if !oldExists {
+					decision = minMaxDecisionRecompute
+				} else {
+					cmpOld := cmpFloat64(addedVals[rowIdx], oldVals[rowIdx])
+					if !m.isMax {
+						cmpOld = -cmpOld
+					}
+					if cmpOld > 0 {
+						decision = minMaxDecisionRecompute
+					}
+				}
+			}
+		} else if chooseAddRemove > 0 {
+			if !oldExists {
+				decision = minMaxDecisionUseAdded
+			} else {
+				cmpOld := cmpFloat64(addedVals[rowIdx], oldVals[rowIdx])
+				if !m.isMax {
+					cmpOld = -cmpOld
+				}
+				if cmpOld > 0 {
+					decision = minMaxDecisionUseAdded
+				}
+			}
+		} else {
+			if !oldExists {
+				return errors.Errorf(
+					"invalid min/max float64 fast-path state (remove-dominant without old value) at row %d",
+					rowIdx,
+				)
+			}
+			cmpOld := cmpFloat64(removedVals[rowIdx], oldVals[rowIdx])
+			if !m.isMax {
+				cmpOld = -cmpOld
+			}
+			if cmpOld > 0 {
+				return errors.Errorf(
+					"invalid min/max float64 fast-path state (remove-dominant outranks old value) at row %d",
+					rowIdx,
+				)
+			}
+			if cmpOld == 0 {
+				decision = minMaxDecisionRecompute
+			}
+		}
+
+		switch decision {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -750,23 +906,10 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 				resultCol.SetNull(rowIdx, true)
 			}
 		case minMaxDecisionUseAdded:
-			switch {
-			case addExists:
-				resultVals[rowIdx] = addedVals[rowIdx]
-			case delExists:
-				resultVals[rowIdx] = removedVals[rowIdx]
-			default:
-				resultCol.SetNull(rowIdx, true)
-			}
-		case minMaxDecisionUseNull:
-			resultCol.SetNull(rowIdx, true)
+			resultVals[rowIdx] = addedVals[rowIdx]
 		default:
 			recomputeRows = append(recomputeRows, rowIdx)
-			if oldExists {
-				resultVals[rowIdx] = oldVals[rowIdx]
-			} else {
-				resultCol.SetNull(rowIdx, true)
-			}
+			resultCol.SetNull(rowIdx, true)
 		}
 	}
 	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
@@ -791,6 +934,12 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
+	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	addedCntVals := addedCntCol.Int64s()
+	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeDecimal(numRows, false)
 	resultVals := resultCol.Decimals()
@@ -798,7 +947,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Decimals()
 	removedVals := removedCol.Decimals()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
 		if err != nil {
 			return err
 		}
@@ -808,23 +957,85 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		}
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
-		delExists := !removedCol.IsNull(rowIdx)
+		removeExists := !removedCol.IsNull(rowIdx)
 
-		cmpAddDel := 0
-		if addExists && delExists {
-			cmpAddDel = addedVals[rowIdx].Compare(&removedVals[rowIdx])
-		}
-		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
-		cmpDeltaOld := 0
-		if oldExists && deltaExists {
-			if chooseAdded {
-				cmpDeltaOld = addedVals[rowIdx].Compare(&oldVals[rowIdx])
+		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		chooseAddRemove := 0
+		// sameExtremumValue means added and removed share the same extremum value.
+		sameExtremumValue := false
+		if addExists != removeExists {
+			if addExists {
+				chooseAddRemove = 1
 			} else {
-				cmpDeltaOld = removedVals[rowIdx].Compare(&oldVals[rowIdx])
+				chooseAddRemove = -1
+			}
+		} else if addExists && removeExists {
+			if m.isMax {
+				chooseAddRemove = addedVals[rowIdx].Compare(&removedVals[rowIdx])
+			} else {
+				chooseAddRemove = removedVals[rowIdx].Compare(&addedVals[rowIdx])
+			}
+			if chooseAddRemove == 0 {
+				chooseAddRemove = cmp.Compare(addedCnt, removedCnt)
+				sameExtremumValue = true
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		decision := minMaxDecisionUseOld
+		if chooseAddRemove == 0 {
+			if sameExtremumValue {
+				// added/removed have the same extremum value and the same count.
+				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
+				// than that value, this value may disappear after merge, and MV-log delta
+				// aggregates do not carry the replacement extremum value.
+				// In this case, recompute is required.
+				if !oldExists {
+					decision = minMaxDecisionRecompute
+				} else {
+					cmpOld := addedVals[rowIdx].Compare(&oldVals[rowIdx])
+					if !m.isMax {
+						cmpOld = -cmpOld
+					}
+					if cmpOld > 0 {
+						decision = minMaxDecisionRecompute
+					}
+				}
+			}
+		} else if chooseAddRemove > 0 {
+			if !oldExists {
+				decision = minMaxDecisionUseAdded
+			} else {
+				cmpOld := addedVals[rowIdx].Compare(&oldVals[rowIdx])
+				if !m.isMax {
+					cmpOld = -cmpOld
+				}
+				if cmpOld > 0 {
+					decision = minMaxDecisionUseAdded
+				}
+			}
+		} else {
+			if !oldExists {
+				return errors.Errorf(
+					"invalid min/max decimal fast-path state (remove-dominant without old value) at row %d",
+					rowIdx,
+				)
+			}
+			cmpOld := removedVals[rowIdx].Compare(&oldVals[rowIdx])
+			if !m.isMax {
+				cmpOld = -cmpOld
+			}
+			if cmpOld > 0 {
+				return errors.Errorf(
+					"invalid min/max decimal fast-path state (remove-dominant outranks old value) at row %d",
+					rowIdx,
+				)
+			}
+			if cmpOld == 0 {
+				decision = minMaxDecisionRecompute
+			}
+		}
+
+		switch decision {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -832,23 +1043,10 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 				resultCol.SetNull(rowIdx, true)
 			}
 		case minMaxDecisionUseAdded:
-			switch {
-			case addExists:
-				resultVals[rowIdx] = addedVals[rowIdx]
-			case delExists:
-				resultVals[rowIdx] = removedVals[rowIdx]
-			default:
-				resultCol.SetNull(rowIdx, true)
-			}
-		case minMaxDecisionUseNull:
-			resultCol.SetNull(rowIdx, true)
+			resultVals[rowIdx] = addedVals[rowIdx]
 		default:
 			recomputeRows = append(recomputeRows, rowIdx)
-			if oldExists {
-				resultVals[rowIdx] = oldVals[rowIdx]
-			} else {
-				resultCol.SetNull(rowIdx, true)
-			}
+			resultCol.SetNull(rowIdx, true)
 		}
 	}
 	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
@@ -873,6 +1071,12 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return err
 	}
 	numRows := input.NumRows()
+	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	addedCntVals := addedCntCol.Int64s()
+	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeTime(numRows, false)
 	resultVals := resultCol.Times()
@@ -880,7 +1084,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	addedVals := addedCol.Times()
 	removedVals := removedCol.Times()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
 		if err != nil {
 			return err
 		}
@@ -890,23 +1094,85 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		}
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
-		delExists := !removedCol.IsNull(rowIdx)
+		removeExists := !removedCol.IsNull(rowIdx)
 
-		cmpAddDel := 0
-		if addExists && delExists {
-			cmpAddDel = addedVals[rowIdx].Compare(removedVals[rowIdx])
-		}
-		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
-		cmpDeltaOld := 0
-		if oldExists && deltaExists {
-			if chooseAdded {
-				cmpDeltaOld = addedVals[rowIdx].Compare(oldVals[rowIdx])
+		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		chooseAddRemove := 0
+		// sameExtremumValue means added and removed share the same extremum value.
+		sameExtremumValue := false
+		if addExists != removeExists {
+			if addExists {
+				chooseAddRemove = 1
 			} else {
-				cmpDeltaOld = removedVals[rowIdx].Compare(oldVals[rowIdx])
+				chooseAddRemove = -1
+			}
+		} else if addExists && removeExists {
+			if m.isMax {
+				chooseAddRemove = addedVals[rowIdx].Compare(removedVals[rowIdx])
+			} else {
+				chooseAddRemove = removedVals[rowIdx].Compare(addedVals[rowIdx])
+			}
+			if chooseAddRemove == 0 {
+				chooseAddRemove = cmp.Compare(addedCnt, removedCnt)
+				sameExtremumValue = true
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		decision := minMaxDecisionUseOld
+		if chooseAddRemove == 0 {
+			if sameExtremumValue {
+				// added/removed have the same extremum value and the same count.
+				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
+				// than that value, this value may disappear after merge, and MV-log delta
+				// aggregates do not carry the replacement extremum value.
+				// In this case, recompute is required.
+				if !oldExists {
+					decision = minMaxDecisionRecompute
+				} else {
+					cmpOld := addedVals[rowIdx].Compare(oldVals[rowIdx])
+					if !m.isMax {
+						cmpOld = -cmpOld
+					}
+					if cmpOld > 0 {
+						decision = minMaxDecisionRecompute
+					}
+				}
+			}
+		} else if chooseAddRemove > 0 {
+			if !oldExists {
+				decision = minMaxDecisionUseAdded
+			} else {
+				cmpOld := addedVals[rowIdx].Compare(oldVals[rowIdx])
+				if !m.isMax {
+					cmpOld = -cmpOld
+				}
+				if cmpOld > 0 {
+					decision = minMaxDecisionUseAdded
+				}
+			}
+		} else {
+			if !oldExists {
+				return errors.Errorf(
+					"invalid min/max time fast-path state (remove-dominant without old value) at row %d",
+					rowIdx,
+				)
+			}
+			cmpOld := removedVals[rowIdx].Compare(oldVals[rowIdx])
+			if !m.isMax {
+				cmpOld = -cmpOld
+			}
+			if cmpOld > 0 {
+				return errors.Errorf(
+					"invalid min/max time fast-path state (remove-dominant outranks old value) at row %d",
+					rowIdx,
+				)
+			}
+			if cmpOld == 0 {
+				decision = minMaxDecisionRecompute
+			}
+		}
+
+		switch decision {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -914,23 +1180,10 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 				resultCol.SetNull(rowIdx, true)
 			}
 		case minMaxDecisionUseAdded:
-			switch {
-			case addExists:
-				resultVals[rowIdx] = addedVals[rowIdx]
-			case delExists:
-				resultVals[rowIdx] = removedVals[rowIdx]
-			default:
-				resultCol.SetNull(rowIdx, true)
-			}
-		case minMaxDecisionUseNull:
-			resultCol.SetNull(rowIdx, true)
+			resultVals[rowIdx] = addedVals[rowIdx]
 		default:
 			recomputeRows = append(recomputeRows, rowIdx)
-			if oldExists {
-				resultVals[rowIdx] = oldVals[rowIdx]
-			} else {
-				resultCol.SetNull(rowIdx, true)
-			}
+			resultCol.SetNull(rowIdx, true)
 		}
 	}
 	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
@@ -955,6 +1208,12 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 		return err
 	}
 	numRows := input.NumRows()
+	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	addedCntVals := addedCntCol.Int64s()
+	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeGoDuration(numRows, false)
 	resultVals := resultCol.GoDurations()
@@ -962,7 +1221,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 	addedVals := addedCol.GoDurations()
 	removedVals := removedCol.GoDurations()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
 		if err != nil {
 			return err
 		}
@@ -972,23 +1231,85 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 		}
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
-		delExists := !removedCol.IsNull(rowIdx)
+		removeExists := !removedCol.IsNull(rowIdx)
 
-		cmpAddDel := 0
-		if addExists && delExists {
-			cmpAddDel = cmp.Compare(int64(addedVals[rowIdx]), int64(removedVals[rowIdx]))
-		}
-		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
-		cmpDeltaOld := 0
-		if oldExists && deltaExists {
-			if chooseAdded {
-				cmpDeltaOld = cmp.Compare(int64(addedVals[rowIdx]), int64(oldVals[rowIdx]))
+		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		chooseAddRemove := 0
+		// sameExtremumValue means added and removed share the same extremum value.
+		sameExtremumValue := false
+		if addExists != removeExists {
+			if addExists {
+				chooseAddRemove = 1
 			} else {
-				cmpDeltaOld = cmp.Compare(int64(removedVals[rowIdx]), int64(oldVals[rowIdx]))
+				chooseAddRemove = -1
+			}
+		} else if addExists && removeExists {
+			if m.isMax {
+				chooseAddRemove = cmp.Compare(int64(addedVals[rowIdx]), int64(removedVals[rowIdx]))
+			} else {
+				chooseAddRemove = cmp.Compare(int64(removedVals[rowIdx]), int64(addedVals[rowIdx]))
+			}
+			if chooseAddRemove == 0 {
+				chooseAddRemove = cmp.Compare(addedCnt, removedCnt)
+				sameExtremumValue = true
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		decision := minMaxDecisionUseOld
+		if chooseAddRemove == 0 {
+			if sameExtremumValue {
+				// added/removed have the same extremum value and the same count.
+				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
+				// than that value, this value may disappear after merge, and MV-log delta
+				// aggregates do not carry the replacement extremum value.
+				// In this case, recompute is required.
+				if !oldExists {
+					decision = minMaxDecisionRecompute
+				} else {
+					cmpOld := cmp.Compare(int64(addedVals[rowIdx]), int64(oldVals[rowIdx]))
+					if !m.isMax {
+						cmpOld = -cmpOld
+					}
+					if cmpOld > 0 {
+						decision = minMaxDecisionRecompute
+					}
+				}
+			}
+		} else if chooseAddRemove > 0 {
+			if !oldExists {
+				decision = minMaxDecisionUseAdded
+			} else {
+				cmpOld := cmp.Compare(int64(addedVals[rowIdx]), int64(oldVals[rowIdx]))
+				if !m.isMax {
+					cmpOld = -cmpOld
+				}
+				if cmpOld > 0 {
+					decision = minMaxDecisionUseAdded
+				}
+			}
+		} else {
+			if !oldExists {
+				return errors.Errorf(
+					"invalid min/max duration fast-path state (remove-dominant without old value) at row %d",
+					rowIdx,
+				)
+			}
+			cmpOld := cmp.Compare(int64(removedVals[rowIdx]), int64(oldVals[rowIdx]))
+			if !m.isMax {
+				cmpOld = -cmpOld
+			}
+			if cmpOld > 0 {
+				return errors.Errorf(
+					"invalid min/max duration fast-path state (remove-dominant outranks old value) at row %d",
+					rowIdx,
+				)
+			}
+			if cmpOld == 0 {
+				decision = minMaxDecisionRecompute
+			}
+		}
+
+		switch decision {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultVals[rowIdx] = oldVals[rowIdx]
@@ -996,23 +1317,10 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 				resultCol.SetNull(rowIdx, true)
 			}
 		case minMaxDecisionUseAdded:
-			switch {
-			case addExists:
-				resultVals[rowIdx] = addedVals[rowIdx]
-			case delExists:
-				resultVals[rowIdx] = removedVals[rowIdx]
-			default:
-				resultCol.SetNull(rowIdx, true)
-			}
-		case minMaxDecisionUseNull:
-			resultCol.SetNull(rowIdx, true)
+			resultVals[rowIdx] = addedVals[rowIdx]
 		default:
 			recomputeRows = append(recomputeRows, rowIdx)
-			if oldExists {
-				resultVals[rowIdx] = oldVals[rowIdx]
-			} else {
-				resultCol.SetNull(rowIdx, true)
-			}
+			resultCol.SetNull(rowIdx, true)
 		}
 	}
 	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)
@@ -1038,9 +1346,15 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 		return err
 	}
 	numRows := input.NumRows()
+	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	addedCntVals := addedCntCol.Int64s()
+	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countCol, addedCntCol, removedCntCol)
+		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
 		if err != nil {
 			return err
 		}
@@ -1050,34 +1364,96 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 		}
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
-		delExists := !removedCol.IsNull(rowIdx)
+		removeExists := !removedCol.IsNull(rowIdx)
 
-		var addVal, delVal, oldVal string
+		var addVal, removeVal, oldVal string
 		if addExists {
 			addVal = addedCol.GetString(rowIdx)
 		}
-		if delExists {
-			delVal = removedCol.GetString(rowIdx)
+		if removeExists {
+			removeVal = removedCol.GetString(rowIdx)
 		}
 		if oldExists {
 			oldVal = oldCol.GetString(rowIdx)
 		}
 
-		cmpAddDel := 0
-		if addExists && delExists {
-			cmpAddDel = m.collator.Compare(addVal, delVal)
-		}
-		deltaExists, addIsDelta, delIsDelta, chooseAdded := chooseDeltaSource(m.isMax, addExists, delExists, cmpAddDel)
-		cmpDeltaOld := 0
-		if oldExists && deltaExists {
-			if chooseAdded {
-				cmpDeltaOld = m.collator.Compare(addVal, oldVal)
+		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		chooseAddRemove := 0
+		// sameExtremumValue means added and removed share the same extremum value.
+		sameExtremumValue := false
+		if addExists != removeExists {
+			if addExists {
+				chooseAddRemove = 1
 			} else {
-				cmpDeltaOld = m.collator.Compare(delVal, oldVal)
+				chooseAddRemove = -1
+			}
+		} else if addExists && removeExists {
+			if m.isMax {
+				chooseAddRemove = m.collator.Compare(addVal, removeVal)
+			} else {
+				chooseAddRemove = m.collator.Compare(removeVal, addVal)
+			}
+			if chooseAddRemove == 0 {
+				chooseAddRemove = cmp.Compare(addedCnt, removedCnt)
+				sameExtremumValue = true
 			}
 		}
 
-		switch decideMinMaxFast(m.isMax, oldExists, addIsDelta, delIsDelta, cmpDeltaOld, addedCnt, removedCnt) {
+		decision := minMaxDecisionUseOld
+		if chooseAddRemove == 0 {
+			if sameExtremumValue {
+				// added/removed have the same extremum value and the same count.
+				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
+				// than that value, this value may disappear after merge, and MV-log delta
+				// aggregates do not carry the replacement extremum value.
+				// In this case, recompute is required.
+				if !oldExists {
+					decision = minMaxDecisionRecompute
+				} else {
+					cmpOld := m.collator.Compare(addVal, oldVal)
+					if !m.isMax {
+						cmpOld = -cmpOld
+					}
+					if cmpOld > 0 {
+						decision = minMaxDecisionRecompute
+					}
+				}
+			}
+		} else if chooseAddRemove > 0 {
+			if !oldExists {
+				decision = minMaxDecisionUseAdded
+			} else {
+				cmpOld := m.collator.Compare(addVal, oldVal)
+				if !m.isMax {
+					cmpOld = -cmpOld
+				}
+				if cmpOld > 0 {
+					decision = minMaxDecisionUseAdded
+				}
+			}
+		} else {
+			if !oldExists {
+				return errors.Errorf(
+					"invalid min/max string fast-path state (remove-dominant without old value) at row %d",
+					rowIdx,
+				)
+			}
+			cmpOld := m.collator.Compare(removeVal, oldVal)
+			if !m.isMax {
+				cmpOld = -cmpOld
+			}
+			if cmpOld > 0 {
+				return errors.Errorf(
+					"invalid min/max string fast-path state (remove-dominant outranks old value) at row %d",
+					rowIdx,
+				)
+			}
+			if cmpOld == 0 {
+				decision = minMaxDecisionRecompute
+			}
+		}
+
+		switch decision {
 		case minMaxDecisionUseOld:
 			if oldExists {
 				resultCol.AppendString(oldVal)
@@ -1085,23 +1461,10 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 				resultCol.AppendNull()
 			}
 		case minMaxDecisionUseAdded:
-			switch {
-			case addExists:
-				resultCol.AppendString(addVal)
-			case delExists:
-				resultCol.AppendString(delVal)
-			default:
-				resultCol.AppendNull()
-			}
-		case minMaxDecisionUseNull:
-			resultCol.AppendNull()
+			resultCol.AppendString(addVal)
 		default:
 			recomputeRows = append(recomputeRows, rowIdx)
-			if oldExists {
-				resultCol.AppendString(oldVal)
-			} else {
-				resultCol.AppendNull()
-			}
+			resultCol.AppendNull()
 		}
 	}
 	storeMinMaxRecomputeRows(workerData, m.mappingIdx, recomputeRows)

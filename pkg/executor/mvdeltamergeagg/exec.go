@@ -823,7 +823,7 @@ func (e *Exec) prepareMergers() error {
 			for _, depColID := range mapping.DependencyColID {
 				if _, isMinMaxOutput := minMaxOutputCols[depColID]; isMinMaxOutput {
 					return errors.Errorf(
-						"AggMappings[%d] depends on MIN/MAX output col %d, which is unsupported in stage1",
+						"AggMappings[%d] depends on MIN/MAX output col %d, which is unsupported",
 						mappingIdx,
 						depColID,
 					)
@@ -1094,7 +1094,7 @@ func (e *Exec) recomputeMinMaxSingleRow(
 			return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
 		}
 		if countStarVals[rowIdx] == 0 {
-			continue
+			return errors.Errorf("min/max single-row recompute has zero count(*) at row %d", rowIdx)
 		}
 		inputRow := input.GetRow(rowIdx)
 		for keyPos, keyColID := range keyColIDs {
@@ -1189,7 +1189,6 @@ func (e *Exec) recomputeMinMaxBatch(
 
 	const (
 		batchRowKeyUnknown = -2
-		batchRowKeySkipped = -1
 		batchRowKeyActive  = -3
 	)
 
@@ -1230,13 +1229,10 @@ func (e *Exec) recomputeMinMaxBatch(
 					return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
 				}
 				if countStarVals[rowIdx] == 0 {
-					rowKeyIdx[rowIdx] = batchRowKeySkipped
-					continue
+					return errors.Errorf("min/max batch recompute has zero count(*) at row %d for mapping %d", rowIdx, mappingIdx)
 				}
 				rowKeyIdx[rowIdx] = batchRowKeyActive
 				uniqueRows = append(uniqueRows, rowIdx)
-			case batchRowKeySkipped:
-				continue
 			}
 
 			if _, exists := dupCheck[rowIdx]; exists {

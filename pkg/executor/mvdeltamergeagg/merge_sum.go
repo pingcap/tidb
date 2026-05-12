@@ -22,13 +22,8 @@ import (
 )
 
 func validateCountExprNotNull(countCol *chunk.Column, numRows int) error {
-	if !countCol.HasNull() {
-		return nil
-	}
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countCol.IsNull(rowIdx) {
-			return errors.Errorf("count(expr) is null at row %d", rowIdx)
-		}
+	if rowIdx := firstNullRow(countCol, numRows); rowIdx >= 0 {
+		return errors.Errorf("count is null at row %d", rowIdx)
 	}
 	return nil
 }

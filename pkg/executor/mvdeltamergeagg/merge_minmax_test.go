@@ -17,90 +17,22 @@ package mvdeltamergeagg
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
-func TestDecideMinMaxFast(t *testing.T) {
-	cases := []struct {
-		name        string
-		isMax       bool
-		oldExists   bool
-		addIsDelta  bool
-		delIsDelta  bool
-		cmpDeltaOld int
-		addedCnt    int64
-		removedCnt  int64
-		expected    minMaxDecision
-	}{
-		{
-			name:        "max old missing tie dominant no net add requires recompute",
-			isMax:       true,
-			oldExists:   false,
-			addIsDelta:  true,
-			delIsDelta:  true,
-			cmpDeltaOld: 1,
-			addedCnt:    2,
-			removedCnt:  2,
-			expected:    minMaxDecisionRecompute,
-		},
-		{
-			name:        "max delta stronger tie dominant with net add uses added",
-			isMax:       true,
-			oldExists:   true,
-			addIsDelta:  true,
-			delIsDelta:  true,
-			cmpDeltaOld: 1,
-			addedCnt:    3,
-			removedCnt:  2,
-			expected:    minMaxDecisionUseAdded,
-		},
-		{
-			name:        "max delta stronger tie dominant without net add recompute",
-			isMax:       true,
-			oldExists:   true,
-			addIsDelta:  true,
-			delIsDelta:  true,
-			cmpDeltaOld: 1,
-			addedCnt:    2,
-			removedCnt:  2,
-			expected:    minMaxDecisionRecompute,
-		},
-		{
-			name:        "max equal dominant delete only recompute",
-			isMax:       true,
-			oldExists:   true,
-			addIsDelta:  false,
-			delIsDelta:  true,
-			cmpDeltaOld: 0,
-			addedCnt:    0,
-			removedCnt:  1,
-			expected:    minMaxDecisionRecompute,
-		},
-		{
-			name:        "min delta smaller tie dominant with net add uses added",
-			isMax:       false,
-			oldExists:   true,
-			addIsDelta:  true,
-			delIsDelta:  true,
-			cmpDeltaOld: -1,
-			addedCnt:    4,
-			removedCnt:  1,
-			expected:    minMaxDecisionUseAdded,
-		},
-	}
+func TestFirstNullRow(t *testing.T) {
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	col := chunk.NewColumn(ft, 3)
+	col.AppendInt64(1)
+	col.AppendNull()
+	col.AppendInt64(2)
+	require.Equal(t, 1, firstNullRow(col, 3))
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := decideMinMaxFast(
-				tc.isMax,
-				tc.oldExists,
-				tc.addIsDelta,
-				tc.delIsDelta,
-				tc.cmpDeltaOld,
-				tc.addedCnt,
-				tc.removedCnt,
-			)
-			require.Equal(t, tc.expected, got)
-		})
-	}
+	noNullCol := chunk.NewColumn(ft, 2)
+	noNullCol.AppendInt64(1)
+	noNullCol.AppendInt64(2)
+	require.Equal(t, -1, firstNullRow(noNullCol, 2))
 }

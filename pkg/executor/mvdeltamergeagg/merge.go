@@ -75,6 +75,18 @@ func getDepColumn(input *chunk.Chunk, computedByOrder []*chunk.Column, ref depRe
 	}
 }
 
+func firstNullRow(col *chunk.Column, numRows int) int {
+	if !col.HasNull() {
+		return -1
+	}
+	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		if col.IsNull(rowIdx) {
+			return rowIdx
+		}
+	}
+	return -1
+}
+
 func resolveFieldTypeByColID(colID int, childTypes []*types.FieldType) (*types.FieldType, error) {
 	if colID < 0 || colID >= len(childTypes) {
 		return nil, errors.Errorf("col id %d out of range [0,%d)", colID, len(childTypes))

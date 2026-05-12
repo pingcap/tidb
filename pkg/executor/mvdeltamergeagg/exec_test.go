@@ -1457,7 +1457,7 @@ func TestMinMaxFallbackToCountStarWithoutFinalCountDependency(t *testing.T) {
 	require.True(t, maxCol.IsNull(0))
 }
 
-func TestRejectMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
+func TestAllowMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 	sctx := mock.NewContext()
 	ftInt := types.NewFieldType(mysql.TypeLonglong)
 	fts := []*types.FieldType{
@@ -1501,7 +1501,13 @@ func TestRejectMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 		},
 	}
 	err = mergeExec.Open(context.Background())
-	require.ErrorContains(t, err, "max(nullable expr) requires final-count dependency")
+	require.NoError(t, err)
+	require.Len(t, mergeExec.compiledMergers, 2)
+	maxMerger, ok := mergeExec.compiledMergers[1].(*minMaxIntMerger)
+	require.True(t, ok)
+	require.Equal(t, depFromComputed, maxMerger.countRef.source)
+	require.Equal(t, 0, maxMerger.countRef.idx)
+	require.NoError(t, mergeExec.Close())
 }
 
 func TestRejectMinMaxFinalCountForNonNullableExpr(t *testing.T) {
