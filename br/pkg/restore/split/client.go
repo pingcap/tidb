@@ -656,6 +656,9 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 			return err
 		}
 		if codecCli := c.GetCodecPDClient(); codecCli != nil {
+			// codec PD client will return the region with keys after decode,
+			// but here we expected encoded ones.
+			// we can enhance this part to avoid encode region keys again later.
 			encodeRegionKeys(regions, codecCli.GetCodec().EncodeRegionRange)
 		}
 		log.Info("paginate scan regions",

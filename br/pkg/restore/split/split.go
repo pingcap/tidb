@@ -259,6 +259,7 @@ func PaginateScanRegionWithCodecAware(
 		return nil, err
 	}
 	if encodeRegionRange != nil {
+		// codec PD client will return the region with keys after decode.
 		encodeRegionKeys(regions, encodeRegionRange)
 	}
 	return regions, nil
