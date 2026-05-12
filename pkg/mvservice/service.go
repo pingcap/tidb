@@ -241,6 +241,13 @@ func (t *MVService) combinedTaskExecutorMetrics() taskExecutorMetricsSnapshot {
 	return snapshotTaskExecutorMetrics(t.refreshExecutor).add(snapshotTaskExecutorMetrics(t.purgeExecutor))
 }
 
+func loadTaskExecutorWaitingCount(exec *TaskExecutor) int64 {
+	if exec == nil {
+		return 0
+	}
+	return exec.metrics.gauges.waitingCount.Load()
+}
+
 func (t *MVService) runTaskExecutors() {
 	if t.refreshExecutor != nil {
 		t.refreshExecutor.Run()
@@ -646,14 +653,13 @@ func (t *MVService) observeTaskDuration(taskType string, taskStart time.Time, er
 }
 
 func (t *MVService) runtimeLogFields() []zap.Field {
-	executorMetrics := t.combinedTaskExecutorMetrics()
 	fields := []zap.Field{
 		zap.String("server_id", t.sch.ID),
 		zap.Int64("mv_count", t.metrics.mvCount.Load()),
 		zap.Int64("mvlog_count", t.metrics.mvLogCount.Load()),
 		zap.Int64("running_refresh_count", t.metrics.runningMVRefreshCount.Load()),
 		zap.Int64("running_purge_count", t.metrics.runningMVLogPurgeCount.Load()),
-		zap.Int64("waiting_count", executorMetrics.waitingCount),
+		zap.Int64("waiting_count", loadTaskExecutorWaitingCount(t.refreshExecutor)+loadTaskExecutorWaitingCount(t.purgeExecutor)),
 	}
 	return fields
 }
