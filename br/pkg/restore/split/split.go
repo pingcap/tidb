@@ -236,8 +236,12 @@ func scanRegionsLimitWithRetry(
 	return batch, mustLeader, err
 }
 
-// PaginateScanRegionWithCodecAware is similar to PaginateScanRegion, but it
-// will consider whether it's using codec PD client.
+// PaginateScanRegionWithCodecAware scans a logical KV range. Callers pass
+// logical start and end keys, and this helper converts them to PD scan keys
+// before scanning. Without a CodecPDClient it uses codec.EncodeBytes and
+// returns PD-encoded region boundary keys. With a CodecPDClient it decodes the
+// input range before scanning and re-encodes returned region boundaries through
+// the active codec.
 func PaginateScanRegionWithCodecAware(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {

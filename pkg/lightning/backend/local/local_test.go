@@ -2495,7 +2495,7 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 		tikvCodec: keyspace.CodecV1,
 	}
 
-	dupeController, err := b.GetDupeController(1, nil)
+	dupeController, err := b.GetDupeController(context.Background(), 1, nil)
 	require.Nil(t, dupeController)
 	require.ErrorContains(t, err, "mock kv store error")
 	require.Equal(t, 1, pdClientCalls)
@@ -2505,6 +2505,33 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	require.False(t, inputPDCli.closed)
 	require.True(t, tikvPDCli.closed)
 	require.Nil(t, b.tikvCli)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var pdClientCtx context.Context
+	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
+		return tikv.NewMockSafePointKV(), nil
+	}
+	newPDClient = func(ctx context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+		pdClientCtx = ctx
+		cancel()
+		return nil, ctx.Err()
+	}
+	newTiKVRPCClient = func(_ ...tikv.ClientOpt) tikv.Client {
+		require.FailNow(t, "canceled PD client creation should stop before creating TiKV RPC client")
+		return nil
+	}
+
+	b = &Backend{
+		pdAddrs:   []string{"127.0.0.1:2379"},
+		tls:       &common.TLS{},
+		tikvCodec: keyspace.CodecV1,
+	}
+	dupeController, err = b.GetDupeController(ctx, 1, nil)
+	require.Nil(t, dupeController)
+	require.Same(t, ctx, pdClientCtx)
+	require.ErrorContains(t, err, context.Canceled.Error())
+	require.Nil(t, b.tikvCli)
+
 }
 
 type mockStoreHelper struct{}

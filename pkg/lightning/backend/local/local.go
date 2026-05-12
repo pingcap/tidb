@@ -605,12 +605,14 @@ func pdSecurityOption(tls *common.TLS) pd.SecurityOption {
 	return tls.ToPDSecurityOption()
 }
 
-// NewBackend creates new connections to tikv.
+// NewBackend creates a local backend with a caller-owned PD client. The backend
+// shares callerOwnedCodecPDCli for PD operations and does not close it in
+// Backend.Close.
 func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	codecPDCli *tikvclient.CodecPDClient,
+	callerOwnedCodecPDCli *tikvclient.CodecPDClient,
 ) (b *Backend, err error) {
 	var (
 		pdHTTPCli            pdhttp.Client
@@ -629,7 +631,7 @@ func NewBackend(
 		}
 	}()
 	config.adjust()
-	pdSvcDiscovery := codecPDCli.GetServiceDiscovery()
+	pdSvcDiscovery := callerOwnedCodecPDCli.GetServiceDiscovery()
 	pdAddrs := pdSvcDiscovery.GetServiceURLs()
 
 	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
@@ -637,22 +639,22 @@ func NewBackend(
 		pdSvcDiscovery,
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewCodecAwareClient(codecPDCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
+	splitCli := split.NewCodecAwareClient(callerOwnedCodecPDCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
-	multiIngestSupported, err = checkMultiIngestSupport(ctx, codecPDCli, importClientFactory)
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, callerOwnedCodecPDCli, importClientFactory)
 	if err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
 	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	local := &Backend{
-		pdCli:     codecPDCli,
+		pdCli:     callerOwnedCodecPDCli,
 		pdHTTPCli: pdHTTPCli,
 		splitCli:  splitCli,
 		pdAddrs:   append([]string(nil), pdAddrs...),
 		tls:       tls,
-		tikvCodec: codecPDCli.GetCodec(),
+		tikvCodec: callerOwnedCodecPDCli.GetCodec(),
 
 		BackendConfig: config,
 
@@ -816,7 +818,7 @@ func (local *Backend) Close() {
 	}
 }
 
-func (local *Backend) getTiKVClient() (*tikvclient.KVStore, error) {
+func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, error) {
 	local.tikvCliMu.Lock()
 	defer local.tikvCliMu.Unlock()
 
@@ -832,6 +834,8 @@ func (local *Backend) getTiKVClient() (*tikvclient.KVStore, error) {
 	}
 	rpcOpts = append(rpcOpts, tikvclient.WithCodec(local.tikvCodec))
 
+	// Some constructors below use their own internal contexts or timeouts.
+	// Leave those as-is and pass ctx where the API accepts one.
 	spkv, err := newEtcdSafePointKV(local.pdAddrs, tlsConfig)
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
@@ -839,7 +843,7 @@ func (local *Backend) getTiKVClient() (*tikvclient.KVStore, error) {
 	// we have to build a separate PD client for tikv, as KVStore will manage
 	// the lifecycle of input PD client, while the PD client inside this is
 	// managed outside.
-	pdCliForTiKV, err := newPDClient(context.Background(), caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
+	pdCliForTiKV, err := newPDClient(ctx, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
 	if err != nil {
 		_ = spkv.Close()
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
@@ -1794,9 +1798,10 @@ func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 	return local.engineMgr.cleanupEngine(ctx, engineUUID)
 }
 
-// GetDupeController returns a new dupe controller.
-func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) (*DupeController, error) {
-	tikvCli, err := local.getTiKVClient()
+// GetDupeController returns a new dupe controller. ctx is used when creating
+// the lazy TiKV client.
+func (local *Backend) GetDupeController(ctx context.Context, dupeConcurrency int, errorMgr *errormanager.ErrorManager) (*DupeController, error) {
+	tikvCli, err := local.getTiKVClient(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
