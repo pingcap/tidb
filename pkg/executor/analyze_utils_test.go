@@ -17,8 +17,10 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -73,6 +75,20 @@ func BuildExecutorForTest(ctx context.Context, stmt *ExecStmt) error {
 }
 
 func TestEstimateSamplingNDV(t *testing.T) {
+	t.Run("configured NDV sample rate", func(t *testing.T) {
+		require.Equal(t, float64(statistics.NDVSampleSkipRate), configuredAnalyzeNDVSampleRate(nil))
+		require.Equal(t, 0.25, configuredAnalyzeNDVSampleRate(map[ast.AnalyzeOptionType]uint64{
+			ast.AnalyzeOptNDVRate: math.Float64bits(0.25),
+		}))
+	})
+
+	t.Run("effective NDV sample rate clamp", func(t *testing.T) {
+		// configured >= rowSampleRate: pass through.
+		require.Equal(t, 0.25, effectiveAnalyzeNDVSampleRate(0.25, 0.1))
+		// configured < rowSampleRate: clamp up.
+		require.Equal(t, 0.5, effectiveAnalyzeNDVSampleRate(0.25, 0.5))
+	})
+
 	rootCollector := statistics.NewReservoirRowSampleCollector(1, 2)
 	rootCollector.Count = 100
 	rootCollector.FMSketches = append(rootCollector.FMSketches,

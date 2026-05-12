@@ -455,6 +455,83 @@ func TestSnapshotAnalyzeAndMaxTSAnalyze(t *testing.T) {
 	}
 }
 
+func TestAnalyzeUsesNDVRateOption(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t_ndv_rate(a int, b int, index idx_b(b))")
+	// 200 rows: col a is fully unique; col b has 10 distinct values, each repeated 20 times.
+	values := make([]string, 0, 200)
+	for i := 1; i <= 200; i++ {
+		values = append(values, fmt.Sprintf("(%d,%d)", i, i%10))
+	}
+	tk.MustExec("insert into t_ndv_rate values " + strings.Join(values, ","))
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_ndv_rate"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	readNDV := func(histID int64, isIndex int) int64 {
+		rows := tk.MustQuery(fmt.Sprintf(
+			"select distinct_count from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d",
+			tblInfo.ID,
+			histID,
+			isIndex,
+		)).Rows()
+		require.Len(t, rows, 1)
+		n, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		return n
+	}
+
+	t.Run("exact path with ndvrate=1", func(t *testing.T) {
+		tk.MustExec("analyze table t_ndv_rate with 1 samplerate, 1 ndvrate")
+		require.Equal(t, int64(200), readNDV(tblInfo.Columns[0].ID, 0))
+		require.Equal(t, int64(10), readNDV(tblInfo.Columns[1].ID, 0))
+		require.Equal(t, int64(10), readNDV(tblInfo.Indices[0].ID, 1))
+	})
+
+	t.Run("singleton-sketch path with ndvrate<1", func(t *testing.T) {
+		// Pin the unistore analyze RNG seed so the Bernoulli sketch sampling and the
+		// resulting GEE estimate are deterministic.
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockAnalyzeSamplingSeed", "return(1)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockAnalyzeSamplingSeed"))
+		}()
+		tk.MustExec("analyze table t_ndv_rate with 0.5 samplerate, 0.5 ndvrate")
+		// True NDVs are 200/10/10. Column `a` lands at 141 (instead of 200) because
+		// GEE under-estimates NDV on fully-unique columns from a half-sample; this
+		// confirms the singleton-sketch path is exercised rather than the exact one.
+		require.Equal(t, int64(141), readNDV(tblInfo.Columns[0].ID, 0))
+		require.Equal(t, int64(10), readNDV(tblInfo.Columns[1].ID, 0))
+		require.Equal(t, int64(10), readNDV(tblInfo.Indices[0].ID, 1))
+	})
+}
+
+func TestAnalyzeRaisesNDVRateNote(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t_ndv_note(a int)")
+	tk.MustExec("insert into t_ndv_note values (1),(2),(3)")
+
+	// Force stats_meta to a tiny count so getAdjustedSampleRate returns 1, which
+	// will exceed the user's configured ndvrate of 0.5 and trigger the clamp.
+	statsHandle := dom.StatsHandle()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_ndv_note"))
+	require.NoError(t, err)
+	tk.MustExec(fmt.Sprintf("update mysql.stats_meta set count = 3 where table_id = %d", tbl.Meta().ID))
+	require.NoError(t, statsHandle.Update(context.Background(), dom.InfoSchema()))
+
+	tk.MustExec("analyze table t_ndv_note with 0.5 ndvrate")
+	tk.MustQuery("show warnings").CheckContain(
+		"Analyze raised NDV sample rate from 0.500000 to 1.000000 to match the auto-adjusted row sample rate for table test.t_ndv_note",
+	)
+}
+
 func TestAdjustSampleRateNote(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

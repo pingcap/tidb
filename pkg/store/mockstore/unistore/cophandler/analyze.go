@@ -25,6 +25,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -447,6 +448,12 @@ func handleAnalyzeFullSamplingReq(
 		colGroups = append(colGroups, colOffsets)
 	}
 	colReq := analyzeReq.ColReq
+	seed := time.Now().UnixNano()
+	failpoint.Inject("mockAnalyzeSamplingSeed", func(val failpoint.Value) {
+		if s, ok := val.(int); ok {
+			seed = int64(s)
+		}
+	})
 	/* #nosec G404 */
 	builder := &statistics.RowSampleBuilder{
 		Sc:              sctx.GetSessionVars().StmtCtx,
@@ -458,7 +465,7 @@ func handleAnalyzeFullSamplingReq(
 		MaxFMSketchSize: int(colReq.SketchSize),
 		SampleRate:      colReq.GetSampleRate(),
 		NDVSampleRate:   colReq.GetNdvRate(),
-		Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		Rng:             rand.New(rand.NewSource(seed)),
 	}
 	collector, err := builder.Collect()
 	if err != nil {

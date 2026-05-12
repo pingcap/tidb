@@ -3111,6 +3111,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
+	ast.AnalyzeOptNDVRate:       math.Float64bits(statistics.NDVSampleSkipRate),
 }
 
 // TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
@@ -3122,6 +3123,7 @@ var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchDepth: 5,
 	ast.AnalyzeOptNumSamples:    0,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+	ast.AnalyzeOptNDVRate:       math.Float64bits(statistics.NDVSampleSkipRate),
 }
 
 // GetAnalyzeOptionDefaultV2ForTest returns the default analyze options for test.
@@ -3133,7 +3135,7 @@ func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
 // explicitly specified in the statement.
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
-	sampleNum, sampleRate := uint64(0), 0.0
+	sampleNum, sampleRate, ndvRate := uint64(0), 0.0, 0.0
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
 		switch opt.Type {
@@ -3143,7 +3145,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 				return nil, errors.Errorf("Value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
 			optMap[opt.Type] = v
-		case ast.AnalyzeOptSampleRate:
+		case ast.AnalyzeOptSampleRate, ast.AnalyzeOptNDVRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
 			fVal, err := datumValue.ToFloat64(types.DefaultStmtNoWarningContext)
 			if err != nil {
@@ -3153,7 +3155,12 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 			if fVal <= 0 || fVal > limit {
 				return nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", ast.AnalyzeOptionString[opt.Type], limit)
 			}
-			sampleRate = fVal
+			switch opt.Type {
+			case ast.AnalyzeOptSampleRate:
+				sampleRate = fVal
+			case ast.AnalyzeOptNDVRate:
+				ndvRate = fVal
+			}
 			optMap[opt.Type] = math.Float64bits(fVal)
 		default:
 			v := datumValue.GetUint64()
@@ -3168,6 +3175,15 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 	}
 	if sampleNum > 0 && sampleRate > 0 {
 		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
+	}
+	// TiKV builds singleton sketches at ndvrate first and then draws the row
+	// sample from that stream at samplerate, so ndvrate < samplerate is
+	// incoherent by construction — the row sample cannot exceed the population
+	// it is drawn from. Reject the explicit conflict here so the user sees the
+	// mistake instead of letting execution-time clamping silently raise the
+	// value.
+	if ndvRate > 0 && sampleRate > 0 && ndvRate < sampleRate {
+		return nil, errors.Errorf("Value of analyze option NDVRATE (%f) must not be smaller than SAMPLERATE (%f)", ndvRate, sampleRate)
 	}
 
 	return optMap, nil
