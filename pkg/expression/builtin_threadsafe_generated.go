@@ -1740,6 +1740,76 @@ func (s *builtinMakeTimeSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskDateSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskFullBinarySig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskFullDurationSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskFullIntSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskFullStringSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskFullTimeSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskNullDecimalSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskNullDurationSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskNullIntSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskNullRealSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskNullStringSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskNullTimeSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskPartialSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinMaskPartialUTF8Sig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinMicroSecondSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
