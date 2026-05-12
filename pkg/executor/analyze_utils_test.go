@@ -20,7 +20,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,4 +70,47 @@ func TestCanBroadcastToTiDBRPCForTestRejectsInvalidEndpoints(t *testing.T) {
 func BuildExecutorForTest(ctx context.Context, stmt *ExecStmt) error {
 	_, err := stmt.buildExecutor(ctx)
 	return err
+}
+
+func TestEstimateSamplingNDV(t *testing.T) {
+	rootCollector := statistics.NewReservoirRowSampleCollector(1, 2)
+	rootCollector.Count = 100
+	rootCollector.FMSketches = append(rootCollector.FMSketches,
+		mustBuildFMSketch(t, 1, 2, 3, 4),
+		mustBuildFMSketch(t, 10, 11),
+	)
+
+	// RegionSketchSummary retains sketches in the compact proto form.
+	toProto := func(ss ...*statistics.FMSketch) []*tipb.FMSketch {
+		out := make([]*tipb.FMSketch, len(ss))
+		for i, s := range ss {
+			out[i] = statistics.FMSketchToProto(s)
+		}
+		return out
+	}
+	regions := []statistics.RegionSketchSummary{
+		{
+			NDVSketches:       toProto(mustBuildFMSketch(t, 1, 2, 3), mustBuildFMSketch(t, 10)),
+			SingletonSketches: toProto(mustBuildFMSketch(t, 1, 2, 3), mustBuildFMSketch(t, 10)),
+			SketchSampleCount: 3,
+		},
+		{
+			NDVSketches:       toProto(mustBuildFMSketch(t, 2, 3, 4), mustBuildFMSketch(t, 11)),
+			SingletonSketches: toProto(mustBuildFMSketch(t, 2, 4), mustBuildFMSketch(t, 11)),
+			SketchSampleCount: 3,
+		},
+	}
+
+	require.Equal(t, uint64(6), totalSketchSampleSize(regions))
+	require.Equal(t, int64(10), estimateSamplingNDV(rootCollector, regions, 0, 6))
+}
+
+func mustBuildFMSketch(t *testing.T, values ...int64) *statistics.FMSketch {
+	t.Helper()
+	sketch := statistics.NewFMSketch(1000)
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	for _, value := range values {
+		require.NoError(t, sketch.InsertValue(sc, types.NewIntDatum(value)))
+	}
+	return sketch
 }

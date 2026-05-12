@@ -3169,6 +3169,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		modifyCount = int64(val.(int))
 	})
 	sampleRate := new(float64)
+	ndvRate := float64(statistics.NDVSampleSkipRate)
 	var sampleRateReason string
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
@@ -3193,6 +3194,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 				))
 			}
 		}
+	}
+	// NDV estimation needs at least as many rows as the row sample to remain statistically
+	// useful; align ndvRate up to sampleRate when a smaller value was configured.
+	if ndvRate < *sampleRate {
+		ndvRate = *sampleRate
 	}
 	job := &statistics.AnalyzeJob{
 		DBName:           task.DBName,
@@ -3229,6 +3235,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
 		SampleRate:   sampleRate,
+		NdvRate:      &ndvRate,
 		SketchSize:   statistics.MaxSketchSize,
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
