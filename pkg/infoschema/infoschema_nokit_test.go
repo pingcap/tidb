@@ -65,7 +65,7 @@ func TestLoadMaskingPoliciesNoRetryWhenTableNotReady(t *testing.T) {
 	calls := 0
 	is.factory = func() (pools.Resource, error) {
 		calls++
-		return nil, errors.New("Table 'mysql.tidb_masking_policy' doesn't exist")
+		return nil, ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_masking_policy")
 	}
 
 	is.loadMaskingPoliciesIfNeeded()

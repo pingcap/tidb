@@ -40,9 +40,9 @@ func TestMaskingPolicyDDLBasic(t *testing.T) {
 	tk.MustQuery("select status from mysql.tidb_masking_policy where policy_name = 'p'").
 		Check(testkit.Rows("ENABLED"))
 
-	tk.MustExec("create or replace masking policy p on t(c) as mask_full(c)")
-	tk.MustQuery("select masking_type from mysql.tidb_masking_policy where policy_name = 'p'").
-		Check(testkit.Rows("MASK_FULL"))
+	tk.MustExec("create or replace masking policy p on t(c) as concat(c, '_x')")
+	tk.MustQuery("select expression like 'CONCAT(%', masking_type from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("1 CUSTOM"))
 
 	tk.MustExec("alter table t drop masking policy p")
 	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p'").

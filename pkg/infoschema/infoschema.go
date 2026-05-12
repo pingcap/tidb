@@ -668,6 +668,8 @@ func (is *infoSchema) AllMaskingPolicies() []*model.MaskingPolicyInfo {
 }
 
 func (is *infoSchema) CloneMaskingPoliciesByTableColumn() map[int64]map[int64]*model.MaskingPolicyInfo {
+	is.loadMaskingPoliciesIfNeeded()
+
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
 	cloned := make(map[int64]map[int64]*model.MaskingPolicyInfo, len(is.maskingPolicyTableColumnMap))
@@ -789,6 +791,7 @@ func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tab
 func buildLoadMaskingPoliciesQuery(tableIDs []int64) (string, []any) {
 	const baseQuery = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
 FROM mysql.tidb_masking_policy`
+	const maxBatchSize = 1024
 
 	idSet := make(map[int64]struct{}, len(tableIDs))
 	ids := make([]int64, 0, len(tableIDs))
@@ -803,19 +806,23 @@ FROM mysql.tidb_masking_policy`
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
+	if len(ids) > maxBatchSize {
+		ids = ids[:maxBatchSize]
+	}
 
 	var sb strings.Builder
 	sb.WriteString(baseQuery)
 	args := make([]any, 0, len(ids))
 	if len(ids) > 0 {
-		sb.WriteString(" WHERE ")
+		sb.WriteString(" WHERE table_id IN (")
 		for i, id := range ids {
 			if i > 0 {
-				sb.WriteString(" OR ")
+				sb.WriteString(", ")
 			}
-			sb.WriteString("table_id = %?")
+			sb.WriteString("%?")
 			args = append(args, id)
 		}
+		sb.WriteString(")")
 	}
 	sb.WriteString(" ORDER BY table_id, column_id, policy_id")
 	return sb.String(), args
@@ -853,6 +860,10 @@ func maskingPolicyInfoFromChunkRow(row chunk.Row) (*model.MaskingPolicyInfo, err
 	if !row.IsNull(13) {
 		createdBy = row.GetString(13)
 	}
+	maskingType, err := maskingPolicyTypeFromString(row.GetString(9))
+	if err != nil {
+		return nil, err
+	}
 
 	return &model.MaskingPolicyInfo{
 		ID:          row.GetInt64(0),
@@ -864,7 +875,7 @@ func maskingPolicyInfoFromChunkRow(row chunk.Row) (*model.MaskingPolicyInfo, err
 		ColumnID:    row.GetInt64(6),
 		Expression:  row.GetString(7),
 		Status:      status,
-		MaskingType: maskingPolicyTypeFromString(row.GetString(9)),
+		MaskingType: maskingType,
 		RestrictOps: restrictOps,
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
@@ -884,16 +895,17 @@ func maskingPolicyStatusFromString(status string) (model.MaskingPolicyStatus, er
 	}
 }
 
-func maskingPolicyTypeFromString(tp string) model.MaskingPolicyType {
-	switch model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp))) {
+func maskingPolicyTypeFromString(tp string) (model.MaskingPolicyType, error) {
+	normalized := model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))
+	switch normalized {
 	case model.MaskingPolicyTypeFull,
 		model.MaskingPolicyTypePartial,
 		model.MaskingPolicyTypeNull,
 		model.MaskingPolicyTypeDate,
 		model.MaskingPolicyTypeCustom:
-		return model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))
+		return normalized, nil
 	default:
-		return model.MaskingPolicyTypeCustom
+		return "", errors.Errorf("unknown masking policy type: %s", tp)
 	}
 }
 
@@ -923,8 +935,7 @@ func maskingPolicyRestrictOpsFromString(restrictOn string) (ast.MaskingPolicyRes
 }
 
 func isMaskingPolicyTableNotReady(err error) bool {
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "not exist")
+	return ErrTableNotExists.Equal(err)
 }
 
 func (is *infoSchema) resetMaskingPolicyCache() {

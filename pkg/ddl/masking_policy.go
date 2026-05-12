@@ -257,23 +257,40 @@ func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, query str
 
 func validateMaskingPolicyTarget(ctx context.Context, infoCache *infoschema.InfoCache, policy *model.MaskingPolicyInfo) error {
 	is := infoCache.GetLatest()
-	dbInfo, ok := is.SchemaByName(policy.DBName)
+	tbl, ok := is.TableByID(ctx, policy.TableID)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(policy.DBName)
-	}
-	tbl, err := is.TableByName(ctx, policy.DBName, policy.TableName)
-	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(policy.DBName, policy.TableName)
 	}
 	tblInfo := tbl.Meta()
-	if err = checkMaskingPolicyTable(dbInfo, tblInfo); err != nil {
+
+	dbInfo, ok := is.SchemaByID(tblInfo.DBID)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(policy.DBName)
+	}
+
+	col := findColumnInfoByID(tblInfo.Columns, policy.ColumnID)
+	if col == nil {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(policy.ColumnName, tblInfo.Name)
+	}
+
+	// Keep names in system table synced after table/column rename.
+	policy.DBName = dbInfo.Name
+	policy.TableName = tblInfo.Name
+	policy.ColumnName = col.Name
+
+	if err := checkMaskingPolicyTable(dbInfo, tblInfo); err != nil {
 		return err
 	}
-	col := model.FindColumnInfo(tblInfo.Columns, policy.ColumnName.L)
-	if col == nil || col.ID != policy.ColumnID {
-		return infoschema.ErrColumnNotExists.GenWithStackByArgs(policy.ColumnName, policy.TableName)
-	}
 	return checkMaskingPolicyColumn(col)
+}
+
+func findColumnInfoByID(cols []*model.ColumnInfo, columnID int64) *model.ColumnInfo {
+	for _, col := range cols {
+		if col.ID == columnID {
+			return col
+		}
+	}
+	return nil
 }
 
 func checkMaskingPolicyTable(schema *model.DBInfo, tblInfo *model.TableInfo) error {
