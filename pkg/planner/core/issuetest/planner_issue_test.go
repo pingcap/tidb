@@ -851,6 +851,10 @@ WHERE t0.c0 IN (IF(NULL, "'K", t1.c0))
 ORDER BY t1.c0, t0.c0`).Check(expectedRows)
 		tk.MustQuery(`SELECT /* issue:65161 */ t1.c0, t0.c0
 FROM issue_65161_t0 t0, issue_65161_t1 t1
+WHERE t0.c0 IN (CASE WHEN NULL THEN "'K" ELSE t1.c0 END)
+ORDER BY t1.c0, t0.c0`).Check(expectedRows)
+		tk.MustQuery(`SELECT /* issue:65161 */ t1.c0, t0.c0
+FROM issue_65161_t0 t0, issue_65161_t1 t1
 WHERE t0.c0 = t1.c0
 ORDER BY t1.c0, t0.c0`).Check(expectedRows)
 		tk.MustQuery(`SELECT /* issue:65161 */ t1.c0, t0.c0

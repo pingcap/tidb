@@ -319,6 +319,22 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	l := len(args)
+	for i := 0; i < l-1; i += 2 {
+		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
+			return nil, err
+		}
+	}
+	if selectedBranchIdx := constantCaseWhenSelectedBranchIdx(ctx, args); selectedBranchIdx != ifNoConstantBranch {
+		selectedBranch := args[selectedBranchIdx]
+		selectedBranchTp := selectedBranch.GetType(ctx.GetEvalCtx())
+		_, selectedBranchIsConstant := selectedBranch.(*Constant)
+		if selectedBranchTp.EvalType() != types.ETString &&
+			selectedBranchTp.GetType() != mysql.TypeNull &&
+			!selectedBranchIsConstant {
+			// Do not let unreachable CASE result arms force casts or warnings on the selected branch.
+			rewriteCaseWhenDeadBranches(args, selectedBranchIdx, selectedBranchTp.Clone())
+		}
+	}
 	// Fill in each 'THEN' clause parameter type.
 	thenArgs := make([]Expression, 0, (l+1)/2)
 	for i := 1; i < l; i += 2 {
@@ -340,9 +356,6 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 	argTps := make([]*types.FieldType, 0, l)
 	for i := 0; i < l-1; i += 2 {
-		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
-			return nil, err
-		}
 		argTps = append(argTps, args[i].GetType(ctx.GetEvalCtx()), fieldTp.Clone())
 	}
 	if l%2 == 1 {
@@ -387,6 +400,34 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, errors.Errorf("%s is not supported for CASE WHEN", tp)
 	}
 	return sig, nil
+}
+
+func constantCaseWhenSelectedBranchIdx(ctx BuildContext, args []Expression) int {
+	l := len(args)
+	for i := 0; i < l-1; i += 2 {
+		switch constantIfSelectedBranchIdx(ctx, args[i]) {
+		case ifNoConstantBranch:
+			return ifNoConstantBranch
+		case ifThenBranchIdx:
+			return i + 1
+		}
+	}
+	if l%2 == 1 {
+		return l - 1
+	}
+	return ifNoConstantBranch
+}
+
+func rewriteCaseWhenDeadBranches(args []Expression, selectedBranchIdx int, fieldTp *types.FieldType) {
+	l := len(args)
+	for i := 1; i < l; i += 2 {
+		if i != selectedBranchIdx {
+			args[i] = NewNullWithFieldType(fieldTp.Clone())
+		}
+	}
+	if l%2 == 1 && l-1 != selectedBranchIdx {
+		args[l-1] = NewNullWithFieldType(fieldTp.Clone())
+	}
 }
 
 type builtinCaseWhenIntSig struct {
@@ -701,6 +742,12 @@ type ifFunctionClass struct {
 	baseFunctionClass
 }
 
+const (
+	ifNoConstantBranch = -1
+	ifThenBranchIdx    = 1
+	ifElseBranchIdx    = 2
+)
+
 // getFunction see https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
 func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
@@ -714,7 +761,7 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	if err != nil {
 		return nil, err
 	}
-	if selectedBranchIdx := constantIfSelectedBranchIdx(ctx, args[0]); selectedBranchIdx != -1 {
+	if selectedBranchIdx := constantIfSelectedBranchIdx(ctx, args[0]); selectedBranchIdx != ifNoConstantBranch {
 		selectedBranch := args[selectedBranchIdx]
 		selectedBranchTp := selectedBranch.GetType(ctx.GetEvalCtx())
 		_, selectedBranchIsConstant := selectedBranch.(*Constant)
@@ -724,8 +771,8 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 			!selectedBranchIsConstant {
 			retTp = selectedBranchTp.Clone()
 			deadBranchIdx := 1
-			if selectedBranchIdx == 1 {
-				deadBranchIdx = 2
+			if selectedBranchIdx == ifThenBranchIdx {
+				deadBranchIdx = ifElseBranchIdx
 			}
 			// Do not let an unreachable branch force casts or warnings on the selected branch.
 			args[deadBranchIdx] = NewNullWithFieldType(retTp.Clone())
@@ -773,16 +820,17 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 func constantIfSelectedBranchIdx(ctx BuildContext, condition Expression) int {
 	constCondition, ok := condition.(*Constant)
 	if !ok || constCondition.DeferredExpr != nil || constCondition.ParamMarker != nil {
-		return -1
+		return ifNoConstantBranch
 	}
 	conditionValue, isNull, err := constCondition.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
-		return -1
+		// Fall back to standard type inference; the execution path will surface evaluation errors.
+		return ifNoConstantBranch
 	}
 	if !isNull && conditionValue != 0 {
-		return 1
+		return ifThenBranchIdx
 	}
-	return 2
+	return ifElseBranchIdx
 }
 
 type builtinIfIntSig struct {
