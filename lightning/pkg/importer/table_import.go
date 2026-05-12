@@ -1072,7 +1072,7 @@ func (tr *TableImporter) postProcess(
 		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
 			localBackend := rc.backend.(*local.Backend)
 			var err error
-			dupeController, err = localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+			dupeController, err = localBackend.GetDupeController(ctx, rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
