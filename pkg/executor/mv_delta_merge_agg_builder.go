@@ -61,6 +61,7 @@ type MVDeltaMergeAggResultWriter = mvdeltamergeagg.ResultWriter
 // MVDeltaMergeAgg row operation constants.
 const (
 	// Min/max recompute strategy constants.
+	MinMaxRecomputeUnknown   = mvdeltamergeagg.MinMaxRecomputeUnknown
 	MinMaxRecomputeSingleRow = mvdeltamergeagg.MinMaxRecomputeSingleRow
 	MinMaxRecomputeBatch     = mvdeltamergeagg.MinMaxRecomputeBatch
 

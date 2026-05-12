@@ -59,8 +59,10 @@ type Mapping struct {
 type MinMaxRecomputeStrategy uint8
 
 const (
+	// MinMaxRecomputeUnknown is the zero value and means the strategy is unset or invalid.
+	MinMaxRecomputeUnknown MinMaxRecomputeStrategy = iota
 	// MinMaxRecomputeSingleRow recomputes one group key per execution.
-	MinMaxRecomputeSingleRow MinMaxRecomputeStrategy = iota + 1
+	MinMaxRecomputeSingleRow
 	// MinMaxRecomputeBatch recomputes multiple group keys in one execution.
 	MinMaxRecomputeBatch
 )
