@@ -835,6 +835,9 @@ func (m *dupeDetector) buildIndexDupTasks() ([]dupTask, error) {
 				})
 			}
 		})
+		for i := range tasks {
+			tasks[i].StartKey, tasks[i].EndKey = m.tikvCodec.EncodeRange(tasks[i].StartKey, tasks[i].EndKey)
+		}
 		return tasks, nil
 	}
 	return nil, nil
