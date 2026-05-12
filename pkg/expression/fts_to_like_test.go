@@ -281,10 +281,11 @@ func TestBuildFTSToILikeExpressionFromBuiltin(t *testing.T) {
 		require.Contains(t, err.Error(), "multi-column")
 	})
 
-	t.Run("NULL search constant returns zero", func(t *testing.T) {
+	t.Run("NULL search constant returns Constant(NULL)", func(t *testing.T) {
 		// The builtin's getFunction allows NULL search constants explicitly
-		// (builtin_fts.go:129); the substitution must also short-circuit to a
-		// constant-0 expression rather than attempting to validate/translate.
+		// (builtin_fts.go:129); the substitution short-circuits to Constant(NULL)
+		// rather than Constant(0) so it composes correctly under SQL three-valued
+		// logic and matches the planner-side matchAgainstToLike NULL fast-path.
 		stringTp := types.NewFieldType(mysql.TypeVarchar)
 		nullArg := &Constant{Value: types.NewDatum(nil), RetType: stringTp}
 		col := &Column{Index: 0, RetType: stringTp}
@@ -297,9 +298,7 @@ func TestBuildFTSToILikeExpressionFromBuiltin(t *testing.T) {
 		require.NoError(t, err)
 		c, ok := expr.(*Constant)
 		require.True(t, ok)
-		v, err := c.Value.ToInt64(types.DefaultStmtNoWarningContext)
-		require.NoError(t, err)
-		require.EqualValues(t, 0, v)
+		require.True(t, c.Value.IsNull(), "expected Constant(NULL), got %v", c.Value)
 	})
 
 	t.Run("search string outside strict subset rejected", func(t *testing.T) {

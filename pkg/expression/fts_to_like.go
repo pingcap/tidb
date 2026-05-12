@@ -371,8 +371,14 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-constant search string")
 	}
 	if againstConst.Value.IsNull() {
+		// Match the planner-side matchAgainstToLike NULL fast-path: emit
+		// Constant(NULL) so the substitute preserves SQL three-valued logic
+		// even though selectivity estimation does not currently exploit the
+		// difference. Constant(0) here would, under any future cost path that
+		// composes NOT over the substitute, report "NOT 0 = TRUE → selectivity
+		// 1" — opposite of native MATCH(NULL) which returns NULL.
 		return &Constant{
-			Value:   types.NewIntDatum(0),
+			Value:   types.Datum{},
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}, nil
 	}
