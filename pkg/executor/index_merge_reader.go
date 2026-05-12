@@ -191,7 +191,7 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 		}
 		for i, idx := range e.indexes {
 			if idx != nil && idx.Global {
-				keyRange, _ := distsql.IndexRangesToKVRanges(e.ctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[i])
+				keyRange, _ := distsql.IndexRangesToKVRanges(e.sctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[i])
 				e.partitionKeyRanges[i] = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
 			} else {
 				for _, pKeyRanges := range tmpPartitionKeyRanges {
@@ -2017,9 +2017,9 @@ type IndexMergeRuntimeStat struct {
 func (e *IndexMergeRuntimeStat) String() string {
 	var buf bytes.Buffer
 	if e.FetchIdxTime != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{fetch_handle:%s", time.Duration(e.FetchIdxTime)))
+		fmt.Fprintf(&buf, "index_task:{fetch_handle:%s", time.Duration(e.FetchIdxTime))
 		if e.IndexMergeProcess != 0 {
-			buf.WriteString(fmt.Sprintf(", merge:%s", e.IndexMergeProcess))
+			fmt.Fprintf(&buf, ", merge:%s", e.IndexMergeProcess)
 		}
 		buf.WriteByte('}')
 	}

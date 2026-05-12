@@ -37,6 +37,9 @@ var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
 	ConcurrentReaderBufferSizePerConc = int(8 * size.MB)
+	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
+	// external readers within one task.
+	concurrentReaderTotalConcurrency = 256
 	// in readAllData, expected concurrency less than this value will not use
 	// concurrent reader.
 	readAllDataConcThreshold = uint64(4)
@@ -198,7 +201,10 @@ func (r *byteReader) switchToConcurrentReader() error {
 
 	readerFields.largeBuf = make([][]byte, readerFields.concurrency)
 	for i := range readerFields.largeBuf {
-		readerFields.largeBuf[i] = readerFields.largeBufferPool.AllocBytes(readerFields.bufSizePerConc)
+		readerFields.largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
+		if err != nil {
+			return err
+		}
 		if readerFields.largeBuf[i] == nil {
 			return errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
 		}

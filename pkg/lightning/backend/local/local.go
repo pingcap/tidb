@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -50,7 +51,6 @@ import (
 	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -836,9 +836,10 @@ func (local *Backend) FlushAllEngines(parentCtx context.Context) (err error) {
 	return local.engineMgr.flushAllEngines(parentCtx)
 }
 
-// CleanupAllLocalEngines closes and removes all local engines, used for best-effort cleanup on error.
-func (local *Backend) CleanupAllLocalEngines(ctx context.Context) error {
-	return local.engineMgr.cleanupAllLocalEngines(ctx)
+// CleanupAllLocalEngines performs best-effort cleanup for all local engines.
+// Failures are logged internally and not returned to the caller.
+func (local *Backend) CleanupAllLocalEngines(ctx context.Context) {
+	local.engineMgr.cleanupAllLocalEngines(ctx)
 }
 
 // RetryImportDelay returns the delay time before retrying to import a file.
@@ -1085,7 +1086,7 @@ func (local *Backend) prepareAndSendJob(
 	// the table when table is created.
 	needSplit := len(regionSplitKeys) > 2 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeyCnt
 	// split region by given ranges
-	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+	failpoint.Inject("forceSplitRegion", func(_ failpoint.Value) {
 		needSplit = true
 	})
 	if needSplit {

@@ -22,6 +22,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -38,6 +39,7 @@ func readAllData(
 	store storeapi.Storage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
+	startOffsets, estimatedEndOffsets []uint64,
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
@@ -51,11 +53,15 @@ func readAllData(
 	)
 	defer func() {
 		if err != nil {
+			output.kvs = nil
 			output.kvsPerFile = nil
 			for _, b := range output.memKVBuffers {
 				b.Destroy()
 			}
 			output.memKVBuffers = nil
+			output.size = 0
+			output.droppedSize = 0
+			output.droppedSizePerFile = nil
 		} else {
 			// try to fix a bug that the memory is retained in http2 package
 			if gcs, ok := store.(*objstore.GCSStorage); ok {
@@ -65,16 +71,34 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
-		ctx,
-		store,
-		statsFiles,
-		startKey,
-		endKey,
-	)
-	if err != nil {
-		return err
+	concurrences := make([]uint64, len(statsFiles))
+	totalFileSize := uint64(0)
+	bufSize := uint64(ConcurrentReaderBufferSizePerConc)
+	for i := range statsFiles {
+		size := estimatedEndOffsets[i] - startOffsets[i]
+		totalFileSize += size
+		expectedConc := size / bufSize
+		// let the stat internals cover the [startKey, endKey) since the offsets
+		// always point to a position that is less than or equal to the key.
+		expectedConc += 1
+
+		if expectedConc >= readAllDataConcThreshold {
+			concurrences[i] = expectedConc
+		} else {
+			concurrences[i] = 1
+		}
+		if expectedConc > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in readAllData",
+				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffsets[i]),
+				zap.Uint64("endOffset", estimatedEndOffsets[i]),
+				zap.Uint64("expectedConc", expectedConc),
+				zap.Uint64("concurrency", concurrences[i]),
+			)
+		}
 	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000
@@ -184,7 +208,15 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		kvs = append(kvs, KVPair{Key: smallBlockBuf.AddBytes(k), Value: smallBlockBuf.AddBytes(v)})
+		key, err := smallBlockBuf.TryAddBytes(k)
+		if err != nil {
+			return err
+		}
+		value, err := smallBlockBuf.TryAddBytes(v)
+		if err != nil {
+			return err
+		}
+		kvs = append(kvs, KVPair{Key: key, Value: value})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())

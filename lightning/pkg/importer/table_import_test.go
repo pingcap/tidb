@@ -33,20 +33,21 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	restoremock "github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -82,8 +83,8 @@ type tableRestoreSuiteBase struct {
 	tr  *TableImporter
 	cfg *config.Config
 
-	tableInfo  *checkpoints.TidbTableInfo
-	dbInfo     *checkpoints.TidbDBInfo
+	tableInfo  *importdef.TableInfo
+	dbInfo     *importdef.DBInfo
 	tableMeta  *mydump.MDTableMeta
 	tableMeta2 *mydump.MDTableMeta
 
@@ -108,7 +109,7 @@ func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.Table
 }
 
 func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
-	web.EnableCurrentProgress()
+	progress.EnableCurrentProgress()
 
 	core := mockTiflashTableInfo(t, `CREATE TABLE "table" (
 		a INT,
@@ -126,10 +127,10 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 )
 `, tiflashReplica2)
 
-	s.tableInfo = &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-	s.dbInfo = &checkpoints.TidbDBInfo{
+	s.tableInfo = &importdef.TableInfo{Name: "table", DB: "db", Core: core}
+	s.dbInfo = &importdef.DBInfo{
 		Name: "db",
-		Tables: map[string]*checkpoints.TidbTableInfo{
+		Tables: map[string]*importdef.TableInfo{
 			"table":  s.tableInfo,
 			"table2": {Name: "table2", DB: "db", Core: core2},
 		},
@@ -754,7 +755,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
-		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
+		tableInfo := &importdef.TableInfo{Name: "table", DB: "db", Core: core}
 		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
@@ -967,7 +968,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		ioWorkers:        ioWorkers,
 	}
 	preInfoGetter.Init()
-	dbInfos := map[string]*checkpoints.TidbDBInfo{
+	dbInfos := map[string]*importdef.DBInfo{
 		s.tableInfo.DB: s.dbInfo,
 	}
 	mockChunkFlushStatus := mock.NewMockChunkFlushStatus(controller)
@@ -1022,7 +1023,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
 		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 
-	web.BroadcastInitProgress(rc.dbMetas)
+	progress.BroadcastInitProgress(rc.dbMetas)
 
 	err = rc.importTables(ctx)
 	require.NoError(s.T(), err)
@@ -1045,11 +1046,11 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/SlowDownCheckpointUpdate")
 	}()
 
-	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
+	progress.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
 		Name:   "test",
 		Tables: []*mydump.MDTableMeta{{DB: "test", Name: "tbl"}},
 	}})
-	web.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
+	progress.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
 
 	saveCpCh := make(chan saveCp)
 
@@ -1332,7 +1333,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			taskMgr:             mockTaskMetaMgr{},
 			checkTemplate:       template,
 			preInfoGetter:       preInfoGetter,
-			dbInfos:             make(map[string]*checkpoints.TidbDBInfo),
+			dbInfos:             make(map[string]*importdef.DBInfo),
 			precheckItemBuilder: theCheckBuilder,
 			pdHTTPCli:           cli,
 		}
@@ -1460,7 +1461,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 			Tables: []*mydump.MDTableMeta{s.tableMeta, s.tableMeta2},
 		},
 	}
-	dbInfos := map[string]*checkpoints.TidbDBInfo{
+	dbInfos := map[string]*importdef.DBInfo{
 		"db1": s.dbInfo,
 	}
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
@@ -1530,7 +1531,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// MsgNum == 0 means the check passed.
 		MsgNum    int
 		hasHeader bool
-		dbInfos   map[string]*checkpoints.TidbDBInfo
+		dbInfos   map[string]*importdef.DBInfo
 		tableMeta *mydump.MDTableMeta
 	}{
 		// Case 1:
@@ -1542,10 +1543,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table1` has 2 columns, and data file has 1 columns, but column colb is missing(.*)",
 			1,
 			false,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table1": {
 							ID:   1,
 							DB:   "db1",
@@ -1591,10 +1592,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2` doesn't have column cola,(.*)use tables.ignoreColumns to ignore(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1642,10 +1643,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1694,10 +1695,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2` doesn't have the default value for colc(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1750,10 +1751,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2`'s column colb cannot be ignored(.*)",
 			2,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1804,10 +1805,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table3` doesn't exists(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"": {},
 					},
 				},
@@ -1840,10 +1841,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1900,10 +1901,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column colA is also assigned in ignore-column(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -1959,10 +1960,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column colA is contained in table(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2007,10 +2008,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"row count 2 adding with extend column length 1 is larger than columnCount 2 plus ignore column count 0 for(.*)",
 			1,
 			false,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2055,10 +2056,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column \\[colC\\] don't exist in target table(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2120,10 +2121,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2243,10 +2244,10 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
 	require.NoError(s.T(), err)
 
-	dbInfos := map[string]*checkpoints.TidbDBInfo{
+	dbInfos := map[string]*importdef.DBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"gbk_table": {
 					ID:   1,
 					DB:   "db1",

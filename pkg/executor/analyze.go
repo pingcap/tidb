@@ -24,9 +24,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -46,8 +48,10 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -85,6 +89,170 @@ const (
 	idxTask
 )
 
+// flushStatsDeltaForAnalyze flushes pending stats deltas for the tables whose column-analyze
+// tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
+// pre-analyze delta can be applied later and double count rows or modifications.
+func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) error {
+	flushObjects := collectStatsDeltaFlushObjectsForAnalyze(plan)
+	if len(flushObjects) == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// HACK: Some tests register in-process TiDB domains but do not start TiDB RPC
+	// endpoints. Broadcasting FLUSH STATS_DELTA CLUSTER to those mock endpoints can
+	// spend the TiKV RPC backoff budget before analyze really starts. When the test
+	// topology cannot receive TiDB broadcast requests, dumping local deltas is the
+	// only viable approximation.
+	if intest.InTest {
+		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
+		if err != nil {
+			return err
+		}
+		if flushedLocally {
+			return nil
+		}
+	}
+
+	stmt := &ast.FlushStmt{
+		Tp:           ast.FlushStatsDelta,
+		IsCluster:    true,
+		FlushObjects: flushObjects,
+	}
+	sql, err := restoreFlushStatsDeltaSQL(stmt)
+	if err != nil {
+		return err
+	}
+	return broadcast(ctx, sctx, sql)
+}
+
+// collectStatsDeltaFlushObjectsForAnalyze returns the database-qualified table
+// objects whose stats deltas must be flushed before building column analyze
+// tasks. Column analyze captures base count / modify_count from mysql.stats_meta,
+// so each target table is included once even if it has multiple column tasks.
+func collectStatsDeltaFlushObjectsForAnalyze(plan *core.Analyze) []*ast.StatsObject {
+	flushObjects := make([]*ast.StatsObject, 0, len(plan.ColTasks))
+	type statsObjectKey struct {
+		dbName    string
+		tableName string
+	}
+	seenObjects := make(map[statsObjectKey]struct{}, len(plan.ColTasks))
+	appendFlushObject := func(task core.AnalyzeColumnsTask) {
+		dbName, tableName := task.DBName, task.TableName
+		if dbName == "" || tableName == "" {
+			intest.Assert(false, "analyze column task must have database-qualified table name")
+			return
+		}
+		key := statsObjectKey{dbName: dbName, tableName: tableName}
+		if _, ok := seenObjects[key]; ok {
+			return
+		}
+		seenObjects[key] = struct{}{}
+		flushObjects = append(flushObjects, &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
+			DBName:           ast.NewCIStr(dbName),
+			TableName:        ast.NewCIStr(tableName),
+		})
+	}
+	for _, task := range plan.ColTasks {
+		appendFlushObject(task)
+	}
+	return flushObjects
+}
+
+func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) (bool, error) {
+	canBroadcast, err := canBroadcastAnalyzeStatsDeltaForTest(ctx)
+	if err != nil {
+		return false, err
+	}
+	// If every registered TiDB server has a reachable RPC endpoint, use the normal
+	// broadcast path so RPC-backed tests still exercise the production behavior.
+	if canBroadcast {
+		return false, nil
+	}
+	targetIDs := collectAnalyzeStatsDeltaTargetIDsForTest(plan)
+	if len(targetIDs) == 0 {
+		return false, nil
+	}
+	return true, domain.GetDomain(sctx).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+}
+
+func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return false, err
+	}
+	rpcAddrs := make([]string, 0, len(servers))
+	for _, server := range servers {
+		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
+		// nodes that should not receive TiDB-type coprocessor requests.
+		if server.IP == config.UnavailableIP {
+			continue
+		}
+		// In-process test domains can register server info without starting a
+		// TiDB RPC listener. In that case AdvertiseAddress stays empty, so a
+		// normal broadcast would target ":10080" and wait for RPC backoff.
+		if server.IP == "" {
+			rpcAddrs = append(rpcAddrs, "")
+			continue
+		}
+		rpcAddrs = append(rpcAddrs, net.JoinHostPort(server.IP, strconv.Itoa(int(server.StatusPort))))
+	}
+	return canBroadcastToTiDBRPCForTest(ctx, rpcAddrs), nil
+}
+
+func canBroadcastToTiDBRPCForTest(ctx context.Context, rpcAddrs []string) bool {
+	if len(rpcAddrs) == 0 {
+		return false
+	}
+	for _, addr := range rpcAddrs {
+		if !isTiDBRPCReachableForTest(ctx, addr) {
+			return false
+		}
+	}
+	return true
+}
+
+func isTiDBRPCReachableForTest(ctx context.Context, addr string) bool {
+	if addr == "" {
+		return false
+	}
+	dialer := net.Dialer{Timeout: 50 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func collectAnalyzeStatsDeltaTargetIDsForTest(plan *core.Analyze) []int64 {
+	targetIDs := make([]int64, 0, len(plan.ColTasks))
+	seenTargetIDs := make(map[int64]struct{}, len(plan.ColTasks))
+	appendTargetID := func(id int64) {
+		if _, ok := seenTargetIDs[id]; ok {
+			return
+		}
+		seenTargetIDs[id] = struct{}{}
+		targetIDs = append(targetIDs, id)
+	}
+	for _, task := range plan.ColTasks {
+		if task.TblInfo == nil {
+			intest.Assert(false, "analyze column task must have table info")
+			continue
+		}
+		appendTargetID(task.TblInfo.ID)
+		if partitionInfo := task.TblInfo.GetPartitionInfo(); partitionInfo != nil {
+			for _, def := range partitionInfo.Definitions {
+				appendTargetID(def.ID)
+			}
+		}
+	}
+	return targetIDs
+}
+
 // Next implements the Executor Next interface.
 // It will collect all the sample task and run them concurrently.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
@@ -101,6 +269,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
+	ctx, stop := e.buildAnalyzeKillCtx(ctx)
+	defer stop()
 
 	// Filter the locked tables.
 	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
@@ -132,7 +302,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
 	for range buildStatsConcurrency {
-		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
+		e.wg.Run(func() { e.analyzeWorker(ctx, taskCh, resultsCh) })
 	}
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
@@ -143,7 +313,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return e.handleResultsError(buildStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
 	for _, task := range tasks {
-		prepareV2AnalyzeJobInfo(task.colExec)
+		prepareAnalyzeColumnsJobInfo(task.colExec)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
@@ -152,10 +322,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
 	})
+	sentTasks := 0
 TASKLOOP:
 	for _, task := range tasks {
 		select {
 		case taskCh <- task:
+			sentTasks++
 		case <-e.errExitCh:
 			break TASKLOOP
 		case <-gctx.Done():
@@ -173,6 +345,19 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		err = normalizeCtxErrWithCause(ctx, err)
+	} else if ctx.Err() != nil {
+		// Preserve the original cancellation cause before follow-up work (for example stats cache update)
+		// can degrade it into a plain context error.
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
+	}
+	if err != nil {
+		for task := range taskCh {
+			finishJobWithLog(statsHandle, task.job, err)
+		}
+		for i := sentTasks; i < len(tasks); i++ {
+			finishJobWithLog(statsHandle, tasks[i].job, err)
+		}
 		return err
 	}
 
@@ -203,7 +388,7 @@ TASKLOOP:
 	}
 
 	// Update analyze options to mysql.analyze_options for auto analyze.
-	err = e.saveV2AnalyzeOpts()
+	err = e.saveAnalyzeOptions()
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
@@ -339,7 +524,7 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	panic("unreachable")
 }
 
-func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
+func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
 	}
@@ -504,7 +689,76 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	return err
 }
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
+// buildAnalyzeKillCtx creates the statement-scoped ANALYZE context.
+// Callers should pass this ctx through every analyze DistSQL path so parent
+// cancellation and SQLKiller share the same cancel cause.
+func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	killer := &e.Ctx().GetSessionVars().SQLKiller
+	killCh := killer.GetKillEventChan()
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-killCh:
+			status := killer.GetKillSignal()
+			// resetKillEvent may close killCh when the statement is reset even though no real
+			// kill signal was recorded, so ignore that synthetic wake-up here.
+			if status == sqlkiller.UnspecifiedKillSignal {
+				return
+			}
+			err := killer.HandleSignal()
+			if err == nil {
+				err = exeerrors.ErrQueryInterrupted
+			}
+			cancel(err)
+		}
+	}()
+	return ctx, func() {
+		cancel(context.Canceled)
+	}
+}
+
+// analyzeWorkerExitErr is checked after a task is dequeued but before starting a new
+// analyze request. It lets the worker stop immediately when the statement was already
+// canceled or another worker has aborted the whole analyze workflow.
+func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return normalizeCtxErrWithCause(ctx, ctxErr)
+	}
+	select {
+	case <-ctx.Done():
+		return normalizeCtxErrWithCause(ctx, ctx.Err())
+	case <-errExitCh:
+		return exeerrors.ErrQueryInterrupted
+	default:
+		return nil
+	}
+}
+
+// trySendAnalyzeResult may drop and destroy result when the statement is already
+// aborting, so callers should not reuse result after calling it.
+func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
+	select {
+	case resultsCh <- result:
+		return
+	case <-ctx.Done():
+	case <-e.errExitCh:
+	}
+	// Keep the cancel cause consistent with the other analyze paths when a dropped
+	// result only carries a generic context error from lower layers.
+	err := normalizeCtxErrWithCause(ctx, result.Err)
+	if err == nil {
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
+	}
+	if err == nil {
+		err = exeerrors.ErrQueryInterrupted
+	}
+	finishJobWithLog(statsHandle, result.Job, err)
+	result.DestroyAndPutToPool()
+}
+
+// ctx must be from AnalyzeExec.buildAnalyzeKillCtx
+func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
@@ -527,23 +781,21 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		var ok bool
 		task, ok = <-taskCh
 		if !ok {
-			break
+			return
+		}
+		if err := analyzeWorkerExitErr(ctx, e.errExitCh); err != nil {
+			finishJobWithLog(statsHandle, task.job, err)
+			return
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
-			select {
-			case <-e.errExitCh:
-				return
-			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
-			}
+			result := task.colExec.analyzeColumnsPushDown(ctx, e.gp)
+			e.trySendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		case idxTask:
-			select {
-			case <-e.errExitCh:
-				return
-			case resultsCh <- analyzeIndexPushdown(task.idxExec):
-			}
+			result := analyzeIndexPushdown(ctx, task.idxExec)
+			e.trySendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		}
 	}
 }

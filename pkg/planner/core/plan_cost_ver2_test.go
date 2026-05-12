@@ -19,12 +19,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -41,7 +44,6 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec(`create table t (pk int, a int, b int, c int, d int, primary key(pk), index ab(a, b), index abc(a, b, c))`)
 		tk.MustExec("insert into t values (1, 1, 1, 1, 1)")
-		tk.MustExec(`set @@tidb_cost_model_version=2`)
 		tk.MustExec("set global tidb_enable_collect_execution_info=1;")
 
 		cases := []struct {
@@ -69,12 +71,12 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 			require.Equal(t, formula, c.scanFormula)
 		}
 
-		tk.MustQuery("explain format = 'brief' select a from t where a=1").Check(testkit.Rows(
-			`IndexReader 10.00 root  index:IndexRangeScan`, // use idx_ab automatically since it has the smallest row-size in all access paths.
-			`└─IndexRangeScan 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
-		tk.MustQuery("explain format = 'brief' select a, b, c from t where a=1").Check(testkit.Rows(
-			`IndexReader 10.00 root  index:IndexRangeScan`, // use idx_abc automatically
-			`└─IndexRangeScan 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
+		tk.MustQuery("explain format = 'plan_tree' select a from t where a=1").Check(testkit.Rows(
+			`IndexReader root  index:IndexRangeScan`, // use idx_ab automatically since it has the smallest row-size in all access paths.
+			`└─IndexRangeScan cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
+		tk.MustQuery("explain format = 'plan_tree' select a, b, c from t where a=1").Check(testkit.Rows(
+			`IndexReader root  index:IndexRangeScan`, // use idx_abc automatically
+			`└─IndexRangeScan cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
 	})
 }
 
@@ -717,5 +719,240 @@ func TestTiFlashCostFactors(t *testing.T) {
 		tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
 		// Reset TiFlash cop to default
 		tk.MustExec("set @@session.tidb_allow_tiflash_cop=OFF")
+	})
+}
+
+func TestTrueCardCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, key(b))`)
+
+	checkPlanCost := func(sql string) {
+		rs := tk.MustQuery(`explain analyze format=verbose ` + sql).Rows()
+		planCost1 := rs[0][2].(string)
+
+		rs = tk.MustQuery(`explain analyze format=true_card_cost ` + sql).Rows()
+		planCost2 := rs[0][2].(string)
+
+		// `true_card_cost` can work since the plan cost is changed
+		require.NotEqual(t, planCost1, planCost2)
+	}
+
+	checkPlanCost(`select * from t`)
+	checkPlanCost(`select * from t where a>10`)
+	checkPlanCost(`select * from t where a>10 limit 10`)
+	checkPlanCost(`select sum(a), b*2 from t use index(b) group by b order by sum(a) limit 10`)
+}
+
+func TestIssue36243(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into mysql.expr_pushdown_blacklist values ('>','tikv','')`)
+	tk.MustExec(`admin reload expr_pushdown_blacklist`)
+
+	getCost := func() (selCost, readerCost float64) {
+		res := tk.MustQuery(`explain format=verbose select * from t where a>0`).Rows()
+		// TableScan -> TableReader -> Selection
+		require.Equal(t, len(res), 3)
+		require.Contains(t, res[0][0], "Selection")
+		require.Contains(t, res[1][0], "TableReader")
+		require.Contains(t, res[2][0], "Scan")
+		var err error
+		selCost, err = strconv.ParseFloat(res[0][2].(string), 64)
+		require.NoError(t, err)
+		readerCost, err = strconv.ParseFloat(res[1][2].(string), 64)
+		require.NoError(t, err)
+		return
+	}
+
+	// In cost model ver2, Selection cost is greater than TableReader cost.
+	selCost, readerCost := getCost()
+	require.True(t, selCost > readerCost)
+}
+
+func TestScanOnSmallTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec("analyze table t all columns")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, exists)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tblInfo := range tblInfos {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	result := tk.MustQuery("explain select * from t")
+	resStr := result.String()
+	rs := result.Rows()
+	useTiKVScan := false
+	for _, r := range rs {
+		op := r[0].(string)
+		task := r[2].(string)
+		if strings.Contains(op, "Scan") && strings.Contains(task, "tikv") {
+			useTiKVScan = true
+		}
+	}
+	require.True(t, useTiKVScan, "should use tikv scan, but got:\n%s", resStr)
+}
+
+func TestHashAggMemCostNotDividedByConcurrency(t *testing.T) {
+	// Verify that for high-NDV GROUP BY with an available index on a table with
+	// wide rows, the hash table memory cost (placed outside /concurrency) is
+	// significant enough that StreamAgg (with ordered index scan and ~constant
+	// memory) is cheaper than HashAgg. This validates that hash table memory is
+	// not artificially discounted by parallelism.
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		store := tk.Session().GetStore()
+		defer func() {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("drop table if exists t_high_ndv")
+			dom.StatsHandle().Clear()
+		}()
+
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_high_ndv")
+		// The hash table memory cost is based on outputRows * outputRowSize, so the
+		// SELECT must include wide output columns (not just count(*)) for memory to
+		// become the dominant factor in the cost model.
+		tk.MustExec("create table t_high_ndv (a int, b int, c varchar(200), d varchar(200), key(b))")
+
+		// Insert rows where every b value is unique (100% NDV).
+		var buf strings.Builder
+		buf.WriteString("insert into t_high_ndv values ")
+		for i := 0; i < 1000; i++ {
+			if i > 0 {
+				buf.WriteString(",")
+			}
+			buf.WriteString(fmt.Sprintf("(%d,%d,'%s','%s')", i, i, "padding-data-for-wide-rows", "more-padding-data-here"))
+		}
+		tk.MustExec(buf.String())
+		tk.MustExec("analyze table t_high_ndv")
+
+		// With default cost factors, force both plans via hints and compare costs.
+		// Including max(c), max(d) in the SELECT makes the output rows wide, which
+		// means the hash table (one per partial worker) consumes significant memory.
+		// StreamAgg on indexed input should be cheaper than HashAgg in this scenario.
+		q := "select b, count(*), max(c), max(d) from t_high_ndv use index(b) group by b"
+		rs := tk.MustQuery("explain format=verbose select /*+ STREAM_AGG() */ " + q[len("select "):]).Rows()
+		streamCost, err := strconv.ParseFloat(rs[0][2].(string), 64)
+		require.NoError(t, err)
+
+		rs = tk.MustQuery("explain format=verbose select /*+ HASH_AGG() */ " + q[len("select "):]).Rows()
+		hashCost, err := strconv.ParseFloat(rs[0][2].(string), 64)
+		require.NoError(t, err)
+
+		// StreamAgg should be cheaper than HashAgg for high-NDV GROUP BY with wide
+		// output rows and an available index.
+		require.Less(t, streamCost, hashCost,
+			"StreamAgg (cost=%.2f) should be cheaper than HashAgg (cost=%.2f) for high-NDV GROUP BY with wide output and index",
+			streamCost, hashCost)
+	})
+}
+
+func TestHashAggMemCostGatedOnFreeOrdering(t *testing.T) {
+	// Companion to TestHashAggMemCostNotDividedByConcurrency: verify that the
+	// HashAgg memory penalty is gated on whether the child can naturally
+	// provide ordering on the GROUP BY keys. Without this gate the inflated
+	// penalty also fires for GROUP BY over a join output, where the StreamAgg
+	// alternative would need an explicit Sort whose own cost already disfavors
+	// it; double-counting would steer the optimizer toward Sort+StreamAgg.
+	//
+	// Behavioral assertions on plan choice are unreliable here because the
+	// Sort cost over a 1000-row join is already large enough that HashAgg wins
+	// either way. Instead, inspect the HashAgg cost trace directly:
+	//
+	//   * HashAgg's added memory penalty traces as
+	//     `hashmem(<concurrency>*<rows>*<rowSize>*tidb_mem_factor(...))`
+	//     — three numeric tokens before the factor.
+	//   * HashJoin's own (unrelated) memory term traces as
+	//     `hashmem(<rows>*<rowSize>*tidb_mem_factor(...))` — only two
+	//     numeric tokens before the factor.
+	//
+	// Matching the three-token pattern at the HashAgg row therefore detects
+	// only the gated penalty, regardless of any HashJoin in the subtree.
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		store := tk.Session().GetStore()
+		defer func() {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("drop table if exists t_indexed, t_join_a, t_join_b")
+			dom.StatsHandle().Clear()
+		}()
+
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_indexed, t_join_a, t_join_b")
+		tk.MustExec("create table t_indexed (a int, b int, c varchar(200), key(b))")
+		tk.MustExec("create table t_join_a (k int, v int, c varchar(200))")
+		tk.MustExec("create table t_join_b (k int, w int, d varchar(200))")
+		var bufIdx, bufA, bufB strings.Builder
+		bufIdx.WriteString("insert into t_indexed values ")
+		bufA.WriteString("insert into t_join_a values ")
+		bufB.WriteString("insert into t_join_b values ")
+		for i := 0; i < 1000; i++ {
+			if i > 0 {
+				bufIdx.WriteString(",")
+				bufA.WriteString(",")
+				bufB.WriteString(",")
+			}
+			bufIdx.WriteString(fmt.Sprintf("(%d,%d,'padding-data-for-wide-rows')", i, i))
+			bufA.WriteString(fmt.Sprintf("(%d,%d,'padding-data-for-wide-rows')", i, i))
+			bufB.WriteString(fmt.Sprintf("(%d,%d,'more-padding-data-here')", i, i))
+		}
+		tk.MustExec(bufIdx.String())
+		tk.MustExec(bufA.String())
+		tk.MustExec(bufB.String())
+		tk.MustExec("analyze table t_indexed")
+		tk.MustExec("analyze table t_join_a")
+		tk.MustExec("analyze table t_join_b")
+
+		// Three numeric tokens before tidb_mem_factor isolates HashAgg's
+		// memory penalty from any HashJoin hashmem term in the subtree.
+		hashAggMemPattern := regexp.MustCompile(`hashmem\([0-9.]+\*[0-9.]+\*[0-9.]+\*tidb_mem_factor`)
+
+		hashAggTrace := func(query string) string {
+			rows := tk.MustQuery("explain format='cost_trace' " + query).Rows()
+			for _, r := range rows {
+				if strings.Contains(r[0].(string), "HashAgg") {
+					return r[3].(string)
+				}
+			}
+			t.Fatalf("HashAgg not found in plan for %q", query)
+			return ""
+		}
+
+		// Free ordering available (HashAgg over an ordered index scan): the
+		// memory penalty must be applied — the index gives StreamAgg a
+		// sort-free alternative, and we want HashAgg to be charged its
+		// concurrent-hash-table cost so the optimizer can compare fairly.
+		traceFree := hashAggTrace("select /*+ HASH_AGG() */ b, count(*), max(c) from t_indexed use index(b) group by b")
+		require.Regexp(t, hashAggMemPattern, traceFree,
+			"HashAgg over an ordered index scan should include the memory penalty term, got: %s", traceFree)
+
+		// No free ordering (HashAgg over a hash-join output): the memory
+		// penalty must be skipped — StreamAgg would need an explicit Sort
+		// whose cost already disfavors it; adding the penalty here would
+		// double-count.
+		traceJoin := hashAggTrace("select /*+ HASH_AGG() */ t_join_a.v, max(t_join_a.c), max(t_join_b.d) from t_join_a join t_join_b on t_join_a.k = t_join_b.k group by t_join_a.v")
+		require.NotRegexp(t, hashAggMemPattern, traceJoin,
+			"HashAgg over a join output must NOT include the memory penalty (gated on free ordering), got: %s", traceJoin)
 	})
 }

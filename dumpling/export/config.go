@@ -79,6 +79,11 @@ const (
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
+	flagPDAddr                   = "pd"
+	flagClusterSSLCA             = "cluster-ssl-ca"
+	flagClusterSSLCert           = "cluster-ssl-cert"
+	flagClusterSSLKey            = "cluster-ssl-key"
+	flagPartitions               = "partitions"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -182,6 +187,7 @@ type Config struct {
 	Tables              DatabaseTables
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
+	Partitions          []string
 
 	Labels        prometheus.Labels `json:"-"`
 	PromFactory   promutil.Factory  `json:"-"`
@@ -191,6 +197,17 @@ type Config struct {
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
+
+	// PDAddr is a comma-separated list of PD endpoints in host:port form.
+	// http:// or https:// prefixes are also accepted and normalized by the PD client.
+	// It's used for controlling GC in keyspace-level clusters where PD addresses
+	// may not be discoverable from TiDB.
+	PDAddr string
+	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
+	// to PD endpoints for GC control.
+	ClusterSSLCA   string
+	ClusterSSLCert string
+	ClusterSSLKey  string
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -244,6 +261,10 @@ func DefaultConfig() *Config {
 		PromFactory:              promutil.NewDefaultFactory(),
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
+		PDAddr:                   "",
+		ClusterSSLCA:             "",
+		ClusterSSLCert:           "",
+		ClusterSSLKey:            "",
 	}
 }
 
@@ -360,6 +381,12 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
+	flags.StringSlice(flagPartitions, nil, "The table partitions to dump. Every listed partition must exist on all selected base tables; incompatible with --sql. TiDB >= v5.0.0 only")
+
+	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
+	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
+	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
+	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -518,6 +545,11 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.Partitions, err = flags.GetStringSlice(flagPartitions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.Partitions = normalizePartitions(conf.Partitions)
 
 	if conf.Threads <= 0 {
 		return errors.Errorf("--threads is set to %d. It should be greater than 0", conf.Threads)
@@ -601,6 +633,23 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Errorf("%s is only supported when dumping whole table to csv, not compatible with %s", flagCsvOutputDialect, conf.FileType)
 	}
 	conf.CsvOutputDialect, err = ParseOutputDialect(dialect)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	conf.PDAddr, err = flags.GetString(flagPDAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ClusterSSLCA, err = flags.GetString(flagClusterSSLCA)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ClusterSSLCert, err = flags.GetString(flagClusterSSLCert)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ClusterSSLKey, err = flags.GetString(flagClusterSSLKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -760,6 +809,9 @@ func validateSpecifiedSQL(conf *Config) error {
 	if conf.SQL != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	}
+	if conf.SQL != "" && len(conf.Partitions) > 0 {
+		return errors.New("can't specify both --sql and --partitions at the same time")
+	}
 	return nil
 }
 
@@ -794,4 +846,21 @@ func matchMysqlBugversion(info version.ServerInfo) bool {
 	bugVersionStart := semver.New("8.0.2")
 	bugVersionEnd := semver.New("8.0.23")
 	return bugVersionStart.LessThan(*currentVersion) && currentVersion.LessThan(*bugVersionEnd)
+}
+
+func normalizePartitions(partitions []string) []string {
+	seen := make(map[string]struct{}, len(partitions))
+	result := make([]string, 0, len(partitions))
+	for _, p := range partitions {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		result = append(result, p)
+	}
+	return result
 }

@@ -18,9 +18,12 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"sync/atomic"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -38,11 +41,22 @@ import (
 // exported for testing.
 var MaxConflictRowFileSize int64 = 8 * units.GiB
 
+// maxTotalConflictRowFileSize is the hard limit of all conflict-row files in
+// one collect-conflicts subtask.
+//
+// We hardcode this to 1GiB intentionally and do not expose it as a user config
+// for now. The goal is to collect usage feedback first before deciding whether
+// we should introduce a configurable knob in future.
+var maxTotalConflictRowFileSize int64 = units.GiB
+
 // CollectResult is the result of the collector.
 type CollectResult struct {
 	// total number of conflicted rows.
 	RowCount      int64
 	TotalFileSize int64
+	// RowRecordingCapped is true if conflicted-row file recording is stopped due to
+	// maxTotalConflictRowFileSize.
+	RowRecordingCapped bool
 	// it's the checksum of the encoded KV of the conflicted rows.
 	Checksum *verification.KVChecksum
 	// name of the files which records the conflicted rows
@@ -64,6 +78,7 @@ func (r *CollectResult) Merge(other *CollectResult) {
 	}
 	r.RowCount += other.RowCount
 	r.TotalFileSize += other.TotalFileSize
+	r.RowRecordingCapped = r.RowRecordingCapped || other.RowRecordingCapped
 	r.Checksum.Add(other.Checksum)
 	r.Filenames = append(r.Filenames, other.Filenames...)
 }
@@ -77,10 +92,15 @@ type Collector struct {
 	handler        Handler
 	result         *CollectResult
 	hdlSet         *BoundedHandleSet
+	// total recorded file size is shared across collectors in one collect-conflicts
+	// subtask, to enforce one global hard limit.
+	sharedTotalFileSize *atomic.Int64
 
 	fileSeq      int
 	currFileSize int64
 	writer       objectio.Writer
+	// once true, no more conflicted rows will be written to files.
+	stopRecording bool
 }
 
 // NewCollector creates a new conflicted KV info collector.
@@ -93,17 +113,25 @@ func NewCollector(
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
 	globalSet, localSet *BoundedHandleSet,
+	sharedTotalFileSize *atomic.Int64,
+	progressCollector execute.Collector,
 	trafficRec TrafficRecorder,
 ) *Collector {
-	collector := &Collector{
-		logger:         logger,
-		store:          objStore,
-		filenamePrefix: filenamePrefix,
-		kvGroup:        kvGroup,
-		result:         NewCollectResult(store.GetCodec().GetKeyspace()),
-		hdlSet:         localSet,
+	// Safety check: if caller doesn't pass the shared counter, allocate one to
+	// avoid nil-pointer panics when recordRowToFile does atomic Add.
+	if sharedTotalFileSize == nil {
+		sharedTotalFileSize = &atomic.Int64{}
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, logger)
+	collector := &Collector{
+		logger:              logger,
+		store:               objStore,
+		filenamePrefix:      filenamePrefix,
+		kvGroup:             kvGroup,
+		result:              NewCollectResult(store.GetCodec().GetKeyspace()),
+		hdlSet:              localSet,
+		sharedTotalFileSize: sharedTotalFileSize,
+	}
+	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, progressCollector, logger)
 	var h Handler
 	if kvGroup == external.DataKVGroup {
 		h = NewDataKVHandler(base)
@@ -125,12 +153,6 @@ func (c *Collector) Run(ctx context.Context, ch chan *external.KVPair) (err erro
 // HandleEncodedRow handles the re-encoded row from conflict KV.
 func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 	row []types.Datum, kvPairs *kv.Pairs) error {
-	if c.writer == nil || c.currFileSize >= MaxConflictRowFileSize {
-		if err := c.switchFile(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		c.currFileSize = 0
-	}
 	// every conflicted row from data KV group must be recorded, but for index KV
 	// group, they might come from the same row, so we only need to record it on
 	// the first time we meet it.
@@ -143,29 +165,58 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 		c.hdlSet.Add(handle)
 	}
 
+	if err := c.recordRowToFile(ctx, row); err != nil {
+		return err
+	}
+	c.result.RowCount++
+	c.result.Checksum.Update(kvPairs.Pairs)
+	return nil
+}
+
+func (c *Collector) recordRowToFile(ctx context.Context, row []types.Datum) error {
+	if c.stopRecording {
+		return nil
+	}
+
 	str, err := types.DatumsToString(row, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	contentSize := int64(len(str) + 1)
+	// We intentionally check the hard limit after Add to keep cross-collector
+	// accounting simple. A small overflow above the threshold is acceptable for
+	// now while we collect real-world feedback for this feature.
+	limit := maxTotalConflictRowFileSize
+	failpoint.InjectCall("mockTotalConflictRowFileSizeLimit", &limit)
+	globalTotalSize := c.sharedTotalFileSize.Add(contentSize)
+	if globalTotalSize > limit {
+		return c.onTotalSizeLimitExceeded(ctx, globalTotalSize, contentSize, limit)
+	}
+
+	if c.writer == nil || c.currFileSize >= MaxConflictRowFileSize {
+		if err := c.switchFile(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		c.currFileSize = 0
+	}
+
 	content := []byte(str + "\n")
 	if _, err = c.writer.Write(ctx, content); err != nil {
 		return errors.Trace(err)
 	}
-
-	c.result.RowCount++
-	c.result.TotalFileSize += int64(len(content))
-	c.result.Checksum.Update(kvPairs.Pairs)
-	c.currFileSize += int64(len(content))
+	c.result.TotalFileSize += contentSize
+	c.currFileSize += contentSize
 	return nil
 }
 
 func (c *Collector) switchFile(ctx context.Context) error {
 	if c.writer != nil {
-		if err := c.writer.Close(ctx); err != nil {
+		err := c.writer.Close(ctx)
+		c.writer = nil
+		if err != nil {
 			c.logger.Warn("failed to close conflict row writer", zap.Error(err))
 			return errors.Trace(err)
 		}
-		c.writer = nil
 	}
 	c.fileSeq++
 	filename := getRowFileName(c.filenamePrefix, c.fileSeq)
@@ -180,6 +231,29 @@ func (c *Collector) switchFile(ctx context.Context) error {
 	}
 	c.result.Filenames = append(c.result.Filenames, filename)
 	c.writer = writer
+	return nil
+}
+
+func (c *Collector) onTotalSizeLimitExceeded(ctx context.Context, totalSize, rowSize, limit int64) error {
+	if c.stopRecording {
+		return nil
+	}
+	c.stopRecording = true
+	c.result.RowRecordingCapped = true
+	c.logger.Info("conflicted row files reached the hardcoded total size limit, stop recording more rows",
+		zap.String("sizeLimit", units.BytesSize(float64(limit))),
+		zap.String("currentTotalFileSize", units.BytesSize(float64(totalSize))),
+		zap.String("nextRowSize", units.BytesSize(float64(rowSize))),
+	)
+	if c.writer != nil {
+		err := c.writer.Close(ctx)
+		c.writer = nil
+		c.currFileSize = 0
+		if err != nil {
+			c.logger.Warn("failed to close conflict row writer", zap.Error(err))
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 

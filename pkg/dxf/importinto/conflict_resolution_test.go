@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/config"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
@@ -114,6 +115,7 @@ type conflictedKVHandleContext struct {
 	tempDir          string
 	store            tidbkv.Storage
 	logger           *zap.Logger
+	tbl              table.Table
 	taskMeta         *importinto.TaskMeta
 	tbl              table.Table
 	tk               *testkit.TestKit
@@ -154,6 +156,7 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 	return &conflictedKVHandleContext{
 		store:            store,
 		logger:           logger,
+		tbl:              tbl,
 		taskMeta:         taskMeta,
 		tbl:              tbl,
 		tk:               tk,
@@ -173,6 +176,11 @@ func runConflictedKVHandleStep(t *testing.T, subtask *proto.Subtask, stepExe exe
 }
 
 func TestConflictResolutionStepExecutor(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
 	hdlCtx := prepareConflictedKVHandleContext(t)
 	stMeta := importinto.ConflictResolutionStepMeta{Infos: hdlCtx.conflictedKVInfo}
 	bytes, err := json.Marshal(stMeta)

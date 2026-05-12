@@ -340,6 +340,10 @@ func TestValidator(t *testing.T) {
 		{"CREATE VECTOR INDEX ident ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		// {"CREATE COLUMNAR INDEX ident USING VECTOR ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		{"CREATE FULLTEXT INDEX x ON ident (col_x)", false, errors.New(`[schema:1146]Table 'test.ident' doesn't exist`)},
+
+		// LATERAL derived tables pass preprocessing; validation happens in the planner.
+		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
+		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
 	}
 
 	store := testkit.CreateMockStore(t)

@@ -372,15 +372,19 @@ func TestMergeContinuousKeyRanges(t *testing.T) {
 }
 
 func TestDetectAndUpdateJobVersion(t *testing.T) {
-	d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background()}}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	d := &ddl{ddlCtx: &ddlCtx{ctx: ctx}}
 
 	reset := func() {
 		model.SetJobVerInUse(model.JobVersion1)
+		model.SetGlobalIndexV1Supported(false)
 	}
 	t.Cleanup(reset)
 	// other ut in the same address space might change it
 	reset()
 	require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+	require.False(t, model.GetGlobalIndexV1Supported())
 
 	t.Run("in ut", func(t *testing.T) {
 		reset()
@@ -390,6 +394,7 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		} else {
 			require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 		}
+		require.True(t, model.GetGlobalIndexV1Supported())
 	})
 
 	d.etcdCli = &clientv3.Client{}
@@ -407,15 +412,24 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", inTerms)
 	}
 
-	t.Run("all support v2, even with pre-release label", func(t *testing.T) {
+	t.Run("all support v2 and global index v1", func(t *testing.T) {
 		reset()
-		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0-alpha-228-g650888fea7-dirty",
-			"8.0.11-TiDB-v8.4.1", "8.0.11-TiDB-8.5.0-beta")
-		d.detectAndUpdateJobVersion()
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6-alpha-228-g650888fea7-dirty",
+			"8.0.11-TiDB-v9.0.0", "8.0.11-TiDB-8.5.6-beta")
+		d.detectAndUpdateJobVersionOnce()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+		require.True(t, model.GetGlobalIndexV1Supported())
 	})
 
-	t.Run("v1 first, later all support v2", func(t *testing.T) {
+	t.Run("all support v2 but not global index v1", func(t *testing.T) {
+		reset()
+		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.5.5")
+		d.detectAndUpdateJobVersionOnce()
+		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+		require.False(t, model.GetGlobalIndexV1Supported())
+	})
+
+	t.Run("v1 first, later all support v2 and global index v1", func(t *testing.T) {
 		reset()
 		intervalBak := detectJobVerInterval
 		t.Cleanup(func() {
@@ -429,30 +443,56 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 			iterateCnt++
 			if iterateCnt == 1 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				require.False(t, model.GetGlobalIndexV1Supported())
 				// user set version explicitly in config
 				mockGetAllServerInfo(t, "9.0.0-xxx")
 			} else if iterateCnt == 2 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				require.False(t, model.GetGlobalIndexV1Supported())
 				// invalid version
 				mockGetAllServerInfo(t, "xxx")
 			} else if iterateCnt == 3 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				require.False(t, model.GetGlobalIndexV1Supported())
 				// less than 8.4.0
 				mockGetAllServerInfo(t, "8.0.11-TiDB-8.3.0")
 			} else if iterateCnt == 4 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				require.False(t, model.GetGlobalIndexV1Supported())
 				// upgrade case
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.4.0")
 			} else if iterateCnt == 5 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
-				// upgrade done
+				require.False(t, model.GetGlobalIndexV1Supported())
+				// all support job v2 but not global index v1
 				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0")
+			} else if iterateCnt == 6 {
+				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+				require.False(t, model.GetGlobalIndexV1Supported())
+				// upgrade to version supporting global index v1
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6")
 			} else {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+				require.True(t, model.GetGlobalIndexV1Supported())
 			}
 		})
 		d.detectAndUpdateJobVersion()
 		d.wg.Wait()
-		require.EqualValues(t, 6, iterateCnt)
+		require.EqualValues(t, 7, iterateCnt)
 	})
+}
+
+func TestSetGlobalIndexVersionFlag(t *testing.T) {
+	tblInfo := &model.TableInfo{} // non-clustered (zero value)
+	idxInfo := &model.IndexInfo{Global: true, Unique: false}
+
+	model.SetGlobalIndexV1Supported(false)
+	t.Cleanup(func() { model.SetGlobalIndexV1Supported(false) })
+
+	setGlobalIndexVersion(tblInfo, idxInfo)
+	require.Equal(t, uint8(0), idxInfo.GlobalIndexVersion)
+
+	model.SetGlobalIndexV1Supported(true)
+	setGlobalIndexVersion(tblInfo, idxInfo)
+	require.Equal(t, model.GlobalIndexVersionV1, idxInfo.GlobalIndexVersion)
 }

@@ -144,6 +144,10 @@ const (
 	SlowLogStorageFromKV = "Storage_from_kv"
 	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
 	SlowLogStorageFromMPP = "Storage_from_mpp"
+	// SlowLogRequestUnitV2 is the RU v2 total for the statement.
+	SlowLogRequestUnitV2 = "Request_unit_v2"
+	// SlowLogRequestUnitV2Detail is the RU v2 detailed metrics for the statement.
+	SlowLogRequestUnitV2Detail = "Request_unit_v2_detail"
 
 	// The following constants define the set of fields for SlowQueryLogItems
 	// that are relevant to evaluating and triggering SlowLogRules.
@@ -221,6 +225,8 @@ const (
 	SlowLogResourceGroup = "Resource_group"
 	// SlowLogCopMVCCReadAmplification is total_keys / processed_keys in coprocessor scan detail.
 	SlowLogCopMVCCReadAmplification = "cop_mvcc_read_amplification"
+	// SlowLogSessionConnectAttrs is the session connection attributes from the client.
+	SlowLogSessionConnectAttrs = "Session_connect_attrs"
 )
 
 // JSONSQLWarnForSlowLog helps to print the SQLWarn through the slow log in JSON format.
@@ -297,12 +303,16 @@ type SlowQueryLogItems struct {
 	// resource information
 	ResourceGroupName string
 	RUDetails         *util.RUDetails
+	RUV2Metrics       *execdetails.RUV2Metrics
 	MemMax            int64
 	DiskMax           int64
 	CPUUsages         ppcpuusage.CPUUsages
 	StorageKV         bool // query read from TiKV
 	StorageMPP        bool // query read from TiFlash
 	MemArbitration    float64
+	// SessionConnectAttrs holds the client connection attributes (e.g. _client_name, _os).
+	// This is a shared reference to ConnectionInfo.Attributes and must not be modified.
+	SessionConnectAttrs map[string]string
 }
 
 const zeroStr = "0"
@@ -322,17 +332,18 @@ func kvExecDetailFormat(buf *bytes.Buffer, kvExecDetail *util.ExecDetails) {
 		writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, zeroStr)
 		return
 	}
-	writeSlowLogItem(buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(kvExecDetail.WaitKVRespDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(kvExecDetail.WaitPDRespDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(kvExecDetail.BackoffDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesSentKVTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedKVTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesSentKVCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedKVCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesSentMPPTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedMPPTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesSentMPPCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedMPPCrossZone, 10))
+	snapshot := execdetails.LoadTiKVExecDetails(kvExecDetail)
+	writeSlowLogItem(buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(snapshot.WaitKVRespDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(snapshot.WaitPDRespDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(snapshot.BackoffDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(snapshot.UnpackedBytesSentKVTotal, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(snapshot.UnpackedBytesReceivedKVTotal, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(snapshot.UnpackedBytesSentKVCrossZone, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(snapshot.UnpackedBytesReceivedKVCrossZone, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(snapshot.UnpackedBytesSentMPPTotal, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(snapshot.UnpackedBytesReceivedMPPTotal, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(snapshot.UnpackedBytesSentMPPCrossZone, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, strconv.FormatInt(snapshot.UnpackedBytesReceivedMPPCrossZone, 10))
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -398,8 +409,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v", SlowLogRewriteTimeStr,
 		SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationRewrite.Seconds(), 'f', -1, 64)))
 	if logItems.RewriteInfo.PreprocessSubQueries > 0 {
-		buf.WriteString(fmt.Sprintf(" %v%v%v %v%v%v", SlowLogPreprocSubQueriesStr, SlowLogSpaceMarkStr, logItems.RewriteInfo.PreprocessSubQueries,
-			SlowLogPreProcSubQueryTimeStr, SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationPreprocessSubQuery.Seconds(), 'f', -1, 64)))
+		fmt.Fprintf(&buf, " %v%v%v %v%v%v", SlowLogPreprocSubQueriesStr, SlowLogSpaceMarkStr, logItems.RewriteInfo.PreprocessSubQueries,
+			SlowLogPreProcSubQueryTimeStr, SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationPreprocessSubQuery.Seconds(), 'f', -1, 64))
 	}
 	buf.WriteString("\n")
 
@@ -552,12 +563,35 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
 	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
+	var tiKVRU, tiFlashRU float64
+	if logItems.RUDetails != nil {
+		tiKVRU = logItems.RUDetails.TiKVRUV2()
+		tiFlashRU = logItems.RUDetails.TiflashRU()
+	}
+	total, formatted := execdetails.FormatRUV2Summary(logItems.RUV2Metrics, s.RUV2Weights(), tiKVRU, tiFlashRU)
+	if len(total) > 0 {
+		writeSlowLogItem(&buf, SlowLogRequestUnitV2, total)
+	}
+	if len(formatted) > 0 {
+		writeSlowLogItem(&buf, SlowLogRequestUnitV2Detail, formatted)
+	}
+	if len(logItems.SessionConnectAttrs) > 0 {
+		// Encode into a temporary buffer first so that a (practically impossible)
+		// encoding error does not leave a partial line in the main buffer.
+		var attrsBuf bytes.Buffer
+		encoder := json.NewEncoder(&attrsBuf)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(logItems.SessionConnectAttrs); err == nil {
+			buf.WriteString(SlowLogRowPrefixStr + SlowLogSessionConnectAttrs + SlowLogSpaceMarkStr)
+			buf.Write(attrsBuf.Bytes()) // Encode already appends \n
+		}
+	}
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
 
 	if s.CurrentDBChanged {
-		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
+		fmt.Fprintf(&buf, "use %s;\n", strings.ToLower(s.CurrentDB))
 		s.CurrentDBChanged = false
 	}
 
@@ -612,7 +646,8 @@ func makeKVExecDetailAccessor(parse func(string) (any, error),
 			if items.KVExecDetail == nil {
 				tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
 				if tikvExecDetailRaw != nil {
-					items.KVExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+					snapshot := execdetails.LoadTiKVExecDetails(tikvExecDetailRaw.(*util.ExecDetails))
+					items.KVExecDetail = &snapshot
 				}
 			}
 		},
@@ -1128,7 +1163,7 @@ func encodeRules(rules *slowlogrule.SlowLogRules) string {
 			}
 			strB.WriteString(cond.Field)
 			strB.WriteByte(':')
-			strB.WriteString(fmt.Sprintf("%v", cond.Threshold))
+			fmt.Fprintf(&strB, "%v", cond.Threshold)
 		}
 
 		if i < len(rules.Rules)-1 {

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -57,10 +58,10 @@ func TestAutoAnalyzeForMissingPartition(t *testing.T) {
 	tk.MustExec("set @@tidb_skip_missing_partition_stats = 1")
 	tk.MustExec("create table t (a int, b int, c int, index idx_b(b)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300))")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t partition p1")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	originalVal2 := tk.MustQuery("select @@tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	defer func() {
@@ -68,12 +69,20 @@ func TestAutoAnalyzeForMissingPartition(t *testing.T) {
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
 	require.True(t, h.HandleAutoAnalyze())
-	tk.MustQuery("select state from mysql.analyze_jobs").Check(testkit.Rows(
-		"finished",
-		"finished",
-		"finished",
-		"finished",
-		"finished",
-		"finished",
-		"finished"))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	pi := tbl.Meta().GetPartitionInfo()
+	require.NotNil(t, pi)
+
+	p0Stats := h.GetPhysicalTableStats(pi.Definitions[0].ID, tbl.Meta())
+	require.False(t, p0Stats.Pseudo)
+	require.True(t, p0Stats.IsAnalyzed())
+
+	p2Stats := h.GetPhysicalTableStats(pi.Definitions[2].ID, tbl.Meta())
+	require.False(t, p2Stats.Pseudo)
+	require.True(t, p2Stats.IsAnalyzed())
+
+	tk.MustQuery("select distinct state from mysql.analyze_jobs").Check(testkit.Rows("finished"))
 }
