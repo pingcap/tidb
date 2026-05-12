@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -60,16 +59,6 @@ var (
 	_          base.PhysicalPlan = &testutil.MockDataPhysicalPlan{}
 	wideString                   = strings.Repeat("x", 5*1024)
 )
-
-func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
-	plan := &mlogPurgeThrottlePlan{targetRate: 2000}
-	batch := plan.effectiveDeleteBatchSize(10000)
-	require.Equal(t, int64(2000), batch)
-
-	plan = &mlogPurgeThrottlePlan{targetRate: 100000}
-	batch = plan.effectiveDeleteBatchSize(10000)
-	require.Equal(t, int64(10000), batch)
-}
 
 func buildHashAggExecutor(ctx sessionctx.Context, src exec.Executor, schema *expression.Schema,
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression) exec.Executor {

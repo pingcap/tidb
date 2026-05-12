@@ -232,3 +232,13 @@ func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testi
 	require.Contains(t, exec.calls[1].sql, "NEXT_TIME = %?")
 	require.Equal(t, []any{"2026-03-08 00:00:00", int64(123)}, exec.calls[1].args)
 }
+
+func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
+	plan := &mlogPurgeThrottlePlan{targetRate: 2000}
+	batch := plan.effectiveDeleteBatchSize(10000)
+	require.Equal(t, int64(2000), batch)
+
+	plan = &mlogPurgeThrottlePlan{targetRate: 100000}
+	batch = plan.effectiveDeleteBatchSize(10000)
+	require.Equal(t, int64(10000), batch)
+}
