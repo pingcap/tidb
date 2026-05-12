@@ -637,7 +637,7 @@ func NewBackend(
 		pdSvcDiscovery,
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewClient(codecPDCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
+	splitCli := split.NewCodecAwareClient(codecPDCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
 	multiIngestSupported, err = checkMultiIngestSupport(ctx, codecPDCli, importClientFactory)
@@ -836,6 +836,9 @@ func (local *Backend) getTiKVClient() (*tikvclient.KVStore, error) {
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
+	// we have to build a separate PD client for tikv, as KVStore will manage
+	// the lifecycle of input PD client, while the PD client inside this is
+	// managed outside.
 	pdCliForTiKV, err := newPDClient(context.Background(), caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
 	if err != nil {
 		_ = spkv.Close()

@@ -512,7 +512,7 @@ func TestPaginateScanRegionWithCodecAwareCodecPDClient(t *testing.T) {
 		}
 		mockPDClient.SetRegions(physicalBoundaries)
 
-		client := &pdClient{client: codecPDClient}
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
 		regions, err := PaginateScanRegionWithCodecAware(
 			ctx,
 			client,
@@ -537,7 +537,7 @@ func TestPaginateScanRegionWithCodecAwareCodecPDClient(t *testing.T) {
 		}
 		mockPDClient.SetRegions(physicalBoundaries)
 
-		client := &pdClient{client: codecPDClient}
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
 		scanStart, scanEnd := tikvCodec.EncodeRange([]byte("a"), nil)
 		regions, err := PaginateScanRegionWithCodecAware(
 			ctx,
@@ -575,6 +575,7 @@ func TestSplitKeysAndScatterCodecPDClientMapsSplitKeys(t *testing.T) {
 		client:           codecPDClient,
 		splitConcurrency: 1,
 		splitBatchKeyCnt: 100,
+		isCodecPDClient:  true,
 	}
 	_, err := client.SplitKeysAndScatter(ctx, [][]byte{tikvCodec.EncodeKey([]byte("b"))})
 	require.ErrorContains(t, err, "retryable error")

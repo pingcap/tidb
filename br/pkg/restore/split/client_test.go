@@ -23,7 +23,9 @@ func TestGetCodecPDClient(t *testing.T) {
 	require.Nil(t, (&pdClient{}).GetCodecPDClient())
 	require.Nil(t, (&pdClient{client: NewMockPDClientForSplit()}).GetCodecPDClient())
 	codecPDClient := &tikv.CodecPDClient{}
-	require.Same(t, codecPDClient, (&pdClient{client: codecPDClient}).GetCodecPDClient())
+	require.Nil(t, (&pdClient{client: codecPDClient}).GetCodecPDClient())
+	require.Same(t, codecPDClient, (&pdClient{client: codecPDClient, isCodecPDClient: true}).GetCodecPDClient())
+	require.Same(t, codecPDClient, NewCodecAwareClient(codecPDClient, nil, nil, 0, 0).GetCodecPDClient())
 	require.Nil(t, NewFakeSplitClient().GetCodecPDClient())
 	require.Nil(t, NewTestClient(nil, nil, 0).GetCodecPDClient())
 }
