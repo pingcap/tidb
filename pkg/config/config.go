@@ -1402,6 +1402,9 @@ func (c *Config) Load(confFile string) error {
 	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
+		c.Standby.EnableZeroBackend = true
+	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	} else if c.TokenLimit > MaxTokenLimit {

@@ -1113,6 +1113,18 @@ dxf-resource-limit = 101`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.True(t, conf.Standby.EnableZeroBackend)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+deploy-mode = "starter"
+[standby]
+enable-zero-backend = false
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.False(t, conf.Standby.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))

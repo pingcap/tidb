@@ -2508,7 +2508,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 
 		for {
 			select {
-			case <-time.After(sessionstates.LoadCertInterval):
+			case <-time.After(sessionstates.GetLoadCertInterval()):
 				sessionstates.ReloadSigningCert()
 			case <-do.exit:
 				return
