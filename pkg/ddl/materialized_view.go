@@ -67,8 +67,6 @@ var (
 )
 
 // GenerateMLogTableName generates an available mlog table name for the base table.
-//
-// TODO(xzx) add ut for this function
 func GenerateMLogTableName(
 	baseTableName pmodel.CIStr,
 	checkTableExistence func(pmodel.CIStr) (bool, error),
@@ -111,7 +109,6 @@ func GenerateMLogTableName(
 		return candidate, nil
 	}
 
-	// TODO(xzx) more ut for this code
 	for {
 		var err error
 		number, err := nextMLogTableNameNumber(
