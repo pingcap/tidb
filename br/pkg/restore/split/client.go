@@ -108,11 +108,14 @@ type SplitClient interface {
 	// scattering no matter what the error is.
 	WaitRegionsScattered(ctx context.Context, regionInfos []*RegionInfo) (notFinished int, err error)
 	// GetCodecPDClient returns the underlying codec PD client if one is used.
-	// normal PD client require the KEYs passed in to be encoded in memory
-	// comparable way through codec.EncodeBytes. if we are using keyspace, it
+	// There are two types of PD client, although they both implement the
+	// pd.Client interface, they have different requirements on the keys passed in:
+	//
+	// 1. normal PD client requires the keys passed in to be encoded in memory
+	// comparable way through codec.EncodeBytes. If we are using keyspace, it
 	// requires the keyspace prefix already included before codec.EncodeBytes.
 	//
-	// codec PD client will do the same encode internally, but it requires the keys
+	// 2. codec PD client does the same encode internally, but it requires the keys
 	// to be the same as the keys encoded by KV encoder, i.e. there is no additional
 	// encode from codec.EncodeBytes, and if it's codec V2, the passed key should
 	// NOT contain the keyspace.
@@ -136,6 +139,8 @@ type pdClient struct {
 	onSplit          func(key [][]byte)
 	splitConcurrency int
 	splitBatchKeyCnt int
+	// see comments of SplitClient.GetCodecPDClient for details.
+	isCodecPDClient bool
 }
 
 type ClientOptionalParameter func(*pdClient)
@@ -180,15 +185,25 @@ func NewClient(
 	return cli
 }
 
+// NewCodecAwareClient creates a SplitClient with a codec PD client.
+func NewCodecAwareClient(
+	client *tikvclient.CodecPDClient,
+	httpCli pdhttp.Client,
+	tlsConf *tls.Config,
+	splitBatchKeyCnt int,
+	splitConcurrency int,
+	opts ...ClientOptionalParameter,
+) SplitClient {
+	cli := NewClient(client, httpCli, tlsConf, splitBatchKeyCnt, splitConcurrency, opts...).(*pdClient)
+	cli.isCodecPDClient = true
+	return cli
+}
+
 func (c *pdClient) GetCodecPDClient() *tikvclient.CodecPDClient {
-	if c == nil {
+	if c == nil || !c.isCodecPDClient {
 		return nil
 	}
-	codecPDClient, ok := c.client.(*tikvclient.CodecPDClient)
-	if !ok {
-		return nil
-	}
-	return codecPDClient
+	return c.client.(*tikvclient.CodecPDClient)
 }
 
 func (c *pdClient) needScatter(ctx context.Context) bool {
