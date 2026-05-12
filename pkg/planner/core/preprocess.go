@@ -1162,8 +1162,8 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[tableAliasKe
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
-					tabName = ast.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.O, tableNode.Name.O))
 					key = tableAliasKey{schema: tableNode.Schema.L, name: tableNode.Name.L, qualified: true}
+					tabName = ast.NewCIStr(fmt.Sprintf("%s.%s", key.schema, key.name))
 				} else {
 					tabName = tableNode.Name
 					key = tableAliasKey{name: tableNode.Name.L}
