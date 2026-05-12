@@ -1167,6 +1167,7 @@ const (
 
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrMaxKeysReadExceeded                      = 8274
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
