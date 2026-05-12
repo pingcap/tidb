@@ -101,8 +101,12 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 
 // LoadTableStats loads the stats of the table read by this plan.
 func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	stats.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
+	switch scan := p.TablePlans[0].(type) {
+	case *PhysicalTableScan:
+		stats.LoadTableStats(ctx, scan.Table, scan.PhysicalTableID)
+	case *PhysicalIndexScan:
+		stats.LoadTableStats(ctx, scan.Table, scan.PhysicalTableID)
+	}
 }
 
 // SetTablePlanForTest sets TablePlan field for test usage only

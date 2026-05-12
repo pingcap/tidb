@@ -114,6 +114,11 @@ type PhysicalIndexScan struct {
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
+// IsTiCIFTSScan returns whether this index scan is a TiCI full-text search scan.
+func (p *PhysicalIndexScan) IsTiCIFTSScan() bool {
+	return p != nil && p.Index != nil && p.Index.IsTiCIIndex() && p.FtsQueryInfo != nil
+}
+
 // FullRange represent used all partitions.
 const FullRange = -1
 

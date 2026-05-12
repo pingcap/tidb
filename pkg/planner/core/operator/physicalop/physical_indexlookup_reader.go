@@ -208,7 +208,7 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 }
 
 func (p *PhysicalIndexLookUpReader) adjustReadReqType(_ base.PlanContext) {
-	if p.IndexStoreType == kv.TiFlash || p.IndexStoreType == kv.TiCI {
+	if p.IndexStoreType == kv.TiFlash {
 		_, ok := p.IndexPlan.(*PhysicalExchangeSender)
 		if ok {
 			p.ReadReqType = MPP
@@ -218,33 +218,42 @@ func (p *PhysicalIndexLookUpReader) adjustReadReqType(_ base.PlanContext) {
 	}
 }
 
-func containTiCIIndexScan(p base.PhysicalPlan) bool {
+func containsTiCIFTSIndexScan(p base.PhysicalPlan) bool {
 	if p == nil {
 		return false
 	}
 	if is, ok := p.(*PhysicalIndexScan); ok {
-		return is.Index != nil && is.Index.IsTiCIIndex() && is.FtsQueryInfo != nil
+		return is.IsTiCIFTSScan()
 	}
 	for _, child := range p.Children() {
-		if containTiCIIndexScan(child) {
+		if containsTiCIFTSIndexScan(child) {
 			return true
 		}
 	}
 	return false
 }
 
-func rewriteTiCIIndexStoreToTiFlash(p base.PhysicalPlan) {
-	if p == nil {
-		return
+func wrapTiCIFTSIndexPlanForMPP(ctx base.PlanContext, indexPlan base.PhysicalPlan) base.PhysicalPlan {
+	if !containsTiCIFTSIndexScan(indexPlan) {
+		return indexPlan
 	}
-	if is, ok := p.(*PhysicalIndexScan); ok {
-		if is.Index != nil && is.Index.IsTiCIIndex() && is.FtsQueryInfo != nil {
-			is.StoreType = kv.TiFlash
-		}
+	if _, isSender := indexPlan.(*PhysicalExchangeSender); isSender {
+		return indexPlan
 	}
-	for _, child := range p.Children() {
-		rewriteTiCIIndexStoreToTiFlash(child)
+	sender := PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_PassThrough,
+	}.Init(ctx, indexPlan.StatsInfo())
+	sender.SetChildren(indexPlan)
+	return sender
+}
+
+func getIndexLookUpIndexStoreType(indexPlan base.PhysicalPlan, indexPlans []base.PhysicalPlan) kv.StoreType {
+	if containsTiCIFTSIndexScan(indexPlan) {
+		// TiCI index side is dispatched by the TiFlash MPP protocol. Keep the
+		// PhysicalIndexScan as TiCI, but expose TiFlash here for task/explain wiring.
+		return kv.TiFlash
 	}
+	return indexPlans[0].(*PhysicalIndexScan).StoreType
 }
 
 // Init initializes PhysicalIndexLookUpReader.
@@ -255,7 +264,7 @@ func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, indexL
 	p.tryPushDownLookUp(ctx, indexLookUpPushDownBy)
 	p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 	p.IndexPlans, p.IndexPlansUnNatureOrders = FlattenTreePushDownPlan(p.IndexPlan)
-	p.IndexStoreType = p.IndexPlans[0].(*PhysicalIndexScan).StoreType
+	p.IndexStoreType = getIndexLookUpIndexStoreType(p.IndexPlan, p.IndexPlans)
 	p.adjustReadReqType(ctx)
 	return &p
 }
@@ -333,20 +342,10 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType,
 // BuildIndexLookUpTask builds a index look up task from a cop task.
 func BuildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	newTask := &RootTask{}
-	indexPlan := t.IndexPlan
 	// For TiCI index side in IndexLookUp, wrap the index subtree by a pass-through
 	// ExchangeSender so the executor can dispatch it through MPP protocol while keeping
 	// the table probe side on TiKV.
-	if containTiCIIndexScan(indexPlan) {
-		rewriteTiCIIndexStoreToTiFlash(indexPlan)
-		if _, isSender := indexPlan.(*PhysicalExchangeSender); !isSender {
-			sender := PhysicalExchangeSender{
-				ExchangeType: tipb.ExchangeType_PassThrough,
-			}.Init(ctx, indexPlan.StatsInfo())
-			sender.SetChildren(indexPlan)
-			indexPlan = sender
-		}
-	}
+	indexPlan := wrapTiCIFTSIndexPlanForMPP(ctx, t.IndexPlan)
 	p := PhysicalIndexLookUpReader{
 		TablePlan:        t.TablePlan,
 		IndexPlan:        indexPlan,

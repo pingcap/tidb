@@ -102,6 +102,9 @@ func (f *Fragment) MemoryUsage() (sum int64) {
 	if f.TableScan != nil {
 		sum += f.TableScan.MemoryUsage()
 	}
+	if f.IndexScan != nil {
+		sum += f.IndexScan.MemoryUsage()
+	}
 	if f.Sink != nil {
 		sum += f.Sink.MemoryUsage()
 	}
@@ -415,7 +418,7 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 					"Please set tidb_allow_mpp = 0, and then rerun sql.")
 		}
 	} else if f.IndexScan != nil {
-		tasks, err = e.constructMPPTasksForIndexScan(context.Background(), f.IndexScan)
+		tasks, err = e.constructMPPTasksForTiCIFTSIndexScan(context.Background(), f.IndexScan)
 		if err == nil && len(tasks) == 0 {
 			err = errors.New(
 				"In mpp mode, the number of tasks for index scan should not be zero. " +
@@ -549,6 +552,16 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		return nil, errors.Trace(err)
 	}
 
+	return e.constructMPPTasksFromRequest(ctx, req, ts.Table.ID, allPartitionsIDs, tiFlashStaticPrune)
+}
+
+func (e *mppTaskGenerator) constructMPPTasksFromRequest(
+	ctx context.Context,
+	req *kv.MPPBuildTasksRequest,
+	tableID int64,
+	allPartitionsIDs []int64,
+	tiFlashStaticPrune bool,
+) ([]*kv.MPPTask, error) {
 	// ttl is always 0, `tidb_mpp_store_fail_ttl` variable has been deprecated
 	ttl := time.Duration(0)
 	dispatchPolicy := tiflashcompute.DispatchPolicyInvalid
@@ -558,6 +571,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
 
 	var metas []kv.MPPTaskMeta
+	var err error
 	if val := req.ToString(); e.tableReaderCache[val] != nil {
 		metas = e.tableReaderCache[val]
 		failpoint.InjectCall("mppTaskGeneratorTableReaderCacheHit")
@@ -581,7 +595,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 			StartTs:            e.startTS,
 			GatherID:           e.gatherID,
 			MppQueryID:         e.mppQueryID,
-			TableID:            ts.Table.ID,
+			TableID:            tableID,
 			PartitionTableIDs:  allPartitionsIDs,
 			TiFlashStaticPrune: tiFlashStaticPrune,
 			MppVersion:         mppVersion,
@@ -595,15 +609,17 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	return tasks, nil
 }
 
-// constructMPPTasksForIndexScan schedules MPP tasks for a fragment whose leaf is an IndexScan.
+// constructMPPTasksForTiCIFTSIndexScan schedules MPP tasks for a TiCI FTS fragment.
 //
-// Today MPP store assignment only depends on key ranges (see kv.MPPBuildTasksRequest). For an index scan,
-// we still schedule by the base table key ranges, and rely on TiFlash to execute the IndexScan executor
-// (with FtsQueryInfo) and route it to TiCI.
-func (e *mppTaskGenerator) constructMPPTasksForIndexScan(ctx context.Context, is *PhysicalIndexScan) ([]*kv.MPPTask, error) {
-	// NOTE: For now, we schedule by the whole table ranges (the same as full scan scheduling),
-	// because kv.MPPBuildTasksRequest only accepts key ranges and doesn't carry index ranges.
-	// This is OK for correctness, though it may be sub-optimal for locality.
+// TiFlash executes the IndexScan executor and uses task-level TableShardInfo to route
+// the FTS scan to TiCI shards. The regular table key ranges are still recorded for
+// the MPP gatherer's mem-buffer handling, while the TiCI key ranges drive scheduling.
+func (e *mppTaskGenerator) constructMPPTasksForTiCIFTSIndexScan(ctx context.Context, is *PhysicalIndexScan) ([]*kv.MPPTask, error) {
+	if !is.IsTiCIFTSScan() {
+		return nil, errors.New("MPP IndexScan is only supported for TiCI FTS")
+	}
+	// Build regular table ranges first so the MPP gatherer can still expose the
+	// base key ranges to UnionScan. TiCI shard scheduling is attached below.
 	//
 	// IMPORTANT: For TiCI, TiFlash needs TableShardInfo which is keyed by the executor_id.
 	// The executor_id is the `tipb.Executor.ExecutorId` set in `PhysicalIndexScan.ToPB()`.
@@ -659,84 +675,47 @@ func (e *mppTaskGenerator) constructMPPTasksForIndexScan(ctx context.Context, is
 		e.KVRanges = append(e.KVRanges, req.KeyRanges...)
 	}
 
-	if is.Index != nil && is.Index.IsTiCIIndex() && is.FtsQueryInfo != nil {
-		ticiShardType := distsql.TiCIShardIntHandle
-		switch {
-		case is.Index.HasExtraTiCIShardingKey():
-			ticiShardType = distsql.TiCIShardExtraShardingKey
-		case is.Table.IsCommonHandle:
-			ticiShardType = distsql.TiCIShardCommonHandle
-		}
-		ticiPartitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(physicalTableIDs))
-		for _, physicalTableID := range physicalTableIDs {
-			ticiKVRanges, rangeErr := distsql.TiCIIndexRangesToKVRanges(
-				e.ctx.GetDistSQLCtx(),
-				[]int64{physicalTableID},
-				is.Index.ID,
-				is.Ranges,
-				ticiShardType,
-			)
-			if rangeErr != nil {
-				return nil, errors.Trace(rangeErr)
-			}
-			ticiPartitionIDAndRanges = append(ticiPartitionIDAndRanges, kv.PartitionIDAndRanges{
-				ID:        physicalTableID,
-				KeyRanges: ticiKVRanges.FirstPartitionRange(),
-			})
-		}
-		req.TiCI = true
-		req.TiCIIndexID = is.Index.ID
-		req.TiCIExecutorID = is.ExplainID().String()
-		if len(ticiPartitionIDAndRanges) == 1 {
-			req.TiCITableID = ticiPartitionIDAndRanges[0].ID
-			req.TiCIKeyRanges = ticiPartitionIDAndRanges[0].KeyRanges
-		} else {
-			req.TiCIPartitionIDAndRanges = ticiPartitionIDAndRanges
-		}
+	if err := e.attachTiCIFTSInfoToMPPBuildTaskReq(req, is, physicalTableIDs); err != nil {
+		return nil, err
 	}
+	return e.constructMPPTasksFromRequest(ctx, req, is.Table.ID, nil, false)
+}
 
-	// ttl is always 0, `tidb_mpp_store_fail_ttl` variable has been deprecated
-	ttl := time.Duration(0)
-	dispatchPolicy := tiflashcompute.DispatchPolicyInvalid
-	if config.GetGlobalConfig().DisaggregatedTiFlash {
-		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
+func (e *mppTaskGenerator) attachTiCIFTSInfoToMPPBuildTaskReq(req *kv.MPPBuildTasksRequest, is *PhysicalIndexScan, physicalTableIDs []int64) error {
+	ticiShardType := distsql.TiCIShardIntHandle
+	switch {
+	case is.Index.HasExtraTiCIShardingKey():
+		ticiShardType = distsql.TiCIShardExtraShardingKey
+	case is.Table.IsCommonHandle:
+		ticiShardType = distsql.TiCIShardCommonHandle
 	}
-	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
-
-	var metas []kv.MPPTaskMeta
-	if val := req.ToString(); e.tableReaderCache[val] != nil {
-		metas = e.tableReaderCache[val]
-		failpoint.InjectCall("mppTaskGeneratorTableReaderCacheHit")
-	} else {
-		metas, err = e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, ttl, dispatchPolicy, tiflashReplicaRead, e.ctx.GetSessionVars().StmtCtx.AppendWarning)
+	ticiPartitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(physicalTableIDs))
+	for _, physicalTableID := range physicalTableIDs {
+		ticiKVRanges, err := distsql.TiCIIndexRangesToKVRanges(
+			e.ctx.GetDistSQLCtx(),
+			[]int64{physicalTableID},
+			is.Index.ID,
+			is.Ranges,
+			ticiShardType,
+		)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		e.tableReaderCache[val] = metas
-		failpoint.InjectCall("mppTaskGeneratorTableReaderCacheMiss")
+		ticiPartitionIDAndRanges = append(ticiPartitionIDAndRanges, kv.PartitionIDAndRanges{
+			ID:        physicalTableID,
+			KeyRanges: ticiKVRanges.FirstPartitionRange(),
+		})
 	}
-
-	mppVersion := e.ctx.GetSessionVars().ChooseMppVersion()
-	sessionID := e.ctx.GetSessionVars().ConnectionID
-	sessionAlias := e.ctx.GetSessionVars().SessionAlias
-	tasks := make([]*kv.MPPTask, 0, len(metas))
-	for _, meta := range metas {
-		task := &kv.MPPTask{
-			Meta:         meta,
-			ID:           AllocMPPTaskID(e.ctx),
-			StartTs:      e.startTS,
-			GatherID:     e.gatherID,
-			MppQueryID:   e.mppQueryID,
-			TableID:      is.Table.ID,
-			MppVersion:   mppVersion,
-			SessionID:    sessionID,
-			SessionAlias: sessionAlias,
-		}
-		tasks = append(tasks, task)
-		addr := meta.GetAddress()
-		e.nodeInfo[addr] = true
+	req.TiCI = true
+	req.TiCIIndexID = is.Index.ID
+	req.TiCIExecutorID = is.ExplainID().String()
+	if len(ticiPartitionIDAndRanges) == 1 {
+		req.TiCITableID = ticiPartitionIDAndRanges[0].ID
+		req.TiCIKeyRanges = ticiPartitionIDAndRanges[0].KeyRanges
+		return nil
 	}
-	return tasks, nil
+	req.TiCIPartitionIDAndRanges = ticiPartitionIDAndRanges
+	return nil
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {

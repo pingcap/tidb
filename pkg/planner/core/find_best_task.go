@@ -1520,6 +1520,13 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	return candidate
 }
 
+func isTiCIFTSAccessPath(path *util.AccessPath) bool {
+	return path != nil &&
+		path.Index != nil &&
+		path.Index.IsTiCIIndex() &&
+		(path.FtsQueryInfo != nil || expression.ContainsFullTextSearchFn(path.AccessConds...))
+}
+
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) []*candidatePath {
@@ -1529,12 +1536,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
-		// Flash-only tasks keep TiFlash paths; allow TiCI path since it runs in TiFlash MPP.
+		// Flash-only tasks keep TiFlash paths; allow TiCI FTS paths since they run through TiFlash MPP.
 		if prop.IsFlashProp() {
-			if path.StoreType != kv.TiFlash {
-				if !(path.Index != nil && path.Index.IsTiCIIndex() && path.FtsQueryInfo != nil) {
-					continue
-				}
+			if path.StoreType != kv.TiFlash && !isTiCIFTSAccessPath(path) {
+				continue
 			}
 		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
@@ -1585,7 +1590,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
-			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || path.FtsQueryInfo != nil
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || isTiCIFTSAccessPath(path)
 			if !keepIndex {
 				// If none of the above conditions are met, this index will be directly pruned here.
 				continue
@@ -2271,9 +2276,7 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath) (task base.Task, err error) {
-	isTiCICandidate := candidate.path.Index != nil &&
-		candidate.path.Index.IsTiCIIndex() &&
-		(candidate.path.FtsQueryInfo != nil || expression.ContainsFullTextSearchFn(candidate.path.AccessConds...))
+	isTiCIPath := isTiCIFTSAccessPath(candidate.path)
 	if candidate.path.Index.MVIndex {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
@@ -2281,7 +2284,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	// TiCI currently can not set the order property.
-	if isTiCICandidate && !prop.IsSortItemEmpty() {
+	if isTiCIPath && !prop.IsSortItemEmpty() {
 		return base.InvalidTask, nil
 	}
 	if !candidate.path.IsSingleScan {
@@ -2321,8 +2324,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// For TiCI index scan, we also plan it into TiFlash MPP pipeline.
 	// NOTE: TiCI access path keeps StoreType=kv.TiCI (so it remains an IndexScan).
-	isTiCIPath := is.Index != nil && is.Index.IsTiCIIndex() &&
-		(is.FtsQueryInfo != nil || isTiCICandidate)
+	isTiCIPath = isTiCIPath && is.IsTiCIFTSScan()
 	// Non-covering TiCI access must stay as IndexLookUp(root): index side can run by
 	// MPP protocol, but it still needs table probe on TiKV. A pure MPP task here is invalid.
 	if isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.MppTaskType {
@@ -2359,11 +2361,6 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 
 	useTiCICopLookupPath := isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.RootTaskType
 	if needMPPPath && !useTiCICopLookupPath {
-		if isTiCIPath {
-			// TiCI IndexScan is executed by TiFlash MPP pipeline. Keep TiCI semantics in executor
-			// payload (FtsQueryInfo), but mark store type as TiFlash for MPP request type wiring.
-			is.StoreType = kv.TiFlash
-		}
 		// TiCI currently can not keep order.
 		if !prop.IsSortItemEmpty() {
 			return base.InvalidTask, nil
@@ -2559,10 +2556,16 @@ func addPushedDownSelectionToMppTask4PhysicalIndexScan(is *physicalop.PhysicalIn
 
 	var newRootConds []expression.Expression
 	pctx := util.GetPushDownCtx(is.SCtx())
-	indexConds, newRootConds = expression.PushDownExprs(pctx, indexConds, is.StoreType)
+	storeType := is.StoreType
+	if is.IsTiCIFTSScan() {
+		// TiCI FTS index scans are encoded as TiFlash MPP fragments. Non-FTS
+		// residual predicates should therefore use TiFlash pushdown capability.
+		storeType = kv.TiFlash
+	}
+	indexConds, newRootConds = expression.PushDownExprs(pctx, indexConds, storeType)
 	mppTask.RootTaskConds = append(mppTask.RootTaskConds, newRootConds...)
 
-	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, is.StoreType)
+	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, storeType)
 	mppTask.RootTaskConds = append(mppTask.RootTaskConds, newRootConds...)
 
 	pushedDownConds := make([]expression.Expression, 0, len(indexConds)+len(tableConds))

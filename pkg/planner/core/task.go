@@ -818,7 +818,7 @@ func tryPushDownLimitToTiCIIndexSide(p *physicalop.PhysicalLimit, reader *physic
 		return
 	}
 	is, ok := reader.IndexPlans[0].(*physicalop.PhysicalIndexScan)
-	if !ok || is.Index == nil || !is.Index.IsTiCIIndex() || is.FtsQueryInfo == nil {
+	if !ok || !is.IsTiCIFTSScan() {
 		return
 	}
 	sender, ok := reader.IndexPlan.(*physicalop.PhysicalExchangeSender)
