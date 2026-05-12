@@ -603,3 +603,58 @@ func TestLoadDataLowPrioritySetsKVLowPriority(t *testing.T) {
 	tk.MustQuery("select * from load_data_low_prio").Check(testkit.Rows("1 10"))
 	require.NoError(t, reader.Close())
 }
+
+// loadDataIsPessimisticProbe wraps the file reader and snapshots
+// TxnCtx.IsPessimistic the first time LOAD DATA reads a byte. This lets the
+// test observe which txn provider LOAD DATA actually executes on (the
+// auto-committed case in particular).
+type loadDataIsPessimisticProbe struct {
+	inner         io.ReadCloser
+	sess          sessionctx.Context
+	once          sync.Once
+	isPessimistic atomic.Bool
+}
+
+func (p *loadDataIsPessimisticProbe) Read(b []byte) (int, error) {
+	p.once.Do(func() {
+		p.isPessimistic.Store(p.sess.GetSessionVars().TxnCtx.IsPessimistic)
+	})
+	return p.inner.Read(b)
+}
+
+func (p *loadDataIsPessimisticProbe) Close() error { return p.inner.Close() }
+
+// TestLoadDataLocalUsesPessimisticTxn asserts that LOAD DATA LOCAL INFILE runs
+// on the pessimistic txn provider, even under default session config
+// (tidb_txn_mode=PESSIMISTIC + autocommit=ON, which otherwise lets
+// decideTxnMode fall through to the optimistic provider). Running on the
+// optimistic provider is what enables the session-level retry path that
+// produced the "drain connection failed in load data" symptom in production.
+func TestLoadDataLocalUsesPessimisticTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table load_data_pessimistic (a int, b int)")
+	ctx := tk.Session().(sessionctx.Context)
+
+	// Sanity: confirm we are exercising the default config that would
+	// otherwise route us onto the optimistic provider.
+	tk.MustQuery("select @@tidb_txn_mode").Check(testkit.Rows("pessimistic"))
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+
+	probe := &loadDataIsPessimisticProbe{
+		inner: mydump.NewStringReader("1,2\n3,4\n"),
+		sess:  ctx,
+	}
+	readerBuilder := executor.LoadDataReaderBuilder{
+		Build: func(_ string) (io.ReadCloser, error) { return probe, nil },
+		Wg:    &sync.WaitGroup{},
+	}
+	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+
+	tk.MustExec("load data local infile '/tmp/x.csv' into table load_data_pessimistic fields terminated by ','")
+
+	require.True(t, probe.isPessimistic.Load(),
+		"LOAD DATA LOCAL must run on the pessimistic provider so the session-level optimistic retry path is short-circuited; otherwise a retryable commit error (kv:8022) would trigger LoadDataReaderBuilder.Build again and surface as 'drain connection failed in load data'")
+}
+

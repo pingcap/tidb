@@ -4923,6 +4923,21 @@ func (s *session) decideTxnMode(stmt ast.StmtNode) string {
 		return s.sessionVars.TxnMode
 	}
 
+	// LOAD DATA LOCAL streams the file from the client as one-shot data: once
+	// the client has sent the terminating empty packet, the protocol gives the
+	// server no way to ask for the file again. Running such a statement on the
+	// optimistic provider would let the session-level retry path
+	// (doCommitWithRetry -> s.retry) re-execute it on a retryable commit
+	// error, which calls the reader builder again and asks the
+	// already-finished client to re-send the file. The result is an EOF that
+	// surfaces as "drain connection failed in load data" and masks the real
+	// commit error. Force LOAD DATA LOCAL onto the pessimistic provider so the
+	// retry guard at doCommitWithRetry short-circuits and the original commit
+	// error is delivered to the client unchanged.
+	if _, ok := stmt.(*ast.LoadDataStmt); ok {
+		return ast.Pessimistic
+	}
+
 	if stmt != nil && s.shouldUsePessimisticAutoCommit(stmt) {
 		return ast.Pessimistic
 	}
