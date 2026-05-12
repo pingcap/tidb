@@ -129,12 +129,22 @@ var tlsVersionString = map[uint16]string{
 }
 
 var defaultStatus = map[string]*StatusVal{
+<<<<<<< HEAD
 	"Ssl_cipher":      {ScopeGlobal | ScopeSession, ""},
 	"Ssl_cipher_list": {ScopeGlobal | ScopeSession, ""},
 	"Ssl_verify_mode": {ScopeGlobal | ScopeSession, 0},
 	"Ssl_version":     {ScopeGlobal | ScopeSession, ""},
 	"Performance_schema_session_connect_attrs_longest_seen": {ScopeGlobal, int64(0)},
 	"Performance_schema_session_connect_attrs_lost":         {ScopeGlobal, int64(0)},
+=======
+	"Ssl_cipher":      {vardef.ScopeGlobal | vardef.ScopeSession, ""},
+	"Ssl_cipher_list": {vardef.ScopeGlobal | vardef.ScopeSession, ""},
+	"Ssl_verify_mode": {vardef.ScopeGlobal | vardef.ScopeSession, 0},
+	"Ssl_version":     {vardef.ScopeGlobal | vardef.ScopeSession, ""},
+	"Performance_schema_session_connect_attrs_longest_seen": {vardef.ScopeGlobal, int64(0)},
+	"Performance_schema_session_connect_attrs_lost":         {vardef.ScopeGlobal, int64(0)},
+	"tidb_keys_examined": {vardef.ScopeSession, uint64(0)},
+>>>>>>> a624c28d81f (sessionctx/variable: add tidb_max_keys_read (#68047))
 }
 
 type defaultStatusStat struct {
@@ -156,6 +166,7 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 	statusVars["Performance_schema_session_connect_attrs_lost"] = ConnectAttrsLost.Load()
 
 	// `vars` may be nil in unit tests.
+<<<<<<< HEAD
 	if vars != nil && vars.TLSConnectionState != nil {
 		statusVars["Ssl_cipher"] = util.TLSCipher2String(vars.TLSConnectionState.CipherSuite)
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
@@ -165,6 +176,16 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 			statusVars["Ssl_version"] = tlsVersion
 		} else {
 			statusVars["Ssl_version"] = "unknown_tls_version"
+=======
+	if vars != nil {
+		statusVars["tidb_keys_examined"] = vars.KeysExamined
+		if vars.TLSConnectionState != nil {
+			statusVars["Ssl_cipher"] = tlsutil.CipherSuiteName(vars.TLSConnectionState.CipherSuite)
+			statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
+			// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
+			statusVars["Ssl_verify_mode"] = 0x01 | 0x04
+			statusVars["Ssl_version"] = tlsutil.VersionName(vars.TLSConnectionState.Version)
+>>>>>>> a624c28d81f (sessionctx/variable: add tidb_max_keys_read (#68047))
 		}
 	}
 

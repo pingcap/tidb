@@ -2975,6 +2975,8 @@ func (e *SimpleExec) executeFlush(ctx context.Context, s *ast.FlushStmt) error {
 				return err
 			}
 		}
+	case ast.FlushStatus:
+		e.Ctx().GetSessionVars().KeysExamined = 0
 	case ast.FlushClientErrorsSummary:
 		errno.FlushStats()
 	case ast.FlushStatsDelta:
