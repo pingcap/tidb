@@ -15,9 +15,11 @@
 package local_test
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestBuildDupTask(t *testing.T) {
@@ -139,6 +142,53 @@ func TestBuildDupTask(t *testing.T) {
 	}
 	require.True(t, hasRecordKey)
 	require.Equal(t, expectedIndexIDs, gotIndexIDs)
+}
+
+func TestBuildIndexDupTaskEncodesKeyspaceRange(t *testing.T) {
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table t (a int, b int, index idx(a));")
+	require.NoError(t, err)
+	info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
+	require.NoError(t, err)
+
+	tikvCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Id:   42,
+		Name: "test_keyspace",
+	})
+	require.NoError(t, err)
+
+	indexInfo := info.Indices[0]
+	dupMgr, err := local.NewDupeDetector(
+		tbl,
+		"t",
+		nil,
+		nil,
+		tikvCodec,
+		nil,
+		&encode.SessionOptions{IndexID: indexInfo.ID},
+		4,
+		log.Wrap(logutil.Logger(context.Background())),
+		"test",
+		"lightning",
+	)
+	require.NoError(t, err)
+	tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	expectedStartPrefix := tikvCodec.EncodeKey(tablecodec.EncodeTableIndexPrefix(info.ID, indexInfo.ID))
+	require.True(t, bytes.HasPrefix(tasks[0].StartKey, expectedStartPrefix))
+
+	startKey, _, err := tikvCodec.DecodeRange(tasks[0].StartKey, tasks[0].EndKey)
+	require.NoError(t, err)
+	tableID, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(startKey)
+	require.NoError(t, err)
+	require.Equal(t, info.ID, tableID)
+	require.Equal(t, indexInfo.ID, indexID)
+	require.False(t, isRecordKey)
 }
 
 func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.StmtNode) (table.Table, *lkv.Pairs) {
