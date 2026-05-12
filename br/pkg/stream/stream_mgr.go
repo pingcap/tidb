@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
@@ -156,6 +157,7 @@ func BuildObserveMetaRange() *kv.KeyRange {
 }
 
 type ContentRef struct {
+	mu       sync.Mutex
 	init_ref int
 	ref      int
 	data     []byte
@@ -164,6 +166,7 @@ type ContentRef struct {
 // MetadataHelper make restore/truncate compatible with metadataV1 and metadataV2.
 type MetadataHelper struct {
 	cache             map[string]*ContentRef
+	cacheMu           sync.RWMutex
 	decoder           *zstd.Decoder
 	encryptionManager *encryption.Manager
 }
@@ -194,6 +197,8 @@ func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
 	if ref <= 0 {
 		return
 	}
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
 	m.cache[path] = &ContentRef{
 		init_ref: ref,
 		ref:      ref,
@@ -201,12 +206,12 @@ func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
 	}
 }
 
-func (m *MetadataHelper) decodeCompressedData(data []byte, compressionType backuppb.CompressionType) ([]byte, error) {
+func (m *MetadataHelper) decodeCompressedData(data []byte, rawLength uint64, compressionType backuppb.CompressionType) ([]byte, error) {
 	switch compressionType {
 	case backuppb.CompressionType_UNKNOWN:
 		return data, nil
 	case backuppb.CompressionType_ZSTD:
-		return m.decoder.DecodeAll(data, nil)
+		return m.decoder.DecodeAll(data, make([]byte, 0, rawLength))
 	}
 	return nil, errors.Errorf(
 		"failed to decode compressed data: compression type is unimplemented. type id is %d", compressionType)
@@ -246,12 +251,15 @@ func (m *MetadataHelper) ReadFile(
 	path string,
 	offset uint64,
 	length uint64,
+	rawLength uint64,
 	compressionType backuppb.CompressionType,
 	storage storeapi.Storage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	var err error
+	m.cacheMu.RLock()
 	cref, exist := m.cache[path]
+	m.cacheMu.RUnlock()
 	if !exist {
 		// Only files from metaV2 are cached,
 		// so the file should be from metaV1.
@@ -268,29 +276,33 @@ func (m *MetadataHelper) ReadFile(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return m.decodeCompressedData(decryptedData, compressionType)
+		return m.decodeCompressedData(decryptedData, rawLength, compressionType)
 	}
 
+	cref.mu.Lock()
 	cref.ref -= 1
 
 	if len(cref.data) == 0 {
 		cref.data, err = storage.ReadFile(ctx, path)
 		if err != nil {
+			cref.mu.Unlock()
 			return nil, errors.Trace(err)
 		}
 	}
-	// decrypt if needed
-	decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, cref.data[offset:offset+length], encryptionInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	buf, err := m.decodeCompressedData(decryptedData, compressionType)
-
+	data := cref.data[offset : offset+length]
 	if cref.ref <= 0 {
 		// need reset reference information.
 		cref.data = nil
 		cref.ref = cref.init_ref
 	}
+	cref.mu.Unlock()
+
+	// decrypt if needed
+	decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, data, encryptionInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	buf, err := m.decodeCompressedData(decryptedData, rawLength, compressionType)
 
 	return buf, errors.Trace(err)
 }

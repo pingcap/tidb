@@ -16,6 +16,7 @@ package logclient
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -121,10 +122,25 @@ func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper stre
 	}
 }
 
+func TEST_CountReadableMetaKVFiles(files []*backuppb.DataFileInfo) int {
+	return countReadableMetaKVFiles(files)
+}
+
 type FakeStreamMetadataHelper struct {
 	streamMetadataHelper
 
-	Data []byte
+	Data      []byte
+	ReadGate  <-chan struct{}
+	active    atomic.Int32
+	maxActive atomic.Int32
+}
+
+func (helper *FakeStreamMetadataHelper) ActiveReadCount() int32 {
+	return helper.active.Load()
+}
+
+func (helper *FakeStreamMetadataHelper) MaxActiveReadCount() int32 {
+	return helper.maxActive.Load()
 }
 
 func (helper *FakeStreamMetadataHelper) ReadFile(
@@ -132,10 +148,22 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 	path string,
 	offset uint64,
 	length uint64,
+	rawLength uint64,
 	compressionType backuppb.CompressionType,
 	storage storeapi.Storage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
+	active := helper.active.Add(1)
+	for {
+		maxActive := helper.maxActive.Load()
+		if active <= maxActive || helper.maxActive.CompareAndSwap(maxActive, active) {
+			break
+		}
+	}
+	defer helper.active.Add(-1)
+	if helper.ReadGate != nil {
+		<-helper.ReadGate
+	}
 	return helper.Data[offset : offset+length], nil
 }
 

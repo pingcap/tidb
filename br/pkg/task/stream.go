@@ -1412,7 +1412,7 @@ func RunStreamRestore(
 		// we restore additional tables at full snapshot phase when it is renamed into the filter range
 		// later in log backup.
 		// we also ignore the tables that currently in filter range but later renamed out of the filter.
-		log.Info("reading meta kv files to collect table info and id mapping information")
+		log.Info("reading meta kv files to collect table info and id mapping information", zap.Int("ddl files count", len(ddlFiles)))
 		err = metaInfoProcessor.ReadMetaKVFilesAndBuildInfo(ctx, ddlFiles)
 		if err != nil {
 			return errors.Trace(err)

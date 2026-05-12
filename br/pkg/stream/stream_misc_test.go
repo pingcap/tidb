@@ -4,15 +4,41 @@ package stream_test
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
+
+type gatedReadStorage struct {
+	storeapi.Storage
+	readGate  <-chan struct{}
+	active    atomic.Int32
+	maxActive atomic.Int32
+}
+
+func (s *gatedReadStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+	active := s.active.Add(1)
+	for {
+		maxActive := s.maxActive.Load()
+		if active <= maxActive || s.maxActive.CompareAndSwap(maxActive, active) {
+			break
+		}
+	}
+	defer s.active.Add(-1)
+	if s.readGate != nil {
+		<-s.readGate
+	}
+	return s.Storage.ReadFile(ctx, name)
+}
 
 func TestGetCheckpointOfTask(t *testing.T) {
 	task := stream.TaskStatus{
@@ -67,16 +93,48 @@ func TestMetadataHelperReadFile(t *testing.T) {
 	require.NoError(t, err)
 
 	helper.InitCacheEntry(filename2, 2)
-	get_data, err := helper.ReadFile(ctx, filename1, 0, 0, backuppb.CompressionType_UNKNOWN, s, nil)
+	get_data, err := helper.ReadFile(ctx, filename1, 0, 0, uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
-	get_data, err = helper.ReadFile(ctx, filename2, 0, uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s, nil)
+	get_data, err = helper.ReadFile(ctx, filename2, 0, uint64(len(data1)), uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
-	get_data, err = helper.ReadFile(ctx, filename2, uint64(len(data1)), uint64(len(data2)),
+	get_data, err = helper.ReadFile(ctx, filename2, uint64(len(data1)), uint64(len(data2)), uint64(len(data1)),
 		backuppb.CompressionType_ZSTD, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
+
+	filename3 := "cached_data_1"
+	filename4 := "cached_data_2"
+	require.NoError(t, s.WriteFile(ctx, filename3, data1))
+	require.NoError(t, s.WriteFile(ctx, filename4, data1))
+	helper.InitCacheEntry(filename3, 1)
+	helper.InitCacheEntry(filename4, 1)
+	readGate := make(chan struct{})
+	gatedStorage := &gatedReadStorage{Storage: s, readGate: readGate}
+	errCh := make(chan error, 2)
+	for _, filename := range []string{filename3, filename4} {
+		go func() {
+			data, err := helper.ReadFile(ctx, filename, 0, uint64(len(data1)), uint64(len(data1)), backuppb.CompressionType_UNKNOWN, gatedStorage, nil)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if string(data) != string(data1) {
+				errCh <- fmt.Errorf("unexpected data for %s", filename)
+				return
+			}
+			errCh <- nil
+		}()
+	}
+	require.Eventually(t, func() bool {
+		return gatedStorage.active.Load() == 2
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(2), gatedStorage.maxActive.Load())
+	close(readGate)
+	require.NoError(t, <-errCh)
+	require.NoError(t, <-errCh)
+	require.Equal(t, int32(2), gatedStorage.maxActive.Load())
 }
 
 func TestMetadataHelperParseToMetadataPreservesExistingFileGroupsForV1(t *testing.T) {
