@@ -94,6 +94,47 @@ func TestCorrelateAlternativeChoosesApply(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("1 1"))
 }
 
+func TestCorrelatedInApplyEliminatesDistinct(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists international_contractors, members, member_employments")
+	tk.MustExec("create table international_contractors (member_id int not null, company_id bigint not null, key(company_id), key(member_id))")
+	tk.MustExec("create table members (id int not null, primary key(id))")
+	tk.MustExec("create table member_employments (member_id int not null, worker_type varchar(20), country_code varchar(8), start_date date, end_date date, key(member_id, worker_type, start_date, end_date))")
+	tk.MustExec("insert into international_contractors values (1, 1), (2, 1), (3, 1)")
+	tk.MustExec("insert into members values (1), (2), (3)")
+	tk.MustExec("insert into member_employments values " +
+		"(1, 'Contractor', 'CA', '2025-01-01', null)," +
+		"(1, 'Contractor', 'CA', '2025-01-02', null)," +
+		"(2, 'Contractor', 'GB', '2025-01-01', '2026-02-01')," +
+		"(3, 'Employee', 'US', '2025-01-01', null)")
+
+	sql := `select count(1)
+from international_contractors ic
+join members m on m.id = ic.member_id
+where m.id in (
+	select distinct inner_members.id
+	from members inner_members
+	join member_employments me on me.member_id = inner_members.id
+	where me.start_date <= '2026-01-05'
+	  and (me.end_date is null or me.end_date >= '2026-01-05')
+	  and me.worker_type = 'Contractor'
+	  and me.country_code != 'US'
+	  and me.member_id = m.id
+)
+and ic.company_id = 1`
+
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.True(t, explainContains(rows, "Apply"),
+		"with alternative plans, expected Apply in plan:\n%s", joinExplainRows(rows))
+	require.False(t, explainHasDistinctLikeAgg(rows),
+		"expected correlated IN apply to eliminate inner distinct agg:\n%s", joinExplainRows(rows))
+	tk.MustQuery(sql).Check(testkit.Rows("2"))
+}
+
 func TestCorrelate(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
@@ -146,6 +187,19 @@ func joinExplainRows(rows [][]any) string {
 		sb.WriteByte('\n')
 	}
 	return sb.String()
+}
+
+func explainHasDistinctLikeAgg(rows [][]any) bool {
+	for _, row := range rows {
+		if len(row) < 5 {
+			continue
+		}
+		info := fmt.Sprintf("%v", row[4])
+		if strings.Contains(info, "group by:") && strings.Contains(info, "firstrow(") {
+			return true
+		}
+	}
+	return false
 }
 
 // TestCorrelateParallelApply verifies that when the correlate alternative round
