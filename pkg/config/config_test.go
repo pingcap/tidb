@@ -1053,6 +1053,9 @@ func TestDeployModeConfig(t *testing.T) {
 	conf := NewConfig()
 	require.Equal(t, deploymode.Premium, conf.DeployMode)
 	require.NoError(t, conf.Valid())
+	conf.DeployMode = deploymode.Mode(100)
+	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
+	conf.DeployMode = deploymode.Premium
 
 	storeDir := t.TempDir()
 	configFile := filepath.Join(storeDir, "config.toml")

@@ -29,6 +29,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -1448,12 +1449,25 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.RequireSecureTransport, Value: BoolToOnOff(vardef.DefRequireSecureTransport), Type: vardef.TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			if deploymode.IsStarter() {
+				// Starter mode intentionally exposes require_secure_transport as ON to SQL.
+				return vardef.On, nil
+			}
 			return BoolToOnOff(tls.RequireSecureTransport.Load()), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			if deploymode.IsStarter() {
+				// Keep the internal TLS transport gate disabled in starter mode; SQL SET is rejected in Validation.
+				tls.RequireSecureTransport.Store(false)
+				return nil
+			}
 			tls.RequireSecureTransport.Store(TiDBOptOn(val))
 			return nil
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if deploymode.IsStarter() && vars.StmtCtx.StmtType == "Set" {
+				// Prevent SQL from changing the fixed starter-mode contract above.
+				return "", errors.New("require_secure_transport can not be set in starter mode")
+			}
 			if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
 				// On tidbcloud dedicated cluster with the default configuration, if an user modify
 				// @@global.require_secure_transport=on, he can not login the cluster anymore!
