@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -241,4 +242,43 @@ func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
 	plan = &mlogPurgeThrottlePlan{targetRate: 100000}
 	batch = plan.effectiveDeleteBatchSize(10000)
 	require.Equal(t, int64(10000), batch)
+}
+
+func TestDeriveMLogPurgeThrottleDeadline(t *testing.T) {
+	t.Run("respect hardcoded purge planning budget", func(t *testing.T) {
+		baseNow := time.Now().UTC()
+
+		deadline, err := deriveMLogPurgeThrottleDeadline(
+			context.Background(),
+			nil,
+			nil,
+			nil,
+			false,
+			"test",
+			"t",
+			nil,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, deadline)
+		require.WithinDuration(t, baseNow.Add(mlogPurgeAdaptiveMaxBudget), *deadline, 2*time.Second)
+	})
+
+	t.Run("pick earlier between next time and hardcoded purge planning budget", func(t *testing.T) {
+		baseNow := time.Now().UTC()
+		nextTime := baseNow.Add(90 * time.Second)
+
+		deadline, err := deriveMLogPurgeThrottleDeadline(
+			context.Background(),
+			nil,
+			nil,
+			nil,
+			false,
+			"test",
+			"t",
+			&nextTime,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, deadline)
+		require.WithinDuration(t, nextTime, *deadline, time.Second)
+	})
 }

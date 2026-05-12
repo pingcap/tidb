@@ -99,7 +99,8 @@ type MVService struct {
 }
 
 const (
-	defaultMVTaskTimeout                 = 5 * time.Minute
+	DefaultMVRefreshTaskTimeout          = 5 * time.Minute
+	DefaultMVPurgeTaskTimeout            = 10 * time.Minute
 	defaultMVRefreshTaskConcurrencyRatio = 0.6
 	defaultMVFetchInterval               = 30 * time.Second
 	defaultMVBasicInterval               = time.Second

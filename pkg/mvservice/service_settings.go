@@ -28,7 +28,8 @@ import (
 type Config struct {
 	TaskMaxConcurrency          int
 	RefreshTaskConcurrencyRatio float64
-	TaskTimeout                 time.Duration
+	RefreshTaskTimeout          time.Duration
+	PurgeTaskTimeout            time.Duration
 
 	FetchInterval         time.Duration
 	BasicInterval         time.Duration
@@ -50,7 +51,8 @@ func DefaultMVServiceConfig() Config {
 	return Config{
 		TaskMaxConcurrency:           defaultMVTaskMaxConcurrency(),
 		RefreshTaskConcurrencyRatio:  defaultMVRefreshTaskConcurrencyRatio,
-		TaskTimeout:                  defaultMVTaskTimeout,
+		RefreshTaskTimeout:           DefaultMVRefreshTaskTimeout,
+		PurgeTaskTimeout:             DefaultMVPurgeTaskTimeout,
 		FetchInterval:                defaultMVFetchInterval,
 		BasicInterval:                defaultMVBasicInterval,
 		ServerRefreshInterval:        defaultServerRefreshInterval,
@@ -81,8 +83,11 @@ func normalizeMVServiceConfig(cfg Config) Config {
 	if cfg.RefreshTaskConcurrencyRatio <= 0 || cfg.RefreshTaskConcurrencyRatio >= 1 {
 		cfg.RefreshTaskConcurrencyRatio = def.RefreshTaskConcurrencyRatio
 	}
-	if cfg.TaskTimeout < 0 {
-		cfg.TaskTimeout = 0
+	if cfg.RefreshTaskTimeout < 0 {
+		cfg.RefreshTaskTimeout = 0
+	}
+	if cfg.PurgeTaskTimeout < 0 {
+		cfg.PurgeTaskTimeout = 0
 	}
 	if cfg.FetchInterval <= 0 {
 		cfg.FetchInterval = def.FetchInterval
@@ -143,8 +148,8 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg 
 	mgr := &MVService{
 		sysSessionPool:  se,
 		sch:             NewServerConsistentHash(ctx, cfg.ServerConsistentHashReplicas, helper),
-		refreshExecutor: NewTaskExecutor(refreshConcurrency, cfg.TaskTimeout),
-		purgeExecutor:   NewTaskExecutor(purgeConcurrency, cfg.TaskTimeout),
+		refreshExecutor: NewTaskExecutor(refreshConcurrency, cfg.RefreshTaskTimeout),
+		purgeExecutor:   NewTaskExecutor(purgeConcurrency, cfg.PurgeTaskTimeout),
 
 		notifier: NewNotifier(),
 		ctx:      ctx,
@@ -216,12 +221,6 @@ func (t *MVService) GetRefreshTaskConcurrencyRatio() float64 {
 		return defaultMVRefreshTaskConcurrencyRatio
 	}
 	return ratio
-}
-
-// SetTaskTimeout sets timeout for MV tasks.
-func (t *MVService) SetTaskTimeout(timeout time.Duration) {
-	t.refreshExecutor.setTimeout(timeout)
-	t.purgeExecutor.setTimeout(timeout)
 }
 
 // setFetchInterval sets metadata fetch interval.

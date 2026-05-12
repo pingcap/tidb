@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -96,6 +97,8 @@ const (
 	mlogPurgeAdaptiveCountTimeout   = 30 * time.Second
 	mlogPurgeAdaptiveBatchWindow    = 200 * time.Millisecond
 	mlogPurgeAdaptiveMinBatchSize   = int64(2000)
+	mlogPurgeAdaptiveDeadlineBuffer = 10 * time.Second
+	mlogPurgeAdaptiveMaxBudget      = mvservice.DefaultMVPurgeTaskTimeout - mlogPurgeAdaptiveDeadlineBuffer
 )
 
 // PurgeMaterializedViewLogExec executes "PURGE MATERIALIZED VIEW LOG" as a utility-style statement.
@@ -2271,6 +2274,12 @@ func deriveMLogPurgeThrottleDeadline(
 	mlogName string,
 	fallbackNextTime *time.Time,
 ) (*time.Time, error) {
+	var adaptiveDeadline *time.Time
+	now := time.Now().UTC()
+	if mlogPurgeAdaptiveMaxBudget > 0 {
+		plannedDeadline := now.Add(mlogPurgeAdaptiveMaxBudget)
+		adaptiveDeadline = &plannedDeadline
+	}
 	if isInternalSQL {
 		nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
 			kctx,
@@ -2292,11 +2301,20 @@ func deriveMLogPurgeThrottleDeadline(
 			if parseErr != nil {
 				return nil, errors.Trace(parseErr)
 			}
-			return &parsedNextTime, nil
+			if adaptiveDeadline == nil || parsedNextTime.Before(*adaptiveDeadline) {
+				return &parsedNextTime, nil
+			}
+			return adaptiveDeadline, nil
 		}
-		return nil, nil
+		return adaptiveDeadline, nil
 	}
-	return fallbackNextTime, nil
+	if fallbackNextTime == nil {
+		return adaptiveDeadline, nil
+	}
+	if adaptiveDeadline == nil || fallbackNextTime.Before(*adaptiveDeadline) {
+		return fallbackNextTime, nil
+	}
+	return adaptiveDeadline, nil
 }
 
 func tryBuildMLogPurgeThrottlePlan(

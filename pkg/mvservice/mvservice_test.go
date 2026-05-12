@@ -413,7 +413,8 @@ func TestNewMVServiceConfig(t *testing.T) {
 		cfg := DefaultMVServiceConfig()
 		cfg.TaskMaxConcurrency = 3
 		cfg.RefreshTaskConcurrencyRatio = 0.6
-		cfg.TaskTimeout = 42 * time.Second
+		cfg.RefreshTaskTimeout = 42 * time.Second
+		cfg.PurgeTaskTimeout = 84 * time.Second
 		cfg.FetchInterval = 37 * time.Second
 		cfg.BasicInterval = 2 * time.Second
 		cfg.ServerRefreshInterval = 9 * time.Second
@@ -433,8 +434,8 @@ func TestNewMVServiceConfig(t *testing.T) {
 		require.Equal(t, refreshConcurrency, int(svc.refreshExecutor.maxConcurrency.Load()))
 		require.Equal(t, purgeConcurrency, int(svc.purgeExecutor.maxConcurrency.Load()))
 		require.Equal(t, cfg.RefreshTaskConcurrencyRatio, svc.GetRefreshTaskConcurrencyRatio())
-		require.Equal(t, cfg.TaskTimeout, time.Duration(svc.refreshExecutor.timeoutNanos.Load()))
-		require.Equal(t, cfg.TaskTimeout, time.Duration(svc.purgeExecutor.timeoutNanos.Load()))
+		require.Equal(t, cfg.RefreshTaskTimeout, time.Duration(svc.refreshExecutor.timeoutNanos.Load()))
+		require.Equal(t, cfg.PurgeTaskTimeout, time.Duration(svc.purgeExecutor.timeoutNanos.Load()))
 
 		baseDelay, maxDelay := svc.retryDelayConfig()
 		require.Equal(t, cfg.RetryBaseDelay, baseDelay)
