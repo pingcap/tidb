@@ -618,15 +618,11 @@ func NewParquetParser(
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
 
-	wrapper, closeWrapper, err := newFooterReader(r, fileSize)
+	wrapper, smallFileBase, closeWrapper, err := prepareReader(r, fileSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer func() { _ = closeWrapper() }()
-	var smallFileBase *inMemoryReaderBase
-	if w, ok := wrapper.(*inMemoryParquetWrapper); ok {
-		smallFileBase = w.base
-	}
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
