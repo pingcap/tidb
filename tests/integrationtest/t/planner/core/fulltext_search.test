@@ -188,6 +188,13 @@ select id from articles where match(id) against('MySQL');
 -- error 1235
 select id from articles where match(id) against('xx-yy');
 
+# Test 36a-null: Non-string MATCH column with a NULL search argument. The
+# column-type error must still win — the LIKE fallback's NULL fast-path
+# must not silently emit Constant(NULL) when the matched column wouldn't
+# be eligible in the first place.
+-- error 1235
+select id from articles where match(id) against(NULL);
+
 # Test 36b: Multi-MATCH in the same predicate with no FTS index on either
 # column. Round 1 sees both MATCHes as non-viable and the fts-like-fallback
 # alternative round must take over; if round 1's native plan were not

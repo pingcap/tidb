@@ -2635,6 +2635,24 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
 	}
 
+	// Reject non-string matched columns before any value-based branch so the
+	// column-type error always wins. In current architecture round 1's
+	// matchAgainstToBuiltin → getFunction (builtin_fts.go) already rejects
+	// non-string columns before round 2 (this function) can run, but keep
+	// the check here too as defense in depth: the LIKE fallback's own NULL
+	// fast-path and strict-subset validator below should never accept a
+	// non-string column, regardless of any future code path that might
+	// reach this function around round 1.
+	columns := make([]expression.Expression, numCols)
+	for i := range numCols {
+		col := er.ctxStack[stackLen-numCols-1+i]
+		if col.GetType(er.sctx.GetEvalCtx()).EvalType() != types.ETString {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
+			return
+		}
+		columns[i] = col
+	}
+
 	searchText, err := constExpr.Eval(er.sctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		er.err = err
@@ -2660,21 +2678,6 @@ func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, s
 	if searchText.Kind() != types.KindString {
 		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search expression")
 		return
-	}
-
-	// Reject non-string matched columns before any other LIKE-specific checks
-	// so the column-type error always wins. If we ran the strict-subset
-	// validator first, a query like MATCH(int_col) AGAINST('a-b') would
-	// surface "search term 'a-b' is not supported" — accurate but less
-	// actionable than "non-string column".
-	columns := make([]expression.Expression, numCols)
-	for i := range numCols {
-		col := er.ctxStack[stackLen-numCols-1+i]
-		if col.GetType(er.sctx.GetEvalCtx()).EvalType() != types.ETString {
-			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
-			return
-		}
-		columns[i] = col
 	}
 
 	// The LIKE fallback only translates a strict subset of MySQL FTS search

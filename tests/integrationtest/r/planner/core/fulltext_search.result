@@ -142,6 +142,8 @@ select id from articles where match(id) against('MySQL');
 Error 1235 (42000): This version of TiDB doesn't yet support 'Doesn't support match search on a non-string column without fulltext index'
 select id from articles where match(id) against('xx-yy');
 Error 1235 (42000): This version of TiDB doesn't yet support 'Doesn't support match search on a non-string column without fulltext index'
+select id from articles where match(id) against(NULL);
+Error 1235 (42000): This version of TiDB doesn't yet support 'Doesn't support match search on a non-string column without fulltext index'
 select id, title from articles
 where match(title) against('MySQL') and match(body) against('PostgreSQL');
 id	title
