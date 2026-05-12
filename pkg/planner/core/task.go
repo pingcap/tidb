@@ -2151,22 +2151,22 @@ func attach2TaskForMPP4PhysicalWindow(p *physicalop.PhysicalWindow, mpp *physica
 
 func attach2Task4PhysicalWindow(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	var (
-		p              *physicalop.PhysicalWindow
-		isStreamWindow bool
+		p               *physicalop.PhysicalWindow
+		isOrderedWindow bool
 	)
 	switch v := pp.(type) {
 	case *physicalop.PhysicalWindow:
 		p = v
-	case *physicalop.PhysicalStreamWindow:
+	case *physicalop.PhysicalOrderedWindow:
 		p = &v.PhysicalWindow
-		isStreamWindow = true
+		isOrderedWindow = true
 	default:
 		return base.InvalidTask
 	}
 	if mpp, ok := tasks[0].Copy().(*physicalop.MppTask); ok && p.StoreTp == kv.TiFlash {
 		return attach2TaskForMPP4PhysicalWindow(p, mpp)
 	}
-	if isStreamWindow {
+	if isOrderedWindow {
 		if cop, ok := tasks[0].(*physicalop.CopTask); ok && cop.IndexPlan != nil && cop.TablePlan != nil {
 			return base.InvalidTask
 		}

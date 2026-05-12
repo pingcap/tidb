@@ -48,7 +48,7 @@ func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
-	case *physicalop.PhysicalStreamWindow:
+	case *physicalop.PhysicalOrderedWindow:
 		if shuffle := optimizeByShuffle4Window(&p.PhysicalWindow, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}

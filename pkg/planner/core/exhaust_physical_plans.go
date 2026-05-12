@@ -624,10 +624,11 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return false
 		}
-		// IndexJoin inner patterns only admit the ordered-input stream window
-		// subset. The general window path still behaves like an optimization
-		// fence for this matcher.
-		if !physicalop.CanUseStreamWindow(x) {
+		// IndexJoin inner patterns only admit the OrderedWindow subset. That
+		// keeps the ordinary Window path as an optimization fence while still
+		// allowing windows whose input order is guaranteed by the inner access
+		// path itself.
+		if !physicalop.CanUseOrderedWindow(x) {
 			return false
 		}
 	case *logicalop.LogicalUnionScan:

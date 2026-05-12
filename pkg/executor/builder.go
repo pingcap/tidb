@@ -324,8 +324,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpReader(v)
 	case *physicalop.PhysicalWindow:
 		return b.buildWindow(v)
-	case *physicalop.PhysicalStreamWindow:
-		return b.buildStreamWindow(v)
+	case *physicalop.PhysicalOrderedWindow:
+		return b.buildOrderedWindow(v)
 	case *physicalop.PhysicalShuffle:
 		return b.buildShuffle(v)
 	case *physicalop.PhysicalShuffleReceiverStub:
@@ -4922,12 +4922,12 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		// row_number filter. The fused child only guarantees "produce at most K
 		// rows per partition"; predicates like rn = K still need the original
 		// filter semantics above it.
-		if streamWindow, limitCount, ok := physicalop.CanUsePartitionTopNStreamWindow(v); ok {
-			childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, streamWindow.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+		if orderedWindow, limitCount, ok := physicalop.CanUsePartitionTopNOrderedWindow(v); ok {
+			childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, orderedWindow.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 			if err != nil {
 				return nil, err
 			}
-			partitionTopNExec, err := builder.buildPartitionTopNWindowForIndexJoin(streamWindow, childExec, limitCount)
+			partitionTopNExec, err := builder.buildPartitionTopNWindowForIndexJoin(orderedWindow, childExec, limitCount)
 			if err != nil {
 				terror.Log(childExec.Close())
 				return nil, err
@@ -4971,12 +4971,12 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildStreamAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
-	case *physicalop.PhysicalStreamWindow:
+	case *physicalop.PhysicalOrderedWindow:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
 		}
-		exec, err := builder.buildStreamWindowForIndexJoin(ctx, v, childExec)
+		exec, err := builder.buildOrderedWindowForIndexJoin(ctx, v, childExec)
 		if err != nil {
 			terror.Log(childExec.Close())
 			return nil, err
@@ -5461,9 +5461,9 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	return e, nil
 }
 
-func (builder *dataReaderBuilder) buildStreamWindowForIndexJoin(
+func (builder *dataReaderBuilder) buildOrderedWindowForIndexJoin(
 	_ context.Context,
-	v *physicalop.PhysicalStreamWindow,
+	v *physicalop.PhysicalOrderedWindow,
 	childExec exec.Executor,
 ) (executor exec.Executor, err error) {
 	defer func() {
@@ -5477,18 +5477,18 @@ func (builder *dataReaderBuilder) buildStreamWindowForIndexJoin(
 	}
 	pipelinedExec, ok := windowExec.(*PipelinedWindowExec)
 	if !ok {
-		return nil, errors.New("stream window for index join must be built with stream window executor")
+		return nil, errors.New("ordered window for index join must use pipelined window executor")
 	}
-	streamWindowExec := &StreamWindowExec{PipelinedWindowExec: pipelinedExec}
-	err = streamWindowExec.OpenSelf()
+	orderedWindowExec := &OrderedWindowExec{PipelinedWindowExec: pipelinedExec}
+	err = orderedWindowExec.OpenSelf()
 	if err != nil {
 		return nil, err
 	}
-	return streamWindowExec, nil
+	return orderedWindowExec, nil
 }
 
 func (builder *dataReaderBuilder) buildPartitionTopNWindowForIndexJoin(
-	v *physicalop.PhysicalStreamWindow,
+	v *physicalop.PhysicalOrderedWindow,
 	childExec exec.Executor,
 	limitCount uint64,
 ) (exec.Executor, error) {
@@ -5632,17 +5632,17 @@ func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executo
 	return b.buildWindowBase(v, false)
 }
 
-func (b *executorBuilder) buildStreamWindow(v *physicalop.PhysicalStreamWindow) exec.Executor {
+func (b *executorBuilder) buildOrderedWindow(v *physicalop.PhysicalOrderedWindow) exec.Executor {
 	windowExec := b.buildWindowBase(&v.PhysicalWindow, true)
 	if windowExec == nil || b.err != nil {
 		return nil
 	}
 	pipelinedExec, ok := windowExec.(*PipelinedWindowExec)
 	if !ok {
-		b.err = errors.New("stream window must be built with pipelined window executor")
+		b.err = errors.New("ordered window must be built with pipelined window executor")
 		return nil
 	}
-	return &StreamWindowExec{PipelinedWindowExec: pipelinedExec}
+	return &OrderedWindowExec{PipelinedWindowExec: pipelinedExec}
 }
 
 func (b *executorBuilder) buildWindowBase(v *physicalop.PhysicalWindow, forcePipelined bool) exec.Executor {

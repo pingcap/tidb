@@ -77,10 +77,10 @@ type PipelinedWindowExec struct {
 	initializedSlidingWindow bool
 }
 
-// StreamWindowExec is the executor for stream window functions.
+// OrderedWindowExec is the executor wrapper for ordered-input window plans.
 // It reuses the pipelined window implementation and is selected only when the
 // planner has already guaranteed the required partition/order property.
-type StreamWindowExec struct {
+type OrderedWindowExec struct {
 	*PipelinedWindowExec
 }
 

@@ -254,7 +254,7 @@ func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
 	}
 }
 
-func TestIndexJoinWithStreamWindowInner(t *testing.T) {
+func TestIndexJoinWithOrderedWindowInner(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -285,7 +285,7 @@ func TestIndexJoinWithStreamWindowInner(t *testing.T) {
 
 	sql := "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 1"
 	tk.MustHavePlan(sql, "IndexJoin")
-	tk.MustHavePlan(sql, "StreamWindow")
+	tk.MustHavePlan(sql, "OrderedWindow")
 	tk.MustQuery(sql).Sort().Check(testkit.Rows(
 		"1 1 11",
 		"2 1 21",
@@ -294,7 +294,7 @@ func TestIndexJoinWithStreamWindowInner(t *testing.T) {
 
 	sql = "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 2"
 	tk.MustHavePlan(sql, "IndexJoin")
-	tk.MustHavePlan(sql, "StreamWindow")
+	tk.MustHavePlan(sql, "OrderedWindow")
 	tk.MustQuery(sql).Sort().Check(testkit.Rows(
 		"1 2 12",
 		"2 3 23",
@@ -302,7 +302,7 @@ func TestIndexJoinWithStreamWindowInner(t *testing.T) {
 
 	sql = "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn < 2"
 	tk.MustHavePlan(sql, "IndexJoin")
-	tk.MustHavePlan(sql, "StreamWindow")
+	tk.MustHavePlan(sql, "OrderedWindow")
 	tk.MustQuery(sql).Sort().Check(testkit.Rows(
 		"1 1 11",
 		"2 1 21",
@@ -311,7 +311,7 @@ func TestIndexJoinWithStreamWindowInner(t *testing.T) {
 
 	sql = "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn <= 2"
 	tk.MustHavePlan(sql, "IndexJoin")
-	tk.MustHavePlan(sql, "StreamWindow")
+	tk.MustHavePlan(sql, "OrderedWindow")
 	tk.MustQuery(sql).Sort().Check(testkit.Rows(
 		"1 1 11",
 		"1 2 12",

@@ -47,10 +47,14 @@ type PhysicalWindow struct {
 	StoreTp kv.StoreType
 }
 
-// PhysicalStreamWindow is the physical operator of stream window function.
-// It requires the child to naturally provide the partition/order property and
-// does not allow a sort enforcer to manufacture that order.
-type PhysicalStreamWindow struct {
+// PhysicalOrderedWindow is a window operator for inputs that are already ordered
+// by the window partition/order keys. It is only valid when the child plan can
+// provide that property by itself, for example from an ordered index scan.
+//
+// Unlike PhysicalWindow, this operator must not rely on a Sort enforcer. If a
+// sort is needed to satisfy the window property, the optimizer should use the
+// regular PhysicalWindow path instead.
+type PhysicalOrderedWindow struct {
 	PhysicalWindow
 }
 
@@ -62,9 +66,9 @@ func (p PhysicalWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, of
 	return &p
 }
 
-// Init initializes PhysicalStreamWindow.
-func (p PhysicalStreamWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalStreamWindow {
-	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, "StreamWindow", &p, offset)
+// Init initializes PhysicalOrderedWindow.
+func (p PhysicalOrderedWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalOrderedWindow {
+	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, "OrderedWindow", &p, offset)
 	p.SetChildrenReqProps(props)
 	p.SetStats(stats)
 	return &p
@@ -123,8 +127,8 @@ func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 }
 
 // Clone implements op.PhysicalPlan interface.
-func (p *PhysicalStreamWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
-	cloned := new(PhysicalStreamWindow)
+func (p *PhysicalOrderedWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalOrderedWindow)
 	*cloned = *p
 	cloned.SetSCtx(newCtx)
 	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
@@ -328,7 +332,7 @@ func (p *PhysicalWindow) Attach2Task(tasks ...base.Task) base.Task {
 }
 
 // Attach2Task implements the PhysicalPlan interface.
-func (p *PhysicalStreamWindow) Attach2Task(tasks ...base.Task) base.Task {
+func (p *PhysicalOrderedWindow) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalWindow(p, tasks...)
 }
 
@@ -510,28 +514,28 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	var byItems []property.SortItem
 	byItems = append(byItems, lw.PartitionBy...)
 	byItems = append(byItems, lw.OrderBy...)
-	streamChildProperty := &property.PhysicalProperty{
+	orderedChildProperty := &property.PhysicalProperty{
 		ExpectedCnt:       math.MaxFloat64,
 		SortItems:         byItems,
 		CanAddEnforcer:    false,
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,
 	}
-	streamChildProperty = admitIndexJoinProp(streamChildProperty, prop)
-	// Prefer the stream variant only when the child already satisfies the full
-	// partition/order requirement. Once an extra sort is needed, the dedicated
-	// stream path no longer has an advantage over the general window path.
-	if CanUseStreamWindow(lw) && prop.IsPrefix(streamChildProperty) {
-		streamWindow := PhysicalStreamWindow{
+	orderedChildProperty = admitIndexJoinProp(orderedChildProperty, prop)
+	// Prefer OrderedWindow only when the child naturally satisfies the full
+	// partition/order requirement. Once a Sort enforcer is needed, the plan must
+	// fall back to the regular window path.
+	if CanUseOrderedWindow(lw) && prop.IsPrefix(orderedChildProperty) {
+		orderedWindow := PhysicalOrderedWindow{
 			PhysicalWindow: PhysicalWindow{
 				WindowFuncDescs: lw.WindowFuncDescs,
 				PartitionBy:     lw.PartitionBy,
 				OrderBy:         lw.OrderBy,
 				Frame:           lw.Frame,
 			},
-		}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), streamChildProperty)
-		streamWindow.SetSchema(lw.Schema())
-		windows = append(windows, streamWindow)
+		}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), orderedChildProperty)
+		orderedWindow.SetSchema(lw.Schema())
+		windows = append(windows, orderedWindow)
 	}
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems,
 		CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
@@ -551,9 +555,10 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	return windows, true, nil
 }
 
-// CanUseStreamWindow reports whether the logical window can be executed by the
-// ordered-input stream window path.
-func CanUseStreamWindow(lw *logicalop.LogicalWindow) bool {
+// CanUseOrderedWindow reports whether the logical window belongs to the subset
+// currently supported by PhysicalOrderedWindow. The property requirement is
+// checked separately during physical plan enumeration.
+func CanUseOrderedWindow(lw *logicalop.LogicalWindow) bool {
 	if len(lw.WindowFuncDescs) != 1 {
 		return false
 	}
@@ -564,26 +569,26 @@ func CanUseStreamWindow(lw *logicalop.LogicalWindow) bool {
 		return false
 	}
 	// Keep the admission rule aligned with the current execution contract: the
-	// stream path only handles the default row_number frame and should fall back
-	// to the generic window executor for explicit frame variants.
+	// ordered-input path only handles the default row_number frame and should
+	// fall back to the generic window executor for explicit frame variants.
 	return lw.Frame.Type == ast.Rows &&
 		lw.Frame.Start != nil && lw.Frame.Start.Type == ast.CurrentRow && !lw.Frame.Start.UnBounded &&
 		lw.Frame.End != nil && lw.Frame.End.Type == ast.CurrentRow && !lw.Frame.End.UnBounded
 }
 
-// CanUsePartitionTopNStreamWindow reports whether the physical selection is an
-// upper-bound filter on the result column of a stream row_number window. The
-// returned limit is the largest row_number value that still needs to be
-// produced per partition before the original selection applies.
-func CanUsePartitionTopNStreamWindow(sel *PhysicalSelection) (*PhysicalStreamWindow, uint64, bool) {
-	streamWindow, ok := sel.Children()[0].(*PhysicalStreamWindow)
+// CanUsePartitionTopNOrderedWindow reports whether the physical selection is an
+// upper-bound filter on the result column of an ordered row_number window. The
+// returned limit is the largest row_number value the child window must produce
+// per partition before the original selection applies.
+func CanUsePartitionTopNOrderedWindow(sel *PhysicalSelection) (*PhysicalOrderedWindow, uint64, bool) {
+	orderedWindow, ok := sel.Children()[0].(*PhysicalOrderedWindow)
 	if !ok {
 		return nil, 0, false
 	}
-	if len(streamWindow.WindowFuncDescs) != 1 || streamWindow.WindowFuncDescs[0].Name != ast.WindowFuncRowNumber {
+	if len(orderedWindow.WindowFuncDescs) != 1 || orderedWindow.WindowFuncDescs[0].Name != ast.WindowFuncRowNumber {
 		return nil, 0, false
 	}
-	windowResultCol := streamWindow.Schema().Columns[streamWindow.Schema().Len()-1]
+	windowResultCol := orderedWindow.Schema().Columns[orderedWindow.Schema().Len()-1]
 	var (
 		upperBound uint64
 		found      bool
@@ -599,7 +604,7 @@ func CanUsePartitionTopNStreamWindow(sel *PhysicalSelection) (*PhysicalStreamWin
 	if !found || upperBound == 0 {
 		return nil, 0, false
 	}
-	return streamWindow, upperBound, true
+	return orderedWindow, upperBound, true
 }
 
 func findRowNumberUpperBound(expr expression.Expression, rowNumberCol *expression.Column) (uint64, bool) {

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-// PartitionTopNWindowExec fuses a row_number stream window with an upper-bound
+// PartitionTopNWindowExec fuses a row_number ordered window with an upper-bound
 // filter and only produces the first K rows of each partition.
 type PartitionTopNWindowExec struct {
 	exec.BaseExecutor
