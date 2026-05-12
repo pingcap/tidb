@@ -1743,14 +1743,13 @@ func newLoadDataParser(
 			nil,
 		)
 	case DataFormatParquet:
-		parquetMeta := dataFileInfo.Remote.ParquetMeta
-		parquetMeta.FileSize = dataFileInfo.Remote.FileSize
 		parser, err = mydump.NewParquetParser(
 			ctx,
 			dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
-			parquetMeta,
+			dataFileInfo.Remote.FileSize,
+			dataFileInfo.Remote.ParquetMeta,
 		)
 	default:
 		return nil, exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(format)

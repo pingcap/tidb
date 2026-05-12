@@ -604,6 +604,7 @@ func NewParquetParser(
 	store storeapi.Storage,
 	r storeapi.ReadSeekCloser,
 	path string,
+	fileSize int64,
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
@@ -616,7 +617,7 @@ func NewParquetParser(
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
 
-	wrapper, smallFileBase, closeWrapper, err := newFooterReader(r, meta)
+	wrapper, smallFileBase, closeWrapper, err := newFooterReader(r, fileSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -747,7 +748,7 @@ func SampleStatisticsFromParquet(
 		return 0, 0, err
 	}
 
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
+	parser, err := NewParquetParser(ctx, store, r, path, 0, ParquetFileMeta{})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -887,9 +888,7 @@ func (pp *ParquetParser) preloadBufferBytes() (int64, error) {
 
 // EstimateParquetReaderMemory estimates the peak memory usage for parsing a
 // single parquet file by reading through the first row group with a tracking
-// allocator. Returns the peak memory in bytes. fileSize must match the runtime
-// ParquetFileMeta.FileSize so the estimator and the parser pick the same
-// preload strategy (whole-file vs per-row-group vs streaming).
+// allocator. Returns the peak memory in bytes.
 func EstimateParquetReaderMemory(
 	ctx context.Context,
 	store storeapi.Storage,
@@ -902,7 +901,7 @@ func EstimateParquetReaderMemory(
 	}
 
 	allocator := &trackingAllocator{}
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator, FileSize: fileSize})
+	parser, err := NewParquetParser(ctx, store, r, path, fileSize, ParquetFileMeta{allocator: allocator})
 	if err != nil {
 		_ = r.Close()
 		return 0, err

@@ -47,6 +47,7 @@ func newParquetParserForTest(
 	t *testing.T,
 	dir string,
 	fileName string,
+	fileSize int64,
 	meta ParquetFileMeta,
 ) *ParquetParser {
 	t.Helper()
@@ -57,7 +58,7 @@ func newParquetParserForTest(
 	r, err := store.Open(ctx, fileName, nil)
 	require.NoError(t, err)
 
-	parser, err := NewParquetParser(ctx, store, r, fileName, meta)
+	parser, err := NewParquetParser(ctx, store, r, fileName, fileSize, meta)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -114,7 +115,7 @@ func TestParquetParser(t *testing.T) {
 	name := "test123.parquet"
 	WriteParquetFile(dir, name, pc, 100)
 
-	reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{})
+	reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{})
 
 	require.Equal(t, []string{"ss", "a_a"}, reader.Columns())
 
@@ -183,7 +184,7 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
+	parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
 
 	for i := range 50 {
 		require.NoError(t, parser.ReadRow())
@@ -292,7 +293,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "test123.parquet"
 		WriteParquetFile(dir, name, pc, 1)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 
 		require.Len(t, reader.colNames, 10)
 		require.NoError(t, reader.ReadRow())
@@ -378,7 +379,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "logical-timestamps.parquet"
 		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: asiaShanghai})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: asiaShanghai})
 		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[0].converted)
 		require.Equal(t, schema.ConvertedTypes.TimestampMicros, reader.colTypes[1].converted)
 		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[2].converted)
@@ -433,7 +434,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "logical-time-local.parquet"
 		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: asiaShanghai})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: asiaShanghai})
 		require.Equal(t, schema.ConvertedTypes.TimeMillis, reader.colTypes[0].converted)
 		require.Equal(t, schema.ConvertedTypes.TimeMicros, reader.colTypes[1].converted)
 		require.False(t, reader.colTypes[0].IsAdjustedToUTC)
@@ -473,7 +474,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.NoError(t, err)
 		r, err := store.Open(context.Background(), name, nil)
 		require.NoError(t, err)
-		parser, err := NewParquetParser(context.Background(), store, r, name, ParquetFileMeta{Loc: time.UTC})
+		parser, err := NewParquetParser(context.Background(), store, r, name, 0, ParquetFileMeta{Loc: time.UTC})
 		require.ErrorContains(t, err, "unsupported timestamp time unit")
 		require.Nil(t, parser)
 	})
@@ -495,7 +496,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		name := "int96-rounds-sub-microsecond.parquet"
 		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 		require.Equal(t, "", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 		require.NoError(t, reader.ReadRow())
 
@@ -606,7 +607,7 @@ func TestParquetVariousTypes(t *testing.T) {
 					),
 				)
 
-				reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 				require.NotNil(t, reader.fileMeta.KeyValueMetadata().FindValue("org.apache.spark.version"))
 				if tc.name == "legacy" {
 					version := sparkVersionFromMetadata(reader.fileMeta)
@@ -782,7 +783,7 @@ func TestParquetVariousTypes(t *testing.T) {
 					),
 				)
 
-				reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+				reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 				for _, colType := range reader.colTypes {
 					require.Equal(t, tc.timeZoneID, colType.sparkRebaseMicros.timeZoneID)
 				}
@@ -831,7 +832,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			),
 		)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 		require.Equal(t, sparkRebaseDefaultTimeZoneID, reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 		require.NoError(t, reader.ReadRow())
 
@@ -873,7 +874,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			),
 		)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, name, 0, ParquetFileMeta{})
 		require.Equal(t, "Asia/Shanghai", reader.loc.String())
 		require.Equal(t, "Asia/Shanghai", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
 	})
@@ -943,7 +944,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		fileName := "test.02.parquet"
 		WriteParquetFile(dir, fileName, pc, 7)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
 
 		for i, expectValue := range expectedValues {
 			assert.NoError(t, reader.ReadRow())
@@ -978,7 +979,7 @@ func TestParquetVariousTypes(t *testing.T) {
 		fileName := "test.bool.parquet"
 		WriteParquetFile(dir, fileName, pc, 2)
 
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
 
 		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 		// compare will `DeepEqual` here
@@ -1031,7 +1032,7 @@ func BenchmarkRebaseSparkJulianToGregorianMicros(b *testing.B) {
 
 func TestParquetAurora(t *testing.T) {
 	fileName := "test.parquet"
-	parser := newParquetParserForTest(context.TODO(), t, "examples", fileName, ParquetFileMeta{})
+	parser := newParquetParserForTest(context.TODO(), t, "examples", fileName, 0, ParquetFileMeta{})
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
 
@@ -1087,7 +1088,7 @@ func TestParquetAurora(t *testing.T) {
 func TestHiveParquetParser(t *testing.T) {
 	name := "000000_0.parquet"
 	dir := "./parquet/"
-	reader := newParquetParserForTest(context.TODO(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+	reader := newParquetParserForTest(context.TODO(), t, dir, name, 0, ParquetFileMeta{Loc: time.UTC})
 	// UTC+0:00
 	results := []time.Time{
 		time.Date(2022, 9, 10, 9, 9, 0, 0, time.UTC),
@@ -1167,7 +1168,7 @@ func TestBasicReadFile(t *testing.T) {
 		readBatchSize = origBatchSize
 	}()
 
-	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, ParquetFileMeta{})
+	reader := newParquetParserForTest(context.TODO(), t, dir, fileName, 0, ParquetFileMeta{})
 	for i := range rowCnt {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
@@ -1234,7 +1235,7 @@ func TestParquetParserWrapper(t *testing.T) {
 			rowGroupInMemoryThreshold = origThreshold
 		}()
 
-		parser := newParquetParserForTest(context.Background(), t, dir, fileName, ParquetFileMeta{})
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
 
 		gotFixed := make([]string, 0, rowCnt)
 		gotInt := make([]int64, 0, rowCnt)
@@ -1287,8 +1288,8 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 	require.NoError(t, err)
 	fileSize := info.Size()
 
-	read := func(meta ParquetFileMeta) *ParquetParser {
-		parser := newParquetParserForTest(context.Background(), t, dir, fileName, meta)
+	read := func(fileSize int64) *ParquetParser {
+		parser := newParquetParserForTest(context.Background(), t, dir, fileName, fileSize, ParquetFileMeta{})
 		for i := range rowCnt {
 			require.NoError(t, parser.ReadRow())
 			require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
@@ -1303,14 +1304,14 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		smallFileThreshold = int(fileSize) + 1
 		defer func() { smallFileThreshold = origThreshold }()
 
-		parser := read(ParquetFileMeta{FileSize: fileSize})
+		parser := read(fileSize)
 		require.NotNil(t, parser.smallFileBase, "expected whole-file in-memory path")
 	})
 
 	// FileSize unset: parser falls back to streaming, whole-file base must
 	// stay nil so we don't accidentally claim mode 3.
 	t.Run("skipped_when_file_size_unknown", func(t *testing.T) {
-		parser := read(ParquetFileMeta{})
+		parser := read(0)
 		require.Nil(t, parser.smallFileBase)
 	})
 
@@ -1321,7 +1322,7 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		smallFileThreshold = int(fileSize) - 1
 		defer func() { smallFileThreshold = origThreshold }()
 
-		parser := read(ParquetFileMeta{FileSize: fileSize})
+		parser := read(fileSize)
 		require.Nil(t, parser.smallFileBase)
 	})
 }

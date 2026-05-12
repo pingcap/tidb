@@ -285,21 +285,21 @@ func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path st
 // For small files it consumes r in one read and returns a buffer-backed
 // wrapper plus the same buffer via base, so later row-group reads can
 // reuse it. Otherwise it returns a streaming wrapper and a closer for r.
-func newFooterReader(r storeapi.ReadSeekCloser, meta ParquetFileMeta) (
+func newFooterReader(r storeapi.ReadSeekCloser, fileSize int64) (
 	wrapper parquet.ReaderAtSeeker,
 	base *inMemoryReaderBase,
 	closer func() error,
 	err error,
 ) {
-	if meta.FileSize > 0 && meta.FileSize <= int64(smallFileThreshold) {
-		buf := make([]byte, meta.FileSize)
+	if fileSize > 0 && fileSize <= int64(smallFileThreshold) {
+		buf := make([]byte, fileSize)
 		if _, err := io.ReadFull(r, buf); err != nil {
 			_ = r.Close()
 			return nil, nil, nil, errors.Trace(err)
 		}
 		_ = r.Close()
 		base = newInMemoryReaderBaseFromBytes(buf)
-		wrapper = &inMemoryParquetWrapper{base: base, fileSize: meta.FileSize}
+		wrapper = &inMemoryParquetWrapper{base: base, fileSize: fileSize}
 		return wrapper, base, func() error { return nil }, nil
 	}
 	return &parquetWrapper{ReadSeekCloser: r}, nil, r.Close, nil
