@@ -92,7 +92,7 @@
         "SQL": "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
         "Plan": [
           "StreamAgg_13 1.00 2128.93 root  funcs:count(1)->Column#9",
-          "└─HashJoin_48 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
+          "└─HashJoin_36 3.00 1979.23 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
           "  ├─IndexReader_35(Build) 3.00 45.23 root  index:IndexFullScan_34",
           "  │ └─IndexFullScan_34 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false",
           "  └─TableReader_30(Probe) 3.00 68.11 root  data:Selection_29",
@@ -120,7 +120,7 @@
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
           "StreamAgg_19 1.00 71701.80 root  funcs:count(1)->Column#13",
-          "└─HashJoin_92 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "└─HashJoin_80 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "  ├─TableReader_57(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_56",
           "  │ └─ExchangeSender_56 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─Projection_55 3.00 1044634.01 mpp[tiflash]  test.t1.b",
@@ -138,7 +138,7 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
         "Plan": [
-          "HashJoin_23 3.00 32781.07 root  CARTESIAN left outer semi join, left side:IndexReader_27",
+          "HashJoin_17 3.00 32781.07 root  CARTESIAN left outer semi join, left side:IndexReader_27",
           "├─Selection_40(Build) 0.80 31149.25 root  eq(2, Column#23)",
           "│ └─StreamAgg_47 1.00 31099.35 root  funcs:count(1)->Column#23",
           "│   └─TableReader_59 3.00 30949.65 root  MppVersion: 3, data:ExchangeSender_58",
@@ -152,17 +152,17 @@
         "SQL": "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
           "StreamAgg_15 1.00 62546.70 root  funcs:count(1)->Column#9",
-          "└─MergeJoin_29 3.00 62397.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
-          "  ├─Sort_27(Build) 3.00 31197.00 root  test.t2.a",
-          "  │ └─TableReader_26 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_25",
-          "  │   └─ExchangeSender_25 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │     └─Selection_24 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "  │       └─TableFullScan_23 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
-          "  └─Sort_22(Probe) 3.00 31197.00 root  test.t1.a",
-          "    └─TableReader_21 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_20",
-          "      └─ExchangeSender_20 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
-          "        └─Selection_19 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
-          "          └─TableFullScan_18 3.00 464139.20 mpp[tiflash] table:t1 keep order:false"
+          "└─MergeJoin_33 3.00 62397.00 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─Sort_29(Build) 3.00 31197.00 root  test.t2.a",
+          "  │ └─TableReader_28 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_27",
+          "  │   └─ExchangeSender_27 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │     └─Selection_26 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
+          "  │       └─TableFullScan_25 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
+          "  └─Sort_24(Probe) 3.00 31197.00 root  test.t1.a",
+          "    └─TableReader_23 3.00 30950.13 root  MppVersion: 3, data:ExchangeSender_22",
+          "      └─ExchangeSender_22 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection_21 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
+          "          └─TableFullScan_20 3.00 464139.20 mpp[tiflash] table:t1 keep order:false"
         ]
       },
       {
