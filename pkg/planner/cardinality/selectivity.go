@@ -272,11 +272,15 @@ func Selectivity(
 							notCoveredStrMatch[i] = sub
 							continue
 						case *expression.Constant:
-							// AGAINST(NULL) and empty-string search produce a
-							// constant substitute (Constant 0). Route to the
-							// constants bucket so the stats engine recognizes
-							// it as constant-false (selectivity 0) instead of
-							// applying the str-match default (0.1).
+							// AGAINST(NULL) produces Constant(NULL) (preserves SQL
+							// three-valued logic — matches the planner-side
+							// matchAgainstToLike NULL fast-path); empty-string
+							// search produces Constant(0). Route either to the
+							// constants bucket so the stats engine recognizes the
+							// substitute as constant-false (the IsNull / ToBool
+							// pass at line ~309 zeroes selectivity for both
+							// shapes) instead of applying the str-match default
+							// (0.1).
 							notCoveredConstants[i] = sub
 							continue
 						}
