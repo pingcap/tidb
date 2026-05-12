@@ -879,6 +879,12 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 }
 
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
+	// This function may set the two fields below for the PropMatchedNeedMergeSort case, so we reset them here to
+	// avoid leaving the AccessPath with an inconsistent state when there are multiple calls to matchProperty with
+	// different properties.
+	path.GroupedRanges = nil
+	path.GroupByColIdxs = nil
+
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
 		return property.PropNotMatched
@@ -1110,8 +1116,18 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		matchIdxes := make([]int, 0, 1)
 		for i, oneAlternative := range oneORBranch {
 			// if there is some sort items and this path doesn't match this prop, continue.
+<<<<<<< HEAD
 			// Satisfying the property by a merge sort is not supported for partial paths of index merge.
 			if !noSortItem && matchProperty(ds, oneAlternative, prop) != property.PropMatched {
+=======
+			match := true
+			for _, oneAccessPath := range oneAlternative {
+				if !noSortItem && !matchProperty(ds, oneAccessPath, prop).Matched() {
+					match = false
+				}
+			}
+			if !match {
+>>>>>>> 173eaf24799 (planner, executor: support merge sort for IN conditions in IndexMerge partial paths (#67771))
 				continue
 			}
 			// two possibility here:
@@ -1238,8 +1254,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 		return property.PropNotMatched
 	}
 	for _, partialPath := range path.PartialIndexPaths {
-		// Satisfying the property by a merge sort is not supported for partial paths of index merge.
-		if matchProperty(ds, partialPath, prop) != property.PropMatched {
+		if !matchProperty(ds, partialPath, prop).Matched() {
 			return property.PropNotMatched
 		}
 	}
@@ -2010,9 +2025,13 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 }
 
 func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (tablePlan base.PhysicalPlan) {
+<<<<<<< HEAD
 	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
 		"partial paths of index merge path should not match property using merge sort")
 	ts, rowCount := getOriginalPhysicalTableScan(ds, prop, path, matchProp.Matched())
+=======
+	ts, rowCount := physicalop.GetOriginalPhysicalTableScan(ds, prop, path, matchProp.Matched())
+>>>>>>> 173eaf24799 (planner, executor: support merge sort for IN conditions in IndexMerge partial paths (#67771))
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
 	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
@@ -2028,6 +2047,10 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 			ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
 		}
 		ts.ByItems = byItems
+		if len(path.GroupedRanges) > 0 {
+			ts.GroupedRanges = path.GroupedRanges
+			ts.GroupByColIdxs = path.GroupByColIdxs
+		}
 	}
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.filterCondition, nil)
