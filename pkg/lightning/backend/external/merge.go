@@ -37,9 +37,10 @@ import (
 
 var (
 	// MaxMergingFilesPerThread is the maximum number of files that can be merged by a
-	// single thread. This value comes from the fact that 16 threads are ok to merge 4k
-	// files in parallel, so we set it to 250.
-	MaxMergingFilesPerThread = 250
+	// single thread. Note: the 250 multiplier inside commonGetAdjustCount in writer.go
+	// controls merge-step planning (file-count step / overlap threshold) and is a
+	// separate knob; it is intentionally not tied to this value.
+	MaxMergingFilesPerThread = 64
 	// MinUploadPartSize is the minimum size of each part when uploading files to
 	// external storage, which is 5MiB for both S3 and GCS.
 	MinUploadPartSize int64 = 5 * units.MiB
@@ -108,8 +109,8 @@ func NewMergeOperator(
 ) *MergeOperator {
 	// during encode&sort step, the writer-limit is aligned to block size, so we
 	// need align this too. the max additional written size per file is max-block-size.
-	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
-	// to part-size is enough.
+	// (max-block-size * MaxMergingFilesPerThread)/10000 stays well under 1MiB for
+	// reasonable values (e.g. 32MiB * 64 / 10000 ~ 0.2MiB), so +1MiB slack is enough.
 	partSize = max(MinUploadPartSize, partSize+units.MiB)
 	logutil.Logger(ctx).Info("create merge operator",
 		zap.Int64("part-size", partSize))
@@ -258,8 +259,8 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // with current default values, on machine with 2G per core, the estimate max memory
 // usage for import into is:
 //
-//	128 + 250 * (4 + 64/1024) + 8 * (25.6 + 5) ~ 1.36 GiB
-//	where 25.6 is max part-size when there is only data kv = 1024*250/10000 = 25.6MiB
+//	128 + 64 * (4 + 64/1024) + 8 * (6.55 + 5) ~ 480 MiB
+//	where 6.55 is max part-size when there is only data kv = 1024*64/10000 ~ 6.55MiB
 //
 // for add-index, it uses more memory as check-hotspot is enabled.
 func mergeOverlappingFilesInternal(
