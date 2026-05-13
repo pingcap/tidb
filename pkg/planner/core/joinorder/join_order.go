@@ -586,6 +586,86 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
+	var seedResult *Node
+	if nodeWithHint != nil || len(nodes) < 2 {
+		seedResult, err = j.optimizeWithSeed(detector, nodes, 0, cartesianFactor, allowNoEQ)
+		if err != nil {
+			return nil, err
+		}
+		return seedResult.p, nil
+	}
+
+	bestSeedIdx := 0
+	seedResult, bestSeedIdx, err = chooseBestGreedySeed(2, func(seedIdx int) (*Node, error) {
+		return j.optimizeWithSeed(detector, nodes, seedIdx, cartesianFactor, allowNoEQ)
+	})
+	if err != nil {
+		return nil, err
+	}
+	logutil.BgLogger().Debug("greedy join reorder picked multi-seed candidate",
+		zap.Int("rootID", group.root.ID()),
+		zap.Int("seedIdx", bestSeedIdx),
+		zap.Float64("cumCost", seedResult.cumCost),
+		zap.Int("nodeCount", len(nodes)))
+	return seedResult.p, nil
+}
+
+func cloneNodeForGreedySeed(node *Node) *Node {
+	if node == nil {
+		return nil
+	}
+	cloned := &Node{
+		bitSet:  node.bitSet,
+		p:       node.p,
+		cumCost: node.cumCost,
+	}
+	if node.usedEdges != nil {
+		cloned.usedEdges = maps.Clone(node.usedEdges)
+	}
+	return cloned
+}
+
+func cloneNodesForGreedySeed(nodes []*Node) []*Node {
+	cloned := make([]*Node, len(nodes))
+	for i, node := range nodes {
+		cloned[i] = cloneNodeForGreedySeed(node)
+	}
+	return cloned
+}
+
+func chooseBestGreedySeed(seedCount int, runner func(seedIdx int) (*Node, error)) (*Node, int, error) {
+	var best *Node
+	bestSeedIdx := -1
+	for seedIdx := 0; seedIdx < seedCount; seedIdx++ {
+		candidate, err := runner(seedIdx)
+		if err != nil {
+			return nil, -1, err
+		}
+		if best == nil || candidate.cumCost < best.cumCost {
+			best = candidate
+			bestSeedIdx = seedIdx
+		}
+	}
+	if best == nil {
+		return nil, -1, errors.New("internal error: greedy join reorder produced no seed result")
+	}
+	return best, bestSeedIdx, nil
+}
+
+func moveGreedySeedToFront(nodes []*Node, seedIdx int) []*Node {
+	if seedIdx <= 0 || seedIdx >= len(nodes) {
+		return nodes
+	}
+	reordered := make([]*Node, 0, len(nodes))
+	reordered = append(reordered, nodes[seedIdx])
+	reordered = append(reordered, nodes[:seedIdx]...)
+	reordered = append(reordered, nodes[seedIdx+1:]...)
+	return reordered
+}
+
+func (j *joinOrderGreedy) optimizeWithSeed(detector *ConflictDetector, nodes []*Node, seedIdx int, cartesianFactor float64, allowNoEQ bool) (*Node, error) {
+	nodes = moveGreedySeedToFront(cloneNodesForGreedySeed(nodes), seedIdx)
+	var err error
 	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
 		return nil, err
 	}
@@ -599,10 +679,11 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		// So we got here and we need to the second round of enumeration with `allowNoEQ` as true.
 		befLen := len(nodes)
 		// Clamp to 1 to avoid cumCost*0=0 making non-EQ joins appear free.
-		if cartesianFactor <= 0 {
-			cartesianFactor = 1
+		secondRoundFactor := cartesianFactor
+		if secondRoundFactor <= 0 {
+			secondRoundFactor = 1
 		}
-		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
+		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, secondRoundFactor, true); err != nil {
 			return nil, err
 		}
 		if len(nodes) != befLen {
@@ -613,29 +694,33 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	if detector.HasRemainingEdges(usedEdges) {
 		totalEdges, usedEdgeCount, missingEdges, missingDetail, nodeSets := summarizeEdges(detector, usedEdges, nodes, 4)
 		logutil.BgLogger().Warn("join reorder skipped because not all edges are used",
-			zap.Int("rootID", group.root.ID()),
+			zap.Int("rootID", j.group.root.ID()),
+			zap.Int("seedIdx", seedIdx),
 			zap.Int("nodes", len(nodes)),
 			zap.Int("totalEdges", totalEdges),
 			zap.Int("usedEdges", usedEdgeCount),
 			zap.Int("missingEdges", missingEdges),
 			zap.String("missingDetail", missingDetail),
 			zap.String("nodeSets", nodeSets),
-			zap.Bool("allInnerJoin", group.allInnerJoin))
+			zap.Bool("allInnerJoin", j.group.allInnerJoin))
 		if intest.InTest {
 			return nil, errors.New("got remaining edges during join reorder")
 		}
-		return group.root, nil
+		return &Node{
+			p:       j.group.root,
+			cumCost: math.Inf(1),
+		}, nil
 	}
 	if len(nodes) <= 0 {
 		return nil, errors.New("internal error: bushy join tree nodes is empty")
 	}
-	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins,
-	// It handles situations where there is no edges between different subgraphs,
-	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, true)
+	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins.
+	// We need the returned Node metadata to compare seed alternatives by cumCost.
+	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, false)
 	if err != nil {
 		return nil, err
 	}
-	return root.p, nil
+	return root, nil
 }
 
 func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
