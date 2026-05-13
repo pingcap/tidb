@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -122,6 +123,9 @@ func TestGetStmtReadTSActivateTxnWhenAutocommitOff(t *testing.T) {
 }
 
 func TestGetSnapshotWithStmtReadTSActivateTxnWhenAutocommitOff(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip test on next-gen kernel since it doesn't support replica read")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
