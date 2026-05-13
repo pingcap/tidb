@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/bits"
 	"strconv"
 	"strings"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -92,6 +94,11 @@ const (
 	mvTaskMonitorPollInterval       = 5 * time.Second
 	mvTaskHistHeartbeatInterval     = 10 * time.Minute
 	mvTaskMonitorSQLTimeout         = 5 * time.Second
+	mlogPurgeAdaptiveCountTimeout   = 30 * time.Second
+	mlogPurgeAdaptiveBatchWindow    = 200 * time.Millisecond
+	mlogPurgeAdaptiveMinBatchSize   = int64(2000)
+	mlogPurgeAdaptiveDeadlineBuffer = 10 * time.Second
+	mlogPurgeAdaptiveMaxBudget      = mvservice.DefaultMVPurgeTaskTimeout - mlogPurgeAdaptiveDeadlineBuffer
 )
 
 // PurgeMaterializedViewLogExec executes "PURGE MATERIALIZED VIEW LOG" as a utility-style statement.
@@ -121,6 +128,20 @@ type mvTaskCancelController struct {
 	mu        sync.Mutex
 	reason    mvTaskCancelReason
 	requester string
+}
+
+type mlogPurgeThrottleConfig struct {
+	minRate     float64
+	budgetRatio float64
+}
+
+type mlogPurgeThrottlePlan struct {
+	targetRate         float64
+	pendingRows        int64
+	effectiveBatchSize int64
+	minRate            float64
+	deadline           time.Time
+	noWaitStreak       int
 }
 
 func newMVTaskCancelController(parent context.Context) *mvTaskCancelController {
@@ -172,6 +193,16 @@ func (c *mvTaskCancelController) normalizeTaskFailure(taskErr error) (*string, e
 
 	failedReason := formatMVManualCancelFailureReason(requester)
 	return &failedReason, errMVTaskCanceledManually
+}
+
+func (c *mvTaskCancelController) isManualCancelRequested() bool {
+	if c == nil {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reason == mvTaskCancelReasonManual
 }
 
 func formatMVManualCancelFailureReason(requester string) string {
@@ -1549,10 +1580,14 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	safePurgeTSO := uint64(0)
 	lockedLastPurgedTSO := uint64(0)
 	lockedLastPurgedTSOReady := false
+	var lockedNextTime *time.Time
 	purgeJobID := uint64(0)
 	purgeHistRunningInserted := false
 	txnStarted := false
 	txnFinished := false
+	var throttlePlan *mlogPurgeThrottlePlan
+	effectiveBatchSize := batchSize
+	var deleteLoopStart time.Time
 	defer func() {
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
@@ -1625,6 +1660,23 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	)
 	deleteSQLExec := deleteSctx.GetSQLExecutor()
 
+	countSctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(releaseCtx, countSctx)
+	countSessVars := countSctx.GetSessionVars()
+	restoreCountMaintenanceVars, err := applyMVMaintenanceSessionVars(
+		countSessVars,
+		targetMaintainMemQuota,
+		targetMaintainIsolationReadEngines,
+		isInternalSQL,
+	)
+	if err != nil {
+		return err
+	}
+	defer restoreCountMaintenanceVars()
+	countSQLExec := countSctx.GetSQLExecutor()
 	histSctx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -1714,12 +1766,13 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	txnStarted = true
 
-	lastPurgedTSO, hasLastPurgedTSO, err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID)
+	lastPurgedTSO, hasLastPurgedTSO, nextTimeLocked, err := acquireMaterializedViewLogPurgeLock(kctx, sqlExec, schemaName, s.Table.Name, mlogID)
 	if err != nil {
 		return err
 	}
 	lockedLastPurgedTSO = lastPurgedTSO
 	lockedLastPurgedTSOReady = hasLastPurgedTSO
+	lockedNextTime = nextTimeLocked
 
 	txn, err := purgeSctx.Txn(true)
 	if err != nil {
@@ -1727,7 +1780,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	purgeStartTS := txn.StartTS()
 	safePurgeTSO = purgeStartTS
-
 	purgeJobID = purgeStartTS
 	if err := insertMLogPurgeHistRunning(
 		kctx,
@@ -1780,6 +1832,26 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	skipDeleteByCheckpoint := lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
 	if !skipDeleteByCheckpoint && safePurgeTSO > 0 {
+		throttlePlan = tryBuildMLogPurgeThrottlePlanBestEffort(
+			kctx,
+			e.Ctx().GetSessionVars(),
+			scheduleEvalSctx,
+			purgeSctx,
+			countSQLExec,
+			countSessVars,
+			mlogInfo,
+			isInternalSQL,
+			schemaName.O,
+			mlogName.O,
+			lockedLastPurgedTSO,
+			lockedLastPurgedTSOReady,
+			safePurgeTSO,
+			lockedNextTime,
+		)
+		if throttlePlan != nil {
+			effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
+		}
+		deleteLoopStart = time.Now()
 		for {
 			batchPurgeRows, batchErr := purgeMaterializedViewLogData(
 				kctx,
@@ -1787,16 +1859,38 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 				deleteSessVars,
 				schemaName.O,
 				mlogName.O,
+				lockedLastPurgedTSO,
+				lockedLastPurgedTSOReady,
 				safePurgeTSO,
-				batchSize,
+				effectiveBatchSize,
 			)
 			totalPurgeRows += batchPurgeRows
 			failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
 			if batchErr != nil {
+				_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+				txnFinished = true
 				return finalizeFailure(batchErr)
 			}
-			if batchPurgeRows < batchSize {
+			if batchPurgeRows < effectiveBatchSize {
 				break
+			}
+			if throttlePlan != nil {
+				if sleepErr := throttlePlan.maybeSleep(kctx, deleteLoopStart, totalPurgeRows); sleepErr != nil {
+					if taskCancelController.isManualCancelRequested() {
+						return finalizeFailure(sleepErr)
+					}
+					logutil.BgLogger().Warn(
+						"purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge",
+						zap.String("schemaName", schemaName.O),
+						zap.String("tableName", mlogName.O),
+						zap.Uint64("safePurgeTSO", safePurgeTSO),
+						zap.Error(sleepErr),
+					)
+					throttlePlan = nil
+					effectiveBatchSize = batchSize
+				} else {
+					effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
+				}
 			}
 		}
 	}
@@ -1994,7 +2088,7 @@ func acquireMaterializedViewLogPurgeLock(
 	schemaName pmodel.CIStr,
 	baseTableName pmodel.CIStr,
 	mlogID int64,
-) (lastPurgedTSO uint64, hasLastPurgedTSO bool, _ error) {
+) (lastPurgedTSO uint64, hasLastPurgedTSO bool, nextTime *time.Time, _ error) {
 	forceConflict := false
 	failpoint.Inject("mockPurgeMaterializedViewLogLockConflict", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
@@ -2002,7 +2096,7 @@ func acquireMaterializedViewLogPurgeLock(
 		}
 	})
 	if forceConflict {
-		return 0, false, errors.Annotatef(
+		return 0, false, nil, errors.Annotatef(
 			errMLogPurgeLockConflict,
 			"another purge is running for materialized view log on %s.%s, please retry later",
 			schemaName.O,
@@ -2011,11 +2105,11 @@ func acquireMaterializedViewLogPurgeLock(
 	}
 
 	// Acquire the mutual exclusion lock row for this MLOG_ID. NOWAIT ensures we fail fast if another purge is running.
-	lockSQL := sqlescape.MustEscapeSQL("SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT", mlogID)
+	lockSQL := sqlescape.MustEscapeSQL("SELECT LAST_PURGED_TSO, NEXT_TIME FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT", mlogID)
 	rows, err := sqlexec.ExecSQL(kctx, sqlExec, lockSQL)
 	if err != nil {
 		if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
-			return 0, false, errors.Annotatef(
+			return 0, false, nil, errors.Annotatef(
 				errMLogPurgeLockConflict,
 				"another purge is running for materialized view log on %s.%s, please retry later",
 				schemaName.O,
@@ -2023,17 +2117,24 @@ func acquireMaterializedViewLogPurgeLock(
 			)
 		}
 		if infoschema.ErrTableNotExists.Equal(err) {
-			return 0, false, errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
+			return 0, false, nil, errors.New("required system table mysql.tidb_mlog_purge_info does not exist")
 		}
-		return 0, false, errors.Trace(err)
+		return 0, false, nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		return 0, false, errors.Errorf("mlog purge lock row does not exist for mlog id %d", mlogID)
+		return 0, false, nil, errors.Errorf("mlog purge lock row does not exist for mlog id %d", mlogID)
+	}
+	if !rows[0].IsNull(1) {
+		lockedNextTime, convErr := rows[0].GetTime(1).GoTime(time.UTC)
+		if convErr != nil {
+			return 0, false, nil, errors.Trace(convErr)
+		}
+		nextTime = &lockedNextTime
 	}
 	if rows[0].IsNull(0) {
-		return 0, false, nil
+		return 0, false, nextTime, nil
 	}
-	return rows[0].GetUint64(0), true, nil
+	return rows[0].GetUint64(0), true, nextTime, nil
 }
 
 func collectDependentMViewIDsForMLogPurge(
@@ -2090,6 +2191,8 @@ func purgeMaterializedViewLogData(
 	sessVars *variable.SessionVars,
 	schemaName string,
 	mlogName string,
+	lastPurgedTSO uint64,
+	hasLastPurgedTSO bool,
 	safePurgeTSO uint64,
 	batchSize int64,
 ) (int64, error) {
@@ -2107,15 +2210,29 @@ func purgeMaterializedViewLogData(
 		}
 	})
 
-	deleteSQL := sqlescape.MustEscapeSQL(
-		"DELETE /*+ read_from_storage(tiflash[%n.%n]) */ FROM %n.%n WHERE _tidb_commit_ts <= %? LIMIT %?",
-		schemaName,
-		mlogName,
-		schemaName,
-		mlogName,
-		safePurgeTSO,
-		batchSize,
-	)
+	var deleteSQL string
+	if hasLastPurgedTSO {
+		deleteSQL = sqlescape.MustEscapeSQL(
+			"DELETE /*+ read_from_storage(tiflash[%n.%n]) */ FROM %n.%n WHERE _tidb_commit_ts > %? AND _tidb_commit_ts <= %? LIMIT %?",
+			schemaName,
+			mlogName,
+			schemaName,
+			mlogName,
+			lastPurgedTSO,
+			safePurgeTSO,
+			batchSize,
+		)
+	} else {
+		deleteSQL = sqlescape.MustEscapeSQL(
+			"DELETE /*+ read_from_storage(tiflash[%n.%n]) */ FROM %n.%n WHERE _tidb_commit_ts <= %? LIMIT %?",
+			schemaName,
+			mlogName,
+			schemaName,
+			mlogName,
+			safePurgeTSO,
+			batchSize,
+		)
+	}
 	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
 	sessVars.InMaterializedViewMaintenance = true
 	defer func() {
@@ -2127,6 +2244,404 @@ func purgeMaterializedViewLogData(
 		return 0, errors.Trace(err)
 	}
 	return int64(sessVars.StmtCtx.AffectedRows()), nil
+}
+
+func loadMLogPurgeThrottleConfig(
+	kctx context.Context,
+	sessVars *variable.SessionVars,
+) (mlogPurgeThrottleConfig, error) {
+	if sessVars == nil {
+		return mlogPurgeThrottleConfig{}, errors.New("purge materialized view log: session vars is nil")
+	}
+	minRateStr, err := sessVars.GetSessionOrGlobalSystemVar(kctx, variable.TiDBMLogPurgeMinRate)
+	if err != nil {
+		return mlogPurgeThrottleConfig{}, errors.Trace(err)
+	}
+	minRate, err := strconv.ParseFloat(minRateStr, 64)
+	if err != nil {
+		return mlogPurgeThrottleConfig{}, errors.Trace(err)
+	}
+	budgetRatioStr, err := sessVars.GetSessionOrGlobalSystemVar(kctx, variable.TiDBMLogPurgeRateBudgetRatio)
+	if err != nil {
+		return mlogPurgeThrottleConfig{}, errors.Trace(err)
+	}
+	budgetRatio, err := strconv.ParseFloat(budgetRatioStr, 64)
+	if err != nil {
+		return mlogPurgeThrottleConfig{}, errors.Trace(err)
+	}
+	return mlogPurgeThrottleConfig{
+		minRate:     minRate,
+		budgetRatio: budgetRatio,
+	}, nil
+}
+
+func deriveMLogPurgeThrottleDeadline(
+	kctx context.Context,
+	evalSctx sessionctx.Context,
+	templateSctx sessionctx.Context,
+	mlogInfo *model.MaterializedViewLogInfo,
+	isInternalSQL bool,
+	schemaName string,
+	mlogName string,
+	fallbackNextTime *time.Time,
+) (*time.Time, error) {
+	failpoint.Inject("mockMLogPurgeAdaptiveDeadlineErr", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(nil, errors.New("mock adaptive purge deadline error"))
+		}
+	})
+	var adaptiveDeadline *time.Time
+	now := time.Now().UTC()
+	if mlogPurgeAdaptiveMaxBudget > 0 {
+		plannedDeadline := now.Add(mlogPurgeAdaptiveMaxBudget)
+		adaptiveDeadline = &plannedDeadline
+	}
+	if isInternalSQL {
+		nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
+			kctx,
+			evalSctx,
+			templateSctx,
+			mlogInfo.PurgeStartWith,
+			mlogInfo.PurgeNext,
+			true,
+			mlogInfo.DefinitionSQLMode,
+			func() {
+				logRuntimeMaterializedViewLogPurgeNextTimeUpdateNull(schemaName, mlogName, mlogInfo.PurgeNext)
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+		if shouldUpdateNextTime && nextTime != nil {
+			parsedNextTime, parseErr := time.ParseInLocation(types.TimeFSPFormat, *nextTime, time.UTC)
+			if parseErr != nil {
+				return nil, errors.Trace(parseErr)
+			}
+			if adaptiveDeadline == nil || parsedNextTime.Before(*adaptiveDeadline) {
+				return &parsedNextTime, nil
+			}
+			return adaptiveDeadline, nil
+		}
+		return adaptiveDeadline, nil
+	}
+	if fallbackNextTime == nil {
+		return adaptiveDeadline, nil
+	}
+	if adaptiveDeadline == nil || fallbackNextTime.Before(*adaptiveDeadline) {
+		return fallbackNextTime, nil
+	}
+	return adaptiveDeadline, nil
+}
+
+func tryBuildMLogPurgeThrottlePlan(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	sessVars *variable.SessionVars,
+	schemaName string,
+	mlogName string,
+	lastPurgedTSO uint64,
+	hasLastPurgedTSO bool,
+	safePurgeTSO uint64,
+	nextTime *time.Time,
+	cfg mlogPurgeThrottleConfig,
+) *mlogPurgeThrottlePlan {
+	if safePurgeTSO == 0 || nextTime == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	if !nextTime.After(now) {
+		return nil
+	}
+	budget := time.Duration(float64(nextTime.Sub(now)) * cfg.budgetRatio)
+	if budget <= 0 {
+		return nil
+	}
+	pendingRows, err := countMLogPurgePendingRowsOnTiFlash(
+		kctx,
+		sqlExec,
+		sessVars,
+		schemaName,
+		mlogName,
+		lastPurgedTSO,
+		hasLastPurgedTSO,
+		safePurgeTSO,
+	)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"purge materialized view log: failed to build adaptive throttle plan, fallback to unthrottled purge",
+			zap.String("schemaName", schemaName),
+			zap.String("tableName", mlogName),
+			zap.Uint64("safePurgeTSO", safePurgeTSO),
+			zap.Error(err),
+		)
+		return nil
+	}
+	if pendingRows <= 0 {
+		return nil
+	}
+	targetRate := float64(pendingRows) / budget.Seconds()
+	if targetRate < cfg.minRate {
+		targetRate = cfg.minRate
+	}
+	effectiveBatchSize := calcMLogPurgeAdaptiveBatchSize(targetRate)
+	if effectiveBatchSize <= 0 {
+		effectiveBatchSize = mlogPurgeAdaptiveMinBatchSize
+	}
+	return &mlogPurgeThrottlePlan{
+		targetRate:         targetRate,
+		pendingRows:        pendingRows,
+		effectiveBatchSize: effectiveBatchSize,
+		minRate:            cfg.minRate,
+		deadline:           *nextTime,
+	}
+}
+
+func tryBuildMLogPurgeThrottlePlanBestEffort(
+	kctx context.Context,
+	sessVars *variable.SessionVars,
+	evalSctx sessionctx.Context,
+	templateSctx sessionctx.Context,
+	sqlExec sqlexec.SQLExecutor,
+	countSessVars *variable.SessionVars,
+	mlogInfo *model.MaterializedViewLogInfo,
+	isInternalSQL bool,
+	schemaName string,
+	mlogName string,
+	lastPurgedTSO uint64,
+	hasLastPurgedTSO bool,
+	safePurgeTSO uint64,
+	fallbackNextTime *time.Time,
+) *mlogPurgeThrottlePlan {
+	throttleCfg, err := loadMLogPurgeThrottleConfig(kctx, sessVars)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"purge materialized view log: failed to load adaptive throttle config, fallback to unthrottled purge",
+			zap.String("schemaName", schemaName),
+			zap.String("tableName", mlogName),
+			zap.Uint64("safePurgeTSO", safePurgeTSO),
+			zap.Error(err),
+		)
+		return nil
+	}
+	throttleDeadline, err := deriveMLogPurgeThrottleDeadline(
+		kctx,
+		evalSctx,
+		templateSctx,
+		mlogInfo,
+		isInternalSQL,
+		schemaName,
+		mlogName,
+		fallbackNextTime,
+	)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"purge materialized view log: failed to derive adaptive throttle deadline, fallback to unthrottled purge",
+			zap.String("schemaName", schemaName),
+			zap.String("tableName", mlogName),
+			zap.Uint64("safePurgeTSO", safePurgeTSO),
+			zap.Error(err),
+		)
+		return nil
+	}
+	return tryBuildMLogPurgeThrottlePlan(
+		kctx,
+		sqlExec,
+		countSessVars,
+		schemaName,
+		mlogName,
+		lastPurgedTSO,
+		hasLastPurgedTSO,
+		safePurgeTSO,
+		throttleDeadline,
+		throttleCfg,
+	)
+}
+
+func calcMLogPurgeAdaptiveBatchSize(targetRate float64) int64 {
+	if targetRate <= 0 {
+		return mlogPurgeAdaptiveMinBatchSize
+	}
+	effectiveBatchSize := int64(math.Ceil(targetRate * mlogPurgeAdaptiveBatchWindow.Seconds()))
+	if effectiveBatchSize < mlogPurgeAdaptiveMinBatchSize {
+		return mlogPurgeAdaptiveMinBatchSize
+	}
+	return effectiveBatchSize
+}
+
+func countMLogPurgePendingRowsOnTiFlash(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	sessVars *variable.SessionVars,
+	schemaName string,
+	mlogName string,
+	lastPurgedTSO uint64,
+	hasLastPurgedTSO bool,
+	safePurgeTSO uint64,
+) (int64, error) {
+	failpoint.Inject("mockMLogPurgeAdaptiveCountErr", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(int64(0), errors.New("mock adaptive purge count error"))
+		}
+	})
+	if sessVars == nil {
+		return 0, errors.New("purge materialized view log: count session vars is nil")
+	}
+	restoreIsolation, err := setSessionVarWithRestore(sessVars, variable.TiDBIsolationReadEngines, kv.TiFlash.Name())
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer restoreIsolation()
+	restoreFallback, err := setSessionVarWithRestore(sessVars, variable.TiDBAllowFallbackToTiKV, "")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer restoreFallback()
+	origInMaterializedViewMaintenance := sessVars.InMaterializedViewMaintenance
+	sessVars.InMaterializedViewMaintenance = true
+	defer func() {
+		sessVars.InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+	}()
+
+	countCtx, cancel := context.WithTimeout(kctx, mlogPurgeAdaptiveCountTimeout)
+	defer cancel()
+
+	var countSQL string
+	if hasLastPurgedTSO {
+		countSQL = sqlescape.MustEscapeSQL(
+			"SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n WHERE _tidb_commit_ts > %? AND _tidb_commit_ts <= %?",
+			schemaName,
+			mlogName,
+			schemaName,
+			mlogName,
+			lastPurgedTSO,
+			safePurgeTSO,
+		)
+	} else {
+		countSQL = sqlescape.MustEscapeSQL(
+			"SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n WHERE _tidb_commit_ts <= %?",
+			schemaName,
+			mlogName,
+			schemaName,
+			mlogName,
+			safePurgeTSO,
+		)
+	}
+	rows, err := sqlexec.ExecSQL(countCtx, sqlExec, countSQL)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return 0, nil
+	}
+	return rows[0].GetInt64(0), nil
+}
+
+func setSessionVarWithRestore(
+	sessVars *variable.SessionVars,
+	varName string,
+	value string,
+) (func(), error) {
+	origin, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), varName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if origin == value {
+		return func() {}, nil
+	}
+	if err := sessVars.SetSystemVar(varName, value); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return func() {
+		if restoreErr := sessVars.SetSystemVar(varName, origin); restoreErr != nil {
+			logutil.BgLogger().Warn(
+				"purge materialized view log: failed to restore session variable after adaptive throttling",
+				zap.String("var", varName),
+				zap.String("origin", origin),
+				zap.String("current", value),
+				zap.Error(restoreErr),
+			)
+		}
+	}, nil
+}
+
+func (p *mlogPurgeThrottlePlan) maybeSleep(
+	kctx context.Context,
+	start time.Time,
+	totalDeletedRows int64,
+) error {
+	failpoint.Inject("mockMLogPurgeAdaptiveSleepErr", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(errors.New("mock adaptive purge sleep error"))
+		}
+	})
+	if p == nil || p.targetRate <= 0 || totalDeletedRows <= 0 {
+		return nil
+	}
+	expectedElapsed := time.Duration(float64(totalDeletedRows) / p.targetRate * float64(time.Second))
+	actualElapsed := time.Since(start)
+	sleepFor := expectedElapsed - actualElapsed
+	failpoint.InjectCall("mvPurgeAdaptiveThrottleSleepComputed", totalDeletedRows, sleepFor)
+	if sleepFor <= 0 {
+		p.noWaitStreak++
+		return p.recalculateBatchSizeOnNoWait(totalDeletedRows)
+	}
+	p.noWaitStreak = 0
+	timer := time.NewTimer(sleepFor)
+	defer timer.Stop()
+	select {
+	case <-kctx.Done():
+		return errors.Trace(kctx.Err())
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (p *mlogPurgeThrottlePlan) recalculateBatchSizeOnNoWait(totalDeletedRows int64) error {
+	if p == nil {
+		return nil
+	}
+	if p.noWaitStreak < 2 {
+		return nil
+	}
+	if p.pendingRows <= 0 || p.deadline.IsZero() {
+		return nil
+	}
+	remainingRows := p.pendingRows - totalDeletedRows
+	if remainingRows <= 0 {
+		return nil
+	}
+	remainingBudget := time.Until(p.deadline)
+	if remainingBudget <= 0 {
+		return nil
+	}
+	newTargetRate := float64(remainingRows) / remainingBudget.Seconds()
+	if newTargetRate < p.minRate {
+		newTargetRate = p.minRate
+	}
+	newBatchSize := calcMLogPurgeAdaptiveBatchSize(newTargetRate)
+	if newBatchSize <= 0 {
+		newBatchSize = mlogPurgeAdaptiveMinBatchSize
+	}
+	p.targetRate = newTargetRate
+	p.effectiveBatchSize = newBatchSize
+	p.noWaitStreak = 0
+	return nil
+}
+
+func (p *mlogPurgeThrottlePlan) effectiveDeleteBatchSize(configuredBatchSize int64) int64 {
+	if p == nil || configuredBatchSize <= 0 {
+		return configuredBatchSize
+	}
+	effectiveBatchSize := p.effectiveBatchSize
+	if effectiveBatchSize <= 0 {
+		effectiveBatchSize = calcMLogPurgeAdaptiveBatchSize(p.targetRate)
+	}
+	if effectiveBatchSize > configuredBatchSize {
+		effectiveBatchSize = configuredBatchSize
+	}
+	p.effectiveBatchSize = effectiveBatchSize
+	failpoint.InjectCall("mvPurgeAdaptiveBatchSizeComputed", configuredBatchSize, effectiveBatchSize)
+	return effectiveBatchSize
 }
 
 func updateMaterializedViewLogPurgeInfoOnSuccess(

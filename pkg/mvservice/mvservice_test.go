@@ -412,7 +412,9 @@ func TestNewMVServiceConfig(t *testing.T) {
 	t.Run("applied", func(t *testing.T) {
 		cfg := DefaultMVServiceConfig()
 		cfg.TaskMaxConcurrency = 3
-		cfg.TaskTimeout = 42 * time.Second
+		cfg.RefreshTaskConcurrencyRatio = 0.6
+		cfg.RefreshTaskTimeout = 42 * time.Second
+		cfg.PurgeTaskTimeout = 84 * time.Second
 		cfg.FetchInterval = 37 * time.Second
 		cfg.BasicInterval = 2 * time.Second
 		cfg.ServerRefreshInterval = 9 * time.Second
@@ -428,8 +430,12 @@ func TestNewMVServiceConfig(t *testing.T) {
 		}
 
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
-		require.Equal(t, cfg.TaskMaxConcurrency, int(svc.executor.maxConcurrency.Load()))
-		require.Equal(t, cfg.TaskTimeout, time.Duration(svc.executor.timeoutNanos.Load()))
+		refreshConcurrency, purgeConcurrency := splitTaskConcurrency(cfg.TaskMaxConcurrency, cfg.RefreshTaskConcurrencyRatio)
+		require.Equal(t, refreshConcurrency, int(svc.refreshExecutor.maxConcurrency.Load()))
+		require.Equal(t, purgeConcurrency, int(svc.purgeExecutor.maxConcurrency.Load()))
+		require.Equal(t, cfg.RefreshTaskConcurrencyRatio, svc.GetRefreshTaskConcurrencyRatio())
+		require.Equal(t, cfg.RefreshTaskTimeout, time.Duration(svc.refreshExecutor.timeoutNanos.Load()))
+		require.Equal(t, cfg.PurgeTaskTimeout, time.Duration(svc.purgeExecutor.timeoutNanos.Load()))
 
 		baseDelay, maxDelay := svc.retryDelayConfig()
 		require.Equal(t, cfg.RetryBaseDelay, baseDelay)
@@ -443,7 +449,8 @@ func TestNewMVServiceConfig(t *testing.T) {
 
 		backpressureCfg := svc.GetTaskBackpressureConfig()
 		require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
-		require.NotNil(t, svc.executor.backpressure.Load())
+		require.NotNil(t, svc.refreshExecutor.backpressure.Load())
+		require.NotNil(t, svc.purgeExecutor.backpressure.Load())
 
 		require.Equal(t, cfg.FetchInterval, svc.fetchInterval())
 		require.Equal(t, cfg.BasicInterval, svc.basicInterval)
@@ -470,7 +477,9 @@ func TestNewMVServiceConfig(t *testing.T) {
 
 		backpressureCfg := svc.GetTaskBackpressureConfig()
 		require.Equal(t, cfg.TaskBackpressure, backpressureCfg)
-		require.Nil(t, svc.executor.backpressure.Load())
+		require.Equal(t, defaultMVRefreshTaskConcurrencyRatio, svc.GetRefreshTaskConcurrencyRatio())
+		require.Nil(t, svc.refreshExecutor.backpressure.Load())
+		require.Nil(t, svc.purgeExecutor.backpressure.Load())
 	})
 
 	t.Run("invalid_retry_panics", func(t *testing.T) {
@@ -523,12 +532,14 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 		require.Equal(t, 0.7, cfg.CPUThreshold)
 		require.Equal(t, 0.8, cfg.MemThreshold)
 		require.Equal(t, time.Second, cfg.Delay)
-		require.NotNil(t, svc.executor.backpressure.Load())
+		require.NotNil(t, svc.refreshExecutor.backpressure.Load())
+		require.NotNil(t, svc.purgeExecutor.backpressure.Load())
 
 		err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{})
 		require.NoError(t, err)
 		require.Equal(t, TaskBackpressureConfig{}, svc.GetTaskBackpressureConfig())
-		require.Nil(t, svc.executor.backpressure.Load())
+		require.Nil(t, svc.refreshExecutor.backpressure.Load())
+		require.Nil(t, svc.purgeExecutor.backpressure.Load())
 
 		err = svc.SetTaskBackpressureConfig(TaskBackpressureConfig{
 			CPUThreshold: -1,
@@ -557,6 +568,23 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 		require.Error(t, err)
 		err = svc.setRetryDelayConfig(10*time.Second, 2*time.Second)
 		require.Error(t, err)
+	})
+
+	t.Run("task_concurrency_split", func(t *testing.T) {
+		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+
+		svc.SetTaskMaxConcurrency(10)
+		svc.SetRefreshTaskConcurrencyRatio(0.6)
+		require.Equal(t, 6, int(svc.refreshExecutor.maxConcurrency.Load()))
+		require.Equal(t, 4, int(svc.purgeExecutor.maxConcurrency.Load()))
+
+		svc.SetRefreshTaskConcurrencyRatio(0.9)
+		require.Equal(t, 9, int(svc.refreshExecutor.maxConcurrency.Load()))
+		require.Equal(t, 1, int(svc.purgeExecutor.maxConcurrency.Load()))
+
+		svc.SetTaskMaxConcurrency(2)
+		require.Equal(t, 1, int(svc.refreshExecutor.maxConcurrency.Load()))
+		require.Equal(t, 1, int(svc.purgeExecutor.maxConcurrency.Load()))
 	})
 
 	t.Run("history_gc", func(t *testing.T) {
@@ -626,7 +654,7 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 
 func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 
 	now := mvsNow()
 
@@ -684,7 +712,7 @@ func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 
 func TestMVServiceRefreshAlertScanInterval(t *testing.T) {
 	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 
 	now := mvsNow()
 
@@ -777,7 +805,7 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
-			defer svc.executor.Close()
+			defer svc.closeTaskExecutors()
 
 			task := tc.task
 			task.orderTs = task.nextRefresh.UnixMilli()
@@ -810,7 +838,7 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 
 func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
@@ -892,7 +920,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 func TestMVServiceMaybeLogRefreshAlertTasksCleansUpStaleRowsWithoutLocalPendingTasks(t *testing.T) {
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
@@ -912,7 +940,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksCleansUpStaleRowsWithoutLocalPendingT
 func TestMVServiceBuildMVRefreshTasksDoesNotClearRemovedAlertStates(t *testing.T) {
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 
 	now := mvsNow()
 	m := &mv{
@@ -931,7 +959,7 @@ func TestMVServiceBuildMVRefreshTasksDoesNotClearRemovedAlertStates(t *testing.T
 func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(t *testing.T) {
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 
 	now := mvsNow()
 	task := &mv{
@@ -969,7 +997,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(
 func TestMVServiceMaybeLogRefreshAlertTasksSkipsUnresolvedMetadata(t *testing.T) {
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
@@ -1001,7 +1029,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsUnresolvedMetadata(t *testing.T)
 func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(t *testing.T) {
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
@@ -1045,7 +1073,7 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 func TestMVServiceMaybeLogRefreshAlertTasksSkipsCleanupWhenNotOwner(t *testing.T) {
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	defer svc.executor.Close()
+	defer svc.closeTaskExecutors()
 	setRefreshAlertCleanupOwnerForTest(svc, 20)
 
 	now := mvsNow()
@@ -1349,9 +1377,9 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 		h.waitRefreshTask(1001)
 
 		require.Eventually(t, func() bool {
-			return h.svc.executor.metrics.counters.finishedCount.Load() == 2
+			return h.svc.combinedTaskExecutorMetrics().finishedCount == 2
 		}, testEventuallyWait, testEventuallyTick)
-		assertTaskExecutorMetrics(t, h.svc.executor, 2, 2, 0, 0, 0, 0, 0, 0)
+		assertCombinedTaskExecutorMetrics(t, h.svc, 2, 2, 0, 0, 0, 0, 0, 0)
 		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
 		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
 	})
@@ -1361,9 +1389,10 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 		h.helper.refreshErr = errors.New("refresh failed")
 		h.helper.purgeErr = errors.New("purge failed")
 
-		finishedBase := h.svc.executor.metrics.counters.finishedCount.Load()
-		failedBase := h.svc.executor.metrics.counters.failedCount.Load()
-		submittedBase := h.svc.executor.metrics.counters.submittedCount.Load()
+		baseMetrics := h.svc.combinedTaskExecutorMetrics()
+		finishedBase := baseMetrics.finishedCount
+		failedBase := baseMetrics.failedCount
+		submittedBase := baseMetrics.submittedCount
 		baseLogCalls, baseViewCalls := h.fetchCallCounts()
 
 		now := mvsNow()
@@ -1377,9 +1406,10 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 		h.waitPurgeTask(2002)
 		h.waitRefreshTask(1002)
 		require.Eventually(t, func() bool {
-			return h.svc.executor.metrics.counters.finishedCount.Load() >= finishedBase+2 &&
-				h.svc.executor.metrics.counters.failedCount.Load() >= failedBase+2 &&
-				h.svc.executor.metrics.counters.submittedCount.Load() >= submittedBase+2
+			metrics := h.svc.combinedTaskExecutorMetrics()
+			return metrics.finishedCount >= finishedBase+2 &&
+				metrics.failedCount >= failedBase+2 &&
+				metrics.submittedCount >= submittedBase+2
 		}, testEventuallyWait, testEventuallyTick)
 
 		h.helper.refreshErr = nil
@@ -1390,9 +1420,10 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 		h.waitPurgeTask(2002)
 		h.waitRefreshTask(1002)
 		require.Eventually(t, func() bool {
-			return h.svc.executor.metrics.counters.finishedCount.Load() >= finishedBase+4 &&
-				h.svc.executor.metrics.counters.failedCount.Load() >= failedBase+2 &&
-				h.svc.executor.metrics.counters.submittedCount.Load() >= submittedBase+4
+			metrics := h.svc.combinedTaskExecutorMetrics()
+			return metrics.finishedCount >= finishedBase+4 &&
+				metrics.failedCount >= failedBase+2 &&
+				metrics.submittedCount >= submittedBase+4
 		}, testEventuallyWait, testEventuallyTick)
 
 		require.Equal(t, 2, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
@@ -1469,6 +1500,24 @@ func assertTaskExecutorMetrics(
 	require.Equal(t, running, exec.metrics.gauges.runningCount.Load())
 	require.Equal(t, waiting, exec.metrics.gauges.waitingCount.Load())
 	require.Equal(t, timedOutRunning, exec.metrics.gauges.timedOutRunningCount.Load())
+}
+
+func assertCombinedTaskExecutorMetrics(
+	t *testing.T,
+	svc *MVService,
+	submitted, finished, failed, timeout, rejected int64,
+	running, waiting, timedOutRunning int64,
+) {
+	t.Helper()
+	metrics := svc.combinedTaskExecutorMetrics()
+	require.Equal(t, submitted, metrics.submittedCount)
+	require.Equal(t, finished, metrics.finishedCount)
+	require.Equal(t, failed, metrics.failedCount)
+	require.Equal(t, timeout, metrics.timeoutCount)
+	require.Equal(t, rejected, metrics.rejectedCount)
+	require.Equal(t, running, metrics.runningCount)
+	require.Equal(t, waiting, metrics.waitingCount)
+	require.Equal(t, timedOutRunning, metrics.timedOutRunningCount)
 }
 
 func waitForStart(t *testing.T, ch <-chan string, timeout time.Duration) string {

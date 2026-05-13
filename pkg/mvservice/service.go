@@ -55,9 +55,11 @@ type MVService struct {
 
 	nextRefreshAlertScanMillis atomic.Int64
 
-	executor *TaskExecutor
-	notifier Notifier
-	ddlDirty atomic.Bool
+	refreshExecutor                 *TaskExecutor
+	purgeExecutor                   *TaskExecutor
+	refreshTaskConcurrencyRatioBits atomic.Uint64
+	notifier                        Notifier
+	ddlDirty                        atomic.Bool
 
 	mh Helper
 
@@ -96,19 +98,23 @@ type MVService struct {
 	}
 }
 
+// DefaultMVRefreshTaskTimeout and DefaultMVPurgeTaskTimeout define the default
+// per-task timeout budget for MV refresh and MV log purge.
 const (
-	defaultMVTaskTimeout         = 5 * time.Minute
-	defaultMVFetchInterval       = 30 * time.Second
-	defaultMVBasicInterval       = time.Second
-	defaultServerRefreshInterval = 5 * time.Second
-	defaultMVHistoryGCInterval   = 20 * time.Minute
-	defaultMVHistoryGCRetention  = 365 * 24 * time.Hour
-	defaultMVHistoryGCMaxRecords = uint64(1000000)
-	defaultMVTaskRetryBase       = 10 * time.Second
-	defaultMVTaskRetryMax        = 120 * time.Second
-	manualCancelBackoffDelay     = 2 * time.Minute
-	mvRefreshAlertScanInterval   = 30 * time.Second
-	maxNextScheduleTs            = 9e18
+	DefaultMVRefreshTaskTimeout          = 5 * time.Minute
+	DefaultMVPurgeTaskTimeout            = 10 * time.Minute
+	defaultMVRefreshTaskConcurrencyRatio = 0.6
+	defaultMVFetchInterval               = 30 * time.Second
+	defaultMVBasicInterval               = time.Second
+	defaultServerRefreshInterval         = 5 * time.Second
+	defaultMVHistoryGCInterval           = 20 * time.Minute
+	defaultMVHistoryGCRetention          = 365 * 24 * time.Hour
+	defaultMVHistoryGCMaxRecords         = uint64(1000000)
+	defaultMVTaskRetryBase               = 10 * time.Second
+	defaultMVTaskRetryMax                = 120 * time.Second
+	manualCancelBackoffDelay             = 2 * time.Minute
+	mvRefreshAlertScanInterval           = 30 * time.Second
+	maxNextScheduleTs                    = 9e18
 
 	defaultCHReplicas = 100
 
@@ -180,12 +186,87 @@ type TaskBackpressureConfig struct {
 	Delay        time.Duration
 }
 
+type taskExecutorMetricsSnapshot struct {
+	submittedCount       int64
+	finishedCount        int64
+	failedCount          int64
+	timeoutCount         int64
+	rejectedCount        int64
+	backpressureCount    int64
+	runningCount         int64
+	waitingCount         int64
+	timedOutRunningCount int64
+	backpressureBlocked  int64
+}
+
+func snapshotTaskExecutorMetrics(exec *TaskExecutor) taskExecutorMetricsSnapshot {
+	if exec == nil {
+		return taskExecutorMetricsSnapshot{}
+	}
+	return taskExecutorMetricsSnapshot{
+		submittedCount:       exec.metrics.counters.submittedCount.Load(),
+		finishedCount:        exec.metrics.counters.finishedCount.Load(),
+		failedCount:          exec.metrics.counters.failedCount.Load(),
+		timeoutCount:         exec.metrics.counters.timeoutCount.Load(),
+		rejectedCount:        exec.metrics.counters.rejectedCount.Load(),
+		backpressureCount:    exec.metrics.counters.backpressureCount.Load(),
+		runningCount:         exec.metrics.gauges.runningCount.Load(),
+		waitingCount:         exec.metrics.gauges.waitingCount.Load(),
+		timedOutRunningCount: exec.metrics.gauges.timedOutRunningCount.Load(),
+		backpressureBlocked:  exec.metrics.gauges.backpressureBlocked.Load(),
+	}
+}
+
+func (m taskExecutorMetricsSnapshot) add(other taskExecutorMetricsSnapshot) taskExecutorMetricsSnapshot {
+	return taskExecutorMetricsSnapshot{
+		submittedCount:       m.submittedCount + other.submittedCount,
+		finishedCount:        m.finishedCount + other.finishedCount,
+		failedCount:          m.failedCount + other.failedCount,
+		timeoutCount:         m.timeoutCount + other.timeoutCount,
+		rejectedCount:        m.rejectedCount + other.rejectedCount,
+		backpressureCount:    m.backpressureCount + other.backpressureCount,
+		runningCount:         m.runningCount + other.runningCount,
+		waitingCount:         m.waitingCount + other.waitingCount,
+		timedOutRunningCount: m.timedOutRunningCount + other.timedOutRunningCount,
+		backpressureBlocked:  m.backpressureBlocked + other.backpressureBlocked,
+	}
+}
+
 func (m *mv) Less(other *mv) bool {
 	return m.orderTs < other.orderTs
 }
 
 func (m *mvLog) Less(other *mvLog) bool {
 	return m.orderTs < other.orderTs
+}
+
+func (t *MVService) combinedTaskExecutorMetrics() taskExecutorMetricsSnapshot {
+	return snapshotTaskExecutorMetrics(t.refreshExecutor).add(snapshotTaskExecutorMetrics(t.purgeExecutor))
+}
+
+func loadTaskExecutorWaitingCount(exec *TaskExecutor) int64 {
+	if exec == nil {
+		return 0
+	}
+	return exec.metrics.gauges.waitingCount.Load()
+}
+
+func (t *MVService) runTaskExecutors() {
+	if t.refreshExecutor != nil {
+		t.refreshExecutor.Run()
+	}
+	if t.purgeExecutor != nil {
+		t.purgeExecutor.Run()
+	}
+}
+
+func (t *MVService) closeTaskExecutors() {
+	if t.refreshExecutor != nil {
+		t.refreshExecutor.Close()
+	}
+	if t.purgeExecutor != nil {
+		t.purgeExecutor.Close()
+	}
 }
 
 // fetchExecTasks collects due tasks from both queues and marks them as running.
@@ -236,7 +317,7 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 	for _, task := range mvToRefresh {
 		mvTask := task
 		mviewID := mvTask.ID
-		t.executor.Submit("mv-refresh/"+strconv.FormatInt(mviewID, 10), func() error {
+		t.refreshExecutor.Submit("mv-refresh/"+strconv.FormatInt(mviewID, 10), func() error {
 			return t.executeRefreshTask(mvTask)
 		})
 	}
@@ -486,7 +567,7 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 		return
 	}
 	for _, l := range mvLogToPurge {
-		t.executor.Submit("mvlog-purge/"+strconv.FormatInt(l.ID, 10), func() error {
+		t.purgeExecutor.Submit("mvlog-purge/"+strconv.FormatInt(l.ID, 10), func() error {
 			return t.executePurgeTask(l)
 		})
 	}
@@ -581,7 +662,7 @@ func (t *MVService) runtimeLogFields() []zap.Field {
 		zap.Int64("mvlog_count", t.metrics.mvLogCount.Load()),
 		zap.Int64("running_refresh_count", t.metrics.runningMVRefreshCount.Load()),
 		zap.Int64("running_purge_count", t.metrics.runningMVLogPurgeCount.Load()),
-		zap.Int64("waiting_count", t.executor.metrics.gauges.waitingCount.Load()),
+		zap.Int64("waiting_count", loadTaskExecutorWaitingCount(t.refreshExecutor)+loadTaskExecutorWaitingCount(t.purgeExecutor)),
 	}
 	return fields
 }
@@ -1062,14 +1143,14 @@ func (t *MVService) Run() {
 		t.mh.observeRunEvent(mvRunEventInitFailed)
 		return
 	}
-	t.executor.Run()
+	t.runTaskExecutors()
 	timer := mvsNewTimer(0)
 	maintenanceTimer := mvsNewTimer(t.basicInterval)
 
 	defer func() {
 		timer.Stop()
 		maintenanceTimer.Stop()
-		t.executor.Close()
+		t.closeTaskExecutors()
 		t.mh.reportMetrics(t)
 	}()
 

@@ -32,16 +32,17 @@ func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current 
 // reportMetrics flushes MVService runtime metrics into the metrics module.
 func (h *serviceHelper) reportMetrics(s *MVService) {
 	// Executor metrics
-	reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &h.reportCache.submittedCount, s.executor.metrics.counters.submittedCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorFinishedCounter, &h.reportCache.finishedCount, s.executor.metrics.counters.finishedCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorFailedCounter, &h.reportCache.failedCount, s.executor.metrics.counters.failedCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorTimeoutCounter, &h.reportCache.timeoutCount, s.executor.metrics.counters.timeoutCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorRejectedCounter, &h.reportCache.rejectedCount, s.executor.metrics.counters.rejectedCount.Load())
-	reportCounterDelta(tidbmetrics.MVTaskExecutorBackpressureCounter, &h.reportCache.backpressureCount, s.executor.metrics.counters.backpressureCount.Load())
-	tidbmetrics.MVTaskExecutorRunningTaskGauge.Set(float64(s.executor.metrics.gauges.runningCount.Load()))
-	tidbmetrics.MVTaskExecutorWaitingTaskGauge.Set(float64(s.executor.metrics.gauges.waitingCount.Load()))
-	tidbmetrics.MVTaskExecutorTimedOutRunningTaskGauge.Set(float64(s.executor.metrics.gauges.timedOutRunningCount.Load()))
-	tidbmetrics.MVTaskExecutorBackpressureBlockedGauge.Set(float64(s.executor.metrics.gauges.backpressureBlocked.Load()))
+	executorMetrics := s.combinedTaskExecutorMetrics()
+	reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &h.reportCache.submittedCount, executorMetrics.submittedCount)
+	reportCounterDelta(tidbmetrics.MVTaskExecutorFinishedCounter, &h.reportCache.finishedCount, executorMetrics.finishedCount)
+	reportCounterDelta(tidbmetrics.MVTaskExecutorFailedCounter, &h.reportCache.failedCount, executorMetrics.failedCount)
+	reportCounterDelta(tidbmetrics.MVTaskExecutorTimeoutCounter, &h.reportCache.timeoutCount, executorMetrics.timeoutCount)
+	reportCounterDelta(tidbmetrics.MVTaskExecutorRejectedCounter, &h.reportCache.rejectedCount, executorMetrics.rejectedCount)
+	reportCounterDelta(tidbmetrics.MVTaskExecutorBackpressureCounter, &h.reportCache.backpressureCount, executorMetrics.backpressureCount)
+	tidbmetrics.MVTaskExecutorRunningTaskGauge.Set(float64(executorMetrics.runningCount))
+	tidbmetrics.MVTaskExecutorWaitingTaskGauge.Set(float64(executorMetrics.waitingCount))
+	tidbmetrics.MVTaskExecutorTimedOutRunningTaskGauge.Set(float64(executorMetrics.timedOutRunningCount))
+	tidbmetrics.MVTaskExecutorBackpressureBlockedGauge.Set(float64(executorMetrics.backpressureBlocked))
 
 	// MVService metrics
 	tidbmetrics.MVServiceMVRefreshTotalGauge.Set(float64(s.metrics.mvCount.Load()))

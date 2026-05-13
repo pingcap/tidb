@@ -1497,6 +1497,73 @@ WHERE MLOG_ID = ?
 		Check(testkit.Rows("1 " + beforeNextTime))
 }
 
+func TestPurgeMaterializedViewLogAdaptiveThrottleFallbackOnCountFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_adaptive_count_fail (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_adaptive_count_fail (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_adaptive_count_fail values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec("set @@session.tidb_mlog_purge_min_rate = 1")
+	tk.MustExec("set @@session.tidb_mlog_purge_rate_budget_ratio = 0.5")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockMLogPurgeAdaptiveCountErr", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockMLogPurgeAdaptiveCountErr"))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_adaptive_count_fail")
+	require.Equal(t, uint64(3), tk.Session().AffectedRows())
+	tk.CheckLastMessage("Rows inserted: 0  Updated: 0  Deleted: 3")
+	tk.MustQuery("select count(*) from `$mlog$t_purge_adaptive_count_fail`").Check(testkit.Rows("0"))
+}
+
+func TestPurgeMaterializedViewLogAdaptiveThrottleFallbackOnDeadlineFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_adaptive_deadline_fail (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_adaptive_deadline_fail (id, v) purge start with now() next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_adaptive_deadline_fail values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec("set @@session.tidb_mlog_purge_min_rate = 1")
+	tk.MustExec("set @@session.tidb_mlog_purge_rate_budget_ratio = 0.5")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockMLogPurgeAdaptiveDeadlineErr", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockMLogPurgeAdaptiveDeadlineErr"))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_adaptive_deadline_fail")
+	require.Equal(t, uint64(3), tk.Session().AffectedRows())
+	tk.CheckLastMessage("Rows inserted: 0  Updated: 0  Deleted: 3")
+	tk.MustQuery("select count(*) from `$mlog$t_purge_adaptive_deadline_fail`").Check(testkit.Rows("0"))
+}
+
+func TestPurgeMaterializedViewLogAdaptiveThrottleFallbackOnSleepFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_adaptive_sleep_fail (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_adaptive_sleep_fail (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_adaptive_sleep_fail values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec("set @@session.tidb_mlog_purge_min_rate = 1")
+	tk.MustExec("set @@session.tidb_mlog_purge_rate_budget_ratio = 0.5")
+	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 1")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockMLogPurgeAdaptiveSleepErr", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockMLogPurgeAdaptiveSleepErr"))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_adaptive_sleep_fail")
+	require.Equal(t, uint64(3), tk.Session().AffectedRows())
+	tk.CheckLastMessage("Rows inserted: 0  Updated: 0  Deleted: 3")
+	tk.MustQuery("select count(*) from `$mlog$t_purge_adaptive_sleep_fail`").Check(testkit.Rows("0"))
+}
+
 func TestPurgeMaterializedViewLogMissingPublicMViewRefreshRow(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
