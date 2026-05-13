@@ -336,6 +336,13 @@ type PlanBuilder struct {
 	// after the round to invalidate the round's plan and trigger the
 	// fts-like-fallback round (see optimize.go).
 	nonViableFTSMatch bool
+
+	// predicateMatchSeen is set during build when the expression rewriter
+	// encounters a direct-boolean-context MATCH...AGAINST (one whose 0/1 boolean
+	// result is consumed directly as a predicate). The alternative-rounds driver
+	// uses this to enable the fts-like-fallback round even when round 1's
+	// native plan is executable, so the LIKE-based plan can compete on cost.
+	predicateMatchSeen bool
 }
 
 // HasNonViableFTSMatch reports whether the most recent build round saw a
@@ -350,6 +357,20 @@ func (b *PlanBuilder) HasNonViableFTSMatch() bool {
 // the current build cannot be served natively. See HasNonViableFTSMatch.
 func (b *PlanBuilder) MarkNonViableFTSMatch() {
 	b.nonViableFTSMatch = true
+}
+
+// HasPredicateMatch reports whether the most recent build round saw a
+// direct-boolean-context MATCH...AGAINST. The caller (optimize.go) uses this
+// to decide whether to run the fts-like-fallback round for cost competition,
+// independent of whether round 1's native plan is executable.
+func (b *PlanBuilder) HasPredicateMatch() bool {
+	return b.predicateMatchSeen
+}
+
+// MarkPredicateMatch records that the current build encountered a
+// direct-boolean-context MATCH...AGAINST. See HasPredicateMatch.
+func (b *PlanBuilder) MarkPredicateMatch() {
+	b.predicateMatchSeen = true
 }
 
 type handleColHelper struct {

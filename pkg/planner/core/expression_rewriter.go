@@ -2459,6 +2459,9 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	// any boolean-context MATCH is non-viable, the resulting plan would
 	// fail at execution. The rewriter records that on the planBuilder so the
 	// round driver can invalidate the plan and trigger the fallback round.
+	// Round 1 additionally records that a direct-boolean-context MATCH was
+	// seen so the driver runs the LIKE round for cost competition even when
+	// round 1's native plan is executable.
 	useLikeFallback := false
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
@@ -2466,13 +2469,16 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 			if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
 				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
 				useLikeFallback = true
-			} else if sessVars.EnableAlternativeLogicalPlans && !er.ftsNativeViable(v.Modifier, numCols, stackLen) {
-				// Round 1 (native) but this boolean-context MATCH cannot run
-				// natively. Mark the build so the driver invalidates this plan and
-				// triggers fts-like-fallback. The rewrite continues with the native
-				// builtin to keep round 1 internally consistent; that plan is
-				// discarded after build completes.
-				er.planCtx.builder.MarkNonViableFTSMatch()
+			} else if sessVars.EnableAlternativeLogicalPlans {
+				// Round 1 (native). Mark the build so the driver runs the LIKE
+				// round and cost-compares its plan against round 1's. If this
+				// MATCH cannot run natively, also mark the build as non-viable
+				// so the driver discards round 1's plan; the rewrite continues
+				// with the native builtin to keep round 1 internally consistent.
+				er.planCtx.builder.MarkPredicateMatch()
+				if !er.ftsNativeViable(v.Modifier, numCols, stackLen) {
+					er.planCtx.builder.MarkNonViableFTSMatch()
+				}
 			}
 		}
 	}

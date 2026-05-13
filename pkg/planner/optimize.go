@@ -561,12 +561,21 @@ func buildAndOptimizeLogicalPlanRound(
 		return nil, nil, false, err
 	}
 
+	// Record predicate-context MATCH for cost competition. The fts-like-fallback
+	// alternative round reads this signal to decide whether to build a competing
+	// ILIKE-based plan alongside round 1's native plan, so the cheaper of the
+	// two wins via the normal alt-rounds cost comparison.
+	if builder.HasPredicateMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
+	}
+
 	// If this round saw a predicate-context MATCH that cannot be served by the
 	// native FTSMysqlMatchAgainst builtin, the produced plan would fail at
 	// execution. Discard it and arm AlternativeLogicalPlanFTSLikeFallback so
-	// the fts-like-fallback alternative round rebuilds the plan with ILIKE.
-	// The flag also persists across any subsequent rounds (correlate, etc.)
-	// so their re-rewrites use ILIKE for predicate MATCHes too.
+	// any intervening rounds (correlate, etc.) re-rewrite with ILIKE too. The
+	// fts-like-fallback round below also forces this flag during setup; this
+	// outer assignment covers the non-viable case where the flag must stay
+	// true across all subsequent rounds, not just inside the LIKE round.
 	if builder.HasNonViableFTSMatch() {
 		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
 		return p, names, false, nil
@@ -619,6 +628,12 @@ type alternativeRound struct {
 // wrapper. Safe because optimize is single-threaded per session.
 var savedEnableCorrelateSubquery bool
 
+// savedFTSLikeFallback holds the pre-round value of
+// AlternativeLogicalPlanFTSLikeFallback so the fts-like-fallback round's
+// setup/cleanup can restore it after running with the flag forced on. Safe
+// because optimize is single-threaded per session.
+var savedFTSLikeFallback bool
+
 var alternativeRounds = [...]alternativeRound{
 	{
 		name:       "non-decorrelate",
@@ -644,18 +659,30 @@ var alternativeRounds = [...]alternativeRound{
 	},
 	{
 		// fts-like-fallback: rebuild the plan rewriting predicate-context
-		// MATCH...AGAINST to ILIKE so the query can execute when the native
-		// FTSMysqlMatchAgainst builtin can't be served. Round 1 always uses
-		// the native builtin (same as Alt-disabled); the round driver sets
-		// AlternativeLogicalPlanFTSLikeFallback and invalidates round 1's plan
-		// only when round 1 saw a predicate-context MATCH whose columns lack
-		// a public FULLTEXT index on a TiFlash replica (or whose modifier is
-		// not pushdown-supported). When this round fires it is the only valid
-		// plan; round 1's plan was discarded.
+		// MATCH...AGAINST to ILIKE so it can compete with round 1's native plan
+		// on cost (and serve as the only valid plan when native is non-viable).
+		// Round 1 always uses the native builtin (same as Alt-disabled). This
+		// round fires whenever round 1 saw a direct-boolean-context MATCH
+		// (HasPredicateContextMatch) — both plans then compete via the strict-`<`
+		// cost comparison in buildAndOptimizeLogicalPlanRound — or whenever
+		// round 1 saw a MATCH whose native form cannot execute
+		// (FTSLikeFallback, set by the round driver after discarding round 1).
+		// In the discard case, round 1's plan is unavailable and this round's
+		// plan wins by default.
 		name: "fts-like-fallback",
 		enabled: func(sv *variable.SessionVars) bool {
-			return sv.EnableAlternativeLogicalPlans &&
-				sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+			if !sv.EnableAlternativeLogicalPlans {
+				return false
+			}
+			return sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback ||
+				sv.StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch
+		},
+		setup: func(sv *variable.SessionVars) {
+			savedFTSLikeFallback = sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = savedFTSLikeFallback
 		},
 	},
 }
@@ -704,11 +731,17 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
 		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
 		// Round 1 always uses the native FTSMysqlMatchAgainst builtin — same as
-		// the Alt-disabled default. If the build records a non-viable predicate
-		// MATCH on the planBuilder (no FTS index / no TiFlash replica), the
-		// round driver discards round 1's plan and sets
-		// AlternativeLogicalPlanFTSLikeFallback to trigger the fts-like-fallback
-		// alternative round, which re-builds using ILIKE for predicate MATCHes.
+		// the Alt-disabled default. The build records two signals on the
+		// planBuilder when MATCH...AGAINST is seen:
+		//   * HasPredicateMatch: any direct-boolean-context MATCH. The round
+		//     driver propagates this into stmtctx to trigger the
+		//     fts-like-fallback alternative round, which builds a competing
+		//     ILIKE-based plan; the cheaper of the two wins.
+		//   * HasNonViableFTSMatch: a predicate-context MATCH whose native form
+		//     cannot execute (no FTS index / no TiFlash replica / unsupported
+		//     modifier). The round driver discards round 1's plan and forces
+		//     AlternativeLogicalPlanFTSLikeFallback true so all subsequent
+		//     rounds (correlate, etc.) re-rewrite with ILIKE.
 	}
 
 	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(

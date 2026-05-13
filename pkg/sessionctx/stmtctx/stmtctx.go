@@ -492,14 +492,21 @@ type StatementContext struct {
 	// the native FTSMysqlMatchAgainst builtin. When true, the rewriter emits
 	// ILIKE-based predicates instead.
 	//
-	// Round 1 always runs with this flag false. If the build phase finds any
+	// Round 1 always runs with this flag false. The "fts-like-fallback"
+	// alternative round flips it to true (via its setup/cleanup) while it
+	// builds a competing ILIKE-based plan; the cost-cheapest plan wins via the
+	// normal alt-rounds cost comparison. If round 1's build records a
 	// predicate-context MATCH that cannot be served natively (no FTS index on a
 	// matched column / no TiFlash replica / modifier not pushdown-supported),
-	// optimize.go invalidates the round-1 plan and sets this flag so the
-	// "fts-like-fallback" alternative round fires with the rewriter switched
-	// to ILIKE. The flag survives subsequent rounds so any further re-rewrite
-	// (correlate, etc.) keeps using ILIKE for the affected MATCHes.
+	// optimize.go additionally invalidates round 1's plan and forces this flag
+	// true outside the round so any intervening rounds (correlate, etc.) also
+	// produce executable LIKE-based plans.
 	AlternativeLogicalPlanFTSLikeFallback bool
+	// AlternativeLogicalPlanHasPredicateContextMatch indicates that round 1
+	// encountered a direct-boolean-context MATCH...AGAINST. The round driver
+	// uses this to enable the fts-like-fallback round for cost competition even
+	// when round 1's native plan is executable.
+	AlternativeLogicalPlanHasPredicateContextMatch bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -680,6 +687,7 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
 	sc.AlternativeLogicalPlanFTSLikeFallback = false
+	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 }
 
