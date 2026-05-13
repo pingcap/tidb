@@ -158,15 +158,6 @@ func newInMemoryReaderBase(
 	return base, base.loadRowGroup(ctx, store, path)
 }
 
-// newInMemoryReaderBaseFromBytes wraps an already-loaded whole-file buffer.
-// rowGroup spans [0, len(buf)) so ReadAt can use absolute file offsets.
-func newInMemoryReaderBaseFromBytes(buf []byte) *inMemoryReaderBase {
-	return &inMemoryReaderBase{
-		rowGroup: rowGroupRange{start: 0, end: int64(len(buf))},
-		buffer:   buf,
-	}
-}
-
 func (r *inMemoryReaderBase) ReadAt(p []byte, off int64) (int, error) {
 	start := off - r.rowGroup.start
 	groupSize := r.rowGroup.end - r.rowGroup.start
@@ -275,13 +266,18 @@ func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path st
 }
 
 // prepareReader picks the reader strategy: whole-file preload or streaming.
-func prepareReader(r storeapi.ReadSeekCloser, fileSize int64) (parquet.ReaderAtSeeker, *inMemoryReaderBase, error) {
+func prepareReader(
+	ctx context.Context,
+	store storeapi.Storage,
+	path string,
+	r storeapi.ReadSeekCloser,
+	fileSize int64,
+) (parquet.ReaderAtSeeker, *inMemoryReaderBase, error) {
 	if fileSize > 0 && fileSize <= int64(inMemoryThreshold) {
-		buf := make([]byte, fileSize)
-		if _, err := io.ReadFull(r, buf); err != nil {
+		base, err := newInMemoryReaderBase(ctx, store, path, rowGroupRange{start: 0, end: fileSize})
+		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		base := newInMemoryReaderBaseFromBytes(buf)
 		return &inMemoryParquetWrapper{base: base, fileSize: fileSize}, base, nil
 	}
 	return &parquetWrapper{ReadSeekCloser: r}, nil, nil

@@ -615,7 +615,7 @@ func NewParquetParser(
 	prop.BufferSize = 1024
 
 	defer func() { _ = r.Close() }()
-	wrapper, preloadBase, err := prepareReader(r, fileSize)
+	wrapper, preloadBase, err := prepareReader(ctx, store, path, r, fileSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
