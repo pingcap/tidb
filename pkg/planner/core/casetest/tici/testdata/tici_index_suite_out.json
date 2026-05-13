@@ -463,6 +463,39 @@
         "Warn": null
       },
       {
+        "SQL": "explain format='brief' select t3.a, t4.i from t3, t4 where t3.a = t4.i and fts_match_word('hello', t3.title) and t4.t = 'apple'",
+        "Plan": [
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.t3.a, test.t4.i",
+          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t4.i)]",
+          "      ├─ExchangeReceiver(Build) 1000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo",
+          "      └─IndexRangeScan(Probe) 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select t3.a, count(*) from t3, t4 where t3.a = t4.i and fts_match_word('hello', t3.title) and t4.t = 'apple' group by t3.a",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t3.a, Column#10",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#10, test.t3.a",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t3.a, funcs:count(1)->Column#10, funcs:firstrow(test.t3.a)->test.t3.a",
+          "        └─ExchangeReceiver 12500.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t3.a, collate: binary]",
+          "            └─Projection 12500.00 mpp[tiflash]  test.t3.a",
+          "              └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t4.i)]",
+          "                ├─ExchangeReceiver(Build) 1000.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "                │   └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo",
+          "                └─IndexRangeScan(Probe) 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format='brief' select /*+ inl_join(t4), use_index(t4, idx) */ * from t4, t2 where t2.a=t4.i and t4.t = 'apple'",
         "Plan": [
           "Projection 12487.50 root  test.t4.i, test.t4.ts, test.t4.d, test.t4.t, test.t2.a, test.t2.col",
