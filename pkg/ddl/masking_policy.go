@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -62,11 +63,11 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		if p.Name.L == policyInfo.Name.L {
 			if p.ColumnID != policyInfo.ColumnID {
 				job.State = model.JobStateCancelled
-				return ver, errors.Errorf("masking policy %s already exists on another column", p.Name.O)
+				return ver, errors.WithMessage(meta.ErrMaskingPolicyExists, "masking policy already exists on another column")
 			}
 			if !replaceOnExist {
 				job.State = model.JobStateCancelled
-				return ver, errors.Errorf("masking policy %s already exists", policyInfo.Name.O)
+				return ver, errors.WithMessage(meta.ErrMaskingPolicyExists, "masking policy already exists")
 			}
 
 			replacePolicy := p.Clone()

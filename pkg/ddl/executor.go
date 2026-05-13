@@ -6620,7 +6620,12 @@ func (e *executor) createMaskingPolicyWithInfo(
 		Policy:         policy,
 		ReplaceOnExist: onExist == OnExistReplace,
 	}
-	return errors.Trace(e.doDDLJob2(ctx, job, args))
+	err := e.doDDLJob2(ctx, job, args)
+	if onExist == OnExistIgnore && meta.ErrMaskingPolicyExists.Equal(err) {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
 }
 
 func (e *executor) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {

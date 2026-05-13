@@ -1004,21 +1004,20 @@ SELECT column_name, LOWER(column_type), is_nullable
 FROM information_schema.columns
 WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
 ORDER BY ordinal_position`).Check(testkit.Rows(
-		"policy_id bigint(20) NO",
-		"schema_name varchar(64) NO",
-		"table_name varchar(64) NO",
-		"table_id bigint(20) NO",
-		"column_id bigint(20) NO",
-		"column_name varchar(64) NO",
+		"policy_id bigint(64) NO",
 		"policy_name varchar(64) NO",
-		"masking_type varchar(32) NO",
+		"db_name varchar(64) NO",
+		"table_name varchar(64) NO",
+		"table_id bigint(64) NO",
+		"column_name varchar(64) NO",
+		"column_id bigint(64) NO",
 		"expression text NO",
+		"status varchar(16) NO",
+		"masking_type varchar(32) NO",
 		"restrict_on varchar(256) NO",
-		"status enum('enabled','disabled') YES",
-		"created_at timestamp YES",
-		"created_by varchar(128) YES",
-		"updated_by varchar(128) YES",
-		"updated_at timestamp YES",
+		"created_at datetime(6) NO",
+		"updated_at datetime(6) NO",
+		"created_by varchar(288) NO",
 	))
 	tk.MustQuery(`
 SELECT index_name, non_unique, seq_in_index, column_name
@@ -1026,8 +1025,6 @@ FROM information_schema.statistics
 WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
 ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 		"PRIMARY 0 1 policy_id",
-		"idx_schema_table 1 1 schema_name",
-		"idx_schema_table 1 2 table_name",
 		"uk_table_column 0 1 table_id",
 		"uk_table_column 0 2 column_id",
 		"uk_table_policy 0 1 table_id",
