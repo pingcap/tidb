@@ -34,17 +34,11 @@ import (
 const maxDictHeaderSize int64 = 100
 
 var (
-	// rowGroupInMemoryThreshold controls when we preload an entire row group.
-	// If the row-group size is no larger than this threshold, we read it once
-	// into memory and let all column readers share that buffer. This reduces
-	// number of GET requests for files with many small columns, where first-byte
-	// latency can dominate read time. 128 MiB is an heuristic value which we can
-	// tolerate the extra memory usage for row group.
-	rowGroupInMemoryThreshold = 128 * units.MiB
-
-	// smallFileThreshold preloads the entire file in one read when its size
-	// is at or below this value.
-	smallFileThreshold = 8 * units.MiB
+	// inMemoryThreshold caps the buffer prepareReader / getBuilder is willing
+	// to hold per parser. Files at or below this size are preloaded in one read;
+	// otherwise individual row groups are preloaded when they fit, and larger
+	// row groups fall back to per-column streaming. 128 MiB is a heuristic.
+	inMemoryThreshold = 128 * units.MiB
 )
 
 type readerAtSeekerCloser interface {
@@ -282,7 +276,7 @@ func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path st
 
 // prepareReader picks the reader strategy: whole-file preload or streaming.
 func prepareReader(r storeapi.ReadSeekCloser, fileSize int64) (parquet.ReaderAtSeeker, *inMemoryReaderBase, error) {
-	if fileSize > 0 && fileSize <= int64(smallFileThreshold) {
+	if fileSize > 0 && fileSize <= int64(inMemoryThreshold) {
 		buf := make([]byte, fileSize)
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, nil, errors.Trace(err)

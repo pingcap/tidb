@@ -421,7 +421,7 @@ func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, e
 	switch {
 	case pp.preloadBase != nil:
 		return inMemoryColumnBuilder(pp.preloadBase, ranges, fileSize), nil
-	case ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold):
+	case ranges.end-ranges.start <= int64(inMemoryThreshold):
 		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -878,7 +878,7 @@ func (pp *ParquetParser) preloadBufferBytes() (int64, error) {
 		return 0, err
 	}
 	preloadBytes := rgRange.end - rgRange.start
-	if preloadBytes <= 0 || preloadBytes > int64(rowGroupInMemoryThreshold) {
+	if preloadBytes <= 0 || preloadBytes > int64(inMemoryThreshold) {
 		return 0, nil
 	}
 	return preloadBytes, nil

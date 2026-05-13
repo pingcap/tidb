@@ -1229,10 +1229,10 @@ func TestParquetParserWrapper(t *testing.T) {
 	require.NoError(t, err)
 
 	readRows := func(threshold int) ([]string, []int64) {
-		origThreshold := rowGroupInMemoryThreshold
-		rowGroupInMemoryThreshold = threshold
+		origThreshold := inMemoryThreshold
+		inMemoryThreshold = threshold
 		defer func() {
-			rowGroupInMemoryThreshold = origThreshold
+			inMemoryThreshold = origThreshold
 		}()
 
 		parser := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
@@ -1300,9 +1300,9 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 
 	// FileSize known and below threshold: whole-file path engages.
 	t.Run("engages_when_file_fits_threshold", func(t *testing.T) {
-		origThreshold := smallFileThreshold
-		smallFileThreshold = int(fileSize) + 1
-		defer func() { smallFileThreshold = origThreshold }()
+		origThreshold := inMemoryThreshold
+		inMemoryThreshold = int(fileSize) + 1
+		defer func() { inMemoryThreshold = origThreshold }()
 
 		parser := read(fileSize)
 		require.NotNil(t, parser.preloadBase, "expected whole-file in-memory path")
@@ -1318,9 +1318,9 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 	// FileSize larger than threshold: stay on the streaming / per-row-group
 	// path even though we know the size.
 	t.Run("skipped_when_file_exceeds_threshold", func(t *testing.T) {
-		origThreshold := smallFileThreshold
-		smallFileThreshold = int(fileSize) - 1
-		defer func() { smallFileThreshold = origThreshold }()
+		origThreshold := inMemoryThreshold
+		inMemoryThreshold = int(fileSize) - 1
+		defer func() { inMemoryThreshold = origThreshold }()
 
 		parser := read(fileSize)
 		require.Nil(t, parser.preloadBase)
