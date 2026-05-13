@@ -1196,7 +1196,7 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
-	ExportID:                  "",
+	ExportID:                             "",
 }
 
 var (
