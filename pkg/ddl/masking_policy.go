@@ -71,6 +71,12 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 			}
 
 			replacePolicy := p.Clone()
+			// Keep persisted names/IDs synced if table/column was renamed after policy creation.
+			replacePolicy.DBName = policyInfo.DBName
+			replacePolicy.TableName = policyInfo.TableName
+			replacePolicy.TableID = policyInfo.TableID
+			replacePolicy.ColumnName = policyInfo.ColumnName
+			replacePolicy.ColumnID = policyInfo.ColumnID
 			replacePolicy.Expression = policyInfo.Expression
 			replacePolicy.Status = policyInfo.Status
 			replacePolicy.MaskingType = policyInfo.MaskingType
