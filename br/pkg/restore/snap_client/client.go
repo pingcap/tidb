@@ -719,6 +719,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	var createCallBacks []func(*SnapFileImporter) error
 	var closeCallBacks []func(*SnapFileImporter) error
 	var splitClientOpts []split.ClientOptionalParameter
+	splitClientOpts = append(splitClientOpts, split.WithRequestSource(kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR)))
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {

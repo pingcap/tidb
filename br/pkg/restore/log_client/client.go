@@ -559,7 +559,7 @@ func (rc *LogClient) InitClients(
 		log.Fatal("failed to get stores", zap.Error(err))
 	}
 
-	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
+	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1, split.WithRequestSource(kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR)))
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 
 	rc.logRestoreManager, err = NewLogRestoreManager(
@@ -1499,7 +1499,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	splitSize uint64,
 	splitKeys int64,
 ) (iter.TryNextor[SSTs], error) {
-	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3, split.WithRequestSource(kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR)))
 	wrapper := restore.PipelineRestorerWrapper[SSTs]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
@@ -1518,7 +1518,7 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	splitSize uint64,
 	splitKeys int64,
 ) (LogIter, error) {
-	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3, split.WithRequestSource(kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR)))
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}

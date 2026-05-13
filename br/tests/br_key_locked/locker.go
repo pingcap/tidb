@@ -44,6 +44,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
@@ -311,7 +312,9 @@ func (c *Locker) lockBatch(ctx context.Context, keys [][]byte, primary []byte) (
 			StartVersion: startTS,
 			LockTtl:      uint64(c.lockTTL.Milliseconds()),
 		}
-		req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, prewrite)
+		req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, prewrite, kvrpcpb.Context{
+			RequestSource: kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR),
+		})
 
 		// Send the requests
 		resp, err := c.kv.SendReq(bo, req, loc.Region, time.Second*20)

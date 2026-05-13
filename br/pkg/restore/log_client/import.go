@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -287,9 +288,10 @@ func (importer *LogFileImporter) downloadAndApplyKVFile(
 	}
 
 	reqCtx := &kvrpcpb.Context{
-		RegionId:    regionInfo.Region.GetId(),
-		RegionEpoch: regionInfo.Region.GetRegionEpoch(),
-		Peer:        leader,
+		RegionId:      regionInfo.Region.GetId(),
+		RegionEpoch:   regionInfo.Region.GetRegionEpoch(),
+		Peer:          leader,
+		RequestSource: kvutil.BuildRequestSource(true, kv.InternalTxnBR, kvutil.ExplicitTypeBR),
 	}
 
 	var req *import_sstpb.ApplyRequest

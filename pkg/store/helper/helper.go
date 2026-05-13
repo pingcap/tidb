@@ -44,6 +44,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
+	cgutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -132,7 +133,9 @@ const MaxBackoffTimeoutForMvccGet = 5000
 // GetMvccByEncodedKeyWithTS get the MVCC value by the specific encoded key, if lock is encountered it would be resolved.
 func (h *Helper) GetMvccByEncodedKeyWithTS(encodedKey kv.Key, startTS uint64) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	bo := tikv.NewBackofferWithVars(context.Background(), MaxBackoffTimeoutForMvccGet, nil)
-	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
+	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey}, kvrpcpb.Context{
+		RequestSource: cgutil.BuildRequestSource(true, kv.InternalTxnAdmin, ""),
+	})
 	for {
 		keyLocation, err := h.RegionCache.LocateKey(bo, encodedKey)
 		if err != nil {
@@ -254,8 +257,10 @@ func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*Mvc
 
 		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, &kvrpcpb.MvccGetByStartTsRequest{
 			StartTs: startTS,
+		}, kvrpcpb.Context{
+			RequestSource: cgutil.BuildRequestSource(true, kv.InternalTxnAdmin, ""),
+			Priority:      kvrpcpb.CommandPri_Low,
 		})
-		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := h.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
 		if err != nil {
 			logutil.BgLogger().Error("get MVCC by startTS failed",
