@@ -320,8 +320,8 @@ type ParquetParser struct {
 
 	rowGroup *rowGroupParser
 
-	// smallFileBase holds the whole-file preload buffer.
-	smallFileBase *inMemoryReaderBase
+	// preloadBase holds the whole-file preload buffer.
+	preloadBase *inMemoryReaderBase
 
 	rowPool *zeropool.Pool[[]types.Datum]
 
@@ -419,8 +419,8 @@ func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, e
 	fileSize := pp.fileMeta.GetSourceFileSize()
 
 	switch {
-	case pp.smallFileBase != nil:
-		return inMemoryColumnBuilder(pp.smallFileBase, ranges, fileSize), nil
+	case pp.preloadBase != nil:
+		return inMemoryColumnBuilder(pp.preloadBase, ranges, fileSize), nil
 	case ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold):
 		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
 		if err != nil {
@@ -615,7 +615,7 @@ func NewParquetParser(
 	prop.BufferSize = 1024
 
 	defer func() { _ = r.Close() }()
-	wrapper, smallFileBase, err := prepareReader(r, fileSize)
+	wrapper, preloadBase, err := prepareReader(r, fileSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -721,7 +721,7 @@ func NewParquetParser(
 		alloc:         allocator,
 		logger:        logger,
 		rowPool:       &pool,
-		smallFileBase: smallFileBase,
+		preloadBase: preloadBase,
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
@@ -866,8 +866,8 @@ func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 // outside the tracking allocator for the first row group. The estimator adds
 // this to the tracked peak so concurrency sizing matches runtime behavior.
 func (pp *ParquetParser) preloadBufferBytes() (int64, error) {
-	if pp.smallFileBase != nil {
-		return int64(len(pp.smallFileBase.buffer)), nil
+	if pp.preloadBase != nil {
+		return int64(len(pp.preloadBase.buffer)), nil
 	}
 	if pp.fileMeta == nil || pp.fileMeta.NumRowGroups() == 0 {
 		return 0, nil

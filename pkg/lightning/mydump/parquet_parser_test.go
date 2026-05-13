@@ -1305,14 +1305,14 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		defer func() { smallFileThreshold = origThreshold }()
 
 		parser := read(fileSize)
-		require.NotNil(t, parser.smallFileBase, "expected whole-file in-memory path")
+		require.NotNil(t, parser.preloadBase, "expected whole-file in-memory path")
 	})
 
 	// FileSize unset: parser falls back to streaming, whole-file base must
 	// stay nil so we don't accidentally claim mode 3.
 	t.Run("skipped_when_file_size_unknown", func(t *testing.T) {
 		parser := read(0)
-		require.Nil(t, parser.smallFileBase)
+		require.Nil(t, parser.preloadBase)
 	})
 
 	// FileSize larger than threshold: stay on the streaming / per-row-group
@@ -1323,7 +1323,7 @@ func TestParquetParserWholeFileInMemory(t *testing.T) {
 		defer func() { smallFileThreshold = origThreshold }()
 
 		parser := read(fileSize)
-		require.Nil(t, parser.smallFileBase)
+		require.Nil(t, parser.preloadBase)
 	})
 }
 
