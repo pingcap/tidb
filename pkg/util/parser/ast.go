@@ -124,6 +124,7 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 // 3. RestoreStringWithoutCharset specifies to not print charset before string;
 // 4. RestoreNameBackQuotes specifies to use back quotes to surround the name;
 const defaultRestoreFlag = format.RestoreStringSingleQuotes | format.RestoreSpacesAroundBinaryOperation | format.RestoreStringWithoutCharset | format.RestoreNameBackQuotes
+const bindingRestoreFlag = defaultRestoreFlag | format.RestoreSkipRedundantParentheses
 
 // RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
 // This function is customized for SQL bind usage.
@@ -132,7 +133,7 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 		return s
 	}
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(defaultRestoreFlag, &sb)
+	ctx := format.NewRestoreCtx(bindingRestoreFlag, &sb)
 	ctx.DefaultDB = defaultDB
 	if err := node.Restore(ctx); err != nil {
 		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
@@ -145,7 +146,7 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 // This function is customized for universal SQL binding.
 func RestoreWithoutDB(node ast.StmtNode) string {
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(defaultRestoreFlag|format.RestoreWithoutSchemaName, &sb)
+	ctx := format.NewRestoreCtx(bindingRestoreFlag|format.RestoreWithoutSchemaName, &sb)
 	if err := node.Restore(ctx); err != nil {
 		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 		return ""

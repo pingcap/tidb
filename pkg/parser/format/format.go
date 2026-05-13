@@ -242,6 +242,7 @@ const (
 	RestoreForNonPrepPlanCache
 
 	RestoreBracketAroundBetweenExpr
+	RestoreSkipRedundantParentheses
 )
 
 const (
@@ -332,6 +333,12 @@ func (rf RestoreFlags) HasRestoreBracketAroundBetweenExpr() bool {
 	return rf.has(RestoreBracketAroundBetweenExpr)
 }
 
+// HasRestoreSkipRedundantParentheses returns a boolean indicating whether
+// `rf` has `RestoreSkipRedundantParentheses` flag.
+func (rf RestoreFlags) HasRestoreSkipRedundantParentheses() bool {
+	return rf.has(RestoreSkipRedundantParentheses)
+}
+
 // HasStringWithoutCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutCharset` flag.
 func (rf RestoreFlags) HasStringWithoutCharset() bool {
 	return rf.has(RestoreStringWithoutCharset)
@@ -366,9 +373,12 @@ type RestoreWriter interface {
 
 // RestoreCtx is `Restore` context to hold flags and writer.
 type RestoreCtx struct {
-	Flags     RestoreFlags
-	In        RestoreWriter
-	DefaultDB string
+	Flags            RestoreFlags
+	In               RestoreWriter
+	DefaultDB        string
+	ParentBinaryOp   int
+	ParentBinarySide int
+	InUnaryOperation bool
 	CTERestorer
 }
 
