@@ -529,7 +529,9 @@ func TestTiCIJoinNoMPPPlan(t *testing.T) {
 		sql := `explain format='brief' select f.id, t.id from fts1 f join fts2 t on f.page_num=t.page_num where match(f.content) against('"red"' in boolean mode)`
 		tk.MustQuery(sql).CheckContain("HashJoin")
 		tk.MustQuery(sql).CheckContain("IndexRangeScan")
-		tk.MustQuery(sql).CheckContain("mpp[tiflash]")
+		tk.MustQuery(sql).CheckContain("cop[tici]")
+		tk.MustQuery(sql).CheckContain("cop[tikv]")
+		tk.MustQuery(sql).CheckNotContain("mpp[tiflash]")
 	})
 }
 
@@ -573,7 +575,8 @@ func TestTiCIJoinWithNonTiCITable(t *testing.T) {
 		sql := `explain format='brief' select f.id, t.id from fts1 f join t2 t on f.page_num=t.page_num where match(f.content) against('"red"' in boolean mode)`
 		tk.MustQuery(sql).CheckContain("HashJoin")
 		tk.MustQuery(sql).CheckContain("IndexRangeScan")
-		tk.MustQuery(sql).CheckContain("mpp[tiflash]")
+		tk.MustQuery(sql).CheckContain("cop[tici]")
 		tk.MustQuery(sql).CheckContain("cop[tikv]")
+		tk.MustQuery(sql).CheckNotContain("mpp[tiflash]")
 	})
 }
