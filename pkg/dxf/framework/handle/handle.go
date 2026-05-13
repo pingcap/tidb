@@ -160,7 +160,7 @@ func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 		logger.Error("task reverted", zap.Error(found.Error))
 		return found.Error
 	case proto.TaskStatePaused:
-		logger.Error("task paused")
+		logger.Info("task paused")
 		return nil
 	case proto.TaskStateFailed:
 		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
