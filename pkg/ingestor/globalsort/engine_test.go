@@ -179,7 +179,7 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 			dataReleaseCh: make(chan struct{}, 1),
 		}
 		extEngine.inFlightDataCount.Store(1)
-		const failpointName = "github.com/pingcap/tidb/pkg/lightning/backend/external/waitIngestDataReleasedBeforeCountCheck"
+		const failpointName = "github.com/pingcap/tidb/pkg/ingestor/globalsort/waitIngestDataReleasedBeforeCountCheck"
 		require.NoError(t, failpoint.EnableCall(failpointName, func() {
 			extEngine.onIngestDataReleased()
 		}))
@@ -527,7 +527,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		updatedCh chan struct{}
 	)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/globalsort/mockLoadBatchRegionData", "return(true)")
 
 	resetFn := func() {
 		outCh = make(chan engineapi.DataAndRanges, 4)
@@ -557,7 +557,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 	}
 
 	t.Run("reduce concurrency", func(t *testing.T) {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/globalsort/afterUpdateWorkerConcurrency", func() {
 			updatedCh <- struct{}{}
 		})
 
@@ -571,7 +571,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 	})
 
 	t.Run("increase concurrency", func(t *testing.T) {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/globalsort/afterUpdateWorkerConcurrency", func() {
 			updatedCh <- struct{}{}
 		})
 

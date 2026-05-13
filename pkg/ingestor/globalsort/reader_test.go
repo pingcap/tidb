@@ -141,8 +141,8 @@ func TestReadLargeFile(t *testing.T) {
 	datas, stats := getKVAndStatFiles(summary)
 	require.Len(t, datas, 1)
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/assertReloadAtMostOnce", "return()")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/assertReloadAtMostOnce")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/globalsort/assertReloadAtMostOnce", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/globalsort/assertReloadAtMostOnce")
 
 	smallBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),

@@ -96,7 +96,7 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 		})
 	}
 	// we need the intermediate files to check meta.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/external/skipCleanUpFiles", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ingestor/globalsort/skipCleanUpFiles", `return(true)`)
 	s.T().Cleanup(func() {
 		testutils.RemoveAllObjects(s.T(), s.server, "conflicts")
 		testutils.RemoveAllObjects(s.T(), s.server, "sorted")

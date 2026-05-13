@@ -162,7 +162,7 @@ func TestMergeOperator(t *testing.T) {
 
 	for _, tc := range testcases {
 		testfailpoint.Enable(t,
-			"github.com/pingcap/tidb/pkg/lightning/backend/external/mergeOverlappingFilesInternal",
+			"github.com/pingcap/tidb/pkg/ingestor/globalsort/mergeOverlappingFilesInternal",
 			tc.failpointValue,
 		)
 

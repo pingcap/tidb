@@ -2312,7 +2312,7 @@ func TestExternalEngine(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/globalsort/LoadIngestDataBatchSize", "return(2)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipOnDuplicateKeyCheck", "return(true)")
 	ctx := context.Background()
 	dir := t.TempDir()
