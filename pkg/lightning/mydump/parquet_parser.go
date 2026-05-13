@@ -611,6 +611,13 @@ func NewParquetParser(
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
+	defer func() {
+		_ = r.Close()
+	}()
+	wrapper, preloadBase, err := prepareReader(ctx, store, path, r, fileSize)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	allocator := meta.allocator
 	if allocator == nil {
@@ -619,12 +626,6 @@ func NewParquetParser(
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
-
-	defer func() { _ = r.Close() }()
-	wrapper, preloadBase, err := prepareReader(ctx, store, path, r, fileSize)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
