@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
@@ -300,14 +299,12 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 
 func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) error {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
-	retCharset, retCollate := charset.GetDefaultCharsetAndCollate()
 	ec, err := expression.CheckAndDeriveCollationFromExprs(ctx, ast.AggFuncGroupConcat, types.ETString, a.Args...)
 	if err != nil {
 		return err
 	}
-	retCharset, retCollate = ec.Charset, ec.Collation
-	a.RetTp.SetCharset(retCharset)
-	a.RetTp.SetCollate(retCollate)
+	a.RetTp.SetCharset(ec.Charset)
+	a.RetTp.SetCollate(ec.Collation)
 
 	a.RetTp.SetFlen(mysql.MaxBlobWidth)
 	a.RetTp.SetDecimal(0)
