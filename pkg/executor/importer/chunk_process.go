@@ -22,9 +22,9 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -612,13 +612,13 @@ func newQueryChunkProcessor(
 }
 
 // WriterFactory is a factory function to create a new index KV writer.
-type WriterFactory func(indexID int64) (*external.Writer, error)
+type WriterFactory func(indexID int64) (*globalsort.Writer, error)
 
 // IndexRouteWriter is a writer for index when using global sort.
 // we route kvs of different index to different writer in order to make
 // merge sort easier, else kv data of all subtasks will all be overlapped.
 type IndexRouteWriter struct {
-	writers       map[int64]*external.Writer
+	writers       map[int64]*globalsort.Writer
 	logger        *zap.Logger
 	writerFactory WriterFactory
 }
@@ -626,7 +626,7 @@ type IndexRouteWriter struct {
 // NewIndexRouteWriter creates a new IndexRouteWriter.
 func NewIndexRouteWriter(logger *zap.Logger, writerFactory WriterFactory) *IndexRouteWriter {
 	return &IndexRouteWriter{
-		writers:       make(map[int64]*external.Writer),
+		writers:       make(map[int64]*globalsort.Writer),
 		logger:        logger,
 		writerFactory: writerFactory,
 	}

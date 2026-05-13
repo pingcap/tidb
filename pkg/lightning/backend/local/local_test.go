@@ -44,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -1778,10 +1778,10 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	}
 	memStore := objstore.NewMemStorage()
 
-	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
+	dataFiles, statFiles, err := globalsort.MockExternalEngine(memStore, keys, value)
 	require.NoError(t, err)
 
-	extEngine := external.NewExternalEngine(
+	extEngine := globalsort.NewExternalEngine(
 		ctx,
 		memStore,
 		dataFiles,
@@ -2331,7 +2331,7 @@ func TestExternalEngine(t *testing.T) {
 	endKey := make([]byte, len(keys[99])+1)
 	copy(endKey, keys[99])
 
-	dataFiles, statFiles, err := external.MockExternalEngine(extStorage, keys, values)
+	dataFiles, statFiles, err := globalsort.MockExternalEngine(extStorage, keys, values)
 	require.NoError(t, err)
 
 	externalCfg := &backend.ExternalEngineConfig{

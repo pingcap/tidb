@@ -44,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -1188,7 +1188,7 @@ func (local *Backend) generateAndSendJob(
 
 	dataAndRangeCh := make(chan engineapi.DataAndRanges)
 	conn := int(local.WorkerConcurrency.Load())
-	if _, ok := engine.(*external.Engine); ok {
+	if _, ok := engine.(*globalsort.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
 		conn = 1
@@ -1287,7 +1287,7 @@ func (local *Backend) generateJobForRange(
 	}
 	if pairStart == nil {
 		logFn := tidblogutil.Logger(ctx).Info
-		if _, ok := data.(*external.MemoryIngestData); ok {
+		if _, ok := data.(*globalsort.MemoryIngestData); ok {
 			logFn = tidblogutil.Logger(ctx).Warn
 		}
 		logFn("There is no pairs in range",
@@ -1355,12 +1355,12 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 // GetExternalEngine returns the external engine by uuid.
 // If the engine is not found or not an external engine, it returns nil.
 // It's used to dynamically update the resource used by the external engine
-func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
+func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *globalsort.Engine {
 	e, ok := local.engineMgr.getExternalEngine(engineUUID)
 	if !ok {
 		return nil
 	}
-	ext, ok := e.(*external.Engine)
+	ext, ok := e.(*globalsort.Engine)
 	if !ok {
 		return nil
 	}
@@ -1375,7 +1375,7 @@ func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 	// These options are not yet implemented for local backend, so we skip
 	// the statistics verification and return an error to remind future
 	// implementers to add support for this check.
-	if extEngine, ok := e.(*external.Engine); ok {
+	if extEngine, ok := e.(*globalsort.Engine); ok {
 		failpoint.Inject("skipOnDuplicateKeyCheck", func(_ failpoint.Value) {
 			failpoint.Return(nil)
 		})
@@ -1644,7 +1644,7 @@ func (local *Backend) doImport(
 	)
 	wctx := workerpool.NewContext(workerCtx)
 
-	if e, ok := engine.(*external.Engine); ok {
+	if e, ok := engine.(*globalsort.Engine); ok {
 		e.SetWorkerPool(pool)
 	}
 

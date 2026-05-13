@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"go.uber.org/zap"
@@ -102,7 +102,7 @@ type chunkWorker struct {
 	ctx context.Context
 	op  *encodeAndSortOperator
 
-	dataWriter  *external.EngineWriter
+	dataWriter  *globalsort.EngineWriter
 	indexWriter *importer.IndexRouteWriter
 }
 
@@ -120,13 +120,13 @@ func newChunkWorker(
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) (*external.Writer, error) {
+		indexWriterFn := func(indexID int64) (*globalsort.Writer, error) {
 			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID, op.onDupKey)
 			if err != nil {
 				return nil, err
 			}
-			builder := external.NewWriterBuilder().
-				SetOnCloseFunc(func(summary *external.WriterSummary) {
+			builder := globalsort.NewWriterBuilder().
+				SetOnCloseFunc(func(summary *globalsort.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 					op.sharedVars.indexKVFileCount.Add(int64(summary.KVFileCount))
 				}).
@@ -136,14 +136,14 @@ func newChunkWorker(
 				SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
-			writerID := path.Join("index", external.IndexID2KVGroup(indexID), workerUUID)
+			writerID := path.Join("index", globalsort.IndexID2KVGroup(indexID), workerUUID)
 			writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
 			return writer, nil
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
-		builder := external.NewWriterBuilder().
-			SetOnCloseFunc(func(summary *external.WriterSummary) {
+		builder := globalsort.NewWriterBuilder().
+			SetOnCloseFunc(func(summary *globalsort.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
 				op.sharedVars.dataKVFileCount.Add(int64(summary.KVFileCount))
 			}).
@@ -153,9 +153,9 @@ func newChunkWorker(
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
-		writerID := path.Join(external.DataKVGroup, workerUUID)
+		writerID := path.Join(globalsort.DataKVGroup, workerUUID)
 		writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
-		w.dataWriter = external.NewEngineWriter(writer)
+		w.dataWriter = globalsort.NewEngineWriter(writer)
 
 		w.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)
 	}

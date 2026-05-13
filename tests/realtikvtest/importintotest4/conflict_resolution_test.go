@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
@@ -560,7 +560,7 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 	kvGroupCanConflict := make(map[string]bool, len(taskMeta.Plan.TableInfo.Indices)+1)
 	kvGroupCanConflict["data"] = taskMeta.Plan.TableInfo.HasClusteredIndex()
 	for _, idx := range taskMeta.Plan.TableInfo.Indices {
-		kvGroupCanConflict[external.IndexID2KVGroup(idx.ID)] = idx.Unique
+		kvGroupCanConflict[globalsort.IndexID2KVGroup(idx.ID)] = idx.Unique
 	}
 	store, err := importer.GetSortStore(s.ctx, taskMeta.Plan.CloudStorageURI)
 	s.NoError(err)
