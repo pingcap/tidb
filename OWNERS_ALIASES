@@ -10,6 +10,7 @@ aliases:
   sig-critical-approvers-parser:
     - yudongusa
     - likidu
+    - terry1purcell
   sig-approvers-autoid-service:
     - bb7133
     - tiancaiamao
