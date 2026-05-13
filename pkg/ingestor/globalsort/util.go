@@ -100,7 +100,9 @@ func getReadRangeFromProps(
 				}
 				return errors.Trace(err2)
 			}
-			defer r.Close()
+			defer func() {
+				_ = r.Close()
+			}()
 
 			keyIdx := 0
 			curKey := starts[keyIdx]
@@ -405,7 +407,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 		return json.Marshal(src)
 	}
 	t := v.Type()
-	var fields []reflect.StructField
+	fields := make([]reflect.StructField, 0, t.NumField())
 	for i := range t.NumField() {
 		f := t.Field(i)
 		if !f.IsExported() {
@@ -538,7 +540,7 @@ func doRemoveDuplicates[E any](
 		var key []byte
 		if idx < len(in) {
 			key = keyGetter(&in[idx])
-			if bytes.Compare(pivot, key) == 0 {
+			if bytes.Equal(pivot, key) {
 				continue
 			}
 		}

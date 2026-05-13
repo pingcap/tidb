@@ -189,34 +189,33 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 	if w.currDupCnt == 0 {
 		return w.onNextPivot(ctx, idxKey, idxVal)
 	}
-	if slices.Compare(w.pivotKey, idxKey) == 0 {
-		w.currDupCnt++
-		switch w.onDup {
-		case engineapi.OnDuplicateKeyRecord:
-			// record first 2 duplicate to data file, others to dup file.
-			if w.currDupCnt == 2 {
-				if err := w.doWriteRow(ctx, w.pivotKey, w.pivotValue); err != nil {
-					return err
-				}
-				if err := w.doWriteRow(ctx, idxKey, idxVal); err != nil {
-					return err
-				}
-			} else {
-				// w.currDupCnt > 2
-				if err := w.lazyInitDupFile(ctx); err != nil {
-					return err
-				}
-				if err := w.dupKVStore.addRawKV(idxKey, idxVal); err != nil {
-					return err
-				}
-				w.recordedDupCnt++
-			}
-		case engineapi.OnDuplicateKeyError:
-			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
-			// default is OnDuplicateKeyRemove, we will not write for duplicates.
-		}
-	} else {
+	if slices.Compare(w.pivotKey, idxKey) != 0 {
 		return w.onNextPivot(ctx, idxKey, idxVal)
+	}
+	w.currDupCnt++
+	switch w.onDup {
+	case engineapi.OnDuplicateKeyRecord:
+		// record first 2 duplicate to data file, others to dup file.
+		if w.currDupCnt == 2 {
+			if err := w.doWriteRow(ctx, w.pivotKey, w.pivotValue); err != nil {
+				return err
+			}
+			if err := w.doWriteRow(ctx, idxKey, idxVal); err != nil {
+				return err
+			}
+		} else {
+			// w.currDupCnt > 2
+			if err := w.lazyInitDupFile(ctx); err != nil {
+				return err
+			}
+			if err := w.dupKVStore.addRawKV(idxKey, idxVal); err != nil {
+				return err
+			}
+			w.recordedDupCnt++
+		}
+	case engineapi.OnDuplicateKeyError:
+		return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
+		// default is OnDuplicateKeyRemove, we will not write for duplicates.
 	}
 	return nil
 }

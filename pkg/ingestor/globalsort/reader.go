@@ -171,7 +171,7 @@ func readOneFile(
 		return err
 	}
 	defer func() {
-		rd.Close()
+		_ = rd.Close()
 	}()
 	if concurrency > 1 {
 		rd.byteReader.enableConcurrentRead(

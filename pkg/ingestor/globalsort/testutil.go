@@ -45,7 +45,6 @@ func testReadAndCompare(
 	stats []string,
 	startKey dbkv.Key,
 	memSizeLimit int) {
-
 	splitter, err := NewRangeSplitter(
 		ctx,
 		mockOneMultiFileStat(datas, stats),
