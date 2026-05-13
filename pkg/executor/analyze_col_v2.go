@@ -675,10 +675,6 @@ func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *
 	})
 
 	colLen := len(e.colsInfo)
-	bufferedMemSize := int64(0)
-	bufferedReleaseSize := int64(0)
-	defer e.memTracker.Consume(bufferedMemSize)
-	defer e.memTracker.Release(bufferedReleaseSize)
 
 workLoop:
 	for {
@@ -686,6 +682,23 @@ workLoop:
 		case task, ok := <-taskCh:
 			if !ok {
 				break workLoop
+			}
+			// Track per-task allocations: curBufferedMemSize is pending charges to
+			// the tracker, and totalBuffered accumulates bytes retained by
+			// collector.MemSize.
+			curBufferedMemSize := int64(0)
+			totalBuffered := int64(0)
+			consumeBuffered := func(bytes int64) {
+				totalBuffered += bytes
+				e.memTracker.BufferedConsume(&curBufferedMemSize, bytes)
+			}
+			flushBuffered := func(cum *int64) {
+				if curBufferedMemSize != 0 {
+					e.memTracker.Consume(curBufferedMemSize)
+					curBufferedMemSize = 0
+				}
+				*cum += totalBuffered
+				totalBuffered = 0
 			}
 			var collector *statistics.SampleCollector
 			if task.isColumn {
@@ -697,6 +710,8 @@ workLoop:
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
+				// 8 means the pointer size of sampleItems slice. EmptySampleItemSize already accounts for
+				// the embedded types.Datum in SampleItem.Value.
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
 				e.memTracker.Consume(collectorMemSize)
 				var collator collate.Collator
@@ -719,18 +734,14 @@ workLoop:
 					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
 						deltaSize := int64(cap(val.GetBytes()))
-						collectorMemSize += deltaSize
-						e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+						consumeBuffered(deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
 						Ordinal: j,
 					})
-					// tmp memory usage
-					deltaSize := val.MemUsage() + 4 // content of SampleItem is copied
-					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 				}
+				flushBuffered(&collectorMemSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
@@ -747,6 +758,7 @@ workLoop:
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
+				// EmptySampleItemSize already accounts for the embedded types.Datum in SampleItem.Value.
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
 			indexSampleCollectLoop:
@@ -776,14 +788,15 @@ workLoop:
 							continue workLoop
 						}
 					}
+					if cap(b) > 8 {
+						// The initial 8-byte buffer capacity was accounted before the loop.
+						consumeBuffered(int64(cap(b) - 8))
+					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value: types.NewBytesDatum(b),
 					})
-					// tmp memory usage
-					deltaSize := sampleItems[len(sampleItems)-1].Value.MemUsage()
-					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 				}
+				flushBuffered(&collectorMemSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
