@@ -30,7 +30,9 @@ FROM debian:bookworm-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
+RUN useradd --system --create-home --uid 10001 --user-group tidb
 
 COPY --from=builder /opt/tidb-mirror/mirror /mirror
 
+USER 10001:10001
 ENTRYPOINT ["/mirror"]

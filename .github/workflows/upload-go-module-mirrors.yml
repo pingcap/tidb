@@ -128,7 +128,7 @@ jobs:
             echo "PR: #${{ needs.resolve.outputs.pr_number }}"
             echo "Head repository: ${{ needs.resolve.outputs.head_repo }}"
             echo "Head SHA: ${{ needs.resolve.outputs.head_sha }}"
-            echo "Image: us-docker.pkg.dev/gcp-compute-dev/tidb-ci-public/tidb-mirror-uploader:20260508"
+            echo "Image: us-docker.pkg.dev/gcp-compute-dev/tidb-ci-public/tidb-mirror-uploader@sha256:016d0432613dd44d20f2281fa3f8394d06471d64bf1312069bcbe2819544c579"
             echo "Workspace mount: ${PWD}/pr -> /workspace"
             echo "GOROOT mount: ${goroot} -> ${goroot}"
             echo "Container stdout and stderr are streamed to this step log."
@@ -147,5 +147,5 @@ jobs:
             -v "${GOOGLE_APPLICATION_CREDENTIALS}:/credentials/gcs-credentials.json:ro" \
             -v "${mirror_tmp}:/tmp" \
             -v "${PWD}/pr:/workspace:ro" \
-            us-docker.pkg.dev/gcp-compute-dev/tidb-ci-public/tidb-mirror-uploader:20260508 \
+            us-docker.pkg.dev/gcp-compute-dev/tidb-ci-public/tidb-mirror-uploader@sha256:016d0432613dd44d20f2281fa3f8394d06471d64bf1312069bcbe2819544c579 \
             --mirror --upload
