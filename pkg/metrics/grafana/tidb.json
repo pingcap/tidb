@@ -17622,7 +17622,7 @@
           ],
           "thresholds": [],
           "timeRegions": [],
-          "title": "Retryable Error (DDL & DXF)",
+          "title": "DDL/DXF Retryable Error",
           "tooltip": {
             "shared": true,
             "sort": 0,
