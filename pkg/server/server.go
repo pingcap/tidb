@@ -345,6 +345,10 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 	variable.RegisterStatistics(s)
+
+	if err := s.initTiDBListener(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -486,11 +490,6 @@ func (s *Server) Run(dom *domain.Domain) error {
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
 	errChan := make(chan error, 2)
-	err := s.initTiDBListener()
-	if err != nil {
-		log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
-		return err
-	}
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
 	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
@@ -501,7 +500,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 		close(RunInGoTestChan)
 	}
 	s.health.Store(true)
-	err = <-errChan
+	err := <-errChan
 	if err != nil {
 		return err
 	}
