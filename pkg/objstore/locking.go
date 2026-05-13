@@ -530,46 +530,43 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		case <-time.After(renewInterval):
 		}
 
-		// First attempt at this tick. If terminal, exit; if transient, retry.
-		err := l.tryRenew(ctx)
-		if err == nil {
-			continue
-		}
-		if stderrors.Is(err, errRenewTxnIDMismatch) || stderrors.Is(err, errRenewLeaseExpired) {
-			log.Warn("Lock renewal detected lease lost; calling onLeaseLost.",
-				zap.Stringer("lock", l), logutil.ShortError(err))
-			invokeLost()
-			return
-		}
-
-		// Transient error: exponential-backoff retry.
-		log.Warn("Lock renewal hit transient error; will retry with exponential backoff.",
-			zap.Stringer("lock", l), logutil.ShortError(err))
-		backoff := renewBaseBackoff
-		lastErr := err
-		recovered := false
-		for attempt := 1; attempt <= renewMaxRetries; attempt++ {
-			select {
-			case <-l.stopCh:
-				return
-			case <-time.After(backoff):
-			}
-			retryErr := l.tryRenew(ctx)
-			if retryErr == nil {
-				recovered = true
+		var lastErr error
+		renewSucceeded := false
+		for attempt := 0; attempt <= renewMaxRetries; attempt++ {
+			err := l.tryRenew(ctx)
+			if err == nil {
+				renewSucceeded = true
 				break
 			}
-			if stderrors.Is(retryErr, errRenewTxnIDMismatch) || stderrors.Is(retryErr, errRenewLeaseExpired) {
-				log.Warn("Lock renewal retry detected lease lost.",
-					zap.Stringer("lock", l), zap.Int("attempt", attempt),
-					logutil.ShortError(retryErr))
+			if stderrors.Is(err, errRenewTxnIDMismatch) || stderrors.Is(err, errRenewLeaseExpired) {
+				log.Warn("Lock renewal detected lease lost; calling onLeaseLost.",
+					zap.Stringer("lock", l),
+					zap.Int("attempt", attempt),
+					logutil.ShortError(err))
 				invokeLost()
 				return
 			}
-			lastErr = retryErr
-			backoff *= 2
+
+			lastErr = err
+			if attempt == renewMaxRetries {
+				break
+			}
+
+			retryBackoff := renewBaseBackoff * time.Duration(1<<attempt)
+			log.Warn("Lock renewal hit transient error; will retry with exponential backoff.",
+				zap.Stringer("lock", l),
+				zap.Int("attempt", attempt),
+				zap.Duration("backoff", retryBackoff),
+				logutil.ShortError(err))
+			timer := time.NewTimer(retryBackoff)
+			select {
+			case <-l.stopCh:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
-		if !recovered {
+		if !renewSucceeded {
 			log.Warn("Lock renewal retries exhausted; calling onLeaseLost.",
 				zap.Stringer("lock", l),
 				zap.Int("max_retries", renewMaxRetries),
@@ -577,7 +574,7 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 			invokeLost()
 			return
 		}
-		// recovered → wait for the next tick.
+		// renewSucceeded → wait for the next tick.
 	}
 }
 
