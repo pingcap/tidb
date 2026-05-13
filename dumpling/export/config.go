@@ -778,6 +778,8 @@ func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
 	return bytes, nil
 }
 
+// ParseParquetCompressType parses the parquet compression flag value.
+// Empty means the flag is not configured, so Dumpling uses Snappy by default.
 func ParseParquetCompressType(compressType string) (compressedio.CompressType, error) {
 	if compressType == "" {
 		return compressedio.Snappy, nil
