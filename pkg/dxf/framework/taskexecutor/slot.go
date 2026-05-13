@@ -144,3 +144,17 @@ func (sm *slotManager) availableSlots() int {
 func (sm *slotManager) usedSlots() int {
 	return sm.capacity - int(sm.available.Load())
 }
+
+func (sm *slotManager) executorTaskSlotsSnapshot() []TaskSlotSnapshot {
+	sm.RLock()
+	defer sm.RUnlock()
+
+	slots := make([]TaskSlotSnapshot, 0, len(sm.executorTasks))
+	for _, task := range sm.executorTasks {
+		slots = append(slots, TaskSlotSnapshot{
+			ID:            task.ID,
+			RequiredSlots: task.RequiredSlots,
+		})
+	}
+	return slots
+}
