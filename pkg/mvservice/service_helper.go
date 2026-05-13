@@ -550,7 +550,128 @@ func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *vari
 		restoreMaintainMemQuota()
 		return nil, err
 	}
+	originPurgeBatchSize := sessVars.MLogPurgeBatchSize
+	targetPurgeBatchSize := originPurgeBatchSize
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMLogPurgeBatchSize); ok {
+		targetPurgeBatchSize = variable.TidbOptInt(val, originPurgeBatchSize)
+	}
+	restorePurgeBatchSize, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMLogPurgeBatchSize,
+			originValue: strconv.Itoa(originPurgeBatchSize),
+			targetValue: strconv.Itoa(targetPurgeBatchSize),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply purge batch size from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMLogPurgeBatchSize),
+					zap.Int("origin", originPurgeBatchSize),
+					zap.Int("target", targetPurgeBatchSize),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mlog_purge_batch_size after maintenance",
+					zap.Int("originPurgeBatchSize", originPurgeBatchSize),
+					zap.Int("currentPurgeBatchSize", targetPurgeBatchSize),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
+		return nil, err
+	}
+	originPurgeMinRate := sessVars.MLogPurgeMinRate
+	targetPurgeMinRate := originPurgeMinRate
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMLogPurgeMinRate); ok {
+		targetPurgeMinRate = variable.TidbOptInt(val, originPurgeMinRate)
+	}
+	restorePurgeMinRate, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMLogPurgeMinRate,
+			originValue: strconv.Itoa(originPurgeMinRate),
+			targetValue: strconv.Itoa(targetPurgeMinRate),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply purge min rate from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMLogPurgeMinRate),
+					zap.Int("origin", originPurgeMinRate),
+					zap.Int("target", targetPurgeMinRate),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mlog_purge_min_rate after maintenance",
+					zap.Int("originPurgeMinRate", originPurgeMinRate),
+					zap.Int("currentPurgeMinRate", targetPurgeMinRate),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restorePurgeBatchSize()
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
+		return nil, err
+	}
+	originPurgeRateBudgetRatio := sessVars.MLogPurgeRateBudgetRatio
+	targetPurgeRateBudgetRatio := originPurgeRateBudgetRatio
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMLogPurgeRateBudgetRatio); ok {
+		parsed, parseErr := strconv.ParseFloat(val, 64)
+		if parseErr != nil {
+			logutil.BgLogger().Warn(
+				"mv service: failed to parse global session var, fallback to current session value",
+				zap.String("var", variable.TiDBMLogPurgeRateBudgetRatio),
+				zap.String("value", val),
+				zap.Error(parseErr),
+			)
+		} else {
+			targetPurgeRateBudgetRatio = parsed
+		}
+	}
+	restorePurgeRateBudgetRatio, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMLogPurgeRateBudgetRatio,
+			originValue: strconv.FormatFloat(originPurgeRateBudgetRatio, 'f', -1, 64),
+			targetValue: strconv.FormatFloat(targetPurgeRateBudgetRatio, 'f', -1, 64),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply purge rate budget ratio from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMLogPurgeRateBudgetRatio),
+					zap.Float64("origin", originPurgeRateBudgetRatio),
+					zap.Float64("target", targetPurgeRateBudgetRatio),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mlog_purge_rate_budget_ratio after maintenance",
+					zap.Float64("originPurgeRateBudgetRatio", originPurgeRateBudgetRatio),
+					zap.Float64("currentPurgeRateBudgetRatio", targetPurgeRateBudgetRatio),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restorePurgeMinRate()
+		restorePurgeBatchSize()
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
+		return nil, err
+	}
 	return func() {
+		restorePurgeRateBudgetRatio()
+		restorePurgeMinRate()
+		restorePurgeBatchSize()
 		restoreIsolationReadEngines()
 		restoreMaintainMemQuota()
 	}, nil
