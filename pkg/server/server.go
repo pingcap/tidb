@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -968,6 +969,15 @@ func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]stri
 
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool) {
+	s.kill(connectionID, query, maxExecutionTime, runaway, "")
+}
+
+// KillWithNormalCloseMsg implements the sessmgr.NormalCloseKiller interface.
+func (s *Server) KillWithNormalCloseMsg(connectionID uint64, query bool, maxExecutionTime bool, runaway bool, normalCloseMsg string) {
+	s.kill(connectionID, query, maxExecutionTime, runaway, normalCloseMsg)
+}
+
+func (s *Server) kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool, normalCloseMsg string) {
 	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID),
 		zap.Bool("query", query), zap.Bool("maxExecutionTime", maxExecutionTime), zap.Bool("runawayExceed", runaway))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
@@ -993,6 +1003,10 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, ru
 			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
 				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 			}
+		}
+		if normalCloseMsg != "" && s.StandbyController != nil {
+			tidbGatewayConnID := conn.attrs[tidbGatewayAttrsConnKey]
+			s.SetNormalClosedConn(keyspace.GetKeyspaceNameBySettings(), tidbGatewayConnID, normalCloseMsg)
 		}
 	}
 	killQuery(conn, maxExecutionTime, runaway)
