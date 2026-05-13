@@ -410,7 +410,10 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-// getBuilder picks a column-reader strategy for the current row group.
+// getBuilder picks a column-reader strategy for the current row group:
+//   - whole-file preload, when prepareReader has already loaded the file;
+//   - per-row-group preload, when the row group fits inMemoryThreshold;
+//   - per-column streaming, otherwise.
 func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
