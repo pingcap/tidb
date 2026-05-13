@@ -24,14 +24,29 @@ import (
 )
 
 func TestChooseBestGreedySeed(t *testing.T) {
-	best, seedIdx, err := chooseBestGreedySeed(2, func(seedIdx int) (*Node, error) {
-		costs := []float64{100, 10}
-		return &Node{cumCost: costs[seedIdx]}, nil
+	t.Run("pick lowest cost", func(t *testing.T) {
+		best, seedIdx, err := chooseBestGreedySeed(2, func(seedIdx int) (*Node, error) {
+			costs := []float64{100, 10}
+			return &Node{cumCost: costs[seedIdx]}, nil
+		})
+		require.NoError(t, err)
+		require.NotNil(t, best)
+		require.Equal(t, 1, seedIdx)
+		require.Equal(t, float64(10), best.cumCost)
 	})
-	require.NoError(t, err)
-	require.NotNil(t, best)
-	require.Equal(t, 1, seedIdx)
-	require.Equal(t, float64(10), best.cumCost)
+
+	t.Run("skip nil candidate", func(t *testing.T) {
+		best, seedIdx, err := chooseBestGreedySeed(2, func(seedIdx int) (*Node, error) {
+			if seedIdx == 0 {
+				return nil, nil
+			}
+			return &Node{cumCost: 10}, nil
+		})
+		require.NoError(t, err)
+		require.NotNil(t, best)
+		require.Equal(t, 1, seedIdx)
+		require.Equal(t, float64(10), best.cumCost)
+	})
 }
 
 func TestCloneNodesForGreedySeedIsolation(t *testing.T) {

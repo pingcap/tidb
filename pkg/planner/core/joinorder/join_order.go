@@ -592,6 +592,9 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		if err != nil {
 			return nil, err
 		}
+		if seedResult == nil {
+			return group.root, nil
+		}
 		return seedResult.p, nil
 	}
 
@@ -601,6 +604,9 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if seedResult == nil {
+		return group.root, nil
 	}
 	logutil.BgLogger().Debug("greedy join reorder picked multi-seed candidate",
 		zap.Int("rootID", group.root.ID()),
@@ -641,13 +647,10 @@ func chooseBestGreedySeed(seedCount int, runner func(seedIdx int) (*Node, error)
 		if err != nil {
 			return nil, -1, err
 		}
-		if best == nil || candidate.cumCost < best.cumCost {
+		if candidate != nil && (best == nil || candidate.cumCost < best.cumCost) {
 			best = candidate
 			bestSeedIdx = seedIdx
 		}
-	}
-	if best == nil {
-		return nil, -1, errors.New("internal error: greedy join reorder produced no seed result")
 	}
 	return best, bestSeedIdx, nil
 }
@@ -706,10 +709,7 @@ func (j *joinOrderGreedy) optimizeWithSeed(detector *ConflictDetector, nodes []*
 		if intest.InTest {
 			return nil, errors.New("got remaining edges during join reorder")
 		}
-		return &Node{
-			p:       j.group.root,
-			cumCost: math.Inf(1),
-		}, nil
+		return nil, nil
 	}
 	if len(nodes) <= 0 {
 		return nil, errors.New("internal error: bushy join tree nodes is empty")
