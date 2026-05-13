@@ -994,7 +994,9 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
 	defer func(begin time.Time) {
-		logic.SCtx().GetSessionVars().DurationOptimizer.LogicalOpt = time.Since(begin)
+		if logic != nil {
+			logic.SCtx().GetSessionVars().DurationOptimizer.LogicalOpt = time.Since(begin)
+		}
 	}(time.Now())
 
 	var err error

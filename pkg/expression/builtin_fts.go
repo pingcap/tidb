@@ -196,8 +196,10 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 
 func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	// Matching NULL returns 0.
-	if b.args[0].(*Constant).Value.IsNull() {
-		return 0, false, nil
+	// args[0] is validated to be a *Constant by getFunction; guard defensively
+	// since the sig may be reconstructed via the distsql path without that check.
+	if constArg, ok := b.args[0].(*Constant); ok && constArg.Value.IsNull() {
+		return 0, true, nil
 	}
 	// Reject executing match against in TiDB side
 	return 0, false, errors.Errorf("cannot use 'MATCH ... AGAINST' outside of fulltext index")
