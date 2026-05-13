@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -231,4 +232,78 @@ func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testi
 
 	require.Contains(t, exec.calls[1].sql, "NEXT_TIME = %?")
 	require.Equal(t, []any{"2026-03-08 00:00:00", int64(123)}, exec.calls[1].args)
+}
+
+func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
+	plan := &mlogPurgeThrottlePlan{targetRate: 2000}
+	batch := plan.effectiveDeleteBatchSize(10000)
+	require.Equal(t, int64(2000), batch)
+
+	plan = &mlogPurgeThrottlePlan{targetRate: 100000}
+	batch = plan.effectiveDeleteBatchSize(10000)
+	require.Equal(t, int64(10000), batch)
+}
+
+func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
+	plan := &mlogPurgeThrottlePlan{
+		targetRate:         50000,
+		pendingRows:        100000,
+		effectiveBatchSize: 10000,
+		minRate:            1,
+		deadline:           time.Now().Add(30 * time.Second),
+		noWaitStreak:       1,
+	}
+
+	err := plan.maybeSleep(context.Background(), time.Now().Add(-3*time.Second), 98000)
+	require.NoError(t, err)
+	require.Equal(t, int64(2000), plan.effectiveBatchSize)
+	require.Zero(t, plan.noWaitStreak)
+	require.Less(t, plan.targetRate, float64(50000))
+}
+
+func TestMVTaskCancelControllerIsManualCancelRequested(t *testing.T) {
+	controller := newMVTaskCancelController(context.Background())
+	require.False(t, controller.isManualCancelRequested())
+
+	controller.requestManualCancelByRequester("'u'@'h'")
+	require.True(t, controller.isManualCancelRequested())
+}
+
+func TestDeriveMLogPurgeThrottleDeadline(t *testing.T) {
+	t.Run("respect hardcoded purge planning budget", func(t *testing.T) {
+		baseNow := time.Now().UTC()
+
+		deadline, err := deriveMLogPurgeThrottleDeadline(
+			context.Background(),
+			nil,
+			nil,
+			nil,
+			false,
+			"test",
+			"t",
+			nil,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, deadline)
+		require.WithinDuration(t, baseNow.Add(mlogPurgeAdaptiveMaxBudget), *deadline, 2*time.Second)
+	})
+
+	t.Run("pick earlier between next time and hardcoded purge planning budget", func(t *testing.T) {
+		baseNow := time.Now().UTC()
+		nextTime := baseNow.Add(90 * time.Second)
+
+		deadline, err := deriveMLogPurgeThrottleDeadline(
+			context.Background(),
+			nil,
+			nil,
+			nil,
+			false,
+			"test",
+			"t",
+			&nextTime,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, deadline)
+		require.WithinDuration(t, nextTime, *deadline, time.Second)
+	})
 }
