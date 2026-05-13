@@ -281,11 +281,7 @@ go_test(
         "placement_policy_test.go",
         "placement_sql_test.go",
         "primary_key_handle_test.go",
-<<<<<<< HEAD
-=======
-        "reorg_test.go",
         "reorg_util_test.go",
->>>>>>> 8b8bccf34f1 (ddl: use max approximate kv/region size for add-index table estimation (#67585))
         "repair_table_test.go",
         "restart_test.go",
         "rollingback_test.go",
