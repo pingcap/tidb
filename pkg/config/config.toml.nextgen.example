@@ -16,6 +16,10 @@ store = "unistore"
 # startup and cannot be changed after it is set.
 deploy-mode = "premium"
 
+# Limits the local TiDB resources available to DXF tasks, [10, 100].
+# This can only be configured when deploy-mode is "premium_reserved".
+# dxf-resource-limit = 100
+
 # TiDB storage path.
 path = "/tmp/tidb"
 
