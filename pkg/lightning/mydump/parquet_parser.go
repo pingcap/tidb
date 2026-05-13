@@ -320,9 +320,7 @@ type ParquetParser struct {
 
 	rowGroup *rowGroupParser
 
-	// smallFileBase holds the buffer preloaded by NewParquetParser when
-	// the file fits smallFileThreshold, so getBuilder can skip another
-	// range GET. nil for streaming and per-row-group preload modes.
+	// smallFileBase holds the whole-file preload buffer.
 	smallFileBase *inMemoryReaderBase
 
 	rowPool *zeropool.Pool[[]types.Datum]
@@ -412,9 +410,7 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-// getBuilder picks a column-reader strategy for the current row group:
-// small-file buffer if preloaded, per-row-group preload if it fits the
-// threshold, otherwise streaming.
+// getBuilder picks a column-reader strategy for the current row group.
 func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
