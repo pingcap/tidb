@@ -284,24 +284,18 @@ func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path st
 // prepareReader picks the reader strategy for one parquet file.
 // For small files it consumes r in one read and returns a buffer-backed
 // wrapper plus the same buffer via base, so later row-group reads can
-// reuse it. Otherwise it returns a streaming wrapper and a closer for r.
-func prepareReader(r storeapi.ReadSeekCloser, fileSize int64) (
-	wrapper parquet.ReaderAtSeeker,
-	base *inMemoryReaderBase,
-	closer func() error,
-	err error,
-) {
+// reuse it. Otherwise it returns a streaming wrapper over r. The caller
+// owns r and is responsible for closing it.
+func prepareReader(r storeapi.ReadSeekCloser, fileSize int64) (parquet.ReaderAtSeeker, *inMemoryReaderBase, error) {
 	if fileSize > 0 && fileSize <= int64(smallFileThreshold) {
 		buf := make([]byte, fileSize)
 		if _, err := io.ReadFull(r, buf); err != nil {
-			_ = r.Close()
-			return nil, nil, nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
-		_ = r.Close()
-		base = newInMemoryReaderBaseFromBytes(buf)
-		return &inMemoryParquetWrapper{base: base, fileSize: fileSize}, base, func() error { return nil }, nil
+		base := newInMemoryReaderBaseFromBytes(buf)
+		return &inMemoryParquetWrapper{base: base, fileSize: fileSize}, base, nil
 	}
-	return &parquetWrapper{ReadSeekCloser: r}, nil, r.Close, nil
+	return &parquetWrapper{ReadSeekCloser: r}, nil, nil
 }
 
 // Copied from https://github.com/apache/arrow-go/blob/bbf7ab7523a6411e25c7a08566a40e8759cc6c13/parquet/file/row_group_reader.go
