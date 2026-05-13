@@ -413,6 +413,11 @@ func TestUnlockWaitsForRenewalGoroutine(t *testing.T) {
 	// Give any (incorrectly-still-running) goroutine a moment to misbehave.
 	time.Sleep(60 * time.Millisecond)
 	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+
+	require.NotPanics(t, func() {
+		err = lock.Unlock(ctx)
+	})
+	require.Error(t, err)
 }
 
 // writeLockMeta is a small test helper that places a custom LockMeta JSON at a

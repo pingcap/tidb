@@ -35,14 +35,7 @@ func TEST_TryRenew(l *RemoteLock, ctx context.Context) error {
 // exit. Used by tests that exercise StartRenewal without going through the
 // full Unlock path. Returns immediately if no renewal was started.
 func TEST_StopRenewal(l *RemoteLock) {
-	l.mu.Lock()
-	started := l.renewalStarted
-	l.mu.Unlock()
-	if !started {
-		return
-	}
-	close(l.stopCh)
-	<-l.done
+	l.stopRenewalIfStarted()
 }
 
 // TEST_SetLeaseConstants overrides the lease-related timing knobs for a test.

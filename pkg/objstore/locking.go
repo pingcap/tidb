@@ -242,9 +242,17 @@ func getLockMeta(ctx context.Context, storage storeapi.Storage, path string) (Lo
 	return meta, nil
 }
 
+type renewalState uint8
+
+const (
+	renewalIdle renewalState = iota
+	renewalRunning
+	renewalStopped
+)
+
 // RemoteLock is the remote lock.
 //
-// Renewal state (mu, renewalStarted, stopCh, done) is zero-initialized and
+// Renewal state (mu, renewalState, stopCh, done) is zero-initialized and
 // activated by StartRenewal. Because RemoteLock embeds a sync.Mutex once
 // renewal activates, callers must not copy a RemoteLock after StartRenewal
 // has been invoked on it; pass pointers instead.
@@ -253,10 +261,10 @@ type RemoteLock struct {
 	storage storeapi.Storage
 	path    string
 
-	mu             sync.Mutex
-	renewalStarted bool
-	stopCh         chan struct{}
-	done           chan struct{}
+	mu           sync.Mutex
+	renewalState renewalState
+	stopCh       chan struct{}
+	done         chan struct{}
 }
 
 // String implements fmt.Stringer interface.
@@ -311,13 +319,7 @@ func TryLockRemote(ctx context.Context, storage storeapi.Storage, path, hint str
 // without the wait, an in-flight tryRenew WriteFile could land after our
 // DeleteFile below, recreating a zombie lock file on remote storage.
 func (l *RemoteLock) Unlock(ctx context.Context) error {
-	l.mu.Lock()
-	started := l.renewalStarted
-	l.mu.Unlock()
-	if started {
-		close(l.stopCh)
-		<-l.done
-	}
+	l.stopRenewalIfStarted()
 
 	meta, err := getLockMeta(ctx, l.storage, l.path)
 	if err != nil {
@@ -337,6 +339,34 @@ func (l *RemoteLock) Unlock(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to delete lock file %s", l.path)
 	}
 	return nil
+}
+
+func (l *RemoteLock) stopRenewalIfStarted() {
+	var (
+		stopCh      chan struct{}
+		done        chan struct{}
+		shouldClose bool
+	)
+
+	l.mu.Lock()
+	switch l.renewalState {
+	case renewalIdle:
+		l.mu.Unlock()
+		return
+	case renewalStopped:
+		done = l.done
+	case renewalRunning:
+		l.renewalState = renewalStopped
+		stopCh = l.stopCh
+		done = l.done
+		shouldClose = true
+	}
+	l.mu.Unlock()
+
+	if shouldClose {
+		close(stopCh)
+	}
+	<-done
 }
 
 // CleanUpStaleLock checks whether the lock file at `path` has an expired
@@ -468,12 +498,12 @@ func (l *RemoteLock) tryRenew(ctx context.Context) error {
 // double-starting a pair of conflicting renewal goroutines.
 func (l *RemoteLock) StartRenewal(ctx context.Context, onLeaseLost func()) {
 	l.mu.Lock()
-	if l.renewalStarted {
+	if l.renewalState != renewalIdle {
 		l.mu.Unlock()
 		log.Panic("StartRenewal called twice on the same lock; each RemoteLock has exactly one owner.",
 			zap.Stringer("lock", l))
 	}
-	l.renewalStarted = true
+	l.renewalState = renewalRunning
 	l.stopCh = make(chan struct{})
 	l.done = make(chan struct{})
 	l.mu.Unlock()
