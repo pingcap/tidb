@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/table"
@@ -222,4 +223,104 @@ func TestHandler(t *testing.T) {
 			doTestFn(t, "tn", 12)
 		})
 	})
+}
+
+func TestDataKVHandlerSkipsTiCIIndexKVsOnReencode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	logger := zap.Must(zap.NewDevelopment())
+
+	tk.MustExec("drop table if exists t_tici")
+	tk.MustExec("create table t_tici(a bigint primary key clustered, b int, c text, index idx_b(b))")
+	origTbl, err := do.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t_tici"))
+	require.NoError(t, err)
+
+	const ticiIndexID int64 = 1001
+	tblMeta := origTbl.Meta().Clone()
+	tblMeta.Indices = append(tblMeta.Indices, &model.IndexInfo{
+		ID:    ticiIndexID,
+		Name:  ast.NewCIStr("idx_tici"),
+		State: model.StatePublic,
+		Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("c"), Offset: 2, Length: types.UnspecifiedLength},
+		},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	})
+	tbl := table.MockTableFromMeta(tblMeta)
+	sourceEncoder := getEncoder(t, tbl)
+	handlerEncoder := getEncoder(t, tbl)
+
+	row := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewStringDatum("doc")}
+	srcPairs, err := sourceEncoder.Encode(row, 1)
+	require.NoError(t, err)
+
+	var (
+		dataKeyCount  int
+		tableKeyCount int
+		indexIDs      []int64
+		keyKinds      []string
+	)
+	mockEncodedKVHdl := mockHandleEncodedRowFn(func(ctx context.Context, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
+		require.Empty(t, keyKinds)
+		for _, pair := range kvPairs.Pairs {
+			if tablecodec.IsRecordKey(pair.Key) {
+				dataKeyCount++
+				keyKinds = append(keyKinds, "record")
+				continue
+			}
+			if tablecodec.IsIndexKey(pair.Key) {
+				indexID, err := tablecodec.DecodeIndexID(pair.Key)
+				require.NoError(t, err)
+				indexIDs = append(indexIDs, indexID)
+				keyKinds = append(keyKinds, fmt.Sprintf("index:%d", indexID))
+				continue
+			}
+			if tablecodec.IsTableKey(pair.Key) {
+				tableKeyCount++
+				keyKinds = append(keyKinds, "table")
+				continue
+			}
+			keyKinds = append(keyKinds, fmt.Sprintf("other:%x", pair.Key))
+		}
+		return nil
+	})
+	baseHdl := conflictedkv.NewBaseHandler(tbl, external.DataKVGroup, handlerEncoder, mockEncodedKVHdl, logger)
+	dataKVHdl := conflictedkv.NewDataKVHandler(baseHdl)
+	require.NoError(t, dataKVHdl.PreRun())
+	t.Cleanup(func() {
+		require.NoError(t, dataKVHdl.Close(ctx))
+	})
+
+	var recordPair *external.KVPair
+	for _, pair := range srcPairs.Pairs {
+		if !tablecodec.IsRecordKey(pair.Key) {
+			continue
+		}
+		recordPair = &external.KVPair{
+			Key:   store.GetCodec().EncodeKey(pair.Key),
+			Value: pair.Val,
+		}
+		break
+	}
+	require.NotNil(t, recordPair)
+	require.NoError(t, dataKVHdl.Handle(ctx, recordPair))
+	var normalIndexID int64
+	for _, idx := range tblMeta.Indices {
+		if idx.Name.L == "idx_b" {
+			normalIndexID = idx.ID
+			break
+		}
+	}
+	require.NotZero(t, normalIndexID)
+	require.Equal(t, 1, dataKeyCount)
+	require.Zero(t, tableKeyCount)
+	require.Equal(t, []int64{normalIndexID}, indexIDs)
+	require.NotContains(t, indexIDs, ticiIndexID)
 }

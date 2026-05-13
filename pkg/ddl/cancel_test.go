@@ -288,6 +288,7 @@ func TestCancelVariousJobs(t *testing.T) {
 	tk.MustExec("use test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(2048)`)
+	enableMockTiCIBackfill(t)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCloudImportExecutor", `return()`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)

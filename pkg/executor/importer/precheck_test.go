@@ -280,3 +280,41 @@ func TestCheckRequirementsWithTiCIIndexLocalSort(t *testing.T) {
 	err = c.CheckRequirements(ctx, tk.Session())
 	require.NoError(t, err)
 }
+
+func TestCheckRequirementsWithHybridTiCIIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
+	conn := tk.Session().GetSQLExecutor()
+
+	_, err := conn.Execute(ctx, "create table test.t(id int primary key)")
+	require.NoError(t, err)
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	tableObj, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	tableInfo := tableObj.Meta().Clone()
+	tableInfo.Indices = append(tableInfo.Indices, &model.IndexInfo{
+		ID:         1,
+		Name:       ast.NewCIStr("hybrid_tici_idx"),
+		HybridInfo: &model.HybridIndexInfo{},
+	})
+
+	c := &importer.LoadDataController{
+		Plan: &importer.Plan{
+			DBName:          "test",
+			DataSourceType:  importer.DataSourceTypeFile,
+			TableInfo:       tableInfo,
+			TotalFileSize:   1,
+			DisablePrecheck: true,
+		},
+		Table: tableObj,
+	}
+
+	for _, cloudStorageURI := range []string{"", "s3://test-bucket/path"} {
+		c.Plan.CloudStorageURI = cloudStorageURI
+		err = c.CheckRequirements(ctx, tk.Session())
+		require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+		require.ErrorContains(t, err, "IMPORT INTO does not support hybrid TiCI indexes")
+	}
+}

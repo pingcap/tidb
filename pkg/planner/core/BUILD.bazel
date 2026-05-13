@@ -190,6 +190,7 @@ go_library(
         "//pkg/util/stringutil",
         "//pkg/util/syncutil",
         "//pkg/util/texttree",
+        "//pkg/util/timeutil",
         "//pkg/util/tracing",
         "//pkg/util/zeropool",
         "@com_github_bits_and_blooms_bitset//:bitset",

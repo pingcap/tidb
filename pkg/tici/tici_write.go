@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -108,11 +109,47 @@ func getEtcdClient() (cli *clientv3.Client, err error) {
 	})
 }
 
+func newTiCIDataWriterGroupManagerCtx(ctx context.Context, keyspaceID uint32) (*ManagerCtx, *clientv3.Client, error) {
+	failpoint.Inject("MockNewTiCIDataWriterGroupManagerCtx", func(val failpoint.Value) {
+		if enabled, ok := val.(bool); ok && enabled {
+			mockCtx, cancel := context.WithCancel(ctx)
+			mgrCtx := &ManagerCtx{
+				ctx:    mockCtx,
+				cancel: cancel,
+			}
+			mgrCtx.SetKeyspaceID(keyspaceID)
+			failpoint.Return(mgrCtx, (*clientv3.Client)(nil), nil)
+		}
+	})
+	etcdClient, err := getEtcdClientFunc()
+	if err != nil {
+		return nil, nil, err
+	}
+	mgrCtx, err := newManagerCtxFunc(ctx, etcdClient)
+	if err != nil {
+		closeEtcdClient(etcdClient)
+		return nil, nil, err
+	}
+	mgrCtx.SetKeyspaceID(keyspaceID)
+	return mgrCtx, etcdClient, nil
+}
+
 // NewTiCIDataWriterGroup constructs a DataWriterGroup covering the given indexIDs of the given table.
 func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string, tidbTaskID string, keyspaceID uint32, newIndexIDs []int64) (*DataWriterGroup, error) {
 	if len(newIndexIDs) == 0 {
 		return nil, nil // No new indexes on TiCI, no writers needed
 	}
+	failpoint.Inject("MockNewTiCIDataWriterGroup", func(val failpoint.Value) {
+		if x, ok := val.(bool); ok && x {
+			mockCtx, cancel := context.WithCancel(context.Background())
+			mgrCtx := &ManagerCtx{
+				ctx:    mockCtx,
+				cancel: cancel,
+			}
+			mgrCtx.SetKeyspaceID(keyspaceID)
+			failpoint.Return(newMockTiCIDataWriterGroupForTest(ctx, mgrCtx, tblInfo, schema, tidbTaskID, newIndexIDs), nil)
+		}
+	})
 
 	logger := logutil.Logger(ctx).With(zap.String("tidbTaskID", tidbTaskID), zap.Int64("tableID", tblInfo.ID))
 	logger.Info("building TiCIDataWriterGroup",
@@ -120,18 +157,15 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 		zap.Int64s("newIndexIDs", newIndexIDs),
 	)
 
-	etcdClient, err := getEtcdClient()
+	mgrCtx, etcdClient, err := newTiCIDataWriterGroupManagerCtx(ctx, keyspaceID)
 	if err != nil {
 		return nil, err
 	}
-	mgrCtx, err := NewManagerCtx(ctx, etcdClient)
-	if err != nil {
-		return nil, err
-	}
-	mgrCtx.SetKeyspaceID(keyspaceID)
 
 	indexMeta, err := NewTiCIIndexMeta(ctx, tblInfo, newIndexIDs, schema, tidbTaskID, mgrCtx)
 	if err != nil {
+		mgrCtx.Close()
+		closeEtcdClient(etcdClient)
 		return nil, err
 	}
 
@@ -144,6 +178,30 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 		etcdClient: etcdClient,
 	}
 	return g, nil
+}
+
+func newMockTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblInfo *model.TableInfo, schema string, tidbTaskID string, newIndexIDs []int64) *DataWriterGroup {
+	if len(newIndexIDs) == 0 {
+		return nil
+	}
+
+	logger := logutil.Logger(ctx).With(zap.Int64("tableID", tblInfo.ID))
+	logger.Info("building mock TiCIDataWriterGroup",
+		zap.String("schema", schema),
+		zap.Int64s("newIndexIDs", newIndexIDs),
+	)
+
+	return &DataWriterGroup{
+		indexMeta: &IndexMeta{
+			tidbTaskID: tidbTaskID,
+			tblInfo:    tblInfo,
+			schema:     schema,
+			ticiJobID:  1,
+			storeURI:   "noop:///mock-tici/import/mock_job",
+		},
+		logger: logger,
+		mgrCtx: mgrCtx,
+	}
 }
 
 func newTiCIDataWriterGroupForTest(ctx context.Context, mgrCtx *ManagerCtx, tblInfo *model.TableInfo, schema string) *DataWriterGroup {

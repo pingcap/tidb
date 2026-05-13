@@ -367,6 +367,10 @@ func (s *tikvStore) GetMPPClient() kv.MPPClient {
 	return s.coprStore.GetMPPClient()
 }
 
+func (s *tikvStore) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCountRequest, timeout time.Duration) (uint64, error) {
+	return s.coprStore.EstimateTiCICount(ctx, req, timeout)
+}
+
 // Close and unregister the store.
 func (s *tikvStore) Close() error {
 	mc.Lock()

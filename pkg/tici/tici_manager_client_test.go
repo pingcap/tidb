@@ -19,7 +19,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -43,6 +45,14 @@ type MockMetaServiceClient struct {
 func (m *MockMetaServiceClient) CreateIndex(ctx context.Context, in *CreateIndexRequest, opts ...grpc.CallOption) (*CreateIndexResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*CreateIndexResponse), args.Error(1)
+}
+func (m *MockMetaServiceClient) AddPartition(ctx context.Context, in *AddPartitionRequest, opts ...grpc.CallOption) (*AddPartitionResponse, error) {
+	args := m.Called(ctx, in)
+	return args.Get(0).(*AddPartitionResponse), args.Error(1)
+}
+func (m *MockMetaServiceClient) DropPartition(ctx context.Context, in *DropPartitionRequest, opts ...grpc.CallOption) (*DropPartitionResponse, error) {
+	args := m.Called(ctx, in)
+	return args.Get(0).(*DropPartitionResponse), args.Error(1)
 }
 func (m *MockMetaServiceClient) GetImportStoragePrefix(ctx context.Context, in *GetImportStoragePrefixRequest, opts ...grpc.CallOption) (*GetImportStoragePrefixResponse, error) {
 	args := m.Called(ctx, in)
@@ -101,34 +111,138 @@ func matchKeyspace[T interface{ GetKeyspaceId() uint32 }](expect uint32) func(T)
 }
 
 func TestCreateFulltextIndex(t *testing.T) {
-	mockClient := new(MockMetaServiceClient)
-	ctx := newTestTiCIManagerCtx(mockClient)
-	keyspaceID := uint32(123)
-	ctx.SetKeyspaceID(keyspaceID)
-	tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}}, Version: 1}
-	indexInfo := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx"), Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}
-	schemaName := "testdb"
+	t.Run("CreateFulltextIndex", func(t *testing.T) {
+		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
+		ctx := newTestTiCIManagerCtx(mockClient)
+		keyspaceID := uint32(123)
+		ctx.SetKeyspaceID(keyspaceID)
+		tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}}, Version: 1}
+		indexInfo := &model.IndexInfo{ID: 2, Name: ast.NewCIStr("idx"), Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}
+		schemaName := "testdb"
 
-	mockClient.
-		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
-		Return(&CreateIndexResponse{Status: ErrorCode_SUCCESS, IndexId: "2"}, nil).
-		Once()
-	err := ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
-	assert.NoError(t, err)
+		mockClient.
+			On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
+			Return(&CreateIndexResponse{Status: ErrorCode_SUCCESS, IndexId: "2"}, nil).
+			Once()
+		err := ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
+		assert.NoError(t, err)
 
-	mockClient.
-		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
-		Return(&CreateIndexResponse{Status: ErrorCode_UNKNOWN_ERROR, IndexId: "2", ErrorMessage: "fail"}, nil).
-		Once()
-	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
-	require.ErrorContains(t, err, "fail")
+		mockClient.
+			On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
+			Return(&CreateIndexResponse{Status: ErrorCode_UNKNOWN_ERROR, IndexId: "2", ErrorMessage: "fail"}, nil).
+			Once()
+		err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
+		require.ErrorContains(t, err, "fail")
 
-	mockClient.
-		On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
-		Return(&CreateIndexResponse{}, errors.New("rpc error")).
-		Once()
-	err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
-	require.ErrorContains(t, err, "rpc error")
+		mockClient.
+			On("CreateIndex", mock.Anything, mock.MatchedBy(matchKeyspace[*CreateIndexRequest](keyspaceID))).
+			Return(&CreateIndexResponse{}, errors.New("rpc error")).
+			Once()
+		err = ctx.CreateFulltextIndex(context.Background(), tblInfo, indexInfo, schemaName, nil)
+		require.ErrorContains(t, err, "rpc error")
+	})
+
+	t.Run("AddPartition", func(t *testing.T) {
+		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
+		ctx := newTestTiCIManagerCtx(mockClient)
+		keyspaceID := uint32(123)
+		ctx.SetKeyspaceID(keyspaceID)
+		tblInfo := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}}, Version: 1}
+		schemaName := "testdb"
+		indexIDs := []int64{2, 3}
+
+		mockClient.
+			On("AddPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*AddPartitionRequest](keyspaceID))).
+			Return(&AddPartitionResponse{Status: ErrorCode_SUCCESS, IndexIds: indexIDs}, nil).
+			Once()
+		err := ctx.AddPartition(context.Background(), tblInfo, indexIDs, schemaName, nil)
+		assert.NoError(t, err)
+
+		mockClient.
+			On("AddPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*AddPartitionRequest](keyspaceID))).
+			Return(&AddPartitionResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
+			Once()
+		err = ctx.AddPartition(context.Background(), tblInfo, indexIDs, schemaName, nil)
+		require.ErrorContains(t, err, "fail")
+
+		mockClient.
+			On("AddPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*AddPartitionRequest](keyspaceID))).
+			Return(&AddPartitionResponse{}, errors.New("rpc error")).
+			Once()
+		err = ctx.AddPartition(context.Background(), tblInfo, indexIDs, schemaName, nil)
+		require.ErrorContains(t, err, "rpc error")
+	})
+
+	t.Run("DropPartition", func(t *testing.T) {
+		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
+		ctx := newTestTiCIManagerCtx(mockClient)
+		keyspaceID := uint32(123)
+		ctx.SetKeyspaceID(keyspaceID)
+		tableID := int64(1)
+		indexIDs := []int64{2, 3}
+
+		mockClient.
+			On("DropPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*DropPartitionRequest](keyspaceID))).
+			Return(&DropPartitionResponse{Status: ErrorCode_SUCCESS}, nil).
+			Once()
+		err := ctx.DropPartition(context.Background(), tableID, indexIDs)
+		assert.NoError(t, err)
+
+		mockClient.
+			On("DropPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*DropPartitionRequest](keyspaceID))).
+			Return(&DropPartitionResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
+			Once()
+		err = ctx.DropPartition(context.Background(), tableID, indexIDs)
+		require.ErrorContains(t, err, "fail")
+
+		mockClient.
+			On("DropPartition", mock.Anything, mock.MatchedBy(matchKeyspace[*DropPartitionRequest](keyspaceID))).
+			Return(&DropPartitionResponse{}, errors.New("rpc error")).
+			Once()
+		err = ctx.DropPartition(context.Background(), tableID, indexIDs)
+		require.ErrorContains(t, err, "rpc error")
+	})
+}
+
+func TestBuildAddPartitionRequestUsesOnlyAddingDefinitions(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("t"),
+		Version: 1,
+		Columns: []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("c"), FieldType: types.FieldType{}}},
+		Partition: &model.PartitionInfo{
+			Type: ast.PartitionTypeRange,
+			Definitions: []model.PartitionDefinition{
+				{ID: 101, Name: ast.NewCIStr("p2023")},
+				{ID: 102, Name: ast.NewCIStr("p2024")},
+			},
+			AddingDefinitions: []model.PartitionDefinition{
+				{ID: 103, Name: ast.NewCIStr("p2026")},
+			},
+			DroppingDefinitions: []model.PartitionDefinition{
+				{ID: 104, Name: ast.NewCIStr("p_old")},
+			},
+		},
+	}
+
+	req, err := buildAddPartitionRequest(tblInfo, []int64{2, 3}, "testdb", 123, nil)
+	require.NoError(t, err)
+
+	var got model.TableInfo
+	require.NoError(t, json.Unmarshal(req.TableInfo, &got))
+	require.NotNil(t, got.Partition)
+	require.Len(t, got.Partition.Definitions, 1)
+	require.Equal(t, "p2026", got.Partition.Definitions[0].Name.L)
+	require.Empty(t, got.Partition.AddingDefinitions)
+	require.Empty(t, got.Partition.DroppingDefinitions)
+
+	// Keep the source table unchanged for the caller.
+	require.Len(t, tblInfo.Partition.Definitions, 2)
+	require.Len(t, tblInfo.Partition.AddingDefinitions, 1)
+	require.Len(t, tblInfo.Partition.DroppingDefinitions, 1)
 }
 
 func TestGetImportStoragePrefix(t *testing.T) {
@@ -141,7 +255,12 @@ func TestGetImportStoragePrefix(t *testing.T) {
 	indexIDs := []int64{2, 3}
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(func(req *GetImportStoragePrefixRequest) bool {
+			return matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID)(req) &&
+				req.GetTidbTaskId() == taskID &&
+				req.GetTableId() == tblID &&
+				slices.Equal(req.GetIndexIds(), indexIDs)
+		})).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
 		Once()
 	path, jobID, err := ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
@@ -150,14 +269,24 @@ func TestGetImportStoragePrefix(t *testing.T) {
 	assert.Equal(t, "/s3/path?endpoint=http://127.0.0.1", path)
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(func(req *GetImportStoragePrefixRequest) bool {
+			return matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID)(req) &&
+				req.GetTidbTaskId() == taskID &&
+				req.GetTableId() == tblID &&
+				slices.Equal(req.GetIndexIds(), indexIDs)
+		})).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
 	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
 	assert.Error(t, err)
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(func(req *GetImportStoragePrefixRequest) bool {
+			return matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID)(req) &&
+				req.GetTidbTaskId() == taskID &&
+				req.GetTableId() == tblID &&
+				slices.Equal(req.GetIndexIds(), indexIDs)
+		})).
 		Return(&GetImportStoragePrefixResponse{}, errors.New("rpc error")).
 		Once()
 	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
@@ -384,7 +513,7 @@ func TestFinishIndexUploadHelper(t *testing.T) {
 	originalGetEtcdClient := getEtcdClientFunc
 	originalNewManagerCtx := newManagerCtxFunc
 	getEtcdClientFunc = func() (*clientv3.Client, error) {
-		return &clientv3.Client{}, nil
+		return nil, nil
 	}
 	newManagerCtxFunc = func(_ context.Context, _ *clientv3.Client) (*ManagerCtx, error) {
 		return managerCtx, nil
@@ -408,37 +537,73 @@ func TestFinishIndexUploadHelper(t *testing.T) {
 }
 
 func TestScanRanges(t *testing.T) {
-	mockClient := new(MockMetaServiceClient)
-	ctx := newTestTiCIManagerCtx(mockClient)
-	tableID, indexID := int64(1), int64(2)
+	t.Run("success", func(t *testing.T) {
+		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
+		ctx := newTestTiCIManagerCtx(mockClient)
+		tableID, indexID := int64(1), int64(2)
 
-	keyRanges := []kv.KeyRange{
-		{StartKey: []byte("a"), EndKey: []byte("b")},
-		{StartKey: []byte("c"), EndKey: []byte("d")},
-	}
+		keyRanges := []kv.KeyRange{
+			{StartKey: []byte("a"), EndKey: []byte("b")},
+			{StartKey: []byte("c"), EndKey: []byte("d")},
+		}
 
-	mockClient.
-		On("GetShardLocalCacheInfo", mock.Anything, mock.Anything).
-		Return(&GetShardLocalCacheResponse{
-			Status: 0,
-			ShardLocalCacheInfos: []*ShardLocalCacheInfo{
-				{Shard: &ShardManifestHeader{ShardId: 1, StartKey: []byte("a"), EndKey: []byte("b"), Epoch: 1}, LocalCacheAddrs: []string{"addr1"}},
-				{Shard: &ShardManifestHeader{ShardId: 2, StartKey: []byte("c"), EndKey: []byte("d"), Epoch: 1}, LocalCacheAddrs: []string{"addr2"}},
-			},
-		}, nil).
-		Once()
+		mockClient.
+			On("GetShardLocalCacheInfo", mock.Anything, mock.Anything).
+			Return(&GetShardLocalCacheResponse{
+				Status: 0,
+				ShardLocalCacheInfos: []*ShardLocalCacheInfo{
+					{Shard: &ShardManifestHeader{ShardId: 1, StartKey: []byte("a"), EndKey: []byte("b"), Epoch: 1}, LocalCacheAddrs: []string{"addr1"}},
+					{Shard: &ShardManifestHeader{ShardId: 2, StartKey: []byte("c"), EndKey: []byte("d"), Epoch: 1}, LocalCacheAddrs: []string{"addr2"}},
+				},
+			}, nil).
+			Once()
 
-	shardInfos, err := ctx.ScanRanges(context.Background(), tableID, indexID, keyRanges, 100)
-	assert.NoError(t, err)
-	assert.Len(t, shardInfos, 2)
-	assert.Equal(t, uint64(1), shardInfos[0].Shard.ShardId)
-	assert.Equal(t, []byte("a"), shardInfos[0].Shard.StartKey)
-	assert.Equal(t, []byte("b"), shardInfos[0].Shard.EndKey)
-	assert.Equal(t, []string{"addr1"}, shardInfos[0].LocalCacheAddrs)
-	assert.Equal(t, uint64(2), shardInfos[1].Shard.ShardId)
-	assert.Equal(t, []byte("c"), shardInfos[1].Shard.StartKey)
-	assert.Equal(t, []byte("d"), shardInfos[1].Shard.EndKey)
-	assert.Equal(t, []string{"addr2"}, shardInfos[1].LocalCacheAddrs)
+		shardInfos, err := ctx.ScanRanges(context.Background(), tableID, indexID, keyRanges, 100)
+		assert.NoError(t, err)
+		assert.Len(t, shardInfos, 2)
+		assert.Equal(t, uint64(1), shardInfos[0].Shard.ShardId)
+		assert.Equal(t, []byte("a"), shardInfos[0].Shard.StartKey)
+		assert.Equal(t, []byte("b"), shardInfos[0].Shard.EndKey)
+		assert.Equal(t, []string{"addr1"}, shardInfos[0].LocalCacheAddrs)
+		assert.Equal(t, uint64(2), shardInfos[1].Shard.ShardId)
+		assert.Equal(t, []byte("c"), shardInfos[1].Shard.StartKey)
+		assert.Equal(t, []byte("d"), shardInfos[1].Shard.EndKey)
+		assert.Equal(t, []string{"addr2"}, shardInfos[1].LocalCacheAddrs)
+	})
+
+	t.Run("retry_on_worker_not_found", func(t *testing.T) {
+		mockClient := new(MockMetaServiceClient)
+		t.Cleanup(func() { mockClient.AssertExpectations(t) })
+		ctx := newTestTiCIManagerCtx(mockClient)
+		tableID, indexID := int64(1), int64(2)
+
+		keyRanges := []kv.KeyRange{
+			{StartKey: []byte("a"), EndKey: []byte("b")},
+		}
+
+		mockClient.
+			On("GetShardLocalCacheInfo", mock.Anything, mock.Anything).
+			Return(&GetShardLocalCacheResponse{Status: int32(ErrorCode_WORKER_NOT_FOUND)}, nil).
+			Once()
+		mockClient.
+			On("GetShardLocalCacheInfo", mock.Anything, mock.Anything).
+			Return(&GetShardLocalCacheResponse{
+				Status: 0,
+				ShardLocalCacheInfos: []*ShardLocalCacheInfo{
+					{Shard: &ShardManifestHeader{ShardId: 1, StartKey: []byte("a"), EndKey: []byte("b"), Epoch: 1}, LocalCacheAddrs: []string{"addr1"}},
+				},
+			}, nil).
+			Once()
+
+		reqCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		t.Cleanup(cancel)
+		shardInfos, err := ctx.ScanRanges(reqCtx, tableID, indexID, keyRanges, 100)
+		require.NoError(t, err)
+		require.Len(t, shardInfos, 1)
+		require.Equal(t, uint64(1), shardInfos[0].Shard.ShardId)
+		require.Equal(t, []string{"addr1"}, shardInfos[0].LocalCacheAddrs)
+	})
 }
 
 func TestModelTableToTiCITableInfo(t *testing.T) {

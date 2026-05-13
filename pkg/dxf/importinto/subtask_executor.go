@@ -16,7 +16,6 @@ package importinto
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -59,6 +58,8 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 		mTtask: t,
 	}
 }
+
+var finishTiCIIndexUpload = tici.FinishIndexUpload
 
 func (e *importMinimalTaskExecutor) Run(
 	ctx context.Context,
@@ -127,37 +128,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		return err
 	}
 
-	// Call Backend.PostProcess to finish TiCI index upload if needed.
-	// This should be called after all engines are imported.
-	// We need to recreate TableImporter here because post process step executor is different
-	// from import step executor. The same tidbTaskID will ensure we get the same TiCI job ID.
-	tableImporter, err := getTableImporter(ctx, p.taskID, p.taskMeta, p.store, logger)
-	if err != nil {
-		logger.Warn("failed to get table importer for post process", zap.Error(err))
-		// Continue with other post process steps even if we can't get table importer
-	} else {
-		defer func() {
-			if closeErr := tableImporter.Close(); closeErr != nil {
-				logger.Warn("failed to close table importer", zap.Error(closeErr))
-			}
-		}()
-		backend := tableImporter.Backend()
-		if backend != nil {
-			// Re-initialize TiCI writer group with the same taskID to get the same ticiJobID
-			taskIDStr := strconv.FormatInt(p.taskID, 10)
-			// The newIndexIDs is not critical here as we only need to get the ticiJobID by taskID.
-			// Now we collect all the tici indexIDs because `InitTiCIWriterGroup` require a non-empty indexIDs.
-			newIndexIDs := tici.GetTiCIIndexIDs(plan.TableInfo)
-			if err := backend.InitTiCIWriterGroup(ctx, plan.TableInfo, plan.DBName, taskIDStr, newIndexIDs); err != nil {
-				logger.Warn("failed to init TiCI writer group for post process", zap.Error(err))
-				// Continue with other post process steps even if we can't init TiCI writer group
-			} else {
-				if err := backend.PostProcess(ctx); err != nil {
-					return errors.Annotate(err, "backend post process failed")
-				}
-			}
-		}
-	}
+	finishTiCIIndexUploadForPostProcess(ctx, p.store, p.taskID, p.taskMeta.JobID, plan, logger)
 
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	for id, cksum := range subtaskMeta.Checksum {
@@ -170,7 +141,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		)
 		localChecksum.AddRawGroup(id, cksum.Size, cksum.KVs, cksum.Sum)
 	}
-	encodeStepChecksum := localChecksum.MergedChecksum()
+	encodeStepChecksum := importer.MainChecksumForValidation(plan, localChecksum)
 	deletedRowsChecksum := subtaskMeta.DeletedRowsChecksum.ToKVChecksum()
 	finalChecksum := encodeStepChecksum
 	finalChecksum.Sub(deletedRowsChecksum)
@@ -188,13 +159,14 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		mgr := local.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
 			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
 		defer mgr.Close()
+		checksumTableInfo := importer.TableInfoForRemoteChecksumValidation(plan)
 		return importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
 			func() (*local.RemoteChecksum, error) {
 				ctxWithLogger := logutil.WithLogger(ctx, logger)
 				return mgr.Checksum(ctxWithLogger, &checkpoints.TidbTableInfo{
 					DB:   plan.DBName,
 					Name: plan.TableInfo.Name.L,
-					Core: plan.TableInfo,
+					Core: checksumTableInfo,
 				})
 			},
 		)
@@ -219,4 +191,39 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		}
 		return err
 	})
+}
+
+func finishTiCIIndexUploadForPostProcess(
+	ctx context.Context,
+	store kv.Storage,
+	taskID int64,
+	jobID int64,
+	plan *importer.Plan,
+	logger *zap.Logger,
+) {
+	if plan == nil || plan.TableInfo == nil {
+		return
+	}
+
+	ticiIndexIDs := tici.GetTiCIIndexIDs(plan.TableInfo)
+	if len(ticiIndexIDs) == 0 {
+		return
+	}
+
+	tidbTaskID := ticiTaskIDForImportInto(jobID)
+	if err := finishTiCIIndexUpload(ctx, store, tidbTaskID); err != nil {
+		logger.Warn(
+			"failed to finish TiCI index upload for post process",
+			zap.Int64("task-id", taskID),
+			zap.Int64s("tici-index-ids", ticiIndexIDs),
+			zap.Error(err),
+		)
+		return
+	}
+
+	logger.Info(
+		"finished TiCI index upload for post process",
+		zap.Int64("task-id", taskID),
+		zap.Int64s("tici-index-ids", ticiIndexIDs),
+	)
 }
