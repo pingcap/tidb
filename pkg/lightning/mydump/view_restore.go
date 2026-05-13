@@ -130,7 +130,7 @@ func NewSchemaImportPlan(ctx context.Context, store storeapi.Storage, sqlMode my
 				return nil, err
 			}
 			if strings.TrimSpace(sqlStr) == "" {
-				continue
+				return nil, errors.Errorf("empty schema for view %s.%s", viewMeta.DB, viewMeta.Name)
 			}
 
 			parsed, err := parseViewSchemaSQL(p, filterTableName(viewMeta.DB, viewMeta.Name), sqlStr)

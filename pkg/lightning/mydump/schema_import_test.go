@@ -246,16 +246,13 @@ func TestSchemaImporter(t *testing.T) {
 	})
 
 	t.Run("view: fail on create", func(t *testing.T) {
-		fileNameV0 := "empty-file.sql"
 		fileNameV1 := "invalid-schema.sql"
 		fileNameV2 := "test02.v2-schema-view.sql"
-		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV0), []byte(""), 0o644))
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV1), []byte("xxxx;"), 0o644))
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV2), []byte("create view v2 as select * from t;"), 0o644))
 		dbMetas := []*MDDatabaseMeta{
 			{Name: "test01"},
 			{Name: "test02", Views: []*MDTableMeta{
-				{DB: "test02", Name: "V0", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV0}}},
 				{DB: "test02", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV1}}},
 				{DB: "test02", Name: "V2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV2}}}}},
 		}
@@ -284,7 +281,6 @@ func TestSchemaImporter(t *testing.T) {
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		require.NoError(t, importer.Run(ctx, validViews))
 		require.NoError(t, mock.ExpectationsWereMet())
-		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV0)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV1)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV2)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameValidV1)))
@@ -328,6 +324,26 @@ func TestNewSchemaImportPlan(t *testing.T) {
 	require.Equal(t, "v1", plan.viewPlan.ordered[0].key.Name)
 	require.Equal(t, "v2", plan.viewPlan.ordered[1].key.Name)
 	require.Empty(t, plan.viewPlan.ordered[0].externalDeps)
+}
+
+func TestNewSchemaImportPlanRejectsEmptyViewSchema(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	store, err := objstore.NewLocalStorage(tempDir)
+	require.NoError(t, err)
+
+	fileName := "test.v1-schema-view.sql"
+	require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte(""), 0o644))
+
+	_, err = NewSchemaImportPlan(ctx, store, mysql.SQLMode(0), []*MDDatabaseMeta{
+		{
+			Name: "test",
+			Views: []*MDTableMeta{
+				{DB: "test", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
+			},
+		},
+	})
+	require.ErrorContains(t, err, "empty schema for view test.v1")
 }
 
 func TestLoaderBuildsSchemaImportPlan(t *testing.T) {
