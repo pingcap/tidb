@@ -864,6 +864,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBadUser:                                               mysql.Message("User %s does not exist.", nil),
 	ErrUserAlreadyExists:                                     mysql.Message("User %s already exists.", nil),
 	ErrInvalidJSONPathArrayCell:                              mysql.Message("A path expression is not a path to a cell in an array.", nil),
+	ErrUserPrefixMismatch:                                    mysql.Message("User name prefix does not match the assigned keyspace.", nil),
 	ErrInvalidEncryptionOption:                               mysql.Message("Invalid encryption option.", nil),
 	ErrTooLongValueForType:                                   mysql.Message("Too long enumeration/set value for column %s.", nil),
 	ErrPKIndexCantBeInvisible:                                mysql.Message("A primary key index cannot be invisible", nil),

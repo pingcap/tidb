@@ -812,9 +812,9 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	sslVersion := ""
 	if cc.isUnixSocket {
 		connType = variable.ConnTypeUnixSocket
-	} else if cc.tlsConn != nil {
+	} else if tlsState := cc.getTLSState(); tlsState != nil {
 		connType = variable.ConnTypeTLS
-		sslVersionNum := cc.tlsConn.ConnectionState().Version
+		sslVersionNum := tlsState.Version
 		switch sslVersionNum {
 		case tls.VersionTLS12:
 			sslVersion = "TLSv1.2"

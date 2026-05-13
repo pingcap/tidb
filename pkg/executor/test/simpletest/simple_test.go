@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -37,6 +39,44 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
+
+func TestStarterUsernamePolicyInSimpleExec(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is nextgen-only")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		restoreConfig()
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "SYSTEM"
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user if not exists `SYSTEM.r1`@`%`")
+	tk.MustExec("create user if not exists `SYSTEM.u1`@`%`")
+
+	tk.MustContainErrMsg("create user u2@'%' identified by 'pwd'", "User name must start with `SYSTEM.`")
+	tk.MustContainErrMsg("create role r2", "User name must start with `SYSTEM.`")
+	tk.MustExec("create role `SYSTEM.r2`")
+	tk.MustQuery("select User from mysql.user where User='SYSTEM.r2' and Host='%'").Check(testkit.Rows("SYSTEM.r2"))
+	tk.MustContainErrMsg("rename user `SYSTEM.u1`@`%` to u2@'%'", "User name must start with `SYSTEM.`")
+
+	tk.MustExec("grant r1 to u1")
+	tk.MustQuery("select TO_USER from mysql.role_edges where FROM_USER='SYSTEM.r1' and TO_USER='SYSTEM.u1' and TO_HOST='%'").Check(testkit.Rows("SYSTEM.u1"))
+
+	tk.MustExec("revoke `SYSTEM.r1` from `SYSTEM.u1`")
+	tk.MustQuery("select TO_USER from mysql.role_edges where FROM_USER='SYSTEM.r1' and TO_USER='SYSTEM.u1' and TO_HOST='%'").Check(testkit.Rows())
+
+	tk.MustExec("alter user u1 identified by 'pwd2'")
+	tk.MustQuery("select authentication_string from mysql.user where user='SYSTEM.u1' and host='%'").Check(testkit.Rows(auth.EncodePassword("pwd2")))
+}
 
 func TestUserWithSetNames(t *testing.T) {
 	store := testkit.CreateMockStore(t)

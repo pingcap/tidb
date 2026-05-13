@@ -19,7 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,6 +72,42 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	} else {
 		require.Nil(t, getKeyspaceNameByte)
 	}
+}
+
+func TestUsernamePolicy(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		restoreConfig()
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(originalMode))
+		}
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "ks"
+	})
+
+	policy := GetUsernamePolicy()
+	require.NoError(t, policy.ValidateUsername("user"))
+	require.Empty(t, policy.GetUsernameVariants("user"))
+	require.Empty(t, policy.GetOriginalUsername("ks.user"))
+
+	if !kerneltype.IsNextGen() {
+		return
+	}
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	policy = GetUsernamePolicy()
+	require.NoError(t, policy.ValidateUsername("ks.user"))
+	require.True(t, policy.ValidateUsernameFormat("other.user"))
+	require.True(t, policy.ValidateUsernameFormat("other.user.extra"))
+	require.True(t, terror.ErrorEqual(policy.ValidateUsername("user"), exeerrors.ErrUserNameNeedPrefix))
+	require.Equal(t, []string{"ks.user"}, policy.GetUsernameVariants("user"))
+	require.Empty(t, policy.GetUsernameVariants("ks.user"))
+	require.Empty(t, policy.GetUsernameVariants("other.user"))
+	require.Empty(t, policy.GetUsernameVariants("other.user.extra"))
+	require.Equal(t, "user", policy.GetOriginalUsername("ks.user"))
 }
 
 func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {

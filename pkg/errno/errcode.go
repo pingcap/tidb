@@ -861,6 +861,7 @@ const (
 	ErrBadUser                                               = 3162
 	ErrUserAlreadyExists                                     = 3163
 	ErrInvalidJSONPathArrayCell                              = 3165
+	ErrUserPrefixMismatch                                    = 20003
 	ErrInvalidEncryptionOption                               = 3184
 	ErrTooLongValueForType                                   = 3505
 	ErrPKIndexCantBeInvisible                                = 3522
