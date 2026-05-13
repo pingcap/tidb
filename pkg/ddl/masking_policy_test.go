@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -62,5 +63,18 @@ func TestMaskingPolicyCaseExpression(t *testing.T) {
 	tk.MustQuery("select expression like 'CASE WHEN %' from mysql.tidb_masking_policy where policy_name = 'p_case'").
 		Check(testkit.Rows("1"))
 	tk.MustQuery("select expression like '%CURRENT_USER()%' from mysql.tidb_masking_policy where policy_name = 'p_case'").
+		Check(testkit.Rows("1"))
+}
+
+func TestMaskingPolicyIfNotExists(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table t_mask (c char(120))")
+
+	dbChangeTestParallelExecSQL(t, store, "create masking policy if not exists p on t_mask(c) as c")
+
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where db_name = 'test_db_state' and table_name = 't_mask' and policy_name = 'p'").
 		Check(testkit.Rows("1"))
 }
