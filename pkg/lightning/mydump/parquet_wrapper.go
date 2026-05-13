@@ -43,8 +43,7 @@ var (
 	rowGroupInMemoryThreshold = 128 * units.MiB
 
 	// smallFileThreshold preloads the entire file in one read when its size
-	// is at or below this value, so footer parsing and row-group reads share
-	// the same buffer.
+	// is at or below this value.
 	smallFileThreshold = 8 * units.MiB
 )
 

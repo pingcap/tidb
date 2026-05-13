@@ -872,6 +872,7 @@ func (pp *ParquetParser) preloadBufferBytes() (int64, error) {
 	if pp.fileMeta == nil || pp.fileMeta.NumRowGroups() == 0 {
 		return 0, nil
 	}
+
 	rgRange, err := rowGroupRangeFromMeta(pp.fileMeta, 0)
 	if err != nil {
 		return 0, err
