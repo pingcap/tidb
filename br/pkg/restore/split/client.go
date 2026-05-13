@@ -603,7 +603,7 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 	return len(regionInfo.PendingPeers) == 0, nil
 }
 
-func (c *pdClient) getEncodedKeysFn(start, end []byte) (encodedStart, encodedEnd []byte, err error) {
+func (c *pdClient) getEncodedKeys(start, end []byte) (encodedStart, encodedEnd []byte, err error) {
 	if codecCli := c.GetCodecPDClient(); codecCli != nil {
 		cd := codecCli.GetCodec()
 		encodedStart, encodedEnd, err = cd.DecodeRange(start, end)
@@ -630,7 +630,7 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 	if len(lastKey) > 0 {
 		lastKey = lastKey.Next()
 	}
-	scanStart, scanEnd, err := c.getEncodedKeysFn(sortedSplitKeys[0], lastKey)
+	scanStart, scanEnd, err := c.getEncodedKeys(sortedSplitKeys[0], lastKey)
 	if err != nil {
 		return nil, err
 	}
@@ -646,7 +646,7 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 
 		if len(retrySplitKeys) > 0 {
 			lastKey2 := kv.Key(retrySplitKeys[len(retrySplitKeys)-1])
-			scanStart, scanEnd, err = c.getEncodedKeysFn(retrySplitKeys[0], lastKey2.Next())
+			scanStart, scanEnd, err = c.getEncodedKeys(retrySplitKeys[0], lastKey2.Next())
 			if err != nil {
 				return err
 			}
