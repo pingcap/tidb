@@ -79,6 +79,12 @@ type Param struct {
 	TaskRuntime sqlsvrapi.Runtime
 }
 
+// TaskSlotSnapshot is the task/slot view captured from slot manager.
+type TaskSlotSnapshot struct {
+	ID            int64
+	RequiredSlots int
+}
+
 // NewParamForTest creates a new Param for test.
 func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string) Param {
 	return Param{
@@ -669,6 +675,17 @@ func (e *BaseTaskExecutor) GetTaskBase() *proto.TaskBase {
 	return &task.TaskBase
 }
 
+// ExecutorTaskSlotsSnapshot returns the current task/slot snapshot tracked by
+// the executor slot manager.
+func (e *BaseTaskExecutor) ExecutorTaskSlotsSnapshot() []TaskSlotSnapshot {
+	return e.slotMgr.executorTaskSlotsSnapshot()
+}
+
+// GetTaskTable returns the task table bound to the executor.
+func (e *BaseTaskExecutor) GetTaskTable() TaskTable {
+	return e.taskTable
+}
+
 // CancelRunningSubtask implements TaskExecutor.CancelRunningSubtask.
 func (e *BaseTaskExecutor) CancelRunningSubtask() {
 	e.cancelRunStepWith(ErrCancelSubtask)
@@ -791,9 +808,4 @@ func (e *BaseTaskExecutor) failOneSubtask(ctx context.Context, taskID int64, sub
 		e.logger.Error("fail one subtask failed", zap.NamedError("subtaskErr", subtaskErr),
 			zap.Duration("takes", time.Since(start)), zap.Error(err1))
 	}
-}
-
-// GetTaskTable returns the TaskTable of the TaskExecutor.
-func (e *BaseTaskExecutor) GetTaskTable() TaskTable {
-	return e.taskTable
 }
