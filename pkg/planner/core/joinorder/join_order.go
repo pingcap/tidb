@@ -682,11 +682,10 @@ func (j *joinOrderGreedy) optimizeWithSeed(detector *ConflictDetector, nodes []*
 		// So we got here and we need to the second round of enumeration with `allowNoEQ` as true.
 		befLen := len(nodes)
 		// Clamp to 1 to avoid cumCost*0=0 making non-EQ joins appear free.
-		secondRoundFactor := cartesianFactor
-		if secondRoundFactor <= 0 {
-			secondRoundFactor = 1
+		if cartesianFactor <= 0 {
+			cartesianFactor = 1
 		}
-		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, secondRoundFactor, true); err != nil {
+		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
 			return nil, err
 		}
 		if len(nodes) != befLen {
