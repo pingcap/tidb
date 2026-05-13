@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -212,23 +213,10 @@ type Config struct {
 	ClusterSSLCert string
 	ClusterSSLKey  string
 
-	ParquetCompressType ParquetCompressType
+	ParquetCompressType compressedio.CompressType
 	ParquetPageSize     int64
 	ParquetRowGroupSize int64
 }
-
-type ParquetCompressType string
-
-const (
-	// NoCompression won't compress given bytes.
-	NoCompression ParquetCompressType = "no-compression"
-	// Gzip will compress given bytes in gzip format.
-	Gzip ParquetCompressType = "gz"
-	// Snappy will compress given bytes in snappy format.
-	Snappy ParquetCompressType = "snappy"
-	// Zstd will compress given bytes in zstd format.
-	Zstd ParquetCompressType = "zst"
-)
 
 // ServerInfoUnknown is the unknown database type to dumpling
 var ServerInfoUnknown = version.ServerInfo{
@@ -285,6 +273,9 @@ func DefaultConfig() *Config {
 		ClusterSSLCA:             "",
 		ClusterSSLCert:           "",
 		ClusterSSLKey:            "",
+		ParquetCompressType:      compressedio.Snappy,
+		ParquetPageSize:          units.MiB,
+		ParquetRowGroupSize:      parquetfile.DefaultRowGroupMemoryLimitBytes,
 	}
 }
 
@@ -408,8 +399,8 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
 	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
-	flags.Int64(flagParquetPageSize, 1024*1024, "Parquet page size in bytes")
-	flags.Int64(flagParquetRowGroupSize, 16*1024*1024, "Parquet row group size in bytes")
+	flags.String(flagParquetPageSize, units.BytesSize(float64(units.MiB)), "Parquet page size in bytes, accepts human-readable units")
+	flags.String(flagParquetRowGroupSize, units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)), "Parquet row group size in bytes, accepts human-readable units")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -665,11 +656,11 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.ParquetPageSize, err = flags.GetInt64(flagParquetPageSize)
+	conf.ParquetPageSize, err = parseSizeFlag(flags, flagParquetPageSize)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.ParquetRowGroupSize, err = flags.GetInt64(flagParquetRowGroupSize)
+	conf.ParquetRowGroupSize, err = parseSizeFlag(flags, flagParquetRowGroupSize)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -775,19 +766,23 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
-func ParseParquetCompressType(compressType string) (ParquetCompressType, error) {
-	switch compressType {
-	case "no-compression":
-		return NoCompression, nil
-	case "gzip", "gz":
-		return Gzip, nil
-	case "", "snappy":
-		return Snappy, nil
-	case "zstd", "zst":
-		return Zstd, nil
-	default:
-		return NoCompression, errors.Errorf("unknown compress type %s", compressType)
+func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
+	size, err := flags.GetString(flagName)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
+	bytes, err := units.RAMInBytes(size)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to parse --%s", flagName)
+	}
+	return bytes, nil
+}
+
+func ParseParquetCompressType(compressType string) (compressedio.CompressType, error) {
+	if compressType == "" {
+		return compressedio.Snappy, nil
+	}
+	return compressedio.ParseCompressType(compressType)
 }
 
 func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {

@@ -677,15 +677,15 @@ func WriteInsertInParquet(
 	return counter, nil
 }
 
-func getParquetCompress(tp ParquetCompressType) compress.Compression {
+func getParquetCompress(tp compressedio.CompressType) compress.Compression {
 	switch tp {
-	case NoCompression:
+	case compressedio.NoCompression:
 		return compress.Codecs.Uncompressed
-	case Gzip:
+	case compressedio.Gzip:
 		return compress.Codecs.Gzip
-	case Snappy:
+	case compressedio.Snappy:
 		return compress.Codecs.Snappy
-	case Zstd:
+	case compressedio.Zstd:
 		return compress.Codecs.Zstd
 	default:
 		return compress.Codecs.Snappy

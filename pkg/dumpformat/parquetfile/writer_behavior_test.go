@@ -90,8 +90,8 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 
 	defaultOptions := defaultWriterOptions()
 	defaultProps := parquet.NewWriterProperties(defaultOptions.writerProperties...)
-	require.Equal(t, defaultCompressionType, defaultProps.Compression())
-	require.EqualValues(t, defaultRowGroupMemoryLimitBytes, defaultOptions.rowGroupMemoryLimitBytes)
+	require.Equal(t, compress.Codecs.Snappy, defaultProps.Compression())
+	require.EqualValues(t, DefaultRowGroupMemoryLimitBytes, defaultOptions.rowGroupMemoryLimitBytes)
 
 	t.Run("flushes row group by accounted memory bytes", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -149,7 +149,7 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 		var buf bytes.Buffer
 		pw, err := NewParquetWriter(&buf, []*ColumnInfo{
 			{Name: "name", DatabaseTypeName: "VARCHAR"},
-		}, WithRowGroupMemoryLimit(defaultRowGroupMemoryLimitBytes))
+		}, WithRowGroupMemoryLimit(DefaultRowGroupMemoryLimitBytes))
 		require.NoError(t, err)
 
 		require.Equal(t, uint64(pw.totalWrittenBytes()), pw.EstimateFileSize())

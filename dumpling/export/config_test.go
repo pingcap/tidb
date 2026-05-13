@@ -4,10 +4,14 @@ package export
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,4 +54,43 @@ func TestGetConfTables(t *testing.T) {
 	actualDBTables, err := GetConfTables(tablesList)
 	require.NoError(t, err)
 	require.Equal(t, expectedDBTables, actualDBTables)
+}
+
+func TestParseParquetDefaultFlags(t *testing.T) {
+	defaultConf := DefaultConfig()
+	require.Equal(t, compressedio.Snappy, defaultConf.ParquetCompressType)
+	require.EqualValues(t, units.MiB, defaultConf.ParquetPageSize)
+	require.EqualValues(t, 120*units.MiB, defaultConf.ParquetRowGroupSize)
+
+	conf := parseConfigFromArgsForTest(t)
+	require.Equal(t, reflect.TypeOf(compressedio.NoCompression), reflect.TypeOf(conf.ParquetCompressType))
+	require.EqualValues(t, units.MiB, conf.ParquetPageSize)
+	require.EqualValues(t, 120*units.MiB, conf.ParquetRowGroupSize)
+	require.Equal(t, compressedio.Snappy, conf.ParquetCompressType)
+}
+
+func TestParseParquetSizeFlags(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t,
+		"--filetype", "parquet",
+		"--parquet-page-size", "2MiB",
+		"--parquet-row-group-size", "128MiB",
+	)
+	require.EqualValues(t, 2*units.MiB, conf.ParquetPageSize)
+	require.EqualValues(t, 128*units.MiB, conf.ParquetRowGroupSize)
+}
+
+func parseConfigFromArgsForTest(t *testing.T, args ...string) *Config {
+	t.Helper()
+
+	conf := DefaultConfig()
+	flags := pflag.NewFlagSet("dumpling", pflag.ContinueOnError)
+	conf.DefineFlags(flags)
+	oldCommandLine := pflag.CommandLine
+	pflag.CommandLine = flags
+	t.Cleanup(func() {
+		pflag.CommandLine = oldCommandLine
+	})
+	require.NoError(t, flags.Parse(args))
+	require.NoError(t, conf.ParseFromFlags(flags))
+	return conf
 }

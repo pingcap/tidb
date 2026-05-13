@@ -28,10 +28,12 @@ import (
 )
 
 // defaultCompressionType is the default Parquet compression codec.
-var defaultCompressionType = compress.Codecs.Zstd
+var defaultCompressionType = compress.Codecs.Snappy
 
 const (
-	defaultRowGroupMemoryLimitBytes = 120 * units.MiB
+	// DefaultRowGroupMemoryLimitBytes is the default row-group flush threshold
+	// by accounted in-memory bytes.
+	DefaultRowGroupMemoryLimitBytes = 120 * units.MiB
 	definitionLevelMemoryBytes      = int64(2)
 )
 
@@ -125,7 +127,7 @@ func defaultWriterOptions() writerOptions {
 		writerProperties: []parquet.WriterProperty{
 			parquet.WithCompression(defaultCompressionType),
 		},
-		rowGroupMemoryLimitBytes: defaultRowGroupMemoryLimitBytes,
+		rowGroupMemoryLimitBytes: DefaultRowGroupMemoryLimitBytes,
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
@@ -235,8 +236,9 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileFmtExtension := format.Extension()
-	if format == FileFormatParquet && conf.ParquetCompressType != NoCompression {
-		fileFmtExtension = fmt.Sprintf("%s.%s", conf.ParquetCompressType, fileFmtExtension)
+	if format == FileFormatParquet && conf.ParquetCompressType != compressedio.NoCompression {
+		compressSuffix := strings.TrimPrefix(conf.ParquetCompressType.FileSuffix(), ".")
+		fileFmtExtension = fmt.Sprintf("%s.%s", compressSuffix, fileFmtExtension)
 	}
 	fileName, err := namer.NextName(conf.OutputFileTemplate, fileFmtExtension)
 	if err != nil {
