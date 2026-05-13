@@ -793,7 +793,6 @@ func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 		Offset: p.Offset,
 		Count:  p.Count,
 	}
-	tryPushDownLimitToTiCIIndexSide(p, reader)
 	if originStats := ts.StatsInfo(); originStats.RowCount >= p.StatsInfo().RowCount {
 		// Only reset the table scan stats when its row estimation is larger than the limit count.
 		// When indexLookUp push down is enabled, some rows have been looked up in TiKV side,
@@ -809,33 +808,6 @@ func sinkIntoIndexLookUp(p *physicalop.PhysicalLimit, t base.Task) bool {
 		proj.SetStats(p.StatsInfo())
 	}
 	return true
-}
-
-// For TiCI MPP double-read path, keep the index-side Limit under ExchangeSender so the
-// index scan can stop early before producing excessive handles to the probe side.
-func tryPushDownLimitToTiCIIndexSide(p *physicalop.PhysicalLimit, reader *physicalop.PhysicalIndexLookUpReader) {
-	if reader == nil || reader.IndexPlan == nil || reader.ReadReqType != physicalop.MPP || len(reader.IndexPlans) == 0 {
-		return
-	}
-	is, ok := reader.IndexPlans[0].(*physicalop.PhysicalIndexScan)
-	if !ok || !is.IsTiCIFTSScan() {
-		return
-	}
-	sender, ok := reader.IndexPlan.(*physicalop.PhysicalExchangeSender)
-	if !ok || len(sender.Children()) != 1 {
-		return
-	}
-	if _, alreadyLimited := sender.Children()[0].(*physicalop.PhysicalLimit); alreadyLimited {
-		return
-	}
-	newCount := p.Offset + p.Count
-	childProfile := sender.Children()[0].StatsInfo()
-	stats := property.DeriveLimitStats(childProfile, float64(newCount))
-	pushedDownLimit := physicalop.PhysicalLimit{Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
-	pushedDownLimit.SetChildren(sender.Children()[0])
-	pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
-	sender.SetChildren(pushedDownLimit)
-	reader.IndexPlans, reader.IndexPlansUnNatureOrders = physicalop.FlattenTreePushDownPlan(reader.IndexPlan)
 }
 
 func sinkIntoIndexMerge(p *physicalop.PhysicalLimit, t base.Task) bool {
