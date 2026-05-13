@@ -1524,7 +1524,7 @@ func isTiCIFTSAccessPath(path *util.AccessPath) bool {
 	return path != nil &&
 		path.Index != nil &&
 		path.Index.IsTiCIIndex() &&
-		(path.FtsQueryInfo != nil || expression.ContainsFullTextSearchFn(path.AccessConds...))
+		path.FtsQueryInfo != nil
 }
 
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
