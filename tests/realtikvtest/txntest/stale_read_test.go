@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -1480,6 +1481,9 @@ func TestStaleTSO(t *testing.T) {
 }
 
 func TestStaleReadNoBackoff(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip test on next-gen kernel since it doesn't support stale read")
+	}
 	cfg := config.GetGlobalConfig()
 	cfg.Labels = map[string]string{"zone": "us-east-1a"}
 	config.StoreGlobalConfig(cfg)
