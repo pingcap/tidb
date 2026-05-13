@@ -19,8 +19,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -240,4 +242,59 @@ func TestIncrementalAnalyze(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustMatchErrMsg("analyze incremental table t partition p0 index idx", msg)
+}
+
+func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
+	const valueLen = 8 * 1024
+	// Ensure sample values are small enough to be retained in the collector;
+	// values exceeding MaxSampleValueLength are truncated, which would make
+	// the memory-release assertions unreliable.
+	require.Greater(t, statistics.MaxSampleValueLength, valueLen)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_enable_extended_stats=off")
+	tk.MustExec("set @@tidb_build_sampling_stats_concurrency=1")
+	tk.MustExec("set @@tidb_analyze_skip_column_types=''")
+	tk.MustExec("drop table if exists t_mem_release")
+	tk.MustExec("create table t_mem_release(a text collate utf8mb4_general_ci)")
+	tk.MustExec(fmt.Sprintf("insert into t_mem_release values (repeat('a', %d))", valueLen))
+	for i := 0; i < 6; i++ {
+		tk.MustExec("insert into t_mem_release select a from t_mem_release")
+	}
+
+	var beforeBytes atomic.Int64
+	var afterBytes atomic.Int64
+	var beforeCollectorMem atomic.Int64
+	var afterCollectorMem atomic.Int64
+	var beforeSeen atomic.Bool
+	var afterSeen atomic.Bool
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildBeforeReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
+		if beforeSeen.CompareAndSwap(false, true) {
+			beforeBytes.Store(bytesConsumed)
+			beforeCollectorMem.Store(collectorMemSize)
+		}
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildBeforeReleaseCollectorMemory"))
+	}()
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildAfterReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
+		if afterSeen.CompareAndSwap(false, true) {
+			afterBytes.Store(bytesConsumed)
+			afterCollectorMem.Store(collectorMemSize)
+		}
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildAfterReleaseCollectorMemory"))
+	}()
+
+	tk.MustExec("analyze table t_mem_release with 1.0 samplerate")
+
+	require.True(t, beforeSeen.Load())
+	require.True(t, afterSeen.Load())
+	require.NotZero(t, beforeCollectorMem.Load())
+	require.Equal(t, beforeCollectorMem.Load(), afterCollectorMem.Load())
+	require.Equal(t, beforeBytes.Load()-beforeCollectorMem.Load(), afterBytes.Load())
 }

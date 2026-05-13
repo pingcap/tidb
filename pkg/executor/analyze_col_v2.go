@@ -346,7 +346,12 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		samplingStatsConcurrency = totalLen
 	}
 	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
-	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
+	var sampleCollectors []*statistics.SampleCollector
+	if needExtStats {
+		// Extended stats still need column collectors after histograms and TopN are built.
+		// Keep them only for that path; otherwise release each collector in the build worker.
+		sampleCollectors = make([]*statistics.SampleCollector, len(e.colsInfo))
+	}
 	exitCh := make(chan struct{})
 	e.samplingBuilderWg.Add(samplingStatsConcurrency)
 
@@ -407,15 +412,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			continue
 		}
 	}
-	defer func() {
-		totalSampleCollectorSize := int64(0)
-		for _, sampleCollector := range sampleCollectors {
-			if sampleCollector != nil {
-				totalSampleCollectorSize += sampleCollector.MemSize
-			}
-		}
-		e.memTracker.Release(totalSampleCollectorSize)
-	}()
+	defer e.releaseSamplingCollectorsMemory(sampleCollectors)
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -426,6 +423,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}
+		e.releaseSamplingCollectorsMemory(sampleCollectors)
 	}
 
 	return
@@ -806,12 +804,13 @@ workLoop:
 					MemSize:   collectorMemSize,
 				}
 			}
-			if task.isColumn {
+			keepColumnCollector := task.isColumn && collectors != nil
+			if keepColumnCollector {
 				collectors[task.slicePos] = collector
 			}
 			releaseCollectorMemory := func() {
-				if !task.isColumn {
-					e.memTracker.Release(collector.MemSize)
+				if !keepColumnCollector {
+					e.releaseSamplingCollectorMemory(collector)
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker)
@@ -829,6 +828,24 @@ workLoop:
 		case <-exitCh:
 			return
 		}
+	}
+}
+
+func (e *AnalyzeColumnsExecV2) releaseSamplingCollectorMemory(collector *statistics.SampleCollector) {
+	if collector == nil {
+		return
+	}
+	collectorMemSize := collector.MemSize
+	failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
+	e.memTracker.Release(collectorMemSize)
+	collector.Destroy()
+	failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
+}
+
+func (e *AnalyzeColumnsExecV2) releaseSamplingCollectorsMemory(collectors []*statistics.SampleCollector) {
+	for i, collector := range collectors {
+		e.releaseSamplingCollectorMemory(collector)
+		collectors[i] = nil
 	}
 }
 
