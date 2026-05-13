@@ -479,7 +479,7 @@ func TestSimplifiedCreateBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`create table t (a int, b int, key(a), key(b))`)
 
 	check := func(scope, sql, binding string) {
 		r := tk.MustQuery(fmt.Sprintf("show %s bindings", scope)).Rows()
@@ -500,6 +500,11 @@ func TestSimplifiedCreateBinding(t *testing.T) {
 	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (1,2,3)`)
 	check("global", "select * from `test` . `t` where `a` in ( ... )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)")
 	tk.MustExec(`drop global binding for select * from t where a in (1,2,3)`)
+	tk.MustExec(`create binding for select * from t where abs((a + 1)) = 2 and (b = 1) using select /*+ use_index(t, b) */ * from t where abs((a + 1)) = 2 and (b = 1)`)
+	check("", "select * from `test` . `t` where `abs` ( `a` + ? ) = ? and `b` = ?", "SELECT /*+ use_index(`t` `b`)*/ * FROM `test`.`t` WHERE abs(`a` + 1) = 2 AND `b` = 1")
+	tk.MustQuery(`select * from t where abs(a + 1) = 2 and b = 1`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`drop binding for select * from t where abs(a + 1) = 2 and b = 1`)
 }
 
 func TestDropBindBySQLDigest(t *testing.T) {

@@ -183,15 +183,22 @@ func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("(")
 		ctx.Flags |= format.RestoreBracketAroundBetweenExpr
 	}
+	parentOp, parentSide := ctx.ParentBinaryOp, ctx.ParentBinarySide
+	ctx.ParentBinaryOp, ctx.ParentBinarySide = int(n.Op), binaryOpLeftSide
 	if err := n.L.Restore(ctx); err != nil {
+		ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
 	}
+	ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
 	if err := restoreBinaryOpWithSpacesAround(ctx, n.Op); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.Op")
 	}
+	ctx.ParentBinaryOp, ctx.ParentBinarySide = int(n.Op), binaryOpRightSide
 	if err := n.R.Restore(ctx); err != nil {
+		ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.R")
 	}
+	ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain(")")
 		ctx.Flags = originalFlags
@@ -1011,6 +1018,12 @@ type ParenthesesExpr struct {
 
 // Restore implements Node interface.
 func (n *ParenthesesExpr) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasRestoreSkipRedundantParentheses() && canRestoreWithoutParentheses(ctx, n.Expr) {
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred when restore ParenthesesExpr.Expr")
+		}
+		return nil
+	}
 	ctx.WritePlain("(")
 	if err := n.Expr.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore ParenthesesExpr.Expr")
@@ -1041,6 +1054,84 @@ func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
 		n.Expr = node.(ExprNode)
 	}
 	return v.Leave(n)
+}
+
+const (
+	binaryOpLeftSide = iota + 1
+	binaryOpRightSide
+)
+
+func canRestoreWithoutParentheses(ctx *format.RestoreCtx, expr ExprNode) bool {
+	if ctx.InUnaryOperation {
+		return false
+	}
+	child, ok := expr.(*BinaryOperationExpr)
+	if !ok {
+		if _, ok := expr.(*UnaryOperationExpr); ok && ctx.ParentBinaryOp != 0 {
+			return false
+		}
+		return true
+	}
+	parentOp := opcode.Op(ctx.ParentBinaryOp)
+	if parentOp == 0 {
+		return true
+	}
+	return canRestoreBinaryChildWithoutParentheses(parentOp, child.Op, ctx.ParentBinarySide)
+}
+
+func canRestoreBinaryChildWithoutParentheses(parentOp, childOp opcode.Op, side int) bool {
+	parentPrecedence := restoreBinaryPrecedence(parentOp)
+	childPrecedence := restoreBinaryPrecedence(childOp)
+	if parentPrecedence == 0 || childPrecedence == 0 {
+		return false
+	}
+	if childPrecedence > parentPrecedence {
+		return true
+	}
+	if childPrecedence < parentPrecedence {
+		return false
+	}
+	return side == binaryOpLeftSide || isAssociativeRestoreOp(parentOp, childOp)
+}
+
+func restoreBinaryPrecedence(op opcode.Op) int {
+	switch op {
+	case opcode.LogicOr:
+		return 1
+	case opcode.LogicXor:
+		return 2
+	case opcode.LogicAnd:
+		return 3
+	case opcode.EQ, opcode.NE, opcode.NullEQ, opcode.LT, opcode.LE, opcode.GT, opcode.GE,
+		opcode.In, opcode.Like, opcode.Regexp, opcode.IsNull, opcode.IsTruth, opcode.IsFalsity:
+		return 4
+	case opcode.Or:
+		return 5
+	case opcode.Xor:
+		return 6
+	case opcode.And:
+		return 7
+	case opcode.LeftShift, opcode.RightShift:
+		return 8
+	case opcode.Plus, opcode.Minus:
+		return 9
+	case opcode.Mul, opcode.Div, opcode.IntDiv, opcode.Mod:
+		return 10
+	default:
+		return 0
+	}
+}
+
+func isAssociativeRestoreOp(parentOp, childOp opcode.Op) bool {
+	if parentOp != childOp {
+		return false
+	}
+	switch parentOp {
+	case opcode.LogicAnd, opcode.LogicOr, opcode.Plus, opcode.Mul, opcode.And, opcode.Or, opcode.Xor:
+		return true
+	default:
+		return false
+	}
 }
 
 // PositionExpr is the expression for order by and group by position.
@@ -1208,9 +1299,13 @@ func (n *UnaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	if err := n.Op.Restore(ctx); err != nil {
 		return errors.Trace(err)
 	}
+	inUnaryOperation := ctx.InUnaryOperation
+	ctx.InUnaryOperation = true
 	if err := n.V.Restore(ctx); err != nil {
+		ctx.InUnaryOperation = inUnaryOperation
 		return errors.Trace(err)
 	}
+	ctx.InUnaryOperation = inUnaryOperation
 	return nil
 }
 

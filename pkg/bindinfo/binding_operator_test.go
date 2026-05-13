@@ -828,14 +828,45 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
-		{"select 1 from b where (x) in ((1), ('3'), (2),('x'),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
-		{"select 1 from b where (x) in ((1), ('3'), (2),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'),('x'))", "select ? from `b` where `x` in ( ... )", "695a1f42dbae3cae4a5d475d7a9d67955aed6d9790c1ffa20106d80f79b33dc0"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'))", "select ? from `b` where `x` in ( ... )", "695a1f42dbae3cae4a5d475d7a9d67955aed6d9790c1ffa20106d80f79b33dc0"},
 	}
 	for _, test := range tests {
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)
 		n, digest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		require.Equalf(t, test.normalized, n, "sql: %s", test.sql)
 		require.Equalf(t, test.digest, digest, "sql: %s", test.sql)
+	}
+
+	parenthesesTests := []struct {
+		sql        string
+		normalized string
+	}{
+		{
+			"select 1 from b where abs((x + 1)) = 2",
+			"select ? from `b` where `abs` ( `x` + ? ) = ?",
+		},
+		{
+			"select 1 from b where (x + 1) * y = 2",
+			"select ? from `b` where ( `x` + ? ) * `y` = ?",
+		},
+		{
+			"select 1 from b where x = 1 and (y = 1 or y = 2)",
+			"select ? from `b` where `x` = ? and ( `y` = ? or `y` = ? )",
+		},
+		{
+			"select 1 from b where not (x = 1)",
+			"select ? from `b` where not ( `x` = ? )",
+		},
+		{
+			"select 1 from b where (not x) = 1",
+			"select ? from `b` where ( not `x` ) = ?",
+		},
+	}
+	for _, test := range parenthesesTests {
+		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)
+		n, _ := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		require.Equalf(t, test.normalized, n, "sql: %s", test.sql)
 	}
 }
 
