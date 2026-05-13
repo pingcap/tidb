@@ -171,7 +171,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 		subtasks, err := e.taskTable.GetSubtasksByExecIDAndStepAndStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStateRunning)
 		if err != nil {
-			e.logger.Error("get subtasks failed", zap.Error(err))
+			e.logger.Warn("get subtasks failed", zap.Error(err))
 			continue
 		}
 		if len(subtasks) == 0 {
@@ -308,7 +308,7 @@ func (e *BaseTaskExecutor) Run() {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
 			}
-			e.sampleLogger.Error("refresh task failed", zap.Error(err))
+			e.sampleLogger.Warn("refresh task failed", zap.Error(err))
 			continue
 		}
 
