@@ -93,6 +93,10 @@ func TestNormalize(t *testing.T) {
 		{"select * from t where (a, b) in ((1, 1), (2, 2))", "select * from `t` where ( `a` , `b` ) in ( ( ... ) )"},
 		{"select * from t where a in(1, 2)", "select * from `t` where `a` in ( ... )"},
 		{"select * from t where a in(1, 2, 3)", "select * from `t` where `a` in ( ... )"},
+		{"select * from t where (a = 1) and b = 1", "select * from `t` where `a` = ? and `b` = ?"},
+		{"select * from t where a = 1 and (b = 1 or b = 2)", "select * from `t` where `a` = ? and ( `b` = ? or `b` = ? )"},
+		{"select * from t where not (a = 1)", "select * from `t` where not ( `a` = ? )"},
+		{"select pid from t where ((id = 1) and ((ptype = 1) or (ptype = 2))) order by pid limit 10", "select `pid` from `t` where `id` = ? and ( `ptype` = ? or `ptype` = ? ) order by `pid` limit ?"},
 	}
 	for _, test := range tests_for_binding_specific_rules {
 		normalized := parser.NormalizeForBinding(test.input, false)
@@ -102,6 +106,20 @@ func TestNormalize(t *testing.T) {
 		normalized2, digest2 := parser.NormalizeDigestForBinding(test.input)
 		require.Equal(t, normalized, normalized2)
 		require.Equalf(t, digest.String(), digest2.String(), "%+v", test)
+	}
+
+	bindingDigestCases := []string{
+		"select pid from t where id=1 and (ptype=1 or ptype=2) order by pid limit 10",
+		"select pid from t where id=1 and ((ptype=1) or ptype=2) order by pid limit 10",
+		"select pid from t where id=1 and (ptype=1 or (ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1 and ((ptype=1) or (ptype=2))) order by pid limit 10",
+		"select pid from t where ((id=1) and (ptype=1 or (ptype=2))) order by pid limit 10",
+	}
+	normalized, digest := parser.NormalizeDigestForBinding(bindingDigestCases[0])
+	for _, input := range bindingDigestCases[1:] {
+		normalized2, digest2 := parser.NormalizeDigestForBinding(input)
+		require.Equalf(t, normalized, normalized2, "sql: %s", input)
+		require.Equalf(t, digest.String(), digest2.String(), "sql: %s", input)
 	}
 }
 
