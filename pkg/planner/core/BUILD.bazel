@@ -15,8 +15,12 @@ go_library(
         "expression_rewriter.go",
         "find_best_task.go",
         "flat_plan.go",
+<<<<<<< HEAD
         "foreign_key.go",
         "fragment.go",
+=======
+        "fulltext_to_like.go",
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
         "hint_utils.go",
         "index_join_path.go",
         "indexmerge_path.go",
@@ -224,7 +228,11 @@ go_test(
         "exhaust_physical_plans_test.go",
         "expression_test.go",
         "find_best_task_test.go",
+<<<<<<< HEAD
         "fragment_test.go",
+=======
+        "fulltext_to_like_test.go",
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
         "hint_test.go",
         "indexmerge_intersection_test.go",
         "indexmerge_path_test.go",

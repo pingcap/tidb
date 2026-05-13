@@ -466,9 +466,241 @@ var planBuilderPool = sync.Pool{
 	},
 }
 
+<<<<<<< HEAD
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
 
+=======
+type logicalPlanBuildCtx struct {
+	stmtCtxState             stmtctx.LogicalPlanBuildState
+	plannerSelectBlockAsName *[]ast.HintTable
+	mapScalarSubQ            []any
+	mapHashCode2UniqueID     map[string]int
+	rewritePhaseInfo         variable.RewritePhaseInfo
+}
+
+func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx {
+	return logicalPlanBuildCtx{
+		stmtCtxState:             sessVars.StmtCtx.SaveLogicalPlanBuildState(),
+		plannerSelectBlockAsName: sessVars.PlannerSelectBlockAsName.Load(),
+		mapScalarSubQ:            sessVars.MapScalarSubQ,
+		mapHashCode2UniqueID:     sessVars.MapHashCode2UniqueID4ExtendedCol,
+		rewritePhaseInfo:         sessVars.RewritePhaseInfo,
+	}
+}
+
+func restoreLogicalPlanBuildCtx(sessVars *variable.SessionVars, logicalPlanCtx logicalPlanBuildCtx) {
+	sessVars.StmtCtx.RestoreLogicalPlanBuildState(logicalPlanCtx.stmtCtxState)
+	sessVars.PlannerSelectBlockAsName.Store(logicalPlanCtx.plannerSelectBlockAsName)
+	sessVars.MapScalarSubQ = logicalPlanCtx.mapScalarSubQ
+	sessVars.MapHashCode2UniqueID4ExtendedCol = logicalPlanCtx.mapHashCode2UniqueID
+	sessVars.RewritePhaseInfo = logicalPlanCtx.rewritePhaseInfo
+}
+
+func buildAndOptimizeLogicalPlanRound(
+	ctx context.Context,
+	sctx planctx.PlanContext,
+	node *resolve.NodeW,
+	is infoschema.InfoSchema,
+	hintProcessor *hint.QBHintHandler,
+	checked *bool,
+	optimizeStarted *bool,
+	beginOpt *time.Time,
+	needRestoreLogicalPlanCtx bool,
+	bestPlan *base.PhysicalPlan,
+	bestNames *types.NameSlice,
+	bestCost *float64,
+	bestLogicalPlanCtx *logicalPlanBuildCtx,
+	optFlagAdjust func(uint64) uint64,
+) (base.Plan, types.NameSlice, bool, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	// TODO: when buildRound > 1, only emit unused view-hint warnings for the winner build.
+	defer builder.HandleUnusedViewHints()
+
+	builder.Init(sctx, is, hintProcessor)
+
+	// todo: you can customize each round's special builder (like semi join rewrite or not by signal)
+	p, err := buildLogicalPlan(ctx, sctx, node, builder)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	names := p.OutputNames()
+
+	if !*checked {
+		// Keep privilege and lock checks fail-fast. These depend on visitInfo
+		// produced by the logical build, but not on the later cost winner.
+		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+			visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
+			if err := core.CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
+				return nil, nil, false, err
+			}
+		}
+
+		if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+			return nil, nil, false, err
+		}
+
+		if err := core.CheckTableMode(node); err != nil {
+			return nil, nil, false, err
+		}
+		*checked = true
+	}
+
+	// Handle the non-logical plan statement.
+	logic, isLogicalPlan := p.(base.LogicalPlan)
+	if !isLogicalPlan {
+		return p, names, true, nil
+	}
+
+	core.RecheckCTE(logic)
+
+	// todo: also you can customize each round's special logical opt flag here (like decorrelate rule or not)
+	if !*optimizeStarted {
+		*optimizeStarted = true
+		*beginOpt = time.Now()
+	}
+	optFlag := builder.GetOptFlag()
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		optFlag&rule.FlagPushDownTopN > 0 &&
+		optFlag&rule.FlagJoinReOrder > 0 {
+		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	}
+	if optFlagAdjust != nil {
+		optFlag = optFlagAdjust(optFlag)
+	}
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	// Record predicate-context MATCH for cost competition. The fts-like-fallback
+	// alternative round reads this signal to decide whether to build a competing
+	// ILIKE-based plan alongside round 1's native plan, so the cheaper of the
+	// two wins via the normal alt-rounds cost comparison.
+	if builder.HasPredicateMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
+	}
+
+	// If this round saw a predicate-context MATCH that cannot be served by the
+	// native FTSMysqlMatchAgainst builtin, the produced plan would fail at
+	// execution. Discard it and arm AlternativeLogicalPlanFTSLikeFallback so
+	// any intervening rounds (correlate, etc.) re-rewrite with ILIKE too. The
+	// fts-like-fallback round below also forces this flag during setup; this
+	// outer assignment covers the non-viable case where the flag must stay
+	// true across all subsequent rounds, not just inside the LIKE round.
+	if builder.HasNonViableFTSMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		return p, names, false, nil
+	}
+
+	if *bestPlan == nil || cost < *bestCost {
+		*bestCost = cost
+		*bestPlan = finalPlan
+		*bestNames = names
+		if needRestoreLogicalPlanCtx {
+			*bestLogicalPlanCtx = saveLogicalPlanBuildCtx(sctx.GetSessionVars())
+		}
+	}
+	return p, names, false, nil
+}
+
+// optimizeCnt is a global variable only used for test.
+var optimizeCnt int
+
+func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
+}
+
+func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+}
+
+func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
+}
+
+// alternativeRound describes one alternative logical-plan round.
+// adjustFlag adjusts the optimization flags for the round.
+// enabled returns true when the round should be attempted.
+// setup/cleanup optionally modify session state before/after plan building.
+type alternativeRound struct {
+	name       string
+	adjustFlag func(uint64) uint64
+	enabled    func(*variable.SessionVars) bool
+	setup      func(*variable.SessionVars)
+	cleanup    func(*variable.SessionVars)
+}
+
+// savedEnableCorrelateSubquery holds the pre-round value of
+// EnableCorrelateSubquery so setup/cleanup can share it without a closure
+// wrapper. Safe because optimize is single-threaded per session.
+var savedEnableCorrelateSubquery bool
+
+// savedFTSLikeFallback holds the pre-round value of
+// AlternativeLogicalPlanFTSLikeFallback so the fts-like-fallback round's
+// setup/cleanup can restore it after running with the flag forced on. Safe
+// because optimize is single-threaded per session.
+var savedFTSLikeFallback bool
+
+var alternativeRounds = [...]alternativeRound{
+	{
+		name:       "non-decorrelate",
+		adjustFlag: func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+		enabled:    shouldTryNonDecorrelationRound,
+	},
+	{
+		name:       "order-aware-reorder",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+		enabled:    shouldTryOrderAwareReorderRound,
+	},
+	{
+		name:       "correlate",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+		enabled:    shouldTryCorrelateRound,
+		setup: func(sv *variable.SessionVars) {
+			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+			sv.EnableCorrelateSubquery = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+		},
+	},
+	{
+		// fts-like-fallback: rebuild the plan rewriting predicate-context
+		// MATCH...AGAINST to ILIKE so it can compete with round 1's native plan
+		// on cost (and serve as the only valid plan when native is non-viable).
+		// Round 1 always uses the native builtin (same as Alt-disabled). This
+		// round fires whenever round 1 saw a direct-boolean-context MATCH
+		// (HasPredicateContextMatch) — both plans then compete via the strict-`<`
+		// cost comparison in buildAndOptimizeLogicalPlanRound — or whenever
+		// round 1 saw a MATCH whose native form cannot execute
+		// (FTSLikeFallback, set by the round driver after discarding round 1).
+		// In the discard case, round 1's plan is unavailable and this round's
+		// plan wins by default.
+		name: "fts-like-fallback",
+		enabled: func(sv *variable.SessionVars) bool {
+			if !sv.EnableAlternativeLogicalPlans {
+				return false
+			}
+			return sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback ||
+				sv.StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch
+		},
+		setup: func(sv *variable.SessionVars) {
+			savedFTSLikeFallback = sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = savedFTSLikeFallback
+		},
+	},
+}
+
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
 		// only count the optimization for SQL with specified text
@@ -484,9 +716,52 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
 	})
 	sessVars := sctx.GetSessionVars()
+<<<<<<< HEAD
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
+=======
+	var (
+		beginOpt        time.Time
+		optimizeStarted bool
+	)
+	defer func() {
+		if optimizeStarted {
+			sessVars.DurationOptimizer.Total = time.Since(beginOpt)
+		}
+	}()
+
+	// Build the logical plan from the raw AST. The hint processor only keeps
+	// AST-derived metadata; per-build state is allocated inside PlanBuilder.
+	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
+	node.Node.Accept(hintProcessor)
+
+	// build multi logical plan from raw AST.
+	var (
+		needRestoreLogicalPlanCtx = sessVars.EnableAlternativeLogicalPlans
+		bestCost                  = math.MaxFloat64
+		bestPlan                  base.PhysicalPlan
+		bestNames                 types.NameSlice
+		bestLogicalPlanCtx        logicalPlanBuildCtx
+		checked                   bool
+	)
+	var initialLogicalPlanCtx logicalPlanBuildCtx
+	if needRestoreLogicalPlanCtx {
+		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
+		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
+		// Round 1 always uses the native FTSMysqlMatchAgainst builtin — same as
+		// the Alt-disabled default. The build records two signals on the
+		// planBuilder when MATCH...AGAINST is seen:
+		//   * HasPredicateMatch: any direct-boolean-context MATCH. The round
+		//     driver propagates this into stmtctx to trigger the
+		//     fts-like-fallback alternative round, which builds a competing
+		//     ILIKE-based plan; the cheaper of the two wins.
+		//   * HasNonViableFTSMatch: a predicate-context MATCH whose native form
+		//     cannot execute (no FTS index / no TiFlash replica / unsupported
+		//     modifier). The round driver discards round 1's plan and forces
+		//     AlternativeLogicalPlanFTSLikeFallback true so all subsequent
+		//     rounds (correlate, etc.) re-rewrite with ILIKE.
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
 	}
 
 	// build logical plan
@@ -528,6 +803,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
+<<<<<<< HEAD
 	core.RecheckCTE(logic)
 
 	// Handle the logical plan statement, use cascades planner if enabled.
@@ -542,6 +818,85 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 
 	sessVars.DurationOptimization = time.Since(beginOpt)
 	return finalPlan, names, cost, err
+=======
+	// Pre-compute which rounds are enabled based on the signals from the first
+	// (default) build. This prevents signal leakage: alternative rounds rebuild
+	// the plan and may set AlternativeLogicalPlan* signals as a side effect,
+	// which are not reset by restoreLogicalPlanBuildCtx. Evaluating enabled()
+	// upfront ensures each round's eligibility is determined solely by the
+	// original build's signals.
+	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
+	for _, round := range alternativeRounds {
+		if round.enabled(sessVars) {
+			enabledRounds = append(enabledRounds, round)
+		}
+	}
+	var lastAltRoundErr error
+	for _, round := range enabledRounds {
+		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
+			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
+				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
+			}
+		})
+
+		// Use a closure so that defer-based cleanup runs at the end of each
+		// iteration, not at function exit. This ensures session state (e.g.
+		// EnableCorrelateSubquery) is restored even if the round panics.
+		func() {
+			if round.setup != nil {
+				round.setup(sessVars)
+				defer round.cleanup(sessVars)
+			}
+			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+				ctx,
+				sctx,
+				node,
+				is,
+				hintProcessor,
+				&checked,
+				&optimizeStarted,
+				&beginOpt,
+				needRestoreLogicalPlanCtx,
+				&bestPlan,
+				&bestNames,
+				&bestCost,
+				&bestLogicalPlanCtx,
+				round.adjustFlag,
+			)
+		}()
+		if err != nil {
+			// Alternative rounds are optional optimizations. If one fails,
+			// log and continue — the first round's plan is still valid in
+			// the general case. fts-like-fallback is the exception: the
+			// first round's plan may have been discarded as non-executable,
+			// so we remember the last alt-round error in case bestPlan
+			// remains nil after the loop.
+			logutil.BgLogger().Warn("alternative logical plan round failed",
+				zap.String("round", round.name),
+				zap.Error(err))
+			lastAltRoundErr = err
+			continue
+		}
+		if nonLogical {
+			return p, names, 0, nil
+		}
+	}
+	if bestPlan == nil {
+		if lastAltRoundErr != nil {
+			// No valid plan from any round. Surface the most recent alt-round
+			// error rather than the generic sentinel — typically this is the
+			// fts-like-fallback round reporting why MATCH...AGAINST cannot be
+			// rewritten (unsupported search string, etc.).
+			return nil, nil, 0, lastAltRoundErr
+		}
+		return nil, nil, 0, errors.New("failed to build logical plan")
+	}
+	if needRestoreLogicalPlanCtx {
+		restoreLogicalPlanBuildCtx(sessVars, bestLogicalPlanCtx)
+	}
+	return bestPlan, bestNames, bestCost, nil
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
 }
 
 // OptimizeExecStmt to handle the "execute" statement

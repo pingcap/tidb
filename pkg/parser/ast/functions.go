@@ -366,6 +366,13 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+<<<<<<< HEAD
+=======
+	// FTS functions (tidb extension)
+	FTSMatchWord         = "fts_match_word"
+	FTSMysqlMatchAgainst = "match_against"
+
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBMVCCInfo        = "tidb_mvcc_info"

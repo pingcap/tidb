@@ -37,7 +37,31 @@ bazel-tidb
 MODULE.bazel.lock
 .ijwb/
 /oom_record/
+<<<<<<< HEAD
 *.log.json
 genkeyword
 test_coverage
 coverage.dat
+=======
+
+# Integration tests
+tests/integrationtest/integration-test.out
+tests/integrationtest/integrationtest_tidb-server
+tests/integrationtest/s/
+tests/integrationtest/replayer/
+
+# Local dev artifacts
+bench_daily.json
+compose-dev.yaml
+fix.sql
+export-20*/
+var
+
+# Personal config files
+/*config.toml
+.cache
+
+# Claude Code runtime state (per-user, not part of repo)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
