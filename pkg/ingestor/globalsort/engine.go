@@ -263,7 +263,7 @@ func (e *Engine) loadRangeBatchData(
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
 	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
-		kvs := make([]KVPair, 0)
+		kvs := make([]KVPair, 0, 1)
 		kvs = append(kvs, KVPair{[]byte{}, []byte{}})
 		data := e.buildIngestData(kvs, nil)
 		data.IncRef()

@@ -98,7 +98,7 @@ func TestMergeKVIter(t *testing.T) {
 	// close one empty file immediately in NewMergeKVIter
 	require.EqualValues(t, 2, trackStore.opened.Load())
 
-	got := make([][2]string, 0)
+	got := make([][2]string, 0, 3)
 	require.True(t, iter.Next())
 	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
 	require.True(t, iter.Next())
@@ -149,7 +149,7 @@ func TestOneUpstream(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, trackStore.opened.Load())
 
-	got := make([][2]string, 0)
+	got := make([][2]string, 0, 3)
 	require.True(t, iter.Next())
 	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
 	require.True(t, iter.Next())
@@ -231,7 +231,7 @@ func TestCorruptContent(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 2, trackStore.opened.Load())
 
-	got := make([][2]string, 0)
+	got := make([][2]string, 0, 3)
 	require.True(t, iter.Next())
 	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
 	require.True(t, iter.Next())

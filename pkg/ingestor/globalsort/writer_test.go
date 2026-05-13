@@ -484,7 +484,7 @@ func TestWriterSort(t *testing.T) {
 	t.Log("quick sort", time.Since(ts).String())
 
 	for i := range 1000000 {
-		require.True(t, bytes.Compare(kvs[i].Key, kvs2[i].Key) == 0)
+		require.True(t, bytes.Equal(kvs[i].Key, kvs2[i].Key))
 	}
 }
 

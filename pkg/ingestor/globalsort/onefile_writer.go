@@ -189,7 +189,7 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 	if w.currDupCnt == 0 {
 		return w.onNextPivot(ctx, idxKey, idxVal)
 	}
-	if slices.Compare(w.pivotKey, idxKey) != 0 {
+	if !slices.Equal(w.pivotKey, idxKey) {
 		return w.onNextPivot(ctx, idxKey, idxVal)
 	}
 	w.currDupCnt++

@@ -496,7 +496,7 @@ func TestLoadIngestDataMultiBatch(t *testing.T) {
 	require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
 	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
 
-	var allKVs []KVPair
+	allKVs := make([]KVPair, 0, len(contents[0])+len(contents[1]))
 	for range 2 {
 		dr := <-loadDataCh
 		allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
