@@ -2330,12 +2330,15 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.MppTaskType {
 		return base.InvalidTask, nil
 	}
-	// TiCI path is MPP-only. Even for non-covering scans, IndexLookUp can fetch
-	// base table columns after index-side MPP returns handles.
+	useTiCILookupPath := isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.RootTaskType
+	// Covering TiCI FTS scans use the TiFlash MPP pipeline. Non-covering scans keep
+	// the IndexLookUp shape: executor sends the index-side TiCI request to TiFlash,
+	// then fetches base-table rows through the normal table-probe side.
 	canUseTiCIInMpp := isTiCIPath
 	isTiFlashStorePath := is.StoreType == kv.TiFlash
 	supportsMPPPath := isTiFlashStorePath || canUseTiCIInMpp
 	canConvertRootToMPP := prop.TaskTp == property.RootTaskType &&
+		!useTiCILookupPath &&
 		supportsMPPPath &&
 		(ds.SCtx().GetSessionVars().IsMPPAllowed() || isTiCIPath)
 	forceRootToMPP := canConvertRootToMPP &&
@@ -2353,14 +2356,14 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		if ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && isTiFlashStorePath {
 			return base.InvalidTask, nil
 		}
-		// TiCI index scan is MPP-only.
-		if isTiCIPath {
+		// Covering TiCI index scan is MPP-only; non-covering TiCI lookup uses
+		// executor's TiCI request path on the index side.
+		if isTiCIPath && !useTiCILookupPath {
 			return base.InvalidTask, nil
 		}
 	}
 
-	useTiCICopLookupPath := isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.RootTaskType
-	if needMPPPath && !useTiCICopLookupPath {
+	if needMPPPath {
 		// TiCI currently can not keep order.
 		if !prop.IsSortItemEmpty() {
 			return base.InvalidTask, nil
@@ -2381,9 +2384,9 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		}
 		return t, nil
 	}
-	// Non-covering TiCI index access still needs table probe (IndexLookUp). In this case,
-	// keep the cop task shape and let IndexLookUp wrap TiCI index side by MPP protocol.
-	// Returning a pure MPP IndexScan here would lose base-table columns required by lookup/join.
+	// Non-covering TiCI index access still needs table probe, so keep the normal
+	// IndexLookUp task shape. Returning a pure MPP IndexScan here would lose
+	// base-table columns required by lookup/join.
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,

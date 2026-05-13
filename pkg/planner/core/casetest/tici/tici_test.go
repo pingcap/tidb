@@ -484,8 +484,9 @@ func TestTiCINonCoveringUsesDoubleRead(t *testing.T) {
 		tk.MustQuery(sql).CheckContain("IndexLookUp")
 		tk.MustQuery(sql).CheckContain("IndexRangeScan")
 		tk.MustQuery(sql).CheckContain("TableRowIDScan")
-		tk.MustQuery(sql).CheckContain("mpp[tiflash]")
+		tk.MustQuery(sql).CheckContain("cop[tici]")
 		tk.MustQuery(sql).CheckContain("cop[tikv]")
+		tk.MustQuery(sql).CheckNotContain("mpp[tiflash]")
 	})
 }
 

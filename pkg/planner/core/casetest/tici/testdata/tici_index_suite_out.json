@@ -6,8 +6,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -16,8 +15,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_phrase('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_phrase(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_phrase(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -36,8 +34,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_prefix('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -46,9 +43,8 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_prefix('hello', title) and id = 10",
         "Plan": [
           "IndexLookUp 0.00 root  ",
-          "├─ExchangeSender(Build) 0.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─Selection 0.00 mpp[tiflash]  eq(test.t1.id, 10)",
-          "│   └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[10,10], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─Selection(Build) 0.00 cop[tici]  eq(test.t1.id, 10)",
+          "│ └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[10,10], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -67,9 +63,8 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10",
         "Plan": [
           "IndexLookUp 0.00 root  ",
-          "├─ExchangeSender(Build) 0.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─Selection 0.00 mpp[tiflash]  gt(test.t1.id, 10)",
-          "│   └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─Selection(Build) 0.00 cop[tici]  gt(test.t1.id, 10)",
+          "│ └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -78,9 +73,8 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
         "Plan": [
           "IndexLookUp 0.00 root  ",
-          "├─ExchangeSender(Build) 0.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─Selection 0.00 mpp[tiflash]  gt(length(test.t1.title), 1), gt(test.t1.id, 10)",
-          "│   └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─Selection(Build) 0.00 cop[tici]  gt(length(test.t1.title), 1), gt(test.t1.id, 10)",
+          "│ └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -155,8 +149,7 @@
         "Plan": [
           "Projection 8000.00 root  test.t1.id",
           "└─IndexLookUp 8000.00 root  ",
-          "  ├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "  └─Selection(Probe) 8000.00 cop[tikv]  gt(length(test.t1.body), 10)",
           "    └─TableRowIDScan 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
@@ -166,9 +159,7 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) limit 1",
         "Plan": [
           "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─ExchangeSender(Build) 0.10 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─Limit 0.10 mpp[tiflash]  offset:0, count:1",
-          "│   └─IndexRangeScan 0.10 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 0.10 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -466,8 +457,7 @@
           "│ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo",
           "└─IndexLookUp(Probe) 1000.00 root  ",
-          "  ├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -545,8 +535,7 @@
         "SQL": "explain format='brief' select * from t1 where match(title) against ('hello' IN BOOLEAN MODE)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -566,8 +555,7 @@
         "SQL": "explain format='brief' select * from t1 where match(title) against ('hello*' IN BOOLEAN MODE)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -576,8 +564,7 @@
         "SQL": "explain format='brief' select * from t1 where match(title) against ('\\\"hello world\\\"' IN BOOLEAN MODE)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_phrase(\"hello world\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_phrase(\"hello world\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -731,8 +718,7 @@
         "SQL": "explain format='brief' select * from t1 use index(idx_field) where fts_match_word('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
-          "├─ExchangeSender(Build) 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
