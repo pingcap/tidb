@@ -277,7 +277,7 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 func newMockTableIRWithColumnInfo(databaseName, tableName string, data [][]driver.Value, specialComments []string, infos []*ColumnInfo) *mockTableIR {
 	colTypes := make([]string, len(infos))
 	for i, info := range infos {
-		colTypes[i] = info.Type
+		colTypes[i] = info.DatabaseTypeName
 	}
 	return &mockTableIR{
 		dbName:        databaseName,

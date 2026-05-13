@@ -688,7 +688,7 @@ func getParquetCompress(tp ParquetCompressType) compress.Compression {
 	case Zstd:
 		return compress.Codecs.Zstd
 	default:
-		return parquetfile.DefaultCompressionType
+		return compress.Codecs.Snappy
 	}
 }
 

@@ -276,11 +276,11 @@ func (tm *tableMeta) ColumnInfos() []*ColumnInfo {
 			precision, scale = 0, 0
 		}
 		columnInfos = append(columnInfos, &ColumnInfo{
-			Name:      ct.Name(),
-			Type:      ct.DatabaseTypeName(),
-			Nullable:  nullable,
-			Precision: precision,
-			Scale:     scale,
+			Name:             ct.Name(),
+			DatabaseTypeName: ct.DatabaseTypeName(),
+			Nullable:         nullable,
+			Precision:        precision,
+			Scale:            scale,
 		})
 	}
 	return columnInfos

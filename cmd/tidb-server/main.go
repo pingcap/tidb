@@ -141,10 +141,10 @@ const (
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 	nmKeyspaceName                = "keyspace-name"
 	nmTiDBServiceScope            = "tidb-service-scope"
-	nmStandby           = "standby"
-	nmActivationTimeout = "activation-timeout"
-	nmMaxIdleSeconds    = "max-idle-seconds"
-	nmExportID = "export-id"
+	nmStandby                     = "standby"
+	nmActivationTimeout           = "activation-timeout"
+	nmMaxIdleSeconds              = "max-idle-seconds"
+	nmExportID                    = "export-id"
 )
 
 const (
