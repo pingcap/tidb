@@ -162,7 +162,7 @@ func (d *sqlDigester) doDigestNormalized(normalized string) (digest *Digest) {
 }
 
 func (d *sqlDigester) doDigest(sql string) (digest *Digest) {
-	d.normalize(sql, errors.RedactLogEnable, false, false, false)
+	d.normalize(sql, errors.RedactLogEnable, false, false, false, false)
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
 	digest = NewDigest(d.hasher.Sum(nil))
@@ -171,21 +171,21 @@ func (d *sqlDigester) doDigest(sql string) (digest *Digest) {
 }
 
 func (d *sqlDigester) doNormalize(sql string, redact string, keepHint bool) (result string) {
-	d.normalize(sql, redact, keepHint, false, false)
+	d.normalize(sql, redact, keepHint, false, false, false)
 	result = d.buffer.String()
 	d.buffer.Reset()
 	return
 }
 
 func (d *sqlDigester) doNormalizeForBinding(sql string, keepHint bool, forPlanReplayerReload bool) (result string) {
-	d.normalize(sql, errors.RedactLogEnable, keepHint, true, forPlanReplayerReload)
+	d.normalize(sql, errors.RedactLogEnable, keepHint, true, forPlanReplayerReload, true)
 	result = d.buffer.String()
 	d.buffer.Reset()
 	return
 }
 
 func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *Digest) {
-	d.normalize(sql, errors.RedactLogEnable, false, false, false)
+	d.normalize(sql, errors.RedactLogEnable, false, false, false, false)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
@@ -195,7 +195,7 @@ func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *
 }
 
 func (d *sqlDigester) doNormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
-	d.normalize(sql, errors.RedactLogEnable, false, true, false)
+	d.normalize(sql, errors.RedactLogEnable, false, true, false, true)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
@@ -213,7 +213,7 @@ const (
 	genericSymbolList = -2
 )
 
-func (d *sqlDigester) normalize(sql string, redact string, keepHint bool, forBinding bool, forPlanReplayerReload bool) {
+func (d *sqlDigester) normalize(sql string, redact string, keepHint bool, forBinding bool, forPlanReplayerReload bool, removeRedundantExprParen bool) {
 	d.lexer.reset(sql)
 	d.lexer.setKeepHint(keepHint)
 	for {
@@ -258,6 +258,9 @@ func (d *sqlDigester) normalize(sql string, redact string, keepHint bool, forBin
 		d.tokens.pushBack(currTok)
 	}
 	d.lexer.reset("")
+	if removeRedundantExprParen {
+		d.reduceRedundantParenthesesForBinding()
+	}
 	for i, token := range d.tokens {
 		if i > 0 {
 			d.buffer.WriteRune(' ')
@@ -503,6 +506,176 @@ func (d *sqlDigester) reduceInRowListWithSingleLiteral(currTok *token) {
 		d.tokens.pushBack(token{genericSymbolList, "..."})
 		return
 	}
+}
+
+func (d *sqlDigester) reduceRedundantParenthesesForBinding() {
+	if !d.hasParentheses() {
+		return
+	}
+	for {
+		changed := false
+		for i := 0; i < len(d.tokens); i++ {
+			if d.tokens[i].lit != "(" {
+				continue
+			}
+			if d.isParenKeptByKeyword(i) {
+				continue
+			}
+			end := d.findMatchingRightParen(i)
+			if end < 0 {
+				continue
+			}
+			if d.canRemoveBindingParentheses(i, end) {
+				d.removeTokenPair(i, end)
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+func (d *sqlDigester) hasParentheses() bool {
+	for _, tok := range d.tokens {
+		if tok.lit == "(" || tok.lit == ")" {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *sqlDigester) findMatchingRightParen(left int) int {
+	depth := 0
+	for i := left; i < len(d.tokens); i++ {
+		switch d.tokens[i].lit {
+		case "(":
+			depth++
+		case ")":
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func (d *sqlDigester) canRemoveBindingParentheses(left, right int) bool {
+	if right-left <= 1 {
+		return false
+	}
+	if d.isSimpleBindingExpr(left, right) {
+		return true
+	}
+	return d.isWholeBooleanClause(left, right)
+}
+
+func (d *sqlDigester) isSimpleBindingExpr(left, right int) bool {
+	depth := 0
+	hasCompare := false
+	for i := left + 1; i < right; i++ {
+		tok := d.tokens[i]
+		switch tok.lit {
+		case "(":
+			depth++
+		case ")":
+			depth--
+		default:
+			if depth == 0 && tok.lit == "," {
+				return false
+			}
+			if depth == 0 && d.isLogicalOp(tok) {
+				return false
+			}
+			if depth == 0 && d.isComparisonOp(tok) {
+				hasCompare = true
+			}
+		}
+	}
+	return hasCompare
+}
+
+func (d *sqlDigester) isWholeBooleanClause(left, right int) bool {
+	if !d.hasTopLevelLogicalOp(left, right) {
+		return false
+	}
+	return d.isBooleanClauseStart(left) && d.isBooleanClauseEnd(right)
+}
+
+func (d *sqlDigester) hasTopLevelLogicalOp(left, right int) bool {
+	depth := 0
+	for i := left + 1; i < right; i++ {
+		tok := d.tokens[i]
+		switch tok.lit {
+		case "(":
+			depth++
+		case ")":
+			depth--
+		default:
+			if depth == 0 && d.isLogicalOp(tok) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (d *sqlDigester) isBooleanClauseStart(left int) bool {
+	if left == 0 {
+		return true
+	}
+	prev := d.tokens[left-1].lit
+	return prev == "where" || prev == "having" || prev == "on" || prev == "("
+}
+
+func (d *sqlDigester) isBooleanClauseEnd(right int) bool {
+	if right == len(d.tokens)-1 {
+		return true
+	}
+	next := d.tokens[right+1].lit
+	switch next {
+	case "order", "group", "limit", "offset", "having", "window", "union", "except", "intersect", ")":
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *sqlDigester) isParenKeptByKeyword(left int) bool {
+	if left == 0 {
+		return false
+	}
+	prev := d.tokens[left-1]
+	if d.isLogicalOp(prev) {
+		return false
+	}
+	switch prev.lit {
+	case "where", "having", "on", "and", "or", "xor", "(":
+		return false
+	default:
+		return true
+	}
+}
+
+func (*sqlDigester) isLogicalOp(tok token) bool {
+	return tok.lit == "and" || tok.lit == "&&" || tok.lit == "or" || tok.lit == "||" || tok.lit == "xor"
+}
+
+func (*sqlDigester) isComparisonOp(tok token) bool {
+	switch tok.lit {
+	case "=", "<", ">", "<=", ">=", "!=", "<>", "<=>", "is", "like", "regexp":
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *sqlDigester) removeTokenPair(left, right int) {
+	copy(d.tokens[left:], d.tokens[left+1:right])
+	copy(d.tokens[right-1:], d.tokens[right+1:])
+	d.tokens = d.tokens[:len(d.tokens)-2]
 }
 
 func (d *sqlDigester) isPrefixByUnary(currTok int) (isUnary bool) {
