@@ -281,11 +281,7 @@ func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path st
 	}
 }
 
-// prepareReader picks the reader strategy for one parquet file.
-// For small files it consumes r in one read and returns a buffer-backed
-// wrapper plus the same buffer via base, so later row-group reads can
-// reuse it. Otherwise it returns a streaming wrapper over r. The caller
-// owns r and is responsible for closing it.
+// prepareReader picks the reader strategy: whole-file preload or streaming.
 func prepareReader(r storeapi.ReadSeekCloser, fileSize int64) (parquet.ReaderAtSeeker, *inMemoryReaderBase, error) {
 	if fileSize > 0 && fileSize <= int64(smallFileThreshold) {
 		buf := make([]byte, fileSize)
