@@ -56,8 +56,20 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 		keyspaceNameBytes = nil
 		genKeyspaceNameOnce = sync.Once{}
 	}
+	restoreGlobalConfigAndCache := func(t *testing.T) {
+		t.Helper()
+
+		savedConfig := *config.GetGlobalConfig()
+		t.Cleanup(func() {
+			config.UpdateGlobal(func(conf *config.Config) {
+				*conf = savedConfig
+			})
+			resetKeyspaceNameCache()
+		})
+	}
 
 	t.Run("empty config and env", func(t *testing.T) {
+		restoreGlobalConfigAndCache(t)
 		t.Setenv(config.EnvVarKeyspaceName, "")
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = ""
@@ -79,6 +91,7 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	t.Run("fallback to env", func(t *testing.T) {
 		const keyspaceNameInEnv = "test_keyspace_env"
 
+		restoreGlobalConfigAndCache(t)
 		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = ""
@@ -101,6 +114,7 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	t.Run("bytes getter falls back to env before string getter", func(t *testing.T) {
 		const keyspaceNameInEnv = "test_keyspace_env_first"
 
+		restoreGlobalConfigAndCache(t)
 		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = ""
