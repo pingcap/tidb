@@ -21,7 +21,6 @@ go_library(
         "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
-        "//pkg/util/intest",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/transaction",

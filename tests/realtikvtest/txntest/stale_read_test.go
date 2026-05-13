@@ -1296,6 +1296,7 @@ func TestStaleReadCompatibility(t *testing.T) {
 		return oracle.GetTimeFromTS(ts)
 	}
 	requireStaleRows := func(rows [][]any) {
+		t.Helper()
 		require.True(t,
 			reflect.DeepEqual(rows, testkit.Rows("1")) ||
 				reflect.DeepEqual(rows, testkit.Rows("1", "2")),
@@ -1324,6 +1325,9 @@ func TestStaleReadCompatibility(t *testing.T) {
 	// enable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness='-1'")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix())))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow"))
+	}()
 	rows := tk.MustQuery("select * from t order by id;").Rows()
 	requireStaleRows(rows)
 	// assert select as of timestamp during tidb_read_staleness
@@ -1344,7 +1348,6 @@ func TestStaleReadCompatibility(t *testing.T) {
 	// disable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness=''")
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 3)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow"))
 }
 
 func TestStaleReadNoExtraTSORequest(t *testing.T) {

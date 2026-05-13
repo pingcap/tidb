@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -66,8 +65,6 @@ var (
 
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
-	intest.InTest = true
-	intest.EnableAssert = true
 	testsetup.SetupForCommonTest()
 	*WithRealTiKV = true
 	flag.Parse()
