@@ -126,6 +126,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/storage",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/framework/testutil",
         "//pkg/expression",
