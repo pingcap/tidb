@@ -862,6 +862,22 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 			"select 1 from b where (not x) = 1",
 			"select ? from `b` where ( not `x` ) = ?",
 		},
+		{
+			"select 1 from b where (x + y) ^ z = 1",
+			"select ? from `b` where ( `x` + `y` ) ^ `z` = ?",
+		},
+		{
+			"select 1 from b where (x * y) ^ z = 1",
+			"select ? from `b` where ( `x` * `y` ) ^ `z` = ?",
+		},
+		{
+			"select 1 from b where x + (y ^ z) = 1",
+			"select ? from `b` where `x` + `y` ^ `z` = ?",
+		},
+		{
+			"select 1 from b where -(x + (y + z)) = 1",
+			"select ? from `b` where - ( `x` + `y` + `z` ) = ?",
+		},
 	}
 	for _, test := range parenthesesTests {
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)

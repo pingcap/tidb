@@ -1025,9 +1025,13 @@ func (n *ParenthesesExpr) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	}
 	ctx.WritePlain("(")
+	inUnaryOperation, parentOp, parentSide := ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide
+	ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide = false, 0, 0
 	if err := n.Expr.Restore(ctx); err != nil {
+		ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide = inUnaryOperation, parentOp, parentSide
 		return errors.Annotate(err, "An error occurred when restore ParenthesesExpr.Expr")
 	}
+	ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide = inUnaryOperation, parentOp, parentSide
 	ctx.WritePlain(")")
 	return nil
 }
@@ -1107,15 +1111,15 @@ func restoreBinaryPrecedence(op opcode.Op) int {
 		return 4
 	case opcode.Or:
 		return 5
-	case opcode.Xor:
-		return 6
 	case opcode.And:
-		return 7
+		return 6
 	case opcode.LeftShift, opcode.RightShift:
-		return 8
+		return 7
 	case opcode.Plus, opcode.Minus:
-		return 9
+		return 8
 	case opcode.Mul, opcode.Div, opcode.IntDiv, opcode.Mod:
+		return 9
+	case opcode.Xor:
 		return 10
 	default:
 		return 0

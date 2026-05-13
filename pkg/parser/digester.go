@@ -673,6 +673,8 @@ func (*sqlDigester) isComparisonOp(tok token) bool {
 }
 
 func (d *sqlDigester) removeTokenPair(left, right int) {
+	// Drop both parentheses from d.tokens by shifting the enclosed tokens over
+	// the left paren, then shifting the trailing tokens over the right paren.
 	copy(d.tokens[left:], d.tokens[left+1:right])
 	copy(d.tokens[right-1:], d.tokens[right+1:])
 	d.tokens = d.tokens[:len(d.tokens)-2]
