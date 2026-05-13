@@ -97,6 +97,25 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 			require.Nil(t, getKeyspaceNameByte)
 		}
 	})
+
+	t.Run("bytes getter falls back to env before string getter", func(t *testing.T) {
+		const keyspaceNameInEnv = "test_keyspace_env_first"
+
+		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = ""
+		})
+
+		resetKeyspaceNameCache()
+		getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+		if kerneltype.IsNextGen() {
+			require.Equal(t, []byte(keyspaceNameInEnv), getKeyspaceNameByte)
+			require.Equal(t, keyspaceNameInEnv, config.GetGlobalKeyspaceName())
+		} else {
+			require.Nil(t, getKeyspaceNameByte)
+		}
+		require.Equal(t, keyspaceNameInEnv, GetKeyspaceNameBySettings())
+	})
 }
 
 func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
