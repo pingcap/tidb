@@ -98,6 +98,8 @@ type MVService struct {
 	}
 }
 
+// DefaultMVRefreshTaskTimeout and DefaultMVPurgeTaskTimeout define the default
+// per-task timeout budget for MV refresh and MV log purge.
 const (
 	DefaultMVRefreshTaskTimeout          = 5 * time.Minute
 	DefaultMVPurgeTaskTimeout            = 10 * time.Minute
