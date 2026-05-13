@@ -4073,6 +4073,25 @@ ColumnOption:
 			StrValue: $3,
 		}
 	}
+|	GeneratedAlways "AS" "ROW" "START"
+	{
+		// MariaDB system-versioned table period column. Parsed only when the
+		// MariaDB extension is enabled via (*Parser).SetMariaDB; the clause is
+		// kept on the AST for lossless restore but carries no engine semantics.
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionMariaDBRowStart}
+	}
+|	GeneratedAlways "AS" "ROW" "END"
+	{
+		if !parser.enableMariaDB {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionMariaDBRowEnd}
+	}
 
 AutoRandomOpt:
 	{
@@ -16132,22 +16151,22 @@ StatsObject:
 	{
 		$$ = &ast.StatsObject{
 			StatsObjectScope: ast.StatsObjectScopeDatabase,
-			DBName:             ast.NewCIStr($1),
+			DBName:           ast.NewCIStr($1),
 		}
 	}
 |	Identifier '.' Identifier
 	{
 		$$ = &ast.StatsObject{
 			StatsObjectScope: ast.StatsObjectScopeTable,
-			DBName:             ast.NewCIStr($1),
-			TableName:          ast.NewCIStr($3),
+			DBName:           ast.NewCIStr($1),
+			TableName:        ast.NewCIStr($3),
 		}
 	}
 |	Identifier
 	{
 		$$ = &ast.StatsObject{
 			StatsObjectScope: ast.StatsObjectScopeTable,
-			TableName:          ast.NewCIStr($1),
+			TableName:        ast.NewCIStr($1),
 		}
 	}
 

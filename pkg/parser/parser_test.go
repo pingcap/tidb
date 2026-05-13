@@ -5343,6 +5343,27 @@ func TestPrivilegeMariaDBDisabled(t *testing.T) {
 	RunTest(t, table, false, false)
 }
 
+func TestSystemVersionedColumnMariaDBEnabled(t *testing.T) {
+	// MariaDB system-versioned table period columns. Accepted only when the
+	// parser is in MariaDB mode; round-trip via Restore preserves the clause.
+	table := []testCase{
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW START)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) GENERATED ALWAYS AS ROW END)"},
+		{"CREATE TABLE t (a TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)", true, "CREATE TABLE `t` (`a` TIMESTAMP(6) NOT NULL GENERATED ALWAYS AS ROW START)"},
+	}
+	RunTest(t, table, false, true)
+}
+
+func TestSystemVersionedColumnMariaDBDisabled(t *testing.T) {
+	// MariaDB system-versioned period columns must be rejected when MariaDB
+	// mode is off so MySQL-strict parsing is unaffected.
+	table := []testCase{
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)", false, ""},
+		{"CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)", false, ""},
+	}
+	RunTest(t, table, false, false)
+}
+
 func TestComment(t *testing.T) {
 	table := []testCase{
 		{"create table t (c int comment 'comment')", true, "CREATE TABLE `t` (`c` INT COMMENT 'comment')"},

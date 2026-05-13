@@ -526,6 +526,13 @@ const (
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
 	ColumnOptionSecondaryEngineAttribute
+	// ColumnOptionMariaDBRowStart and ColumnOptionMariaDBRowEnd carry the
+	// MariaDB-only `GENERATED ALWAYS AS ROW {START|END}` clause used to mark
+	// the period columns of a system-versioned table. The clauses are parsed
+	// only when the parser has been put into MariaDB mode via
+	// (*Parser).SetMariaDB.
+	ColumnOptionMariaDBRowStart
+	ColumnOptionMariaDBRowEnd
 )
 
 var (
@@ -685,6 +692,10 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.StrValue)
+	case ColumnOptionMariaDBRowStart:
+		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW START")
+	case ColumnOptionMariaDBRowEnd:
+		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW END")
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
