@@ -204,7 +204,7 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
-			input: `SET_VAR(sbs = 16M) SET_VAR(fkc=OFF) SET_VAR(os="mcb=off") set_var(abc=1) set_var(os2='mcb2=off') set_var(sel=0.3)`,
+			input: `SET_VAR(sbs = 16M) SET_VAR(fkc=OFF) SET_VAR(os="mcb=off") set_var(abc=1) set_var(os2='mcb2=off') set_var(sel=0.3) set_var(sel_plus=+0.3) set_var(sel_minus=-0.3)`,
 			output: []*ast.TableOptimizerHint{
 				{
 					HintName: ast.NewCIStr("SET_VAR"),
@@ -246,6 +246,20 @@ func TestParseHint(t *testing.T) {
 					HintData: ast.HintSetVar{
 						VarName: "sel",
 						Value:   "0.3",
+					},
+				},
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "sel_plus",
+						Value:   "0.3",
+					},
+				},
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "sel_minus",
+						Value:   "-0.3",
 					},
 				},
 			},

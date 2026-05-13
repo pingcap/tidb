@@ -51,6 +51,7 @@ import (
 
 	/*yy:token "'%c'" */
 	hintStringLit
+	/* SET_VAR-only decimal/float literal. Integer values still use hintIntLit. */
 	hintNumericLit
 
 	/* MySQL 8.0 hint names */

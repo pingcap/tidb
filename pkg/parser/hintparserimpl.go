@@ -40,6 +40,8 @@ type hintScanner struct {
 	setVarValueState hintSetVarValueState
 }
 
+// SET_VAR values are parsed with lexer context so decimal/float tokens are accepted only after
+// SET_VAR(name = ...). Other hints, such as QB_NAME(1.5), must keep rejecting those tokens.
 type hintSetVarValueState uint8
 
 const (
