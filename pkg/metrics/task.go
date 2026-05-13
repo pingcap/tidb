@@ -42,6 +42,10 @@ var (
 var digitsRE = regexp.MustCompile(`[0-9]+`)
 
 // AddRetryableError increments the retryable error counter with the given error.
+// To bound Prometheus label cardinality, when the number of distinct labels seen
+// since the last reset exceeds errMapLimit, the entire counter vector is Reset()
+// and the label set is cleared — accumulated history for this metric is lost in
+// exchange for a hard cap on series count.
 func AddRetryableError(err error) {
 	var s string
 	err = errors.Cause(err)
