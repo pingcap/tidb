@@ -3677,6 +3677,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	model.SetLowerCaseTableNamesOnBootstrap(lowerCaseTableNames)
 
+	infoschema.BootstrapFinishGlobalVars.Store(true)
+
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])
 	err = dom.Start(ddl.Normal)

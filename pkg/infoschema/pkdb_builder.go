@@ -5,6 +5,7 @@ package infoschema
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -18,6 +19,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
+
+// BootstrapFinishGlobalVars will be set after bootstrapSessionImpl finish
+// setting global variables.
+var BootstrapFinishGlobalVars atomic.Bool
 
 func (b *Builder) reloadRoutines() error {
 	if b.infoSchema.routineMap == nil {
@@ -38,6 +43,11 @@ func (b *Builder) reloadRoutines() error {
 	sctx, ok := res.(sessionctx.Context)
 	if !ok {
 		return errors.Errorf("unexpected sys session type %T", res)
+	}
+	if !BootstrapFinishGlobalVars.Load() {
+		// During bootstrap/domain initialization the session may not have any usable infoschema yet.
+		// Skip routine loading in such cases; it will be loaded on later infoschema reloads.
+		return nil
 	}
 	sessIS := sctx.GetInfoSchema()
 	if sessIS == nil {
