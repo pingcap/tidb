@@ -426,7 +426,10 @@ func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, e
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
+		pp.logger.Debug("preload parquet row group into memory",
+			zap.String("path", pp.path),
+			zap.Int("rowGroup", pp.curRowGroup),
+			zap.Int64("size", ranges.end-ranges.start))
 		return inMemoryColumnBuilder(base, ranges, fileSize), nil
 	default:
 		return streamingColumnBuilder(ctx, pp.store, pp.path, ranges), nil
