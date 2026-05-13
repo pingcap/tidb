@@ -158,7 +158,6 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
 				lastStepStats = append(lastStepStats, stat.Filenames[i][1])
 			}
-
 		}
 		if len(startKey) == 0 && len(endKey) == 0 {
 			startKey = s.Min.Clone()
@@ -275,7 +274,6 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
 				lastStepStats = append(lastStepStats, stat.Filenames[i][1])
 			}
-
 		}
 		if len(startKey) == 0 && len(endKey) == 0 {
 			startKey = s.Min.Clone()

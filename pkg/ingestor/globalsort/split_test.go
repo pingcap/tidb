@@ -473,7 +473,6 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 			memSize := uint64(0)
 			for j := range int(64 * size.GB / kvSize) {
-
 				// copied from OneFileWriter.WriteRow
 
 				if memSize >= DefaultMemSizeLimit {
