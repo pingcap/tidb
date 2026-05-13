@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	dmysql "github.com/go-sql-driver/mysql"
@@ -287,6 +288,10 @@ func filterTableName(dbName, tblName string) filter.Table {
 	return filter.Table{Schema: dbName, Name: tblName}
 }
 
+func normalizeTableName(dbName, tblName string) filter.Table {
+	return filter.Table{Schema: strings.ToLower(dbName), Name: strings.ToLower(tblName)}
+}
+
 // collectDumpTables returns only the physical tables restored before the view
 // phase. View dependencies are tracked separately in viewRestorePlan.
 func collectDumpTables(dbMetas []*MDDatabaseMeta) tableNameSet {
@@ -312,40 +317,58 @@ func unionTableNames(sets ...tableNameSet) tableNameSet {
 }
 
 // loadExistingViewDependencies fetches downstream tables and views for every
-// schema touched by the plan so validation can distinguish missing external
-// objects from already satisfied dependencies or name collisions.
+// object referenced by the plan so validation can distinguish missing external
+// objects from already satisfied dependencies or name collisions without
+// scanning whole schemas.
 func (si *SchemaImporter) loadExistingViewDependencies(
 	ctx context.Context,
 	plan *viewRestorePlan,
 ) (existingTables tableNameSet, existingViews tableNameSet, err error) {
-	schemas := make(set.StringSet)
+	uniqueObjects := make(map[filter.Table]filter.Table)
+	addObject := func(tbl filter.Table) {
+		normalized := normalizeTableName(tbl.Schema, tbl.Name)
+		if _, ok := uniqueObjects[normalized]; ok {
+			return
+		}
+		uniqueObjects[normalized] = tbl
+	}
+
 	for _, node := range plan.nodes {
-		schemas.Insert(strings.ToLower(node.key.Schema))
+		addObject(node.key)
 		for _, dep := range node.deps {
-			schemas.Insert(strings.ToLower(dep.Schema))
+			addObject(dep)
 		}
 	}
 
 	existingTables = make(tableNameSet)
 	existingViews = make(tableNameSet)
-	for schema := range schemas {
-		var tables map[string]struct{}
-		tables, err = si.getExistingTables(ctx, schema)
-		if err != nil {
-			return nil, nil, err
+	objectKeys := make([]filter.Table, 0, len(uniqueObjects))
+	for normalized := range uniqueObjects {
+		objectKeys = append(objectKeys, normalized)
+	}
+	sort.Slice(objectKeys, func(i, j int) bool {
+		if objectKeys[i].Schema != objectKeys[j].Schema {
+			return objectKeys[i].Schema < objectKeys[j].Schema
 		}
-		for tableName := range tables {
-			existingTables.add(filter.Table{Schema: schema, Name: tableName})
-		}
+		return objectKeys[i].Name < objectKeys[j].Name
+	})
 
-		var views map[string]struct{}
-		views, err = si.getExistingViews(ctx, schema)
+	for _, normalized := range objectKeys {
+		object := uniqueObjects[normalized]
+		var isView bool
+		var exists bool
+		isView, exists, err = si.getExistingObjectType(ctx, object.Schema, object.Name)
 		if err != nil {
 			return nil, nil, err
 		}
-		for viewName := range views {
-			existingViews.add(filter.Table{Schema: schema, Name: viewName})
+		if !exists {
+			continue
 		}
+		if isView {
+			existingViews.add(normalized)
+			continue
+		}
+		existingTables.add(normalized)
 	}
 	return existingTables, existingViews, nil
 }
@@ -416,17 +439,17 @@ func (si *SchemaImporter) isTableExist(ctx context.Context, dbName, tableName st
 	return true, nil
 }
 
-// the result contains views too, but as table and view share the same name space, it's ok.
-func (si *SchemaImporter) getExistingTables(ctx context.Context, dbName string) (set.StringSet, error) {
+func (si *SchemaImporter) getExistingObjectType(ctx context.Context, dbName, tableName string) (bool, bool, error) {
 	sb := new(strings.Builder)
-	sqlescape.MustFormatSQL(sb, `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = %?`, dbName)
-	return si.getExistingSchemas(ctx, sb.String())
-}
-
-func (si *SchemaImporter) getExistingViews(ctx context.Context, dbName string) (set.StringSet, error) {
-	sb := new(strings.Builder)
-	sqlescape.MustFormatSQL(sb, `SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = %?`, dbName)
-	return si.getExistingSchemas(ctx, sb.String())
+	sqlescape.MustFormatSQL(sb, `SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = %? AND TABLE_NAME = %?`, dbName, tableName)
+	tableTypes, err := si.getExistingSchemas(ctx, sb.String())
+	if err != nil {
+		return false, false, err
+	}
+	if len(tableTypes) == 0 {
+		return false, false, nil
+	}
+	return tableTypes.Exist("view"), true, nil
 }
 
 // get existing databases/tables/views using the given query, the first column of
