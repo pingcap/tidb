@@ -139,6 +139,9 @@ type mlogPurgeThrottlePlan struct {
 	targetRate         float64
 	pendingRows        int64
 	effectiveBatchSize int64
+	minRate            float64
+	deadline           time.Time
+	noWaitStreak       int
 }
 
 func newMVTaskCancelController(parent context.Context) *mvTaskCancelController {
@@ -190,6 +193,16 @@ func (c *mvTaskCancelController) normalizeTaskFailure(taskErr error) (*string, e
 
 	failedReason := formatMVManualCancelFailureReason(requester)
 	return &failedReason, errMVTaskCanceledManually
+}
+
+func (c *mvTaskCancelController) isManualCancelRequested() bool {
+	if c == nil {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reason == mvTaskCancelReasonManual
 }
 
 func formatMVManualCancelFailureReason(requester string) string {
@@ -1863,6 +1876,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 			}
 			if throttlePlan != nil {
 				if sleepErr := throttlePlan.maybeSleep(kctx, deleteLoopStart, totalPurgeRows); sleepErr != nil {
+					if taskCancelController.isManualCancelRequested() {
+						return finalizeFailure(sleepErr)
+					}
 					logutil.BgLogger().Warn(
 						"purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge",
 						zap.String("schemaName", schemaName.O),
@@ -1872,6 +1888,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 					)
 					throttlePlan = nil
 					effectiveBatchSize = batchSize
+				} else {
+					effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
 				}
 			}
 		}
@@ -2366,10 +2384,15 @@ func tryBuildMLogPurgeThrottlePlan(
 		targetRate = cfg.minRate
 	}
 	effectiveBatchSize := calcMLogPurgeAdaptiveBatchSize(targetRate)
+	if effectiveBatchSize <= 0 {
+		effectiveBatchSize = mlogPurgeAdaptiveMinBatchSize
+	}
 	return &mlogPurgeThrottlePlan{
 		targetRate:         targetRate,
 		pendingRows:        pendingRows,
 		effectiveBatchSize: effectiveBatchSize,
+		minRate:            cfg.minRate,
+		deadline:           *nextTime,
 	}
 }
 
@@ -2559,8 +2582,10 @@ func (p *mlogPurgeThrottlePlan) maybeSleep(
 	sleepFor := expectedElapsed - actualElapsed
 	failpoint.InjectCall("mvPurgeAdaptiveThrottleSleepComputed", totalDeletedRows, sleepFor)
 	if sleepFor <= 0 {
-		return nil
+		p.noWaitStreak++
+		return p.recalculateBatchSizeOnNoWait(totalDeletedRows)
 	}
+	p.noWaitStreak = 0
 	timer := time.NewTimer(sleepFor)
 	defer timer.Stop()
 	select {
@@ -2569,6 +2594,38 @@ func (p *mlogPurgeThrottlePlan) maybeSleep(
 	case <-timer.C:
 		return nil
 	}
+}
+
+func (p *mlogPurgeThrottlePlan) recalculateBatchSizeOnNoWait(totalDeletedRows int64) error {
+	if p == nil {
+		return nil
+	}
+	if p.noWaitStreak < 2 {
+		return nil
+	}
+	if p.pendingRows <= 0 || p.deadline.IsZero() {
+		return nil
+	}
+	remainingRows := p.pendingRows - totalDeletedRows
+	if remainingRows <= 0 {
+		return nil
+	}
+	remainingBudget := time.Until(p.deadline)
+	if remainingBudget <= 0 {
+		return nil
+	}
+	newTargetRate := float64(remainingRows) / remainingBudget.Seconds()
+	if newTargetRate < p.minRate {
+		newTargetRate = p.minRate
+	}
+	newBatchSize := calcMLogPurgeAdaptiveBatchSize(newTargetRate)
+	if newBatchSize <= 0 {
+		newBatchSize = mlogPurgeAdaptiveMinBatchSize
+	}
+	p.targetRate = newTargetRate
+	p.effectiveBatchSize = newBatchSize
+	p.noWaitStreak = 0
+	return nil
 }
 
 func (p *mlogPurgeThrottlePlan) effectiveDeleteBatchSize(configuredBatchSize int64) int64 {
@@ -2582,6 +2639,7 @@ func (p *mlogPurgeThrottlePlan) effectiveDeleteBatchSize(configuredBatchSize int
 	if effectiveBatchSize > configuredBatchSize {
 		effectiveBatchSize = configuredBatchSize
 	}
+	p.effectiveBatchSize = effectiveBatchSize
 	failpoint.InjectCall("mvPurgeAdaptiveBatchSizeComputed", configuredBatchSize, effectiveBatchSize)
 	return effectiveBatchSize
 }

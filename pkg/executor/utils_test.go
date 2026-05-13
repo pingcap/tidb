@@ -244,6 +244,31 @@ func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
 	require.Equal(t, int64(10000), batch)
 }
 
+func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
+	plan := &mlogPurgeThrottlePlan{
+		targetRate:         50000,
+		pendingRows:        100000,
+		effectiveBatchSize: 10000,
+		minRate:            1,
+		deadline:           time.Now().Add(30 * time.Second),
+		noWaitStreak:       1,
+	}
+
+	err := plan.maybeSleep(context.Background(), time.Now().Add(-3*time.Second), 98000)
+	require.NoError(t, err)
+	require.Equal(t, int64(2000), plan.effectiveBatchSize)
+	require.Zero(t, plan.noWaitStreak)
+	require.Less(t, plan.targetRate, float64(50000))
+}
+
+func TestMVTaskCancelControllerIsManualCancelRequested(t *testing.T) {
+	controller := newMVTaskCancelController(context.Background())
+	require.False(t, controller.isManualCancelRequested())
+
+	controller.requestManualCancelByRequester("'u'@'h'")
+	require.True(t, controller.isManualCancelRequested())
+}
+
 func TestDeriveMLogPurgeThrottleDeadline(t *testing.T) {
 	t.Run("respect hardcoded purge planning budget", func(t *testing.T) {
 		baseNow := time.Now().UTC()
