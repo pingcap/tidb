@@ -80,6 +80,12 @@ func (s *testMydumpLoaderSuite) touch(t *testing.T, filename ...string) {
 	require.Nil(t, err)
 }
 
+func (s *testMydumpLoaderSuite) writeFile(t *testing.T, filename, content string) {
+	path := filepath.Join(s.sourceDir, filename)
+	err := os.WriteFile(path, []byte(content), 0o644)
+	require.NoError(t, err)
+}
+
 func (s *testMydumpLoaderSuite) mkdir(t *testing.T, dirname string) {
 	path := filepath.Join(s.sourceDir, dirname)
 	err := os.Mkdir(path, 0o755)
@@ -293,7 +299,7 @@ func TestViewNoHostDB(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "notdb-schema-create.sql")
-	s.touch(t, "db.tbl-schema-view.sql")
+	s.writeFile(t, "db.tbl-schema-view.sql", "CREATE VIEW tbl AS SELECT 1;")
 
 	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
@@ -314,7 +320,7 @@ func TestViewNoHostDB(t *testing.T) {
 			Views: []*md.MDTableMeta{{
 				DB:           "db",
 				Name:         "tbl",
-				SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema}},
+				SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: 28, RealSize: 28}},
 				IndexRatio:   0.0,
 				IsRowOrdered: true,
 			}},
@@ -331,7 +337,7 @@ func TestViewNoHostTable(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "db-schema-create.sql")
-	s.touch(t, "db.tbl-schema-view.sql")
+	s.writeFile(t, "db.tbl-schema-view.sql", "CREATE VIEW tbl AS SELECT 1;")
 
 	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
@@ -341,7 +347,7 @@ func TestViewNoHostTable(t *testing.T) {
 		Views: []*md.MDTableMeta{{
 			DB:           "db",
 			Name:         "tbl",
-			SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema}},
+			SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: 28, RealSize: 28}},
 			IndexRatio:   0.0,
 			IsRowOrdered: true,
 		}},
@@ -445,7 +451,7 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "a1.t2.1.sql")
 
 		s.touch(t, "a1.v1-schema.sql")
-		s.touch(t, "a1.v1-schema-view.sql")
+		s.writeFile(t, "a1.v1-schema-view.sql", "CREATE VIEW v1 AS SELECT 1;")
 
 		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
@@ -474,7 +480,7 @@ func TestRouter(t *testing.T) {
 					{
 						DB:           "a1",
 						Name:         "v1",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: 27, RealSize: 27}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -557,7 +563,7 @@ func TestRouter(t *testing.T) {
 		}
 		s.touch(t, "e0-schema-create.sql")
 		s.touch(t, "e0.f0-schema.sql")
-		s.touch(t, "e0.f0-schema-view.sql")
+		s.writeFile(t, "e0.f0-schema-view.sql", "CREATE VIEW f0 AS SELECT 1;")
 
 		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
@@ -576,7 +582,7 @@ func TestRouter(t *testing.T) {
 					{
 						DB:           "v",
 						Name:         "vv",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: 27, RealSize: 27}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -869,7 +875,7 @@ func TestLoaderPrunesPlaceholderTablesAfterViewDiscovery(t *testing.T) {
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.real-schema.sql")
 	s.touch(t, "db.v1-schema.sql")
-	s.touch(t, "db.v1-schema-view.sql")
+	s.writeFile(t, "db.v1-schema-view.sql", "CREATE VIEW v1 AS SELECT 1;")
 
 	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)

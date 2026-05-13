@@ -439,7 +439,7 @@ func (si *SchemaImporter) isTableExist(ctx context.Context, dbName, tableName st
 	return true, nil
 }
 
-func (si *SchemaImporter) getExistingObjectType(ctx context.Context, dbName, tableName string) (bool, bool, error) {
+func (si *SchemaImporter) getExistingObjectType(ctx context.Context, dbName, tableName string) (isView bool, exists bool, err error) {
 	sb := new(strings.Builder)
 	sqlescape.MustFormatSQL(sb, `SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = %? AND TABLE_NAME = %?`, dbName, tableName)
 	tableTypes, err := si.getExistingSchemas(ctx, sb.String())
