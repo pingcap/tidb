@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -261,6 +262,8 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
+	// ExtendedErrorMsgs maps error message regexps to configured suffixes for selected user-facing errors.
+	ExtendedErrorMsgs map[string]string `toml:"extended-error-msgs" json:"extended-error-msgs"`
 
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
@@ -1175,6 +1178,7 @@ var defaultConf = Config{
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
+	ExtendedErrorMsgs:          make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
@@ -1214,7 +1218,19 @@ var (
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
 	conf := defaultConf
+	conf.ExtendedErrorMsgs = cloneStringMap(defaultConf.ExtendedErrorMsgs)
 	return &conf
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // GetGlobalConfig returns the global configuration for this server.
@@ -1464,6 +1480,11 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
+	for pattern := range c.ExtendedErrorMsgs {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("invalid extended-error-msgs regexp %q: %w", pattern, err)
+		}
+	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
 	}
@@ -1633,6 +1654,7 @@ func init() {
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 	conf := defaultConf
+	conf.ExtendedErrorMsgs = cloneStringMap(defaultConf.ExtendedErrorMsgs)
 	if intest.InTest && kerneltype.IsNextGen() {
 		// In test mode, without reading a config file, we still assume the `GetGlobalConfig()` returns
 		// a valid config file. However, the "valid" nextgen config file should always have a keyspace name.

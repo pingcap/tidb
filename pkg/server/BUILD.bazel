@@ -93,6 +93,7 @@ go_library(
         "//pkg/util/cpuprofile",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/errmsg",
         "//pkg/util/execdetails",
         "//pkg/util/fastrand",
         "//pkg/util/hack",

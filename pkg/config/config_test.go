@@ -170,6 +170,41 @@ disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
 }
 
+func TestExtendedErrorMsgsConfig(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+[extended-error-msgs]
+"^Access denied for user '.+'@'.+' \\(using password: (YES|NO)\\)$" = "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details"
+"^require_secure_transport can not be set to ON with SEM\\(security enhanced mode\\) enabled$" = "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details"
+"^sleep\\(\\) argument is greater than [0-9]+$" = "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details"
+"^[A-Z ]+ command denied to user '.+'@'.+' for table '.+'$" = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details"
+"^Access denied; you need \\(at least one of\\) the RESTRICTED_VARIABLES_ADMIN privilege\\(s\\) for this operation$" = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details"
+"^Feature '.+' is not supported when security enhanced mode is enabled$" = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details"
+`), 0644))
+
+	conf := NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.NoError(t, conf.Valid())
+	require.Equal(t, map[string]string{
+		`^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$`:                                                "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details",
+		`^require_secure_transport can not be set to ON with SEM\(security enhanced mode\) enabled$`:                     "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details",
+		`^sleep\(\) argument is greater than [0-9]+$`:                                                                    "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details",
+		`^[A-Z ]+ command denied to user '.+'@'.+' for table '.+'$`:                                                      "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details",
+		`^Access denied; you need \(at least one of\) the RESTRICTED_VARIABLES_ADMIN privilege\(s\) for this operation$`: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details",
+		`^Feature '.+' is not supported when security enhanced mode is enabled$`:                                         "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details",
+	}, conf.ExtendedErrorMsgs)
+
+	require.Empty(t, NewConfig().ExtendedErrorMsgs)
+}
+
+func TestExtendedErrorMsgsInvalidRegexp(t *testing.T) {
+	conf := NewConfig()
+	conf.ExtendedErrorMsgs = map[string]string{
+		"[": "invalid regexp",
+	}
+	require.ErrorContains(t, conf.Valid(), "invalid extended-error-msgs regexp")
+}
+
 func TestRemovedVariableCheck(t *testing.T) {
 	configTest := []struct {
 		options string

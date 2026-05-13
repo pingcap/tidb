@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "errmsg",
+    srcs = ["errmsg.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/errmsg",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/mysql",
+    ],
+)
+
+go_test(
+    name = "errmsg_test",
+    timeout = "short",
+    srcs = ["errmsg_test.go"],
+    embed = [":errmsg"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/mysql",
+        "@com_github_stretchr_testify//require",
+    ],
+)

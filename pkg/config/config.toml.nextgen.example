@@ -446,6 +446,11 @@ allow-expression-index = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
+# extended-error-msgs appends configured messages to SQL errors matching regexps. When multiple
+# regexps match the same error, TiDB uses the longest regexp pattern first.
+# Example: "^Feature '.+' is not supported$" = "see the feature limitations for more details"
+[extended-error-msgs]
+
 # instance scope variables
 # These options are also available as a system variable for online configuration
 # changes to the system variable do not persist to the cluster. You must make changes
