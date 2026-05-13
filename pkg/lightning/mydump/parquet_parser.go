@@ -718,16 +718,16 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		fileMeta:      fileMeta,
-		colTypes:      colTypes,
-		colNames:      colNames,
-		ctx:           ctx,
-		store:         store,
-		path:          path,
-		prop:          prop,
-		alloc:         allocator,
-		logger:        logger,
-		rowPool:       &pool,
+		fileMeta:    fileMeta,
+		colTypes:    colTypes,
+		colNames:    colNames,
+		ctx:         ctx,
+		store:       store,
+		path:        path,
+		prop:        prop,
+		alloc:       allocator,
+		logger:      logger,
+		rowPool:     &pool,
 		preloadBase: preloadBase,
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
