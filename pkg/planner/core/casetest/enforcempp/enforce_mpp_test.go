@@ -575,8 +575,30 @@ func TestMPPSharedCTEScan(t *testing.T) {
 	tk.MustExec("drop table if exists s")
 	tk.MustExec("create table t(a int, b int, c int)")
 	tk.MustExec("create table s(a int, b int, c int)")
-	tk.MustExec("CREATE TABLE `part` (`P_PARTKEY` bigint NOT NULL, `P_NAME` varchar(55) NOT NULL, `P_MFGR` char(25) NOT NULL, `P_BRAND` char(10) NOT NULL, `P_TYPE` varchar(25) NOT NULL, `P_SIZE` bigint NOT NULL, `P_CONTAINER` char(10) NOT NULL, `P_RETAILPRICE` decimal(15,2) NOT NULL, `P_COMMENT` varchar(23) NOT NULL, PRIMARY KEY (`P_PARTKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-	tk.MustExec("CREATE TABLE `orders` (`O_ORDERKEY` bigint NOT NULL, `O_CUSTKEY` bigint NOT NULL, `O_ORDERSTATUS` char(1) NOT NULL, `O_TOTALPRICE` decimal(15,2) NOT NULL, `O_ORDERDATE` date NOT NULL, `O_ORDERPRIORITY` char(15) NOT NULL, `O_CLERK` char(15) NOT NULL, `O_SHIPPRIORITY` bigint NOT NULL, `O_COMMENT` varchar(79) NOT NULL, PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec(`CREATE TABLE part (
+		P_PARTKEY bigint NOT NULL,
+		P_NAME varchar(55) NOT NULL,
+		P_MFGR char(25) NOT NULL,
+		P_BRAND char(10) NOT NULL,
+		P_TYPE varchar(25) NOT NULL,
+		P_SIZE bigint NOT NULL,
+		P_CONTAINER char(10) NOT NULL,
+		P_RETAILPRICE decimal(15,2) NOT NULL,
+		P_COMMENT varchar(23) NOT NULL,
+		PRIMARY KEY (P_PARTKEY) /*T![clustered_index] CLUSTERED */
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`CREATE TABLE orders (
+		O_ORDERKEY bigint NOT NULL,
+		O_CUSTKEY bigint NOT NULL,
+		O_ORDERSTATUS char(1) NOT NULL,
+		O_TOTALPRICE decimal(15,2) NOT NULL,
+		O_ORDERDATE date NOT NULL,
+		O_ORDERPRIORITY char(15) NOT NULL,
+		O_CLERK char(15) NOT NULL,
+		O_SHIPPRIORITY bigint NOT NULL,
+		O_COMMENT varchar(79) NOT NULL,
+		PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustExec("alter table s set tiflash replica 1")
 	tk.MustExec("alter table part set tiflash replica 1")
