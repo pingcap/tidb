@@ -2959,8 +2959,8 @@ func (w *worker) addTableIndex(
 func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
 	var (
 		backendCtx ingest.BackendCtx
-		cfg        *local.BackendConfig
-		backend    *local.Backend
+		cfg        *ingestctrl.BackendConfig
+		backend    *ingestctrl.Backend
 	)
 	defer func() {
 		if backendCtx != nil {

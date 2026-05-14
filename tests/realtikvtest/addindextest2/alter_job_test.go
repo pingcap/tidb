@@ -110,7 +110,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
 	})
 	var finishedSubtasks int
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(be *local.Backend) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(be *ingestctrl.Backend) {
 		finishedSubtasks++
 		require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
 	})

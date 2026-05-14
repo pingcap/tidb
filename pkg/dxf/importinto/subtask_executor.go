@@ -148,11 +148,11 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if kerneltype.IsNextGen() {
 		bfWeight := importer.GetBackoffWeight(plan)
-		mgr := local.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
+		mgr := ingestctrl.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
 			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
 		defer mgr.Close()
 		return importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
-			func() (*local.RemoteChecksum, error) {
+			func() (*ingestctrl.RemoteChecksum, error) {
 				ctxWithLogger := logutil.WithLogger(ctx, logger)
 				return mgr.Checksum(ctxWithLogger, &importdef.TableInfo{
 					DB:   plan.DBName,
@@ -165,7 +165,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 
 	return p.taskTbl.WithNewSession(func(se sessionctx.Context) error {
 		err = importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
-			func() (*local.RemoteChecksum, error) {
+			func() (*ingestctrl.RemoteChecksum, error) {
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
 			},
 		)

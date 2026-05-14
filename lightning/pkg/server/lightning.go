@@ -1043,8 +1043,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 		maxDBFiles := topNTotalSize / int64(cfg.TikvImporter.LocalWriterMemCacheSize) * 2
 		// the pebble db and all import routine need upto maxDBFiles fds for read and write.
 		maxOpenDBFiles := maxDBFiles * (1 + int64(cfg.TikvImporter.RangeConcurrency))
-		estimateMaxFiles := local.RlimT(cfg.App.RegionConcurrency) + local.RlimT(maxOpenDBFiles)
-		if err := local.VerifyRLimit(estimateMaxFiles); err != nil {
+		estimateMaxFiles := ingestctrl.RlimT(cfg.App.RegionConcurrency) + ingestctrl.RlimT(maxOpenDBFiles)
+		if err := ingestctrl.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}
 	}

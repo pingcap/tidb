@@ -768,7 +768,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 
 func MockDoChecksumCtx(db *sql.DB) context.Context {
 	ctx := context.Background()
-	manager := local.NewTiDBChecksumExecutor(db)
+	manager := ingestctrl.NewTiDBChecksumExecutor(db)
 	return context.WithValue(ctx, &checksumManagerKey, manager)
 }
 

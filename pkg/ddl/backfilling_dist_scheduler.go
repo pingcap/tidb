@@ -763,7 +763,7 @@ func getRangeSplitter(
 		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()
 		if err == nil {
-			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+			size, keys, err := ingestctrl.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 			if err == nil {
 				regionSplitSize = max(regionSplitSize, size)
 				regionSplitKeys = max(regionSplitKeys, keys)

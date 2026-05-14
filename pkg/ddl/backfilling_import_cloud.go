@@ -51,7 +51,7 @@ type cloudImportExecutor struct {
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
 	backendCtx    ingest.BackendCtx
-	backend       *local.Backend
+	backend       *ingestctrl.Backend
 	metric        *lightningmetric.Common
 	engine        atomic.Pointer[globalsort.Engine]
 	summary       *execute.SubtaskSummary

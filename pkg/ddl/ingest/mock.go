@@ -153,8 +153,8 @@ func (m *MockBackendCtx) AdvanceWatermark(imported bool) error {
 }
 
 // GetLocalBackend returns the local backend.
-func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
-	b := &local.Backend{}
+func (m *MockBackendCtx) GetLocalBackend() *ingestctrl.Backend {
+	b := &ingestctrl.Backend{}
 	b.LocalStoreDir = filepath.Join(os.TempDir(), "mock_backend", strconv.FormatInt(m.jobID, 10))
 	return b
 }

@@ -31,7 +31,7 @@ import (
 )
 
 // NewChecksumManager creates a new checksum manager.
-func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (local.ChecksumManager, error) {
+func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (ingestctrl.ChecksumManager, error) {
 	// if we don't need checksum, just return nil
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 		return nil, nil
@@ -43,20 +43,20 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 	}
 
 	// for v4.0.0 or upper, we can use the gc ttl api
-	var manager local.ChecksumManager
+	var manager ingestctrl.ChecksumManager
 	if pdVersion.Major >= 4 && !rc.cfg.PostRestore.ChecksumViaSQL {
 		backoffWeight, err := common.GetBackoffWeightFromDB(ctx, rc.db)
 		// only set backoff weight when it's smaller than default value
-		if err == nil && backoffWeight >= local.DefaultBackoffWeight {
+		if err == nil && backoffWeight >= ingestctrl.DefaultBackoffWeight {
 			logutil.Logger(ctx).Info("get tidb_backoff_weight", zap.Int("backoff_weight", backoffWeight))
 		} else {
-			logutil.Logger(ctx).Info("set tidb_backoff_weight to default", zap.Int("backoff_weight", local.DefaultBackoffWeight))
-			backoffWeight = local.DefaultBackoffWeight
+			logutil.Logger(ctx).Info("set tidb_backoff_weight to default", zap.Int("backoff_weight", ingestctrl.DefaultBackoffWeight))
+			backoffWeight = ingestctrl.DefaultBackoffWeight
 		}
 
-		manager = local.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, rc.taskType)
+		manager = ingestctrl.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, rc.taskType)
 	} else {
-		manager = local.NewTiDBChecksumExecutor(rc.db)
+		manager = ingestctrl.NewTiDBChecksumExecutor(rc.db)
 	}
 
 	return manager, nil
@@ -64,9 +64,9 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(ctx context.Context, table *importdef.TableInfo) (*local.RemoteChecksum, error) {
+func DoChecksum(ctx context.Context, table *importdef.TableInfo) (*ingestctrl.RemoteChecksum, error) {
 	var err error
-	manager, ok := ctx.Value(&checksumManagerKey).(local.ChecksumManager)
+	manager, ok := ctx.Value(&checksumManagerKey).(ingestctrl.ChecksumManager)
 	if !ok {
 		return nil, errors.New("No gcLifeTimeManager found in context, check context initialization")
 	}

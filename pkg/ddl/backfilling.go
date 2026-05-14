@@ -776,8 +776,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	}
 
 	var (
-		cfg *local.BackendConfig
-		bd  *local.Backend
+		cfg *ingestctrl.BackendConfig
+		bd  *ingestctrl.Backend
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {

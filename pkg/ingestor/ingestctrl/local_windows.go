@@ -14,7 +14,7 @@
 
 //go:build windows
 
-package local
+package ingestctrl
 
 import (
 	"math"

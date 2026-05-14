@@ -47,13 +47,13 @@ func genConfig(
 	concurrency int,
 	maxWriteSpeed int,
 	globalSort bool,
-) *local.BackendConfig {
+) *ingestctrl.BackendConfig {
 	workerConcurrency := int32(concurrency * 2)
 	if ImporterRangeConcurrencyForTest != nil {
 		workerConcurrency = ImporterRangeConcurrencyForTest.Load() * 2
 	}
 
-	cfg := &local.BackendConfig{
+	cfg := &ingestctrl.BackendConfig{
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
@@ -132,7 +132,7 @@ func generateLocalEngineConfig(ts uint64) *backend.EngineConfig {
 }
 
 // adjustImportMemory adjusts the lightning memory parameters according to the memory root's max limitation.
-func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *local.BackendConfig) {
+func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.BackendConfig) {
 	var scale int64
 	// Try aggressive resource usage successful.
 	if tryAggressiveMemory(ctx, memRoot, cfg) {
@@ -163,7 +163,7 @@ func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *local.Backend
 }
 
 // tryAggressiveMemory lightning memory parameters according memory root's max limitation.
-func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *local.BackendConfig) bool {
+func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.BackendConfig) bool {
 	var defaultMemSize int64
 	defaultMemSize = int64(int(cfg.LocalWriterMemCacheSize) * cfg.GetWorkerConcurrency() / 2)
 	defaultMemSize += int64(cfg.MemTableSize)

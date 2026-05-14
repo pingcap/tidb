@@ -223,8 +223,8 @@ func (tr *TableImporter) importTable(
 	// 2. Do duplicate detection if needed
 	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
-		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
-		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
+		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+ingestctrl.DupDetectDirSuffix)
+		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+ingestctrl.DupResultDirSuffix)
 
 		dupIgnoreRows, err := extsort.OpenDiskSorter(resultDir, &extsort.DiskSorterOptions{
 			Concurrency: rc.cfg.App.RegionConcurrency,
@@ -452,7 +452,7 @@ func estimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableC
 	}
 	totalRawFileSize *= factor
 
-	return local.EstimateCompactionThreshold2(totalRawFileSize)
+	return ingestctrl.EstimateCompactionThreshold2(totalRawFileSize)
 }
 
 func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
@@ -708,7 +708,7 @@ func (tr *TableImporter) preprocessEngine(
 	if !tr.tableMeta.IsRowOrdered {
 		dataEngineCfg.Local.Compact = true
 		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+		dataEngineCfg.Local.CompactThreshold = ingestctrl.CompactionUpperThreshold
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
@@ -1067,10 +1067,10 @@ func (tr *TableImporter) postProcess(
 		// if we came here, it must be a local backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
-		var dupeController *local.DupeController
+		var dupeController *ingestctrl.DupeController
 		hasDupe := false
 		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
-			localBackend := rc.backend.(*local.Backend)
+			localBackend := rc.backend.(*ingestctrl.Backend)
 			var err error
 			dupeController, err = localBackend.GetDupeController(ctx, rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 			if err != nil {
@@ -1134,7 +1134,7 @@ func (tr *TableImporter) postProcess(
 				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 			}
 
-			var remoteChecksum *local.RemoteChecksum
+			var remoteChecksum *ingestctrl.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
 			failpoint.Inject("checksum-error", func() {
 				tr.logger.Info("failpoint checksum-error injected.")
@@ -1361,7 +1361,7 @@ func (tr *TableImporter) importKV(
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
 	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = local.ConvertToErrFoundConflictRecords(err, tr.encTable)
+		err = ingestctrl.ConvertToErrFoundConflictRecords(err, tr.encTable)
 	}
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
@@ -1386,7 +1386,7 @@ func (tr *TableImporter) importKV(
 }
 
 // do checksum for each table.
-func (tr *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, localChecksum verify.KVChecksum) error {
+func (tr *TableImporter) compareChecksum(remoteChecksum *ingestctrl.RemoteChecksum, localChecksum verify.KVChecksum) error {
 	if remoteChecksum.Checksum != localChecksum.Sum() ||
 		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
 		remoteChecksum.TotalBytes != localChecksum.SumSize() {

@@ -58,10 +58,10 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	}
 
-	oldRunInTest := local.RunInTest
-	local.RunInTest = true
+	oldRunInTest := ingestctrl.RunInTest
+	ingestctrl.RunInTest = true
 	t.Cleanup(func() {
-		local.RunInTest = oldRunInTest
+		ingestctrl.RunInTest = oldRunInTest
 	})
 
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -81,7 +81,7 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("alter table t add unique index idx1(b);")
 	tk.MustExec("admin check table t;")
 	require.Equal(t, int64(0), ingest.LitMemRoot.CurrentUsage())
-	require.NoError(t, local.LastAlloc.Load().CheckRefCnt())
+	require.NoError(t, ingestctrl.LastAlloc.Load().CheckRefCnt())
 }
 
 func TestAddIndexIngestLimitOneBackend(t *testing.T) {
@@ -872,10 +872,10 @@ func TestIssue55808(t *testing.T) {
 		tk.MustExec("set global tidb_ddl_error_count_limit = default;")
 	}()
 
-	backup := local.MaxWriteAndIngestRetryTimes
-	local.MaxWriteAndIngestRetryTimes = 1
+	backup := ingestctrl.MaxWriteAndIngestRetryTimes
+	ingestctrl.MaxWriteAndIngestRetryTimes = 1
 	t.Cleanup(func() {
-		local.MaxWriteAndIngestRetryTimes = backup
+		ingestctrl.MaxWriteAndIngestRetryTimes = backup
 	})
 
 	tk.MustExec("create table t (a int primary key, b int);")

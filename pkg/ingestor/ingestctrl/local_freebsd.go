@@ -14,7 +14,7 @@
 
 //go:build freebsd
 
-package local
+package ingestctrl
 
 import (
 	"go.uber.org/zap"

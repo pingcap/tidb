@@ -145,7 +145,7 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
+		backendTargetInfoGetter = ingestctrl.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
@@ -299,7 +299,7 @@ func NewPreImportInfoGetter(
 		case config.BackendTiDB:
 			encBuilder = tidb.NewEncodingBuilder()
 		case config.BackendLocal:
-			encBuilder = local.NewEncodingBuilder(context.Background())
+			encBuilder = ingestctrl.NewEncodingBuilder(context.Background())
 		default:
 			return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 		}

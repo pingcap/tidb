@@ -67,8 +67,8 @@ type readIndexStepExecutor struct {
 	summary *execute.SubtaskSummary
 
 	summaryMap sync.Map // subtaskID => readIndexSummary
-	backendCfg *local.BackendConfig
-	backend    *local.Backend
+	backendCfg *ingestctrl.BackendConfig
+	backend    *ingestctrl.Backend
 	// pipeline of current running subtask, it's nil when no subtask is running.
 	currPipe atomic.Pointer[operator.AsyncPipeline]
 

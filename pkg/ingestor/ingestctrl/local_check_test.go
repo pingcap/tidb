@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local_test
+package ingestctrl_test
 
 import (
 	"context"
@@ -73,13 +73,13 @@ func TestCheckRequirementsTiFlash(t *testing.T) {
 	}
 	checkCtx := &backend.CheckCtx{DBMetas: dbMetas}
 
-	mock.ExpectQuery(local.TiFlashReplicaQueryForTest).WillReturnRows(sqlmock.NewRows([]string{"db", "tbl"}).
+	mock.ExpectQuery(ingestctrl.TiFlashReplicaQueryForTest).WillReturnRows(sqlmock.NewRows([]string{"db", "tbl"}).
 		AddRow("db", "tbl").
 		AddRow("test", "t1").
 		AddRow("test1", "tbl"))
 	mock.ExpectClose()
 
-	err = local.CheckTiFlashVersionForTest(ctx, db, checkCtx, *semver.New("4.0.2"))
+	err = ingestctrl.CheckTiFlashVersionForTest(ctx, db, checkCtx, *semver.New("4.0.2"))
 	require.Regexp(t, "^lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: \\[`test`.`t1`, `test1`.`tbl`\\]", err.Error())
 }
 
@@ -102,15 +102,15 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	defer cancel()
 	cli := split.NewFakePDClient(allStores, false, nil)
 	defer func() {
-		local.SetGetSplitConfFromStoreFunc(local.GetSplitConfFromStore)
+		ingestctrl.SetGetSplitConfFromStoreFunc(ingestctrl.GetSplitConfFromStore)
 	}()
-	local.SetGetSplitConfFromStoreFunc(func(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
+	ingestctrl.SetGetSplitConfFromStoreFunc(func(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
 		if strings.Contains(host, "172.16.102.3:20180") {
 			return int64(1), int64(2), nil
 		}
 		return 0, 0, errors.New("invalid connection")
 	})
-	splitSize, splitKeys, err := local.GetRegionSplitSizeKeys(ctx, cli, nil)
+	splitSize, splitKeys, err := ingestctrl.GetRegionSplitSizeKeys(ctx, cli, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), splitSize)
 	require.Equal(t, int64(2), splitKeys)

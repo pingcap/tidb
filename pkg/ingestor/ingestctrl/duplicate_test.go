@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local_test
+package ingestctrl_test
 
 import (
 	"bytes"
@@ -62,7 +62,7 @@ func TestBuildDupTask(t *testing.T) {
 		{&encode.SessionOptions{IndexID: info.Indices[1].ID}, false, []int64{info.Indices[1].ID}},
 	}
 	for _, tc := range testCases {
-		dupMgr, err := local.NewDupeDetector(
+		dupMgr, err := ingestctrl.NewDupeDetector(
 			tbl,
 			"t",
 			nil,
@@ -76,7 +76,7 @@ func TestBuildDupTask(t *testing.T) {
 			"lightning",
 		)
 		require.NoError(t, err)
-		tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
+		tasks, err := ingestctrl.BuildDuplicateTaskForTest(dupMgr)
 		require.NoError(t, err)
 		var hasRecordKey bool
 		var gotIndexIDs []int64
@@ -111,7 +111,7 @@ func TestBuildDupTask(t *testing.T) {
 	require.Equal(t, "idx2", tbl.Meta().Indices[2].Name.L)
 	expectedIndexIDs := []int64{info.Indices[0].ID, info.Indices[2].ID}
 
-	dupMgr, err := local.NewDupeDetector(
+	dupMgr, err := ingestctrl.NewDupeDetector(
 		tbl,
 		"t",
 		nil,
@@ -125,7 +125,7 @@ func TestBuildDupTask(t *testing.T) {
 		"lightning",
 	)
 	require.NoError(t, err)
-	tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
+	tasks, err := ingestctrl.BuildDuplicateTaskForTest(dupMgr)
 	require.NoError(t, err)
 
 	var hasRecordKey bool
@@ -161,7 +161,7 @@ func TestBuildIndexDupTaskEncodesKeyspaceRange(t *testing.T) {
 	require.NoError(t, err)
 
 	indexInfo := info.Indices[0]
-	dupMgr, err := local.NewDupeDetector(
+	dupMgr, err := ingestctrl.NewDupeDetector(
 		tbl,
 		"t",
 		nil,
@@ -175,7 +175,7 @@ func TestBuildIndexDupTaskEncodesKeyspaceRange(t *testing.T) {
 		"lightning",
 	)
 	require.NoError(t, err)
-	tasks, err := local.BuildDuplicateTaskForTest(dupMgr)
+	tasks, err := ingestctrl.BuildDuplicateTaskForTest(dupMgr)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
@@ -250,7 +250,7 @@ func TestRetrieveKeyAndValueFromErrFoundDuplicateKeys(t *testing.T) {
 	data1RowValue := kvPairs.Pairs[0].Val
 
 	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data1RowKey, data1RowValue)
-	rawKey, rawValue, err := local.RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
+	rawKey, rawValue, err := ingestctrl.RetrieveKeyAndValueFromErrFoundDuplicateKeys(originalErr)
 	require.NoError(t, err)
 	require.Equal(t, data1RowKey, rawKey)
 	require.Equal(t, data1RowValue, rawValue)
@@ -270,12 +270,12 @@ func TestConvertToErrFoundConflictRecordsSingleColumnsIndex(t *testing.T) {
 
 	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data2RowKey, data2RowValue)
 
-	newErr := local.ConvertToErrFoundConflictRecords(originalErr, tbl)
+	newErr := ingestctrl.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '(2, 6, \"2.csv\", 102)'")
 
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
-	newErr = local.ConvertToErrFoundConflictRecords(originalErr, tbl)
+	newErr = ingestctrl.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_b', unique key is '[7]', primary key is '3'")
 }
 
@@ -293,11 +293,11 @@ func TestConvertToErrFoundConflictRecordsMultipleColumnsIndex(t *testing.T) {
 
 	originalErr := common.ErrFoundDuplicateKeys.FastGenByArgs(data2RowKey, data2RowValue)
 
-	newErr := local.ConvertToErrFoundConflictRecords(originalErr, tbl)
+	newErr := ingestctrl.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table a, primary key is '2', row data is '(2, 6, \"2.csv\", 102)'")
 
 	originalErr = common.ErrFoundDuplicateKeys.FastGenByArgs(data3IndexKey, data3IndexValue)
 
-	newErr = local.ConvertToErrFoundConflictRecords(originalErr, tbl)
+	newErr = ingestctrl.ConvertToErrFoundConflictRecords(originalErr, tbl)
 	require.EqualError(t, newErr, "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_bd', unique key is '[7 103]', primary key is '3'")
 }
