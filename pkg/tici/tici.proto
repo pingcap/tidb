@@ -639,7 +639,8 @@ message FinishImportPartitionUploadRequest {
   string storage_uri = 3;
   // Keyspace ID
   uint32 keyspace_id = 4;
-  // Index ID for the uploaded partition data. A zero value means unspecified.
+  // Index ID for the uploaded partition data.
+  // TiDB must set a non-zero value when finishing a TiCI partition upload.
   int64 index_id = 5;
 }
 

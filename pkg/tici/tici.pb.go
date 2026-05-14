@@ -3478,7 +3478,8 @@ type FinishImportPartitionUploadRequest struct {
 	StorageUri string `protobuf:"bytes,3,opt,name=storage_uri,json=storageUri,proto3" json:"storage_uri,omitempty"`
 	// Keyspace ID
 	KeyspaceId uint32 `protobuf:"varint,4,opt,name=keyspace_id,json=keyspaceId,proto3" json:"keyspace_id,omitempty"`
-	// Index ID for the uploaded partition data. A zero value means unspecified.
+	// Index ID for the uploaded partition data.
+	// TiDB must set a non-zero value when finishing a TiCI partition upload.
 	IndexId int64 `protobuf:"varint,5,opt,name=index_id,json=indexId,proto3" json:"index_id,omitempty"`
 }
 

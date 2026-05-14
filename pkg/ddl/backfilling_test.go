@@ -734,3 +734,20 @@ func TestGetTiCIHeaderCommitTSForCloudImport(t *testing.T) {
 	}
 	require.Equal(t, scanSnapshotTS, getTiCIHeaderCommitTSForCloudImport(hybridIdx, scanSnapshotTS))
 }
+
+func TestGetTiCIIndexIDForCloudImport(t *testing.T) {
+	idxID := int64(123)
+
+	require.Zero(t, getTiCIIndexIDForCloudImport(nil, idxID))
+	require.Zero(t, getTiCIIndexIDForCloudImport(&model.IndexInfo{}, idxID))
+
+	fullTextIdx := &model.IndexInfo{
+		FullTextInfo: &model.FullTextIndexInfo{},
+	}
+	require.Equal(t, idxID, getTiCIIndexIDForCloudImport(fullTextIdx, idxID))
+
+	hybridIdx := &model.IndexInfo{
+		HybridInfo: &model.HybridIndexInfo{},
+	}
+	require.Equal(t, idxID, getTiCIIndexIDForCloudImport(hybridIdx, idxID))
+}
