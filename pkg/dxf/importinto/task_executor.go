@@ -639,13 +639,9 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if e.tableImporter != nil {
 		plan = e.tableImporter.Plan
 	}
-	ticiWriteEnabled := decideTiCIWriteEnabled(e.logger, e.taskID, subtask.ID, sm.KVGroup, plan)
-	var ticiIndexID int64
-	if ticiWriteEnabled {
-		ticiIndexID, err = external.KVGroup2IndexID(sm.KVGroup)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	ticiWriteEnabled, ticiIndexID, err := decideTiCIWriteConfig(e.logger, e.taskID, subtask.ID, sm.KVGroup, plan)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	localBackend := e.tableImporter.Backend()
@@ -742,6 +738,18 @@ func decideTiCIWriteEnabled(logger *zap.Logger, taskID int64, subtaskID int64, k
 		zap.Bool("tici-write-enabled", enabled),
 	).Info("TiCI write decision for index engine")
 	return enabled
+}
+
+func decideTiCIWriteConfig(logger *zap.Logger, taskID int64, subtaskID int64, kvGroup string, plan *importer.Plan) (bool, int64, error) {
+	enabled := decideTiCIWriteEnabled(logger, taskID, subtaskID, kvGroup, plan)
+	if !enabled {
+		return false, 0, nil
+	}
+	indexID, err := external.KVGroup2IndexID(kvGroup)
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
+	return true, indexID, nil
 }
 
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, objStore storeapi.Storage) error {

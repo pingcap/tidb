@@ -115,6 +115,88 @@ func TestTiCIDataWriterGroup_WritePairs_Fail(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestTiCIDataWriterGroup_FinishPartitionUploadIndexID(t *testing.T) {
+	ctx := context.Background()
+	lower, upper := []byte("a"), []byte("z")
+
+	tests := []struct {
+		name         string
+		indices      []*model.IndexInfo
+		inputIndexID int64
+		wantIndexID  int64
+	}{
+		{
+			name: "single tici index forwards explicit index id",
+			indices: []*model.IndexInfo{
+				{ID: 2, Name: ast.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
+			},
+			inputIndexID: 2,
+			wantIndexID:  2,
+		},
+		{
+			name: "explicit index id is forwarded",
+			indices: []*model.IndexInfo{
+				{ID: 2, Name: ast.NewCIStr("idx_1"), FullTextInfo: &model.FullTextIndexInfo{}},
+				{ID: 3, Name: ast.NewCIStr("idx_2"), FullTextInfo: &model.FullTextIndexInfo{}},
+			},
+			inputIndexID: 3,
+			wantIndexID:  3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: tt.indices}
+			mockClient := new(MockMetaServiceClient)
+			ticiMgr := newTestTiCIManagerCtx(mockClient)
+			mockClient.
+				On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+				Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+				Once()
+			mockClient.
+				On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(func(req *FinishImportPartitionUploadRequest) bool {
+					return req.GetTidbTaskId() == "fakeTaskID" &&
+						req.GetIndexId() == tt.wantIndexID &&
+						req.GetStorageUri() == "unit-test-file" &&
+						req.GetKeyRange() != nil &&
+						slices.Equal(req.GetKeyRange().GetStartKey(), lower) &&
+						slices.Equal(req.GetKeyRange().GetEndKey(), upper)
+				})).
+				Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
+				Once()
+
+			group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
+			require.NotNil(t, group)
+			mockFileWriter, _ := newStubTICIFileWriter(t, false)
+			err := group.FinishPartitionUpload(ctx, mockFileWriter, tt.inputIndexID, lower, upper)
+			require.NoError(t, err)
+			mockClient.AssertExpectations(t)
+		})
+	}
+}
+
+func TestTiCIDataWriterGroup_FinishPartitionUploadRequiresIndexID(t *testing.T) {
+	ctx := context.Background()
+	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{
+		{ID: 2, Name: ast.NewCIStr("idx_1"), FullTextInfo: &model.FullTextIndexInfo{}},
+		{ID: 3, Name: ast.NewCIStr("idx_2"), FullTextInfo: &model.FullTextIndexInfo{}},
+	}}
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	mockClient.
+		On("GetImportStoragePrefix", mock.Anything, mock.Anything).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		Once()
+
+	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
+	require.NotNil(t, group)
+	mockFileWriter, _ := newStubTICIFileWriter(t, false)
+	err := group.FinishPartitionUpload(ctx, mockFileWriter, 0, []byte("a"), []byte("z"))
+	require.ErrorContains(t, err, "tici index id is required for partition upload")
+	mockClient.AssertExpectations(t)
+	mockClient.AssertNumberOfCalls(t, "FinishImportPartitionUpload", 0)
+}
+
 func TestTiCIDataWriterGroup_FinishIndexUpload(t *testing.T) {
 	ctx := context.Background()
 	tbl := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), Indices: []*model.IndexInfo{

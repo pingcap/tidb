@@ -188,24 +188,33 @@ func TestFinishPartitionUpload(t *testing.T) {
 	taskID := "tidb-task-123"
 	indexID := int64(456)
 	lower, upper := []byte("a"), []byte("z")
+	matchRequest := func(req *FinishImportPartitionUploadRequest) bool {
+		return matchKeyspace[*FinishImportPartitionUploadRequest](keyspaceID)(req) &&
+			req.GetTidbTaskId() == taskID &&
+			req.GetIndexId() == indexID &&
+			req.GetStorageUri() == "/s3/path" &&
+			req.GetKeyRange() != nil &&
+			slices.Equal(req.GetKeyRange().GetStartKey(), lower) &&
+			slices.Equal(req.GetKeyRange().GetEndKey(), upper)
+	}
 
 	// 1st call – success
 	mockClient.
-		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportPartitionUploadRequest](keyspaceID))).
+		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchRequest)).
 		Return(&FinishImportResponse{Status: ErrorCode_SUCCESS}, nil).
 		Once()
 	assert.NoError(t, ctx.FinishPartitionUpload(context.Background(), taskID, indexID, lower, upper, "/s3/path"))
 
 	// 2nd call – business error from TiCI
 	mockClient.
-		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportPartitionUploadRequest](keyspaceID))).
+		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchRequest)).
 		Return(&FinishImportResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
 	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, indexID, lower, upper, "/s3/path"))
 
 	// 3rd call – RPC error
 	mockClient.
-		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchKeyspace[*FinishImportPartitionUploadRequest](keyspaceID))).
+		On("FinishImportPartitionUpload", mock.Anything, mock.MatchedBy(matchRequest)).
 		Return(&FinishImportResponse{}, errors.New("rpc error")).
 		Once()
 	assert.Error(t, ctx.FinishPartitionUpload(context.Background(), taskID, indexID, lower, upper, "/s3/path"))

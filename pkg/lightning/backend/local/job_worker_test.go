@@ -394,26 +394,30 @@ func TestCloudRegionJobWorkerTiCIOnly(t *testing.T) {
 	defer ctrl.Finish()
 	mockIngestCli := ingestclimock.NewMockClient(ctrl)
 
+	ticiGroup := &mockTiCIWriteGroup{}
 	cloudW := &objStoreRegionJobWorker{
 		regionJobBaseWorker: &regionJobBaseWorker{},
 		ingestCli:           mockIngestCli,
 		writeBatchSize:      8,
 		bufPool:             nil,
-		ticiWriteGroup:      &mockTiCIWriteGroup{},
+		ticiWriteGroup:      ticiGroup,
 	}
 	cloudW.regionJobBaseWorker.writeFn = cloudW.write
 	cloudW.regionJobBaseWorker.ingestFn = cloudW.ingest
 	cloudW.regionJobBaseWorker.preRunJobFn = cloudW.preRunJob
 
+	const ticiIndexID int64 = 303
 	job := &regionJob{
 		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
 		stage:            regionScanned,
 		ingestData:       mockIngestData{{[]byte("a"), []byte("a")}},
 		ticiWriteEnabled: true,
+		ticiIndexID:      ticiIndexID,
 	}
 
 	writeRes, err := cloudW.write(context.Background(), job)
 	require.NoError(t, err)
 	require.True(t, writeRes.skipIngest)
+	require.Equal(t, ticiIndexID, ticiGroup.lastIndexID)
 	require.True(t, ctrl.Satisfied())
 }

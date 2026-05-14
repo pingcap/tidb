@@ -1130,6 +1130,7 @@ func TestLocalDoWriteTiCIOnly(t *testing.T) {
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
+	const ticiIndexID int64 = 101
 	job := &regionJob{
 		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
 		stage:            regionScanned,
@@ -1138,6 +1139,7 @@ func TestLocalDoWriteTiCIOnly(t *testing.T) {
 		regionSplitSize:  int64(config.SplitRegionSize),
 		regionSplitKeys:  100,
 		ticiWriteEnabled: true,
+		ticiIndexID:      ticiIndexID,
 	}
 
 	res, err := local.doWrite(context.Background(), job)
@@ -1145,6 +1147,7 @@ func TestLocalDoWriteTiCIOnly(t *testing.T) {
 	require.NotNil(t, res)
 	require.True(t, res.skipIngest)
 	require.Zero(t, createCalled)
+	require.Equal(t, ticiIndexID, local.ticiWriteGroup.(*mockTiCIWriteGroup).lastIndexID)
 }
 
 func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
@@ -1166,6 +1169,7 @@ func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
+	const ticiIndexID int64 = 202
 	job := &regionJob{
 		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
 		stage:            regionScanned,
@@ -1174,6 +1178,7 @@ func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
 		regionSplitSize:  int64(config.SplitRegionSize),
 		regionSplitKeys:  2,
 		ticiWriteEnabled: true,
+		ticiIndexID:      ticiIndexID,
 	}
 
 	res, err := local.doWrite(context.Background(), job)
@@ -1184,6 +1189,7 @@ func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
 	expectedUpperBound := codec.EncodeBytes([]byte{}, []byte("b"))
 	require.Equal(t, expectedLowerBound, ticiGroup.lastLowerBound)
 	require.Equal(t, expectedUpperBound, ticiGroup.lastUpperBound)
+	require.Equal(t, ticiIndexID, ticiGroup.lastIndexID)
 	require.Less(t, bytes.Compare(ticiGroup.lastUpperBound, res.remainingStartKey), 0)
 }
 
@@ -2668,6 +2674,21 @@ func TestMarkTiCIWriteEngineLogs(t *testing.T) {
 	require.Equal(t, true, fields["tici-write-enabled"])
 	fields = entries[1].ContextMap()
 	require.Equal(t, false, fields["tici-write-enabled"])
+}
+
+func TestTiCIIndexIDByEngine(t *testing.T) {
+	backend := &Backend{}
+	engineUUID := uuid.New()
+
+	backend.setTiCIIndexID(engineUUID, true, 101)
+	require.Equal(t, int64(101), backend.getTiCIIndexID(engineUUID))
+
+	backend.setTiCIIndexID(engineUUID, true, 0)
+	require.Zero(t, backend.getTiCIIndexID(engineUUID))
+
+	backend.setTiCIIndexID(engineUUID, true, 202)
+	backend.setTiCIIndexID(engineUUID, false, 202)
+	require.Zero(t, backend.getTiCIIndexID(engineUUID))
 }
 
 // refCountIngestData is a mock IngestData that tracks reference count.
