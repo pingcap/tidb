@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"go.uber.org/zap"
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -37,6 +39,17 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	case model.ActionDropTable:
 		if err := h.resetTableStatsForDrop(t.TableInfo); err != nil {
 			return err
+		}
+	case model.ActionDropSchema:
+		for _, tblInfo := range t.TableInfos {
+			// Try best effort to update the stats meta version for GC.
+			if err := h.resetTableStatsForDrop(tblInfo); err != nil {
+				logutil.StatsLogger().Error(
+					"Failed to update stats meta version for gc",
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Error(err),
+				)
+			}
 		}
 	case model.ActionAddColumn, model.ActionModifyColumn:
 		ids, err := h.getInitStateTableIDs(t.TableInfo)

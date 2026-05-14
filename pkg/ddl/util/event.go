@@ -24,6 +24,7 @@ import (
 type Event struct {
 	TableInfo    *model.TableInfo
 	OldTableInfo *model.TableInfo
+	TableInfos   []*model.TableInfo
 	PartInfo     *model.PartitionInfo
 	IndexInfo    *model.IndexInfo
 	ColumnInfos  []*model.ColumnInfo
@@ -38,6 +39,13 @@ func (e *Event) String() string {
 	}
 	if e.OldTableInfo != nil {
 		ret += fmt.Sprintf(", Old Table ID: %d, Old Table Name %s", e.OldTableInfo.ID, e.OldTableInfo.Name)
+	}
+	if len(e.TableInfos) > 0 {
+		ids := make([]int64, 0, len(e.TableInfos))
+		for _, tableInfo := range e.TableInfos {
+			ids = append(ids, tableInfo.ID)
+		}
+		ret += fmt.Sprintf(", Table IDs: %v", ids)
 	}
 	if e.PartInfo != nil {
 		ids := make([]int64, 0, len(e.PartInfo.Definitions))
