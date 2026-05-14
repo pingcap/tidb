@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1216,9 +1215,6 @@ func TestTiFlashProgressAfterAvailable(t *testing.T) {
 }
 
 func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
-	if !intest.InTest {
-		t.Skip("requires --tags=intest")
-	}
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
