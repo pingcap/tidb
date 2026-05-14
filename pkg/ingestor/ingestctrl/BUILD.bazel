@@ -138,6 +138,7 @@ go_test(
     ],
     embed = [":ingestctrl"],
     flaky = True,
+    race = "on",
     shard_count = 50,
     deps = [
         "//br/pkg/mock/mocklocal",
