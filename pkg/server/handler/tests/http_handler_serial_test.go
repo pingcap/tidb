@@ -472,6 +472,17 @@ func TestDebugRoutes(t *testing.T) {
 	}
 }
 
+func TestAutoIDOwnerRouteNotRegisteredOutsideStarter(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	resp, err := ts.FetchStatus("/owner_manager/auto_id_service")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
 func TestFailpointHandler(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 

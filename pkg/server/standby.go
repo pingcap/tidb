@@ -31,4 +31,6 @@ type StandbyController interface {
 	OnConnActive()
 	// OnServerCreated is called when the server is created.
 	OnServerCreated(svr *Server)
+	// OnServerShutdown is called when the server is going to shut down.
+	OnServerShutdown(svr *Server)
 }

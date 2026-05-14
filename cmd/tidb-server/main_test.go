@@ -161,6 +161,40 @@ func TestInitDeployMode(t *testing.T) {
 	})
 }
 
+func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	t.Cleanup(restoreConfig)
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Standby.EnableManagerNotifier = true
+		conf.Standby.ManagerAddr = "manager.example.com:8000"
+	})
+
+	t.Setenv(config.EnvPodName, "")
+	t.Setenv(config.EnvPodIP, "")
+	t.Setenv(config.EnvNamespace, "")
+	_, err := createMgrClient()
+	require.ErrorContains(t, err, "manager notifier requires pod identity envs")
+	require.ErrorContains(t, err, config.EnvPodName)
+	require.ErrorContains(t, err, config.EnvPodIP)
+	require.ErrorContains(t, err, config.EnvNamespace)
+
+	t.Setenv(config.EnvPodName, "pod-1")
+	t.Setenv(config.EnvPodIP, "10.0.0.1")
+	t.Setenv(config.EnvNamespace, "ns-1")
+	cli, err := createMgrClient()
+	require.NoError(t, err)
+	require.NotNil(t, cli)
+}
+
 func TestSetVersionByConfigInNextGen(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only for nextgen kernel")

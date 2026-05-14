@@ -44,6 +44,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/autoid"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -281,6 +282,9 @@ func (s *Server) startHTTPServer() {
 
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
+	if deploymode.IsStarter() {
+		router.HandleFunc("/owner_manager/auto_id_service", s.handleCheckAutoIDOwner).Name("isAutoIDServiceOwner")
+	}
 
 	// HTTP path for ingest configurations
 	router.Handle("/ingest/max-batch-split-ranges", tikvhandler.NewIngestConcurrencyHandler(
@@ -678,6 +682,30 @@ type Status struct {
 // DetailStatus is to show the detail status of TiDB. for example the init stats percentage.
 type DetailStatus struct {
 	InitStatsPercentage float64 `json:"init_stats_percentage"`
+}
+
+// IsAutoIDServiceOwner is the response structure for checking if the auto ID service is the owner.
+type IsAutoIDServiceOwner struct {
+	IsOwner bool `json:"is_owner"`
+}
+
+func (s *Server) handleCheckAutoIDOwner(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.health == nil || !s.health.Load() {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	js, err := json.Marshal(IsAutoIDServiceOwner{
+		IsOwner: s.IsAutoIDOwner(),
+	})
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		logutil.BgLogger().Warn("encode json failed", zap.Error(err))
+		return
+	}
+	_, err = w.Write(js)
+	terror.Log(errors.Trace(err))
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {

@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -132,6 +133,8 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
+	// zeroConnCond is used by Starter graceful shutdown to wait until all connections are closed.
+	zeroConnCond *sync.Cond
 
 	normalClosedConnsMutex sync.Mutex
 	normalClosedConns      *kvcache.SimpleLRUCache
@@ -148,6 +151,7 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode *uatomic.Bool
 	health         *uatomic.Bool
+	forceShutdown  *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[any]struct{}
@@ -155,6 +159,7 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+	needRequestMgrFree  *uatomic.Bool
 
 	StandbyController
 }
@@ -293,17 +298,20 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
-		cfg:               cfg,
-		driver:            driver,
-		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
-		clients:           make(map[uint64]*clientConn),
-		normalClosedConns: kvcache.NewSimpleLRUCache(normalClosedConnsCapacity, 0, 0),
-		userResource:      make(map[string]*userResourceLimits),
-		internalSessions:  make(map[any]struct{}, 100),
-		health:            uatomic.NewBool(false),
-		inShutdownMode:    uatomic.NewBool(false),
-		printMDLLogTime:   time.Now(),
+		cfg:                cfg,
+		driver:             driver,
+		concurrentLimiter:  util.NewTokenLimiter(cfg.TokenLimit),
+		clients:            make(map[uint64]*clientConn),
+		normalClosedConns:  kvcache.NewSimpleLRUCache(normalClosedConnsCapacity, 0, 0),
+		userResource:       make(map[string]*userResourceLimits),
+		internalSessions:   make(map[any]struct{}, 100),
+		health:             uatomic.NewBool(false),
+		inShutdownMode:     uatomic.NewBool(false),
+		forceShutdown:      uatomic.NewBool(false),
+		printMDLLogTime:    time.Now(),
+		needRequestMgrFree: uatomic.NewBool(false),
 	}
+	s.zeroConnCond = sync.NewCond(&s.rwlock)
 	s.capability = defaultCapability
 	setSystemTimeZoneVariable()
 
@@ -632,6 +640,9 @@ func (s *Server) startShutdown() {
 		logutil.BgLogger().Info("waiting for stray connections before starting shutdown process", zap.Duration("waitTime", waitTime))
 		time.Sleep(waitTime)
 	}
+	if deploymode.IsStarter() && s.StandbyController != nil {
+		s.OnServerShutdown(s)
+	}
 }
 
 func (s *Server) closeListener() {
@@ -654,14 +665,46 @@ func (s *Server) closeListener() {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
 	}
-	if s.autoIDService != nil {
-		s.autoIDService.Close()
+	if !deploymode.IsStarter() || s.StandbyController == nil {
+		s.AutoIDServiceClose()
 	}
 	if s.authTokenCancelFunc != nil {
 		s.authTokenCancelFunc()
 	}
 	s.wg.Wait()
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
+}
+
+// SetForceShutdown sets the force shutdown flag.
+func (s *Server) SetForceShutdown() {
+	if s.forceShutdown == nil {
+		s.forceShutdown = uatomic.NewBool(false)
+	}
+	s.forceShutdown.Store(true)
+}
+
+// GetForceShutdown gets the force shutdown flag.
+func (s *Server) GetForceShutdown() bool {
+	if s.forceShutdown == nil {
+		return false
+	}
+	return s.forceShutdown.Load()
+}
+
+// SetNeedRequestMgrFree sets the need request manager free flag.
+func (s *Server) SetNeedRequestMgrFree() {
+	if s.needRequestMgrFree == nil {
+		s.needRequestMgrFree = uatomic.NewBool(false)
+	}
+	s.needRequestMgrFree.Store(true)
+}
+
+// GetNeedRequestMgrFree gets the need request manager free flag.
+func (s *Server) GetNeedRequestMgrFree() bool {
+	if s.needRequestMgrFree == nil {
+		return false
+	}
+	return s.needRequestMgrFree.Load()
 }
 
 // Close closes the server.
@@ -680,7 +723,7 @@ func (s *Server) registerConn(conn *clientConn) bool {
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
-		terror.Log(closeConn(conn))
+		terror.Log(closeConn(conn, len(s.clients)))
 		return false
 	}
 	s.clients[conn.connectionID] = conn
@@ -1275,4 +1318,28 @@ func (s *Server) GetStatusVars() map[uint64]map[string]string {
 // Health returns if the server is healthy (begin to shut down)
 func (s *Server) Health() bool {
 	return s.health.Load()
+}
+
+// AutoIDServiceClose closes the auto ID service.
+func (s *Server) AutoIDServiceClose() {
+	if s.autoIDService != nil {
+		s.autoIDService.Close()
+	}
+}
+
+// IsAutoIDOwner checks if the auto ID service is the owner.
+func (s *Server) IsAutoIDOwner() bool {
+	return s.autoIDService != nil && s.autoIDService.IsOwner()
+}
+
+// WaitZeroConn waits until all client connections are closed.
+func (s *Server) WaitZeroConn() {
+	if s.zeroConnCond == nil {
+		return
+	}
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+	for len(s.clients) > 0 {
+		s.zeroConnCond.Wait()
+	}
 }

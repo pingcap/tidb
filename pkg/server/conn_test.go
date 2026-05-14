@@ -2477,7 +2477,7 @@ func TestCloseConn(t *testing.T) {
 	for range numGoroutines {
 		go func() {
 			defer wg.Done()
-			err := closeConn(cc)
+			err := closeConn(cc, len(server.clients))
 			require.NoError(t, err)
 		}()
 	}

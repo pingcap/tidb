@@ -388,6 +388,11 @@ func (s *Service) Close() {
 	}
 }
 
+// IsOwner returns whether this service is the current auto ID owner.
+func (s *Service) IsOwner() bool {
+	return s.leaderShip != nil && s.leaderShip.IsOwner()
+}
+
 // seekToFirstAutoIDSigned seeks to the next valid signed position.
 func seekToFirstAutoIDSigned(base, increment, offset int64) int64 {
 	nr := (base + increment - offset) / increment

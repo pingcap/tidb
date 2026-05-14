@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -82,6 +83,9 @@ func (c *LoadKeyspaceController) OnServerCreated(svr *server.Server) {
 				// And clientInteractiveCount don't need to be considered because session can be restored by gateway.
 				if config.GetGlobalConfig().Standby.EnableZeroBackend && (connCount == 0 || processCount == 0) && inTransCount == 0 {
 					SaveTidbNormalRestartInfo("connection idle for too long")
+					if deploymode.IsStarter() {
+						svr.SetNeedRequestMgrFree()
+					}
 					signal.TiDBExit(syscall.SIGTERM)
 				} else if (connCount == 0 || processCount == 0) && inTransCount == 0 && clientInteractiveCount == 0 {
 					SaveTidbNormalRestartInfo("connection idle for too long")

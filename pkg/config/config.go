@@ -127,6 +127,14 @@ const (
 	EnvSQLCert = "SQL_CERT"
 	// EnvSQLKey is the system env name for SQL key path.
 	EnvSQLKey = "SQL_KEY"
+	// EnvPodName is the system env name for pod name.
+	EnvPodName = "POD_NAME"
+	// EnvPodIP is the system env name for pod IP.
+	EnvPodIP = "POD_IP"
+	// EnvNamespace is the system env name for namespace.
+	EnvNamespace = "NAMESPACE"
+	// EnvManagerNs is the system env name for manager namespace.
+	EnvManagerNs = "MANAGER_NS"
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
@@ -137,6 +145,8 @@ const (
 	// DefMaxAllowedPacket is the default value of max_allowed_packet.
 	DefMaxAllowedPacket = 64 << 20
 	UnavailableIP       = "<nil>"
+	// DefaultManagerNamespace is the default namespace for TiDB manager in Starter deployments.
+	DefaultManagerNamespace = "tidb-admin"
 )
 
 // Valid config maps
@@ -1025,10 +1035,18 @@ type Standby struct {
 	MaxIdleSeconds uint `toml:"max-idle-seconds" json:"max-idle-seconds"`
 	// ActivationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
 	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
+	// ExportID is the export identifier supplied by standby activation.
+	ExportID string `toml:"export-id" json:"export-id"`
 	// EnableZeroBackend is used to control the behavior of standby idle watcher.
 	// When it is enabled, the idle watcher will not wait for session migration
 	// and will not consider client interactive connections.
 	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
+	// EnableManagerNotifier indicates whether standby shutdown should notify TiDB manager.
+	// It is only used in NextGen Starter deployments.
+	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier"`
+	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
+	// When empty and EnableManagerNotifier is true, the Starter path derives the default service address.
+	ManagerAddr string `toml:"manager-addr" json:"manager-addr"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()

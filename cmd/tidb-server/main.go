@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/tidbmanager"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cgmon"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -340,7 +341,9 @@ func main() {
 
 	var standbyController server.StandbyController
 	if config.GetGlobalConfig().Standby.StandByMode {
-		standbyController = standby.NewLoadKeyspaceController()
+		mgrCli, err := createMgrClient()
+		terror.MustNil(err)
+		standbyController = standby.NewLoadKeyspaceController(mgrCli)
 	}
 
 	var err error
@@ -1183,6 +1186,9 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	dom.StopAutoAnalyze()
 
 	drainClientWait := gracefulCloseConnectionsTimeout
+	if deploymode.IsStarter() && svr.GetForceShutdown() {
+		drainClientWait = 0
+	}
 
 	cancelClientWait := time.Second * 1
 	svr.DrainClients(drainClientWait, cancelClientWait)
@@ -1231,6 +1237,50 @@ func closeStmtSummary() {
 	if instanceCfg.StmtSummaryEnablePersistent {
 		stmtsummaryv2.Close()
 	}
+}
+
+func createMgrClient() (tidbmanager.Client, error) {
+	if !deploymode.IsStarter() {
+		return nil, nil
+	}
+
+	cfg := config.GetGlobalConfig()
+	if !cfg.Standby.EnableManagerNotifier {
+		return nil, nil
+	}
+
+	clusterSecurity := cfg.Security.ClusterSecurity()
+	tlsConfig, err := clusterSecurity.ToTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	managerAddr := cfg.Standby.ManagerAddr
+	if managerAddr == "" {
+		managerNs := os.Getenv(config.EnvManagerNs)
+		if managerNs == "" {
+			managerNs = config.DefaultManagerNamespace
+		}
+		managerAddr = fmt.Sprintf("manager-server.%s.svc:8000", managerNs)
+	}
+
+	podName := os.Getenv(config.EnvPodName)
+	podIP := os.Getenv(config.EnvPodIP)
+	namespace := os.Getenv(config.EnvNamespace)
+	if podName == "" || podIP == "" || namespace == "" {
+		return nil, fmt.Errorf("manager notifier requires pod identity envs: %s=%q, %s=%q, %s=%q",
+			config.EnvPodName, podName,
+			config.EnvPodIP, podIP,
+			config.EnvNamespace, namespace)
+	}
+
+	return tidbmanager.NewClient(
+		managerAddr,
+		tlsConfig,
+		podName,
+		podIP,
+		namespace,
+	), nil
 }
 
 func enablePyroscope() {
