@@ -269,10 +269,19 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 	pcte := PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, CteAsName: p.CteAsName, CteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
 	pcte.SetSchema(p.Schema())
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
+		partitionTp := prop.MPPPartitionTp
+		partitionCols := prop.MPPPartitionCols
 		if prop.MPPPartitionTp != property.AnyType {
-			return base.InvalidTask, nil
+			if !prop.CanAddEnforcer {
+				return base.InvalidTask, nil
+			}
+			// The shared CTE storage/source itself is not tied to one consumer's
+			// distribution requirement. Build the reader as AnyType first and let
+			// the consumer-side enforcer add the required exchange above it.
+			partitionTp = property.AnyType
+			partitionCols = nil
 		}
-		t = NewMppTask(pcte, prop.MPPPartitionTp, prop.MPPPartitionCols, p.StatsInfo().HistColl, nil)
+		t = NewMppTask(pcte, partitionTp, partitionCols, p.StatsInfo().HistColl, nil)
 	} else {
 		rt := &RootTask{}
 		rt.SetPlan(pcte)
