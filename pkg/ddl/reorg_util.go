@@ -18,10 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
@@ -41,48 +38,6 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
-
-type regionsInfoWithApproximateKVSize struct {
-	Count   int64                           `json:"count"`
-	Regions []regionInfoWithApproximateSize `json:"regions"`
-}
-
-type regionInfoWithApproximateSize struct {
-	EndKey            string `json:"end_key"`
-	ApproximateSize   int64  `json:"approximate_size"`
-	ApproximateKVSize int64  `json:"approximate_kv_size"`
-	ApproximateKeys   int64  `json:"approximate_keys"`
-}
-
-func getRegionsByKeyRangeWithApproximateKVSize(
-	ctx context.Context,
-	pdCli pdhttp.Client,
-	keyRange *pdhttp.KeyRange,
-	limit int,
-) (*regionsInfoWithApproximateKVSize, error) {
-	regionsInfo := &regionsInfoWithApproximateKVSize{}
-	_, err := pdCli.WithRespHandler(func(resp *http.Response, _ any) error {
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-		if resp.StatusCode != http.StatusOK {
-			body, readErr := io.ReadAll(resp.Body)
-			if readErr != nil {
-				return readErr
-			}
-			body = bytes.TrimSpace(body)
-			if len(body) == 0 {
-				return fmt.Errorf("request pd failed, status: %s", resp.Status)
-			}
-			return fmt.Errorf("request pd failed, status: %s, body: %s", resp.Status, body)
-		}
-		return json.NewDecoder(resp.Body).Decode(regionsInfo)
-	}).GetRegionsByKeyRange(ctx, keyRange, limit)
-	if err != nil {
-		return nil, err
-	}
-	return regionsInfo, nil
-}
 
 func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl table.Table, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
@@ -268,7 +223,7 @@ func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helpe
 	start, end := store.GetCodec().EncodeRegionRange(sk, ek)
 	var totalSize int64
 	for {
-		regionInfos, err := getRegionsByKeyRangeWithApproximateKVSize(ctx, pdCli, pdhttp.NewKeyRange(start, end), 128)
+		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), 128)
 		if err != nil {
 			return 0, err
 		}
@@ -279,7 +234,7 @@ func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helpe
 			// ApproximateSize is SST/blob file size (can reflect compression), while
 			// ApproximateKvSize is KV data size and usually better tracks logical table size.
 			// Use max() because ApproximateKvSize can be zero when TiKV does not report it.
-			sizeInMiB := max(r.ApproximateSize, r.ApproximateKVSize)
+			sizeInMiB := max(r.ApproximateSize, r.ApproximateKvSize)
 			totalSize += sizeInMiB * units.MiB
 		}
 		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey

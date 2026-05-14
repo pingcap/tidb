@@ -3036,7 +3036,7 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 	start, end := hStore.GetCodec().EncodeRegionRange(sk, ek)
 	// We use the second region to prevent the influence of the front and back tables.
 	regionLimit := 3
-	regionInfos, err := getRegionsByKeyRangeWithApproximateKVSize(ctx, pdCli, pdHttp.NewKeyRange(start, end), regionLimit)
+	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdHttp.NewKeyRange(start, end), regionLimit)
 	if err != nil {
 		return 0, err
 	}
@@ -3046,7 +3046,7 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 	sample := regionInfos.Regions[1]
 	// ApproximateSize is SST/blob file size (can reflect compression), while
 	// ApproximateKvSize is KV data size and usually closer to logical table size.
-	sizeInMiB := max(sample.ApproximateSize, sample.ApproximateKVSize)
+	sizeInMiB := max(sample.ApproximateSize, sample.ApproximateKvSize)
 	if sample.ApproximateKeys == 0 || sizeInMiB == 0 {
 		return 0, fmt.Errorf("zero approximate size")
 	}

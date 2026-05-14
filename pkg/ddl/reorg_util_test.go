@@ -16,10 +16,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/docker/go-units"
@@ -60,20 +56,13 @@ func (mockHelperStorage) GetRegionCache() *tikv.RegionCache {
 
 type mockPDHTTPClient struct {
 	pdhttp.Client
-	regionInfos  []*pdhttp.RegionsInfo
-	rawResponses []string
-	respHandler  func(resp *http.Response, res any) error
-	callCount    int
-	firstRange   *pdhttp.KeyRange
-	firstLimit   int
+	regionInfos []*pdhttp.RegionsInfo
+	callCount   int
+	firstRange  *pdhttp.KeyRange
+	firstLimit  int
 }
 
 func (c *mockPDHTTPClient) WithCallerID(string) pdhttp.Client {
-	return c
-}
-
-func (c *mockPDHTTPClient) WithRespHandler(handler func(resp *http.Response, res any) error) pdhttp.Client {
-	c.respHandler = handler
 	return c
 }
 
@@ -81,15 +70,6 @@ func (c *mockPDHTTPClient) GetRegionsByKeyRange(_ context.Context, keyRange *pdh
 	if c.callCount == 0 {
 		c.firstRange = keyRange
 		c.firstLimit = limit
-	}
-	if c.respHandler != nil && c.callCount < len(c.rawResponses) {
-		resp := &http.Response{
-			StatusCode: http.StatusOK,
-			Status:     http.StatusText(http.StatusOK),
-			Body:       io.NopCloser(strings.NewReader(c.rawResponses[c.callCount])),
-		}
-		c.callCount++
-		return &pdhttp.RegionsInfo{}, c.respHandler(resp, nil)
 	}
 	if c.callCount >= len(c.regionInfos) {
 		return &pdhttp.RegionsInfo{}, nil
@@ -104,40 +84,21 @@ func expectedRegionRange(tableID int64) ([]byte, []byte) {
 	return mockCodec{}.EncodeRegionRange(tableStart, tableEnd)
 }
 
-func buildRegionsResponse(t *testing.T, regions []map[string]any) string {
-	payload := map[string]any{
-		"count":   len(regions),
-		"regions": regions,
-	}
-	b, err := json.Marshal(payload)
-	require.NoError(t, err)
-	return string(b)
-}
-
 func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 	pdCli := &mockPDHTTPClient{
-		rawResponses: []string{
-			buildRegionsResponse(t, []map[string]any{
-				{
-					"id":                  1,
-					"approximate_size":    5,
-					"approximate_kv_size": 64,
-					"end_key":             "",
+		regionInfos: []*pdhttp.RegionsInfo{
+			{
+				Count: 3,
+				Regions: []pdhttp.RegionInfo{
+					// kv > size -> use kv
+					{ID: 1, ApproximateSize: 5, ApproximateKvSize: 64},
+					// size > kv -> use size
+					{ID: 2, ApproximateSize: 16, ApproximateKvSize: 7},
+					// zero still follows max()
+					{ID: 3, ApproximateSize: 0, ApproximateKvSize: 9},
 				},
-				{
-					"id":                  2,
-					"approximate_size":    16,
-					"approximate_kv_size": 7,
-					"end_key":             "",
-				},
-				{
-					"id":                  3,
-					"approximate_size":    0,
-					"approximate_kv_size": 9,
-					"end_key":             "",
-				},
-			}),
-			buildRegionsResponse(t, nil),
+			},
+			{},
 		},
 	}
 
@@ -186,30 +147,20 @@ func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				rowPD := &mockPDHTTPClient{
-					rawResponses: []string{
-						buildRegionsResponse(t, []map[string]any{
-							{
-								"id":                  1,
-								"approximate_size":    1,
-								"approximate_kv_size": 1,
-								"approximate_keys":    1,
-								"end_key":             "",
+					regionInfos: []*pdhttp.RegionsInfo{
+						{
+							Count: 3,
+							Regions: []pdhttp.RegionInfo{
+								{ID: 1, ApproximateSize: 1, ApproximateKvSize: 1, ApproximateKeys: 1},
+								{
+									ID:                2,
+									ApproximateSize:   tc.approxSizeMiB,
+									ApproximateKvSize: tc.approxKvSizeMiB,
+									ApproximateKeys:   tc.approxKeys,
+								},
+								{ID: 3, ApproximateSize: 1, ApproximateKvSize: 1, ApproximateKeys: 1},
 							},
-							{
-								"id":                  2,
-								"approximate_size":    tc.approxSizeMiB,
-								"approximate_kv_size": tc.approxKvSizeMiB,
-								"approximate_keys":    tc.approxKeys,
-								"end_key":             "",
-							},
-							{
-								"id":                  3,
-								"approximate_size":    1,
-								"approximate_kv_size": 1,
-								"approximate_keys":    1,
-								"end_key":             "",
-							},
-						}),
+						},
 					},
 				}
 				rowSize, err := estimateRowSizeFromRegion(
