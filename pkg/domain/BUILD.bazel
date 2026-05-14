@@ -48,7 +48,7 @@ go_library(
         "//pkg/infoschema/metrics",
         "//pkg/infoschema/perfschema",
         "//pkg/infoschema/validatorapi",
-        "//pkg/ingestor/ingestctrl:local",
+        "//pkg/ingestor/ingestctrl",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/common",

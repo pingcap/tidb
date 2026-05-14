@@ -23,7 +23,7 @@ go_library(
         "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
-        "//pkg/ingestor/ingestctrl:local",
+        "//pkg/ingestor/ingestctrl",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/metadef",

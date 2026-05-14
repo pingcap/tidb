@@ -19,7 +19,7 @@ go_library(
         "//lightning/pkg/importinto",
         "//lightning/pkg/progress",
         "//pkg/expression",
-        "//pkg/ingestor/ingestctrl:local",
+        "//pkg/ingestor/ingestctrl",
         "//pkg/lightning/backend",
         "//pkg/lightning/common",
         "//pkg/lightning/config",

@@ -40,7 +40,7 @@ go_test(
         "//pkg/executor/importer",
         "//pkg/importsdk",
         "//pkg/infoschema",
-        "//pkg/ingestor/ingestctrl:local",
+        "//pkg/ingestor/ingestctrl",
         "//pkg/kv",
         "//pkg/lightning/common",
         "//pkg/meta",

@@ -24,7 +24,7 @@ go_library(
         "//pkg/ddl/logutil",
         "//pkg/ddl/session",
         "//pkg/ddl/util",
-        "//pkg/ingestor/ingestctrl:local",
+        "//pkg/ingestor/ingestctrl",
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",

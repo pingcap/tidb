@@ -42,7 +42,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/ingestor/engineapi",
         "//pkg/ingestor/globalsort",
-        "//pkg/ingestor/ingestctrl:local",
+        "//pkg/ingestor/ingestctrl",
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/kv",
