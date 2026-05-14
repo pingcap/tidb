@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func validateCountExprNotNull(countCol *chunk.Column, numRows int) error {
+func validateCountExprHasNoNull(countCol *chunk.Column, numRows int) error {
 	if rowIdx := firstNullRow(countCol, numRows); rowIdx >= 0 {
 		return errors.Errorf("count is null at row %d", rowIdx)
 	}
@@ -194,7 +194,7 @@ func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.C
 		return nil
 	}
 
-	if err := validateCountExprNotNull(countCol, numRows); err != nil {
+	if err := validateCountExprHasNoNull(countCol, numRows); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -288,7 +288,7 @@ func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 		return nil
 	}
 
-	if err := validateCountExprNotNull(countCol, numRows); err != nil {
+	if err := validateCountExprHasNoNull(countCol, numRows); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -378,7 +378,7 @@ func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return nil
 	}
 
-	if err := validateCountExprNotNull(countCol, numRows); err != nil {
+	if err := validateCountExprHasNoNull(countCol, numRows); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -461,7 +461,7 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return nil
 	}
 
-	if err := validateCountExprNotNull(countCol, numRows); err != nil {
+	if err := validateCountExprHasNoNull(countCol, numRows); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()

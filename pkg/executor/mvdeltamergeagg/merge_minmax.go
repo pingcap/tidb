@@ -281,7 +281,7 @@ func (m *minMaxMergerBase) resolveColumns(
 	return
 }
 
-func (*minMaxMergerBase) validateCountColumnsNotNull(numRows int, countCol, addedCntCol, removedCntCol *chunk.Column) error {
+func (*minMaxMergerBase) validateCountColumnsHasNoNull(numRows int, countCol, addedCntCol, removedCntCol *chunk.Column) error {
 	if rowIdx := firstNullRow(countCol, numRows); rowIdx >= 0 {
 		return errors.Errorf("count is null at row %d", rowIdx)
 	}
@@ -403,7 +403,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -455,7 +455,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this value may disappear after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -551,7 +551,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -603,7 +603,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this value may disappear after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -699,7 +699,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -751,7 +751,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this value may disappear after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -847,7 +847,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -899,7 +899,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this value may disappear after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -995,7 +995,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -1047,7 +1047,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this value may disappear after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -1143,7 +1143,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -1195,7 +1195,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this value may disappear after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -1291,7 +1291,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -1343,7 +1343,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this value may disappear after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -1440,7 +1440,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -1498,7 +1498,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this value may disappear after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
