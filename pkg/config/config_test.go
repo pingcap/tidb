@@ -1057,6 +1057,9 @@ func TestDeployModeConfig(t *testing.T) {
 	conf.DeployMode = deploymode.Mode(100)
 	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
 	conf.DeployMode = deploymode.Premium
+	conf.MaxAllowedPacket = 0
+	require.NoError(t, conf.Valid())
+	conf.MaxAllowedPacket = DefMaxAllowedPacket
 
 	storeDir := t.TempDir()
 	configFile := filepath.Join(storeDir, "config.toml")
@@ -1126,6 +1129,38 @@ enable-zero-backend = false
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
 	require.False(t, conf.Standby.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
+max-allowed-packet = %d`, minMaxAllowedPacket)), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.Equal(t, uint64(minMaxAllowedPacket), conf.MaxAllowedPacket)
+	require.NoError(t, conf.Valid())
+
+	maxAllowedPacketErr := fmt.Sprintf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
+	for _, packetSize := range []uint64{0, minMaxAllowedPacket - 1, minMaxAllowedPacket + 1, maxOfMaxAllowedPacket + 1} {
+		require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
+max-allowed-packet = %d`, packetSize)), 0644))
+		conf = NewConfig()
+		require.NoError(t, conf.Load(configFile))
+		require.ErrorContains(t, conf.Valid(), maxAllowedPacketErr)
+	}
+
+	originDeployMode := deploymode.Get()
+	originGlobalConfig := GetGlobalConfig()
+	t.Cleanup(func() {
+		StoreGlobalConfig(originGlobalConfig)
+		require.NoError(t, deploymode.Set(originDeployMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	conf = NewConfig()
+	conf.MaxAllowedPacket = minMaxAllowedPacket
+	StoreGlobalConfig(conf)
+	require.Equal(t, uint64(minMaxAllowedPacket), GetMaxAllowedPacket())
+	conf.MaxAllowedPacket = 0
+	StoreGlobalConfig(conf)
+	require.Equal(t, uint64(DefMaxAllowedPacket), GetMaxAllowedPacket())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
 	conf = NewConfig()

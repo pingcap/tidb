@@ -118,7 +118,13 @@ const (
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
-	UnavailableIP  = "<nil>"
+	// max_allowed_packet must be in [1024, 1073741824] and a multiple of 1024.
+	maxAllowedPacketUnit  = 1024
+	minMaxAllowedPacket   = maxAllowedPacketUnit
+	maxOfMaxAllowedPacket = 1 << 30
+	// DefMaxAllowedPacket is the default value of max_allowed_packet.
+	DefMaxAllowedPacket = 64 << 20
+	UnavailableIP       = "<nil>"
 )
 
 // Valid config maps
@@ -198,8 +204,10 @@ type Config struct {
 	Lease            string    `toml:"lease" json:"lease"`
 	SplitTable       bool      `toml:"split-table" json:"split-table"`
 	TokenLimit       uint      `toml:"token-limit" json:"token-limit"`
-	TempDir          string    `toml:"temp-dir" json:"temp-dir"`
-	TempStoragePath  string    `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	// MaxAllowedPacket is the configured default for max_allowed_packet in starter deployment mode.
+	MaxAllowedPacket uint64 `toml:"max-allowed-packet" json:"max-allowed-packet"`
+	TempDir          string `toml:"temp-dir" json:"temp-dir"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -1024,6 +1032,7 @@ var defaultConf = Config{
 	SplitTable:                   true,
 	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
+	MaxAllowedPacket:             DefMaxAllowedPacket,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
@@ -1482,6 +1491,9 @@ func (c *Config) Valid() error {
 	if c.DXFResourceLimit != DefDXFResourceLimit && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
+	if c.DeployMode == deploymode.Starter && !validMaxAllowedPacket(c.MaxAllowedPacket) {
+		return fmt.Errorf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
+	}
 	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
@@ -1726,4 +1738,19 @@ func ContainHiddenConfig(s string) bool {
 // from config file or command line.
 func GetGlobalKeyspaceName() string {
 	return GetGlobalConfig().KeyspaceName
+}
+
+// GetMaxAllowedPacket returns the max_allowed_packet value used to initialize sessions.
+// The config value is honored only for starter deployment mode.
+func GetMaxAllowedPacket() uint64 {
+	if deploymode.IsStarter() {
+		if v := GetGlobalConfig().MaxAllowedPacket; validMaxAllowedPacket(v) {
+			return v
+		}
+	}
+	return DefMaxAllowedPacket
+}
+
+func validMaxAllowedPacket(v uint64) bool {
+	return v >= minMaxAllowedPacket && v <= maxOfMaxAllowedPacket && v%maxAllowedPacketUnit == 0
 }

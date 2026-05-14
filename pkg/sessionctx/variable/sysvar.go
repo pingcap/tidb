@@ -2150,9 +2150,14 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.MaxAllowedPacket, Value: strconv.FormatUint(vardef.DefMaxAllowedPacket, 10), Type: vardef.TypeUnsigned, MinValue: 1024, MaxValue: vardef.MaxOfMaxAllowedPacket,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
-			if vars.StmtCtx.StmtType == "Set" && scope == vardef.ScopeSession {
-				err := ErrReadOnly.GenWithStackByArgs("SESSION", vardef.MaxAllowedPacket, "GLOBAL")
-				return normalizedValue, err
+			if vars.StmtCtx.StmtType == "Set" {
+				if scope == vardef.ScopeSession {
+					err := ErrReadOnly.GenWithStackByArgs("SESSION", vardef.MaxAllowedPacket, "GLOBAL")
+					return normalizedValue, err
+				}
+				if scope == vardef.ScopeGlobal && deploymode.IsStarter() {
+					return normalizedValue, errSetGlobalMaxAllowedPacket.GenWithStackByArgs()
+				}
 			}
 			// Truncate the value of max_allowed_packet to be a multiple of 1024,
 			// nonmultiples are rounded down to the nearest multiple.
