@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "reorder",
+    srcs = ["reorder.go"],
+    importpath = "github.com/pingcap/tidb/pkg/executor/internal/reorder",
+    visibility = ["//pkg/executor:__subpackages__"],
+    deps = ["//pkg/util/chunk"],
+)
+
+go_test(
+    name = "reorder_test",
+    timeout = "short",
+    srcs = ["reorder_test.go"],
+    embed = [":reorder"],
+    flaky = True,
+    shard_count = 8,
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "@com_github_stretchr_testify//require",
+    ],
+)

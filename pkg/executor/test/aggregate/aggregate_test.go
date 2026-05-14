@@ -88,6 +88,27 @@ func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	return data
 }
 
+func TestStreamAggRuntimeStat(t *testing.T) {
+	stats := &aggregate.StreamAggRuntimeStats{
+		Concurrency: 4,
+		WallTime:    int64(time.Second * 10),
+	}
+	for i := range 4 {
+		stats.WorkerStats = append(stats.WorkerStats, &aggregate.AggWorkerStat{
+			TaskNum:    10,
+			WaitTime:   int64(2 * time.Second),
+			ExecTime:   int64(1 * time.Second),
+			WorkerTime: int64(i) * int64(time.Second),
+		})
+	}
+	expect := "agg_worker:{wall_time:10s, concurrency:4, task_num:40, tot_wait:8s, tot_exec:4s, tot_time:6s, max:3s, p95:3s}"
+	require.Equal(t, expect, stats.String())
+	require.Equal(t, expect, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	expect = "agg_worker:{wall_time:20s, concurrency:4, task_num:80, tot_wait:16s, tot_exec:8s, tot_time:12s, max:3s, p95:3s}"
+	require.Equal(t, expect, stats.String())
+}
+
 func TestParallelStreamAggGroupConcat(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -455,6 +476,106 @@ func TestParallelHashAgg(t *testing.T) {
 			rs.Check(rsStatic.Rows())
 		}
 	}
+}
+
+func TestParallelStreamAggExec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c varchar(20), index idx_a(a))")
+	tk.MustExec("set tidb_init_chunk_size=1")
+	tk.MustExec("set tidb_max_chunk_size=32")
+
+	// Insert test data: 100 groups with varying sizes.
+	var buf strings.Builder
+	for i := range 500 {
+		if i > 0 {
+			buf.WriteString(",")
+		}
+		fmt.Fprintf(&buf, "(%d,%d,'val%d')", i%100, i, i)
+	}
+	tk.MustExec("insert into t values " + buf.String())
+
+	// Force StreamAgg via hint and index to provide sort order.
+	// The ORDER BY a uses the index, so the input to StreamAgg is already
+	// sorted — the planner won't insert a Shuffle wrapping.
+	sqls := []string{
+		"select /*+ stream_agg() */ count(b), sum(b) from t use index(idx_a) group by a order by a",
+		"select /*+ stream_agg() */ max(b), min(b), avg(b) from t use index(idx_a) group by a order by a",
+		"select /*+ stream_agg() */ count(distinct b) from t use index(idx_a) group by a order by a",
+		"select /*+ stream_agg() */ group_concat(c order by c) from t use index(idx_a) group by a order by a",
+	}
+
+	for _, sql := range sqls {
+		// Get serial (concurrency=1) results as baseline.
+		tk.MustExec("set @@tidb_streamagg_concurrency = 1")
+		expected := tk.MustQuery(sql).Sort().Rows()
+
+		// Verify parallel path produces identical results and actually
+		// exercises the executor-level parallel StreamAgg (not Shuffle).
+		for _, con := range []int{2, 4, 8} {
+			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency = %d", con))
+			comment := fmt.Sprintf("sql: %s; concurrency: %d", sql, con)
+
+			// EXPLAIN ANALYZE must show the parallel runtime stats marker
+			// ("agg_worker") and must not show "Shuffle" (which would mean
+			// the planner-level parallelism path, not executor-level).
+			explainRows := tk.MustQuery("explain analyze " + sql).Rows()
+			foundAggWorker := false
+			foundShuffle := false
+			for _, row := range explainRows {
+				line := fmt.Sprintf("%v", row)
+				if strings.Contains(line, "agg_worker") {
+					foundAggWorker = true
+				}
+				if strings.Contains(line, "Shuffle") {
+					foundShuffle = true
+				}
+			}
+			require.True(t, foundAggWorker, "expected parallel StreamAgg runtime stats (agg_worker) in plan; %s", comment)
+			require.False(t, foundShuffle, "expected no Shuffle operator in plan; %s", comment)
+
+			got := tk.MustQuery(sql).Sort().Rows()
+			require.Equal(t, len(expected), len(got), comment)
+			for i := range expected {
+				require.Equal(t, expected[i], got[i], comment)
+			}
+		}
+	}
+}
+
+func TestParallelStreamAggEdgeCases(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_init_chunk_size=1")
+	tk.MustExec("set tidb_max_chunk_size=32")
+	tk.MustExec("set tidb_streamagg_concurrency=4")
+
+	// Empty table.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a))")
+	tk.MustQuery("select /*+ stream_agg() */ count(b) from t use index(idx_a) group by a order by a").Check(testkit.Rows())
+
+	// Single group.
+	tk.MustExec("insert into t values(1,10),(1,20),(1,30)")
+	tk.MustQuery("select /*+ stream_agg() */ sum(b) from t use index(idx_a) group by a order by a").Check(testkit.Rows("60"))
+
+	// Many single-row groups.
+	tk.MustExec("truncate table t")
+	for i := range 100 {
+		tk.MustExec(fmt.Sprintf("insert into t values(%d,%d)", i, i*10))
+	}
+	tk.MustExec("set tidb_streamagg_concurrency=1")
+	expected := tk.MustQuery("select /*+ stream_agg() */ sum(b), count(b) from t use index(idx_a) group by a order by a").Sort().Rows()
+	tk.MustExec("set tidb_streamagg_concurrency=4")
+	got := tk.MustQuery("select /*+ stream_agg() */ sum(b), count(b) from t use index(idx_a) group by a order by a").Sort().Rows()
+	require.Equal(t, expected, got)
+
+	// LIMIT (early close).
+	result := tk.MustQuery("select /*+ stream_agg() */ sum(b) from t use index(idx_a) group by a order by a limit 5").Rows()
+	require.Equal(t, 5, len(result))
 }
 
 func TestIssue50849(t *testing.T) {

@@ -134,6 +134,11 @@ type executorBuilder struct {
 	// stmtCtxLock guards statement context and telemetry updates when executor building happens concurrently.
 	// It is only set for dataReaderBuilder instances used by index join inner workers.
 	stmtCtxLock *sync.Mutex
+
+	// inShuffleBuild is set when building executors inside a PhysicalShuffle worker.
+	// This prevents executor-level parallelism from activating when the Shuffle
+	// already provides parallelism (avoiding double parallelism).
+	inShuffleBuild bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -2238,6 +2243,11 @@ func (b *executorBuilder) buildStreamAggFromChildExec(childExec exec.Executor, v
 			value := aggDesc.GetDefaultValue()
 			e.DefaultVal.AppendDatum(i, &value)
 		}
+	}
+
+	if concurrency := b.ctx.GetSessionVars().StreamAggConcurrency(); concurrency > 1 && len(v.GroupByItems) > 0 && !b.inShuffleBuild {
+		e.IsParallel = true
+		e.Concurrency = concurrency
 	}
 
 	executor_metrics.ExecutorStreamAggExec.Inc()
@@ -5617,6 +5627,10 @@ func (b *executorBuilder) buildShuffle(v *physicalop.PhysicalShuffle) *ShuffleEx
 		stub.SetSchema(dataSource.Schema())
 		stubs = append(stubs, stub)
 	}
+	prevInShuffleBuild := b.inShuffleBuild
+	b.inShuffleBuild = true
+	defer func() { b.inShuffleBuild = prevInShuffleBuild }()
+
 	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
 		receivers := make([]*shuffleReceiver, len(v.DataSources))

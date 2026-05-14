@@ -256,6 +256,63 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
+// StreamAggRuntimeStats records the StreamAggExec parallel runtime stats.
+type StreamAggRuntimeStats struct {
+	Concurrency int
+	WallTime    int64
+	WorkerStats []*AggWorkerStat
+}
+
+// String implements the RuntimeStats interface.
+func (e *StreamAggRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 64))
+	var totalTime, totalWait, totalExec, totalTaskNum int64
+	for _, w := range e.WorkerStats {
+		totalTime += w.WorkerTime
+		totalWait += w.WaitTime
+		totalExec += w.ExecTime
+		totalTaskNum += w.TaskNum
+	}
+	fmt.Fprintf(buf, "agg_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
+		time.Duration(atomic.LoadInt64(&e.WallTime)), e.Concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime))
+	n := len(e.WorkerStats)
+	if n > 0 {
+		slices.SortFunc(e.WorkerStats, func(i, j *AggWorkerStat) int { return cmp.Compare(i.WorkerTime, j.WorkerTime) })
+		fmt.Fprintf(buf, ", max:%v, p95:%v",
+			time.Duration(e.WorkerStats[n-1].WorkerTime), time.Duration(e.WorkerStats[n*19/20].WorkerTime))
+	}
+	buf.WriteString("}")
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *StreamAggRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &StreamAggRuntimeStats{
+		Concurrency: e.Concurrency,
+		WallTime:    atomic.LoadInt64(&e.WallTime),
+		WorkerStats: make([]*AggWorkerStat, 0, len(e.WorkerStats)),
+	}
+	for _, s := range e.WorkerStats {
+		newRs.WorkerStats = append(newRs.WorkerStats, s.Clone())
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *StreamAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*StreamAggRuntimeStats)
+	if !ok {
+		return
+	}
+	atomic.AddInt64(&e.WallTime, atomic.LoadInt64(&tmp.WallTime))
+	e.WorkerStats = append(e.WorkerStats, tmp.WorkerStats...)
+}
+
+// Tp implements the RuntimeStats interface.
+func (*StreamAggRuntimeStats) Tp() int {
+	return execdetails.TpStreamAggRuntimeStat
+}
+
 func (e *HashAggExec) actionSpillForUnparallel() memory.ActionOnExceed {
 	e.spillAction = &AggSpillDiskAction{
 		e: e,

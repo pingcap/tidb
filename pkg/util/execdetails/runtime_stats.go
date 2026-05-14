@@ -70,6 +70,8 @@ const (
 	TpFKCascadeRuntimeStats
 	// TpRURuntimeStats is the tp for RURuntimeStats
 	TpRURuntimeStats
+	// TpStreamAggRuntimeStat is the tp for StreamAggRuntimeStats
+	TpStreamAggRuntimeStat
 )
 
 // RuntimeStats is used to express the executor runtime information.

@@ -9,6 +9,7 @@ go_library(
         "agg_hash_partial_worker.go",
         "agg_spill.go",
         "agg_stream_executor.go",
+        "agg_stream_parallel.go",
         "agg_util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/aggregate",
@@ -16,6 +17,7 @@ go_library(
     deps = [
         "//pkg/executor/aggfuncs",
         "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/reorder",
         "//pkg/executor/internal/vecgroupchecker",
         "//pkg/expression",
         "//pkg/parser/mysql",
@@ -44,9 +46,12 @@ go_library(
 go_test(
     name = "aggregate_test",
     timeout = "short",
-    srcs = ["agg_spill_test.go"],
+    srcs = [
+        "agg_spill_test.go",
+        "agg_stream_parallel_test.go",
+    ],
     flaky = True,
-    shard_count = 3,
+    shard_count = 6,
     deps = [
         ":aggregate",
         "//pkg/config",
@@ -60,6 +65,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/memory",

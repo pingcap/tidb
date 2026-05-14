@@ -16,11 +16,14 @@ package aggregate
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/internal/reorder"
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -49,6 +52,22 @@ type StreamAggExec struct {
 	// All partial results will be reset after processing one group data, and the memory usage should also be reset.
 	// We can't get memory delta from ResetPartialResult, so record the memory usage here.
 	memUsageOfInitialPartialResult int64
+
+	// Parallel execution fields (populated when IsParallel is true).
+	IsParallel      bool
+	Concurrency     int
+	started         atomic.Uint32
+	drained         atomic.Uint32
+	groupCh         chan streamAggGroupTask
+	orderedResultCh chan reorder.SeqResult[*chunk.Chunk]
+	paceCh          chan struct{}
+	resultChkCh     chan streamAggOutput
+	freeChkCh       chan *chunk.Chunk
+	exit            chan struct{}
+	workerWg        sync.WaitGroup
+	notifyWg        sync.WaitGroup
+	cancelWorkers   context.CancelFunc
+	stats           *StreamAggRuntimeStats
 }
 
 // Open implements the Executor Open interface.
@@ -64,6 +83,9 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	}
 	// If panic in Open, the children executor should be closed because they are open.
 	defer closeBaseExecutor(&e.BaseExecutor)
+	if e.IsParallel {
+		return e.openParallel()
+	}
 	return e.OpenSelf()
 }
 
@@ -98,6 +120,9 @@ func (e *StreamAggExec) OpenSelf() error {
 
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
+	if e.IsParallel {
+		return e.closeParallel()
+	}
 	if e.childResult != nil {
 		e.memTracker.Consume(-e.childResult.MemoryUsage() - e.memUsageOfInitialPartialResult)
 		e.childResult = nil
@@ -108,6 +133,9 @@ func (e *StreamAggExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	if e.IsParallel {
+		return e.nextParallel(ctx, req)
+	}
 	req.Reset()
 	for !e.executed && !req.IsFull() {
 		err = e.consumeOneGroup(ctx, req)
