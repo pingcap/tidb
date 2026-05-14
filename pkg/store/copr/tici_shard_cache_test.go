@@ -17,6 +17,7 @@ package copr
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,7 +103,79 @@ func (m *mockClient) ScanRanges(ctx context.Context, tableID int64, indexID int6
 func (m *mockClient) Close() {
 }
 
+type retryScanClient struct {
+	failTimes int
+	calls     int
+	shards    []*ShardWithAddr
+	errMsg    string
+}
+
+func (m *retryScanClient) ScanRanges(context.Context, int64, int64, []kv.KeyRange, int) ([]*ShardWithAddr, error) {
+	m.calls++
+	if m.calls <= m.failTimes {
+		if m.errMsg != "" {
+			return nil, errors.New(m.errMsg)
+		}
+		return nil, &tici.MetaServiceStatusError{
+			Method: "GetShardLocalCacheInfo",
+			Status: tici.ErrorCode_WORKER_NOT_FOUND,
+		}
+	}
+	return m.shards, nil
+}
+
+func (m *retryScanClient) Close() {}
+
 func TestShardCache(t *testing.T) {
+	t.Run("batch-load-retries-on-worker-not-found", func(t *testing.T) {
+		client := &retryScanClient{
+			failTimes: 2,
+			shards: []*ShardWithAddr{
+				{
+					Shard: Shard{
+						ShardID:  1,
+						StartKey: []byte("a"),
+						EndKey:   []byte("z"),
+						Epoch:    1,
+					},
+					localCacheAddrs: []string{"addr-1"},
+				},
+			},
+		}
+		cache := NewTiCIShardCache(client)
+
+		keyRanges := []kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("z")}}
+		shards, err := cache.BatchLoadShardsWithKeyRanges(context.Background(), 1, 2, keyRanges, defaultShardsPerBatch)
+		require.NoError(t, err)
+		require.Len(t, shards, 1)
+		require.Equal(t, 3, client.calls)
+	})
+
+	t.Run("batch-load-retries-on-string-status-error", func(t *testing.T) {
+		client := &retryScanClient{
+			failTimes: 2,
+			errMsg:    "GetShardLocalCacheInfo failed: 13",
+			shards: []*ShardWithAddr{
+				{
+					Shard: Shard{
+						ShardID:  1,
+						StartKey: []byte("a"),
+						EndKey:   []byte("z"),
+						Epoch:    1,
+					},
+					localCacheAddrs: []string{"addr-1"},
+				},
+			},
+		}
+		cache := NewTiCIShardCache(client)
+		keyRanges := []kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("z")}}
+
+		shards, err := cache.BatchLoadShardsWithKeyRanges(context.Background(), 1, 2, keyRanges, defaultShardsPerBatch)
+		require.NoError(t, err)
+		require.Len(t, shards, 1)
+		require.Equal(t, 3, client.calls)
+	})
+
 	client := newMockClient()
 
 	cache := NewTiCIShardCache(client)

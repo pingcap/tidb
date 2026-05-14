@@ -161,10 +161,19 @@ type PhysicalTableReader struct {
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
 
+// SetTablePlanForTest sets the private table plan for executor regression tests.
+func (p *PhysicalTableReader) SetTablePlanForTest(plan base.PhysicalPlan) {
+	p.tablePlan = plan
+}
+
 // LoadTableStats loads the stats of the table read by this plan.
 func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+	switch scan := p.TablePlans[0].(type) {
+	case *PhysicalTableScan:
+		loadTableStats(ctx, scan.Table, scan.physicalTableID)
+	case *PhysicalIndexScan:
+		loadTableStats(ctx, scan.Table, scan.physicalTableID)
+	}
 }
 
 // PhysPlanPartInfo indicates partition helper info in physical plan.
@@ -2521,6 +2530,17 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 	return p.isPartition, p.physicalTableID
+}
+
+// IsTiCIFTSScan returns whether this is a TiCI full-text search scan.
+func (p *PhysicalIndexScan) IsTiCIFTSScan() bool {
+	return p != nil && p.Index != nil && p.Index.IsTiCIIndex() && p.FtsQueryInfo != nil
+}
+
+// SetTiCIPartition binds a cloned TiCI MPP scan to one physical partition.
+func (p *PhysicalIndexScan) SetTiCIPartition(id int64) {
+	p.isPartition = true
+	p.physicalTableID = id
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.

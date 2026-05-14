@@ -69,17 +69,35 @@ func ExprCoveredByOneTiCIIndex(
 ) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		switch x.FuncName.L {
-		case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
-			if len(x.GetArgs()) == 2 {
-				arg, ok := x.GetArgs()[1].(*Column)
-				return ok && ftsCols.Has(int(arg.ID))
+		if _, ok := FTSFuncMap[x.FuncName.L]; ok {
+			// For single-column `fts_match_xxx`, the covered check is based on helper-eligible
+			// FTS columns; for multi-column forms (and MATCH ... AGAINST), the matched column set
+			// must equal the regular FULLTEXT index column set.
+			//
+			// NOTE: We intentionally don't assume args[1:] are always *Column. After planner
+			// rewrite, complex boolean forms may wrap FTS funcs with NOT/ISTRUE etc.
+			switch x.FuncName.L {
+			case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+				if len(x.GetArgs()) == 2 {
+					arg, ok := x.GetArgs()[1].(*Column)
+					return ok && ftsCols.Has(int(arg.ID))
+				}
 			}
-			matchedColSet, ok := collectFTSMatchedColumnSet(x)
-			return ok && matchedColSet.Equals(*colsInFulltextIdx)
-		case ast.FTSMysqlMatchAgainst:
-			matchedColSet, ok := collectFTSMatchedColumnSet(x)
-			return ok && matchedColSet.Equals(*colsInFulltextIdx)
+			if matchedColSet, ok := collectFTSMatchedColumnSet(x); ok {
+				return matchedColSet.Equals(*colsInFulltextIdx)
+			}
+			// Fallback: if the function is already rewritten into a complex boolean expression,
+			// consider it covered iff all referenced columns belong to the FTS helper column set.
+			//
+			colIDs := intset.NewFastIntSet()
+			CollectColumnIDForFTS(x, &colIDs)
+			covered := true
+			colIDs.ForEach(func(id int) {
+				if !ftsCols.Has(id) {
+					covered = false
+				}
+			})
+			return covered
 		}
 		switch x.FuncName.L {
 		case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.IsTruthWithNull:

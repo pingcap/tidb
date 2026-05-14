@@ -821,7 +821,7 @@ func (ds *DataSource) CheckPartialIndexByFilters(index *model.IndexInfo, filters
 //
 // The v8.5 planner PredicatePushDown interface cannot return an error. The FTS
 // validation rule invokes this method immediately after predicate pushdown.
-func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFuncGlobal bool) error {
+func (ds *DataSource) AnalyzeTiCIIndex(_ bool) error {
 	// Predicate pushdown performs the conversion before statistics derivation.
 	// The following validation rule calls this method again to surface errors;
 	// keep the successful conversion idempotent.
@@ -830,12 +830,7 @@ func (ds *DataSource) AnalyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 			return nil
 		}
 	}
-	condHasFTSFunc := intset.NewFastIntSet()
-	if hasFTSFuncGlobal {
-		// Use the plan-level flag as a fast pre-check so we don't rescan
-		// this DataSource when the whole query contains no FTS function.
-		condHasFTSFunc = ds.collectPushedDownCondsHasFTSFuncSet()
-	}
+	condHasFTSFunc := ds.collectPushedDownCondsHasFTSFuncSet()
 	hasFTSFuncLocal := !condHasFTSFunc.IsEmpty()
 
 	shouldSkip, err := ds.checkTiCIDirtyWrite(hasFTSFuncLocal)
@@ -1079,72 +1074,79 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	matchedCondIdxes []int,
 ) error {
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI Index currently can not be cached")
-	// Fulltext index must be used, so prune all other access paths.
-	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index == nil || path.Index.ID != index.ID
-	})
-	// The v8.5 planner may rebuild PossibleAccessPaths from AllPossibleAccessPaths
-	// after logical rules. Keep the TiCI-only choice in both slices so the table
-	// path cannot be reintroduced before physical optimization.
-	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index == nil || path.Index.ID != index.ID
-	})
-	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
+	ticiPath, err := ds.keepOnlyTiCIPath(index)
+	if err != nil {
+		return err
+	}
+	if ds.HasForceHints && !ticiPath.Forced {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
 	matchedCondSet := make(map[int]struct{}, len(matchedCondIdxes))
 	for _, idx := range matchedCondIdxes {
 		matchedCondSet[idx] = struct{}{}
 	}
-	remainedFilters := make([]expression.Expression, 0, len(ds.PushedDownConds)-len(matchedCondIdxes))
+	matchedConds := make([]expression.Expression, 0, len(matchedCondIdxes))
+	tableFilters := make([]expression.Expression, 0, len(ds.PushedDownConds)-len(matchedCondIdxes))
 	for i, cond := range ds.PushedDownConds {
 		if _, ok := matchedCondSet[i]; ok {
+			matchedConds = append(matchedConds, cond)
 			continue
 		}
-		remainedFilters = append(remainedFilters, cond)
+		tableFilters = append(tableFilters, cond)
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
-	pbExprs := make([]tipb.Expr, 0, len(matchedCondIdxes))
-	// It represents the TiCI search functions currently.
-	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
-	for _, idx := range matchedCondIdxes {
-		matchedCond := ds.PushedDownConds[idx]
+	pbExprs := make([]tipb.Expr, 0, len(matchedConds))
+	ticiPath.AccessConds = ticiPath.AccessConds[:0]
+	for _, matchedCond := range matchedConds {
 		pbExpr := pbConverter.ExprToPB(matchedCond)
 		if pbExpr == nil {
 			// If the expression is not converted to PB, we should return an error.
 			return errors.New("Failed to convert FTS function to PB expression")
 		}
 		pbExprs = append(pbExprs, *pbExpr)
-		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, matchedCond)
+		ticiPath.AccessConds = append(ticiPath.AccessConds, matchedCond)
 	}
 
-	// Build tipb protobuf info for the matched index.
 	tokenizer := ""
 	if index.FullTextInfo != nil {
 		tokenizer = string(index.FullTextInfo.ParserType)
 	}
-	ds.PossibleAccessPaths[0].FtsQueryInfo = &tipb.FTSQueryInfo{
+	ticiPath.FtsQueryInfo = &tipb.FTSQueryInfo{
 		QueryType:      tipb.FTSQueryType_FTSQueryTypeNoScore,
 		IndexId:        index.ID,
 		QueryTokenizer: tokenizer,
 		MatchExpr:      pbExprs,
 	}
 
-	ds.PossibleAccessPaths[0].TableFilters = remainedFilters
+	ticiPath.TableFilters = tableFilters
+	ds.PushedDownConds = tableFilters
 	return nil
+}
+
+func (ds *DataSource) keepOnlyTiCIPath(index *model.IndexInfo) (*util.AccessPath, error) {
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path == nil || path.Index == nil || path.Index.ID != index.ID
+	})
+	if len(ds.PossibleAccessPaths) == 0 {
+		return nil, errors.New("TiCI analyze: matched TiCI access path not found")
+	}
+	ds.AllPossibleAccessPaths = slices.Clone(ds.PossibleAccessPaths)
+	ticiPath := ds.PossibleAccessPaths[0]
+	ticiPath.StoreType = kv.TiCI
+	return ticiPath, nil
 }
 
 // CleanUnusedTiCIIndexes removes the unused TiCI indexes from PossibleAccessPaths and AllPossibleAccessPaths.
 // It also checks whether all hinted indexes is pruned, and raises a warning if so.
 func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
+		return isUnusedTiCIPath(path)
 	})
 	origLen := len(ds.PossibleAccessPaths)
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
+		return isUnusedTiCIPath(path)
 	})
 	nowLen := len(ds.PossibleAccessPaths)
 	stillHasHintedIndex := false
@@ -1155,4 +1157,13 @@ func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	if origLen > nowLen && ds.HasForceHints && !stillHasHintedIndex {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
+}
+
+func isUnusedTiCIPath(path *util.AccessPath) bool {
+	if path == nil || path.Index == nil {
+		return false
+	}
+	return path.Index.IsTiCIIndex() &&
+		len(path.AccessConds) == 0 &&
+		path.FtsQueryInfo == nil
 }

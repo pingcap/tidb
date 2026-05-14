@@ -717,8 +717,8 @@ github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeA
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
 github.com/AilinKid/client-go/v2 v2.0.0-20260907072612-e544f6d4ec57 h1:Qd7WdNQqJhj89fEEG6lIh3wg72J7l/0XfgRR0UEczGU=
 github.com/AilinKid/client-go/v2 v2.0.0-20260907072612-e544f6d4ec57/go.mod h1:h0e6OgtnTLBN3Um/Y5bir+C4wkGooXqx0h8HVwta7Kg=
-github.com/AilinKid/kvproto v0.0.0-20260907072229-f4a0f7af3e51 h1:4mtk1ag/ete5oneLZBIY8Z0y7R6Sh6F7q4nlZK8tfKU=
-github.com/AilinKid/kvproto v0.0.0-20260907072229-f4a0f7af3e51/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
+github.com/AilinKid/kvproto v0.0.0-20260907094418-47bcf5dc38ad h1:q8Jq7vprbmqWiWUlwqHtLh7f3tQzL2WjnI3R8PI4Z5o=
+github.com/AilinKid/kvproto v0.0.0-20260907094418-47bcf5dc38ad/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/AilinKid/tipb v0.0.0-20260902090421-bb7af0def01e h1:efdyKH5WaWybZIYB77oHR/Z3lJSDgdadXMaeLlqd2M0=
 github.com/AilinKid/tipb v0.0.0-20260902090421-bb7af0def01e/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/AilinKid/tipb v0.0.0-20260903024624-c8b140052244 h1:TTE/oUlMM6S5eBjxgvWWx8FvoJeyQrRynshJlvh0cVA=

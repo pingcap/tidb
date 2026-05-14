@@ -4376,6 +4376,9 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		groupedRanges:              is.GroupedRanges,
 		storeType:                  v.IndexStoreType,
 		batchCop:                   v.ReadReqType == plannercore.BatchCop,
+		indexReadReqType:           v.ReadReqType,
+		mppInfoSchema:              b.is,
+		mppSession:                 b.sctx,
 	}
 
 	if v.ExtraHandleCol != nil {

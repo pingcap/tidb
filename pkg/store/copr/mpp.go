@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -42,6 +43,199 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+type tiCIMPPTaskMeta struct {
+	storeAddr       string
+	tableShardInfos []*coprocessor.TableShardInfos
+}
+
+const (
+	maxTiCIShardInfoBuildRetry = 6
+	tiCIShardInfoRetryBackoff  = 200 * time.Millisecond
+)
+
+func (m *tiCIMPPTaskMeta) GetAddress() string {
+	return m.storeAddr
+}
+
+func buildTiCIMPPTaskMetas(shardInfosByAddr map[string][]*coprocessor.TableShardInfos) ([]kv.MPPTaskMeta, error) {
+	if len(shardInfosByAddr) == 0 {
+		return nil, errors.New("No shard info found")
+	}
+	metas := make([]kv.MPPTaskMeta, 0, len(shardInfosByAddr))
+	for addr, infos := range shardInfosByAddr {
+		if len(infos) == 0 {
+			continue
+		}
+		metas = append(metas, &tiCIMPPTaskMeta{
+			storeAddr:       addr,
+			tableShardInfos: infos,
+		})
+	}
+	if len(metas) == 0 {
+		return nil, errors.New("No shard info found")
+	}
+	return metas, nil
+}
+
+func isRetryableTiCIDispatchError(msg string) bool {
+	msg = strings.ToLower(msg)
+	return strings.Contains(msg, "getshardlocalcacheinfo failed: 13") ||
+		strings.Contains(msg, "getshardlocalcacheinfo failed:13") ||
+		strings.Contains(msg, "getshardlocalcacheinfo failed: 14") ||
+		strings.Contains(msg, "getshardlocalcacheinfo failed:14") ||
+		strings.Contains(msg, "worker_not_found") ||
+		strings.Contains(msg, "shard_not_scheduled")
+}
+
+func isRetryableTiCIShardBuildError(err error) bool {
+	if err == nil {
+		return false
+	}
+	cause := errors.Cause(err)
+	if cause == context.Canceled || cause == context.DeadlineExceeded {
+		return false
+	}
+	if isRetryableTiCIMetaErr(err) {
+		return true
+	}
+	return isRetryableTiCIDispatchError(err.Error())
+}
+
+// shouldRetryTiCIDispatch decides whether a dispatch error should trigger retry
+// for TiCI-related MPP tasks.
+//
+// In the new TiCI MPP design, the normal metadata type is *tiCIMPPTaskMeta.
+// The *batchCopTask branch is kept only as a compatibility fallback for legacy
+// paths carrying table_shard_infos, and should not be treated as the primary
+// TiCI scheduling path.
+func shouldRetryTiCIDispatch(meta kv.MPPTaskMeta, errMsg string) bool {
+	if !isRetryableTiCIDispatchError(errMsg) {
+		return false
+	}
+	switch t := meta.(type) {
+	case *tiCIMPPTaskMeta:
+		return true
+	case *batchCopTask:
+		// Some TiCI paths still carry shard routing via batchCopTask metadata.
+		// Treat them as retryable when table_shard_infos is present.
+		return len(t.TableShardInfos) > 0
+	default:
+		return false
+	}
+}
+
+func selectTiCIShardAddr(addrs []string, shardID uint64, dispatchPolicy tiflashcompute.DispatchPolicy, tiflashReplicaReadPolicy tiflash.ReplicaRead) string {
+	if len(addrs) == 0 {
+		return ""
+	}
+	if len(addrs) == 1 {
+		return addrs[0]
+	}
+	// For TiCI MPP, MetaService already returns shard-local candidates in preferred order.
+	// Keep using the first one to avoid dispatching to a candidate whose local cache/worker
+	// is not ready yet (e.g. GetShardLocalCacheInfo failed: 13/14).
+	//
+	// Keep parameters for call-site compatibility.
+	_ = shardID
+	_ = dispatchPolicy
+	_ = tiflashReplicaReadPolicy
+	return addrs[0]
+}
+
+func buildTiCIShardInfosByStoreAddr(ctx context.Context, cache *TiCIShardCache, req *kv.MPPBuildTasksRequest, dispatchPolicy tiflashcompute.DispatchPolicy, tiflashReplicaReadPolicy tiflash.ReplicaRead) (map[string][]*coprocessor.TableShardInfos, error) {
+	if cache == nil {
+		return nil, errors.New("tici shard cache client is not initialized")
+	}
+	ticiPartitionIDAndRanges := req.TiCIPartitionIDAndRanges
+	if len(ticiPartitionIDAndRanges) == 0 {
+		if len(req.TiCIKeyRanges) == 0 {
+			return nil, errors.New("tici MPP request has empty TiCIKeyRanges")
+		}
+		ticiPartitionIDAndRanges = []kv.PartitionIDAndRanges{
+			{
+				ID:        req.TiCITableID,
+				KeyRanges: req.TiCIKeyRanges,
+			},
+		}
+	}
+
+	storeShard := make(map[string][]*coprocessor.ShardInfo)
+	for _, partitionIDAndRange := range ticiPartitionIDAndRanges {
+		if len(partitionIDAndRange.KeyRanges) == 0 {
+			continue
+		}
+		locs, err := cache.BatchLocateKeyRanges(ctx, partitionIDAndRange.ID, req.TiCIIndexID, partitionIDAndRange.KeyRanges)
+		if err != nil {
+			return nil, err
+		}
+		for _, loc := range locs {
+			addrs := loc.localCacheAddrs
+			if len(addrs) == 0 {
+				continue
+			}
+			if loc.Ranges == nil {
+				continue
+			}
+			addr := selectTiCIShardAddr(addrs, loc.ShardID, dispatchPolicy, tiflashReplicaReadPolicy)
+			if len(addr) == 0 {
+				continue
+			}
+			storeShard[addr] = append(storeShard[addr], &coprocessor.ShardInfo{
+				ShardId:    loc.ShardID,
+				ShardEpoch: loc.Epoch,
+				Ranges:     loc.Ranges.ToPBRanges(),
+			})
+		}
+	}
+	if len(storeShard) == 0 {
+		return nil, errors.New("No shard info found")
+	}
+
+	result := make(map[string][]*coprocessor.TableShardInfos, len(storeShard))
+	for addr, shardInfos := range storeShard {
+		if len(shardInfos) == 0 {
+			continue
+		}
+		result[addr] = []*coprocessor.TableShardInfos{
+			{
+				ExecutorId: req.TiCIExecutorID,
+				ShardInfos: shardInfos,
+			},
+		}
+	}
+	if len(result) == 0 {
+		return nil, errors.New("No shard info found")
+	}
+	return result, nil
+}
+
+func buildTiCIShardInfosByStoreAddrWithRetry(
+	ctx context.Context,
+	cache *TiCIShardCache,
+	req *kv.MPPBuildTasksRequest,
+	dispatchPolicy tiflashcompute.DispatchPolicy,
+	tiflashReplicaReadPolicy tiflash.ReplicaRead,
+) (map[string][]*coprocessor.TableShardInfos, error) {
+	retryBackoff := tiCIShardInfoRetryBackoff
+	for attempt := 0; ; attempt++ {
+		shardInfosByAddr, err := buildTiCIShardInfosByStoreAddr(ctx, cache, req, dispatchPolicy, tiflashReplicaReadPolicy)
+		if err == nil {
+			return shardInfosByAddr, nil
+		}
+		if !isRetryableTiCIShardBuildError(err) || attempt == maxTiCIShardInfoBuildRetry {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryBackoff):
+			if retryBackoff < time.Second {
+				retryBackoff *= 2
+			}
+		}
+	}
+}
+
 // MPPClient servers MPP requests.
 type MPPClient struct {
 	store *kvStore
@@ -61,6 +255,17 @@ func (c *batchCopTask) GetAddress() string {
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, ttl time.Duration, dispatchPolicy tiflashcompute.DispatchPolicy, tiflashReplicaReadPolicy tiflash.ReplicaRead, appendWarning func(error)) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
+	if req.TiCI {
+		shardInfosByAddr, err := buildTiCIShardInfosByStoreAddrWithRetry(ctx, c.store.GetTiCIShardCache(), req, dispatchPolicy, tiflashReplicaReadPolicy)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		metas, err := buildTiCIMPPTaskMetas(shardInfosByAddr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return metas, nil
+	}
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	var tasks []*batchCopTask
 	var err error
@@ -79,7 +284,6 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		ranges := NewKeyRanges(req.KeyRanges)
 		tasks, err = buildBatchCopTasksForNonPartitionedTable(ctx, bo, c.store, ranges, kv.TiFlash, true, ttl, true, 20, dispatchPolicy, tiflashReplicaReadPolicy, appendWarning)
 	}
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -94,11 +298,15 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.DispatchTaskResponse, retry bool, err error) {
 	req := param.Req
 	var regionInfos []*coprocessor.RegionInfo
+	var tableShardInfos []*coprocessor.TableShardInfos
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
 		for _, ri := range originalTask.regionInfos {
 			regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
 		}
+		tableShardInfos = originalTask.TableShardInfos
+	} else if ticiTask, ok := req.Meta.(*tiCIMPPTaskMeta); ok {
+		tableShardInfos = ticiTask.tableShardInfos
 	}
 
 	// meta for current task.
@@ -112,14 +320,16 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 		ConnectionId:           req.ConnectionID,
 		ConnectionAlias:        req.ConnectionAlias,
 	}
-
 	mppReq := &mpp.DispatchTaskRequest{
-		Meta:        taskMeta,
+		Meta: taskMeta,
+		// NOTE: encoded plan does not carry TiCI shard routing data anymore.
+		// Task-level shard routing info is carried by DispatchTaskRequest.table_shard_infos.
 		EncodedPlan: req.Data,
 		// TODO: This is only an experience value. It's better to be configurable.
-		Timeout:   60,
-		SchemaVer: req.SchemaVar,
-		Regions:   regionInfos,
+		Timeout:         60,
+		SchemaVer:       req.SchemaVar,
+		Regions:         regionInfos,
+		TableShardInfos: tableShardInfos,
 	}
 	if originalTask != nil {
 		mppReq.TableRegions = originalTask.PartitionTableRegions
@@ -172,6 +382,13 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 
 	realResp := rpcResp.Resp.(*mpp.DispatchTaskResponse)
 	if realResp.Error != nil {
+		if shouldRetryTiCIDispatch(req.Meta, realResp.Error.Msg) {
+			retryErr := errors.New(realResp.Error.Msg)
+			if bo.Backoff(tikv.BoTiFlashRPC(), retryErr) == nil {
+				return nil, true, retryErr
+			}
+			return nil, false, retryErr
+		}
 		return realResp, false, nil
 	}
 
