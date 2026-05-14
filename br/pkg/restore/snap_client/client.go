@@ -502,7 +502,7 @@ func (rc *SnapClient) InitCheckpoint(
 			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
 					"Please don't use the checkpoint, "+
-					"or use the the same restore command. checkpoint manager: %v",
+					"or use the same restore command. checkpoint manager: %v",
 				snapshotCheckpointMetaManager)
 		}
 
