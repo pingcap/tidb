@@ -57,6 +57,7 @@ func (mockHelperStorage) GetRegionCache() *tikv.RegionCache {
 type mockPDHTTPClient struct {
 	pdhttp.Client
 	regionInfos []*pdhttp.RegionsInfo
+	storesInfo  *pdhttp.StoresInfo
 	callCount   int
 	firstRange  *pdhttp.KeyRange
 	firstLimit  int
@@ -77,6 +78,13 @@ func (c *mockPDHTTPClient) GetRegionsByKeyRange(_ context.Context, keyRange *pdh
 	info := c.regionInfos[c.callCount]
 	c.callCount++
 	return info, nil
+}
+
+func (c *mockPDHTTPClient) GetStores(context.Context) (*pdhttp.StoresInfo, error) {
+	if c.storesInfo == nil {
+		return &pdhttp.StoresInfo{}, nil
+	}
+	return c.storesInfo, nil
 }
 
 func expectedRegionRange(tableID int64) ([]byte, []byte) {
@@ -179,4 +187,83 @@ func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestSumTiKVStoreUsage(t *testing.T) {
+	usage, err := sumTiKVStoreUsage([]pdhttp.StoreInfo{
+		{
+			Store: pdhttp.MetaStore{
+				ID:     1,
+				Labels: []pdhttp.StoreLabel{{Key: "zone", Value: "z1"}},
+			},
+			Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "896B"},
+		},
+		{
+			Store: pdhttp.MetaStore{
+				ID:     2,
+				Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tikv"}},
+			},
+			Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "768B"},
+		},
+		{
+			Store: pdhttp.MetaStore{
+				ID:     3,
+				Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tiflash"}},
+			},
+			Status: pdhttp.StoreStatus{Capacity: "2KiB", Available: "1KiB"},
+		},
+		{
+			Store: pdhttp.MetaStore{
+				ID:     5,
+				Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tiflash_compute"}},
+			},
+			Status: pdhttp.StoreStatus{Capacity: "2KiB", Available: "512B"},
+		},
+		{
+			Store:  pdhttp.MetaStore{ID: 4},
+			Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "1KiB"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 3, usage.StoreCount)
+	require.EqualValues(t, 384, usage.UsedBytes)
+}
+
+func TestCollectTiKVStoreUsage(t *testing.T) {
+	pdCli := &mockPDHTTPClient{
+		storesInfo: &pdhttp.StoresInfo{
+			Stores: []pdhttp.StoreInfo{
+				{
+					Store: pdhttp.MetaStore{
+						ID:     1,
+						Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tikv"}},
+					},
+					Status: pdhttp.StoreStatus{Capacity: "1KiB", Available: "960B"},
+				},
+				{
+					Store: pdhttp.MetaStore{
+						ID:     2,
+						Labels: []pdhttp.StoreLabel{{Key: "engine", Value: "tiflash"}},
+					},
+					Status: pdhttp.StoreStatus{Capacity: "2KiB", Available: "1KiB"},
+				},
+			},
+		},
+	}
+
+	usage, err := collectTiKVStoreUsage(context.Background(), mockHelperStorage{codec: mockCodec{}, pdCli: pdCli})
+	require.NoError(t, err)
+	require.Equal(t, 1, usage.StoreCount)
+	require.EqualValues(t, 64, usage.UsedBytes)
+}
+
+func TestSumTiKVStoreUsageError(t *testing.T) {
+	usage, err := sumTiKVStoreUsage([]pdhttp.StoreInfo{
+		{
+			Store:  pdhttp.MetaStore{ID: 7},
+			Status: pdhttp.StoreStatus{Capacity: "broken", Available: "1KiB"},
+		},
+	})
+	require.Nil(t, usage)
+	require.ErrorContains(t, err, "parse store 7 used bytes")
 }
