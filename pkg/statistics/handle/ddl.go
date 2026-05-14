@@ -23,25 +23,20 @@ import (
 // HandleDDLEvent begins to process a ddl task.
 func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	switch t.Tp {
-	case model.ActionCreateTable, model.ActionTruncateTable:
-		ids, err := h.getInitStateTableIDs(t.TableInfo)
-		if err != nil {
+	case model.ActionCreateTable:
+		if err := h.insertTableStats(t.TableInfo); err != nil {
 			return err
 		}
-		for _, id := range ids {
-			if err := h.InsertTableStats2KV(t.TableInfo, id); err != nil {
-				return err
-			}
+	case model.ActionTruncateTable:
+		if err := h.insertTableStats(t.TableInfo); err != nil {
+			return err
+		}
+		if err := h.resetTableStatsForDrop(t.OldTableInfo); err != nil {
+			return err
 		}
 	case model.ActionDropTable:
-		ids, err := h.getInitStateTableIDs(t.TableInfo)
-		if err != nil {
+		if err := h.resetTableStatsForDrop(t.TableInfo); err != nil {
 			return err
-		}
-		for _, id := range ids {
-			if err := h.ResetTableStats2KVForDrop(id); err != nil {
-				return err
-			}
 		}
 	case model.ActionAddColumn, model.ActionModifyColumn:
 		ids, err := h.getInitStateTableIDs(t.TableInfo)
@@ -101,6 +96,41 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		return h.UpdateStatsVersion()
 	}
 	return nil
+}
+
+func (h *Handle) insertTableStats(tblInfo *model.TableInfo) error {
+	ids, err := h.getInitStateTableIDs(tblInfo)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := h.InsertTableStats2KV(tblInfo, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handle) resetTableStatsForDrop(tblInfo *model.TableInfo) error {
+	for _, id := range getStatsTableIDsForDrop(tblInfo) {
+		if err := h.ResetTableStats2KVForDrop(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func getStatsTableIDsForDrop(tblInfo *model.TableInfo) []int64 {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return []int64{tblInfo.ID}
+	}
+	ids := make([]int64, 0, len(pi.Definitions)+1)
+	ids = append(ids, tblInfo.ID)
+	for _, def := range pi.Definitions {
+		ids = append(ids, def.ID)
+	}
+	return ids
 }
 
 func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {

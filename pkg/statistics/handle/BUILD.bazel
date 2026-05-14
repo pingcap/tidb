@@ -59,9 +59,10 @@ go_test(
     embed = [":handle"],
     flaky = True,
     race = "on",
-    shard_count = 12,
+    shard_count = 14,
     deps = [
         "//pkg/config",
+        "//pkg/ddl/util",
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx",
