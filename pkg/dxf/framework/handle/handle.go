@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -292,18 +291,6 @@ func RunWithRetry(
 	return lastErr
 }
 
-var nodeResource atomic.Pointer[proto.NodeResource]
-
-// GetNodeResource gets the node resource.
-func GetNodeResource() *proto.NodeResource {
-	return nodeResource.Load()
-}
-
-// SetNodeResource gets the node resource.
-func SetNodeResource(rc *proto.NodeResource) {
-	nodeResource.Store(rc)
-}
-
 // GetDefaultRegionSplitConfig gets the default region split size and keys.
 func GetDefaultRegionSplitConfig() (splitSize, splitKeys int64) {
 	if kerneltype.IsNextGen() {
@@ -472,10 +459,4 @@ func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
 	}
 	failpoint.InjectCall("afterSendRowAndSizeMeterData", item)
 	return nil
-}
-
-func init() {
-	// domain will init this var at runtime, we store it here for test, as some
-	// test might not start domain.
-	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
 }
