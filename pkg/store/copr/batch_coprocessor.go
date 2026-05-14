@@ -468,19 +468,12 @@ func buildBatchCopTasksForNonPartitionedTable(
 	appendWarning func(error)) ([]*batchCopTask, error) {
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.DisaggregatedTiFlash {
-		if shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg) {
+		if globalCfg.UseAutoScaler {
 			return buildBatchCopTasksConsistentHash(ctx, bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
 		}
 		return buildBatchCopTasksConsistentHashForPD(bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
 	}
 	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount, tiflashReplicaReadPolicy, appendWarning)
-}
-
-func shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg *config.Config) bool {
-	if !globalCfg.UseAutoScaler || globalCfg.UseColumnar {
-		return false
-	}
-	return true
 }
 
 func buildBatchCopTasksForPartitionedTable(
@@ -499,7 +492,7 @@ func buildBatchCopTasksForPartitionedTable(
 	appendWarning func(error)) (batchTasks []*batchCopTask, err error) {
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.DisaggregatedTiFlash {
-		if shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg) {
+		if globalCfg.UseAutoScaler {
 			batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl, dispatchPolicy)
 		} else {
 			// todo: remove this after AutoScaler is stable.

@@ -131,14 +131,6 @@ autoscaler-cluster-id = ""
 # use-autoscaler indicates whether use AutoScaler or PD for tiflash_compute nodes, only meaningful when disaggregated-tiflash is true.
 use-autoscaler = false
 
-# use-columnar indicates whether to enable columnar execution.
-# Only meaningful when disaggregated-tiflash is true.
-use-columnar = false
-
-# use-columnar-fts indicates whether to forward full text search (FTS) requests to columnar TiFlash nodes.
-# Only meaningful when disaggregated-tiflash is true, use-autoscaler is true and use-columnar is true.
-use-columnar-fts = false
-
 # in-mem-slow-query-topn-num indicates the number of TopN slow queries stored in memory.
 in-mem-slow-query-topn-num = 30
 
