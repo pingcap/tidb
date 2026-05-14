@@ -58,10 +58,3 @@ func IsTiFlashWriteHTTPResp(store *pdhttp.MetaStore) bool {
 	}
 	return false
 }
-
-// IsTiFlashWriteNodeHTTPResp tests whether the store is a TiFlash write node
-// from a PD HTTP response. It is kept for compatibility with callers that use
-// the old helper name.
-func IsTiFlashWriteNodeHTTPResp(store *pdhttp.MetaStore) bool {
-	return IsTiFlashWriteHTTPResp(store)
-}
