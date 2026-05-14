@@ -213,6 +213,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		runawayChecker:   req.RunawayChecker,
 		maxKeysRead:      req.MaxKeysRead,
 		keysRead:         pickKeysReadCounter(req),
+		ema:              newRUEMA(),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -1006,6 +1007,9 @@ type copIterator struct {
 
 	maxKeysRead uint64          // global limit from kv.Request (0 = unlimited)
 	keysRead    *atomic2.Uint64 // cumulative storage engine keys read across all completed tasks; may be shared across copIterators in the same statement
+
+	// One EMA per copIterator (logical scan), shared across workers.
+	ema *ruEMA
 }
 
 // pickKeysReadCounter returns the counter used by a copIterator for cumulative
@@ -1052,6 +1056,8 @@ type copIteratorWorker struct {
 
 	maxKeysRead uint64          // global limit (0 = unlimited)
 	keysRead    *atomic2.Uint64 // shared with copIterator for cumulative tracking
+
+	ema *ruEMA
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1248,6 +1254,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		stats:                   it.stats,
 		maxKeysRead:             it.maxKeysRead,
 		keysRead:                it.keysRead,
+		ema:                     it.ema,
 	}
 }
 
@@ -1747,6 +1754,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
+	req.PredictedReadBytes = worker.ema.Predict()
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1897,6 +1905,22 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
+// pagingResponseReadBytes returns the MVCC bytes basis the EMA observes.
+// Mirrors client-go's resourcecontrol.MakeResponseInfo so the EMA learns
+// the same quantity PD bills against.
+//
+// TODO: for NextGen, PD bills max(TotalVersionsSize, ProcessedVersionsSize).
+// Mirror that here once a TiDB-side NextGen gate is available.
+func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
+	if pbResp == nil {
+		return 0
+	}
+	if scanDetail := pbResp.GetExecDetailsV2().GetScanDetailV2(); scanDetail != nil {
+		return scanDetail.GetProcessedVersionsSize()
+	}
+	return 0
+}
+
 func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
 	if err != nil {
@@ -1915,6 +1939,10 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		// If the storage engine doesn't support paging protocol, it should have return all the region data.
 		// So we finish here.
 		return result, nil
+	}
+
+	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
+		worker.ema.Observe(readBytes, time.Now())
 	}
 
 	// calculate next ranges and grow the paging size
