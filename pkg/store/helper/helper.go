@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -978,12 +979,19 @@ func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tab
 	if err != nil {
 		return columnarStatus, errors.Trace(err)
 	}
+
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
 			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
+
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return columnarStatus, errors.Errorf("TiKV columnar status API returned status %d: %s", resp.StatusCode, string(body))
+	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return columnarStatus, errors.Trace(err)

@@ -91,7 +91,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-	pdHttp "github.com/tikv/pd/client/http"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -1063,9 +1062,8 @@ func (w *worker) checkColumnarIndexProcess(jobCtx *jobContext, tbl table.Table, 
 }
 
 // checkColumnarIndexProcessFromTiKV checks the backfill process of a columnar index from TiKV.
-func (w *worker) checkColumnarIndexProcessFromTiKV(_d *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
-	// TODO: Cache the TiKV stores stat.
-	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
+func (w *worker) checkColumnarIndexProcessFromTiKV(jobCtx *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
+	tikvStats, err := infosync.GetTiFlashStoresStat(jobCtx.stepCtx)
 	if err != nil {
 		return false, 0, err
 	}
@@ -3437,7 +3435,7 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 	start, end := hStore.GetCodec().EncodeRegionRange(sk, ek)
 	// We use the second region to prevent the influence of the front and back tables.
 	regionLimit := 3
-	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdHttp.NewKeyRange(start, end), regionLimit)
+	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), regionLimit)
 	if err != nil {
 		return 0, err
 	}

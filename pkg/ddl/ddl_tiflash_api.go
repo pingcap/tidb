@@ -497,7 +497,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 
 			// `avail` indicates that all replicas have been built, and the tiflash replica
 			// is ready for executing queries.
-			avail := progress >= 1.0
+			avail := availProgress >= 1.0
 			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {
 				avail = val.(bool)
 			})

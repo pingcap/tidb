@@ -372,10 +372,10 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 }
 
 // MustGetTiFlashProgressWithCircuitBreaker is a wrapper of MustGetTiFlashProgress, it will trigger circuit breaker if timedout.
-func MustGetTiFlashProgressWithCircuitBreaker(tableID int64, replicaCount uint64, tiFlashStores *map[int64]pdhttp.StoreInfo, tikvStores *map[int64]pdhttp.StoreInfo) (float64, bool /* is circuit breaker triggered */, error) {
+func MustGetTiFlashProgressWithCircuitBreaker(ctx context.Context, tableID int64, replicaCount uint64, tiFlashStores *map[int64]pdhttp.StoreInfo, tikvStores *map[int64]pdhttp.StoreInfo) (float64, bool /* is circuit breaker triggered */, error) {
 	// Create a context with timeout
 	timeout := config.GetGlobalConfig().CSE.ColumnarCollectTimeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// Create a channel to receive the result
@@ -899,6 +899,9 @@ func CalculateColumnarProgress(tableID int64, TiKVStores map[int64]pdhttp.StoreI
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
+	}
+	if is.tikvCodec == nil {
+		return 0, errors.New("tikv codec is not initialized")
 	}
 	keyspaceID := is.tikvCodec.GetKeyspaceID()
 	var ready uint = 0

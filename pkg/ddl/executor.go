@@ -3715,14 +3715,13 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 	if !shouldModifyTiFlashReplica(tbReplicaInfo, replicaInfo) {
 		return nil
 	}
+	if replicaInfo.Hypo {
+		return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
+	}
 
 	checkTiFlash := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
 
 	if checkTiFlash {
-		if replicaInfo.Hypo {
-			return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
-		}
-
 		err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
 		if err != nil {
 			return errors.Trace(err)
