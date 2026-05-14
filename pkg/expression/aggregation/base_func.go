@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
@@ -302,6 +303,24 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) error 
 	ec, err := expression.CheckAndDeriveCollationFromExprs(ctx, ast.AggFuncGroupConcat, types.ETString, a.Args...)
 	if err != nil {
 		return err
+	}
+	if ec.Charset == "" || ec.Collation == "" {
+		connCharset, connCollation := ctx.GetCharsetInfo()
+		if connCharset == "" || connCollation == "" {
+			connCharset, connCollation = charset.GetDefaultCharsetAndCollate()
+		}
+		if ec.Charset == "" {
+			ec.Charset = connCharset
+		}
+		if ec.Collation == "" {
+			if ec.Charset == connCharset {
+				ec.Collation = connCollation
+			} else if coll, err := charset.GetDefaultCollation(ec.Charset); err == nil {
+				ec.Collation = coll
+			} else {
+				ec.Collation = connCollation
+			}
+		}
 	}
 	a.RetTp.SetCharset(ec.Charset)
 	a.RetTp.SetCollate(ec.Collation)
