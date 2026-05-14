@@ -23,8 +23,10 @@
       {
         "SQL": "explain format='brief' select title from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t1.title",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -50,8 +52,10 @@
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -78,56 +82,65 @@
       {
         "SQL": "explain format='brief' select title from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
         "Plan": [
-          "Projection 66.67 root  test.t1.title",
-          "└─IndexReader 0.00 root  index:Selection",
-          "  └─Selection 0.00 cop[tici]  gt(length(test.t1.title), 1), gt(test.t1.id, 10)",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "TableReader 2666.67 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  test.t1.title",
+          "    └─Selection 2666.67 mpp[tiflash]  gt(length(test.t1.title), 1), gt(test.t1.id, 10)",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#6",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t1.id)->Column#8",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#10)->Column#6",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t1.id)->Column#10",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#6",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#8",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#10)->Column#6",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#10",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10",
         "Plan": [
-          "IndexReader 0.00 root  index:Selection",
-          "└─Selection 0.00 cop[tici]  gt(test.t1.id, 10)",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+          "TableReader 3333.33 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  test.t1.id",
+          "    └─Selection 3333.33 mpp[tiflash]  gt(test.t1.id, 10)",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:(10,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where (not fts_match_word('hello', title)) AND id > 10",
         "Plan": [
-          "IndexReader 0.00 root  index:Selection",
-          "└─Selection 0.00 cop[tici]  gt(test.t1.id, 10)",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:(10,+inf], search func:not(istrue_with_null(fts_match_word(\"hello\", test.t1.title))), keep order:false, stats:pseudo"
+          "TableReader 3333.33 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  test.t1.id",
+          "    └─Selection 3333.33 mpp[tiflash]  gt(test.t1.id, 10)",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:(10,+inf], search func:not(istrue_with_null(fts_match_word(\"hello\", test.t1.title))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -146,33 +159,38 @@
         "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) limit 1",
         "Plan": [
           "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 0.12 cop[tici]  offset:0, count:1",
-          "│ └─IndexRangeScan 0.12 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 0.12 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "├─IndexRangeScan(Build) 0.10 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.10 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) and fts_match_word('world', title)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), fts_match_word(\"world\", test.t1.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), fts_match_word(\"world\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where (fts_match_word('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where (fts_match_prefix('apple', title) and fts_match_word('boy', title)) or (fts_match_word('banana', title) and fts_match_word('girl', title))",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(and(istrue_with_null(fts_match_prefix(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(and(istrue_with_null(fts_match_prefix(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"boy\", test.t1.title))), and(istrue_with_null(fts_match_word(\"banana\", test.t1.title)), istrue_with_null(fts_match_word(\"girl\", test.t1.title)))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -195,8 +213,10 @@
       {
         "SQL": "explain format='brief' select a from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t3.a",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -204,9 +224,9 @@
         "SQL": "explain format='brief' select /*+ LIMIT_TO_COP() */ a from t3 where fts_match_word('hello', title) limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─IndexReader 0.12 root  index:Limit",
-          "  └─Limit 0.12 cop[tici]  offset:0, count:1",
-          "    └─IndexRangeScan 0.12 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "└─TableReader 0.10 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 0.10 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 0.10 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
@@ -215,90 +235,108 @@
       {
         "SQL": "explain format='brief' select count(a) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.a)->Column#7",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#9)->Column#5",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t3.a)->Column#9",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select b from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t3.b",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select a, b from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t3.a, test.t3.b",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select b, a from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "Projection 8000.00 root  test.t3.b, test.t3.a",
-          "└─IndexReader 1000.00 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t3.b, test.t3.a",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select count(*) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#7",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#9)->Column#5",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#9",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select count(b) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(test.t3.b)->Column#7",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#9)->Column#5",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t3.b)->Column#9",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select sum(a) from t3 where fts_match_word('hello', title)",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#7)->Column#5",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:sum(test.t3.a)->Column#7",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#5",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#13)->Column#9",
+          "      └─Projection 1000.00 mpp[tiflash]  cast(test.t3.a, decimal(10,0) BINARY)->Column#13",
+          "        └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select count(*) from t3 where fts_match_word('hello', title) group by a",
         "Plan": [
-          "HashAgg 6400.00 root  group by:test.t3.a, funcs:count(1)->Column#5",
-          "└─IndexReader 1000.00 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#5",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.t3.a, funcs:count(1)->Column#5",
+          "      └─ExchangeReceiver 1000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t3.a, collate: binary]",
+          "          └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t4 where i > 1",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:(1,+inf], search func:gt(test.t4.i, 1), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t4.i, test.t4.ts, test.t4.d, test.t4.t",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:gt(test.t4.i, 1), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t4 where i > 1 and ts < '2025-11-30 00:00:00'",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:(1,+inf], search func:gt(test.t4.i, 1), lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t4.i, test.t4.ts, test.t4.d, test.t4.t",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:gt(test.t4.i, 1), lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -306,18 +344,20 @@
         "SQL": "explain format='brief' select * from t4 where i > 1 and ts < '2025-11-30 00:00:00' limit 10 offset 15",
         "Plan": [
           "Limit 10.00 root  offset:15, count:10",
-          "└─IndexReader 7.50 root  index:Limit",
-          "  └─Limit 7.50 cop[tici]  offset:0, count:25",
-          "    └─IndexRangeScan 7.50 cop[tici] table:t4, index:idx1(i, ts, d, t) range:(1,+inf], search func:gt(test.t4.i, 1), lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
+          "└─TableReader 2.50 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 2.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 2.50 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:gt(test.t4.i, 1), lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i",
         "Plan": [
-          "Sort 30.00 root  test.t4.i",
-          "└─IndexReader 1000.00 root  index:IndexRangeScan",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
+          "Sort 10000.00 root  test.t4.i",
+          "└─Projection 10000.00 root  test.t4.i, test.t4.ts, test.t4.d, test.t4.t",
+          "  └─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -325,9 +365,10 @@
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc limit 10",
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:0, count:10",
-          "└─IndexReader 10.00 root  index:TopN",
-          "  └─TopN 10.00 cop[tici]  test.t4.i, test.t4.ts:desc, offset:0, count:10",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 10, keep order:false, stats:pseudo"
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  test.t4.i, test.t4.ts:desc, offset:0, count:10",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -335,9 +376,10 @@
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts limit 10 offset 5",
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts, offset:5, count:10",
-          "└─IndexReader 15.00 root  index:TopN",
-          "  └─TopN 15.00 cop[tici]  test.t4.i, test.t4.ts, offset:0, count:15",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
+          "└─TableReader 15.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 15.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 15.00 mpp[tiflash]  test.t4.i, test.t4.ts, offset:0, count:15",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -345,9 +387,10 @@
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc limit 10 offset 5",
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:5, count:10",
-          "└─IndexReader 15.00 root  index:TopN",
-          "  └─TopN 15.00 cop[tici]  test.t4.i, test.t4.ts:desc, offset:0, count:15",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 15, keep order:false, stats:pseudo"
+          "└─TableReader 15.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 15.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 15.00 mpp[tiflash]  test.t4.i, test.t4.ts:desc, offset:0, count:15",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -355,9 +398,10 @@
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, d limit 10 offset 5",
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, offset:5, count:10",
-          "└─IndexReader 15.00 root  index:TopN",
-          "  └─TopN 15.00 cop[tici]  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:15",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 15, keep order:false, stats:pseudo"
+          "└─TableReader 15.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 15.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 15.00 mpp[tiflash]  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:15",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -365,9 +409,10 @@
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, d, t limit 10 offset 5",
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, test.t4.t, offset:5, count:10",
-          "└─IndexReader 15.00 root  index:TopN",
-          "  └─TopN 15.00 cop[tici]  test.t4.i, test.t4.ts:desc, test.t4.d, test.t4.t, offset:0, count:15",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
+          "└─TableReader 15.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 15.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 15.00 mpp[tiflash]  test.t4.i, test.t4.ts:desc, test.t4.d, test.t4.t, offset:0, count:15",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -375,9 +420,10 @@
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc, t, d limit 10 offset 5",
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.t, test.t4.d, offset:5, count:10",
-          "└─IndexReader 15.00 root  index:TopN",
-          "  └─TopN 15.00 cop[tici]  test.t4.i, test.t4.ts:desc, test.t4.t, test.t4.d, offset:0, count:15",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
+          "└─TableReader 15.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 15.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 15.00 mpp[tiflash]  test.t4.i, test.t4.ts:desc, test.t4.t, test.t4.d, offset:0, count:15",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -385,9 +431,10 @@
         "SQL": "explain format='brief' select * from t4 where i in (1, 2, 3) and d between '2025-11-01' and '2025-11-30' order by i, ts desc, d limit 10",
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:10",
-          "└─IndexReader 10.00 root  index:TopN",
-          "  └─TopN 10.00 cop[tici]  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:10",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:ge(test.t4.d, 2025-11-01 00:00:00.000000), in(test.t4.i, 1, 2, 3), le(test.t4.d, 2025-11-30 00:00:00.000000), topK: 10, keep order:false, stats:pseudo"
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  test.t4.i, test.t4.ts:desc, test.t4.d, offset:0, count:10",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:ge(test.t4.d, 2025-11-01 00:00:00.000000), in(test.t4.i, 1, 2, 3), le(test.t4.d, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -395,34 +442,70 @@
         "SQL": "explain format='brief' select i from t4 where i in (1, 2, 3) and t = 'apple' order by i, ts desc limit 10",
         "Plan": [
           "TopN 10.00 root  test.t4.i, test.t4.ts:desc, offset:0, count:10",
-          "└─IndexReader 10.00 root  index:TopN",
-          "  └─TopN 10.00 cop[tici]  test.t4.i, test.t4.ts:desc, offset:0, count:10",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[1,1], [2,2], [3,3], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), topK: 10, keep order:false, stats:pseudo"
+          "└─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  test.t4.i, test.t4.ts:desc, offset:0, count:10",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), in(test.t4.i, 1, 2, 3), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t1, t4 where t1.id = t4.i and t4.ts < '2025-11-30 00:00:00' and fts_match_word('hello', t1.title)",
         "Plan": [
-          "Projection 4154.17 root  test.t1.id, test.t1.title, test.t1.body, test.t1.field1, test.t4.i, test.t4.ts, test.t4.d, test.t4.t",
-          "└─HashJoin 4154.17 root  inner join, equal:[eq(test.t4.i, test.t1.id)]",
-          "  ├─IndexReader(Build) 1000.00 root  index:IndexRangeScan",
-          "  │ └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo",
-          "  └─IndexLookUp(Probe) 1000.00 root  ",
-          "    ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
-          "    └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin 12500.00 root  inner join, equal:[eq(test.t1.id, test.t4.i)]",
+          "├─TableReader(Build) 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:lt(test.t4.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 1000.00 root  ",
+          "  ├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select t3.a, t4.i from t3, t4 where t3.a = t4.i and fts_match_word('hello', t3.title) and t4.t = 'apple'",
+        "Plan": [
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.t3.a, test.t4.i",
+          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t4.i)]",
+          "      ├─ExchangeReceiver(Build) 1000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo",
+          "      └─IndexRangeScan(Probe) 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select t3.a, count(*) from t3, t4 where t3.a = t4.i and fts_match_word('hello', t3.title) and t4.t = 'apple' group by t3.a",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t3.a, Column#10",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#10, test.t3.a",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t3.a, funcs:count(1)->Column#10, funcs:firstrow(test.t3.a)->test.t3.a",
+          "        └─ExchangeReceiver 12500.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t3.a, collate: binary]",
+          "            └─Projection 12500.00 mpp[tiflash]  test.t3.a",
+          "              └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t3.a, test.t4.i)]",
+          "                ├─ExchangeReceiver(Build) 1000.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "                │   └─IndexRangeScan 1000.00 mpp[tiflash] table:t3, index:title(title) range:[NULL,+inf], search func:fts_match_word(\"hello\", test.t3.title), keep order:false, stats:pseudo",
+          "                └─IndexRangeScan(Probe) 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select /*+ inl_join(t4), use_index(t4, idx) */ * from t4, t2 where t2.a=t4.i and t4.t = 'apple'",
         "Plan": [
-          "HashJoin 12.50 root  inner join, equal:[eq(test.t4.i, test.t2.a)]",
-          "├─IndexReader(Build) 1000.00 root  index:IndexRangeScan",
-          "│ └─IndexRangeScan 1000.00 cop[tici] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "Projection 12487.50 root  test.t4.i, test.t4.ts, test.t4.d, test.t4.t, test.t2.a, test.t2.col",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t2.a, test.t4.i)]",
+          "  ├─TableReader(Build) 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─IndexRangeScan 1000.00 mpp[tiflash] table:t4, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:eq(test.t4.t, \"apple\"), keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "[planner:1815]Optimizer Hint /*+ INL_JOIN(t4) */ or /*+ TIDB_INLJ(t4) */ is inapplicable"
@@ -431,25 +514,31 @@
       {
         "SQL": "explain format='brief' select * from t5 where t = 'apple'",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t5, index:idx1(ts, d, t) range:[NULL,+inf], search func:eq(test.t5.t, \"apple\"), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t5.i, test.t5.ts, test.t5.d, test.t5.t",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t5, index:idx1(ts, d, t) range:[NULL,+inf], search func:eq(test.t5.t, \"apple\"), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t5 where t = 'apple' and ts < '2025-11-30 00:00:00'",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t5, index:idx1(ts, d, t) range:[-inf,2025-11-30 00:00:00.00000), search func:eq(test.t5.t, \"apple\"), lt(test.t5.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t5.i, test.t5.ts, test.t5.d, test.t5.t",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t5, index:idx1(ts, d, t) range:[NULL,+inf], search func:eq(test.t5.t, \"apple\"), lt(test.t5.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t5 where t = 'apple' and i > 10",
         "Plan": [
-          "IndexReader 0.00 root  index:Selection",
-          "└─Selection 0.00 cop[tici]  gt(test.t5.i, 10)",
-          "  └─IndexRangeScan 1000.00 cop[tici] table:t5, index:idx1(ts, d, t) range:[NULL,+inf], search func:eq(test.t5.t, \"apple\"), keep order:false, stats:pseudo"
+          "TableReader 3333.33 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  test.t5.i, test.t5.ts, test.t5.d, test.t5.t",
+          "    └─Selection 3333.33 mpp[tiflash]  gt(test.t5.i, 10)",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t5, index:idx1(ts, d, t) range:[NULL,+inf], search func:eq(test.t5.t, \"apple\"), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -457,9 +546,10 @@
         "SQL": "explain format='brief' select * from t5 where t = 'apple' and ts < '2025-11-30 00:00:00' order by ts limit 5",
         "Plan": [
           "TopN 5.00 root  test.t5.ts, offset:0, count:5",
-          "└─IndexReader 5.00 root  index:TopN",
-          "  └─TopN 5.00 cop[tici]  test.t5.ts, offset:0, count:5",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t5, index:idx1(ts, d, t) range:[-inf,2025-11-30 00:00:00.00000), search func:eq(test.t5.t, \"apple\"), lt(test.t5.ts, 2025-11-30 00:00:00.000000), topK: 5, keep order:false, stats:pseudo"
+          "└─TableReader 5.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 5.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 5.00 mpp[tiflash]  test.t5.ts, offset:0, count:5",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t5, index:idx1(ts, d, t) range:[NULL,+inf], search func:eq(test.t5.t, \"apple\"), lt(test.t5.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -467,9 +557,10 @@
         "SQL": "explain format='brief' select * from t5 where t = 'apple' and ts < '2025-11-30 00:00:00' order by ts, i limit 5",
         "Plan": [
           "TopN 5.00 root  test.t5.ts, test.t5.i, offset:0, count:5",
-          "└─IndexReader 5.00 root  index:TopN",
-          "  └─TopN 5.00 cop[tici]  test.t5.ts, test.t5.i, offset:0, count:5",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t5, index:idx1(ts, d, t) range:[-inf,2025-11-30 00:00:00.00000), search func:eq(test.t5.t, \"apple\"), lt(test.t5.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
+          "└─TableReader 5.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 5.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 5.00 mpp[tiflash]  test.t5.ts, test.t5.i, offset:0, count:5",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t5, index:idx1(ts, d, t) range:[NULL,+inf], search func:eq(test.t5.t, \"apple\"), lt(test.t5.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -479,6 +570,17 @@
           "IndexLookUp 1000.00 root  ",
           "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
           "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select title from t1 where match(title) against ('hello' IN BOOLEAN MODE) and title = 'hello'",
+        "Plan": [
+          "TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10.00 mpp[tiflash]  test.t1.title",
+          "    └─Selection 10.00 mpp[tiflash]  eq(test.t1.title, \"hello\")",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -503,101 +605,130 @@
       {
         "SQL": "explain format='brief' select id from t1 where match(title) against ('+apple -banana' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), not(fts_match_word(\"banana\", test.t1.title))), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), not(fts_match_word(\"banana\", test.t1.title))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where match(title) against ('-banana' IN BOOLEAN MODE)",
         "Plan": [
-          "TableDual 1.00 root  rows:0"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:0, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where match(title) against ('apple' IN BOOLEAN MODE) or match(title) against ('banana' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"banana\", test.t1.title))), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"banana\", test.t1.title))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t1 where match(title) against ('\"\"' IN BOOLEAN MODE)",
         "Plan": [
-          "TableDual 1.00 root  rows:0"
+          "Projection 10000.00 root  test.t1.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:0, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t6 where match(title) against ('hello' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t6, index:idx_title(title) range:[0,+inf], search func:fts_match_phrase(\"hello\", test.t6.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t6.id, test.t6.title",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t6, index:idx_title(title) range:[0,+inf], search func:fts_match_phrase(\"hello\", test.t6.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t6 where match(title) against ('hello*' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t6, index:idx_title(title) range:[0,+inf], search func:fts_match_prefix(\"hello\", test.t6.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t6.id, test.t6.title",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t6, index:idx_title(title) range:[0,+inf], search func:fts_match_prefix(\"hello\", test.t6.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t6 where match(title) against ('\\\"hello world\\\"' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t6, index:idx_title(title) range:[0,+inf], search func:fts_match_phrase(\"hello world\", test.t6.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t6.id, test.t6.title",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t6, index:idx_title(title) range:[0,+inf], search func:fts_match_phrase(\"hello world\", test.t6.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t6 where match(title) against ('\\\"a>b\\\"' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t6, index:idx_title(title) range:[0,+inf], search func:fts_match_phrase(\"a b\", test.t6.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t6.id, test.t6.title",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t6, index:idx_title(title) range:[0,+inf], search func:fts_match_phrase(\"a b\", test.t6.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t6 where match(title) against ('+apple -banana' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t6, index:idx_title(title) range:[0,+inf], search func:and(istrue_with_null(fts_match_phrase(\"apple\", test.t6.title)), not(fts_match_phrase(\"banana\", test.t6.title))), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t6.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t6, index:idx_title(title) range:[0,+inf], search func:and(istrue_with_null(fts_match_phrase(\"apple\", test.t6.title)), not(fts_match_phrase(\"banana\", test.t6.title))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t6 where match(title) against ('\"\"' IN BOOLEAN MODE)",
         "Plan": [
-          "TableDual 1.00 root  rows:0"
+          "Projection 10000.00 root  test.t6.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t6, index:idx_title(title) range:[0,+inf], search func:0, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t7 where match(title, body) against ('hello' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t7.title, test.t7.body), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t7.id, test.t7.title, test.t7.body",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t7.title, test.t7.body), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select * from t7 where match(body, title) against ('hello' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t7.body, test.t7.title), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t7.id, test.t7.title, test.t7.body",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t7.body, test.t7.title), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format='brief' select id from t7 where match(title, body) against ('+apple -banana' IN BOOLEAN MODE)",
         "Plan": [
-          "IndexReader 1000.00 root  index:IndexRangeScan",
-          "└─IndexRangeScan 1000.00 cop[tici] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:and(istrue_with_null(fts_match_word(\"apple\", test.t7.title, test.t7.body)), not(fts_match_word(\"banana\", test.t7.title, test.t7.body))), keep order:false, stats:pseudo"
+          "Projection 10000.00 root  test.t7.id",
+          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t7, index:idx_title_body(title, body) range:[-inf,+inf], search func:and(istrue_with_null(fts_match_word(\"apple\", test.t7.title, test.t7.body)), not(fts_match_word(\"banana\", test.t7.title, test.t7.body))), keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -642,10 +773,11 @@
       {
         "SQL": "explain format='brief' select count(*) from t2 use index(idx1) where i > 10",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#6",
-          "└─IndexReader 1.00 root  index:HashAgg",
-          "  └─HashAgg 1.00 cop[tici]  funcs:count(1)->Column#8",
-          "    └─IndexRangeScan 1000.00 cop[tici] table:t2, index:idx1(i, ts, d, t) range:(10,+inf], search func:gt(test.t2.i, 10), keep order:false, stats:pseudo"
+          "HashAgg 1.00 root  funcs:count(Column#10)->Column#6",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#10",
+          "      └─IndexRangeScan 1000.00 mpp[tiflash] table:t2, index:idx1(i, ts, d, t) range:[NULL,+inf], search func:gt(test.t2.i, 10), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },

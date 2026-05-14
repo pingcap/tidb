@@ -197,16 +197,11 @@ type MppTask struct {
 	partTp   property.MPPPartitionType
 	HashCols []*property.MPPPartitionColumn
 
-	// rootTaskConds record filters of TableScan that cannot be pushed down to TiFlash.
-
-	// For logical plan like: HashAgg -> Selection -> TableScan, if filters in Selection cannot be pushed to TiFlash.
-	// Planner will generate physical plan like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> PhysicalTableScan(cop tiflash)
-	// Because planner will make mppTask invalid directly then use copTask directly.
-
-	// But in DisaggregatedTiFlash mode, cop and batchCop protocol is disabled, so we have to consider this situation for mppTask.
-	// When generating PhysicalTableScan, if prop.TaskTp is RootTaskType, mppTask will be converted to rootTask,
-	// and filters in RootTaskConds will be added in a Selection which will be executed in TiDB.
-	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
+	// RootTaskConds records filters from an MPP scan path that cannot be pushed down to TiFlash.
+	// They can come from a TiFlash table scan or a TiCI FTS index scan. When the MPP task is
+	// converted to a root task, these filters are added as a root Selection and executed in TiDB
+	// after the MPP reader. If the parent requires an MPP task, callers should reject candidates
+	// with RootTaskConds before conversion.
 	RootTaskConds []expression.Expression
 	tblColHists   *statistics.HistColl
 
@@ -319,20 +314,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	rt.SetPlan(p)
 
 	if len(t.RootTaskConds) > 0 {
-		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
-		// so this Selection will be executed in TiDB.
-		_, isTableScan := t.p.(*PhysicalTableScan)
-		_, isSelection := t.p.(*PhysicalSelection)
-		if isSelection {
-			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
-		}
-		if !isTableScan {
-			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
-			// It's only for TableScan. This is ensured by converting mppTask to rootTask just after TableScan is built,
-			// so no other operators are added into this mppTask.
-			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
-			return base.InvalidTask.(*RootTask)
-		}
+		// Some filters cannot be pushed down to TiFlash, so keep them as a root Selection
+		// executed in TiDB after the MPP reader.
 		selectivity, err := cardinality.Selectivity(ctx, t.tblColHists, t.RootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))

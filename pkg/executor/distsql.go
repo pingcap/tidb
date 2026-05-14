@@ -31,10 +31,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/internal/mpp"
 	"github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -364,13 +367,18 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 	if e.index.IsTiCIIndex() {
-		builder.SetStoreType(kv.TiFlash).SetPaging(false).SetFullText(true).SetAllowBatchCop(true)
-		builder.FullTextInfo.TableID = e.table.Meta().ID
-		builder.FullTextInfo.IndexID = e.index.ID
-		builder.FullTextInfo.ExecutorID = e.plans[0].ExplainID().String()
+		applyTiCIRequest(&builder, e.table.Meta().ID, e.index.ID, e.plans[0].ExplainID().String())
 	}
-	kvReq, err := builder.Build()
-	return kvReq, err
+	return builder.Build()
+}
+
+func applyTiCIRequest(builder *distsql.RequestBuilder, tableID, indexID int64, executorID string) {
+	// TiCI is executed on TiFlash nodes, and TiFlash routes to TiCI shards
+	// based on FullTextInfo/TableShardInfos.
+	builder.SetStoreType(kv.TiFlash).SetPaging(false).SetFullText(true).SetAllowBatchCop(true)
+	builder.FullTextInfo.TableID = tableID
+	builder.FullTextInfo.IndexID = indexID
+	builder.FullTextInfo.ExecutorID = executorID
 }
 
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
@@ -557,11 +565,21 @@ type IndexLookUpExecutor struct {
 
 	// Whether to push down the index lookup to TiKV
 	indexLookUpPushDown bool
+
+	// indexReadReqType controls how index side is dispatched.
+	indexReadReqType physicalop.ReadReqType
+	// mppInfoSchema is required by MPP task generation for index-side MPP dispatch.
+	mppInfoSchema infoschema.InfoSchema
 }
 
 type kvRangesWithPhysicalTblID struct {
 	PhysicalTableID int64
 	KeyRanges       []kv.KeyRange
+}
+
+type mppIndexScanTarget struct {
+	PhysicalTableID int64
+	Ranges          []*ranger.Range
 }
 
 type getHandleType int8
@@ -722,6 +740,56 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	return nil
 }
 
+func cloneRangerRanges(ranges []*ranger.Range) []*ranger.Range {
+	if len(ranges) == 0 {
+		return nil
+	}
+	cloned := make([]*ranger.Range, 0, len(ranges))
+	for _, rg := range ranges {
+		cloned = append(cloned, rg.Clone())
+	}
+	return cloned
+}
+
+func (e *IndexLookUpExecutor) buildMPPIndexScanTargets() []mppIndexScanTarget {
+	tableIDs := make([]int64, 0, len(e.prunedPartitions))
+	if e.partitionTableMode {
+		for _, p := range e.prunedPartitions {
+			tableIDs = append(tableIDs, p.GetPhysicalID())
+		}
+	} else {
+		tableIDs = append(tableIDs, getPhysicalTableID(e.table))
+	}
+
+	groupedRanges := e.groupedRanges
+	if len(groupedRanges) == 0 {
+		groupedRanges = [][]*ranger.Range{e.ranges}
+	}
+
+	targets := make([]mppIndexScanTarget, 0, len(groupedRanges)*len(tableIDs))
+	for _, ranges := range groupedRanges {
+		for _, tableID := range tableIDs {
+			overridden := ranges
+			if pRange, ok := e.partitionRangeMap[tableID]; ok {
+				overridden = pRange
+			}
+			targets = append(targets, mppIndexScanTarget{
+				PhysicalTableID: tableID,
+				Ranges:          cloneRangerRanges(overridden),
+			})
+		}
+	}
+	return targets
+}
+
+func (e *IndexLookUpExecutor) useTiCIMPPPartitionAffinity() bool {
+	return e.indexReadReqType == physicalop.MPP &&
+		e.partitionTableMode &&
+		e.index != nil &&
+		e.index.IsTiCIIndex() &&
+		!e.index.Global
+}
+
 func (e *IndexLookUpExecutor) open(_ context.Context) error {
 	if e.index.IsTiCIIndex() {
 		e.isVersionAware = true
@@ -853,6 +921,20 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	return tps
 }
 
+func (e *IndexLookUpExecutor) getRetTpsForIndexWorker() []*types.FieldType {
+	// In TiCI MPP index-lookup, the MPP response is decoded by the index plan schema.
+	// Keep field types aligned with the schema returned by ExchangeSender.
+	if e.indexReadReqType == physicalop.MPP && e.index.IsTiCIIndex() && !e.indexLookUpPushDown && len(e.idxPlans) > 0 {
+		schema := e.idxPlans[len(e.idxPlans)-1].Schema()
+		tps := make([]*types.FieldType, 0, schema.Len())
+		for _, col := range schema.Columns {
+			tps = append(tps, col.RetType)
+		}
+		return tps
+	}
+	return e.getRetTpsForIndexReader()
+}
+
 // startIndexWorker launch a background goroutine to fetch handles, submit lookup-table tasks to the pool.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSize int) error {
 	if e.RuntimeStats() != nil {
@@ -890,7 +972,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			}
 		}
 	} else {
-		tps = e.getRetTpsForIndexReader()
+		tps = e.getRetTpsForIndexWorker()
 	}
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
@@ -910,94 +992,121 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for idx, kvRange := range kvRanges {
-			// check if executor is closed
-			finished := false
-			select {
-			case <-e.finished:
-				finished = true
-			default:
+		resultPhysicalTableIDs := make([]int64, 0, len(kvRanges))
+		// For IndexLookUp, MPP index-side dispatch is currently TiCI-only.
+		// Planner wraps TiCI index subtree with an ExchangeSender, then
+		// PhysicalIndexLookUpReader.adjustReadReqType() marks ReadReqType as MPP.
+		// Non-TiCI index lookup paths still go through cop/batchCop dispatch.
+		if e.indexReadReqType == physicalop.MPP {
+			targets := e.buildMPPIndexScanTargets()
+			for _, target := range targets {
+				var (
+					result   distsql.SelectResult
+					buildErr error
+				)
+				if e.partitionTableMode {
+					result, buildErr = e.buildMPPIndexResultForPartition(ctx, tracker, tps, idxID, target.PhysicalTableID, target.Ranges)
+				} else {
+					result, buildErr = e.buildMPPIndexResult(ctx, tracker, tps, idxID, target.Ranges)
+				}
+				if buildErr != nil {
+					worker.syncErr(buildErr)
+					break
+				}
+				results = append(results, result)
+				resultPhysicalTableIDs = append(resultPhysicalTableIDs, target.PhysicalTableID)
 			}
-			if finished {
-				break
-			}
+		} else {
+			for idx, kvRange := range kvRanges {
+				// check if executor is closed
+				finished := false
+				select {
+				case <-e.finished:
+					finished = true
+				default:
+				}
+				if finished {
+					break
+				}
 
-			if tblScanIdxForRewritePartitionID >= 0 {
-				// We should set the TblScan's TableID to the partition physical ID to make sure
-				// the push-down index lookup can encode the table handle key correctly.
-				e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
-			}
+				if tblScanIdxForRewritePartitionID >= 0 {
+					// We should set the TblScan's TableID to the partition physical ID to make sure
+					// the push-down index lookup can encode the table handle key correctly.
+					e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
+				}
 
-			var builder distsql.RequestBuilder
-			builder.SetDAGRequest(e.dagPB).
-				SetStartTS(e.startTS).
-				SetDesc(e.desc).
-				SetKeepOrder(e.keepOrder).
-				SetTxnScope(e.txnScope).
-				SetReadReplicaScope(e.readReplicaScope).
-				SetIsStaleness(e.isStaleness).
-				SetFromSessionVars(e.dctx).
-				SetFromInfoSchema(e.infoSchema).
-				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-				SetMemTracker(tracker).
-				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-			if e.index.IsTiCIIndex() {
-				builder.SetPaging(false).SetFullText(true).SetAllowBatchCop(true).SetStoreType(kv.TiFlash)
-				builder.FullTextInfo.TableID = e.table.Meta().ID
-				builder.FullTextInfo.IndexID = e.index.ID
-				builder.FullTextInfo.ExecutorID = e.idxPlans[0].ExplainID().String()
-			}
+				var builder distsql.RequestBuilder
+				builder.SetDAGRequest(e.dagPB).
+					SetStartTS(e.startTS).
+					SetDesc(e.desc).
+					SetKeepOrder(e.keepOrder).
+					SetTxnScope(e.txnScope).
+					SetReadReplicaScope(e.readReplicaScope).
+					SetIsStaleness(e.isStaleness).
+					SetFromSessionVars(e.dctx).
+					SetFromInfoSchema(e.infoSchema).
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+					SetMemTracker(tracker).
+					SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+				if e.index.IsTiCIIndex() {
+					applyTiCIRequest(&builder, e.table.Meta().ID, e.index.ID, e.idxPlans[0].ExplainID().String())
+				}
 
-			if e.indexLookUpPushDown {
-				// Paging and Cop-cache is not supported in index lookup push down.
-				builder.Request.Paging.Enable = false
-				builder.Request.Cacheable = false
-			}
+				if e.indexLookUpPushDown {
+					// Paging and Cop-cache is not supported in index lookup push down.
+					builder.Request.Paging.Enable = false
+					builder.Request.Cacheable = false
+				}
 
-			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+				if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+					// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+					// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+					builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+					if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+						builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+					}
+				}
+
+				// init kvReq, result and worker for this partition
+				// The key ranges should be ordered.
+				slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
+					return bytes.Compare(i.StartKey, j.StartKey)
+				})
+				kvReq, err := builder.SetKeyRanges(kvRange).Build()
+				if err != nil {
+					worker.syncErr(err)
+					break
+				}
+				result, err := distsql.SelectWithRuntimeStats(ctx, e.dctx, kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
+				if err != nil {
+					worker.syncErr(err)
+					break
+				}
+				results = append(results, result)
+				if idx < len(e.groupedKVRanges) {
+					resultPhysicalTableIDs = append(resultPhysicalTableIDs, e.groupedKVRanges[idx].PhysicalTableID)
 				}
 			}
-
-			// init kvReq, result and worker for this partition
-			// The key ranges should be ordered.
-			slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
-				return bytes.Compare(i.StartKey, j.StartKey)
-			})
-			kvReq, err := builder.SetKeyRanges(kvRange).Build()
-			if err != nil {
-				worker.syncErr(err)
-				break
-			}
-			result, err := distsql.SelectWithRuntimeStats(ctx, e.dctx, kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
-			if err != nil {
-				worker.syncErr(err)
-				break
-			}
-			results = append(results, result)
 		}
-		if needMergeSort(e.byItems, len(results)) {
+		if needMergeSort(e.byItems, len(results)) && !e.useTiCIMPPPartitionAffinity() {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
+			resultPhysicalTableIDs = []int64{0}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		// this error is synced in fetchHandles(), don't sync it again
 		var selResultList selectResultList
-		indexTypes := e.getRetTpsForIndexReader()
+		indexTypes := e.getRetTpsForIndexWorker()
 		if e.indexLookUpPushDown {
 			var err error
-			if selResultList, err = newSelectResultRowIterList(results, [][]*types.FieldType{indexTypes}); err != nil {
+			if selResultList, err = newSelectResultRowIterList(results, resultPhysicalTableIDs, [][]*types.FieldType{indexTypes}); err != nil {
 				cancel()
 				worker.syncErr(err)
 				return
 			}
 		} else {
-			selResultList = newSelectResultList(results)
+			selResultList = newSelectResultList(results, resultPhysicalTableIDs)
 		}
 		_ = worker.fetchHandles(ctx1, selResultList, indexTypes)
 		cancel()
@@ -1006,6 +1115,128 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		e.idxWorkerWg.Done()
 	})
 	return nil
+}
+
+func (e *IndexLookUpExecutor) buildMPPIndexResult(
+	ctx context.Context,
+	parentTracker *memory.Tracker,
+	tps []*types.FieldType,
+	idxID int,
+	ranges []*ranger.Range,
+) (distsql.SelectResult, error) {
+	sender, err := e.getMPPIndexSender()
+	if err != nil {
+		return nil, err
+	}
+	if len(ranges) > 0 {
+		sender, err = cloneMPPIndexSenderForTiCI(e.ctx.GetPlanCtx(), sender, nil, ranges)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return e.buildMPPIndexResultFromSender(ctx, parentTracker, tps, idxID, sender)
+}
+
+func (e *IndexLookUpExecutor) buildMPPIndexResultForPartition(
+	ctx context.Context,
+	parentTracker *memory.Tracker,
+	tps []*types.FieldType,
+	idxID int,
+	physicalTableID int64,
+	ranges []*ranger.Range,
+) (distsql.SelectResult, error) {
+	sender, err := e.getMPPIndexSender()
+	if err != nil {
+		return nil, err
+	}
+	clonedSender, err := cloneMPPIndexSenderForTiCI(e.ctx.GetPlanCtx(), sender, &physicalTableID, ranges)
+	if err != nil {
+		return nil, err
+	}
+	return e.buildMPPIndexResultFromSender(ctx, parentTracker, tps, idxID, clonedSender)
+}
+
+func (e *IndexLookUpExecutor) getMPPIndexSender() (*physicalop.PhysicalExchangeSender, error) {
+	if len(e.idxPlans) == 0 {
+		return nil, errors.New("index side has no physical plans for MPP lookup")
+	}
+	sender, ok := e.idxPlans[len(e.idxPlans)-1].(*physicalop.PhysicalExchangeSender)
+	if !ok {
+		return nil, errors.New("MPP index lookup requires ExchangeSender as index root")
+	}
+	return sender, nil
+}
+
+func (e *IndexLookUpExecutor) buildMPPIndexResultFromSender(
+	ctx context.Context,
+	parentTracker *memory.Tracker,
+	tps []*types.FieldType,
+	idxID int,
+	sender *physicalop.PhysicalExchangeSender,
+) (distsql.SelectResult, error) {
+	if e.mppInfoSchema == nil {
+		return nil, errors.New("MPP index lookup requires infoschema")
+	}
+	dom := domain.GetDomain(e.ctx)
+	if dom == nil {
+		return nil, errors.New("MPP index lookup requires domain")
+	}
+	queryID := kv.MPPQueryID{
+		QueryTs:      getMPPQueryTS(e.ctx),
+		LocalQueryID: getMPPQueryID(e.ctx),
+		ServerID:     dom.ServerID(),
+	}
+	planIDs := collectPlanIDs(sender, nil)
+	mppExec, err := mpp.NewExecutorWithRetry(
+		ctx,
+		e.ctx,
+		parentTracker,
+		planIDs,
+		sender,
+		e.startTS,
+		queryID,
+		e.mppInfoSchema,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return distsql.GenSelectResultFromMPPResponse(e.dctx, tps, planIDs, idxID, mppExec), nil
+}
+
+func cloneMPPIndexSenderForTiCI(planCtx planctx.PlanContext, sender *physicalop.PhysicalExchangeSender, physicalTableID *int64, ranges []*ranger.Range) (*physicalop.PhysicalExchangeSender, error) {
+	clonedPlan, err := sender.Clone(planCtx)
+	if err != nil {
+		return nil, err
+	}
+	clonedSender, ok := clonedPlan.(*physicalop.PhysicalExchangeSender)
+	if !ok {
+		return nil, errors.New("failed to clone MPP index sender")
+	}
+	if !rewriteTiCIIndexScanForMPP(clonedSender, physicalTableID, ranges) {
+		return nil, errors.New("failed to locate TiCI index scan in MPP index sender")
+	}
+	return clonedSender, nil
+}
+
+func rewriteTiCIIndexScanForMPP(plan base.PhysicalPlan, physicalTableID *int64, ranges []*ranger.Range) bool {
+	if is, ok := plan.(*physicalop.PhysicalIndexScan); ok {
+		if is.Index != nil && is.Index.IsTiCIIndex() {
+			if physicalTableID != nil {
+				is.IsPartition = true
+				is.PhysicalTableID = *physicalTableID
+			}
+			if len(ranges) > 0 {
+				is.Ranges = cloneRangerRanges(ranges)
+			}
+			return true
+		}
+	}
+	for _, child := range plan.Children() {
+		if rewriteTiCIIndexScanForMPP(child, physicalTableID, ranges) {
+			return true
+		}
+	}
+	return false
 }
 
 // calculateBatchSize calculates a suitable initial batch size.
@@ -1244,20 +1475,24 @@ func (w *indexWorker) syncErr(err error) {
 }
 
 type selectResultList []struct {
-	Result  distsql.SelectResult
-	RowIter distsql.SelectResultIter
+	Result          distsql.SelectResult
+	RowIter         distsql.SelectResultIter
+	PhysicalTableID int64
 }
 
-func newSelectResultList(results []distsql.SelectResult) selectResultList {
+func newSelectResultList(results []distsql.SelectResult, physicalTableIDs []int64) selectResultList {
 	l := make(selectResultList, len(results))
 	for i, r := range results {
 		l[i].Result = r
+		if i < len(physicalTableIDs) {
+			l[i].PhysicalTableID = physicalTableIDs[i]
+		}
 	}
 	return l
 }
 
-func newSelectResultRowIterList(results []distsql.SelectResult, intermediateResultTypes [][]*types.FieldType) (selectResultList, error) {
-	ret := newSelectResultList(results)
+func newSelectResultRowIterList(results []distsql.SelectResult, physicalTableIDs []int64, intermediateResultTypes [][]*types.FieldType) (selectResultList, error) {
+	ret := newSelectResultList(results, physicalTableIDs)
 	for i, r := range ret {
 		rowIter, err := r.Result.IntoIter(intermediateResultTypes)
 		if err != nil {
@@ -1316,6 +1551,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		}
 	}
 	taskID := 0
+	partitionByID := make(map[int64]table.PhysicalTable, len(w.idxLookup.prunedPartitions))
+	if w.idxLookup.partitionTableMode {
+		for _, p := range w.idxLookup.prunedPartitions {
+			partitionByID[p.GetPhysicalID()] = p
+		}
+	}
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := results[curResultIdx]
@@ -1366,7 +1607,17 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			}
 			tableLookUpTask = w.buildTableTask(taskID, handles, handleVersionMap, retChunk)
 			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
+				if w.idxLookup.useTiCIMPPPartitionAffinity() {
+					partition, ok := partitionByID[result.PhysicalTableID]
+					if !ok {
+						err = errors.Errorf("cannot find pruned partition for physical table id %d", result.PhysicalTableID)
+						w.syncErr(err)
+						return err
+					}
+					tableLookUpTask.partitionTable = partition
+				} else if curResultIdx < len(w.idxLookup.prunedPartitions) {
+					tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
+				}
 			}
 			taskID++
 		}
@@ -1408,6 +1659,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 }
 
 func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
+	if w.idxLookup.indexReadReqType == physicalop.MPP &&
+		w.idxLookup.index.IsTiCIIndex() &&
+		!w.idxLookup.indexLookUpPushDown {
+		return w.getHandleOffsetsForTiCIMPP()
+	}
+
 	numColsWithoutPid := indexTpsLen
 	ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
 	if err != nil {
@@ -1438,6 +1695,72 @@ func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
 		}
 	}
 	return handleOffset, nil
+}
+
+func (w *indexWorker) getHandleOffsetsForTiCIMPP() ([]int, error) {
+	if len(w.idxLookup.idxPlans) == 0 {
+		return nil, errors.New("TiCI MPP index lookup has empty index plans")
+	}
+	schemaCols := w.idxLookup.idxPlans[len(w.idxLookup.idxPlans)-1].Schema().Columns
+	if len(schemaCols) == 0 {
+		return nil, errors.New("TiCI MPP index lookup has empty schema")
+	}
+
+	findOffsetByID := func(colID int64) int {
+		for i, col := range schemaCols {
+			if col.ID == colID {
+				return i
+			}
+		}
+		return -1
+	}
+
+	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
+	if w.idxLookup.isCommonHandle() {
+		for _, handleCol := range w.idxLookup.handleCols {
+			offset := findOffsetByID(handleCol.ID)
+			if offset < 0 {
+				return nil, errors.Errorf("common handle column(id=%d) not found in TiCI MPP schema", handleCol.ID)
+			}
+			handleOffset = append(handleOffset, offset)
+		}
+		return handleOffset, nil
+	}
+
+	if len(w.idxLookup.handleCols) > 0 {
+		if offset := findOffsetByID(w.idxLookup.handleCols[0].ID); offset >= 0 {
+			return []int{offset}, nil
+		}
+	}
+
+	// For int-handle table, handleCols may be empty on some non-keep-order paths.
+	// In TiCI MPP schema, try to locate the PK handle column by table metadata.
+	if w.idxLookup.table != nil && w.idxLookup.table.Meta() != nil && w.idxLookup.table.Meta().PKIsHandle {
+		if pkCol := w.idxLookup.table.Meta().GetPkColInfo(); pkCol != nil {
+			if offset := findOffsetByID(pkCol.ID); offset >= 0 {
+				return []int{offset}, nil
+			}
+		}
+	}
+
+	if offset := findOffsetByID(model.ExtraHandleID); offset >= 0 {
+		return []int{offset}, nil
+	}
+
+	schemaColIDs := make([]int64, 0, len(schemaCols))
+	for _, col := range schemaCols {
+		schemaColIDs = append(schemaColIDs, col.ID)
+	}
+	expectedHandleColID := int64(0)
+	if len(w.idxLookup.handleCols) > 0 {
+		expectedHandleColID = w.idxLookup.handleCols[0].ID
+	}
+	return nil, errors.Errorf(
+		"int handle column not found in TiCI MPP schema (expected_handle_col_id=%d, extra_handle_id=%d, schema_col_ids=%v)",
+		expectedHandleColID,
+		model.ExtraHandleID,
+		schemaColIDs,
+	)
 }
 
 func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, iter distsql.SelectResultIter, handleOffset []int) (rows []chunk.Row, handles []kv.Handle, exhausted bool, err error) {
@@ -1703,9 +2026,12 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	ok, err := e.needPartitionHandle(tp)
-	if err != nil {
-		return nil, 0, err
+	ok := false
+	if !(tp == getHandleFromIndex && e.useTiCIMPPPartitionAffinity()) {
+		ok, err = e.needPartitionHandle(tp)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 	if ok {
 		pidIdx := row.Len() - 1
@@ -2021,19 +2347,6 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				obtainedHandlesMap.Set(handle, true)
 			}
 			missHds := GetLackHandles(task.handles, obtainedHandlesMap)
-			if w.idxLookup.index.IsTiCIIndex() {
-				warn := consistency.ErrLookupInconsistent.GenWithStackByArgs(
-					w.idxLookup.table.Meta().Name.O,
-					w.idxLookup.index.Name.O,
-					handleCnt,
-					len(task.rows),
-				)
-				if w.idxLookup.dctx != nil {
-					w.idxLookup.dctx.AppendWarning(warn)
-					return nil
-				}
-				return warn
-			}
 			return (&consistency.Reporter{
 				HandleEncode: func(hd kv.Handle) kv.Key {
 					return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), hd)

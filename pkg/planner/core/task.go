@@ -740,6 +740,8 @@ func attach2Task4PhysicalLimit(pp base.PhysicalPlan, tasks ...base.Task) base.Ta
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*physicalop.MppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.Children()[0].Schema())
 		t = mpp.ConvertToRootTask(p.SCtx())
+	} else if _, ok := t.(*physicalop.RootTask); ok {
+		sunk = sinkIntoIndexLookUp(p, t)
 	}
 	if sunk {
 		return t

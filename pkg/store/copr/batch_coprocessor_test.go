@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
+	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -320,6 +321,190 @@ func TestRetryBatchCopTaskForFullTextInvalidatesShardsAndRebuildsTasks(t *testin
 	require.Nil(t, cache.GetCachedShardWithRLock(2))
 	require.False(t, staleShard1.CheckShardCacheTTL(time.Now().Unix()))
 	require.False(t, staleShard2.CheckShardCacheTTL(time.Now().Unix()))
+}
+
+type mppTiCIMockShardClient struct {
+	scanCalled int
+	result     []*ShardWithAddr
+	retErr     error
+	retErrSeq  []error
+	lastCtxErr error
+}
+
+func (m *mppTiCIMockShardClient) ScanRanges(ctx context.Context, _ int64, _ int64, _ []kv.KeyRange, _ int) ([]*ShardWithAddr, error) {
+	m.scanCalled++
+	m.lastCtxErr = ctx.Err()
+	if len(m.retErrSeq) > 0 {
+		err := m.retErrSeq[0]
+		m.retErrSeq = m.retErrSeq[1:]
+		return nil, err
+	}
+	if m.retErr != nil {
+		return nil, m.retErr
+	}
+	return m.result, nil
+}
+
+func (m *mppTiCIMockShardClient) Close() {}
+
+func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
+	t.Run("context canceled", func(t *testing.T) {
+		client := &mppTiCIMockShardClient{retErr: context.Canceled}
+		cache := NewTiCIShardCache(client)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		req := &kv.MPPBuildTasksRequest{
+			TiCI:           true,
+			TiCITableID:    1,
+			TiCIIndexID:    2,
+			TiCIExecutorID: "executor-1",
+			TiCIKeyRanges:  []kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}},
+		}
+		_, err := buildTiCIShardInfosByStoreAddr(ctx, cache, req, tiflashcompute.DispatchPolicyRR, tiflash.AllReplicas)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, client.scanCalled)
+		require.ErrorIs(t, client.lastCtxErr, context.Canceled)
+	})
+
+	t.Run("prefer first local cache addr", func(t *testing.T) {
+		client := &mppTiCIMockShardClient{
+			result: []*ShardWithAddr{
+				{
+					Shard: Shard{
+						ShardID:  4,
+						Epoch:    2,
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+					localCacheAddrs: []string{"addr-a", "addr-b"},
+				},
+			},
+		}
+		cache := NewTiCIShardCache(client)
+		req := &kv.MPPBuildTasksRequest{
+			TiCI:           true,
+			TiCITableID:    11,
+			TiCIIndexID:    22,
+			TiCIExecutorID: "executor-1",
+			TiCIKeyRanges:  []kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}},
+		}
+
+		infoByAddr, err := buildTiCIShardInfosByStoreAddr(context.Background(), cache, req, tiflashcompute.DispatchPolicyRR, tiflash.AllReplicas)
+		require.NoError(t, err)
+		require.Equal(t, 1, client.scanCalled)
+		require.Len(t, infoByAddr, 1)
+		infos := infoByAddr["addr-a"]
+		require.Len(t, infos, 1)
+		require.Equal(t, "executor-1", infos[0].ExecutorId)
+		require.Len(t, infos[0].ShardInfos, 1)
+		require.EqualValues(t, 4, infos[0].ShardInfos[0].ShardId)
+	})
+}
+
+func TestConstructMPPTasksTiCIUsesTiCIMPPTaskMeta(t *testing.T) {
+	t.Run("basic", func(t *testing.T) {
+		client := &mppTiCIMockShardClient{
+			result: []*ShardWithAddr{
+				{
+					Shard: Shard{
+						ShardID:  4,
+						Epoch:    2,
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+					localCacheAddrs: []string{"addr-a", "addr-b"},
+				},
+			},
+		}
+		cache := NewTiCIShardCache(client)
+		mppClient := &MPPClient{
+			store: &kvStore{
+				TiCIShardCache: cache,
+			},
+		}
+		req := &kv.MPPBuildTasksRequest{
+			StartTS:        1,
+			TiCI:           true,
+			TiCITableID:    11,
+			TiCIIndexID:    22,
+			TiCIExecutorID: "executor-1",
+			TiCIKeyRanges:  []kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}},
+		}
+
+		metas, err := mppClient.ConstructMPPTasks(context.Background(), req, 0, tiflashcompute.DispatchPolicyRR, tiflash.AllReplicas, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, client.scanCalled)
+		require.Len(t, metas, 1)
+
+		_, isTiCIMeta := metas[0].(*tiCIMPPTaskMeta)
+		require.True(t, isTiCIMeta)
+		_, isBatchCopMeta := metas[0].(*batchCopTask)
+		require.False(t, isBatchCopMeta)
+		require.Equal(t, "addr-a", metas[0].GetAddress())
+	})
+
+	t.Run("retry-transient-build-error", func(t *testing.T) {
+		client := &mppTiCIMockShardClient{
+			retErrSeq: []error{errors.New("GetShardLocalCacheInfo failed: 13")},
+			result: []*ShardWithAddr{
+				{
+					Shard: Shard{
+						ShardID:  4,
+						Epoch:    2,
+						StartKey: []byte("a"),
+						EndKey:   []byte("b"),
+					},
+					localCacheAddrs: []string{"addr-a"},
+				},
+			},
+		}
+		cache := NewTiCIShardCache(client)
+		mppClient := &MPPClient{
+			store: &kvStore{
+				TiCIShardCache: cache,
+			},
+		}
+		req := &kv.MPPBuildTasksRequest{
+			StartTS:        1,
+			TiCI:           true,
+			TiCITableID:    11,
+			TiCIIndexID:    22,
+			TiCIExecutorID: "executor-1",
+			TiCIKeyRanges:  []kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}},
+		}
+
+		metas, err := mppClient.ConstructMPPTasks(context.Background(), req, 0, tiflashcompute.DispatchPolicyRR, tiflash.AllReplicas, nil)
+		require.NoError(t, err)
+		require.Len(t, metas, 1)
+		require.Equal(t, 2, client.scanCalled)
+		require.Equal(t, "addr-a", metas[0].GetAddress())
+	})
+}
+
+func TestTiCIDispatchRetryHelpers(t *testing.T) {
+	t.Run("is-retryable-dispatch-error", func(t *testing.T) {
+		require.True(t, isRetryableTiCIDispatchError("GetShardLocalCacheInfo failed: 13"))
+		require.True(t, isRetryableTiCIDispatchError("GetShardLocalCacheInfo failed:14"))
+		require.True(t, isRetryableTiCIDispatchError("meta status WORKER_NOT_FOUND"))
+		require.True(t, isRetryableTiCIDispatchError("meta status shard_not_scheduled"))
+		require.False(t, isRetryableTiCIDispatchError("some other mpp error"))
+	})
+
+	t.Run("should-retry-dispatch", func(t *testing.T) {
+		require.True(t, shouldRetryTiCIDispatch(&tiCIMPPTaskMeta{}, "GetShardLocalCacheInfo failed: 13"))
+		require.False(t, shouldRetryTiCIDispatch(&batchCopTask{}, "GetShardLocalCacheInfo failed: 13"))
+		require.True(t, shouldRetryTiCIDispatch(&batchCopTask{
+			TableShardInfos: []*coprocessor.TableShardInfos{{ExecutorId: "IndexRangeScan_1"}},
+		}, "GetShardLocalCacheInfo failed: 13"))
+		require.False(t, shouldRetryTiCIDispatch(&tiCIMPPTaskMeta{}, "some other mpp error"))
+	})
+
+	t.Run("is-retryable-shard-build-error", func(t *testing.T) {
+		require.True(t, isRetryableTiCIShardBuildError(errors.New("GetShardLocalCacheInfo failed: 13")))
+		require.False(t, isRetryableTiCIShardBuildError(context.Canceled))
+		require.False(t, isRetryableTiCIShardBuildError(errors.New("not retryable")))
+	})
 }
 
 func TestDeepCopyStoreTaskMap(t *testing.T) {

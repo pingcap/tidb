@@ -70,19 +70,26 @@ func TestTiCISearchEstimateOnlyForMultiTable(t *testing.T) {
 
 	singleTablePlan := testdata.ConvertRowsToStrings(
 		tk.MustQuery("explain format='brief' select id from t where fts_match_word('hello', title)").Rows())
-	requirePlanContains(t, singleTablePlan, "IndexRangeScan 10.00 cop[tici]")
+	requirePlanLineContains(t, singleTablePlan, "IndexRangeScan 10.00", "search func:fts_match_word")
 
 	multiTablePlan := testdata.ConvertRowsToStrings(
 		tk.MustQuery("explain format='brief' select /*+ inl_join(t) */ t.id from t2, t where t.id = t2.a and fts_match_word('hello', t.title)").Rows())
-	requirePlanContains(t, multiTablePlan, "IndexRangeScan 100.00 cop[tici]")
+	requirePlanLineContains(t, multiTablePlan, "IndexRangeScan 100.00", "search func:fts_match_word")
 }
 
-func requirePlanContains(t *testing.T, plan []string, expected string) {
+func requirePlanLineContains(t *testing.T, plan []string, expected ...string) {
 	t.Helper()
 	for _, line := range plan {
-		if strings.Contains(line, expected) {
+		matched := true
+		for _, item := range expected {
+			if !strings.Contains(line, item) {
+				matched = false
+				break
+			}
+		}
+		if matched {
 			return
 		}
 	}
-	require.Failf(t, "plan does not contain expected text", "expected: %s\nplan:\n%s", expected, strings.Join(plan, "\n"))
+	require.Failf(t, "plan does not contain expected text", "expected: %s\nplan:\n%s", strings.Join(expected, ", "), strings.Join(plan, "\n"))
 }

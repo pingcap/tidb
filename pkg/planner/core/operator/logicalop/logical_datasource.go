@@ -182,8 +182,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	if len(ds.PushedDownConds) > 0 {
-		// Where there're some predicates, try to build tici index.
-		err := ds.analyzeTiCIIndex(ds.SCtx().HasFTSFunc())
+		err := ds.analyzeTiCIIndex()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -651,15 +650,12 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	return resultColumn, resultColumnInfo
 }
 
-// analyzeTiCIIndex checks whether FTS function is used and is a valid one.
-// Then convert the function to index call because it can not be executed without the index.
-func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
-	condHasFTSFunc := intset.NewFastIntSet()
-	if hasFTSFuncGlobal {
-		// Use the plan-level flag as a fast pre-check so we don't rescan
-		// this DataSource when the whole query contains no FTS function.
-		condHasFTSFunc = ds.collectPushedDownCondsHasFTSFuncSet()
-	}
+// analyzeTiCIIndex binds this DataSource's pushed-down TiCI-searchable predicates
+// to one TiCI index path. FTS predicates must match a fulltext component; normal
+// predicates may choose a hybrid TiCI index when they are covered by its inverted
+// component.
+func (ds *DataSource) analyzeTiCIIndex() error {
+	condHasFTSFunc := ds.collectPushedDownCondsHasFTSFuncSet()
 	hasFTSFuncLocal := !condHasFTSFunc.IsEmpty()
 
 	shouldSkip, err := ds.checkTiCIDirtyWrite(hasFTSFuncLocal)
@@ -686,8 +682,8 @@ func (ds *DataSource) analyzeTiCIIndex(hasFTSFuncGlobal bool) error {
 	}
 
 	if matchedIdx == nil {
-		// If no FTS function is found, we should remove all the TiCI index
-		// paths from PossibleAccessPaths.
+		// No local FTS predicate matched a TiCI index. Remove unused TiCI paths so
+		// the normal access path selection can proceed.
 		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
 			return path.Index != nil && path.Index.IsTiCIIndex()
 		})
@@ -904,13 +900,11 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	matchedCondIdxes []int,
 ) error {
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI Index currently can not be cached")
-	// Fulltext index must be used. So we prune all other possible access paths.
-	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index == nil || path.Index.ID != index.ID
-	})
-	copy(ds.AllPossibleAccessPaths, ds.PossibleAccessPaths)
-	ds.AllPossibleAccessPaths = ds.AllPossibleAccessPaths[:len(ds.PossibleAccessPaths)]
-	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
+	ticiPath, err := ds.keepOnlyTiCIPath(index)
+	if err != nil {
+		return err
+	}
+	if ds.HasForceHints && !ticiPath.Forced {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
 
@@ -918,56 +912,69 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	for _, idx := range matchedCondIdxes {
 		matchedCondSet[idx] = struct{}{}
 	}
-	remainedFilters := make([]expression.Expression, 0, len(ds.PushedDownConds)-len(matchedCondIdxes))
+	matchedConds := make([]expression.Expression, 0, len(matchedCondIdxes))
+	tableFilters := make([]expression.Expression, 0, len(ds.PushedDownConds)-len(matchedCondIdxes))
 	for i, cond := range ds.PushedDownConds {
 		if _, ok := matchedCondSet[i]; ok {
+			matchedConds = append(matchedConds, cond)
 			continue
 		}
-		remainedFilters = append(remainedFilters, cond)
+		tableFilters = append(tableFilters, cond)
 	}
 
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
-	pbExprs := make([]tipb.Expr, 0, len(matchedCondIdxes))
-	// It represents the TiCI search functions currently.
-	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
-	for _, idx := range matchedCondIdxes {
-		matchedCond := ds.PushedDownConds[idx]
+	pbExprs := make([]tipb.Expr, 0, len(matchedConds))
+	ticiPath.AccessConds = ticiPath.AccessConds[:0]
+	for _, matchedCond := range matchedConds {
 		pbExpr := pbConverter.ExprToPB(matchedCond)
 		if pbExpr == nil {
 			// If the expression is not converted to PB, we should return an error.
 			return errors.New("Failed to convert FTS function to PB expression")
 		}
 		pbExprs = append(pbExprs, *pbExpr)
-		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, matchedCond)
+		ticiPath.AccessConds = append(ticiPath.AccessConds, matchedCond)
 	}
 
-	// Build tipb protobuf info for the matched index.
 	tokenizer := ""
 	if index.FullTextInfo != nil {
 		tokenizer = string(index.FullTextInfo.ParserType)
 	}
-	ds.PossibleAccessPaths[0].FtsQueryInfo = &tipb.FTSQueryInfo{
+	ticiPath.FtsQueryInfo = &tipb.FTSQueryInfo{
 		QueryType:      tipb.FTSQueryType_FTSQueryTypeNoScore,
 		IndexId:        index.ID,
 		QueryTokenizer: tokenizer,
 		MatchExpr:      pbExprs,
 	}
 
-	ds.PossibleAccessPaths[0].TableFilters = remainedFilters
+	ticiPath.TableFilters = tableFilters
+	ds.PushedDownConds = tableFilters
 	return nil
+}
+
+func (ds *DataSource) keepOnlyTiCIPath(index *model.IndexInfo) (*util.AccessPath, error) {
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path == nil || path.Index == nil || path.Index.ID != index.ID
+	})
+	if len(ds.PossibleAccessPaths) == 0 {
+		return nil, errors.New("TiCI analyze: matched TiCI access path not found")
+	}
+	ds.AllPossibleAccessPaths = slices.Clone(ds.PossibleAccessPaths)
+	ticiPath := ds.PossibleAccessPaths[0]
+	ticiPath.StoreType = kv.TiCI
+	return ticiPath, nil
 }
 
 // CleanUnusedTiCIIndexes removes the unused TiCI indexes from PossibleAccessPaths and AllPossibleAccessPaths.
 // It also checks whether all hinted indexes is pruned, and raises a warning if so.
 func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
+		return isUnusedTiCIPath(path)
 	})
 	origLen := len(ds.PossibleAccessPaths)
 	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
+		return isUnusedTiCIPath(path)
 	})
 	nowLen := len(ds.PossibleAccessPaths)
 	stillHasHintedIndex := false
@@ -978,6 +985,15 @@ func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	if origLen > nowLen && ds.HasForceHints && !stillHasHintedIndex {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
+}
+
+func isUnusedTiCIPath(path *util.AccessPath) bool {
+	if path == nil || path.Index == nil {
+		return false
+	}
+	return path.Index.IsTiCIIndex() &&
+		len(path.AccessConds) == 0 &&
+		path.FtsQueryInfo == nil
 }
 
 // IsSingleScan checks whether all the needed columns and conditions can be covered by the index.
@@ -1000,10 +1016,25 @@ func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens
 
 // IsTiCISingleScan checks whether all the needed columns and conditions can be covered by the index for TiCI index.
 func (ds *DataSource) IsTiCISingleScan(indexColumns []*expression.Column, idxColLens []int, path *util.AccessPath) bool {
-	if !ds.IsIndexCoveringColumns(ds.ColsRequiringFullLen, indexColumns, idxColLens) {
+	requiredCols := ds.ColsRequiringFullLen
+	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || requiredCols == nil {
+		requiredCols = ds.Schema().Columns
+	}
+	if !ds.IsIndexCoveringColumns(requiredCols, indexColumns, idxColLens) {
 		return false
 	}
 	for _, cond := range path.TableFilters {
+		if !ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens) {
+			return false
+		}
+	}
+	for _, cond := range path.AccessConds {
+		// Fulltext predicates in AccessConds are executed by TiCI via FtsQueryInfo.
+		// Their referenced text columns may be pruned from DataSource schema and thus
+		// cannot be used for a generic covering check.
+		if expression.ContainsFullTextSearchFn(cond) {
+			continue
+		}
 		if !ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens) {
 			return false
 		}
@@ -1092,7 +1123,13 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
 			continue
 		}
-		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
+		// Some access paths (e.g. TiCI fulltext index) don't provide idxColLens.
+		// Treat missing lengths as UnspecifiedLength.
+		idxColLen := types.UnspecifiedLength
+		if i < len(idxColLens) {
+			idxColLen = idxColLens[i]
+		}
+		if ignoreLen || idxColLen == types.UnspecifiedLength || idxColLen == col.RetType.GetFlen() {
 			return true
 		}
 	}

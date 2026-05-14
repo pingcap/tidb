@@ -148,45 +148,47 @@ func testFlow(ctx context.Context, probetestest ProbeTest, test *testing.T, flow
 }
 
 func TestMPPFailedStoreProbe(t *testing.T) {
-	ctx := context.Background()
+	t.Run("basic-probe-flow", func(t *testing.T) {
+		ctx := context.Background()
 
-	notExistAddress := "not exist address"
+		notExistAddress := "not exist address"
 
-	GlobalMPPFailedStoreProber.detectPeriod = 0 - time.Second
+		GlobalMPPFailedStoreProber.detectPeriod = 0 - time.Second
 
-	// check not exist address
-	ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, notExistAddress, 0)
-	require.True(t, ok)
+		// check not exist address
+		ok := GlobalMPPFailedStoreProber.IsRecovery(ctx, notExistAddress, 0)
+		require.True(t, ok)
 
-	GlobalMPPFailedStoreProber.scan(ctx)
+		GlobalMPPFailedStoreProber.scan(ctx)
 
-	probetestest := map[string]*mockDetectClient{
-		testimeout: {errortestype: testimeout},
-		Error:      {errortestype: Error},
-	}
+		probetestest := map[string]*mockDetectClient{
+			testimeout: {errortestype: testimeout},
+			Error:      {errortestype: Error},
+		}
 
-	testFlowFinallyRecover := []string{Error, Normal, Error, Error, Normal}
-	testFlow(ctx, probetestest, t, testFlowFinallyRecover)
-	testFlowFinallyDesert := []string{Error, Normal, Normal, Error, Error}
-	testFlow(ctx, probetestest, t, testFlowFinallyDesert)
-}
+		testFlowFinallyRecover := []string{Error, Normal, Error, Error, Normal}
+		testFlow(ctx, probetestest, t, testFlowFinallyRecover)
+		testFlowFinallyDesert := []string{Error, Normal, Normal, Error, Error}
+		testFlow(ctx, probetestest, t, testFlowFinallyDesert)
+	})
 
-func TestMPPFailedStoreProbeGoroutineTask(t *testing.T) {
-	// Confirm that multiple tasks are not allowed
-	GlobalMPPFailedStoreProber.lock.Lock()
-	GlobalMPPFailedStoreProber.Run()
-	GlobalMPPFailedStoreProber.lock.Unlock()
+	t.Run("goroutine-task", func(t *testing.T) {
+		// Confirm that multiple tasks are not allowed
+		GlobalMPPFailedStoreProber.lock.Lock()
+		GlobalMPPFailedStoreProber.Run()
+		GlobalMPPFailedStoreProber.lock.Unlock()
 
-	GlobalMPPFailedStoreProber.Run()
-	GlobalMPPFailedStoreProber.Stop()
-}
+		GlobalMPPFailedStoreProber.Run()
+		GlobalMPPFailedStoreProber.Stop()
+	})
 
-func TestMPPFailedStoreAssertFailed(t *testing.T) {
-	ctx := context.Background()
+	t.Run("assert-failed", func(t *testing.T) {
+		ctx := context.Background()
 
-	GlobalMPPFailedStoreProber.failedMPPStores.Store("errorinfo", nil)
-	GlobalMPPFailedStoreProber.scan(ctx)
+		GlobalMPPFailedStoreProber.failedMPPStores.Store("errorinfo", nil)
+		GlobalMPPFailedStoreProber.scan(ctx)
 
-	GlobalMPPFailedStoreProber.failedMPPStores.Store("errorinfo", nil)
-	GlobalMPPFailedStoreProber.IsRecovery(ctx, "errorinfo", 0)
+		GlobalMPPFailedStoreProber.failedMPPStores.Store("errorinfo", nil)
+		GlobalMPPFailedStoreProber.IsRecovery(ctx, "errorinfo", 0)
+	})
 }

@@ -1520,6 +1520,13 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	return candidate
 }
 
+func isTiCIFTSAccessPath(path *util.AccessPath) bool {
+	return path != nil &&
+		path.Index != nil &&
+		path.Index.IsTiCIIndex() &&
+		path.FtsQueryInfo != nil
+}
+
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) []*candidatePath {
@@ -1529,8 +1536,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
-		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
-			continue
+		// Flash-only tasks keep TiFlash paths; allow TiCI FTS paths since they run through TiFlash MPP.
+		if prop.IsFlashProp() {
+			if path.StoreType != kv.TiFlash && !isTiCIFTSAccessPath(path) {
+				continue
+			}
 		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
 			// OR normal index merge path, try to determine every index partial path for this property.
@@ -1580,7 +1590,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
-			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || path.FtsQueryInfo != nil
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || isTiCIFTSAccessPath(path)
 			if !keepIndex {
 				// If none of the above conditions are met, this index will be directly pruned here.
 				continue
@@ -2266,6 +2276,7 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath) (task base.Task, err error) {
+	isTiCIPath := isTiCIFTSAccessPath(candidate.path)
 	if candidate.path.Index.MVIndex {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
@@ -2273,7 +2284,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	// TiCI currently can not set the order property.
-	if candidate.path.FtsQueryInfo != nil && !prop.IsSortItemEmpty() {
+	if isTiCIPath && !prop.IsSortItemEmpty() {
 		return base.InvalidTask, nil
 	}
 	if !candidate.path.IsSingleScan {
@@ -2310,6 +2321,72 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 
 	path := candidate.path
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
+	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
+	// For TiCI index scan, we also plan it into TiFlash MPP pipeline.
+	// NOTE: TiCI access path keeps StoreType=kv.TiCI (so it remains an IndexScan).
+	isTiCIPath = isTiCIPath && is.IsTiCIFTSScan()
+	// Non-covering TiCI access must stay as IndexLookUp(root): index side can run by
+	// MPP protocol, but it still needs table probe on TiKV. A pure MPP task here is invalid.
+	if isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.MppTaskType {
+		return base.InvalidTask, nil
+	}
+	useTiCILookupPath := isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.RootTaskType
+	// Covering TiCI FTS scans use the TiFlash MPP pipeline. Non-covering scans keep
+	// the IndexLookUp shape: executor sends the index-side TiCI request to TiFlash,
+	// then fetches base-table rows through the normal table-probe side.
+	canUseTiCIInMpp := isTiCIPath
+	isTiFlashStorePath := is.StoreType == kv.TiFlash
+	supportsMPPPath := isTiFlashStorePath || canUseTiCIInMpp
+	canConvertRootToMPP := prop.TaskTp == property.RootTaskType &&
+		!useTiCILookupPath &&
+		supportsMPPPath &&
+		(ds.SCtx().GetSessionVars().IsMPPAllowed() || isTiCIPath)
+	forceRootToMPP := canConvertRootToMPP &&
+		(config.GetGlobalConfig().DisaggregatedTiFlash || ds.SCtx().GetSessionVars().IsTiFlashCopBanned() || isTiCIPath)
+	needMPPPath := prop.TaskTp == property.MppTaskType || forceRootToMPP
+	if needMPPPath && !supportsMPPPath {
+		return base.InvalidTask, nil
+	}
+	if !needMPPPath {
+		// Disaggregated TiFlash only accepts MPP for both TiFlash and TiCI MPP paths.
+		if config.GetGlobalConfig().DisaggregatedTiFlash && supportsMPPPath {
+			return base.InvalidTask, nil
+		}
+		// tidb_allow_tiflash_cop only bans classic TiFlash cop/batchCop; TiCI cop path should remain valid.
+		if ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && isTiFlashStorePath {
+			return base.InvalidTask, nil
+		}
+		// Covering TiCI index scan is MPP-only; non-covering TiCI lookup uses
+		// executor's TiCI request path on the index side.
+		if isTiCIPath && !useTiCILookupPath {
+			return base.InvalidTask, nil
+		}
+	}
+
+	if needMPPPath {
+		// TiCI currently can not keep order.
+		if !prop.IsSortItemEmpty() {
+			return base.InvalidTask, nil
+		}
+		mppTask := physicalop.NewMppTask(is, property.AnyType, nil, ds.TblColHists, nil)
+		finalStats := ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt)
+		if err = addPushedDownSelectionToMppTask4PhysicalIndexScan(is, mppTask, path, finalStats); err != nil {
+			return base.InvalidTask, err
+		}
+		var t base.Task = mppTask
+		if !mppTask.Invalid() {
+			if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
+				return base.InvalidTask, nil
+			}
+			if prop.TaskTp == property.RootTaskType {
+				t = t.ConvertToRootTask(ds.SCtx())
+			}
+		}
+		return t, nil
+	}
+	// Non-covering TiCI index access still needs table probe, so keep the normal
+	// IndexLookUp task shape. Returning a pure MPP IndexScan here would lose
+	// base-table columns required by lookup/join.
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,
@@ -2472,6 +2549,35 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 		}
 		tableSel.SetChildren(copTask.TablePlan)
 		copTask.TablePlan = tableSel
+	}
+	return nil
+}
+
+func addPushedDownSelectionToMppTask4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, mppTask *physicalop.MppTask, path *util.AccessPath, finalStats *property.StatsInfo) error {
+	indexConds, tableConds := path.IndexFilters, path.TableFilters
+	tableConds, mppTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+
+	var newRootConds []expression.Expression
+	pctx := util.GetPushDownCtx(is.SCtx())
+	storeType := is.StoreType
+	if is.IsTiCIFTSScan() {
+		// TiCI FTS index scans are encoded as TiFlash MPP fragments. Non-FTS
+		// residual predicates should therefore use TiFlash pushdown capability.
+		storeType = kv.TiFlash
+	}
+	indexConds, newRootConds = expression.PushDownExprs(pctx, indexConds, storeType)
+	mppTask.RootTaskConds = append(mppTask.RootTaskConds, newRootConds...)
+
+	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, storeType)
+	mppTask.RootTaskConds = append(mppTask.RootTaskConds, newRootConds...)
+
+	pushedDownConds := make([]expression.Expression, 0, len(indexConds)+len(tableConds))
+	pushedDownConds = append(pushedDownConds, indexConds...)
+	pushedDownConds = append(pushedDownConds, tableConds...)
+	if len(pushedDownConds) > 0 {
+		sel := physicalop.PhysicalSelection{Conditions: pushedDownConds}.Init(is.SCtx(), finalStats, is.QueryBlockOffset())
+		sel.SetChildren(is)
+		mppTask.SetPlan(sel)
 	}
 	return nil
 }

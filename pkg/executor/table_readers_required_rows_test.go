@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -262,4 +264,85 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 		}
 		require.NoError(t, executor.Close())
 	}
+}
+
+func buildMockPhysicalTableForTiCIMPPTests(t *testing.T, id int64) *tables.TableCommon {
+	tbl := tables.MockTableFromMeta(&model.TableInfo{
+		ID:    id,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+	})
+	require.NotNil(t, tbl)
+	common, ok := tbl.(*tables.TableCommon)
+	require.True(t, ok)
+	return common
+}
+
+//nolint:constructor
+func TestIndexLookupBuildMPPIndexScanTargetsUsesGroupedRanges(t *testing.T) {
+	tbl := buildMockPhysicalTableForTiCIMPPTests(t, 42)
+	r1 := generateIndexRange(1)
+	r2 := generateIndexRange(2)
+	e := &IndexLookUpExecutor{
+		BaseExecutorV2: exec.NewBaseExecutorV2(defaultCtx().GetSessionVars(), expression.NewSchema(), 0),
+		table:          tbl,
+		ranges:         []*ranger.Range{generateIndexRange(999)},
+		groupedRanges:  [][]*ranger.Range{{r1}, {r2}},
+	}
+
+	targets := e.buildMPPIndexScanTargets()
+	require.Len(t, targets, 2)
+	require.Equal(t, int64(42), targets[0].PhysicalTableID)
+	require.Equal(t, int64(42), targets[1].PhysicalTableID)
+	require.Equal(t, int64(1), targets[0].Ranges[0].LowVal[0].GetInt64())
+	require.Equal(t, int64(2), targets[1].Ranges[0].LowVal[0].GetInt64())
+
+	// Targets should be cloned and isolated from source range mutations.
+	r1.LowVal[0].SetInt64(1234)
+	require.Equal(t, int64(1), targets[0].Ranges[0].LowVal[0].GetInt64())
+}
+
+//nolint:constructor
+func TestIndexLookupBuildMPPIndexScanTargetsUsesRangeOverride(t *testing.T) {
+	tbl := buildMockPhysicalTableForTiCIMPPTests(t, 88)
+	e := &IndexLookUpExecutor{
+		BaseExecutorV2:    exec.NewBaseExecutorV2(defaultCtx().GetSessionVars(), expression.NewSchema(), 0),
+		table:             tbl,
+		ranges:            []*ranger.Range{generateIndexRange(7)},
+		partitionRangeMap: map[int64][]*ranger.Range{88: {generateIndexRange(11)}},
+	}
+
+	targets := e.buildMPPIndexScanTargets()
+	require.Len(t, targets, 1)
+	require.Equal(t, int64(88), targets[0].PhysicalTableID)
+	require.Equal(t, int64(11), targets[0].Ranges[0].LowVal[0].GetInt64())
+}
+
+//nolint:constructor
+func TestIndexLookupUseTiCIMPPPartitionAffinity(t *testing.T) {
+	e := &IndexLookUpExecutor{
+		BaseExecutorV2:     exec.NewBaseExecutorV2(defaultCtx().GetSessionVars(), expression.NewSchema(), 0),
+		indexReadReqType:   physicalop.MPP,
+		partitionTableMode: true,
+		index: &model.IndexInfo{
+			FullTextInfo: &model.FullTextIndexInfo{},
+		},
+	}
+	require.True(t, e.useTiCIMPPPartitionAffinity())
+
+	e.index.Global = true
+	require.False(t, e.useTiCIMPPPartitionAffinity())
+
+	e.index.Global = false
+	e.indexReadReqType = physicalop.BatchCop
+	require.False(t, e.useTiCIMPPPartitionAffinity())
 }
