@@ -423,7 +423,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 }
 
 // OnDone implements scheduler.Extension interface.
-func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
+func (sch *importScheduler) OnDone(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task) error {
 	logger := sch.GetLogger().With(zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	logger.Info("task done", zap.Stringer("state", task.State), zap.Error(task.Error))
 	taskMeta := &TaskMeta{}
@@ -441,7 +441,35 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 		}
 		return sch.failJob(ctx, task, taskMeta, logger, errMsg)
 	}
+	if err := mergeTiCIIndexSummaryFromPostProcess(ctx, taskHandle, task, taskMeta); err != nil {
+		return err
+	}
 	return sch.finishJob(ctx, logger, task, taskMeta)
+}
+
+func mergeTiCIIndexSummaryFromPostProcess(
+	_ context.Context,
+	taskHandle storage.TaskHandle,
+	task *proto.Task,
+	taskMeta *TaskMeta,
+) error {
+	if taskHandle == nil {
+		return nil
+	}
+	metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepPostProcess)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, bs := range metas {
+		var subtaskMeta PostProcessStepMeta
+		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return errors.Trace(err)
+		}
+		if subtaskMeta.TiCIIndexSummary != nil {
+			taskMeta.Summary.TiCIIndexSummary = subtaskMeta.TiCIIndexSummary
+		}
+	}
+	return nil
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
