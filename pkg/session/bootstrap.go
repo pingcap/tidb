@@ -1443,11 +1443,12 @@ const (
 	// ...
 
 	// next version should start with 239
+	version239 = 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version223
+var currentBootstrapVersion int64 = version239
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
@@ -1630,6 +1631,7 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+		upgradeToVer239,
 	}
 )
 
@@ -3557,6 +3559,11 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer239(s sessiontypes.Session, ver int64) {
+	// Keep old behavior for upgraded clusters.
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableNoBackslashEscapesInLike, variable.Off)
 }
 
 func upgradeEEToVer2(s sessiontypes.Session, ver int64) {
