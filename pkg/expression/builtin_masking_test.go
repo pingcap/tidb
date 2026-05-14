@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -133,6 +134,14 @@ func TestMaskPartial(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.Eval(ctx, chunk.Row{})
 	require.Error(t, err)
+
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", math.MaxInt64, math.MaxInt64 - 1, "*"})...)
+	require.NoError(t, err)
+	require.NotPanics(t, func() {
+		d, evalErr := f.Eval(ctx, chunk.Row{})
+		require.NoError(t, evalErr)
+		require.Equal(t, "abcdef", d.GetString())
+	})
 }
 
 func TestMaskDate(t *testing.T) {

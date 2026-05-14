@@ -219,6 +219,7 @@ func (c *maskNullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	bf.tp = argType.Clone()
+	bf.tp.DelFlag(mysql.NotNullFlag)
 	switch evalTp {
 	case types.ETString:
 		return &builtinMaskNullStringSig{bf}, nil
@@ -442,7 +443,7 @@ func (b *builtinMaskPartialSig) evalString(ctx EvalContext, row chunk.Row) (stri
 		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_partial")
 	}
 	total := int64(len(str))
-	if preserveLeft+preserveRight >= total {
+	if preserveLeft >= total || preserveRight >= total || preserveLeft > total-preserveRight {
 		return str, false, nil
 	}
 	maskLen := int(total - preserveLeft - preserveRight)
@@ -490,7 +491,7 @@ func (b *builtinMaskPartialUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (
 	}
 	runes := []rune(str)
 	total := int64(len(runes))
-	if preserveLeft+preserveRight >= total {
+	if preserveLeft >= total || preserveRight >= total || preserveLeft > total-preserveRight {
 		return str, false, nil
 	}
 	maskLen := int(total - preserveLeft - preserveRight)
