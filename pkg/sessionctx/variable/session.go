@@ -1675,6 +1675,9 @@ type SessionVars struct {
 
 	// procedureContext indicates current procedure environment variable
 	procedureContext sessionProcedureContext
+	// storedRoutineEvalGuard serializes concurrent stored routine evaluation on the same
+	// session while allowing nested calls in the same goroutine to re-enter.
+	storedRoutineEvalGuard storedRoutineEvalGuard
 
 	// FastCheckTable is used to control whether fast check table is enabled.
 	FastCheckTable bool
