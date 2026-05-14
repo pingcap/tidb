@@ -91,7 +91,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if dag := builder.dag; dag != nil {
 		if execCnt := len(dag.Executors); execCnt == 1 {
 			// select * from t order by id
-			if builder.Request.KeepOrder && builder.Request.Concurrency == vardef.DefDistSQLScanConcurrency {
+			if builder.Request.KeepOrder && !builder.Request.FixedConcurrency && builder.Request.Concurrency == vardef.DefDistSQLScanConcurrency {
 				// When the DAG is just simple scan and keep order, set concurrency to 2.
 				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
 				// If very few data are returned to client, the speed is not optimal but good enough.
@@ -345,6 +345,9 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 		// Concurrency is set in SetDAGRequest, check the upper limit.
 		builder.Request.Concurrency = distsqlConcurrency
 	}
+	if dctx.FixedDistSQLConcurrency {
+		builder.Request.FixedConcurrency = true
+	}
 	replicaReadType := dctx.ReplicaReadType
 	if dctx.WeakConsistency {
 		builder.Request.IsolationLevel = kv.RC
@@ -387,6 +390,13 @@ func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
 // SetConcurrency sets "Concurrency" for "kv.Request".
 func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	builder.Request.Concurrency = concurrency
+	return builder
+}
+
+// SetFixedConcurrency marks the concurrency as explicitly set, preventing
+// Build() from reducing it for simple ordered scans.
+func (builder *RequestBuilder) SetFixedConcurrency() *RequestBuilder {
+	builder.Request.FixedConcurrency = true
 	return builder
 }
 

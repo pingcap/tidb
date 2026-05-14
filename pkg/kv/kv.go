@@ -583,6 +583,10 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
+	// FixedConcurrency indicates the concurrency value was explicitly chosen
+	// for this request and should not be reduced by Build() optimizations
+	// (e.g., reducing to 2 for simple ordered scans).
+	FixedConcurrency bool
 	// IsolationLevel is the isolation level, default is SI.
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.

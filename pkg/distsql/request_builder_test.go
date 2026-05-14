@@ -960,3 +960,43 @@ func TestRequestBuilderHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tag.TableId, tableID)
 }
+
+func TestBuildReducesConcurrencyForSimpleOrderedScan(t *testing.T) {
+	// When KeepOrder=true, concurrency=default, and a simple scan executor,
+	// Build() should reduce concurrency to 2.
+	dag := &tipb.DAGRequest{}
+	dag.Executors = []*tipb.Executor{{Tp: tipb.ExecType_TypeTableScan}}
+
+	actual, err := (&RequestBuilder{}).
+		SetDAGRequest(dag).
+		SetKeepOrder(true).
+		SetFromSessionVars(DefaultDistSQLContext).
+		Build()
+	require.NoError(t, err)
+	require.Equal(t, 2, actual.Concurrency)
+}
+
+func TestBuildKeepsConcurrencyWhenFixedConcurrency(t *testing.T) {
+	// When FixedConcurrency=true, Build() must NOT reduce concurrency,
+	// even for a simple ordered scan with default concurrency.
+	dag := &tipb.DAGRequest{}
+	dag.Executors = []*tipb.Executor{{Tp: tipb.ExecType_TypeTableScan}}
+
+	actual, err := (&RequestBuilder{}).
+		SetDAGRequest(dag).
+		SetKeepOrder(true).
+		SetFromSessionVars(DefaultDistSQLContext).
+		SetFixedConcurrency().
+		Build()
+	require.NoError(t, err)
+	require.Equal(t, vardef.DefDistSQLScanConcurrency, actual.Concurrency)
+}
+
+func TestSetFromSessionVarsPropagatesFixedConcurrency(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	dctx.FixedDistSQLConcurrency = true
+
+	builder := &RequestBuilder{}
+	builder.SetFromSessionVars(dctx)
+	require.True(t, builder.Request.FixedConcurrency)
+}

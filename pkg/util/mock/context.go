@@ -272,6 +272,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 		ResourceGroupName:                    sc.ResourceGroupName,
 		ExecDetails:                          &sc.SyncExecDetails,
+		FixedDistSQLConcurrency:              vars.FixedDistSQLConcurrency,
 	}
 }
 
