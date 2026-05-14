@@ -15,6 +15,7 @@
 package handle_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	handle "github.com/pingcap/tidb/pkg/statistics/handle"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -407,6 +409,167 @@ func TestTruncatePartitionedTableUpdatesStatsVersionForGC(t *testing.T) {
 	for i := range oldStatsIDs {
 		require.NotEqual(t, oldVersions[i], newVersions[i])
 	}
+}
+
+func TestDropSchemaUpdatesStatsVersionForGC(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+
+	testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("set global tidb_partition_prune_mode='static'")
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t_plain (c1 int)")
+	handleNextDDLEvent(t, h, model.ActionCreateTable)
+	testKit.MustExec(`
+		create table t_partitioned (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11)
+		)
+	`)
+	handleNextDDLEvent(t, h, model.ActionCreateTable)
+	testKit.MustExec("insert into t_plain values (1)")
+	testKit.MustExec("insert into t_partitioned values (1,2),(2,2),(6,2)")
+	testKit.MustExec("analyze table t_plain")
+	testKit.MustExec("analyze table t_partitioned")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_plain"))
+	require.NoError(t, err)
+	plainTableID := tbl.Meta().ID
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_partitioned"))
+	require.NoError(t, err)
+	partitionedTableInfo := tbl.Meta()
+	require.NotNil(t, partitionedTableInfo.Partition)
+	statsIDs := []int64{
+		plainTableID,
+		partitionedTableInfo.Partition.Definitions[0].ID,
+		partitionedTableInfo.Partition.Definitions[1].ID,
+	}
+	oldVersions := statsMetaVersions(t, testKit, statsIDs)
+
+	testKit.MustExec("drop database test")
+	event := handleNextDDLEvent(t, h, model.ActionDropSchema)
+	require.Len(t, event.TableInfos, 2)
+
+	newVersions := statsMetaVersions(t, testKit, statsIDs)
+	for i := range statsIDs {
+		require.NotEqual(t, oldVersions[i], newVersions[i])
+	}
+}
+
+func TestDropSchemaUpdatesGlobalStatsVersionForGC(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+
+	// Create and analyze in dynamic mode so the partitioned table has a global
+	// stats_meta row. Dropping the schema in static mode should still mark both
+	// the old global table ID and old partition IDs for stats GC.
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("set global tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("use test")
+	testKit.MustExec(`
+		create table t_partitioned (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11)
+		)
+	`)
+	handleNextDDLEvent(t, h, model.ActionCreateTable)
+	testKit.MustExec("insert into t_partitioned values (1,2),(2,2),(6,2)")
+	testKit.MustExec("analyze table t_partitioned")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_partitioned"))
+	require.NoError(t, err)
+	partitionedTableInfo := tbl.Meta()
+	require.NotNil(t, partitionedTableInfo.Partition)
+	statsIDs := []int64{
+		partitionedTableInfo.ID,
+		partitionedTableInfo.Partition.Definitions[0].ID,
+		partitionedTableInfo.Partition.Definitions[1].ID,
+	}
+	oldVersions := statsMetaVersions(t, testKit, statsIDs)
+
+	testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("set global tidb_partition_prune_mode='static'")
+	testKit.MustExec("drop database test")
+	event := handleNextDDLEvent(t, h, model.ActionDropSchema)
+	require.Len(t, event.TableInfos, 1)
+	require.Equal(t, partitionedTableInfo.ID, event.TableInfos[0].ID)
+
+	newVersions := statsMetaVersions(t, testKit, statsIDs)
+	for i := range statsIDs {
+		require.NotEqual(t, oldVersions[i], newVersions[i])
+	}
+}
+
+func TestDropSchemaBestEffortUpdatesStatsVersionForGC(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t_first (c1 int)")
+	handleNextDDLEvent(t, h, model.ActionCreateTable)
+	testKit.MustExec("create table t_second (c1 int)")
+	handleNextDDLEvent(t, h, model.ActionCreateTable)
+
+	is := do.InfoSchema()
+	firstTbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_first"))
+	require.NoError(t, err)
+	secondTbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_second"))
+	require.NoError(t, err)
+	oldVersions := map[int64]string{
+		firstTbl.Meta().ID:  statsMetaVersion(t, testKit, firstTbl.Meta().ID),
+		secondTbl.Meta().ID: statsMetaVersion(t, testKit, secondTbl.Meta().ID),
+	}
+
+	testKit.MustExec("drop database test")
+	var event *ddlutil.Event
+	select {
+	case event = <-h.DDLEventCh():
+		require.Equal(t, model.ActionDropSchema, event.Tp)
+	case <-time.After(time.Second):
+		t.Fatalf("expected ddl event %s", model.ActionDropSchema)
+	}
+	require.Len(t, event.TableInfos, 2)
+
+	failID := event.TableInfos[0].ID
+	okID := event.TableInfos[1].ID
+	writer := &failOnceStatsReadWriter{StatsReadWriter: h.StatsReadWriter, failID: failID}
+	h.StatsReadWriter = writer
+
+	require.NoError(t, h.HandleDDLEvent(event))
+	require.Contains(t, writer.seen, failID)
+	require.Contains(t, writer.seen, okID)
+	require.NotEqual(t, oldVersions[okID], statsMetaVersion(t, testKit, okID))
+}
+
+type failOnceStatsReadWriter struct {
+	handleutil.StatsReadWriter
+	failID int64
+	seen   []int64
+}
+
+func (w *failOnceStatsReadWriter) ResetTableStats2KVForDrop(physicalID int64) error {
+	w.seen = append(w.seen, physicalID)
+	if physicalID == w.failID {
+		return errors.New("injected ResetTableStats2KVForDrop failure")
+	}
+	return w.StatsReadWriter.ResetTableStats2KVForDrop(physicalID)
 }
 
 func handleNextDDLEvent(t *testing.T, h *handle.Handle, expectedType model.ActionType) *ddlutil.Event {

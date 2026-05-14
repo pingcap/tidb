@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -246,6 +247,9 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			job.Args = append(job.Args, getIDs(tables))
 		}
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
+		if len(tables) > 0 {
+			asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropSchema, TableInfos: tables})
+		}
 	default:
 		// We can't enter here.
 		return ver, errors.Trace(errors.Errorf("invalid db state %v", dbInfo.State))
