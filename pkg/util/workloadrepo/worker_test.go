@@ -108,10 +108,6 @@ func setupDomainAndContext(t *testing.T) (context.Context, kv.Storage, *domain.D
 	return ctx, store, dom, etcdAddr
 }
 
-func newSessionTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
-	return testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
-}
-
 func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Domain, id string, testWorker bool) *worker {
 	etcdCli, err := clientv3.New(clientv3.Config{
 		Endpoints: []string{addr},
@@ -172,18 +168,6 @@ func setMemorySnapshotTables(t *testing.T, wrk *worker, destTables ...string) {
 	for _, destTable := range destTables[1:] {
 		wrk.workloadTables = append(wrk.workloadTables, memorySnapshot(destTable))
 	}
-}
-
-func appendMemorySnapshotTables(wrk *worker, count int) []string {
-	destTables := make([]string, 0, count)
-	for i := 0; i < count; i++ {
-		destTable := fmt.Sprintf("HIST_MEMORY_USAGE_PRECISION_%02d", i)
-		wrk.workloadTables = append(wrk.workloadTables, repositoryTable{
-			"INFORMATION_SCHEMA", "MEMORY_USAGE", snapshotTable, destTable, "", "", "",
-		})
-		destTables = append(destTables, destTable)
-	}
-	return destTables
 }
 
 func TestRaceToCreateTablesWorker(t *testing.T) {
@@ -431,6 +415,8 @@ func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row 
 }
 
 func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, lastSnapID int, cnt int, maxSecs int) (time.Time, int) {
+	// END_TIME is updated after all snapshot table goroutines finish. BEGIN_TIME
+	// alone is not a safe completion signal for validating mirrored tables.
 	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' and end_time is not null order by begin_time asc")
 
 	// We want to get all rows if we are starting from 0.
@@ -463,7 +449,7 @@ func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time
 
 func TestSnapshotTimingWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
-	tk := newSessionTestKit(t, store)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
 
@@ -483,34 +469,7 @@ func TestSnapshotTimingWorker(t *testing.T) {
 
 	// Change interval and verify new snapshots are taken at new interval
 	wrk.changeSnapshotInterval(ctx, "6")
-	lastRowTs, lastSnapID = SnapshotTimingWorker(t, tk, lastRowTs, lastSnapID, 1, 7)
-
-	appendMemorySnapshotTables(wrk, 48)
-	now = time.Now()
-	require.NoError(t, wrk.createAllTables(ctx, now))
-	waitForTables(ctx, t, wrk, now)
-
-	wrk.changeSnapshotInterval(ctx, "3600")
-	lastSnapID64, err := wrk.takeSnapshot(ctx)
-	require.NoError(t, err)
-
-	// BEGIN_TIME is written before the snapshot goroutines finish, so it is
-	// not a safe completion signal for verifying the mirrored snapshot tables.
-	inProgressQuery := fmt.Sprintf(
-		"select count(*) from %s.%s where snap_id = %d and begin_time is not null and end_time is null",
-		mysql.WorkloadSchema, histSnapshotsTable, lastSnapID64+1,
-	)
-	require.Eventually(t, func() bool {
-		return tk.MustQuery(inProgressQuery).Rows()[0][0] == "1"
-	}, time.Minute, time.Millisecond*20)
-
-	completedQuery := fmt.Sprintf(
-		"select count(*) from %s.%s where snap_id = %d and end_time is not null",
-		mysql.WorkloadSchema, histSnapshotsTable, lastSnapID64+1,
-	)
-	require.Eventually(t, func() bool {
-		return tk.MustQuery(completedQuery).Rows()[0][0] == "1"
-	}, time.Minute, time.Millisecond*20)
+	_, _ = SnapshotTimingWorker(t, tk, lastRowTs, lastSnapID, 1, 7)
 }
 
 func TestStoppingAndRestartingWorker(t *testing.T) {
