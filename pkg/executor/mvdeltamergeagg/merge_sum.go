@@ -43,6 +43,32 @@ func validateSumValueTypes(outputTp, deltaTp *types.FieldType) error {
 	return nil
 }
 
+func resolveSumMergeColumns(
+	input *chunk.Chunk,
+	computedByOrder []*chunk.Column,
+	outputCols []*chunk.Column,
+	mergerOutputCols []int,
+	deltaRef depRef,
+	countRef depRef,
+	hasCountRef bool,
+) (oldCol, deltaCol, countCol *chunk.Column, numRows int, err error) {
+	oldCol, err = resolveSingleOutputOldColumn("sum", input, outputCols, mergerOutputCols)
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	deltaCol, err = getDepColumn(input, computedByOrder, deltaRef)
+	if err != nil {
+		return nil, nil, nil, 0, err
+	}
+	if hasCountRef {
+		countCol, err = getDepColumn(input, computedByOrder, countRef)
+		if err != nil {
+			return nil, nil, nil, 0, err
+		}
+	}
+	return oldCol, deltaCol, countCol, input.NumRows(), nil
+}
+
 func (e *Exec) buildSumMerger(
 	mapping Mapping,
 	colID2ComputedIdx map[int]int,
@@ -150,27 +176,13 @@ func (m *sumIntMerger) outputColIDs() []int {
 }
 
 func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
-	if len(outputCols) != 1 {
-		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
-	}
-	outputColID := m.outputCols[0]
-	if outputColID < 0 || outputColID >= input.NumCols() {
-		return errors.Errorf("sum output col %d out of input range", outputColID)
-	}
-	oldCol := input.Column(outputColID)
-	deltaCol, err := getDepColumn(input, computedByOrder, m.deltaRef)
+	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
+		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
+	)
 	if err != nil {
 		return err
 	}
-	var countCol *chunk.Column
-	if m.hasCountRef {
-		countCol, err = getDepColumn(input, computedByOrder, m.countRef)
-		if err != nil {
-			return err
-		}
-	}
 
-	numRows := input.NumRows()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeInt64(numRows, false)
 	resultVals := resultCol.Int64s()
@@ -241,27 +253,13 @@ func (m *sumUintMerger) outputColIDs() []int {
 }
 
 func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
-	if len(outputCols) != 1 {
-		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
-	}
-	outputColID := m.outputCols[0]
-	if outputColID < 0 || outputColID >= input.NumCols() {
-		return errors.Errorf("sum output col %d out of input range", outputColID)
-	}
-	oldCol := input.Column(outputColID)
-	deltaCol, err := getDepColumn(input, computedByOrder, m.deltaRef)
+	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
+		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
+	)
 	if err != nil {
 		return err
 	}
-	var countCol *chunk.Column
-	if m.hasCountRef {
-		countCol, err = getDepColumn(input, computedByOrder, m.countRef)
-		if err != nil {
-			return err
-		}
-	}
 
-	numRows := input.NumRows()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeUint64(numRows, false)
 	resultVals := resultCol.Uint64s()
@@ -339,27 +337,13 @@ func (m *sumFloat64Merger) outputColIDs() []int {
 }
 
 func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
-	if len(outputCols) != 1 {
-		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
-	}
-	outputColID := m.outputCols[0]
-	if outputColID < 0 || outputColID >= input.NumCols() {
-		return errors.Errorf("sum output col %d out of input range", outputColID)
-	}
-	oldCol := input.Column(outputColID)
-	deltaCol, err := getDepColumn(input, computedByOrder, m.deltaRef)
+	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
+		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
+	)
 	if err != nil {
 		return err
 	}
-	var countCol *chunk.Column
-	if m.hasCountRef {
-		countCol, err = getDepColumn(input, computedByOrder, m.countRef)
-		if err != nil {
-			return err
-		}
-	}
 
-	numRows := input.NumRows()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeFloat64(numRows, false)
 	resultVals := resultCol.Float64s()
@@ -420,27 +404,13 @@ func (m *sumDecimalMerger) outputColIDs() []int {
 }
 
 func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
-	if len(outputCols) != 1 {
-		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
-	}
-	outputColID := m.outputCols[0]
-	if outputColID < 0 || outputColID >= input.NumCols() {
-		return errors.Errorf("sum output col %d out of input range", outputColID)
-	}
-	oldCol := input.Column(outputColID)
-	deltaCol, err := getDepColumn(input, computedByOrder, m.deltaRef)
+	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
+		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
+	)
 	if err != nil {
 		return err
 	}
-	var countCol *chunk.Column
-	if m.hasCountRef {
-		countCol, err = getDepColumn(input, computedByOrder, m.countRef)
-		if err != nil {
-			return err
-		}
-	}
 
-	numRows := input.NumRows()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeDecimal(numRows, false)
 	resultVals := resultCol.Decimals()

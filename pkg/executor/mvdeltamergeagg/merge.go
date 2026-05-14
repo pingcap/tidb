@@ -75,6 +75,25 @@ func getDepColumn(input *chunk.Chunk, computedByOrder []*chunk.Column, ref depRe
 	}
 }
 
+func resolveSingleOutputOldColumn(
+	mergeName string,
+	input *chunk.Chunk,
+	outputCols []*chunk.Column,
+	mergerOutputCols []int,
+) (*chunk.Column, error) {
+	if len(outputCols) != 1 {
+		return nil, errors.Errorf("%s merger expects exactly 1 output column slot, got %d", mergeName, len(outputCols))
+	}
+	if len(mergerOutputCols) != 1 {
+		return nil, errors.Errorf("%s merger expects exactly 1 output column id, got %d", mergeName, len(mergerOutputCols))
+	}
+	outputColID := mergerOutputCols[0]
+	if outputColID < 0 || outputColID >= input.NumCols() {
+		return nil, errors.Errorf("%s output col %d out of input range", mergeName, outputColID)
+	}
+	return input.Column(outputColID), nil
+}
+
 func firstNullRow(col *chunk.Column, numRows int) int {
 	if !col.HasNull() {
 		return -1

@@ -72,20 +72,20 @@ func (m *countMerger) outputColIDs() []int {
 }
 
 func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
-	if len(outputCols) != 1 {
-		return errors.Errorf("count merger expects exactly 1 output column slot, got %d", len(outputCols))
+	oldCol, err := resolveSingleOutputOldColumn("count", input, outputCols, m.outputCols)
+	if err != nil {
+		return err
 	}
-	outputColID := m.outputCols[0]
-	if outputColID < 0 || outputColID >= input.NumCols() {
-		return errors.Errorf("count output col %d out of input range", outputColID)
-	}
-	oldCol := input.Column(outputColID)
 	deltaCol, err := getDepColumn(input, computedByOrder, m.deltaRef)
 	if err != nil {
 		return err
 	}
 
 	numRows := input.NumRows()
+	if rowIdx := firstNullRow(deltaCol, numRows); rowIdx >= 0 {
+		return errors.Errorf("count delta is null at row %d", rowIdx)
+	}
+
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	resultCol.ResizeInt64(numRows, false)
 	resultVals := resultCol.Int64s()
@@ -96,9 +96,6 @@ func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Co
 		var oldVal int64
 		if !oldCol.IsNull(rowIdx) {
 			oldVal = oldVals[rowIdx]
-		}
-		if deltaCol.IsNull(rowIdx) {
-			return errors.Errorf("count delta is null at row %d", rowIdx)
 		}
 		deltaVal := deltaVals[rowIdx]
 		newVal, err := types.AddInt64(oldVal, deltaVal)
