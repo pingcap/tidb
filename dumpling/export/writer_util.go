@@ -600,6 +600,7 @@ func (w *wrappedWriter) Write(p []byte) (n int, err error) {
 	return w.w.Write(w.ctx, p)
 }
 
+// WriteInsertInParquet writes table rows to parquet format.
 func WriteInsertInParquet(
 	pCtx *tcontext.Context,
 	cfg *Config,

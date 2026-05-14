@@ -4,7 +4,6 @@ package export
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
 
 	"github.com/docker/go-units"
@@ -63,7 +62,6 @@ func TestParseParquetDefaultFlags(t *testing.T) {
 	require.EqualValues(t, 120*units.MiB, defaultConf.ParquetRowGroupSize)
 
 	conf := parseConfigFromArgsForTest(t)
-	require.Equal(t, reflect.TypeOf(compressedio.NoCompression), reflect.TypeOf(conf.ParquetCompressType))
 	require.EqualValues(t, units.MiB, conf.ParquetPageSize)
 	require.EqualValues(t, 120*units.MiB, conf.ParquetRowGroupSize)
 	require.Equal(t, compressedio.Snappy, conf.ParquetCompressType)

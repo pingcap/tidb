@@ -39,6 +39,7 @@ type TableMeta interface {
 	ColumnInfos() []*ColumnInfo
 }
 
+// ColumnInfo is an alias of parquet column metadata used by dumpling.
 type ColumnInfo = parquetfile.ColumnInfo
 
 // SQLRowIter is the iterator on a collection of sql.Row.

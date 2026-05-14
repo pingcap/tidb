@@ -230,11 +230,12 @@ func (r *RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bo
 	}
 }
 
+// GetRawBytes implements Stringer.GetRawBytes.
 func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
 	rawBytes := make([]sql.RawBytes, len(r.receivers))
 	for i, receiver := range r.receivers {
-		receiver.GetRawBytes()
-		rawBytes[i] = receiver.GetRawBytes()[0]
+		raw := receiver.GetRawBytes()
+		rawBytes[i] = raw[0]
 	}
 	return rawBytes
 }
@@ -262,6 +263,7 @@ func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool, opt *csvOpti
 	}
 }
 
+// GetRawBytes implements Stringer.GetRawBytes.
 func (s *SQLTypeNumber) GetRawBytes() []sql.RawBytes {
 	return []sql.RawBytes{s.RawBytes}
 }
@@ -298,6 +300,7 @@ func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash boo
 	}
 }
 
+// GetRawBytes implements Stringer.GetRawBytes.
 func (s *SQLTypeString) GetRawBytes() []sql.RawBytes {
 	return []sql.RawBytes{s.RawBytes}
 }
@@ -339,6 +342,7 @@ func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool
 	}
 }
 
+// GetRawBytes implements Stringer.GetRawBytes.
 func (s *SQLTypeBytes) GetRawBytes() []sql.RawBytes {
 	return []sql.RawBytes{s.RawBytes}
 }

@@ -271,7 +271,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		if conf.FileSize == UnspecifiedSize {
 			break
 		}
-		fileName, err = namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
+		fileName, err = namer.NextName(conf.OutputFileTemplate, fileFmtExtension)
 		if err != nil {
 			return err
 		}
