@@ -20,6 +20,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -33,13 +34,11 @@ import (
 const maxDictHeaderSize int64 = 100
 
 var (
-	// rowGroupInMemoryThreshold controls when we preload an entire row group.
-	// If the row-group size is no larger than this threshold, we read it once
-	// into memory and let all column readers share that buffer. This reduces
-	// number of GET requests for files with many small columns, where first-byte
-	// latency can dominate read time. 128 MiB is an heuristic value which we can
-	// tolerate the extra memory usage for row group.
-	rowGroupInMemoryThreshold = 128 * units.MiB
+	// inMemoryThreshold caps the buffer prepareReader / getBuilder is willing
+	// to hold per parser. Files at or below this size are preloaded in one read;
+	// otherwise individual row groups are preloaded when they fit, and larger
+	// row groups fall back to per-column streaming. 128 MiB is a heuristic.
+	inMemoryThreshold = 128 * units.MiB
 )
 
 type readerAtSeekerCloser interface {
@@ -239,6 +238,49 @@ func (w *inMemoryParquetWrapper) Seek(offset int64, whence int) (int64, error) {
 
 func (*inMemoryParquetWrapper) Close() error {
 	return nil
+}
+
+// columnReaderBuilder constructs a per-column reader for one row group.
+type columnReaderBuilder func(c int) (readerAtSeekerCloser, error)
+
+// inMemoryColumnBuilder serves every column from an in-memory buffer.
+func inMemoryColumnBuilder(base *inMemoryReaderBase, ranges rowGroupRange, fileSize int64) columnReaderBuilder {
+	return func(c int) (readerAtSeekerCloser, error) {
+		return &inMemoryParquetWrapper{
+			base:     base,
+			pos:      ranges.columnStarts[c],
+			fileSize: fileSize,
+		}, nil
+	}
+}
+
+// streamingColumnBuilder issues one range GET per column.
+func streamingColumnBuilder(ctx context.Context, store storeapi.Storage, path string, ranges rowGroupRange) columnReaderBuilder {
+	return func(c int) (readerAtSeekerCloser, error) {
+		return newParquetWrapper(ctx, store, path,
+			&storeapi.ReaderOption{
+				StartOffset: &ranges.columnStarts[c],
+				EndOffset:   &ranges.columnEnds[c],
+			})
+	}
+}
+
+// prepareReader picks the reader strategy: whole-file preload or streaming.
+func prepareReader(
+	ctx context.Context,
+	store storeapi.Storage,
+	path string,
+	r storeapi.ReadSeekCloser,
+	fileSize int64,
+) (parquet.ReaderAtSeeker, *inMemoryReaderBase, error) {
+	if fileSize > 0 && fileSize <= int64(inMemoryThreshold) {
+		base, err := newInMemoryReaderBase(ctx, store, path, rowGroupRange{start: 0, end: fileSize})
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		return &inMemoryParquetWrapper{base: base, fileSize: fileSize}, base, nil
+	}
+	return &parquetWrapper{ReadSeekCloser: r}, nil, nil
 }
 
 // Copied from https://github.com/apache/arrow-go/blob/bbf7ab7523a6411e25c7a08566a40e8759cc6c13/parquet/file/row_group_reader.go

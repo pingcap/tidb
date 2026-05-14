@@ -1748,6 +1748,7 @@ func newLoadDataParser(
 			dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
+			dataFileInfo.Remote.FileSize,
 			dataFileInfo.Remote.ParquetMeta,
 		)
 	default:

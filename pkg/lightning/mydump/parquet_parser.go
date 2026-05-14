@@ -320,6 +320,9 @@ type ParquetParser struct {
 
 	rowGroup *rowGroupParser
 
+	// preloadBase holds the whole-file preload buffer.
+	preloadBase *inMemoryReaderBase
+
 	rowPool *zeropool.Pool[[]types.Datum]
 
 	curRowGroup   int
@@ -407,34 +410,33 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSeekerCloser, error), error) {
+// getBuilder picks a column-reader strategy for the current row group:
+//   - whole-file preload, when prepareReader has already loaded the file;
+//   - per-row-group preload, when the row group fits inMemoryThreshold;
+//   - per-column streaming, otherwise.
+func (pp *ParquetParser) getBuilder(ctx context.Context) (columnReaderBuilder, error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	fileSize := pp.fileMeta.GetSourceFileSize()
 
-	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
+	switch {
+	case pp.preloadBase != nil:
+		return inMemoryColumnBuilder(pp.preloadBase, ranges, fileSize), nil
+	case ranges.end-ranges.start <= int64(inMemoryThreshold):
 		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
-		return func(c int) (readerAtSeekerCloser, error) {
-			return &inMemoryParquetWrapper{
-				base:     base,
-				pos:      ranges.columnStarts[c],
-				fileSize: pp.fileMeta.GetSourceFileSize(),
-			}, nil
-		}, nil
+		pp.logger.Debug("preload parquet row group into memory",
+			zap.String("path", pp.path),
+			zap.Int("rowGroup", pp.curRowGroup),
+			zap.Int64("size", ranges.end-ranges.start))
+		return inMemoryColumnBuilder(base, ranges, fileSize), nil
+	default:
+		return streamingColumnBuilder(ctx, pp.store, pp.path, ranges), nil
 	}
-
-	return func(c int) (readerAtSeekerCloser, error) {
-		return newParquetWrapper(ctx, pp.store, pp.path,
-			&storeapi.ReaderOption{
-				StartOffset: &ranges.columnStarts[c],
-				EndOffset:   &ranges.columnEnds[c],
-			})
-	}, nil
 }
 
 func (pp *ParquetParser) moveToNextRowGroup() error {
@@ -605,13 +607,17 @@ func NewParquetParser(
 	store storeapi.Storage,
 	r storeapi.ReadSeekCloser,
 	path string,
+	fileSize int64,
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
-	wrapper := &parquetWrapper{ReadSeekCloser: r}
 	defer func() {
 		_ = r.Close()
 	}()
+	wrapper, preloadBase, err := prepareReader(ctx, store, path, r, fileSize)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	allocator := meta.allocator
 	if allocator == nil {
@@ -712,16 +718,17 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		fileMeta: fileMeta,
-		colTypes: colTypes,
-		colNames: colNames,
-		ctx:      ctx,
-		store:    store,
-		path:     path,
-		prop:     prop,
-		alloc:    allocator,
-		logger:   logger,
-		rowPool:  &pool,
+		fileMeta:    fileMeta,
+		colTypes:    colTypes,
+		colNames:    colNames,
+		ctx:         ctx,
+		store:       store,
+		path:        path,
+		prop:        prop,
+		alloc:       allocator,
+		logger:      logger,
+		rowPool:     &pool,
+		preloadBase: preloadBase,
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
@@ -745,7 +752,7 @@ func SampleStatisticsFromParquet(
 		return 0, 0, err
 	}
 
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
+	parser, err := NewParquetParser(ctx, store, r, path, 0, ParquetFileMeta{})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -862,17 +869,23 @@ func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 	return nb
 }
 
-func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64, error) {
-	if fileMeta == nil || fileMeta.NumRowGroups() == 0 {
+// preloadBufferBytes reports the in-memory buffer that the parser pre-allocates
+// outside the tracking allocator for the first row group. The estimator adds
+// this to the tracked peak so concurrency sizing matches runtime behavior.
+func (pp *ParquetParser) preloadBufferBytes() (int64, error) {
+	if pp.preloadBase != nil {
+		return int64(len(pp.preloadBase.buffer)), nil
+	}
+	if pp.fileMeta == nil || pp.fileMeta.NumRowGroups() == 0 {
 		return 0, nil
 	}
 
-	rgRange, err := rowGroupRangeFromMeta(fileMeta, 0)
+	rgRange, err := rowGroupRangeFromMeta(pp.fileMeta, 0)
 	if err != nil {
 		return 0, err
 	}
 	preloadBytes := rgRange.end - rgRange.start
-	if preloadBytes <= 0 || preloadBytes > int64(rowGroupInMemoryThreshold) {
+	if preloadBytes <= 0 || preloadBytes > int64(inMemoryThreshold) {
 		return 0, nil
 	}
 	return preloadBytes, nil
@@ -885,6 +898,7 @@ func EstimateParquetReaderMemory(
 	ctx context.Context,
 	store storeapi.Storage,
 	path string,
+	fileSize int64,
 ) (int64, error) {
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
@@ -892,7 +906,7 @@ func EstimateParquetReaderMemory(
 	}
 
 	allocator := &trackingAllocator{}
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
+	parser, err := NewParquetParser(ctx, store, r, path, fileSize, ParquetFileMeta{allocator: allocator})
 	if err != nil {
 		_ = r.Close()
 		return 0, err
@@ -906,7 +920,7 @@ func EstimateParquetReaderMemory(
 		return 0, nil
 	}
 
-	preloadBufferBytes, err := estimateInMemoryRowGroupBufferBytes(meta)
+	preloadBufferBytes, err := parser.preloadBufferBytes()
 	if err != nil {
 		return 0, err
 	}
