@@ -1163,6 +1163,7 @@ LOOP:
 func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	enableMockTiCIBackfill(t)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
@@ -1532,6 +1533,7 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 func TestHybridIndexOnPartitionedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	enableMockTiCIBackfill(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1949,6 +1951,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+	enableMockTiCIBackfill(t)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockNewTiCIDataWriterGroupManagerCtx", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
@@ -2282,6 +2285,7 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 }
 
 func TestHybridIndexShardingKeyColumns(t *testing.T) {
+	enableMockTiCIBackfill(t)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
@@ -2322,6 +2326,7 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 }
 
 func TestHybridIndexCreateTiCIOnce(t *testing.T) {
+	enableMockTiCIBackfill(t)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `1*return(true)->return(false)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
@@ -2345,6 +2350,7 @@ func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 }
 
 func TestHybridIndexCheckAddIndexProgressTransition(t *testing.T) {
+	enableMockTiCIBackfill(t)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `1*return(false)->return(true)`)

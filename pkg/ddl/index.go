@@ -2417,6 +2417,7 @@ func (w *worker) readFullTextStopwords(jobCtx *jobContext, dbName, tblName strin
 		}
 		req = chunk.Renew(req, 1024)
 	}
+	slices.Sort(stopwords)
 	return stopwords, nil
 }
 

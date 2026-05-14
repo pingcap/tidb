@@ -2691,6 +2691,16 @@ func TestTiCIIndexIDByEngine(t *testing.T) {
 	require.Zero(t, backend.getTiCIIndexID(engineUUID))
 }
 
+func TestMarkTiCIWriteEngineWithNilLogger(t *testing.T) {
+	backend := &Backend{}
+	engineUUID := uuid.New()
+
+	require.NotPanics(t, func() {
+		backend.markTiCIWriteEngine(engineUUID, true)
+		backend.markTiCIWriteEngine(engineUUID, false)
+	})
+}
+
 // refCountIngestData is a mock IngestData that tracks reference count.
 type refCountIngestData struct {
 	mockIngestData
