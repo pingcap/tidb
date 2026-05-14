@@ -60,11 +60,11 @@ func AddRetryableError(err error) {
 	errMapMutex.Lock()
 	defer errMapMutex.Unlock()
 
-	errMap[s] = struct{}{}
-	if len(errMap) > errMapLimit {
+	if len(errMap) >= errMapLimit {
 		errMap = make(map[string]struct{}, errMapLimit)
 		RetryableErrorCount.Reset()
 	}
+	errMap[s] = struct{}{}
 
 	RetryableErrorCount.WithLabelValues(s).Inc()
 }
