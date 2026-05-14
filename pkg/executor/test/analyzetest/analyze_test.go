@@ -1177,7 +1177,6 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
-
 	// analyze partition under static mode with options
 	tk.MustExec("analyze table t partition p0 columns a,c with 1 topn, 3 buckets")
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1")
@@ -1189,7 +1188,10 @@ func TestAnalyzePartitionTableStaticToDynamic(t *testing.T) {
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[0].ID).Buckets))
 	require.Equal(t, 3, len(p0.GetCol(tableInfo.Columns[2].ID).Buckets))
 	require.Equal(t, 0, len(p1.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 0, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
+	// Static partition analyze may flush pending partition deltas into the
+	// logical/global stats_meta row, but it must not build a global column
+	// histogram. In that meta-only global stats case, the global column is absent.
+	require.Nil(t, tbl.GetCol(tableInfo.Columns[0].ID))
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])

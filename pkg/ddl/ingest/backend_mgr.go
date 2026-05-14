@@ -240,8 +240,8 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, h
 		zap.Bool("checking duplicate", checkDup))
 
 	//nolint: forcetypeassert
-	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
-	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
+	pdCli := store.(kv.StorageWithPD).GetPDClient().(*tikv.CodecPDClient)
+	be, err := local.NewBackend(ctx, tls, *cfg, pdCli)
 	return cfg, be, err
 }
 

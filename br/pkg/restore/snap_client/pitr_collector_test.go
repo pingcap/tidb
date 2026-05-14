@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -185,6 +185,27 @@ func withRewriteRule(hints ...utils.TableIDRemap) backupFileSetOp {
 	}
 }
 
+type copyInterceptorStorage struct {
+	storeapi.Storage
+	copier storeapi.Copier
+	onCopy func()
+}
+
+func newCopyInterceptorStorage(t *testing.T, s storeapi.Storage, onCopy func()) *copyInterceptorStorage {
+	copier, ok := s.(storeapi.Copier)
+	require.True(t, ok)
+	return &copyInterceptorStorage{
+		Storage: s,
+		copier:  copier,
+		onCopy:  onCopy,
+	}
+}
+
+func (s *copyInterceptorStorage) CopyFrom(ctx context.Context, from storeapi.Storage, spec storeapi.CopySpec) error {
+	s.onCopy()
+	return s.copier.CopyFrom(ctx, from, spec)
+}
+
 func TestCollAFile(t *testing.T) {
 	coll := newPiTRCollForTest(t)
 	batch := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("foo.txt")))}
@@ -294,10 +315,10 @@ func TestConcurrency(t *testing.T) {
 	fenceOnce := sync.Once{}
 	closeFence := func() { fenceOnce.Do(func() { close(fence) }) }
 
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/restore/snap_client/put-sst", func() {
+	coll.coll.taskStorage = newCopyInterceptorStorage(t, coll.coll.taskStorage, func() {
 		atomic.AddInt64(&cnt, 1)
 		<-fence
-	}))
+	})
 
 	type result struct {
 		complete func() error
@@ -311,7 +332,6 @@ func TestConcurrency(t *testing.T) {
 	t.Cleanup(func() {
 		closeFence()
 		wg.Wait()
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/snap_client/put-sst"))
 	})
 
 	for i := range tasks {

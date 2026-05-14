@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -146,11 +146,11 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 		prefix := fmt.Sprintf("d_%d_", i)
 		idxPrefix := fmt.Sprintf("i1_%d_", i)
 		meta := &ImportStepMeta{
-			SortedDataMeta: &external.SortedKVMeta{
+			SortedDataMeta: &globalsort.SortedKVMeta{
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []external.MultipleFilesStat{
+				MultipleFilesStats: []globalsort.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{prefix + "/1", prefix + "/1.stat"},
@@ -158,12 +158,12 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 					},
 				},
 			},
-			SortedIndexMetas: map[int64]*external.SortedKVMeta{
+			SortedIndexMetas: map[int64]*globalsort.SortedKVMeta{
 				1: {
 					StartKey:    []byte(idxPrefix + "a"),
 					EndKey:      []byte(idxPrefix + "c"),
 					TotalKVSize: 12,
-					MultipleFilesStats: []external.MultipleFilesStat{
+					MultipleFilesStats: []globalsort.MultipleFilesStat{
 						{
 							Filenames: [][2]string{
 								{idxPrefix + "/1", idxPrefix + "/1.stat"},
@@ -181,10 +181,10 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 }
 
 func TestGenerateMergeSortSpecs(t *testing.T) {
-	stepBak := external.MaxMergeSortFileCountStep
-	external.MaxMergeSortFileCountStep = 2
+	stepBak := globalsort.MaxMergeSortFileCountStep
+	globalsort.MaxMergeSortFileCountStep = 2
 	t.Cleanup(func() {
-		external.MaxMergeSortFileCountStep = stepBak
+		globalsort.MaxMergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/dxf/importinto/forceMergeSort", `return("data")`))
@@ -260,11 +260,11 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 		prefix := fmt.Sprintf("x_%d_", i)
 		meta := &MergeSortStepMeta{
 			KVGroup: "data",
-			SortedKVMeta: external.SortedKVMeta{
+			SortedKVMeta: globalsort.SortedKVMeta{
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []external.MultipleFilesStat{
+				MultipleFilesStats: []globalsort.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{prefix + "/1", prefix + "/1.stat"},
@@ -335,13 +335,13 @@ func TestSplitForOneSubtask(t *testing.T) {
 		values[i] = largeValue
 	}
 
-	var multiFileStat []external.MultipleFilesStat
-	writer := external.NewWriterBuilder().
+	var multiFileStat []globalsort.MultipleFilesStat
+	writer := globalsort.NewWriterBuilder().
 		SetMemorySizeLimit(40*1024*1024).
 		SetBlockSize(20*1024*1024).
 		SetPropSizeDistance(5*1024*1024).
 		SetPropKeysDistance(5).
-		SetOnCloseFunc(func(s *external.WriterSummary) {
+		SetOnCloseFunc(func(s *globalsort.WriterSummary) {
 			multiFileStat = s.MultipleFilesStats
 		}).
 		Build(store, "/mock-test", "0")
@@ -351,7 +351,7 @@ func TestSplitForOneSubtask(t *testing.T) {
 	}
 	require.NoError(t, writer.Close(ctx))
 	require.NoError(t, err)
-	kvMeta := &external.SortedKVMeta{
+	kvMeta := &globalsort.SortedKVMeta{
 		StartKey:           keys[0],
 		EndKey:             kv.Key(keys[len(keys)-1]).Next(),
 		MultipleFilesStats: multiFileStat,

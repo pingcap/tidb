@@ -394,7 +394,7 @@ func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor
 	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
 	// some code in Init that need retry, remove it after it's decoupled.
 	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
-		m.logger.Error("met retryable err", zap.Error(err))
+		m.logger.Warn("met retryable err", zap.Error(err))
 		return
 	}
 	err1 := m.runWithRetry(func() error {

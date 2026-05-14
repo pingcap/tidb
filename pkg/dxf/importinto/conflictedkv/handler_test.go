@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -106,13 +106,13 @@ func TestHandler(t *testing.T) {
 				return nil
 			})
 			progressCollector := &execute.TestCollector{}
-			baseHdl := conflictedkv.NewBaseHandler(tbl, external.DataKVGroup, encoder, mockEncodedKVHdl, progressCollector, logger)
+			baseHdl := conflictedkv.NewBaseHandler(tbl, globalsort.DataKVGroup, encoder, mockEncodedKVHdl, progressCollector, logger)
 			dataKVHdl := conflictedkv.NewDataKVHandler(baseHdl)
 			t.Cleanup(func() {
 				require.NoError(t, dataKVHdl.Close(ctx))
 			})
 			require.NoError(t, dataKVHdl.PreRun())
-			var ch = make(chan *external.KVPair, 10)
+			var ch = make(chan *globalsort.KVPair, 10)
 			eg := util.NewErrorGroupWithRecover()
 			eg.Go(func() error {
 				return dataKVHdl.Run(ctx, ch)
@@ -130,7 +130,7 @@ func TestHandler(t *testing.T) {
 					}
 					// completely same row repeat 10 times
 					for range 10 {
-						ch <- &external.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
+						ch <- &globalsort.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
 					}
 				}
 				close(ch)
@@ -181,7 +181,7 @@ func TestHandler(t *testing.T) {
 			})
 			var targetIndexID int64 = 2
 			progressCollector := &execute.TestCollector{}
-			baseHdl := conflictedkv.NewBaseHandler(tbl, external.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, progressCollector, logger)
+			baseHdl := conflictedkv.NewBaseHandler(tbl, globalsort.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, progressCollector, logger)
 			trafficRec := &mockTrafficRecorder{}
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
@@ -189,7 +189,7 @@ func TestHandler(t *testing.T) {
 				conflictedkv.NewHandleFilter(alreadyProcessedHandles),
 			)
 			require.NoError(t, indexKVHdl.PreRun())
-			var ch = make(chan *external.KVPair, 10)
+			var ch = make(chan *globalsort.KVPair, 10)
 			eg := util.NewErrorGroupWithRecover()
 			eg.Go(func() error {
 				defer func() {
@@ -220,7 +220,7 @@ func TestHandler(t *testing.T) {
 						require.NoError(t, err)
 						// only send unique index kv pairs
 						if indexID == targetIndexID {
-							ch <- &external.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
+							ch <- &globalsort.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
 						}
 					}
 				}

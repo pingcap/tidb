@@ -332,17 +332,18 @@ func kvExecDetailFormat(buf *bytes.Buffer, kvExecDetail *util.ExecDetails) {
 		writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, zeroStr)
 		return
 	}
-	writeSlowLogItem(buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(kvExecDetail.WaitKVRespDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(kvExecDetail.WaitPDRespDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(kvExecDetail.BackoffDuration).Seconds(), 'f', -1, 64))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesSentKVTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedKVTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesSentKVCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedKVCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesSentMPPTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedMPPTotal, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesSentMPPCrossZone, 10))
-	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, strconv.FormatInt(kvExecDetail.UnpackedBytesReceivedMPPCrossZone, 10))
+	snapshot := execdetails.LoadTiKVExecDetails(kvExecDetail)
+	writeSlowLogItem(buf, SlowLogKVTotal, strconv.FormatFloat(time.Duration(snapshot.WaitKVRespDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(buf, SlowLogPDTotal, strconv.FormatFloat(time.Duration(snapshot.WaitPDRespDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(buf, SlowLogBackoffTotal, strconv.FormatFloat(time.Duration(snapshot.BackoffDuration).Seconds(), 'f', -1, 64))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVTotal, strconv.FormatInt(snapshot.UnpackedBytesSentKVTotal, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVTotal, strconv.FormatInt(snapshot.UnpackedBytesReceivedKVTotal, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiKVCrossZone, strconv.FormatInt(snapshot.UnpackedBytesSentKVCrossZone, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiKVCrossZone, strconv.FormatInt(snapshot.UnpackedBytesReceivedKVCrossZone, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashTotal, strconv.FormatInt(snapshot.UnpackedBytesSentMPPTotal, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashTotal, strconv.FormatInt(snapshot.UnpackedBytesReceivedMPPTotal, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesSentTiFlashCrossZone, strconv.FormatInt(snapshot.UnpackedBytesSentMPPCrossZone, 10))
+	writeSlowLogItem(buf, SlowLogUnpackedBytesReceivedTiFlashCrossZone, strconv.FormatInt(snapshot.UnpackedBytesReceivedMPPCrossZone, 10))
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -645,7 +646,8 @@ func makeKVExecDetailAccessor(parse func(string) (any, error),
 			if items.KVExecDetail == nil {
 				tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
 				if tikvExecDetailRaw != nil {
-					items.KVExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
+					snapshot := execdetails.LoadTiKVExecDetails(tikvExecDetailRaw.(*util.ExecDetails))
+					items.KVExecDetail = &snapshot
 				}
 			}
 		},

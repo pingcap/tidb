@@ -26,9 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
@@ -270,43 +268,10 @@ const (
 	CompactionUpperThreshold = 32 * units.GiB
 )
 
-// EstimateCompactionThreshold estimate SST files compression threshold by total row file size
-// with a higher compression threshold, the compression time increases, but the iteration time decreases.
-// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
-// we set the upper bound to 32GB to avoid too long compression time.
-// factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
-func EstimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
-	totalRawFileSize := int64(0)
-	var lastFile string
-	fileSizeMap := make(map[string]int64, len(files))
-	for _, file := range files {
-		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
-	}
-
-	for _, engineCp := range cp.Engines {
-		for _, chunk := range engineCp.Chunks {
-			if chunk.FileMeta.Path == lastFile {
-				continue
-			}
-			size, ok := fileSizeMap[chunk.FileMeta.Path]
-			if !ok {
-				size = chunk.FileMeta.FileSize
-			}
-			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				// parquet file is compressed, thus estimates with a factor of 2
-				size *= 2
-			}
-			totalRawFileSize += size
-			lastFile = chunk.FileMeta.Path
-		}
-	}
-	totalRawFileSize *= factor
-
-	return EstimateCompactionThreshold2(totalRawFileSize)
-}
-
 // EstimateCompactionThreshold2 estimate SST files compression threshold by total row file size
-// see EstimateCompactionThreshold for more details.
+// with a higher compaction threshold, the compaction time increases, but the iteration time decreases.
+// Try to limit the total SST files number under 500. But compressing 32GB SST files costs about 20min,
+// so set the upper bound to 32GB to avoid too long compaction time.
 func EstimateCompactionThreshold2(totalRawFileSize int64) int64 {
 	// try restrict the total file number within 512
 	threshold := totalRawFileSize / 512

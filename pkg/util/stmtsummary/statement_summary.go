@@ -1118,13 +1118,14 @@ func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
 // Add add a new sample value to the ru summary record.
 func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
 	if info != nil {
-		s.UnpackedBytesSentTiKVTotal += info.UnpackedBytesSentKVTotal
-		s.UnpackedBytesReceivedTiKVTotal += info.UnpackedBytesReceivedKVTotal
-		s.UnpackedBytesSentTiKVCrossZone += info.UnpackedBytesSentKVCrossZone
-		s.UnpackedBytesReceivedTiKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
-		s.UnpackedBytesSentTiFlashTotal += info.UnpackedBytesSentMPPTotal
-		s.UnpackedBytesReceivedTiFlashTotal += info.UnpackedBytesReceivedMPPTotal
-		s.UnpackedBytesSentTiFlashCrossZone += info.UnpackedBytesSentMPPCrossZone
-		s.UnpackedBytesReceivedTiFlashCrossZone += info.UnpackedBytesReceivedMPPCrossZone
+		snapshot := execdetails.LoadTiKVExecDetails(info)
+		s.UnpackedBytesSentTiKVTotal += snapshot.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedTiKVTotal += snapshot.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentTiKVCrossZone += snapshot.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedTiKVCrossZone += snapshot.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentTiFlashTotal += snapshot.UnpackedBytesSentMPPTotal
+		s.UnpackedBytesReceivedTiFlashTotal += snapshot.UnpackedBytesReceivedMPPTotal
+		s.UnpackedBytesSentTiFlashCrossZone += snapshot.UnpackedBytesSentMPPCrossZone
+		s.UnpackedBytesReceivedTiFlashCrossZone += snapshot.UnpackedBytesReceivedMPPCrossZone
 	}
 }

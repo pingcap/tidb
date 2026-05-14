@@ -42,9 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -125,7 +125,7 @@ type Engine struct {
 	finishedMetaSeq atomic.Int32
 
 	config    backend.LocalEngineConfig
-	tableInfo *checkpoints.TidbTableInfo
+	tableInfo *importdef.TableInfo
 
 	dupDetectOpt common.DupDetectOpt
 

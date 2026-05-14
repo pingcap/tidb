@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -168,6 +169,10 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 
 func (c *TestClient) WaitRegionsScattered(context.Context, []*RegionInfo) (int, error) {
 	return 0, nil
+}
+
+func (*TestClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }
 
 // MockPDClientForSplit is a mock PD client for testing split and scatter.
@@ -674,4 +679,8 @@ func (f *FakeSplitClient) ScanRegions(
 
 func (f *FakeSplitClient) WaitRegionsScattered(context.Context, []*RegionInfo) (int, error) {
 	return 0, nil
+}
+
+func (*FakeSplitClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }

@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
@@ -301,7 +301,7 @@ func (em *engineManager) closeEngine(
 			}
 			ts = oracle.ComposeTS(physical, logical)
 		}
-		externalEngine := external.NewExternalEngine(
+		externalEngine := globalsort.NewExternalEngine(
 			ctx,
 			externalCfg.ExtStore,
 			externalCfg.DataFiles,
@@ -395,7 +395,7 @@ func (em *engineManager) resetEngine(
 	localEngine := em.lockEngine(engineUUID, importMutexStateClose)
 	if localEngine == nil {
 		if engineI, ok := em.externalEngine[engineUUID]; ok {
-			extEngine := engineI.(*external.Engine)
+			extEngine := engineI.(*globalsort.Engine)
 			extEngine.Reset()
 			return nil
 		}

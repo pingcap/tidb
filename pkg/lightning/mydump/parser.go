@@ -317,6 +317,13 @@ func (parser *blockParser) readBlock() error {
 
 	n, err := parser.reader.ReadFull(parser.blockBuf)
 
+	// (n=0, ErrUnexpectedEOF) is only produced when the underlying reader
+	// itself reported truncation (e.g. zstd/gzip frame cut mid-block); a
+	// normal tail short read always carries n>0. Surface it instead of
+	// treating the truncated stream as a clean last chunk.
+	if err == io.ErrUnexpectedEOF && n == 0 {
+		return errors.Trace(err)
+	}
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
 		parser.isLastChunk = true

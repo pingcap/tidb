@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -88,7 +88,7 @@ func (rc *RemoteChecksum) IsEqual(other *verification.KVChecksum) bool {
 
 // ChecksumManager is a manager that manages checksums.
 type ChecksumManager interface {
-	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error)
+	Checksum(ctx context.Context, tableInfo *importdef.TableInfo) (*RemoteChecksum, error)
 	Close()
 }
 
@@ -108,7 +108,7 @@ func NewTiDBChecksumExecutor(db *sql.DB) ChecksumManager {
 	}
 }
 
-func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *importdef.TableInfo) (*RemoteChecksum, error) {
 	var err error
 	if err = e.manager.addOneJob(ctx, e.db); err != nil {
 		return nil, err
@@ -320,7 +320,7 @@ func NewTiKVChecksumManagerForImportInto(store kv.Storage, taskID int64, distSQL
 	}
 }
 
-func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
+func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *importdef.TableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
 		SetBackoffWeight(e.backoffWeight).
@@ -372,7 +372,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 var retryGetTSInterval = time.Second
 
 // Checksum implements the ChecksumManager interface.
-func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *importdef.TableInfo) (*RemoteChecksum, error) {
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	var (
 		physicalTS, logicalTS int64

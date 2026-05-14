@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,12 +72,12 @@ func TestImportTaskExecutor(t *testing.T) {
 
 func TestGetOnDupForKVGroup(t *testing.T) {
 	t.Run("data-kv-group", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.OnDupKeyModeCapture)
+		onDup, err := getOnDupForKVGroup(nil, globalsort.DataKVGroup, importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
 	})
 	t.Run("data-kv-group-error", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(nil, external.DataKVGroup, importer.OnDupKeyModeError)
+		onDup, err := getOnDupForKVGroup(nil, globalsort.DataKVGroup, importer.OnDupKeyModeError)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
@@ -88,28 +88,28 @@ func TestGetOnDupForKVGroup(t *testing.T) {
 	}
 
 	t.Run("unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.OnDupKeyModeCapture)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(1), importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRecord, onDup)
 	})
 	t.Run("unique-index-error", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(1), importer.OnDupKeyModeError)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(1), importer.OnDupKeyModeError)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
 
 	t.Run("non-unique-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.OnDupKeyModeCapture)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(2), importer.OnDupKeyModeCapture)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyRemove, onDup)
 
-		onDup, err = getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(2), importer.OnDupKeyModeError)
+		onDup, err = getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(2), importer.OnDupKeyModeError)
 		require.NoError(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyError, onDup)
 	})
 
 	t.Run("unknown-index", func(t *testing.T) {
-		onDup, err := getOnDupForKVGroup(indicesGenKV, external.IndexID2KVGroup(3), importer.OnDupKeyModeCapture)
+		onDup, err := getOnDupForKVGroup(indicesGenKV, globalsort.IndexID2KVGroup(3), importer.OnDupKeyModeCapture)
 		require.Error(t, err)
 		require.Equal(t, engineapi.OnDuplicateKeyIgnore, onDup)
 		require.ErrorContains(t, err, "unknown index 3")

@@ -26,6 +26,7 @@ import (
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -34,10 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -77,7 +77,7 @@ type EstimateSourceDataSizeResult struct {
 type PreImportInfoGetter interface {
 	TargetInfoGetter
 	// GetAllTableStructures gets all the table structures with the information from both the source and the target.
-	GetAllTableStructures(ctx context.Context, opts ...ropts.GetPreInfoOption) (map[string]*checkpoints.TidbDBInfo, error)
+	GetAllTableStructures(ctx context.Context, opts ...ropts.GetPreInfoOption) (map[string]*importdef.DBInfo, error)
 	// ReadFirstNRowsByTableName reads the first N rows of data of an importing source table.
 	ReadFirstNRowsByTableName(ctx context.Context, schemaName string, tableName string, n int) (cols []string, rows [][]types.Datum, err error)
 	// ReadFirstNRowsByFileMeta reads the first N rows of an data file.
@@ -276,7 +276,7 @@ type PreImportInfoGetterImpl struct {
 	mdDBMetaMap      map[string]*mydump.MDDatabaseMeta
 	mdDBTableMetaMap map[string]map[string]*mydump.MDTableMeta
 
-	dbInfosCache       map[string]*checkpoints.TidbDBInfo
+	dbInfosCache       map[string]*importdef.DBInfo
 	sysVarsCache       map[string]string
 	estimatedSizeCache *EstimateSourceDataSizeResult
 }
@@ -346,9 +346,9 @@ func (p *PreImportInfoGetterImpl) Init() {
 // GetAllTableStructures gets all the table structures with the information from both the source and the target.
 // It implements the PreImportInfoGetter interface.
 // It has a caching mechanism: the table structures will be obtained from the source only once.
-func (p *PreImportInfoGetterImpl) GetAllTableStructures(ctx context.Context, opts ...ropts.GetPreInfoOption) (map[string]*checkpoints.TidbDBInfo, error) {
+func (p *PreImportInfoGetterImpl) GetAllTableStructures(ctx context.Context, opts ...ropts.GetPreInfoOption) (map[string]*importdef.DBInfo, error) {
 	var (
-		dbInfos map[string]*checkpoints.TidbDBInfo
+		dbInfos map[string]*importdef.DBInfo
 		err     error
 	)
 	getPreInfoCfg := p.getPreInfoCfg.Clone()

@@ -24,7 +24,6 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/util",
         "//pkg/util/chunk",
-        "//pkg/util/cpu",
         "//pkg/util/hack",
         "//pkg/util/injectfailpoint",
         "//pkg/util/logutil",

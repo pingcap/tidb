@@ -25,8 +25,8 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -144,7 +144,7 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
 		}
 		require.NoError(t, coll.Close(ctx))
-		if kvGroup == external.DataKVGroup {
+		if kvGroup == globalsort.DataKVGroup {
 			require.Empty(t, coll.hdlSet.handles)
 		} else {
 			require.Equal(t, rowCount, len(coll.hdlSet.handles))
@@ -176,14 +176,14 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 	for _, c := range [][2]int{{90, 8}, {300, 3}, {800, 1}} {
 		maxSize, outFileCnt := c[0], c[1]
 		t.Run(fmt.Sprintf("data kv, max file size %d bytes", maxSize), func(t *testing.T) {
-			doTestFn(t, external.DataKVGroup, int64(maxSize), outFileCnt)
+			doTestFn(t, globalsort.DataKVGroup, int64(maxSize), outFileCnt)
 		})
 	}
 
 	for _, c := range [][2]int{{90, 8}, {300, 3}, {800, 1}} {
 		maxSize, outFileCnt := c[0], c[1]
 		t.Run(fmt.Sprintf("index kv, max file size %d bytes", maxSize), func(t *testing.T) {
-			doTestFn(t, external.IndexID2KVGroup(1), int64(maxSize), outFileCnt)
+			doTestFn(t, globalsort.IndexID2KVGroup(1), int64(maxSize), outFileCnt)
 		})
 	}
 }
@@ -212,7 +212,7 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	var sharedTotalFileSize atomic.Int64
 	coll := NewCollector(
 		nil, logger, objStore, store, "test",
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+		globalsort.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 
 	rowCount := 5
@@ -306,11 +306,11 @@ func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.
 	var sharedTotalFileSize atomic.Int64
 	coll1 := NewCollector(
 		nil, logger, objStore, store, "test1",
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+		globalsort.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 	coll2 := NewCollector(
 		nil, logger, objStore, store, "test2",
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+		globalsort.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 
 	row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}

@@ -361,6 +361,9 @@ func TestMaxRuntimeSlots(t *testing.T) {
 		},
 	)
 	scope := handle.GetTargetScope()
+	cpuCount, err := c.TaskMgr.GetCPUCountOfNode(c.Ctx)
+	require.NoError(t, err)
+	require.Equal(t, 16, cpuCount)
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 16)
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	require.EqualValues(t, 2, callCount.Load())

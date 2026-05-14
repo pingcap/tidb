@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "operator",
@@ -62,5 +62,18 @@ go_library(
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "operator_test",
+    timeout = "short",
+    srcs = ["crr_checkpoint_test.go"],
+    embed = [":operator"],
+    flaky = True,
+    deps = [
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "@com_github_stretchr_testify//require",
     ],
 )

@@ -250,6 +250,46 @@ func TestSharedLockChildTableConflict(t *testing.T) {
 	tk1.MustExec("admin check table child")
 }
 
+func TestSharedLockCascadeUpdateExplicitPessimisticTxn(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires real TiKV")
+	}
+	if kerneltype.IsNextGen() {
+		t.Skip("does not support shared lock in next-gen TiKV")
+	}
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	for _, constraintCheckInPlace := range []string{"ON", "OFF"} {
+		t.Run("constraint_check_in_place_pessimistic_"+constraintCheckInPlace, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+			defer tk.MustExec("set @@global.tidb_enable_foreign_key=default")
+			tk.MustExec("set @@foreign_key_checks=1")
+			tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock=ON")
+			tk.MustExec("set @@tidb_constraint_check_in_place_pessimistic=" + constraintCheckInPlace)
+
+			tk.MustExec("drop table if exists c, p")
+			tk.MustExec("create table p(id int primary key)")
+			tk.MustExec("create table c(pid int, foreign key(pid) references p(id) on delete cascade on update cascade)")
+			tk.MustExec("insert into p values (1)")
+			tk.MustExec("insert into c values (1)")
+
+			tk.MustExec("begin pessimistic")
+			tk.MustExec("update p set id = 2 where id = 1")
+			tk.MustQuery("select pid from c").Check(testkit.Rows("2"))
+			tk.MustExec("commit")
+
+			tk.MustQuery("select pid from c").Check(testkit.Rows("2"))
+			tk.MustExec("delete from p where id = 2")
+			tk.MustQuery("select count(*) from c").Check(testkit.Rows("0"))
+			tk.MustExec("admin check table p")
+			tk.MustExec("admin check table c")
+		})
+	}
+}
+
 func TestSharedLockLockView(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")

@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -61,16 +61,16 @@ func newTableRestore(t *testing.T,
 	require.NoError(t, err)
 	tableInfo.State = model.StatePublic
 
-	ti := &checkpoints.TidbTableInfo{
+	ti := &importdef.TableInfo{
 		ID:   tableInfo.ID,
 		DB:   db,
 		Name: table,
 		Core: tableInfo,
 	}
-	dbInfo := &checkpoints.TidbDBInfo{
+	dbInfo := &importdef.DBInfo{
 		ID:   dbID,
 		Name: db,
-		Tables: map[string]*checkpoints.TidbTableInfo{
+		Tables: map[string]*importdef.TableInfo{
 			table: ti,
 		},
 	}
@@ -444,7 +444,7 @@ type testChecksumMgr struct {
 
 var _ local.ChecksumManager = (*testChecksumMgr)(nil)
 
-func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*local.RemoteChecksum, error) {
+func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *importdef.TableInfo) (*local.RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
 }

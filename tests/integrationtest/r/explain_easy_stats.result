@@ -128,13 +128,13 @@ HashJoin	root		CARTESIAN left outer semi join, left side:IndexReader, other cond
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_14 {
-subgraph cluster14{
+digraph HashJoin_8 {
+subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_14" -> "IndexReader_18"
-"HashJoin_14" -> "TableReader_20"
+"HashJoin_8" -> "IndexReader_18"
+"HashJoin_8" -> "TableReader_20"
 }
 subgraph cluster17{
 node [style=filled, color=lightgrey]

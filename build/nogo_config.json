@@ -435,7 +435,6 @@
       "lightning/pkg/importer": "ignore importer code",
       "br/cmd/tidb-lightning-ctl/main.go": "ignore main code",
       "br/pkg/stream/rewrite_meta_rawkv.go": "ignore rewrite_meta_rawkv code",
-      "lightning/pkg/web/": "ignore web code",
       "br/pkg/mock/": "ignore mock code",
       "br/pkg/aws/ebs.go": "ignore ebs code",
       "br/pkg/backup/": "ignore backup code",

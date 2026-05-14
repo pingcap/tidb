@@ -35,9 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -160,8 +160,8 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.dataBlockSize = external.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
-	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, external.DefaultBlockSize)
+	s.dataBlockSize = globalsort.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
+	s.indexBlockSize = globalsort.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, globalsort.DefaultBlockSize)
 	s.concurrency = int(s.GetResource().CPU.Capacity())
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
@@ -297,8 +297,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		DataEngine:       dataEngine,
 		IndexEngine:      indexEngine,
 		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetKeySpace()),
-		SortedDataMeta:   &external.SortedKVMeta{},
-		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
+		SortedDataMeta:   &globalsort.SortedKVMeta{},
+		SortedIndexMetas: make(map[int64]*globalsort.SortedKVMeta),
 		globalSortStore:  objStore,
 		dataKVFileCount:  &dataKVFiles,
 		indexKVFileCount: &indexKVFiles,
@@ -405,7 +405,7 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	subtaskMeta.RecordedConflictKVCount = sharedVars.RecordedConflictKVCount
 	// if using global sort, write the external meta to external storage.
 	if s.tableImporter.IsGlobalSort() {
-		subtaskMeta.ExternalPath = external.SubtaskMetaPath(s.taskID, subtask.ID)
+		subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(s.taskID, subtask.ID)
 		if err := subtaskMeta.WriteJSONToExternalStorage(ctx, extStore, subtaskMeta); err != nil {
 			return errors.Trace(err)
 		}
@@ -433,7 +433,7 @@ type mergeSortStepExecutor struct {
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
-	subtaskSortedKVMeta *external.SortedKVMeta
+	subtaskSortedKVMeta *globalsort.SortedKVMeta
 	// part-size for uploading merged files, it's calculated by:
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
@@ -448,8 +448,8 @@ var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
 func (m *mergeSortStepExecutor) Init(context.Context) error {
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
-	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount))
-	m.indexKVPartSize = max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount))
+	m.dataKVPartSize = max(globalsort.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/globalsort.MaxUploadPartCount))
+	m.indexKVPartSize = max(globalsort.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/globalsort.MaxUploadPartCount))
 
 	m.logger.Info("merge sort partSize",
 		zap.String("data-kv", units.BytesSize(float64(m.dataKVPartSize))),
@@ -491,8 +491,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	}()
 
 	var mu sync.Mutex
-	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
-	onWriterClose := func(summary *external.WriterSummary) {
+	m.subtaskSortedKVMeta = &globalsort.SortedKVMeta{}
+	onWriterClose := func(summary *globalsort.WriterSummary) {
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
@@ -501,7 +501,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	prefix := subtaskPrefix(m.task.ID, subtask.ID)
 
 	partSize := m.dataKVPartSize
-	if sm.KVGroup != external.DataKVGroup {
+	if sm.KVGroup != globalsort.DataKVGroup {
 		partSize = m.indexKVPartSize
 	}
 	onDup, err := getOnDupForKVGroup(
@@ -514,20 +514,20 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	}
 
 	wctx := workerpool.NewContext(ctx)
-	op := external.NewMergeOperator(
+	op := globalsort.NewMergeOperator(
 		wctx,
 		objStore,
 		partSize,
 		prefix,
-		external.DefaultOneWriterBlockSize,
+		globalsort.DefaultOneWriterBlockSize,
 		onWriterClose,
-		external.NewMergeCollector(ctx, &m.summary),
+		globalsort.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),
 		false,
 		onDup,
 	)
 
-	if err = external.MergeOverlappingFiles(
+	if err = globalsort.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
 		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
@@ -554,7 +554,7 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
 	subtaskMeta.RecordedConflictKVCount = subtaskMeta.SortedKVMeta.ConflictInfo.Count
-	subtaskMeta.ExternalPath = external.SubtaskMetaPath(m.task.ID, subtask.ID)
+	subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(m.task.ID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, sortStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
@@ -605,11 +605,11 @@ func getOnDupForKVGroup(
 	kvGroup string,
 	onDupKeyMode importer.OnDupKeyMode,
 ) (engineapi.OnDuplicateKey, error) {
-	if kvGroup == external.DataKVGroup {
+	if kvGroup == globalsort.DataKVGroup {
 		return getOnDupForConflictedKV(onDupKeyMode), nil
 	}
 
-	indexID, err2 := external.KVGroup2IndexID(kvGroup)
+	indexID, err2 := globalsort.KVGroup2IndexID(kvGroup)
 	if err2 != nil {
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Trace(err2)
@@ -646,7 +646,7 @@ type ingestCollector struct {
 
 func (c *ingestCollector) Processed(bytes, rowCnt int64) {
 	c.summary.Processed.Add(bytes)
-	if c.kvGroup == external.DataKVGroup {
+	if c.kvGroup == globalsort.DataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)
 	}
 	// since the region job might be retried, this value might be larger than
@@ -797,7 +797,7 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 
 	subtaskMeta.ConflictInfo = conflictInfo
 	subtaskMeta.RecordedConflictKVCount = conflictInfo.Count
-	subtaskMeta.ExternalPath = external.SubtaskMetaPath(e.taskID, subtask.ID)
+	subtaskMeta.ExternalPath = globalsort.SubtaskMetaPath(e.taskID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, objStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}

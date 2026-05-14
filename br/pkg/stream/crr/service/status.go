@@ -41,7 +41,7 @@ func normalizeStorageSubDir(subDir string) (string, error) {
 	}
 	cleaned := path.Clean(trimmed)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("state storage subdir must stay within upstream storage, got %q", subDir)
+		return "", fmt.Errorf("state storage subdir must stay within selected storage, got %q", subDir)
 	}
 	return cleaned, nil
 }

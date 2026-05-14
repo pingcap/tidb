@@ -648,6 +648,13 @@ type Request struct {
 	TiKVClientReadTimeout uint64
 	// MaxExecutionTime is the timeout of the whole query execution
 	MaxExecutionTime uint64
+	// MaxKeysRead is the global limit on storage engine keys examined across all
+	// coprocessor tasks for this request (0 = unlimited).
+	MaxKeysRead uint64
+	// MaxKeysReadCounter, when non-nil, is the shared atomic accumulator used by
+	// copIterator to enforce a statement-wide max_keys_read budget across
+	// multiple coprocessor iterators belonging to the same statement.
+	MaxKeysReadCounter *atomic.Uint64
 
 	RunawayChecker resourcegroup.RunawayChecker
 

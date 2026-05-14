@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/atomic"
 )
@@ -211,6 +212,10 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 
 func (c *testSplitClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
 	return 0, nil
+}
+
+func (*testSplitClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }
 
 // For keys ["", "aay", "bba", "bbh", "cca", ""], the key ranges of

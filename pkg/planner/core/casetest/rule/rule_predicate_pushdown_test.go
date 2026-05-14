@@ -77,7 +77,12 @@ func runPredicatePushdownTestDataWithResult(t *testing.T, tk *testkit.TestKit, c
 	}
 }
 
-func TestConstantPropagateWithCollation(t *testing.T) {
+func TestPredicatePushdownSuite(t *testing.T) {
+	t.Run("TestConstantPropagateWithCollation", testConstantPropagateWithCollation)
+	t.Run("TestPredicatePushDown", testPredicatePushDown)
+}
+
+func testConstantPropagateWithCollation(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t (id int primary key, name varchar(20));")
@@ -98,7 +103,7 @@ func TestConstantPropagateWithCollation(t *testing.T) {
 	})
 }
 
-func TestPredicatePushDown(t *testing.T) {
+func testPredicatePushDown(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec(`CREATE TABLE crm_rd_150m (

@@ -16,23 +16,24 @@ import (
 )
 
 const (
-	flagTableConcurrency  = "table-concurrency"
-	flagRestoredTS        = "restored-ts"
-	flagUpstreamClusterID = "upstream-cluster-id"
-	flagStorePatterns     = "stores"
-	flagTaskName          = "task-name"
-	flagUpstreamStorage   = "upstream-storage"
-	flagDownstreamStorage = "downstream-storage"
-	flagTTL               = "ttl"
-	flagSafePoint         = "safepoint"
-	flagStorage           = "storage"
-	flagLoadCreds         = "load-creds"
-	flagJSON              = "json"
-	flagRecent            = "recent"
-	flagTo                = "to"
-	flagBase              = "base"
-	flagYes               = "yes"
-	flagDryRun            = "dry-run"
+	flagTableConcurrency                 = "table-concurrency"
+	flagRestoredTS                       = "restored-ts"
+	flagUpstreamClusterID                = "upstream-cluster-id"
+	flagStorePatterns                    = "stores"
+	flagTaskName                         = "task-name"
+	flagUpstreamStorage                  = "upstream-storage"
+	flagDownstreamStorage                = "downstream-storage"
+	flagCheckSyncedFromDownstreamStorage = "check-synced-from-downstream-storage"
+	flagTTL                              = "ttl"
+	flagSafePoint                        = "safepoint"
+	flagStorage                          = "storage"
+	flagLoadCreds                        = "load-creds"
+	flagJSON                             = "json"
+	flagRecent                           = "recent"
+	flagTo                               = "to"
+	flagBase                             = "base"
+	flagYes                              = "yes"
+	flagDryRun                           = "dry-run"
 )
 
 type PauseGcConfig struct {
@@ -228,14 +229,16 @@ type CRRCheckpointConfig struct {
 	task.Config
 	CRRConfig crrconfig.Config
 
-	UpstreamStorage   string
-	DownstreamStorage string
+	UpstreamStorage                  string
+	DownstreamStorage                string
+	CheckSyncedFromDownstreamStorage bool
 }
 
 func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
 	crrconfig.DefineFlags(flags)
 	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
 	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI. Optional when the upstream storage can confirm object sync directly, such as AWS S3.")
+	flags.Bool(flagCheckSyncedFromDownstreamStorage, false, "Check object sync by file existence on downstream storage. Only when this flag is enabled will BR use --downstream-storage to confirm replication success.")
 }
 
 func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
@@ -252,6 +255,11 @@ func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return err
 	}
 	cfg.DownstreamStorage, err = flags.GetString(flagDownstreamStorage)
+	if err != nil {
+		return err
+	}
+
+	cfg.CheckSyncedFromDownstreamStorage, err = flags.GetBool(flagCheckSyncedFromDownstreamStorage)
 	if err != nil {
 		return err
 	}

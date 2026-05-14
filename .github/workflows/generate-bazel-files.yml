@@ -42,7 +42,16 @@ jobs:
           sed -i '/ats.apps.svc/d' DEPS.bzl
           sed -i '/bazel-cache/d' WORKSPACE
           sed -i '/ats.apps.svc/d' WORKSPACE
-          make bazel_prepare
+          bazel run //:gazelle
+          bazel run //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps -build_file_proto_mode=disable -prune
+          bazel run \
+            --run_under="cd ${PWD} && " \
+            //tools/tazel:tazel
+
+          tmp_out="$(mktemp -d -t tidbbzl.XXXXXX)"
+          trap 'rm -rf "${tmp_out}"' EXIT
+          bazel run //cmd/mirror -- --mirror > "${tmp_out}/DEPS.bzl"
+          cp "${tmp_out}/DEPS.bzl" DEPS.bzl
       - name: Restore non-generated files
         shell: bash
         run: |
@@ -62,10 +71,16 @@ jobs:
             fi
 
             case "${path}" in
+              build/BUILD.bazel|build/*/BUILD.bazel)
+                ;;
+              WORKSPACE|WORKSPACE.bazel|build|build/*)
+                echo "Unsafe generated file path: ${path}" >&2
+                exit 1
+                ;;
               DEPS.bzl|*.bazel|*.bzl)
                 ;;
               *)
-                echo "Unexpected file changed by bazel_prepare: ${path}" >&2
+                echo "Unexpected generated file path: ${path}" >&2
                 exit 1
                 ;;
             esac

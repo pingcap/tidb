@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -50,6 +51,7 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 	joins := make([]base.PhysicalPlan, 0, len(p.LeftProperties)+1)
 	// The LeftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
+	constantCols := p.ExtractFD().ConstantCols()
 
 	// EnumType/SetType Unsupported: merge join conflicts with index order.
 	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
@@ -110,7 +112,7 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		mergeJoin.SetSchema(schema)
 		mergeJoin.OtherConditions = moveEqualToOtherConditions(p, offsets)
 		mergeJoin.initCompareFuncs()
-		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
+		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop, constantCols); ok {
 			// Adjust expected count for children nodes.
 			if prop.ExpectedCnt < statsInfo.RowCount {
 				reqProps[0].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, leftStatsInfo.RowCount, statsInfo.RowCount)
@@ -420,8 +422,9 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	return
 }
 
-// Only if the input required prop is the prefix fo join keys, we can pass through this property.
-func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty) ([]*property.PhysicalProperty, bool) {
+// Only if the input required prop is compatible with join-key order, we can pass through this property.
+// Leading join keys fixed to a single value can be skipped when matching the required order.
+func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty, constantCols intset.FastIntSet) ([]*property.PhysicalProperty, bool) {
 	all, desc := prop.AllSameOrder()
 	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, desc, math.MaxFloat64, false)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, desc, math.MaxFloat64, false)
@@ -434,13 +437,15 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 		if !all {
 			return nil, false
 		}
-		if !prop.IsPrefix(lProp) && !prop.IsPrefix(rProp) {
+		matchLeft := isSortPropCompatibleWithJoinKeys(prop.SortItems, p.LeftJoinKeys, constantCols)
+		matchRight := isSortPropCompatibleWithJoinKeys(prop.SortItems, p.RightJoinKeys, constantCols)
+		if !matchLeft && !matchRight {
 			return nil, false
 		}
-		if prop.IsPrefix(rProp) && p.JoinType == base.LeftOuterJoin {
+		if matchRight && p.JoinType == base.LeftOuterJoin {
 			return nil, false
 		}
-		if prop.IsPrefix(lProp) && p.JoinType == base.RightOuterJoin {
+		if matchLeft && p.JoinType == base.RightOuterJoin {
 			return nil, false
 		}
 	}
@@ -529,4 +534,38 @@ func getNewNullEQByOffsets(oldNullEQ []bool, offsets []int) []bool {
 		}
 	}
 	return newNullEQ
+}
+
+// isSortPropCompatibleWithJoinKeys checks whether the required order can be
+// satisfied by the join-key order when some leading join keys are fixed to a
+// single value.
+//
+// Examples:
+//   - join keys: (a, b), constant cols: {a}, required order: (b)
+//     This returns true because rows ordered by (a, b) are also ordered by (b)
+//     once a is fixed by predicates such as `a = 1`.
+//   - join keys: (a, b, c), constant cols: {a}, required order: (c)
+//     This returns false because b is neither part of the required order nor
+//     proven constant, so the scan order on c is not guaranteed.
+func isSortPropCompatibleWithJoinKeys(sortItems []property.SortItem, joinKeys []*expression.Column, constantCols intset.FastIntSet) bool {
+	keyPos := 0
+	for _, item := range sortItems {
+		matched := false
+		for keyPos < len(joinKeys) {
+			if item.Col.EqualColumn(joinKeys[keyPos]) {
+				keyPos++
+				matched = true
+				break
+			}
+			if constantCols.Has(int(joinKeys[keyPos].UniqueID)) {
+				keyPos++
+				continue
+			}
+			return false
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }

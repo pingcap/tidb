@@ -74,7 +74,7 @@
                 "name": "Projection_51",
                 "children": [
                   {
-                    "name": "HashJoin_28",
+                    "name": "HashJoin_16",
                     "children": [
                       {
                         "name": "IndexReader_33",
@@ -139,7 +139,7 @@
                 "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#10"
               }
             ],
-            "cost": 2007109896.2117057,
+            "cost": 2007109894.6117058,
             "est_rows": 1,
             "act_rows": 1,
             "task_type": 1,
@@ -212,7 +212,7 @@
         "SQL": "explain analyze format = 'binary' with cte1 as (select a, b from t), cte2 as (select a, b from t2) select * from cte1 join cte2 on cte1.a = cte2.a",
         "BinaryPlan": {
           "main": {
-            "name": "HashJoin_28",
+            "name": "HashJoin_16",
             "children": [
               {
                 "name": "TableReader_32",

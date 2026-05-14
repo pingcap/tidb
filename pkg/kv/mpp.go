@@ -162,6 +162,8 @@ type MPPDispatchRequest struct {
 	ResourceGroupName      string
 	ConnectionID           uint64
 	ConnectionAlias        string
+	SQLDigest              string
+	PlanDigest             string
 }
 
 // CancelMPPTasksParam represents parameter for MPPClient's CancelMPPTasks
@@ -242,7 +244,7 @@ type MPPBuildTasksRequest struct {
 // ToString returns a string representation of MPPBuildTasksRequest. Used for CacheKey.
 func (req *MPPBuildTasksRequest) ToString() string {
 	sb := strings.Builder{}
-	if req.KeyRanges != nil { // Non-partiton
+	if req.KeyRanges != nil { // Non-partition
 		for i, keyRange := range req.KeyRanges {
 			sb.WriteString("range_id" + strconv.Itoa(i))
 			sb.WriteString(keyRange.StartKey.String())

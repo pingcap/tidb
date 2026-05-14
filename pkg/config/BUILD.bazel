@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/config",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/parser/terror",
         "//pkg/util/intest",
@@ -41,8 +42,9 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 31,
+    shard_count = 32,
     deps = [
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",

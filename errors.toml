@@ -401,6 +401,11 @@ error = '''
 checkpoint not found
 '''
 
+["Lightning:Checkpoint:ErrCheckpointTableNotFound"]
+error = '''
+checkpoint for table %s not found
+'''
+
 ["Lightning:Checkpoint:ErrCleanCheckpoint"]
 error = '''
 clean checkpoint error
@@ -2069,6 +2074,11 @@ Quarantined and interrupted because of being in runaway watch list
 ["executor:8255"]
 error = '''
 Unknown background task name '%-.192s'
+'''
+
+["executor:8274"]
+error = '''
+tidb_max_keys_read limit exceeded
 '''
 
 ["expression:1139"]

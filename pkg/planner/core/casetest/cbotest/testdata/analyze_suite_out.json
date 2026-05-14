@@ -605,6 +605,38 @@
     ]
   },
   {
+    "Name": "TestReproHashJoinIssue",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' SELECT COUNT(*) FROM t_small s STRAIGHT_JOIN t_big b ON b.id1 = s.id4 WHERE s.id1 = '10001' AND s.id2 = 0 AND s.id3 = 123456789 AND b.id2 = 10001 AND b.id3 = 0 AND b.id4 = 20991231;",
+        "Ratio": 0,
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#16",
+          "└─IndexHashJoin 100000.00 root  inner join, inner:IndexReader, outer key:repro_hash_join_issue.t_small.id4, inner key:repro_hash_join_issue.t_big.id1, equal cond:eq(repro_hash_join_issue.t_small.id4, repro_hash_join_issue.t_big.id1)",
+          "  ├─TableReader(Build) 1000.00 root  data:Selection",
+          "  │ └─Selection 1000.00 cop[tikv]  eq(repro_hash_join_issue.t_small.id1, \"10001\"), eq(repro_hash_join_issue.t_small.id2, 0), eq(repro_hash_join_issue.t_small.id3, 123456789)",
+          "  │   └─TableFullScan 1000.00 cop[tikv] table:s keep order:false",
+          "  └─IndexReader(Probe) 100000.00 root  index:IndexRangeScan",
+          "    └─IndexRangeScan 100000.00 cop[tikv] table:b, index:idx_id1_id2_id3_id4_id5(id1, id2, id3, id4, id5) range: decided by [eq(repro_hash_join_issue.t_big.id1, repro_hash_join_issue.t_small.id4) eq(repro_hash_join_issue.t_big.id2, 10001) eq(repro_hash_join_issue.t_big.id3, 0) eq(repro_hash_join_issue.t_big.id4, 20991231)], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT COUNT(*) FROM t_small s STRAIGHT_JOIN t_big b ON b.id1 = s.id4 WHERE s.id1 = '10001' AND s.id2 = 0 AND s.id3 = 123456789 AND b.id2 = 10001 AND b.id3 = 0 AND b.id4 = 20991231;",
+        "Ratio": 0.5,
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#16",
+          "└─HashJoin 100000.00 root  inner join, equal:[eq(repro_hash_join_issue.t_small.id4, repro_hash_join_issue.t_big.id1)]",
+          "  ├─TableReader(Build) 1000.00 root  data:Selection",
+          "  │ └─Selection 1000.00 cop[tikv]  eq(repro_hash_join_issue.t_small.id1, \"10001\"), eq(repro_hash_join_issue.t_small.id2, 0), eq(repro_hash_join_issue.t_small.id3, 123456789)",
+          "  │   └─TableFullScan 1000.00 cop[tikv] table:s keep order:false",
+          "  └─IndexReader(Probe) 1000.00 root  index:Selection",
+          "    └─Selection 1000.00 cop[tikv]  eq(repro_hash_join_issue.t_big.id2, 10001), eq(repro_hash_join_issue.t_big.id3, 0), eq(repro_hash_join_issue.t_big.id4, 20991231)",
+          "      └─IndexFullScan 1000.00 cop[tikv] table:b, index:idx_id1_id2_id3_id4_id5(id1, id2, id3, id4, id5) keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexJoinPreferIndexCoversMoreJoinKeyCols",
     "Cases": [
       {

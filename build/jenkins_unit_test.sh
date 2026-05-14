@@ -24,7 +24,7 @@ coverage_report=./bazel-out/_coverage/_coverage_report.dat
 junit_report=./bazel.xml
 
 go install github.com/hawkingrei/bazel_collect@latest
-make bazel_coverage_test
+make bazel_ci_test
 EXIT_STATUS=$?
 # collect the junit and coverage report
 if [ -f "${coverage_report}" ]; then
