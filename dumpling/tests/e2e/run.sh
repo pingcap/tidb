@@ -37,9 +37,8 @@ run_lightning $cur/conf/lightning.toml
 # check mysql and tidb data
 check_sync_diff $cur/conf/diff_config.toml
 
-# test parquet dump and import into on tidb
-PARQUET_SRC_DB="e2e_parquet_src"
-PARQUET_DST_DB="e2e_parquet_dst"
+# test parquet dump and import via lightning
+PARQUET_DB="e2e_parquet"
 PARQUET_TABLE_NAME="t_types"
 
 run_dumpling_parquet() {
@@ -60,33 +59,64 @@ run_dumpling_parquet() {
 }
 
 verify_parquet_import() {
-    run_sql "drop table if exists \`$PARQUET_DST_DB\`.\`$PARQUET_TABLE_NAME\`;"
-    run_sql "create table \`$PARQUET_DST_DB\`.\`$PARQUET_TABLE_NAME\` like \`$PARQUET_SRC_DB\`.\`$PARQUET_TABLE_NAME\`;"
-    run_sql "import into \`$PARQUET_DST_DB\`.\`$PARQUET_TABLE_NAME\` from '$DUMPLING_OUTPUT_DIR/$PARQUET_SRC_DB.$PARQUET_TABLE_NAME.*.parquet' format 'parquet';"
+    # clear target db on TiDB to avoid duplicate-key failures when importing repeatedly.
+    export DUMPLING_TEST_PORT=4000
+    orig_test_db="${DUMPLING_TEST_DATABASE-}"
+    export DUMPLING_TEST_DATABASE=""
+    run_sql "drop database if exists \`$PARQUET_DB\`;"
+    export DUMPLING_TEST_DATABASE="$orig_test_db"
 
-    src_rows=$(run_sql "select count(*) as cnt from \`$PARQUET_SRC_DB\`.\`$PARQUET_TABLE_NAME\`;" | awk -F': ' '/cnt:/ {print $2}')
-    dst_rows=$(run_sql "select count(*) as cnt from \`$PARQUET_DST_DB\`.\`$PARQUET_TABLE_NAME\`;" | awk -F': ' '/cnt:/ {print $2}')
-    [ "$src_rows" = "$dst_rows" ]
+    cat "$cur/conf/lightning.toml"
+    run_lightning $cur/conf/lightning.toml
 
-    diff_rows=$(run_sql "select count(*) as diff_cnt from ((select * from \`$PARQUET_SRC_DB\`.\`$PARQUET_TABLE_NAME\` except select * from \`$PARQUET_DST_DB\`.\`$PARQUET_TABLE_NAME\`) union all (select * from \`$PARQUET_DST_DB\`.\`$PARQUET_TABLE_NAME\` except select * from \`$PARQUET_SRC_DB\`.\`$PARQUET_TABLE_NAME\`)) diff;" | awk -F': ' '/diff_cnt:/ {print $2}')
-    [ "$diff_rows" = "0" ]
+    parquet_diff_config="$DUMPLING_OUTPUT_DIR/parquet_diff_config.toml"
+    cat > "$parquet_diff_config" <<EOF
+# diff Configuration.
+
+check-thread-count = 4
+
+export-fix-sql = true
+
+check-struct-only = false
+
+[task]
+    output-dir = "./output"
+
+    source-instances = ["mysql1"]
+
+    target-instance = "tidb0"
+
+    target-check-tables = ["$PARQUET_DB.$PARQUET_TABLE_NAME"]
+
+[data-sources]
+[data-sources.mysql1]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = ""
+
+[data-sources.tidb0]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+password = ""
+EOF
+    check_sync_diff "$parquet_diff_config"
 }
 
-export DUMPLING_TEST_PORT=4000
-run_sql "drop database if exists \`$PARQUET_SRC_DB\`;"
-run_sql "drop database if exists \`$PARQUET_DST_DB\`;"
-run_sql "create database \`$PARQUET_SRC_DB\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
-run_sql "create database \`$PARQUET_DST_DB\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
-run_sql "create table \`$PARQUET_SRC_DB\`.\`$PARQUET_TABLE_NAME\` (id int primary key, c_tinyint tinyint, c_int int, c_bigint bigint, c_decimal decimal(18,6), c_double double, c_varchar varchar(64), c_text text, c_blob blob, c_date date, c_datetime datetime(6), c_timestamp timestamp(6), c_time time(6), c_year year, c_json json, c_enum enum('small','medium','large'), c_set set('x','y','z'));"
-run_sql "insert into \`$PARQUET_SRC_DB\`.\`$PARQUET_TABLE_NAME\` values (1,-8,123456,-9876543210,12345.678901,0.5,'alpha','hello parquet',x'00ff10','2026-02-28','2026-02-28 11:22:33.123456','2026-02-28 11:22:33.123456','12:34:56.123456',2026,'{\"k\":\"v\",\"n\":1}','medium','x,z'),(2,NULL,NULL,NULL,-1.000001,-12.25,'beta','second row text',x'','1999-12-31','1999-12-31 23:59:59.000001','1999-12-31 23:59:59.000001','00:00:00.000000',1999,'{\"arr\":[1,2,3]}','small','y');"
+export DUMPLING_TEST_PORT=3306
+run_sql "drop database if exists \`$PARQUET_DB\`;"
+run_sql "create database \`$PARQUET_DB\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
+run_sql "create table \`$PARQUET_DB\`.\`$PARQUET_TABLE_NAME\` (id int primary key, c_tinyint tinyint, c_int int, c_bigint bigint, c_decimal decimal(18,6), c_double double, c_varchar varchar(64), c_text text, c_blob blob, c_date date, c_datetime datetime(6), c_timestamp timestamp(6), c_time time(6), c_year year, c_json json, c_enum enum('small','medium','large'), c_set set('x','y','z'));"
+run_sql "insert into \`$PARQUET_DB\`.\`$PARQUET_TABLE_NAME\` values (1,-8,123456,-9876543210,12345.678901,0.5,'alpha','hello parquet',x'00ff10','2026-02-28','2026-02-28 11:22:33.123456','2026-02-28 11:22:33.123456','12:34:56.123456',2026,'{\"k\":\"v\",\"n\":1}','medium','x,z'),(2,NULL,NULL,NULL,-1.000001,-12.25,'beta','second row text',x'','1999-12-31','1999-12-31 23:59:59.000001','1999-12-31 23:59:59.000001','00:00:00.000000',1999,'{\"arr\":[1,2,3]}','small','y');"
 
-export DUMPLING_TEST_DATABASE=$PARQUET_SRC_DB
+export DUMPLING_TEST_DATABASE=$PARQUET_DB
 for parquet_compress in "snappy" "gzip" "zstd" "no-compression"
 do
     rm -rf "$DUMPLING_OUTPUT_DIR"
     mkdir -p "$DUMPLING_OUTPUT_DIR"
     run_dumpling_parquet --filetype parquet --parquet-compress "$parquet_compress" --filesize 1B
-    parquet_file_num=$(find "$DUMPLING_OUTPUT_DIR" -maxdepth 1 -iname "$PARQUET_SRC_DB.$PARQUET_TABLE_NAME.*.parquet" | wc -l)
+    parquet_file_num=$(find "$DUMPLING_OUTPUT_DIR" -maxdepth 1 -iname "$PARQUET_DB.$PARQUET_TABLE_NAME.*.parquet" | wc -l)
     if [ "$parquet_file_num" -lt 2 ]; then
         echo "obtain parquet file number: $parquet_file_num, but expect at least: 2" && exit 1
     fi
