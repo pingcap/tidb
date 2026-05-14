@@ -435,9 +435,10 @@ func TestCleanUpStaleLockOverdueWithinTTL(t *testing.T) {
 	strg, pth := createMockStorage(t)
 	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
-	// Plant a lock that expired 30ms ago. With LeaseTTL=100ms and
-	// reclaimWaitMultiplier=1, total window is 100ms; remaining wait is 70ms.
+	// Plant a lock that expired 30ms ago. With LeaseTTL=100ms, the lock is
+	// not reclaimable until ExpireAt+LeaseTTL.
 	now := time.Now()
+	defer objstore.TEST_SetNow(func() time.Time { return now })()
 	writeLockMeta(t, strg, "stale.lock", objstore.LockMeta{
 		LockedAt: now.Add(-2 * time.Minute),
 		ExpireAt: now.Add(-30 * time.Millisecond),
@@ -451,10 +452,9 @@ func TestCleanUpStaleLockOverdueWithinTTL(t *testing.T) {
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
-	require.True(t, reclaimed, "stale lock must be reclaimed")
-	requireFileNotExists(t, filepath.Join(pth, "stale.lock"))
-	require.GreaterOrEqual(t, elapsed, 50*time.Millisecond,
-		"reclaim should wait roughly the remaining double-confirmation window")
+	require.False(t, reclaimed, "lock must not be reclaimed until ExpireAt+LeaseTTL")
+	requireFileExists(t, filepath.Join(pth, "stale.lock"))
+	require.Less(t, elapsed, 30*time.Millisecond, "cleanup should not wait for the grace window")
 }
 
 func TestCleanUpStaleLockOverduePastTTL(t *testing.T) {
@@ -523,27 +523,19 @@ func TestCleanUpStaleLockRefreshedDuringWait(t *testing.T) {
 	strg, pth := createMockStorage(t)
 	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
-	// Plant a lock that expired 20ms ago. Remaining wait will be ~80ms.
+	// Plant a lock that expired 20ms ago. It is past ExpireAt but still
+	// inside the extra LeaseTTL grace window, so cleanup must not delete it.
 	now := time.Now()
-	original := objstore.LockMeta{
+	writeLockMeta(t, strg, "racing.lock", objstore.LockMeta{
 		LockedAt: now.Add(-time.Minute),
 		ExpireAt: now.Add(-20 * time.Millisecond),
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 		Hint:     "to-be-refreshed",
-	}
-	writeLockMeta(t, strg, "racing.lock", original)
-
-	// During the cleanup wait, simulate the holder coming back and refreshing.
-	go func() {
-		time.Sleep(30 * time.Millisecond)
-		refreshed := original
-		refreshed.ExpireAt = time.Now().Add(time.Minute) // far-future ExpireAt
-		writeLockMeta(t, strg, "racing.lock", refreshed)
-	}()
+	})
 
 	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "racing.lock")
 	require.NoError(t, err)
-	require.False(t, reclaimed, "reclaim must abort when holder refreshes ExpireAt during wait")
+	require.False(t, reclaimed, "reclaim must wait until ExpireAt+LeaseTTL has passed")
 	requireFileExists(t, filepath.Join(pth, "racing.lock"))
 }
 
@@ -562,15 +554,17 @@ func TestLockWithRetryReclaimsStaleWriteLock(t *testing.T) {
 	})
 	requireFileExists(t, filepath.Join(pth, "v1/LOCK.WRIT"))
 
-	lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new truncate")
-	require.NoError(t, err, "LockWithRetry should reclaim the stale lock and succeed")
-	require.NotNil(t, lock)
-	require.NoError(t, lock.Unlock(ctx))
+	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new truncate")
+	require.Error(t, err)
+	require.Nil(t, lock)
+	requireFileNotExists(t, filepath.Join(pth, "v1/LOCK.WRIT"))
 }
 
 func TestLockWithRetryReclaimsStaleReadLockBeforeWrite(t *testing.T) {
 	ctx := context.Background()
-	strg, _ := createMockStorage(t)
+	strg, pth := createMockStorage(t)
 	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
 	// Plant a stale READ lock under v1/LOCK.READ.{xxxx}.
@@ -581,13 +575,49 @@ func TestLockWithRetryReclaimsStaleReadLockBeforeWrite(t *testing.T) {
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 		Hint:     "crashed-prior-restore",
 	})
+	writeLockMeta(t, strg, "v1/LOCK.READ.deadbeef12345678", objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		ExpireAt: now.Add(-time.Hour),
+		TxnID:    []byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
+		Hint:     "another-crashed-prior-restore",
+	})
 
-	// Without reclaim the write would fail (stale read blocks write). With
-	// reclaim, LockWithRetry should clean it up and succeed.
-	lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new compaction")
-	require.NoError(t, err)
-	require.NotNil(t, lock)
-	require.NoError(t, lock.Unlock(ctx))
+	// Without reclaim the write would fail (stale read blocks write). The
+	// cleanup pass should delete it, then fall through to ordinary backoff.
+	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new compaction")
+	require.Error(t, err)
+	require.Nil(t, lock)
+	requireFileNotExists(t, filepath.Join(pth, "v1/LOCK.READ.cafef00d12345678"))
+	requireFileNotExists(t, filepath.Join(pth, "v1/LOCK.READ.deadbeef12345678"))
+
+	t.Run("cleanup does not bypass retry backoff", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		now := time.Now()
+		writeLockMeta(t, strg, "v2/LOCK.READ.cafef00d12345678", objstore.LockMeta{
+			LockedAt: now.Add(-time.Hour),
+			ExpireAt: now.Add(-time.Hour),
+			TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+			Hint:     "unrelated stale reader",
+		})
+
+		var attempts atomic.Int32
+		shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		defer cancel()
+		lock, err := objstore.LockWithRetry(shortCtx, func(
+			context.Context,
+			storeapi.Storage,
+			string,
+			string,
+		) (*objstore.RemoteLock, error) {
+			attempts.Add(1)
+			return nil, context.Canceled
+		}, strg, "v2/LOCK", "still blocked")
+		require.Error(t, err)
+		require.Nil(t, lock)
+		require.Equal(t, int32(1), attempts.Load())
+	})
 }
 
 func TestLockWithRetryDoesNotReclaimAliveLock(t *testing.T) {

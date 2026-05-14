@@ -173,10 +173,6 @@ var (
 	renewMaxRetries  = 5
 	renewBaseBackoff = 5 * time.Second
 
-	// reclaimWaitMultiplier × LeaseTTL is the observation window, starting
-	// from ExpireAt, that a reclaimer waits before deleting a stale lock.
-	reclaimWaitMultiplier = time.Duration(1)
-
 	// nowFunc is indirected so tests can inject deterministic time.
 	nowFunc = time.Now
 )
@@ -369,16 +365,15 @@ func (l *RemoteLock) stopRenewalIfStarted() {
 	<-done
 }
 
-// CleanUpStaleLock checks whether the lock file at `path` has an expired
-// ExpireAt and, if so, performs double-confirmation (wait for the rest of the
-// observation window starting at ExpireAt, then re-read) before deleting it.
+// CleanUpStaleLock checks whether the lock file at `path` has remained expired
+// for at least one full LeaseTTL and, if so, deletes it.
 //
 // Returns:
 //   - reclaimed=true  : the stale lock was deleted; caller may retry acquire.
-//   - reclaimed=false : the lock is alive, was refreshed during the wait, was
-//     written by an old client (no ExpireAt), or its file disappeared mid-flow.
-//     Caller treats this as "no action needed by us, conflict (if any) is
-//     genuine".
+//   - reclaimed=false : the lock is alive, has not stayed expired long enough,
+//     was written by an old client (no ExpireAt), or its file disappeared
+//     mid-flow. Caller treats this as "no action needed by us, conflict (if
+//     any) is genuine".
 //
 // The function never returns an error for the "lock not found" case (someone
 // else cleaned up); it surfaces only unexpected I/O failures.
@@ -396,46 +391,18 @@ func CleanUpStaleLock(ctx context.Context, storage storeapi.Storage, path string
 		return false, nil
 	}
 	now := nowFunc()
-	if !now.After(meta.ExpireAt) {
-		// Still alive.
+	reclaimAfter := meta.ExpireAt.Add(LeaseTTL)
+	if !now.After(reclaimAfter) {
 		return false, nil
 	}
 
-	overdue := now.Sub(meta.ExpireAt)
-	totalWindow := time.Duration(reclaimWaitMultiplier) * LeaseTTL
-	waitDuration := totalWindow - overdue
-	if waitDuration < 0 {
-		waitDuration = 0
-	}
-
-	if waitDuration > 0 {
-		log.Info("Encountered stale lock; waiting for double-confirmation before reclaim.",
-			zap.String("path", path),
-			zap.Duration("wait", waitDuration),
-			zap.Stringer("meta", meta))
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-time.After(waitDuration):
-		}
-	}
-
-	// Re-read: if ExpireAt changed, the holder is alive — abort.
-	meta2, err := getLockMeta(ctx, storage, path)
-	if err != nil {
-		// File vanished during wait — treat as "already reclaimed by someone else".
-		return false, err
-	}
-	if !meta2.ExpireAt.Equal(meta.ExpireAt) {
-		log.Info("Stale-lock reclaim aborted: holder refreshed ExpireAt during wait.",
-			zap.String("path", path))
-		return false, nil
-	}
 	if err := storage.DeleteFile(ctx, path); err != nil {
 		return false, errors.Annotatef(err, "CleanUpStaleLock: DeleteFile %s", path)
 	}
 	log.Info("Reclaimed stale lock.",
-		zap.String("path", path), zap.Stringer("original_meta", meta))
+		zap.String("path", path),
+		zap.Time("reclaim_after", reclaimAfter),
+		zap.Stringer("original_meta", meta))
 	return true, nil
 }
 
@@ -616,11 +583,9 @@ const (
 
 // LockWithRetry lock with retry.
 //
-// On each conflict it first invokes tryReclaimStaleConflict to opportunistically
-// delete any stale (ExpireAt-past + double-confirmed) lock files in the family
-// rooted at `lockPath`. A successful reclaim retries acquire immediately
-// without consuming a backoff attempt; otherwise the standard exponential
-// backoff applies.
+// On each conflict it opportunistically deletes any stale (ExpireAt-past +
+// double-confirmed) lock files in the family rooted at `lockPath`, then
+// continues with the standard exponential backoff.
 func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, lockPath, hint string) (*RemoteLock, error) {
 	const JitterMs = 5000
 
@@ -634,10 +599,9 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 		}
 		err = lockErr
 
-		if tryReclaimStaleConflict(ctx, storage, lockPath) {
-			log.Info("Stale conflicting lock reclaimed; retrying acquire immediately.",
+		if tryCleanUpStaleLocks(ctx, storage, lockPath) {
+			log.Info("Stale locks cleaned up while waiting for lock.",
 				zap.String("path", lockPath))
-			continue
 		}
 
 		if !retry.ShouldRetry() {
@@ -661,14 +625,14 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	}
 }
 
-// tryReclaimStaleConflict scans the lock-file family rooted at basePath
+// tryCleanUpStaleLocks scans the lock-file family rooted at basePath
 // (basePath itself, basePath.WRIT, basePath.READ.*) and attempts to reclaim
 // any whose ExpireAt has expired beyond the double-confirmation window.
 // Returns true if at least one file was successfully reclaimed.
 //
 // Intent files (.INTENT.*) are skipped here; they are handled by the intent
 // expiry mechanism (separate phase).
-func tryReclaimStaleConflict(ctx context.Context, storage storeapi.Storage, basePath string) bool {
+func tryCleanUpStaleLocks(ctx context.Context, storage storeapi.Storage, basePath string) bool {
 	fileName := path.Base(basePath)
 	dirName := path.Dir(basePath)
 	if dirName == "." {

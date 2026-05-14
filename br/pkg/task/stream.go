@@ -1119,8 +1119,6 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	// Reclaim a stale truncate lock left behind by a previous run that
-	// crashed or was killed before its lease could expire on the storage.
 	if _, err := objstore.CleanUpStaleLock(ctx, extStorage, truncateLockPath); err != nil {
 		return err
 	}
