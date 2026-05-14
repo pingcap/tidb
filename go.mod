@@ -101,7 +101,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260414083400-4388bfaaedab
+	github.com/pingcap/kvproto v0.0.0-20260511034003-fc9e0458a359
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -352,7 +352,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250707201910-8d1bb00bc6a7 // indirect
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
@@ -367,15 +367,15 @@ replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
-	// Temporary: pin to JmPotato/kvproto demo/ru-paging-size which adds
+	// Temporary: pin to YuhaoZhang00/kvproto rc-precharge-premium-test which adds
 	// `paging_size_bytes` to coprocessor.Request. Revert once
 	// pingcap/kvproto#1448 is merged and tagged.
-	github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20260428063603-042bfc75f2ac
+	github.com/pingcap/kvproto => github.com/YuhaoZhang00/kvproto v0.0.0-20260514083546-6392d3ef7006
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
 	// Temporary: pin to feature branches. Revert once tikv/client-go#1947 and tikv/pd#10611 are merged and tagged.
-	github.com/tikv/client-go/v2 => github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260422101307-29265f48bf9c
-	github.com/tikv/pd/client => github.com/YuhaoZhang00/pd/client v0.0.0-20260422102426-7a38b73dddb9
+	github.com/tikv/client-go/v2 => github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260514081829-33af58c5fb00
+	github.com/tikv/pd/client => github.com/YuhaoZhang00/pd/client v0.0.0-20260514081800-e393a2130e70
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
