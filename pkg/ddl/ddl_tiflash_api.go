@@ -330,8 +330,8 @@ func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 		checkTiFlash := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
 		checkColumnar := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
 
-		var tiflashProgress float64 = 1.0
-		var columnarProgress float64 = 1.0
+		var tiflashProgress = 1.0
+		var columnarProgress = 1.0
 		var err error
 
 		if checkTiFlash {
@@ -456,9 +456,9 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				continue
 			}
 
-			var tiflashProgress float64 = 1.0
-			var tiflashAvailProgress float64 = 1.0
-			var columnarProgress float64 = 1.0
+			var tiflashProgress = 1.0
+			var tiflashAvailProgress = 1.0
+			var columnarProgress = 1.0
 			var err error
 			if checkTiFlash {
 				// Collect the replica progress for this table from TiFlash stores.

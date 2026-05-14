@@ -1062,7 +1062,7 @@ func (w *worker) checkColumnarIndexProcess(jobCtx *jobContext, tbl table.Table, 
 }
 
 // checkColumnarIndexProcessFromTiKV checks the backfill process of a columnar index from TiKV.
-func (w *worker) checkColumnarIndexProcessFromTiKV(jobCtx *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
+func (*worker) checkColumnarIndexProcessFromTiKV(jobCtx *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
 	tikvStats, err := infosync.GetTiFlashStoresStat(jobCtx.stepCtx)
 	if err != nil {
 		return false, 0, err
@@ -1097,7 +1097,7 @@ func (w *worker) checkColumnarIndexProcessOnce(jobCtx *jobContext, tbl table.Tab
 		}
 	})
 
-	var done bool = true
+	var done = true
 
 	columnarEnabled := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
 	// If columnar store is enabled, we check the columnar index process from TiKV.
