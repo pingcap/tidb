@@ -48,11 +48,18 @@ type BackfillTaskMeta struct {
 	// For now, only index type is supported.
 	EleTypeKey []byte `json:"ele_type_key"`
 
-	CloudStorageURI string `json:"cloud_storage_uri"`
-	EstimateRowSize int    `json:"estimate_row_size"`
-	MergeTempIndex  bool   `json:"merge_temp_index"`
+	CloudStorageURI       string                  `json:"cloud_storage_uri"`
+	EstimateRowSize       int                     `json:"estimate_row_size"`
+	MergeTempIndex        bool                    `json:"merge_temp_index"`
+	InitialTiKVStoreUsage *TiKVStoreUsageSnapshot `json:"initial_tikv_store_usage,omitempty"`
 
 	Version int `json:"version,omitempty"`
+}
+
+// TiKVStoreUsageSnapshot is the observed TiKV store usage at a point in time.
+type TiKVStoreUsageSnapshot struct {
+	UsedBytes  uint64 `json:"used_bytes"`
+	StoreCount int    `json:"store_count"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
