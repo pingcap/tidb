@@ -367,6 +367,10 @@ replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
+	// Temporary: pin to JmPotato/kvproto demo/ru-paging-size which adds
+	// `paging_size_bytes` to coprocessor.Request. Revert once
+	// pingcap/kvproto#1448 is merged and tagged.
+	github.com/pingcap/kvproto => github.com/JmPotato/kvproto v0.0.0-20260428063603-042bfc75f2ac
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
 	// Temporary: pin to feature branches. Revert once tikv/client-go#1947 and tikv/pd#10611 are merged and tagged.
