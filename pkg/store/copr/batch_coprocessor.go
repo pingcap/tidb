@@ -468,12 +468,7 @@ func buildBatchCopTasksForNonPartitionedTable(
 	appendWarning func(error)) ([]*batchCopTask, error) {
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.DisaggregatedTiFlash {
-		// TODO: remove this special routing once columnar TiFlash supports FTS by default.
-		ftsFunctionIsUsed := false
-		if val := ctx.Value(config.FTSFunctionIsUsedKey); val != nil {
-			ftsFunctionIsUsed = val.(bool)
-		}
-		if shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg, ftsFunctionIsUsed) {
+		if shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg) {
 			return buildBatchCopTasksConsistentHash(ctx, bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
 		}
 		return buildBatchCopTasksConsistentHashForPD(bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
@@ -481,14 +476,11 @@ func buildBatchCopTasksForNonPartitionedTable(
 	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount, tiflashReplicaReadPolicy, appendWarning)
 }
 
-func shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg *config.Config, ftsFunctionIsUsed bool) bool {
-	if !globalCfg.UseAutoScaler {
+func shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg *config.Config) bool {
+	if !globalCfg.UseAutoScaler || globalCfg.UseColumnar {
 		return false
 	}
-	if !globalCfg.UseColumnar {
-		return true
-	}
-	return ftsFunctionIsUsed && !globalCfg.UseColumnarFTS
+	return true
 }
 
 func buildBatchCopTasksForPartitionedTable(
@@ -507,12 +499,7 @@ func buildBatchCopTasksForPartitionedTable(
 	appendWarning func(error)) (batchTasks []*batchCopTask, err error) {
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.DisaggregatedTiFlash {
-		// TODO: remove this special routing once columnar TiFlash supports FTS by default.
-		ftsFunctionIsUsed := false
-		if val := ctx.Value(config.FTSFunctionIsUsedKey); val != nil {
-			ftsFunctionIsUsed = val.(bool)
-		}
-		if shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg, ftsFunctionIsUsed) {
+		if shouldDispatchToAutoScalerForDisaggregatedTiFlash(globalCfg) {
 			batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl, dispatchPolicy)
 		} else {
 			// todo: remove this after AutoScaler is stable.

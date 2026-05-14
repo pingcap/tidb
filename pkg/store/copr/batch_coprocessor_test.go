@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -38,27 +37,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
-
-func TestUseColumnarFTSConfig(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DisaggregatedTiFlash = true
-		conf.UseAutoScaler = true
-		conf.UseColumnar = true
-		conf.UseColumnarFTS = false
-	})
-
-	require.False(t, shouldDispatchToAutoScalerForDisaggregatedTiFlash(config.GetGlobalConfig(), false))
-	require.True(t, shouldDispatchToAutoScalerForDisaggregatedTiFlash(config.GetGlobalConfig(), true))
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.UseColumnarFTS = true
-	})
-
-	require.False(t, shouldDispatchToAutoScalerForDisaggregatedTiFlash(config.GetGlobalConfig(), true))
-}
 
 // StoreID: [1, storeCount]
 func buildStoreTaskMap(storeCount int) map[uint64]*batchCopTask {

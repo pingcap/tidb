@@ -173,9 +173,6 @@ var (
 	// They should be moved to [instance] section.
 	DeprecatedOptions []InstanceConfigSection
 
-	// FTSFunctionIsUsedKey marks whether an FTS function is used in the planning context.
-	FTSFunctionIsUsedKey = struct{}{}
-
 	// TikvConfigLock protects against concurrent tikv config refresh
 	TikvConfigLock sync.Mutex
 )
@@ -320,13 +317,6 @@ type Config struct {
 
 	// UseColumnar is used to control whether to enable columnar execution.
 	UseColumnar bool `toml:"use-columnar" json:"use-columnar"`
-	// UseColumnarFTS controls whether TiDB forwards full-text search (FTS) requests to columnar TiFlash nodes
-	// when TiDB is in disaggregated-tiflash mode.
-	//
-	// When DisaggregatedTiFlash=true, UseAutoScaler=true and UseColumnar=true, TiDB historically
-	// forces FTS requests to AutoScaler TiFlash nodes. Enable this config to route FTS requests to
-	// columnar TiFlash nodes instead.
-	UseColumnarFTS bool `toml:"use-columnar-fts" json:"use-columnar-fts"`
 
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
@@ -400,8 +390,6 @@ func DefaultRUV2Config() RUV2Config {
 
 // CSE is the config collection for the cloud storage engine.
 type CSE struct {
-	// EnableRegionClient indicates whether to enable region client.
-	EnableRegionClient     bool          `toml:"enable-region-client" json:"enable-region-client"`
 	ColumnarStoreType      string        `toml:"columnar-store-type" json:"columnar-store-type"`
 	ColumnarCollectTimeout time.Duration `toml:"columnar-collect-timeout" json:"columnar-collect-timeout"`
 }
@@ -1230,14 +1218,12 @@ var defaultConf = Config{
 	AutoScalerClusterID:                  "",
 	UseAutoScaler:                        false,
 	UseColumnar:                          false,
-	UseColumnarFTS:                       false,
 	TiDBMaxReuseChunk:                    64,
 	TiDBMaxReuseColumn:                   256,
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
 	CSE: CSE{
-		EnableRegionClient:     false,
 		ColumnarStoreType:      "tiflash",
 		ColumnarCollectTimeout: 5 * time.Second,
 	},
