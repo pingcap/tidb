@@ -441,8 +441,8 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)), zap.Int("TiKV store count", len(tikvStoresInfo)))
 	}
 
-	var tiflashProgress float64 = 1.0
-	var columnarProgress float64 = 1.0
+	var tiflashProgress = 1.0
+	var columnarProgress = 1.0
 	if len(*tiFlashStores) > 0 {
 		tiflashProgress, _, err = is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 		if err != nil {
@@ -895,7 +895,7 @@ func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores 
 }
 
 // CalculateColumnarProgress calculates columnar progress
-func CalculateColumnarProgress(tableID int64, TiKVStores map[int64]pdhttp.StoreInfo) (float64, error) {
+func CalculateColumnarProgress(tableID int64, tikvStores map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -904,9 +904,9 @@ func CalculateColumnarProgress(tableID int64, TiKVStores map[int64]pdhttp.StoreI
 		return 0, errors.New("tikv codec is not initialized")
 	}
 	keyspaceID := is.tikvCodec.GetKeyspaceID()
-	var ready uint = 0
-	var total uint = 0
-	for _, storeStat := range TiKVStores {
+	var ready uint
+	var total uint
+	for _, storeStat := range tikvStores {
 		addr := storeStat.Store.StatusAddress
 		columnarStatus, err := helper.CollectColumnarStatus(addr, keyspaceID, tableID, nil)
 		if err != nil {
@@ -957,15 +957,15 @@ func CleanTiFlashProgressCache() {
 }
 
 // CalculateColumnarIndexProgress calculates columnar index progress
-func CalculateColumnarIndexProgress(tableID, indexID int64, TiKVStores map[int64]pdhttp.StoreInfo) (float64, error) {
+func CalculateColumnarIndexProgress(tableID, indexID int64, tikvStores map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	keyspaceID := is.tikvCodec.GetKeyspaceID()
-	var indexReady uint = 0
-	var total uint = 0
-	for _, storeStat := range TiKVStores {
+	var indexReady uint
+	var total uint
+	for _, storeStat := range tikvStores {
 		addr := storeStat.Store.StatusAddress
 		columnarStatus, err := helper.CollectColumnarStatus(addr, keyspaceID, tableID, &indexID)
 		if err != nil {
