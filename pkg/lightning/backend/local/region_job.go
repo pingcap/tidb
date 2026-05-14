@@ -118,6 +118,7 @@ type regionJob struct {
 	regionSplitKeys    int64
 	metrics            *metric.Common
 	ticiWriteEnabled   bool
+	ticiIndexID        int64
 	ticiHeaderCommitTS uint64
 
 	retryCount       int
@@ -165,6 +166,7 @@ func newRegionJob(
 	regionSplitKeys int64,
 	metrics *metric.Common,
 	ticiWriteEnabled bool,
+	ticiIndexID int64,
 	ticiHeaderCommitTS uint64,
 ) *regionJob {
 	log.L().Debug("new region job",
@@ -184,6 +186,7 @@ func newRegionJob(
 		regionSplitKeys:    regionSplitKeys,
 		metrics:            metrics,
 		ticiWriteEnabled:   ticiWriteEnabled,
+		ticiIndexID:        ticiIndexID,
 		ticiHeaderCommitTS: ticiHeaderCommitTS,
 	}
 }
@@ -203,6 +206,7 @@ func newRegionJobs(
 	regionSplitKeys int64,
 	metrics *metric.Common,
 	ticiWriteEnabled bool,
+	ticiIndexID int64,
 	ticiHeaderCommitTS uint64,
 ) []*regionJob {
 	var (
@@ -234,6 +238,7 @@ func newRegionJobs(
 				regionSplitKeys,
 				metrics,
 				ticiWriteEnabled,
+				ticiIndexID,
 				ticiHeaderCommitTS,
 			))
 
@@ -265,6 +270,7 @@ func newRegionJobs(
 				regionSplitKeys,
 				metrics,
 				ticiWriteEnabled,
+				ticiIndexID,
 				ticiHeaderCommitTS,
 			))
 		}
@@ -517,7 +523,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (err error) {
 		if lastWrittenKey != nil {
 			upperBound = codec.EncodeBytes([]byte{}, lastWrittenKey)
 		}
-		if err := local.ticiWriteGroup.FinishPartitionUpload(ctx, fileWriter, firstKey, upperBound); err != nil {
+		if err := local.ticiWriteGroup.FinishPartitionUpload(ctx, fileWriter, j.ticiIndexID, firstKey, upperBound); err != nil {
 			return errors.Annotate(err, "failed to finish upload for tici file writer")
 		}
 
@@ -1539,6 +1545,7 @@ func (w *regionJobWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err er
 			job.regionSplitSize,
 			job.regionSplitKeys,
 			job.ticiWriteEnabled,
+			job.ticiIndexID,
 			job.ticiHeaderCommitTS,
 		)
 		if err2 != nil {

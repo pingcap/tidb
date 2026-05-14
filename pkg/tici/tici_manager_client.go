@@ -676,6 +676,7 @@ func (t *ManagerCtx) PreSplitImportShards(ctx context.Context, req *PreSplitImpo
 func (t *ManagerCtx) FinishPartitionUpload(
 	ctx context.Context,
 	tidbTaskID string,
+	indexID int64,
 	lowerBound, upperBound []byte,
 	storageURI string,
 ) error {
@@ -687,6 +688,7 @@ func (t *ManagerCtx) FinishPartitionUpload(
 		if mockSuccess {
 			logutil.BgLogger().Info("MockFinishPartitionUpload failpoint triggered",
 				zap.String("tidbTaskID", tidbTaskID),
+				zap.Int64("indexID", indexID),
 				zap.String("storageURI", storageURI),
 				zap.String("startKey", hex.EncodeToString(lowerBound)),
 				zap.String("endKey", hex.EncodeToString(upperBound)))
@@ -695,6 +697,7 @@ func (t *ManagerCtx) FinishPartitionUpload(
 		err := errors.New("mock FinishPartitionUpload failed")
 		logutil.BgLogger().Warn("MockFinishPartitionUpload failpoint triggered with error",
 			zap.String("tidbTaskID", tidbTaskID),
+			zap.Int64("indexID", indexID),
 			zap.String("storageURI", storageURI),
 			zap.String("startKey", hex.EncodeToString(lowerBound)),
 			zap.String("endKey", hex.EncodeToString(upperBound)),
@@ -709,6 +712,7 @@ func (t *ManagerCtx) FinishPartitionUpload(
 		},
 		StorageUri: storageURI,
 		KeyspaceId: t.getKeyspaceID(),
+		IndexId:    indexID,
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -722,6 +726,7 @@ func (t *ManagerCtx) FinishPartitionUpload(
 	if resp.Status != ErrorCode_SUCCESS {
 		logutil.BgLogger().Error("FinishPartitionUpload failed",
 			zap.String("tidbTaskID", tidbTaskID),
+			zap.Int64("indexID", indexID),
 			zap.String("startKey", hex.EncodeToString(lowerBound)),
 			zap.String("endKey", hex.EncodeToString(upperBound)),
 			zap.String("errorMessage", resp.ErrorMessage))
