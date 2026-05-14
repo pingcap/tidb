@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -26,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -468,6 +471,114 @@ func checkRegionsBoundaries(t *testing.T, regions []*RegionInfo, expected [][]by
 		require.Equal(t, expected[i-1], regions[i-1].Region.StartKey)
 		require.Equal(t, expected[i], regions[i-1].Region.EndKey)
 	}
+}
+
+type codecAwareMockPDClient struct {
+	*MockPDClientForSplit
+	keyspaceMeta *keyspacepb.KeyspaceMeta
+}
+
+func (c *codecAwareMockPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return c
+}
+
+func (c *codecAwareMockPDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return c.keyspaceMeta, nil
+}
+
+func newCodecV2PDClientForSplitTest(t *testing.T, mockClient *MockPDClientForSplit) *tikv.CodecPDClient {
+	codecPDClient, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, &codecAwareMockPDClient{
+		MockPDClientForSplit: mockClient,
+		keyspaceMeta: &keyspacepb.KeyspaceMeta{
+			Id:   42,
+			Name: "test_keyspace",
+		},
+	}, "test_keyspace")
+	require.NoError(t, err)
+	return codecPDClient
+}
+
+func TestPaginateScanRegionWithCodecAwareCodecPDClient(t *testing.T) {
+	ctx := context.Background()
+	t.Run("bounded range", func(t *testing.T) {
+		mockPDClient := NewMockPDClientForSplit()
+		codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+		tikvCodec := codecPDClient.GetCodec()
+
+		physicalBoundaries := [][]byte{
+			tikvCodec.EncodeRegionKey([]byte("a")),
+			tikvCodec.EncodeRegionKey([]byte("b")),
+			tikvCodec.EncodeRegionKey([]byte("d")),
+		}
+		mockPDClient.SetRegions(physicalBoundaries)
+
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
+		regions, err := PaginateScanRegionWithCodecAware(
+			ctx,
+			client,
+			tikvCodec.EncodeKey([]byte("a")),
+			tikvCodec.EncodeKey([]byte("d")),
+			2,
+		)
+		require.NoError(t, err)
+		checkRegionsBoundaries(t, regions, physicalBoundaries)
+	})
+
+	t.Run("empty logical end key", func(t *testing.T) {
+		mockPDClient := NewMockPDClientForSplit()
+		codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+		tikvCodec := codecPDClient.GetCodec()
+
+		_, physicalEnd := tikvCodec.EncodeRegionRange([]byte("b"), nil)
+		physicalBoundaries := [][]byte{
+			tikvCodec.EncodeRegionKey([]byte("a")),
+			tikvCodec.EncodeRegionKey([]byte("b")),
+			physicalEnd,
+		}
+		mockPDClient.SetRegions(physicalBoundaries)
+
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
+		scanStart, scanEnd := tikvCodec.EncodeRange([]byte("a"), nil)
+		regions, err := PaginateScanRegionWithCodecAware(
+			ctx,
+			client,
+			scanStart,
+			scanEnd,
+			2,
+		)
+		require.NoError(t, err)
+		checkRegionsBoundaries(t, regions, physicalBoundaries)
+	})
+}
+
+func TestSplitKeysAndScatterCodecPDClientMapsSplitKeys(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/failToSplit", "return()"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/failToSplit"))
+	})
+	originSplitRetryTimes := SplitRetryTimes
+	SplitRetryTimes = 1
+	t.Cleanup(func() {
+		SplitRetryTimes = originSplitRetryTimes
+	})
+
+	ctx := context.Background()
+	mockPDClient := NewMockPDClientForSplit()
+	codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+	tikvCodec := codecPDClient.GetCodec()
+	mockPDClient.SetRegions([][]byte{
+		tikvCodec.EncodeRegionKey([]byte("a")),
+		tikvCodec.EncodeRegionKey([]byte("d")),
+	})
+
+	client := &pdClient{
+		client:           codecPDClient,
+		splitConcurrency: 1,
+		splitBatchKeyCnt: 100,
+		isCodecPDClient:  true,
+	}
+	_, err := client.SplitKeysAndScatter(ctx, [][]byte{tikvCodec.EncodeKey([]byte("b"))})
+	require.ErrorContains(t, err, "retryable error")
 }
 
 func TestPaginateScanRegion(t *testing.T) {

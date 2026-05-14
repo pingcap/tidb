@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -137,7 +137,7 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	}
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
 	for i := range concurrency {
 		encoder := encoders[i]
 		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e, e.GetMeterRecorder())

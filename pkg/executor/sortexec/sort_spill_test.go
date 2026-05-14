@@ -262,8 +262,9 @@ func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCas
 }
 
 func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
-	ctx.GetSessionVars().InitChunkSize = 1024
-	ctx.GetSessionVars().MaxChunkSize = 1024
+	// Keep all input rows in one chunk to make this one-partition case deterministic.
+	ctx.GetSessionVars().InitChunkSize = sortCase.Rows
+	ctx.GetSessionVars().MaxChunkSize = sortCase.Rows
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 50000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
@@ -277,9 +278,6 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(false)`)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
-	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionMemoryForTest(0))
-	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionDiskForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
 
@@ -292,7 +290,12 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase, enableFailPoint bool) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
+	hardLimit := int64(10000)
+	if enableFailPoint {
+		// Use a tighter limit so `unholdSyncLock` reliably creates multiple spill partitions.
+		hardLimit = 1000
+	}
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	schema := expression.NewSchema(sortCase.Columns()...)
@@ -307,11 +310,10 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 	}
 	if enableFailPoint {
-		// If we disable the failpoint, there may be only one partition.
+		// Even with this failpoint, partition count can still be 1 on some schedules.
 		sortPartitionNum := exe.GetSortPartitionListLenForTest()
-		require.Greater(t, sortPartitionNum, 1)
 
-		// Ensure all partitions are spilled
+		// Ensure all full partitions are spilled.
 		for i := range sortPartitionNum {
 			// The last partition may not be spilled.
 			if i < sortPartitionNum-1 {

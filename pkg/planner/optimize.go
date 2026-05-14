@@ -48,8 +48,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
 
 const nonPreparedPlanCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
@@ -559,6 +561,26 @@ func buildAndOptimizeLogicalPlanRound(
 		return nil, nil, false, err
 	}
 
+	// Record predicate-context MATCH for cost competition. The fts-like-fallback
+	// alternative round reads this signal to decide whether to build a competing
+	// ILIKE-based plan alongside round 1's native plan, so the cheaper of the
+	// two wins via the normal alt-rounds cost comparison.
+	if builder.HasPredicateMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
+	}
+
+	// If this round saw a predicate-context MATCH that cannot be served by the
+	// native FTSMysqlMatchAgainst builtin, the produced plan would fail at
+	// execution. Discard it and arm AlternativeLogicalPlanFTSLikeFallback so
+	// any intervening rounds (correlate, etc.) re-rewrite with ILIKE too. The
+	// fts-like-fallback round below also forces this flag during setup; this
+	// outer assignment covers the non-viable case where the flag must stay
+	// true across all subsequent rounds, not just inside the LIKE round.
+	if builder.HasNonViableFTSMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		return p, names, false, nil
+	}
+
 	if *bestPlan == nil || cost < *bestCost {
 		*bestCost = cost
 		*bestPlan = finalPlan
@@ -584,16 +606,85 @@ func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
 		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
 }
 
-type flagAdjustFunc func(uint64) uint64
-
-var roundList = [...]flagAdjustFunc{
-	func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
-	func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
 }
 
-var roundEnabled = [...]func(*variable.SessionVars) bool{
-	shouldTryNonDecorrelationRound,
-	shouldTryOrderAwareReorderRound,
+// alternativeRound describes one alternative logical-plan round.
+// adjustFlag adjusts the optimization flags for the round.
+// enabled returns true when the round should be attempted.
+// setup/cleanup optionally modify session state before/after plan building.
+type alternativeRound struct {
+	name       string
+	adjustFlag func(uint64) uint64
+	enabled    func(*variable.SessionVars) bool
+	setup      func(*variable.SessionVars)
+	cleanup    func(*variable.SessionVars)
+}
+
+// savedEnableCorrelateSubquery holds the pre-round value of
+// EnableCorrelateSubquery so setup/cleanup can share it without a closure
+// wrapper. Safe because optimize is single-threaded per session.
+var savedEnableCorrelateSubquery bool
+
+// savedFTSLikeFallback holds the pre-round value of
+// AlternativeLogicalPlanFTSLikeFallback so the fts-like-fallback round's
+// setup/cleanup can restore it after running with the flag forced on. Safe
+// because optimize is single-threaded per session.
+var savedFTSLikeFallback bool
+
+var alternativeRounds = [...]alternativeRound{
+	{
+		name:       "non-decorrelate",
+		adjustFlag: func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+		enabled:    shouldTryNonDecorrelationRound,
+	},
+	{
+		name:       "order-aware-reorder",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+		enabled:    shouldTryOrderAwareReorderRound,
+	},
+	{
+		name:       "correlate",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+		enabled:    shouldTryCorrelateRound,
+		setup: func(sv *variable.SessionVars) {
+			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+			sv.EnableCorrelateSubquery = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+		},
+	},
+	{
+		// fts-like-fallback: rebuild the plan rewriting predicate-context
+		// MATCH...AGAINST to ILIKE so it can compete with round 1's native plan
+		// on cost (and serve as the only valid plan when native is non-viable).
+		// Round 1 always uses the native builtin (same as Alt-disabled). This
+		// round fires whenever round 1 saw a direct-boolean-context MATCH
+		// (HasPredicateContextMatch) — both plans then compete via the strict-`<`
+		// cost comparison in buildAndOptimizeLogicalPlanRound — or whenever
+		// round 1 saw a MATCH whose native form cannot execute
+		// (FTSLikeFallback, set by the round driver after discarding round 1).
+		// In the discard case, round 1's plan is unavailable and this round's
+		// plan wins by default.
+		name: "fts-like-fallback",
+		enabled: func(sv *variable.SessionVars) bool {
+			if !sv.EnableAlternativeLogicalPlans {
+				return false
+			}
+			return sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback ||
+				sv.StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch
+		},
+		setup: func(sv *variable.SessionVars) {
+			savedFTSLikeFallback = sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = savedFTSLikeFallback
+		},
+	},
 }
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
@@ -639,6 +730,18 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if needRestoreLogicalPlanCtx {
 		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
 		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
+		// Round 1 always uses the native FTSMysqlMatchAgainst builtin — same as
+		// the Alt-disabled default. The build records two signals on the
+		// planBuilder when MATCH...AGAINST is seen:
+		//   * HasPredicateMatch: any direct-boolean-context MATCH. The round
+		//     driver propagates this into stmtctx to trigger the
+		//     fts-like-fallback alternative round, which builds a competing
+		//     ILIKE-based plan; the cheaper of the two wins.
+		//   * HasNonViableFTSMatch: a predicate-context MATCH whose native form
+		//     cannot execute (no FTS index / no TiFlash replica / unsupported
+		//     modifier). The round driver discards round 1's plan and forces
+		//     AlternativeLogicalPlanFTSLikeFallback true so all subsequent
+		//     rounds (correlate, etc.) re-rewrite with ILIKE.
 	}
 
 	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
@@ -665,10 +768,20 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
-	for i, adjust := range roundList {
-		if !roundEnabled[i](sessVars) {
-			continue
+	// Pre-compute which rounds are enabled based on the signals from the first
+	// (default) build. This prevents signal leakage: alternative rounds rebuild
+	// the plan and may set AlternativeLogicalPlan* signals as a side effect,
+	// which are not reset by restoreLogicalPlanBuildCtx. Evaluating enabled()
+	// upfront ensures each round's eligibility is determined solely by the
+	// original build's signals.
+	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
+	for _, round := range alternativeRounds {
+		if round.enabled(sessVars) {
+			enabledRounds = append(enabledRounds, round)
 		}
+	}
+	var lastAltRoundErr error
+	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
 			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
@@ -676,30 +789,56 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			}
 		})
 
-		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
-			ctx,
-			sctx,
-			node,
-			is,
-			hintProcessor,
-			&checked,
-			&optimizeStarted,
-			&beginOpt,
-			needRestoreLogicalPlanCtx,
-			&bestPlan,
-			&bestNames,
-			&bestCost,
-			&bestLogicalPlanCtx,
-			adjust,
-		)
+		// Use a closure so that defer-based cleanup runs at the end of each
+		// iteration, not at function exit. This ensures session state (e.g.
+		// EnableCorrelateSubquery) is restored even if the round panics.
+		func() {
+			if round.setup != nil {
+				round.setup(sessVars)
+				defer round.cleanup(sessVars)
+			}
+			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+				ctx,
+				sctx,
+				node,
+				is,
+				hintProcessor,
+				&checked,
+				&optimizeStarted,
+				&beginOpt,
+				needRestoreLogicalPlanCtx,
+				&bestPlan,
+				&bestNames,
+				&bestCost,
+				&bestLogicalPlanCtx,
+				round.adjustFlag,
+			)
+		}()
 		if err != nil {
-			return nil, nil, 0, err
+			// Alternative rounds are optional optimizations. If one fails,
+			// log and continue — the first round's plan is still valid in
+			// the general case. fts-like-fallback is the exception: the
+			// first round's plan may have been discarded as non-executable,
+			// so we remember the last alt-round error in case bestPlan
+			// remains nil after the loop.
+			logutil.BgLogger().Warn("alternative logical plan round failed",
+				zap.String("round", round.name),
+				zap.Error(err))
+			lastAltRoundErr = err
+			continue
 		}
 		if nonLogical {
 			return p, names, 0, nil
 		}
 	}
 	if bestPlan == nil {
+		if lastAltRoundErr != nil {
+			// No valid plan from any round. Surface the most recent alt-round
+			// error rather than the generic sentinel — typically this is the
+			// fts-like-fallback round reporting why MATCH...AGAINST cannot be
+			// rewritten (unsupported search string, etc.).
+			return nil, nil, 0, lastAltRoundErr
+		}
 		return nil, nil, 0, errors.New("failed to build logical plan")
 	}
 	if needRestoreLogicalPlanCtx {

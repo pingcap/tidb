@@ -24,7 +24,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
@@ -192,7 +192,7 @@ func (r *inMemoryReaderBase) loadRowGroup(
 	eg.SetLimit(8)
 	readStart := rg.start
 	for readStart < rg.end {
-		batchSize := min(int64(external.ConcurrentReaderBufferSizePerConc), rg.end-readStart)
+		batchSize := min(int64(globalsort.ConcurrentReaderBufferSizePerConc), rg.end-readStart)
 		start := readStart
 		readStart += batchSize
 		offset := start - rg.start

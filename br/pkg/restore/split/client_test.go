@@ -14,9 +14,21 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestGetCodecPDClient(t *testing.T) {
+	require.Nil(t, (&pdClient{}).GetCodecPDClient())
+	require.Nil(t, (&pdClient{client: NewMockPDClientForSplit()}).GetCodecPDClient())
+	codecPDClient := &tikv.CodecPDClient{}
+	require.Nil(t, (&pdClient{client: codecPDClient}).GetCodecPDClient())
+	require.Same(t, codecPDClient, (&pdClient{client: codecPDClient, isCodecPDClient: true}).GetCodecPDClient())
+	require.Same(t, codecPDClient, NewCodecAwareClient(codecPDClient, nil, nil, 0, 0).GetCodecPDClient())
+	require.Nil(t, NewFakeSplitClient().GetCodecPDClient())
+	require.Nil(t, NewTestClient(nil, nil, 0).GetCodecPDClient())
+}
 
 func TestBatchSplit(t *testing.T) {
 	backup := maxBatchSplitSize

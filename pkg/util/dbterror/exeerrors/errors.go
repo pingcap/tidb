@@ -103,4 +103,6 @@ var (
 	ErrLoadDataInvalidOperation       = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidOperation)
 	ErrLoadDataLocalUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataLocalUnsupportedOption)
 	ErrLoadDataPreCheckFailed         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataPreCheckFailed)
+
+	ErrMaxKeysReadExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrMaxKeysReadExceeded)
 )
