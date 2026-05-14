@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/importer"
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"

@@ -1867,8 +1867,8 @@ func TestDoImport(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
 
 	// test that
 	// - one job need rescan when ingest
@@ -2119,8 +2119,8 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
 
 	// test that job need rescan when ingest
 
@@ -2212,10 +2212,10 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeGenerateJob", "sleep(1000)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace", "return()")
 
 	initRegionKeys := [][]byte{{'c'}, {'d'}, {'e'}}
 	fakeRegionJobs = map[[2]string]struct {
@@ -2265,10 +2265,10 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/sendDummyJob", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockGetFirstAndLastKey", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace", "return()")
 
 	initRegionKeys := [][]byte{{'c'}, {'d'}}
 
@@ -2309,11 +2309,11 @@ func (r *recordScanRegionsHook) AfterScanRegions(infos []*split.RegionInfo, err 
 }
 
 func TestExternalEngine(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipStartWorker", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/injectVariables", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/globalsort/LoadIngestDataBatchSize", "return(2)")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipOnDuplicateKeyCheck", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipOnDuplicateKeyCheck", "return(true)")
 	ctx := context.Background()
 	dir := t.TempDir()
 	storageURI := "file://" + filepath.ToSlash(dir)
@@ -2691,10 +2691,10 @@ func (r *refCountIngestData) IsCleaned() bool {
 // This test ensures that even if some empty jobs finish quickly, the ingestData won't be
 // cleaned unexpectedly before other jobs can access it.
 func TestRefAllJobsBeforeSending(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipStartWorker", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/injectVariables", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
 
 	ctx := context.Background()
 	local := &Backend{

@@ -755,7 +755,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 
 	tests := []testCase{
 		{
-			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			fp:               "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockRunJobSucceed",
 			expr:             "return",
 			mockGeneratorErr: false,
 			mockDrainerErr:   false,
@@ -763,7 +763,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 			opErr:            "",
 		},
 		{
-			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			fp:               "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockRunJobSucceed",
 			expr:             "return",
 			mockGeneratorErr: false,
 			mockDrainerErr:   true,
@@ -771,7 +771,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 			opErr:            "",
 		},
 		{
-			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/mockRunJobSucceed",
+			fp:               "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockRunJobSucceed",
 			expr:             "return",
 			mockGeneratorErr: true,
 			mockDrainerErr:   false,
@@ -779,7 +779,7 @@ func TestWorkerPoolWithErrors(t *testing.T) {
 			opErr:            "",
 		},
 		{
-			fp:               "github.com/pingcap/tidb/pkg/lightning/backend/local/injectPanicForRegionJob",
+			fp:               "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/injectPanicForRegionJob",
 			expr:             "panic",
 			mockGeneratorErr: false,
 			mockDrainerErr:   false,

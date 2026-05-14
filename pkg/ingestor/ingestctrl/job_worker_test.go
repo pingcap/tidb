@@ -118,7 +118,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 	) {
 		// mock jobWg.Done() called in the worker
 		testfailpoint.Enable(t,
-			"github.com/pingcap/tidb/pkg/lightning/backend/local/mockJobWgDone",
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockJobWgDone",
 			fmt.Sprintf("return(%d)", generateCount))
 		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
 		pool, jobWg, jobInCh, jobOutCh := newRegionJobWorkerPoolForTest(workerCtx, preRunFn, writeFn, ingestFn)
