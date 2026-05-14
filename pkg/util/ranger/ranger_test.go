@@ -1045,6 +1045,13 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 	testKit.MustExec("insert into t values ('aa', 'bb'), ('aaa', 'bbb')")
 	testKit.MustQuery("select * from t use index (idx_a) where a > 'aa'").Check(testkit.Rows("aaa bbb"))
 	testKit.MustQuery("select * from t use index (idx_ab) where a = 'aaa' and b > 'bb' and b < 'cc'").Check(testkit.Rows("aaa bbb"))
+	testKit.MustQuery("select * from t use index (idx_a) where a > 'a' order by a").Check(testkit.Rows("aa bb", "aaa bbb"))
+
+	testKit.MustExec("drop table if exists issue68152")
+	testKit.MustExec("create table issue68152(c0 text not null, c1 double not null, c2 char(1) not null default 'x', primary key (c2, c1, c0(128)), index prefix_idx(c0(1))) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_bin")
+	testKit.MustExec("insert into issue68152(c0, c1, c2) values (' ^kAI[[_', 428.1106320573271, 'x'), ('V', 343.2264651012424, 'a'), ('E6', 109.27778225906448, 'a'), ('8', 0.8593559742149127, '2'), ('x}', 109.27778225906448, 'i')")
+	testKit.MustQuery("select c0, c2 from issue68152 use index (prefix_idx) where c0 > '' order by c0").
+		Check(testkit.Rows(" ^kAI[[_ x", "8 2", "E6 a", "V a", "x} i"))
 
 	tests := []struct {
 		indexPos    int
@@ -1059,6 +1066,20 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			accessConds: "[gt(test.t.a, aa)]",
 			filterConds: "[gt(test.t.a, aa)]",
 			resultStr:   "[[\"aa\",+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a > 'a'",
+			accessConds: "[gt(test.t.a, a)]",
+			filterConds: "[gt(test.t.a, a)]",
+			resultStr:   "[[\"a\",+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a > ''",
+			accessConds: "[gt(test.t.a, )]",
+			filterConds: "[gt(test.t.a, )]",
+			resultStr:   "[[\"\",+inf]]",
 		},
 		{
 			indexPos:    1,
