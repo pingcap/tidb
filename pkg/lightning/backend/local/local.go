@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"math"
@@ -43,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	backendkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -71,7 +72,6 @@ import (
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
-	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -128,6 +128,15 @@ var (
 	// ForcePartitionRegionThreshold is the threshold of regions to force partition range.
 	// It is exported for testing.
 	ForcePartitionRegionThreshold = 100
+
+	newEtcdSafePointKV = func(addrs []string, tlsConfig *tls.Config, opts ...tikvclient.SafePointKVOpt) (tikvclient.SafePointKV, error) {
+		return tikvclient.NewEtcdSafePointKV(addrs, tlsConfig, opts...)
+	}
+	newTiKVRPCClient = func(opts ...tikvclient.ClientOpt) tikvclient.Client {
+		return tikvclient.NewRPCClient(opts...)
+	}
+	newTiKVStore = tikvclient.NewKVStore
+	newPDClient  = pd.NewClientWithContext
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -534,7 +543,9 @@ type Backend struct {
 	pdCli     pd.Client
 	pdHTTPCli pdhttp.Client
 	splitCli  split.SplitClient
+	pdAddrs   []string
 	tikvCli   *tikvclient.KVStore
+	tikvCliMu sync.Mutex
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
 
@@ -569,19 +580,41 @@ var (
 	}
 )
 
-// NewBackend creates new connections to tikv.
+// PDClientOptions returns the PD client options required by the local backend.
+func PDClientOptions() []opt.ClientOption {
+	return []opt.ClientOption{
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
+		// If the time too short, we may scatter a region many times, because
+		// the interface `ScatterRegions` may time out.
+		opt.WithCustomTimeoutOption(60 * time.Second),
+	}
+}
+
+// NewCodecPDClient creates a codec-aware transaction PD client for the target keyspace.
+func NewCodecPDClient(pdCli pd.Client, keyspaceName string) (*tikvclient.CodecPDClient, error) {
+	if keyspaceName == "" {
+		return tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli), nil
+	}
+	return tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, keyspaceName)
+}
+
+func pdSecurityOption(tls *common.TLS) pd.SecurityOption {
+	if tls == nil {
+		return pd.SecurityOption{}
+	}
+	return tls.ToPDSecurityOption()
+}
+
+// NewBackend creates a local backend with a caller-owned PD client. The backend
+// shares callerOwnedCodecPDCli for PD operations and does not close it in
+// Backend.Close.
 func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdSvcDiscovery sd.ServiceDiscovery,
+	callerOwnedCodecPDCli *tikvclient.CodecPDClient,
 ) (b *Backend, err error) {
 	var (
-		pdCli                pd.Client
-		spkv                 *tikvclient.EtcdSafePointKV
-		pdCliForTiKV         *tikvclient.CodecPDClient
-		rpcCli               tikvclient.Client
-		tikvCli              *tikvclient.KVStore
 		pdHTTPCli            pdhttp.Client
 		importClientFactory  *importClientFactoryImpl
 		multiIngestSupported bool
@@ -596,85 +629,32 @@ func NewBackend(
 		if pdHTTPCli != nil {
 			pdHTTPCli.Close()
 		}
-		if tikvCli != nil {
-			// tikvCli uses pdCliForTiKV(which wraps pdCli) , spkv and rpcCli, so
-			// close tikvCli will close all of them.
-			_ = tikvCli.Close()
-		} else {
-			if rpcCli != nil {
-				_ = rpcCli.Close()
-			}
-			if spkv != nil {
-				_ = spkv.Close()
-			}
-			// pdCliForTiKV wraps pdCli, so we only need close pdCli
-			if pdCli != nil {
-				pdCli.Close()
-			}
-		}
 	}()
 	config.adjust()
-	var pdAddrs []string
-	if pdSvcDiscovery != nil {
-		pdAddrs = pdSvcDiscovery.GetServiceURLs()
-		// TODO(lance6716): if PD client can support creating a client with external
-		// service discovery, we can directly pass pdSvcDiscovery.
-	} else {
-		pdAddrs = strings.Split(config.PDAddr, ",")
-	}
-	pdCli, err = pd.NewClientWithContext(
-		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
-		opt.WithGRPCDialOptions(maxCallMsgSize...),
-		// If the time too short, we may scatter a region many times, because
-		// the interface `ScatterRegions` may time out.
-		opt.WithCustomTimeoutOption(60*time.Second),
-	)
-	if err != nil {
-		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
-	}
+	pdSvcDiscovery := callerOwnedCodecPDCli.GetServiceDiscovery()
+	pdAddrs := pdSvcDiscovery.GetServiceURLs()
 
-	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(pdAddrs, tls.TLSConfig())
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
-
-	if config.KeyspaceName == "" {
-		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
-	} else {
-		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, config.KeyspaceName)
-		if err != nil {
-			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
-		}
-	}
-
-	tikvCodec := pdCliForTiKV.GetCodec()
-	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
-	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
 	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
-		pdCli.GetServiceDiscovery(),
+		pdSvcDiscovery,
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
+	splitCli := split.NewCodecAwareClient(callerOwnedCodecPDCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 
-	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, callerOwnedCodecPDCli, importClientFactory)
 	if err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
 	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	local := &Backend{
-		pdCli:     pdCli,
+		pdCli:     callerOwnedCodecPDCli,
 		pdHTTPCli: pdHTTPCli,
 		splitCli:  splitCli,
-		tikvCli:   tikvCli,
+		pdAddrs:   append([]string(nil), pdAddrs...),
 		tls:       tls,
-		tikvCodec: tikvCodec,
+		tikvCodec: callerOwnedCodecPDCli.GetCodec(),
 
 		BackendConfig: config,
 
@@ -815,15 +795,79 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 
 // Close the local backend.
 func (local *Backend) Close() {
-	local.engineMgr.close()
-	local.importClientFactory.close()
+	if local.engineMgr != nil {
+		local.engineMgr.close()
+	}
+	if local.importClientFactory != nil {
+		local.importClientFactory.close()
+	}
 
-	_ = local.tikvCli.Close()
-	local.pdHTTPCli.Close()
-	local.pdCli.Close()
+	local.tikvCliMu.Lock()
+	tikvCli := local.tikvCli
+	local.tikvCli = nil
+	local.tikvCliMu.Unlock()
+
+	if tikvCli != nil {
+		_ = tikvCli.Close()
+	}
+	if local.pdHTTPCli != nil {
+		local.pdHTTPCli.Close()
+	}
 	if local.nextgenHTTPCli != nil {
 		local.nextgenHTTPCli.CloseIdleConnections()
 	}
+}
+
+func (local *Backend) getTiKVClient(ctx context.Context) (*tikvclient.KVStore, error) {
+	local.tikvCliMu.Lock()
+	defer local.tikvCliMu.Unlock()
+
+	if local.tikvCli != nil {
+		return local.tikvCli, nil
+	}
+
+	var tlsConfig *tls.Config
+	var rpcOpts []tikvclient.ClientOpt
+	if local.tls != nil {
+		tlsConfig = local.tls.TLSConfig()
+		rpcOpts = append(rpcOpts, tikvclient.WithSecurity(local.tls.ToTiKVSecurityConfig()))
+	}
+	rpcOpts = append(rpcOpts, tikvclient.WithCodec(local.tikvCodec))
+
+	// Some constructors below use their own internal contexts or timeouts.
+	// Leave those as-is and pass ctx where the API accepts one.
+	spkv, err := newEtcdSafePointKV(local.pdAddrs, tlsConfig)
+	if err != nil {
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+	// we have to build a separate PD client for tikv, as KVStore will manage
+	// the lifecycle of input PD client, while the PD client inside this is
+	// managed outside.
+	pdCliForTiKV, err := newPDClient(ctx, caller.Component("lightning-local-backend"), local.pdAddrs, pdSecurityOption(local.tls), PDClientOptions()...)
+	if err != nil {
+		_ = spkv.Close()
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+	codecPDCli, err := NewCodecPDClient(pdCliForTiKV, local.KeyspaceName)
+	if err != nil {
+		pdCliForTiKV.Close()
+		_ = spkv.Close()
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+	rpcCli := newTiKVRPCClient(rpcOpts...)
+	tikvCli, err := newTiKVStore("lightning-local-backend", codecPDCli, spkv, rpcCli)
+	if err != nil {
+		if rpcCli != nil {
+			_ = rpcCli.Close()
+		}
+		if spkv != nil {
+			_ = spkv.Close()
+		}
+		codecPDCli.Close()
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+	}
+	local.tikvCli = tikvCli
+	return tikvCli, nil
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -1144,7 +1188,7 @@ func (local *Backend) generateAndSendJob(
 
 	dataAndRangeCh := make(chan engineapi.DataAndRanges)
 	conn := int(local.WorkerConcurrency.Load())
-	if _, ok := engine.(*external.Engine); ok {
+	if _, ok := engine.(*globalsort.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
 		conn = 1
@@ -1243,7 +1287,7 @@ func (local *Backend) generateJobForRange(
 	}
 	if pairStart == nil {
 		logFn := tidblogutil.Logger(ctx).Info
-		if _, ok := data.(*external.MemoryIngestData); ok {
+		if _, ok := data.(*globalsort.MemoryIngestData); ok {
 			logFn = tidblogutil.Logger(ctx).Warn
 		}
 		logFn("There is no pairs in range",
@@ -1255,9 +1299,9 @@ func (local *Backend) generateJobForRange(
 		return nil, nil
 	}
 
-	startKey := codec.EncodeBytes([]byte{}, pairStart)
-	endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
-	regions, err := split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
+	startKey := pairStart
+	endKey := nextKey(pairEnd)
+	regions, err := split.PaginateScanRegionWithCodecAware(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
 		tidblogutil.Logger(ctx).Error("scan region failed",
 			log.ShortError(err), zap.Int("region_len", len(regions)),
@@ -1311,12 +1355,12 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 // GetExternalEngine returns the external engine by uuid.
 // If the engine is not found or not an external engine, it returns nil.
 // It's used to dynamically update the resource used by the external engine
-func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
+func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *globalsort.Engine {
 	e, ok := local.engineMgr.getExternalEngine(engineUUID)
 	if !ok {
 		return nil
 	}
-	ext, ok := e.(*external.Engine)
+	ext, ok := e.(*globalsort.Engine)
 	if !ok {
 		return nil
 	}
@@ -1331,7 +1375,7 @@ func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 	// These options are not yet implemented for local backend, so we skip
 	// the statistics verification and return an error to remind future
 	// implementers to add support for this check.
-	if extEngine, ok := e.(*external.Engine); ok {
+	if extEngine, ok := e.(*globalsort.Engine); ok {
 		failpoint.Inject("skipOnDuplicateKeyCheck", func(_ failpoint.Value) {
 			failpoint.Return(nil)
 		})
@@ -1600,7 +1644,7 @@ func (local *Backend) doImport(
 	)
 	wctx := workerpool.NewContext(workerCtx)
 
-	if e, ok := engine.(*external.Engine); ok {
+	if e, ok := engine.(*globalsort.Engine); ok {
 		e.SetWorkerPool(pool)
 	}
 
@@ -1754,11 +1798,16 @@ func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 	return local.engineMgr.cleanupEngine(ctx, engineUUID)
 }
 
-// GetDupeController returns a new dupe controller.
-func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) *DupeController {
+// GetDupeController returns a new dupe controller. ctx is used when creating
+// the lazy TiKV client.
+func (local *Backend) GetDupeController(ctx context.Context, dupeConcurrency int, errorMgr *errormanager.ErrorManager) (*DupeController, error) {
+	tikvCli, err := local.getTiKVClient(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return &DupeController{
 		splitCli:            local.splitCli,
-		tikvCli:             local.tikvCli,
+		tikvCli:             tikvCli,
 		tikvCodec:           local.tikvCodec,
 		errorMgr:            errorMgr,
 		dupeConcurrency:     dupeConcurrency,
@@ -1767,7 +1816,7 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 		importClientFactory: local.importClientFactory,
 		resourceGroupName:   local.ResourceGroupName,
 		taskType:            local.TaskType,
-	}
+	}, nil
 }
 
 // UnsafeImportAndReset forces the backend to import the content of an engine

@@ -23,8 +23,8 @@ import (
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/table"
@@ -85,7 +85,7 @@ func NewDeleter(
 	}
 	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, progressCollector, logger)
 	var h Handler
-	if kvGroup == external.DataKVGroup {
+	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
 		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), nil)
@@ -95,7 +95,7 @@ func NewDeleter(
 }
 
 // Run starts the deleter.
-func (d *Deleter) Run(ctx context.Context, ch chan *external.KVPair) error {
+func (d *Deleter) Run(ctx context.Context, ch chan *globalsort.KVPair) error {
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	eg.Go(func() error {

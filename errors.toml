@@ -2076,6 +2076,11 @@ error = '''
 Unknown background task name '%-.192s'
 '''
 
+["executor:8274"]
+error = '''
+tidb_max_keys_read limit exceeded
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp

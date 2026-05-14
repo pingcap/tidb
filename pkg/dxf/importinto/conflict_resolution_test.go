@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -43,13 +43,13 @@ import (
 	"go.uber.org/zap"
 )
 
-func writeConflictKVFile(t *testing.T, codec tikv.Codec, kvGroup string, objStore storeapi.Storage, kvs []*external.KVPair) *engineapi.ConflictInfo {
+func writeConflictKVFile(t *testing.T, codec tikv.Codec, kvGroup string, objStore storeapi.Storage, kvs []*globalsort.KVPair) *engineapi.ConflictInfo {
 	t.Helper()
 	ctx := context.Background()
-	var summary *external.WriterSummary
-	w := external.NewWriterBuilder().
+	var summary *globalsort.WriterSummary
+	w := globalsort.NewWriterBuilder().
 		SetTiKVCodec(codec).
-		SetOnCloseFunc(func(s *external.WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *globalsort.WriterSummary) { summary = s }).
 		Build(objStore, "/test", kvGroup)
 	for _, kv := range kvs {
 		require.NoError(t, w.WriteRow(ctx, kv.Key, kv.Value, nil))
@@ -78,8 +78,8 @@ func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table, code
 
 	// total 3 * 2 conflicted data KVs, and 3 conflicted index KVs, they will be
 	// taken as 9 conflicted rows.
-	dupDataKVs := make([]*external.KVPair, 0, 6)
-	dupIndexKVs := make([]*external.KVPair, 0, 3)
+	dupDataKVs := make([]*globalsort.KVPair, 0, 6)
+	dupIndexKVs := make([]*globalsort.KVPair, 0, 3)
 	for i := range 3 {
 		dupID := i + 1
 		row := []types.Datum{types.NewDatum(dupID), types.NewDatum(dupID), types.NewDatum(dupID)}
@@ -87,13 +87,13 @@ func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table, code
 		require.NoError(t, err2)
 		for _, pair := range dupPairs.Pairs {
 			if tablecodec.IsRecordKey(pair.Key) {
-				kv := &external.KVPair{Key: pair.Key, Value: pair.Val}
+				kv := &globalsort.KVPair{Key: pair.Key, Value: pair.Val}
 				dupDataKVs = append(dupDataKVs, kv, kv)
 			} else {
 				indexID, err := tablecodec.DecodeIndexID(pair.Key)
 				require.NoError(t, err)
 				if indexID == 2 {
-					kv := &external.KVPair{Key: pair.Key, Value: pair.Val}
+					kv := &globalsort.KVPair{Key: pair.Key, Value: pair.Val}
 					dupIndexKVs = append(dupIndexKVs, kv)
 				}
 			}
@@ -105,8 +105,8 @@ func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table, code
 
 	return importinto.KVGroupConflictInfos{
 		ConflictInfos: map[string]*engineapi.ConflictInfo{
-			external.DataKVGroup:        writeConflictKVFile(t, codec, external.DataKVGroup, objStore, dupDataKVs),
-			external.IndexID2KVGroup(2): writeConflictKVFile(t, codec, "2", objStore, dupIndexKVs),
+			globalsort.DataKVGroup:        writeConflictKVFile(t, codec, globalsort.DataKVGroup, objStore, dupDataKVs),
+			globalsort.IndexID2KVGroup(2): writeConflictKVFile(t, codec, "2", objStore, dupIndexKVs),
 		},
 	}
 }

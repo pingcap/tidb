@@ -1945,6 +1945,18 @@ var defaultSysVars = []*SysVar{
 		}},
 	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:                    vardef.TiDBMaxKeysRead,
+		Value:                   "0",
+		Type:                    vardef.TypeUnsigned,
+		MinValue:                0,
+		MaxValue:                math.MaxUint64,
+		IsHintUpdatableVerified: true,
+		SetSession: func(s *SessionVars, val string) error {
+			s.MaxKeysRead = TidbOptUint64(val, 0)
+			return nil
+		}},
+	{
+		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.TiKVClientReadTimeout,
 		Value:                   "0",
 		Type:                    vardef.TypeUnsigned,

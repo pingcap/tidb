@@ -388,6 +388,18 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		duration := time.Since(startTime)
 		r.fetchDuration += duration
 		if err != nil {
+			// On error paths with a non-nil resultSubset (e.g. ErrMaxKeysReadExceeded),
+			// still merge CopExecDetails so ProcessedKeys reaches StmtCtx.ExecDetails
+			// (feeds tidb_keys_examined and the slow query log). Skip
+			// updateCopRuntimeStats because r.selectResp is not unmarshaled on this
+			// path, so there are no ExecutionSummaries for per-operator stats.
+			if resultSubset != nil {
+				if hasStats, ok := resultSubset.(CopRuntimeStats); ok {
+					if copStats := hasStats.GetCopRuntimeStats(); copStats != nil {
+						r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
+					}
+				}
+			}
 			return errors.Trace(err)
 		}
 		if r.selectResp != nil {

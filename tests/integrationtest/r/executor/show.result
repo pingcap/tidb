@@ -758,6 +758,7 @@ mask_date
 mask_full
 mask_null
 mask_partial
+match_against
 md5
 microsecond
 mid

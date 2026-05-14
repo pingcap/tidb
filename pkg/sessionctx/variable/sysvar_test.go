@@ -135,6 +135,51 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.Equal(t, uint64(99999), vars.MaxExecutionTime)
 }
 
+func TestTiDBMaxKeysRead(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBMaxKeysRead)
+	require.NotNil(t, sv)
+	vars := NewSessionVars(nil)
+
+	// Negative values should be clipped to 0.
+	val, err := sv.Validate(vars, "-1", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Zero is valid (unlimited).
+	val, err = sv.Validate(vars, "0", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Positive values are accepted.
+	val, err = sv.Validate(vars, "1000", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "1000", val)
+
+	// SetSession sets MaxKeysRead.
+	require.Nil(t, sv.SetSessionFromHook(vars, "500"))
+	require.Equal(t, uint64(500), vars.MaxKeysRead)
+
+	// IsHintUpdatableVerified must be true.
+	require.True(t, sv.IsHintUpdatableVerified)
+}
+
+func TestGetMaxKeysRead(t *testing.T) {
+	vars := NewSessionVars(nil)
+	vars.MaxKeysRead = 100
+
+	// Outside SELECT statement: returns 0.
+	vars.StmtCtx.InSelectStmt = false
+	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
+
+	// Inside SELECT statement: returns configured value.
+	vars.StmtCtx.InSelectStmt = true
+	require.Equal(t, uint64(100), vars.GetMaxKeysRead())
+
+	// Zero means unlimited regardless of context.
+	vars.MaxKeysRead = 0
+	require.Equal(t, uint64(0), vars.GetMaxKeysRead())
+}
+
 func TestTiFlashMaxBytes(t *testing.T) {
 	varNames := []string{vardef.TiDBMaxBytesBeforeTiFlashExternalJoin, vardef.TiDBMaxBytesBeforeTiFlashExternalGroupBy, vardef.TiDBMaxBytesBeforeTiFlashExternalSort}
 	for index, varName := range varNames {

@@ -25,7 +25,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/errno",
-        "//pkg/lightning/backend/external",
+        "//pkg/ingestor/globalsort",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",

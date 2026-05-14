@@ -190,6 +190,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"mask_full",
 		"mask_null",
 		"mask_partial",
+		"match_against",
 		"md5",
 		"microsecond",
 		"mid",
