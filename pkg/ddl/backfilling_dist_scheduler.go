@@ -774,7 +774,7 @@ func getRangeSplitter(
 			logger.Warn("fail to get region split keys and size", zap.Error(err))
 		}
 	}
-	nodeRc := handle.GetNodeResource()
+	nodeRc := diststorage.GetNodeResource()
 	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.DDLIngestLogger().Info("split kv range with split size and keys",
 		zap.Int64("region-split-size", regionSplitSize),
