@@ -43,6 +43,11 @@ const (
 type SQLKiller struct {
 	Signal killSignal
 	ConnID atomic.Uint64
+	killEvent struct {
+		ch chan struct{}
+		sync.Mutex
+		triggered bool
+	}
 	// FinishFuncLock is used to ensure that Finish is not called and modified at the same time.
 	// An external call to the Finish function only allows when the main goroutine to be in the writeResultSet process.
 	// When the main goroutine exits the writeResultSet process, the Finish function will be cleared.
@@ -53,6 +58,46 @@ type SQLKiller struct {
 	InWriteResultSet atomic.Bool
 }
 
+// GetKillEventChan returns a channel that is closed when the query receives a kill signal.
+func (killer *SQLKiller) GetKillEventChan() <-chan struct{} {
+	killer.killEvent.Lock()
+	defer killer.killEvent.Unlock()
+
+	if killer.killEvent.ch != nil {
+		return killer.killEvent.ch
+	}
+
+	killer.killEvent.ch = make(chan struct{})
+	if killer.killEvent.triggered {
+		close(killer.killEvent.ch)
+	}
+	return killer.killEvent.ch
+}
+
+func (killer *SQLKiller) triggerKillEvent() {
+	killer.killEvent.Lock()
+	defer killer.killEvent.Unlock()
+
+	if killer.killEvent.triggered {
+		return
+	}
+	if killer.killEvent.ch != nil {
+		close(killer.killEvent.ch)
+	}
+	killer.killEvent.triggered = true
+}
+
+func (killer *SQLKiller) resetKillEvent() {
+	killer.killEvent.Lock()
+	defer killer.killEvent.Unlock()
+
+	if !killer.killEvent.triggered && killer.killEvent.ch != nil {
+		close(killer.killEvent.ch)
+	}
+	killer.killEvent.ch = nil
+	killer.killEvent.triggered = false
+}
+
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	if atomic.CompareAndSwapUint32(&killer.Signal, 0, reason) {
@@ -60,6 +105,7 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 		err := killer.getKillError(status)
 		logutil.BgLogger().Warn("kill initiated", zap.Uint64("connection ID", killer.ConnID.Load()), zap.String("reason", err.Error()))
 	}
+	killer.triggerKillEvent()
 }
 
 // GetKillSignal gets the kill signal.
@@ -137,4 +183,5 @@ func (killer *SQLKiller) Reset() {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	atomic.StoreUint32(&killer.Signal, 0)
+	killer.resetKillEvent()
 }

@@ -348,6 +348,7 @@ func assertDistSQLCtxEqual(t *testing.T, expected *distsqlctx.DistSQLContext, ac
 			"$.SessionMemTracker",
 			"$.Location",
 			"$.ErrCtx.warnHandler",
+			"$.SQLKiller.killEvent.ch",
 		}),
 	)
 
