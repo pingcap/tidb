@@ -361,6 +361,9 @@ func TestCoprocessorPagingSize(t *testing.T) {
 }
 
 func TestAdaptiveClosestRead(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_replica_read closest-adaptive is not supported in next generation")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
