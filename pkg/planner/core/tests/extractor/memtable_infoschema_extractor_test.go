@@ -399,9 +399,8 @@ func cleanDataSequences(tk *testkit.TestKit) {
 }
 
 func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
-	tk.MustExec("select 3")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set global tidb_enable_check_constraint = true")
 	countSQL := 0
