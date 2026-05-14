@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -3132,6 +3133,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		// When task in succeed state, we can skip the dist task execution/scheduling process.
 		if task.State == proto.TaskStateSucceed {
 			w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
+			w.logDistTaskObservedTiKVUsage(taskManager, taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
@@ -3184,6 +3186,13 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			MergeTempIndex:  reorgInfo.mergingTmpIdx,
 			EstimateRowSize: rowSize,
 			Version:         BackfillTaskMetaVersion1,
+		}
+		initialUsage, err := collectTiKVStoreUsage(ctx, w.store)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to collect initial TiKV store usage for add-index task",
+				zap.Int64("jobID", job.ID), zap.String("task-key", taskKey), zap.Error(err))
+		} else {
+			taskMeta.InitialTiKVStoreUsage = initialUsage
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -3246,6 +3255,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	})
 
 	err = g.Wait()
+	if err == nil {
+		w.logDistTaskObservedTiKVUsage(taskManager, taskKey, reorgInfo.Job.ID)
+	}
 	return err
 }
 
@@ -3451,6 +3463,129 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, fmt.Errorf("zero approximate size")
 	}
 	return int(uint64(sizeInMiB)*size.MB) / int(sample.ApproximateKeys), nil
+}
+
+func collectTiKVStoreUsage(ctx context.Context, store kv.Storage) (*TiKVStoreUsageSnapshot, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
+	}
+	h := &helper.Helper{
+		Store:       hStore,
+		RegionCache: hStore.GetRegionCache(),
+	}
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	storesInfo, err := pdCli.GetStores(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return sumTiKVStoreUsage(storesInfo.Stores)
+}
+
+func sumTiKVStoreUsage(stores []pdHttp.StoreInfo) (*TiKVStoreUsageSnapshot, error) {
+	usage := &TiKVStoreUsageSnapshot{}
+	for _, store := range stores {
+		if isNonTiKVStoreInfo(store) {
+			continue
+		}
+		usage.StoreCount++
+		usedBytes, err := getStoreUsedBytes(store)
+		if err != nil {
+			return nil, errors.Annotatef(err, "parse store %d used bytes", store.Store.ID)
+		}
+		usage.UsedBytes += usedBytes
+	}
+	return usage, nil
+}
+
+func getStoreUsedBytes(store pdHttp.StoreInfo) (uint64, error) {
+	capacityBytes, err := units.RAMInBytes(store.Status.Capacity)
+	if err != nil {
+		return 0, err
+	}
+	availableBytes, err := units.RAMInBytes(store.Status.Available)
+	if err != nil {
+		return 0, err
+	}
+	if capacityBytes <= availableBytes {
+		return 0, nil
+	}
+	return uint64(capacityBytes - availableBytes), nil
+}
+
+func isNonTiKVStoreInfo(store pdHttp.StoreInfo) bool {
+	return slices.ContainsFunc(store.Store.Labels, func(label pdHttp.StoreLabel) bool {
+		if label.Key != placement.EngineLabelKey {
+			return false
+		}
+		return label.Value == placement.EngineLabelTiFlash || label.Value == placement.EngineLabelTiFlashCompute
+	})
+}
+
+func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, taskKey string, jobID int64) {
+	task, err := taskMgr.GetTaskByKeyWithHistory(w.workCtx, taskKey)
+	if err != nil {
+		logutil.DDLLogger().Warn("cannot get add-index task for observed TiKV capacity logging",
+			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Error(err))
+		return
+	}
+	if task == nil || task.State != proto.TaskStateSucceed {
+		return
+	}
+
+	taskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+		logutil.DDLLogger().Warn("cannot decode add-index task meta for observed TiKV capacity logging",
+			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Error(err))
+		return
+	}
+	if taskMeta.InitialTiKVStoreUsage == nil {
+		logutil.DDLLogger().Warn("initial TiKV store usage snapshot missing for add-index task",
+			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID))
+		return
+	}
+
+	finalUsage, err := collectTiKVStoreUsage(w.workCtx, w.store)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to collect final TiKV store usage for add-index task",
+			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(err))
+		return
+	}
+
+	subtasks, err := taskMgr.GetSubtasksWithHistory(w.workCtx, task.ID, proto.BackfillStepReadIndex)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to collect read-index subtasks for add-index task",
+			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(err))
+		return
+	}
+	_, logicalIndexKVBytes, err := sumReadIndexSubtaskSummary(subtasks)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to sum read-index processed bytes for add-index task",
+			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(err))
+		return
+	}
+
+	var observedIncrease int64
+	if finalUsage.UsedBytes > taskMeta.InitialTiKVStoreUsage.UsedBytes {
+		observedIncrease = int64(finalUsage.UsedBytes - taskMeta.InitialTiKVStoreUsage.UsedBytes)
+	}
+	logutil.DDLLogger().Info("observed TiKV capacity increase for add-index task",
+		zap.Int64("jobID", jobID),
+		zap.Int64("taskID", task.ID),
+		zap.String("task_key", taskKey),
+		zap.Int64("logical_index_kv_bytes", logicalIndexKVBytes),
+		zap.Int64("observed_tikv_capacity_increase_bytes", observedIncrease),
+		zap.Uint64("initial_tikv_used_bytes", taskMeta.InitialTiKVStoreUsage.UsedBytes),
+		zap.Uint64("final_tikv_used_bytes", finalUsage.UsedBytes),
+		zap.Int("initial_tikv_store_count", taskMeta.InitialTiKVStoreUsage.StoreCount),
+		zap.Int("final_tikv_store_count", finalUsage.StoreCount),
+	)
+	failpoint.InjectCall("afterLogObservedTiKVCapacityIncrease",
+		task.ID, logicalIndexKVBytes, observedIncrease,
+		int64(taskMeta.InitialTiKVStoreUsage.UsedBytes), int64(finalUsage.UsedBytes))
 }
 
 func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
