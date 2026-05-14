@@ -265,10 +265,17 @@ subgraph cluster10{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
+<<<<<<< HEAD
 "StreamAgg_10" -> "Projection_21"
 "Projection_21" -> "HashJoin_20"
 "HashJoin_20" -> "TableReader_13"
 "HashJoin_20" -> "IndexReader_19"
+=======
+"StreamAgg_13" -> "Projection_36"
+"Projection_36" -> "HashJoin_29"
+"HashJoin_29" -> "IndexReader_24"
+"HashJoin_29" -> "IndexReader_28"
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 }
 subgraph cluster12{
 node [style=filled, color=lightgrey]
@@ -294,8 +301,13 @@ subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
+<<<<<<< HEAD
 "HashJoin_8" -> "TableReader_10"
 "HashJoin_8" -> "TableReader_14"
+=======
+"HashJoin_8" -> "IndexReader_18"
+"HashJoin_8" -> "TableReader_20"
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 }
 subgraph cluster9{
 node [style=filled, color=lightgrey]

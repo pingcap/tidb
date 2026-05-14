@@ -540,6 +540,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
+<<<<<<< HEAD
 	// Test IndexJoin cost factor decrease
 	tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=0.1")
 	rs = tk.MustQuery("explain format=verbose select /*+ INL_JOIN(t1, t2) */ * from t as t1 inner join t as t2 on t1.b = t2.b").Rows()
@@ -547,6 +548,33 @@ func TestOptimizerCostFactors(t *testing.T) {
 	require.Nil(t, err3)
 	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
+=======
+		// Reset to default
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio=0")
+
+		// Test IndexJoin scan ratio threshold
+		tk.MustExec("drop table if exists t_outer, t_inner")
+		tk.MustExec("create table t_outer(a int primary key, b int, key(b))")
+		tk.MustExec("create table t_inner(a int primary key, b int, key(b))")
+		tk.MustExec("insert into t_outer values (1,1),(2,2),(3,3),(4,4),(5,5)")
+		tk.MustExec("insert into t_inner values (1,1),(2,2),(3,3),(4,4),(5,5)")
+		tk.MustExec("analyze table t_outer, t_inner")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=100")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio=0")
+		rs = tk.MustQuery("explain format=verbose select /*+ INL_JOIN(i) */ * from t_outer o straight_join t_inner i on o.b = i.b").Rows()
+		require.Contains(t, rs[0][0].(string), "IndexJoin")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio=0.8")
+		rs = tk.MustQuery("explain format=verbose select /*+ INL_JOIN(i) */ * from t_outer o straight_join t_inner i on o.b = i.b").Rows()
+		require.Contains(t, rs[0][0].(string), "IndexJoin")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio=0")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=1")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=1")
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 
 	// Reset to default
 	tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=1")

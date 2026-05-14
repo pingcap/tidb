@@ -2137,7 +2137,43 @@ var defaultSysVars = []*SysVar{
 		s.IndexJoinCostFactor = tidbOptFloat64(val, DefOptIndexJoinCostFactor)
 		return nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptimizerEnableNewOnlyFullGroupByCheck, Value: BoolToOnOff(DefTiDBOptimizerEnableNewOFGB), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+=======
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptLimitCostFactor, Value: strconv.FormatFloat(vardef.DefOptLimitCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.LimitCostFactor = tidbOptFloat64(val, vardef.DefOptLimitCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptStreamAggCostFactor, Value: strconv.FormatFloat(vardef.DefOptStreamAggCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.StreamAggCostFactor = tidbOptFloat64(val, vardef.DefOptStreamAggCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptHashAggCostFactor, Value: strconv.FormatFloat(vardef.DefOptHashAggCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.HashAggCostFactor = tidbOptFloat64(val, vardef.DefOptHashAggCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptMergeJoinCostFactor, Value: strconv.FormatFloat(vardef.DefOptMergeJoinCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.MergeJoinCostFactor = tidbOptFloat64(val, vardef.DefOptMergeJoinCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptHashJoinCostFactor, Value: strconv.FormatFloat(vardef.DefOptHashJoinCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.HashJoinCostFactor = tidbOptFloat64(val, vardef.DefOptHashJoinCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexJoinCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexJoinCostFactor = tidbOptFloat64(val, vardef.DefOptIndexJoinCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinMaxScanRowsRatio, Value: strconv.FormatFloat(vardef.DefOptIndexJoinMaxScanRowsRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexJoinMaxScanRowsRatio = tidbOptFloat64(val, vardef.DefOptIndexJoinMaxScanRowsRatio)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptSelectivityFactor, Value: strconv.FormatFloat(vardef.DefOptSelectivityFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.SelectivityFactor = tidbOptFloat64(val, vardef.DefOptSelectivityFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptimizerEnableNewOnlyFullGroupByCheck, Value: BoolToOnOff(vardef.DefTiDBOptimizerEnableNewOFGB), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 		s.OptimizerEnableNewOnlyFullGroupByCheck = TiDBOptOn(val)
 		return nil
 	}},

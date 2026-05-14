@@ -45,12 +45,71 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalUnionScan)
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
 		return nil, true, nil
+=======
+const (
+	indexJoinPruneMinProbeRows = 100000.0
+	indexJoinPruneMinBuildRows = 100.0
+)
+
+// exhaustPhysicalPlans generates all possible plans that can match the required property.
+// It will return:
+// 1. All possible plans that can match the required property.
+// 2. Whether the SQL hint can work. Return true if there is no hint.
+func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) (physicalPlans [][]base.PhysicalPlan, hintCanWork bool, err error) {
+	var ops []base.PhysicalPlan
+
+	switch x := lp.(type) {
+	case *logicalop.LogicalCTE:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalCTE(x, prop)
+	case *logicalop.LogicalSort:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSort(x, prop)
+	case *logicalop.LogicalTopN:
+		// ExhaustPhysicalPlans4LogicalTopN return PhysicalLimit and PhysicalTopN in different slice.
+		// So we can always choose limit plan with pushdown when comparing with a limit plan without pushdown directly,
+		// and choose a better plan by checking their cost when comparing a limit plan and a topn plan.
+		return physicalop.ExhaustPhysicalPlans4LogicalTopN(x, prop)
+	case *logicalop.LogicalLock:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLock(x, prop)
+	case *logicalop.LogicalJoin:
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalJoin(x, prop)
+	case *logicalop.LogicalApply:
+		ops, hintCanWork, err = exhaustPhysicalPlans4LogicalApply(x, prop)
+	case *logicalop.LogicalLimit:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalLimit(x, prop)
+	case *logicalop.LogicalWindow:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalWindow(x, prop)
+	case *logicalop.LogicalExpand:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalExpand(x, prop)
+	case *logicalop.LogicalUnionAll:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalUnionAll(x, prop)
+	case *logicalop.LogicalSequence:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSequence(x, prop)
+	case *logicalop.LogicalSelection:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalSelection(x, prop)
+	case *logicalop.LogicalMaxOneRow:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalMaxOneRow(x, prop)
+	case *logicalop.LogicalUnionScan:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalUnionScan(x, prop)
+	case *logicalop.LogicalProjection:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalProjection(x, prop)
+	case *logicalop.LogicalAggregation:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalAggregation(x, prop)
+	case *logicalop.LogicalPartitionUnionAll:
+		ops, hintCanWork, err = physicalop.ExhaustPhysicalPlans4LogicalPartitionUnionAll(x, prop)
+	case *memo.GroupExpression:
+		return memo.ExhaustPhysicalPlans4GroupExpression(x, prop)
+	case *mockLogicalPlan4Test:
+		ops, hintCanWork, err = ExhaustPhysicalPlans4MockLogicalPlan(x, prop)
+	default:
+		panic("unreachable")
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 	}
 	childProp := prop.CloneEssentialFields()
 	us := PhysicalUnionScan{
@@ -708,12 +767,220 @@ func constructIndexHashJoin(
 	return indexHashJoins
 }
 
+<<<<<<< HEAD
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
 	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
+=======
+// constructIndexJoinStatic is used to enumerate a physical index join with undecided inner plan. Via index join prop
+// pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
+// operators. This function is quite similar with constructIndexJoin, differing in the following part:
+//
+// Since constructIndexJoin will fill the physicalIndexJoin with runtime details (adjusting keys, hash-keys, moving eq
+// conditions into other conditions because the underlying ds couldn't use them, etc.) — because previously the index join
+// enumeration could see the complete index chosen result after the inner task is built — the refactored version here can
+// only see the info it owns at static enumeration time. That's why we call the function constructIndexJoinStatic.
+//
+// The indexJoinProp is passed down to the inner side; it contains the runtime constant inner key used to build the
+// underlying index/pk range. When the inner side is built bottom-up, it returns the indexJoinInfo, which contains the
+// runtime information this physical index join needs. That's why we introduce the second function completePhysicalIndexJoin,
+// which fills physicalIndexJoin with all runtime information it lacks in the static enumeration phase.
+func constructIndexJoinStatic(
+	p *logicalop.LogicalJoin,
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	indexJoinProp *property.IndexJoinRuntimeProp,
+	outerStats *property.StatsInfo,
+) []base.PhysicalPlan {
+	joinType := p.JoinType
+	var (
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
+		isNullEQ      []bool
+	)
+	if outerIdx == 0 {
+		outerJoinKeys, innerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
+	} else {
+		innerJoinKeys, outerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
+	}
+	chReqProps := make([]*property.PhysicalProperty, 2)
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
+		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		SortItems:         prop.SortItems,
+		CTEProducerStatus: prop.CTEProducerStatus,
+		NoCopPushDown:     prop.NoCopPushDown,
+	}
+
+	// inner side should pass down the indexJoinProp, which contains the runtime constant inner key, which is used to build the underlying index/pk range.
+	chReqProps[1-outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64,
+		CTEProducerStatus: prop.CTEProducerStatus, IndexJoinProp: indexJoinProp, NoCopPushDown: prop.NoCopPushDown}
+
+	// Some runtime details depend on the indexJoinInfo produced by the inner side,
+	// so we defer them to completePhysicalIndexJoin after the inner task is built.
+
+	baseJoin := physicalop.BasePhysicalJoin{
+		InnerChildIdx:   1 - outerIdx,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		// for static enumeration here, we just pass down the original other conditions
+		OtherConditions: p.OtherConditions,
+		JoinType:        joinType,
+		// for static enumeration here, we just pass down the original outerJoinKeys, innerJoinKeys, isNullEQ
+		OuterJoinKeys: outerJoinKeys,
+		InnerJoinKeys: innerJoinKeys,
+		IsNullEQ:      isNullEQ,
+		DefaultValues: p.DefaultValues,
+	}
+
+	join := physicalop.PhysicalIndexJoin{
+		BasePhysicalJoin: baseJoin,
+		// for static enumeration here, we don't need to fill inner plan anymore.
+		// for static enumeration here, the KeyOff2IdxOff, Ranges, CompareFilters, OuterHashKeys, InnerHashKeys are
+		// waiting for attach2Task's complement after see the inner plan's indexJoinInfo returned by underlying ds.
+		//
+		// for static enumeration here, we just pass down the original equal condition for condition adjustment rather
+		// depend on the original logical join node.
+		EqualConditions: p.EqualConditions,
+		// Only count candidates that keep the original Apply outer/inner order.
+		FromDecorrelatedApply: p.FromDecorrelatedApply && outerIdx == 0,
+	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
+	join.SetSchema(p.Schema())
+	return []base.PhysicalPlan{join}
+}
+
+// completePhysicalIndexJoin
+// as you see, completePhysicalIndexJoin is called in attach2Task, when the inner plan of a physical index join or a
+// physical index hash join is built bottom-up. Then indexJoin info is passed bottom-up within the Task to be filled.
+// completePhysicalIndexJoin will fill physicalIndexJoin about all the runtime information it lacks in static enumeration
+// phase.
+// There are several things to be filled:
+// 1. ranges:
+// as the old comment said: when inner plan is TableReader, the parameter `ranges` will be nil. Because pk
+// only have one column. So all of its range is generated during execution time. So set a new ranges{} when it is nil.
+//
+// 2. KeyOff2IdxOffs: fill the keyOff2IdxOffs' -1 and refill the eq condition back to other conditions and adjust inner
+// or outer keys and info.KeyOff2IdxOff has been used above to re-derive newInnerKeys, newOuterKeys, newIsNullEQ,
+// newOtherConds, newKeyOff.
+//
+//	physic.IsNullEQ = newIsNullEQ
+//	physic.InnerJoinKeys = newInnerKeys
+//	physic.OuterJoinKeys = newOuterKeys
+//	physic.OtherConditions = newOtherConds
+//	physic.KeyOff2IdxOff = newKeyOff
+//
+// 3. OuterHashKeys, InnerHashKeys:
+// for indexHashJoin, those not used EQ condition which has been moved into the new other-conditions can be extracted out
+// to build the hash table to avoid lazy evaluation as other conditions.
+//
+//  4. Info's Ranges, IdxColLens, CompareFilters:
+//     the underlying ds chosen path's ranges, idxColLens, and compareFilters.
+//     physic.Ranges = info.Ranges
+//     physic.IdxColLens = info.IdxColLens
+//     physic.CompareFilters = info.CompareFilters
+func completePhysicalIndexJoin(physic *physicalop.PhysicalIndexJoin, rt *physicalop.RootTask, innerS, outerS *expression.Schema, extractOtherEQ bool) base.PhysicalPlan {
+	info := rt.IndexJoinInfo
+	// runtime fill back ranges
+	if info.Ranges == nil {
+		info.Ranges = ranger.Ranges{} // empty range
+	}
+	// set the new key off according to the index join info's keyOff2IdxOff
+	newKeyOff := make([]int, 0, len(info.KeyOff2IdxOff))
+	// IsNullEQ & InnerJoinKeys & OuterJoinKeys in physic may change.
+	newIsNullEQ := make([]bool, 0, len(physic.IsNullEQ))
+	newInnerKeys := make([]*expression.Column, 0, len(physic.InnerJoinKeys))
+	newOuterKeys := make([]*expression.Column, 0, len(physic.OuterJoinKeys))
+	// OtherCondition may change because EQ can be leveraged in hash table retrieve.
+	newOtherConds := make([]expression.Expression, len(physic.OtherConditions), len(physic.OtherConditions)+len(physic.EqualConditions))
+	copy(newOtherConds, physic.OtherConditions)
+	for keyOff, idxOff := range info.KeyOff2IdxOff {
+		// if the keyOff is not used in the index join, we need to move the equal condition back to other conditions to eval them.
+		if info.KeyOff2IdxOff[keyOff] < 0 {
+			newOtherConds = append(newOtherConds, physic.EqualConditions[keyOff])
+			continue
+		}
+		// collecting the really used inner keys, outer keys, isNullEQ, and keyOff2IdxOff.
+		newInnerKeys = append(newInnerKeys, physic.InnerJoinKeys[keyOff])
+		newOuterKeys = append(newOuterKeys, physic.OuterJoinKeys[keyOff])
+		newIsNullEQ = append(newIsNullEQ, physic.IsNullEQ[keyOff])
+		newKeyOff = append(newKeyOff, idxOff)
+	}
+
+	// we can use the `col <eq> col` in new `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+	// for indexHashJoin, those not used EQ condition which has been moved into new other-conditions can be extracted out
+	// to build the hash table.
+	var outerHashKeys, innerHashKeys []*expression.Column
+	outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
+	// used innerKeys and outerKeys can surely be the hashKeys, besides that, the EQ in otherConds can also be used as hashKeys.
+	copy(outerHashKeys, newOuterKeys)
+	copy(innerHashKeys, newInnerKeys)
+	for i := len(newOtherConds) - 1; extractOtherEQ && i >= 0; i = i - 1 {
+		switch c := newOtherConds[i].(type) {
+		case *expression.ScalarFunction:
+			if c.FuncName.L == ast.EQ {
+				lhs, rhs, ok := expression.IsColOpCol(c)
+				if ok {
+					if lhs.InOperand || rhs.InOperand {
+						// if this other-cond is from a `[not] in` sub-query, do not convert it into eq-cond since
+						// IndexJoin cannot deal with NULL correctly in this case; please see #25799 for more details.
+						continue
+					}
+					// when it arrives here, we can sure that we got a EQ conditions and each side of them is a bare
+					// column, while we don't know whether each of them comes from the inner or outer, so check it.
+					outerSchema, innerSchema := outerS, innerS
+					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, lhs) // nozero
+						innerHashKeys = append(innerHashKeys, rhs) // nozero
+					} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, rhs) // nozero
+						innerHashKeys = append(innerHashKeys, lhs) // nozero
+					}
+					// if not, this EQ function is useless, keep it in new other conditions.
+					newOtherConds = slices.Delete(newOtherConds, i, i+1)
+				}
+			}
+		default:
+			continue
+		}
+	}
+	// then, fill all newXXX runtime info back to the physic indexJoin.
+	// info.KeyOff2IdxOff has been used above to derive newInnerKeys, newOuterKeys, newIsNullEQ, newOtherConds, newKeyOff.
+	physic.IsNullEQ = newIsNullEQ
+	physic.InnerJoinKeys = newInnerKeys
+	physic.OuterJoinKeys = newOuterKeys
+	physic.OtherConditions = newOtherConds
+	physic.KeyOff2IdxOff = newKeyOff
+	// the underlying ds chosen path's ranges, idxColLens, and compareFilters.
+	physic.Ranges = info.Ranges
+	physic.IdxColLens = info.IdxColLens
+	physic.CompareFilters = info.CompareFilters
+	// fill executing hashKeys, which containing inner/outer keys, and extracted EQ keys from otherConds if any.
+	physic.OuterHashKeys = outerHashKeys
+	physic.InnerHashKeys = innerHashKeys
+	// the logical EqualConditions is not used anymore in later phase.
+	physic.EqualConditions = nil
+	// clear rootTask's indexJoinInfo in case of pushing upward, because physical index join is indexJoinInfo's consumer.
+	rt.IndexJoinInfo = nil
+	return physic
+}
+
+// enumerateIndexJoinByOuterIdx will enumerate temporary index joins by index join prop required for its inner child.
+func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.PhysicalProperty, outerIdx int, enableRatioPrune bool) (joins []base.PhysicalPlan) {
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
+	stats0, stats1, schema0, schema1 := getJoinChildStatsAndSchema(ge, p)
+	var outerSchema *expression.Schema
+	var outerStats *property.StatsInfo
+	if outerIdx == 0 {
+		outerSchema = schema0
+		outerStats = stats0
+	} else {
+		outerSchema = schema1
+		outerStats = stats1
+	}
+	// need same order
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
@@ -734,16 +1001,44 @@ func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalPro
 	}
 
 	var avgInnerRowCnt float64
+<<<<<<< HEAD
 	if outerChild.StatsInfo().RowCount > 0 {
 		avgInnerRowCnt = p.EqualCondOutCnt / outerChild.StatsInfo().RowCount
 	}
 	joins = buildIndexJoinInner2TableScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
 	if joins != nil {
 		return
+=======
+	buildRows := 0.0
+	if outerStats != nil {
+		buildRows = outerStats.RowCount
+	}
+	if buildRows > 0 {
+		count := buildRows
+		avgInnerRowCnt = p.EqualCondOutCnt / count
+	}
+	if enableRatioPrune && shouldPruneIndexJoinByScanRatio(
+		p.SCtx().GetSessionVars().IndexJoinMaxScanRowsRatio,
+		buildRows,
+		avgInnerRowCnt,
+		p.Children()[outerIdx],
+		p.Children()[1-outerIdx],
+	) {
+		return nil
+	}
+	// for pk path
+	indexJoinPropTS := &property.IndexJoinRuntimeProp{
+		OtherConditions: p.OtherConditions,
+		InnerJoinKeys:   innerJoinKeys,
+		OuterJoinKeys:   outerJoinKeys,
+		AvgInnerRowCnt:  avgInnerRowCnt,
+		TableRangeScan:  true,
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 	}
 	return buildIndexJoinInner2IndexScan(p, prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
 }
 
+<<<<<<< HEAD
 // indexJoinInnerChildWrapper is a wrapper for the inner child of an index join.
 // It contains the lowest DataSource operator and other inner child operator
 // which is flattened into a list structure from tree structure .
@@ -762,6 +1057,69 @@ type indexJoinInnerChildWrapper struct {
 	ds             *logicalop.DataSource
 	hasDitryWrite  bool
 	zippedChildren []base.LogicalPlan
+=======
+func getProbeFullScanRowsForIndexJoinPrune(p base.LogicalPlan) float64 {
+	stats := p.StatsInfo()
+	if stats != nil && stats.HistColl != nil && stats.HistColl.RealtimeCount > 0 {
+		return float64(stats.HistColl.RealtimeCount)
+	}
+	return 0
+}
+
+func hasPseudoStatsForIndexJoinPrune(p base.LogicalPlan) bool {
+	stats := p.StatsInfo()
+	return stats == nil || stats.HistColl == nil || stats.HistColl.Pseudo
+}
+
+// shouldPruneIndexJoinByScanRatio decides whether to drop index-join candidates by
+// comparing estimated scan rows:
+//
+//	index-join scans ~= buildRows + buildRows*probeRowsOne
+//	hash-join scans  ~= buildRows + innerFullScanRows
+//
+// We only apply this pruning when:
+// 1) session threshold > 0,
+// 2) build/probe stats are non-pseudo,
+// 3) build/probe rows pass minimal gates to avoid over-pruning on tiny inputs.
+// If indexJoinScanRows/hashJoinScanRows >= threshold, index join is considered too
+// expensive in scan volume and gets pruned.
+func shouldPruneIndexJoinByScanRatio(
+	threshold, buildRows, probeRowsOne float64,
+	build, probe base.LogicalPlan,
+) bool {
+	if threshold <= 0 || buildRows < indexJoinPruneMinBuildRows {
+		return false
+	}
+	if hasPseudoStatsForIndexJoinPrune(build) || hasPseudoStatsForIndexJoinPrune(probe) {
+		return false
+	}
+	innerFullScanRows := getProbeFullScanRowsForIndexJoinPrune(probe)
+	if innerFullScanRows <= 0 {
+		return false
+	}
+	indexJoinProbeRows := buildRows * probeRowsOne
+	if indexJoinProbeRows < indexJoinPruneMinProbeRows {
+		return false
+	}
+	indexJoinScanRows := buildRows + indexJoinProbeRows
+	hashJoinScanRows := buildRows + innerFullScanRows
+	if hashJoinScanRows <= 0 {
+		return false
+	}
+	return indexJoinScanRows/hashJoinScanRows >= threshold
+}
+
+func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *property.PhysicalProperty) bool {
+	switch prop.TaskTp {
+	case property.MppTaskType:
+		// when parent operator ask current op to be mppTaskType, check operator itself here.
+		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiFlash)
+	case property.CopSingleReadTaskType, property.CopMultiReadTaskType:
+		return logicalop.CanSelfBeingPushedToCopImpl(p, kv.TiKV)
+	default:
+		return true
+	}
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 }
 
 func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
@@ -1543,8 +1901,19 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 	return
 }
 
+<<<<<<< HEAD
 // tryToGetIndexJoin returns all available index join plans, and the second returned value indicates whether this plan is enforced by hints.
 func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (indexJoins []base.PhysicalPlan, canForced bool) {
+=======
+// tryToEnumerateIndexJoin returns all available index join family plans by
+// pushing IndexJoinProp down to the inner side during enumeration.
+func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty, enableRatioPrune bool) []base.PhysicalPlan {
+	if prop.IndexJoinProp != nil {
+		// Avoid nested index join enumeration under an index join inner side.
+		return nil
+	}
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
@@ -1558,10 +1927,17 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	}
 	candidates := make([]base.PhysicalPlan, 0, 2)
 	if supportLeftOuter {
+<<<<<<< HEAD
 		candidates = append(candidates, getIndexJoinByOuterIdx(p, prop, 0)...)
 	}
 	if supportRightOuter {
 		candidates = append(candidates, getIndexJoinByOuterIdx(p, prop, 1)...)
+=======
+		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 0, enableRatioPrune)...)
+	}
+	if supportRightOuter {
+		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 1, enableRatioPrune)...)
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 	}
 
 	// Handle hints and variables about index join.
@@ -1586,6 +1962,27 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
+<<<<<<< HEAD
+=======
+func hasForceIndexJoinFamilyHint(p *logicalop.LogicalJoin) bool {
+	return p.PreferAny(
+		h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner,
+	)
+}
+
+func enumerationContainIndexJoin(candidates [][]base.PhysicalPlan) bool {
+	return slices.ContainsFunc(candidates, func(candidate []base.PhysicalPlan) bool {
+		return slices.ContainsFunc(candidate, func(op base.PhysicalPlan) bool {
+			_, _, ok := getIndexJoinSideAndMethod(op)
+			return ok
+		})
+	})
+}
+
+// handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
+// hint is specified in the query. So we can do it in physic enumeration phase.
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 func handleFilterIndexJoinHints(p *logicalop.LogicalJoin, candidates []base.PhysicalPlan) []base.PhysicalPlan {
 	if !p.PreferAny(h.PreferNoIndexJoin, h.PreferNoIndexHashJoin, h.PreferNoIndexMergeJoin) {
 		return candidates // no filter index join hints
@@ -2076,7 +2473,16 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		return joins, true, nil
 	}
 
+<<<<<<< HEAD
 	if !p.IsNAAJ() {
+=======
+	hashJoins, forced := getHashJoins(super, prop)
+	if forced && len(hashJoins) > 0 {
+		return hashJoins, true, nil
+	}
+
+	if !p.IsNAAJ() && prop.IndexJoinProp == nil { // gen merge join and index join only when non-naaj and index join prop is nil
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 		// naaj refuse merge join and index join.
 		mergeJoins := GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), p.Children()[0].StatsInfo(), p.Children()[1].StatsInfo())
 		if (p.PreferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
@@ -2084,17 +2490,25 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		}
 		joins = append(joins, mergeJoins...)
 
+<<<<<<< HEAD
 		indexJoins, forced := tryToGetIndexJoin(p, prop)
 		if forced {
 			return indexJoins, true, nil
 		}
+=======
+		enableRatioPrune := len(hashJoins) > 0 && !hasForceIndexJoinFamilyHint(p)
+		indexJoins := tryToEnumerateIndexJoin(super, prop, enableRatioPrune)
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 		joins = append(joins, indexJoins...)
 	}
 
+<<<<<<< HEAD
 	hashJoins, forced := getHashJoins(p, prop)
 	if forced && len(hashJoins) > 0 {
 		return hashJoins, true, nil
 	}
+=======
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 	joins = append(joins, hashJoins...)
 
 	if p.PreferJoinType > 0 {

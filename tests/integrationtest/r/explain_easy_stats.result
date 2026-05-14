@@ -133,8 +133,13 @@ subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
+<<<<<<< HEAD
 "HashJoin_8" -> "TableReader_10"
 "HashJoin_8" -> "TableReader_14"
+=======
+"HashJoin_8" -> "IndexReader_18"
+"HashJoin_8" -> "TableReader_20"
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 }
 subgraph cluster9{
 node [style=filled, color=lightgrey]

@@ -18,8 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+<<<<<<< HEAD
 	"os"
 	"path/filepath"
+=======
+	"strings"
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -93,6 +97,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 
+<<<<<<< HEAD
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
@@ -114,6 +119,178 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
+=======
+		// issue:61389
+		tk.MustExec("use test;")
+		tk.MustExec("CREATE TABLE `t19f3e4f1` (\n  `colc864` enum('d9','dt5w4','wsg','i','3','5ur3','s0m4','mmhw6','rh','ge9d','nm') DEFAULT 'dt5w4',\n  `colaadb` smallint DEFAULT '7697',\n  UNIQUE KEY `ee56e6aa` (`colc864`)\n);")
+		tk.MustExec("CREATE TABLE `t0da79f8d` (\n  `colf2af` enum('xrsg','go9yf','mj4','u1l','8c','at','o','e9','bh','r','yah') DEFAULT 'r'\n);")
+		require.NoError(t, testkit.LoadTableStats("test.t0da79f8d.json", dom))
+		require.NoError(t, testkit.LoadTableStats("test.t19f3e4f1.json", dom))
+		var input61389 []string
+		var output61389 []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestIssue61389", t, &input61389, &output61389, cascades, caller)
+		for i, tt := range input61389 {
+			testdata.OnRecord(func() {
+				output61389[i].SQL = tt
+				output61389[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output61389[i].Warn = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output61389[i].Plan...))
+			tk.MustQuery("show warnings").Check(testkit.Rows(output61389[i].Warn...))
+		}
+
+		// issue:61792
+		tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+		tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+		tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
+		tk.MustExec("use test;")
+		tk.MustExec("CREATE TABLE `tbl_cardcore_statement` (" +
+			"  `ID` varchar(30) NOT NULL," +
+			"  `latest_stmt_print_date` date DEFAULT NULL COMMENT 'KUSTMD'," +
+			"  `created_domain` varchar(10) DEFAULT NULL," +
+			"  PRIMARY KEY (`ID`)," +
+			"  KEY `tbl_cardcore_statement_ix7` (`latest_stmt_print_date`)" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='CCDSTMT';")
+		require.NoError(t, testkit.LoadTableStats("issue61792.json", dom))
+
+		var input61792 []string
+		var output61792 []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestIssue61792", t, &input61792, &output61792, cascades, caller)
+		for i, tt := range input61792 {
+			testdata.OnRecord(func() {
+				output61792[i].SQL = tt
+				output61792[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output61792[i].Warn = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output61792[i].Plan...))
+			tk.MustQuery("show warnings").Check(testkit.Rows(output61792[i].Warn...))
+		}
+
+		// repro_hash_join_issue
+		tk.MustExec("create database if not exists repro_hash_join_issue")
+		tk.MustExec("use repro_hash_join_issue")
+		tk.MustExec("CREATE TABLE t_small (\n" +
+			"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+			"  id1 VARCHAR(10) NOT NULL,\n" +
+			"  id2 TINYINT NOT NULL,\n" +
+			"  id3 BIGINT NOT NULL,\n" +
+			"  id4 BIGINT NOT NULL,\n" +
+			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
+			")")
+		tk.MustExec("CREATE TABLE t_big (\n" +
+			"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+			"  id1 BIGINT NOT NULL,\n" +
+			"  id2 INT NOT NULL,\n" +
+			"  id3 TINYINT NOT NULL,\n" +
+			"  id4 INT NOT NULL,\n" +
+			"  id5 BIGINT NOT NULL,\n" +
+			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+			"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
+			")")
+		tk.MustExec("insert into t_small(id1, id2, id3, id4) values " + buildReproHashJoinIssueSmallRows(1000))
+		tk.MustExec("insert into t_big(id1, id2, id3, id4, id5) values " + buildReproHashJoinIssueBigRows(1000))
+		tk.MustExec("analyze table t_small, t_big all columns")
+		tk.MustExec("set @@session.tidb_cost_model_version = 2")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 100")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = 0.1")
+
+		var inputReproHashJoinIssue []string
+		var outputReproHashJoinIssue []struct {
+			SQL   string
+			Ratio float64
+			Plan  []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestReproHashJoinIssue", t, &inputReproHashJoinIssue, &outputReproHashJoinIssue, cascades, caller)
+		require.Len(t, inputReproHashJoinIssue, 2)
+		ratios := []float64{0, 0.5}
+		for i, tt := range inputReproHashJoinIssue {
+			ratio := ratios[i]
+			tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_index_join_max_scan_rows_ratio = %v", ratio))
+			plan := tk.MustQuery(tt)
+			testdata.OnRecord(func() {
+				outputReproHashJoinIssue[i].SQL = tt
+				outputReproHashJoinIssue[i].Ratio = ratio
+				outputReproHashJoinIssue[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(outputReproHashJoinIssue[i].Plan...))
+		}
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio = 0")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = default")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = default")
+
+		// issue:59563
+		tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+		tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+		tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
+		tk.MustExec("create database if not exists cardcore_issuing;")
+		tk.MustExec("use cardcore_issuing;")
+		tk.MustExec("CREATE TABLE `tbl_cardcore_transaction` (" +
+			" `ID` varchar(30) NOT NULL," +
+			" `period` varchar(6) DEFAULT NULL," +
+			" `account_number` varchar(19) DEFAULT NULL," +
+			" `transaction_status` varchar(3) DEFAULT NULL," +
+			" `entry_date` date DEFAULT NULL," +
+			" `value_date` date DEFAULT NULL," +
+			" `group_acount_number` varchar(19) DEFAULT NULL," +
+			" `payment_date` timestamp NULL DEFAULT NULL," +
+			" PRIMARY KEY (`ID`)," +
+			" KEY `tbl_cardcore_transaction_ix10` (`account_number`,`entry_date`,`value_date`)," +
+			" KEY `tbl_cardcore_transaction_ix17` (`period`,`group_acount_number`,`transaction_status`));")
+		require.NoError(t, testkit.LoadTableStats("issue59563.json", dom))
+
+		var input59563 []string
+		var output59563 []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestIssue59563", t, &input59563, &output59563, cascades, caller)
+		for i, tt := range input59563 {
+			testdata.OnRecord(func() {
+				output59563[i].SQL = tt
+				output59563[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output59563[i].Warn = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output59563[i].Plan...))
+			tk.MustQuery("show warnings").Check(testkit.Rows(output59563[i].Warn...))
+		}
+
+		// issue:9562
+		tk.MustExec("use test")
+		var input9562 [][]string
+		var output9562 []struct {
+			SQL  []string
+			Plan []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestIssue9562", t, &input9562, &output9562, cascades, caller)
+		for i, ts := range input9562 {
+			for j, tt := range ts {
+				if j != len(ts)-1 {
+					tk.MustExec(tt)
+				}
+				testdata.OnRecord(func() {
+					output9562[i].SQL = ts
+					if j == len(ts)-1 {
+						output9562[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+					}
+				})
+				if j == len(ts)-1 {
+					tk.MustQuery(tt).Check(testkit.Rows(output9562[i].Plan...))
+				}
+			}
+		}
+	})
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 }
 
 func TestStraightJoin(t *testing.T) {
@@ -703,4 +880,22 @@ func TestLimitIndexEstimation(t *testing.T) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func buildReproHashJoinIssueSmallRows(n int) string {
+	vals := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		// Keep predicates on t_small selective while preserving >=100 build rows.
+		vals = append(vals, fmt.Sprintf("('10001', 0, 123456789, %d)", i%10))
+	}
+	return strings.Join(vals, ",")
+}
+
+func buildReproHashJoinIssueBigRows(n int) string {
+	vals := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		// Low cardinality on id1 makes each outer-row probe hit many inner rows.
+		vals = append(vals, fmt.Sprintf("(%d, 10001, 0, 20991231, %d)", i%10, i))
+	}
+	return strings.Join(vals, ",")
 }

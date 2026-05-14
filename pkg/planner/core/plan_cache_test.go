@@ -285,7 +285,11 @@ func TestIssue38269(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+<<<<<<< HEAD:pkg/planner/core/plan_cache_test.go
 		"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+=======
+		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_28, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646)):pkg/planner/core/casetest/plancache/plan_cache_suite_test.go
 		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
 		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
 		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -363,12 +367,21 @@ func TestIssue40093(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
 			{"Projection_9"},
+<<<<<<< HEAD:pkg/planner/core/plan_cache_test.go
 			{"└─HashJoin_21"},
 			{"  ├─IndexReader_26(Build)"},
 			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
 			{"  └─TableReader_24(Probe)"},
 			{"    └─Selection_23"},
 			{"      └─TableFullScan_22"},
+=======
+			{"└─HashJoin_11"},
+			{"  ├─IndexReader_25(Build)"},
+			{"  │ └─IndexRangeScan_24"}, // RangeScan instead of FullScan
+			{"  └─TableReader_31(Probe)"},
+			{"    └─Selection_30"},
+			{"      └─TableFullScan_29"},
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646)):pkg/planner/core/casetest/plancache/plan_cache_suite_test.go
 		})
 
 	tk.MustExec("execute st using @b")

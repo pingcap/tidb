@@ -48,36 +48,25 @@
             "id": "HashAgg_12",
             "estRows": "1.00",
             "taskType": "root",
-            "operatorInfo": "funcs:count(Column#5)->Column#3",
+            "operatorInfo": "funcs:count(Column#6)->Column#4",
             "subOperators": [
               {
-<<<<<<< HEAD
-                "id": "TableReader_13",
-                "estRows": "1.00",
-                "taskType": "root",
-                "operatorInfo": "data:HashAgg_5",
-=======
                 "id": "IndexReader_13",
                 "estRows": "1.00",
                 "taskType": "root",
                 "operatorInfo": "index:HashAgg_5",
->>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
                 "subOperators": [
                   {
                     "id": "HashAgg_5",
                     "estRows": "1.00",
                     "taskType": "cop[tikv]",
-                    "operatorInfo": "funcs:count(test.t1._tidb_rowid)->Column#5",
+                    "operatorInfo": "funcs:count(1)->Column#6",
                     "subOperators": [
                       {
-<<<<<<< HEAD
-                        "id": "TableFullScan_10",
-=======
                         "id": "IndexFullScan_11",
->>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
                         "estRows": "10000.00",
                         "taskType": "cop[tikv]",
-                        "accessObject": "table:t1",
+                        "accessObject": "table:t1, index:id(id)",
                         "operatorInfo": "keep order:false, stats:pseudo"
                       }
                     ]
@@ -116,65 +105,28 @@
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",
-<<<<<<< HEAD
-            "executeInfo": "time:3.5ms, loops:1",
-=======
-            "executeInfo": "time:704.6µs, open:138.9µs, close:15.4µs, loops:1",
->>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
+            "executeInfo": "time:616.9µs, open:85.3µs, close:12.1µs, loops:1",
             "operatorInfo": "inner join, left key:test.t1.id, right key:test.t2.id",
             "memoryInfo": "760 Bytes",
             "diskInfo": "0 Bytes",
             "subOperators": [
               {
-<<<<<<< HEAD
-                "id": "IndexReader_36(Build)",
-                "estRows": "9990.00",
-                "actRows": "0",
-                "taskType": "root",
-                "executeInfo": "time:3.47ms, loops:1, cop_task: {num: 1, max: 3.38ms, proc_keys: 0, tot_proc: 3ms, rpc_num: 1, rpc_time: 3.34ms, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
-                "operatorInfo": "index:IndexFullScan_35",
-                "memoryInfo": "171 Bytes",
-                "diskInfo": "N/A",
-                "subOperators": [
-                  {
-                    "id": "IndexFullScan_35",
-                    "estRows": "9990.00",
-                    "actRows": "0",
-                    "taskType": "cop[tikv]",
-                    "accessObject": "table:t2, index:id(id)",
-                    "executeInfo": "tikv_task:{time:3.3ms, loops:0}",
-                    "operatorInfo": "keep order:true, stats:pseudo",
-                    "memoryInfo": "N/A",
-                    "diskInfo": "N/A"
-                  }
-                ]
-              },
-              {
-                "id": "IndexReader_34(Probe)",
-                "estRows": "9990.00",
-                "actRows": "0",
-                "taskType": "root",
-                "executeInfo": "time:14µs, loops:1, cop_task: {num: 1, max: 772.9µs, proc_keys: 0, rpc_num: 1, rpc_time: 735.7µs, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
-                "operatorInfo": "index:IndexFullScan_33",
-                "memoryInfo": "166 Bytes",
-=======
                 "id": "IndexReader_26(Build)",
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:364.5µs, open:41.3µs, close:2.23µs, loops:1, cop_task: {num: 1, max: 223.1µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 4.51µs, max_distsql_concurrency: 1}, fetch_resp_duration: 285.6µs, rpc_info:{Cop:{num_rpc:1, total_time:191.7µs}}",
+                "executeInfo": "time:462.8µs, open:24.3µs, close:1.63µs, loops:1, cop_task: {num: 1, max: 132.2µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 2.85µs, max_distsql_concurrency: 1}, fetch_resp_duration: 420.6µs, rpc_info:{Cop:{num_rpc:1, total_time:107.4µs}}",
                 "operatorInfo": "index:IndexFullScan_25",
                 "memoryInfo": "198 Bytes",
->>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
-                    "id": "IndexFullScan_33",
+                    "id": "IndexFullScan_25",
                     "estRows": "9990.00",
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t2, index:id(id)",
-                    "executeInfo": "tikv_task:{time:149.9µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:79.2µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"
@@ -186,7 +138,7 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:282.4µs, open:56.9µs, close:6.18µs, loops:1, cop_task: {num: 1, max: 172.1µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 15.7µs, max_distsql_concurrency: 1}, fetch_resp_duration: 201.5µs, rpc_info:{Cop:{num_rpc:1, total_time:139.2µs}}",
+                "executeInfo": "time:119.2µs, open:39.7µs, close:5.1µs, loops:1, cop_task: {num: 1, max: 55.4µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 10.3µs, max_distsql_concurrency: 1}, fetch_resp_duration: 65.9µs, rpc_info:{Cop:{num_rpc:1, total_time:45.3µs}}",
                 "operatorInfo": "index:IndexFullScan_23",
                 "memoryInfo": "198 Bytes",
                 "diskInfo": "N/A",
@@ -197,10 +149,7 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t1, index:id(id)",
-<<<<<<< HEAD
-                    "executeInfo": "tikv_task:{time:168.4µs, loops:0}",
-=======
-                    "executeInfo": "tikv_task:{time:98.7µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:31.2µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"
@@ -327,7 +276,7 @@
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",
-            "executeInfo": "time:258.9µs, open:58.8µs, close:4.79µs, loops:1",
+            "executeInfo": "time:95.5µs, open:24.7µs, close:2.54µs, loops:1",
             "operatorInfo": "inner join, left key:test.t1.id, right key:test.t2.id",
             "memoryInfo": "760 Bytes",
             "diskInfo": "0 Bytes",
@@ -337,9 +286,9 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:127.6µs, open:18.6µs, close:208ns, loops:1, cop_task: {num: 1, max: 74.1µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 3.46µs, max_distsql_concurrency: 1}, fetch_resp_duration: 95.5µs, rpc_info:{Cop:{num_rpc:1, total_time:69.9µs}}",
+                "executeInfo": "time:39.5µs, open:4.92µs, close:209ns, loops:1, cop_task: {num: 1, max: 17.2µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 375ns, max_distsql_concurrency: 1}, fetch_resp_duration: 25.7µs, rpc_info:{Cop:{num_rpc:1, total_time:14.3µs}}",
                 "operatorInfo": "index:IndexFullScan_27",
-                "memoryInfo": "182 Bytes",
+                "memoryInfo": "181 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
@@ -348,7 +297,7 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t2, index:id(id)",
-                    "executeInfo": "tikv_task:{time:59.3µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:10.6µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"
@@ -360,7 +309,7 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:106.8µs, open:20.7µs, close:2.13µs, loops:1, cop_task: {num: 1, max: 77.1µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 2.21µs, max_distsql_concurrency: 1}, fetch_resp_duration: 81.8µs, rpc_info:{Cop:{num_rpc:1, total_time:73.8µs}}",
+                "executeInfo": "time:41.7µs, open:8.92µs, close:834ns, loops:1, cop_task: {num: 1, max: 25.3µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 1.38µs, max_distsql_concurrency: 1}, fetch_resp_duration: 29.8µs, rpc_info:{Cop:{num_rpc:1, total_time:21.5µs}}",
                 "operatorInfo": "index:IndexFullScan_25",
                 "memoryInfo": "182 Bytes",
                 "diskInfo": "N/A",
@@ -371,8 +320,7 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t1, index:id(id)",
-                    "executeInfo": "tikv_task:{time:67.8µs, loops:0}",
->>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
+                    "executeInfo": "tikv_task:{time:17µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"

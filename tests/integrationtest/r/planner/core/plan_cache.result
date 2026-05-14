@@ -686,6 +686,7 @@ TableReader_7	8000.00	root		data:Selection_6
   └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_cache' select * from t t1, t t2;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 HashJoin_7	100000000.00	root		CARTESIAN inner join
 ├─TableReader_12(Build)	10000.00	root		data:TableFullScan_11
 │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -702,6 +703,24 @@ HashJoin_10	9990.00	root		inner join, equal:[eq(planner__core__plan_cache.t.a, p
 └─TableReader_14(Probe)	9990.00	root		data:Selection_13
   └─Selection_13	9990.00	cop[tikv]		not(isnull(planner__core__plan_cache.t.a))
     └─TableFullScan_12	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+=======
+HashJoin_8	100000000.00	root		CARTESIAN inner join
+├─TableReader_25(Build)	10000.00	root		data:TableFullScan_24
+│ └─TableFullScan_24	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_23(Probe)	10000.00	root		data:TableFullScan_22
+  └─TableFullScan_22	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'plan_cache' select * from t where a in (select a from t);
+id	estRows	task	access object	operator info
+HashJoin_12	9990.00	root		inner join, equal:[eq(planner__core__plan_cache.t.a, planner__core__plan_cache.t.a)]
+├─HashAgg_40(Build)	7992.00	root		group by:planner__core__plan_cache.t.a, funcs:firstrow(planner__core__plan_cache.t.a)->planner__core__plan_cache.t.a
+│ └─TableReader_41	7992.00	root		data:HashAgg_35
+│   └─HashAgg_35	7992.00	cop[tikv]		group by:planner__core__plan_cache.t.a, 
+│     └─Selection_39	9990.00	cop[tikv]		not(isnull(planner__core__plan_cache.t.a))
+│       └─TableFullScan_38	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_28(Probe)	9990.00	root		data:Selection_27
+  └─Selection_27	9990.00	cop[tikv]		not(isnull(planner__core__plan_cache.t.a))
+    └─TableFullScan_26	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+>>>>>>> e96b6212395 (planner/core: discourage degenerate index joins when probe rows approach a full scan (#67646))
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 set tidb_enable_non_prepared_plan_cache=1;
 explain format='plan_cache' select address from PERFORMANCE_SCHEMA.tikv_profile_cpu;
