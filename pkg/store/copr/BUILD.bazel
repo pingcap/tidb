@@ -93,9 +93,8 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 41,
+    shard_count = 40,
     deps = [
-        "//pkg/config",
         "//pkg/kv",
         "//pkg/store/driver/backoff",
         "//pkg/testkit/testsetup",

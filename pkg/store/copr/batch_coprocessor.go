@@ -466,9 +466,8 @@ func buildBatchCopTasksForNonPartitionedTable(
 	dispatchPolicy tiflashcompute.DispatchPolicy,
 	tiflashReplicaReadPolicy tiflash.ReplicaRead,
 	appendWarning func(error)) ([]*batchCopTask, error) {
-	globalCfg := config.GetGlobalConfig()
-	if globalCfg.DisaggregatedTiFlash {
-		if globalCfg.UseAutoScaler {
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		if config.GetGlobalConfig().UseAutoScaler {
 			return buildBatchCopTasksConsistentHash(ctx, bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
 		}
 		return buildBatchCopTasksConsistentHashForPD(bo, store, []*KeyRanges{ranges}, storeType, ttl, dispatchPolicy)
@@ -490,9 +489,8 @@ func buildBatchCopTasksForPartitionedTable(
 	dispatchPolicy tiflashcompute.DispatchPolicy,
 	tiflashReplicaReadPolicy tiflash.ReplicaRead,
 	appendWarning func(error)) (batchTasks []*batchCopTask, err error) {
-	globalCfg := config.GetGlobalConfig()
-	if globalCfg.DisaggregatedTiFlash {
-		if globalCfg.UseAutoScaler {
+	if config.GetGlobalConfig().DisaggregatedTiFlash {
+		if config.GetGlobalConfig().UseAutoScaler {
 			batchTasks, err = buildBatchCopTasksConsistentHash(ctx, bo, store, rangesForEachPhysicalTable, storeType, ttl, dispatchPolicy)
 		} else {
 			// todo: remove this after AutoScaler is stable.
