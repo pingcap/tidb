@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -58,20 +59,22 @@ func TestTxnScopeAndValidateReadTs(t *testing.T) {
 	tk.MustQuery("select * from t1 AS OF TIMESTAMP NOW() where id = 1;").Check(testkit.Rows())
 
 	// replica read
-	tk.MustExec("set @@tidb_replica_read = 'closest-replicas';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @@tidb_replica_read = 'closest-replicas';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
 
-	tk.MustExec("set @@tidb_replica_read = 'follower';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+		tk.MustExec("set @@tidb_replica_read = 'follower';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
 
-	tk.MustExec("set @@tidb_replica_read = 'closest-adaptive';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+		tk.MustExec("set @@tidb_replica_read = 'closest-adaptive';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
+	}
 }
 
 func TestExactStalenessTransaction(t *testing.T) {
@@ -336,6 +339,7 @@ func TestStaleReadKVRequest(t *testing.T) {
 			assert: "github.com/pingcap/tidb/pkg/executor/assertBatchPointReplicaOption",
 		},
 	}
+<<<<<<< HEAD
 	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	for _, testcase := range testcases {
 		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
@@ -357,6 +361,31 @@ func TestStaleReadKVRequest(t *testing.T) {
 		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
 		tk.MustQuery(testcase.sql)
 		require.NoError(t, failpoint.Disable(testcase.assert))
+=======
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @@tidb_replica_read='closest-replicas'")
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+			tk.MustQuery(testcase.sql)
+			tk.MustExec(`commit`)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+			tk.MustExec(`begin;`)
+			tk.MustQuery(testcase.sql)
+			tk.MustExec(`commit`)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
+		// assert follower read closest read
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustQuery(testcase.sql)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
+>>>>>>> bdd978350e0 (vars: validate some vars for tidb x (#68196))
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
@@ -1446,6 +1475,9 @@ func TestStaleTSO(t *testing.T) {
 }
 
 func TestStaleReadNoBackoff(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_replica_read closest-replicas is not supported in next generation")
+	}
 	cfg := config.GetGlobalConfig()
 	cfg.Labels = map[string]string{"zone": "us-east-1a"}
 	config.StoreGlobalConfig(cfg)
@@ -1656,9 +1688,13 @@ func TestStaleReadAllCombinations(t *testing.T) {
 
 	replicaReadSettings := []string{
 		"leader",
-		"follower",
-		"closest-replicas",
-		"closest-adaptive",
+	}
+	if !kerneltype.IsNextGen() {
+		replicaReadSettings = append(replicaReadSettings,
+			"follower",
+			"closest-replicas",
+			"closest-adaptive",
+		)
 	}
 
 	transactionModes := []struct {
