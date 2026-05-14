@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -1295,13 +1294,6 @@ func TestStaleReadCompatibility(t *testing.T) {
 		require.NoError(t, err)
 		return oracle.GetTimeFromTS(ts)
 	}
-	requireStaleRows := func(rows [][]any) {
-		t.Helper()
-		require.True(t,
-			reflect.DeepEqual(rows, testkit.Rows("1")) ||
-				reflect.DeepEqual(rows, testkit.Rows("1", "2")),
-			"unexpected stale read rows: %v", rows)
-	}
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
@@ -1328,8 +1320,7 @@ func TestStaleReadCompatibility(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow"))
 	}()
-	rows := tk.MustQuery("select * from t order by id;").Rows()
-	requireStaleRows(rows)
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("1"))
 	// assert select as of timestamp during tidb_read_staleness
 	require.Len(t, tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2Str)).Rows(), 2)
 	// assert set transaction as of timestamp during tidb_read_staleness
@@ -1342,8 +1333,7 @@ func TestStaleReadCompatibility(t *testing.T) {
 	tk.MustExec("commit")
 
 	// assert session query still is affected by tidb_read_staleness
-	rows = tk.MustQuery("select * from t order by id;").Rows()
-	requireStaleRows(rows)
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("1"))
 
 	// disable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness=''")
