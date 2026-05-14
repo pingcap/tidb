@@ -376,18 +376,22 @@ func TestNewRegionJobs(t *testing.T) {
 		},
 	}
 
+	const ticiIndexID int64 = 404
 	for caseIdx, c := range cases {
 		jobs := newRegionJobs(
 			buildRegion(c.regionKeys),
 			nil,
 			buildJobRanges(c.jobRangeKeys),
-			0, 0, nil, false,
+			0, 0, nil, true,
+			ticiIndexID,
 			0,
 		)
 		require.Len(t, jobs, len(c.jobKeys)-1, "case %d", caseIdx)
 		for i, j := range jobs {
 			require.Equal(t, c.jobKeys[i], j.keyRange.Start, "case %d", caseIdx)
 			require.Equal(t, c.jobKeys[i+1], j.keyRange.End, "case %d", caseIdx)
+			require.True(t, j.ticiWriteEnabled, "case %d", caseIdx)
+			require.Equal(t, ticiIndexID, j.ticiIndexID, "case %d", caseIdx)
 		}
 	}
 }

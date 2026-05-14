@@ -66,6 +66,18 @@ go_library(
 )
 
 go_test(
+    name = "ingest_internal_test",
+    size = "small",
+    srcs = ["engine_mgr_test.go"],
+    embed = [":ingest"],
+    deps = [
+        "//pkg/lightning/backend",
+        "//pkg/meta/model",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
     name = "ingest_test",
     timeout = "moderate",
     srcs = [

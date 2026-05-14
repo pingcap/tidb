@@ -235,6 +235,48 @@ func TestDecideTiCIWriteEnabled(t *testing.T) {
 	})
 }
 
+func TestDecideTiCIWriteConfig(t *testing.T) {
+	makePlan := func(withFullText bool) *importer.Plan {
+		indexInfo := &model.IndexInfo{
+			ID:   101,
+			Name: ast.NewCIStr("idx_fulltext"),
+		}
+		if withFullText {
+			indexInfo.FullTextInfo = &model.FullTextIndexInfo{}
+		}
+		tableInfo := &model.TableInfo{
+			ID:      1,
+			Name:    ast.NewCIStr("t"),
+			Indices: []*model.IndexInfo{indexInfo},
+		}
+		return &importer.Plan{
+			DBName:    "test",
+			TableInfo: tableInfo,
+		}
+	}
+
+	t.Run("tici index returns index id", func(t *testing.T) {
+		enabled, indexID, err := decideTiCIWriteConfig(zap.NewNop(), 10, 20, strconv.FormatInt(101, 10), makePlan(true))
+		require.NoError(t, err)
+		require.True(t, enabled)
+		require.Equal(t, int64(101), indexID)
+	})
+
+	t.Run("non tici index returns zero index id", func(t *testing.T) {
+		enabled, indexID, err := decideTiCIWriteConfig(zap.NewNop(), 10, 21, strconv.FormatInt(101, 10), makePlan(false))
+		require.NoError(t, err)
+		require.False(t, enabled)
+		require.Zero(t, indexID)
+	})
+
+	t.Run("data kv group returns zero index id", func(t *testing.T) {
+		enabled, indexID, err := decideTiCIWriteConfig(zap.NewNop(), 10, 22, external.DataKVGroup, makePlan(true))
+		require.NoError(t, err)
+		require.False(t, enabled)
+		require.Zero(t, indexID)
+	})
+}
+
 func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 	originFinishTiCIIndexUpload := finishTiCIIndexUpload
 	t.Cleanup(func() {

@@ -26,6 +26,7 @@ type mockTiCIWriteGroup struct {
 	createCount          int
 	writePairsCount      int
 	finishPartitionCount int
+	lastIndexID          int64
 	lastLowerBound       []byte
 	lastUpperBound       []byte
 }
@@ -48,8 +49,9 @@ func (*mockTiCIWriteGroup) CloseFileWriters(_ context.Context, _ *tici.FileWrite
 	return nil
 }
 
-func (m *mockTiCIWriteGroup) FinishPartitionUpload(_ context.Context, _ *tici.FileWriter, lowerBound, upperBound []byte) error {
+func (m *mockTiCIWriteGroup) FinishPartitionUpload(_ context.Context, _ *tici.FileWriter, indexID int64, lowerBound, upperBound []byte) error {
 	m.finishPartitionCount++
+	m.lastIndexID = indexID
 	m.lastLowerBound = slices.Clone(lowerBound)
 	m.lastUpperBound = slices.Clone(upperBound)
 	return nil

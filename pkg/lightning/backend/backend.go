@@ -95,6 +95,9 @@ type EngineConfig struct {
 	TableInfo *checkpoints.TidbTableInfo
 	// TiCIWriteEnabled indicates whether this engine should write TiCI data.
 	TiCIWriteEnabled bool
+	// TiCIIndexID identifies the TiCI index this engine writes when TiCIWriteEnabled is true.
+	// It must be non-zero for TiCI write engines and is ignored otherwise.
+	TiCIIndexID int64
 	// TiCIHeaderCommitTS overrides the commit ts used for TiCI header.
 	// When it is 0, TiCI header uses the ingest data TS.
 	TiCIHeaderCommitTS uint64

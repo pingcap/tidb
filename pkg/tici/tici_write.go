@@ -51,7 +51,7 @@ type IndexMeta struct {
 	schema     string           // database name
 	ticiJobID  uint64           // TiCI job ID for this writer. For better traceability.
 	storeURI   string           // cloud store prefix for this writer, may also include the S3 options
-
+	indexIDs   []int64          // full-text index IDs covered by this writer group
 }
 
 // NewTiCIIndexMeta creates a new IndexMeta.
@@ -73,6 +73,7 @@ func NewTiCIIndexMeta(
 		schema:     schema,
 		ticiJobID:  ticiJobID,
 		storeURI:   storeURI,
+		indexIDs:   append([]int64(nil), fulltextIndexIDs...),
 	}, nil
 }
 
@@ -298,6 +299,7 @@ func (g *DataWriterGroup) WritePairs(ctx context.Context, fileWriter *FileWriter
 func (g *DataWriterGroup) FinishPartitionUpload(
 	ctx context.Context,
 	fileWriter *FileWriter,
+	indexID int64,
 	lowerBound, upperBound []byte,
 ) error {
 	if fileWriter == nil {
@@ -308,9 +310,13 @@ func (g *DataWriterGroup) FinishPartitionUpload(
 		return fmt.Errorf("uri is empty or Error occurred: %v", err)
 	}
 
-	err = g.mgrCtx.FinishPartitionUpload(ctx, g.indexMeta.tidbTaskID, lowerBound, upperBound, uri)
+	if indexID == 0 {
+		return fmt.Errorf("tici index id is required for partition upload, indexIDs=%v", g.indexMeta.indexIDs)
+	}
+	err = g.mgrCtx.FinishPartitionUpload(ctx, g.indexMeta.tidbTaskID, indexID, lowerBound, upperBound, uri)
 	if err != nil {
 		g.logger.Error("failed to finish partition upload",
+			zap.Int64("indexID", indexID),
 			zap.String("uri", uri),
 			zap.String("startKey", hex.EncodeToString(lowerBound)),
 			zap.String("endKey", hex.EncodeToString(upperBound)),
@@ -318,6 +324,7 @@ func (g *DataWriterGroup) FinishPartitionUpload(
 		)
 	} else {
 		g.logger.Info("successfully finish partition upload",
+			zap.Int64("indexID", indexID),
 			zap.String("uri", uri),
 			zap.String("startKey", hex.EncodeToString(lowerBound)),
 			zap.String("endKey", hex.EncodeToString(upperBound)),

@@ -160,6 +160,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		TiCIWriteEnabled:   currentIdx != nil && currentIdx.IsTiCIIndex(),
+		TiCIIndexID:        getTiCIIndexIDForCloudImport(currentIdx, idxID),
 		TiCIHeaderCommitTS: ticiHeaderCommitTS,
 		External: &backend.ExternalEngineConfig{
 			ExtStore:      objStore,
@@ -216,6 +217,13 @@ func getTiCIHeaderCommitTSForCloudImport(currentIdx *model.IndexInfo, scanSnapsh
 		return 0
 	}
 	return scanSnapshotTS
+}
+
+func getTiCIIndexIDForCloudImport(currentIdx *model.IndexInfo, idxID int64) int64 {
+	if currentIdx == nil || !currentIdx.IsTiCIIndex() {
+		return 0
+	}
+	return idxID
 }
 
 func hasUniqueIndex(idxs []*model.IndexInfo) bool {

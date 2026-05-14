@@ -1130,6 +1130,7 @@ func TestLocalDoWriteTiCIOnly(t *testing.T) {
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
+	const ticiIndexID int64 = 101
 	job := &regionJob{
 		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
 		stage:            regionScanned,
@@ -1138,6 +1139,7 @@ func TestLocalDoWriteTiCIOnly(t *testing.T) {
 		regionSplitSize:  int64(config.SplitRegionSize),
 		regionSplitKeys:  100,
 		ticiWriteEnabled: true,
+		ticiIndexID:      ticiIndexID,
 	}
 
 	res, err := local.doWrite(context.Background(), job)
@@ -1145,6 +1147,7 @@ func TestLocalDoWriteTiCIOnly(t *testing.T) {
 	require.NotNil(t, res)
 	require.True(t, res.skipIngest)
 	require.Zero(t, createCalled)
+	require.Equal(t, ticiIndexID, local.ticiWriteGroup.(*mockTiCIWriteGroup).lastIndexID)
 }
 
 func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
@@ -1166,6 +1169,7 @@ func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)
 
+	const ticiIndexID int64 = 202
 	job := &regionJob{
 		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
 		stage:            regionScanned,
@@ -1174,6 +1178,7 @@ func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
 		regionSplitSize:  int64(config.SplitRegionSize),
 		regionSplitKeys:  2,
 		ticiWriteEnabled: true,
+		ticiIndexID:      ticiIndexID,
 	}
 
 	res, err := local.doWrite(context.Background(), job)
@@ -1184,6 +1189,7 @@ func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
 	expectedUpperBound := codec.EncodeBytes([]byte{}, []byte("b"))
 	require.Equal(t, expectedLowerBound, ticiGroup.lastLowerBound)
 	require.Equal(t, expectedUpperBound, ticiGroup.lastUpperBound)
+	require.Equal(t, ticiIndexID, ticiGroup.lastIndexID)
 	require.Less(t, bytes.Compare(ticiGroup.lastUpperBound, res.remainingStartKey), 0)
 }
 
@@ -1828,6 +1834,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		1<<30,
 		false,
 		0,
+		0,
 		jobCh,
 		&jobWg,
 	)
@@ -1900,6 +1907,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		10*units.GB,
 		1<<30,
 		false,
+		0,
 		0,
 		jobCh,
 		&jobWg,
@@ -2071,7 +2079,7 @@ func TestDoImport(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2099,7 +2107,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange"),
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "meet error when generateJobForRange")
 
 	// test second call to generateJobForRange (needRescan) meet error
@@ -2148,7 +2156,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange again"),
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "meet error when generateJobForRange again")
 
 	// test write meet unretryable error
@@ -2199,7 +2207,7 @@ func TestDoImport(t *testing.T) {
 			},
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "fatal error")
 }
 
@@ -2287,7 +2295,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2345,7 +2353,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2377,7 +2385,7 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		),
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2668,6 +2676,21 @@ func TestMarkTiCIWriteEngineLogs(t *testing.T) {
 	require.Equal(t, false, fields["tici-write-enabled"])
 }
 
+func TestTiCIIndexIDByEngine(t *testing.T) {
+	backend := &Backend{}
+	engineUUID := uuid.New()
+
+	backend.setTiCIIndexID(engineUUID, true, 101)
+	require.Equal(t, int64(101), backend.getTiCIIndexID(engineUUID))
+
+	backend.setTiCIIndexID(engineUUID, true, 0)
+	require.Zero(t, backend.getTiCIIndexID(engineUUID))
+
+	backend.setTiCIIndexID(engineUUID, true, 202)
+	backend.setTiCIIndexID(engineUUID, false, 202)
+	require.Zero(t, backend.getTiCIIndexID(engineUUID))
+}
+
 func TestMarkTiCIWriteEngineWithNilLogger(t *testing.T) {
 	backend := &Backend{}
 	engineUUID := uuid.New()
@@ -2944,7 +2967,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 
 	// Generate and send jobs
 	// The fix ensures all jobs are ref'd before sending to jobToWorkerCh
-	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, jobToWorkerCh, &jobWg)
+	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0, jobToWorkerCh, &jobWg)
 	require.NoError(t, err)
 
 	// Wait for all jobs to be processed

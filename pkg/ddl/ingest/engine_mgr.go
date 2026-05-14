@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -78,9 +79,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	for i, indexID := range indexIDs {
 		cfg := *baseCfg
 		indexInfo := tbl.Meta().FindIndexByID(indexID)
-		if indexInfo != nil && indexInfo.IsTiCIIndex() {
-			cfg.TiCIWriteEnabled = true
-		}
+		configureTiCIWriteForIndex(&cfg, indexInfo, indexID)
 		openedEngine, err := mgr.OpenEngine(bc.ctx, &cfg, tbl.Meta().Name.L, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
@@ -118,6 +117,14 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 		zap.Int64("current memory usage", bc.memRoot.CurrentUsage()),
 		zap.Int64("memory limitation", bc.memRoot.MaxMemoryQuota()))
 	return ret, nil
+}
+
+func configureTiCIWriteForIndex(cfg *backend.EngineConfig, indexInfo *model.IndexInfo, indexID int64) {
+	if indexInfo == nil || !indexInfo.IsTiCIIndex() {
+		return
+	}
+	cfg.TiCIWriteEnabled = true
+	cfg.TiCIIndexID = indexID
 }
 
 // UnregisterOpt controls the behavior of backend context unregistering.

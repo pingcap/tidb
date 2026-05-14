@@ -523,6 +523,12 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	return specs, nil
 }
 
+const (
+	// ticiPreSplitRequestTimeout is the timeout for the best-effort TiCI pre-split request.
+	// Large import jobs may need more time for TiCI to analyze the sorted KV metadata.
+	ticiPreSplitRequestTimeout = 5 * time.Minute
+)
+
 var ticiPreSplitReportGroupSize = int64(units.GiB)
 
 type ticiPreSplitImportKVMetaGroup struct {
@@ -543,7 +549,7 @@ func triggerTiCIPreSplitForImportInto(
 		return nil
 	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	timeoutCtx, cancel := context.WithTimeout(ctx, ticiPreSplitRequestTimeout)
 	defer cancel()
 
 	req, err := buildTiCIPreSplitImportShardsRequestForImportInto(timeoutCtx, planCtx, p, store, kvMetaGroups)
