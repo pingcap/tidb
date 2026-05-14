@@ -255,9 +255,13 @@ func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
 		defer debugtrace.LeaveContextCommon(ds.SCtx())
 	}
 	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
-	if count, ok := deriveTiCISearchPathStats(ds, path); ok {
-		path.CountAfterAccess = count
-		return
+	// TiCI count estimation is only used to refine multi-table plan choices.
+	// StmtCtx.Tables is de-duplicated, so self-joins on one table use the local fallback.
+	if len(ds.SCtx().GetSessionVars().StmtCtx.Tables) > 1 {
+		if count, ok := deriveTiCISearchPathStats(ds, path); ok {
+			path.CountAfterAccess = count
+			return
+		}
 	}
 	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
 }
