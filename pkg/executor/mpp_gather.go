@@ -34,8 +34,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+func isTiCITableReader(tr *physicalop.PhysicalTableReader) bool {
+	for _, tablePlan := range tr.TablePlans {
+		indexScan, ok := tablePlan.(*physicalop.PhysicalIndexScan)
+		if !ok || indexScan.Index == nil {
+			continue
+		}
+		if indexScan.Index.IsTiCIIndex() {
+			return true
+		}
+	}
+	return false
+}
+
 func useMPPExecution(ctx sessionctx.Context, tr *physicalop.PhysicalTableReader) bool {
-	if !ctx.GetSessionVars().IsMPPAllowed() {
+	if !ctx.GetSessionVars().IsMPPAllowed() && !isTiCITableReader(tr) {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*physicalop.PhysicalExchangeSender)

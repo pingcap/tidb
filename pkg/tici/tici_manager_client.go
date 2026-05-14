@@ -61,6 +61,17 @@ var mockTiCIGetImportStoragePrefixRequest atomic.Value // stores []byte of GetIm
 var mockTiCIFinishIndexUploadRequest atomic.Value      // stores []byte of FinishImportIndexUploadRequest for tests.
 var mockTiCIPreSplitImportShardsRequest atomic.Value   // stores []byte of PreSplitImportShardsRequest for tests.
 
+// MetaServiceStatusError is returned when MetaService replies with a non-success status.
+type MetaServiceStatusError struct {
+	Method string
+	Status ErrorCode
+}
+
+// Error implements the error interface.
+func (e *MetaServiceStatusError) Error() string {
+	return fmt.Sprintf("%s failed: %d", e.Method, e.Status)
+}
+
 // GetMockTiCICreateIndexRequest returns the marshaled CreateIndexRequest bytes captured by the
 // `MockCreateTiCIIndexRequest` failpoint. It returns nil if nothing was captured.
 func GetMockTiCICreateIndexRequest() []byte {
@@ -1032,7 +1043,6 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 		KeyRanges:  ticiKeyRanges,
 		Limit:      int32(limit),
 	}
-
 	var (
 		backoff    = 100 * time.Millisecond
 		maxBackoff = time.Second
@@ -1073,7 +1083,7 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 		code := ErrorCode(resp.Status)
 		if !isRetryableGetShardLocalCacheStatus(resp.Status) || time.Since(start) >= maxWait {
 			return nil, fmt.Errorf(
-				"GetShardLocalCacheInfo failed after %s (attempts=%d, keyspaceID=%d, tableID=%d, indexID=%d, ranges=%d, limit=%d, returnedShards=%d): %s(%d)",
+				"GetShardLocalCacheInfo failed after %s (attempts=%d, keyspaceID=%d, tableID=%d, indexID=%d, ranges=%d, limit=%d, returnedShards=%d): %w",
 				time.Since(start).Round(time.Millisecond),
 				attempt+1,
 				request.KeyspaceId,
@@ -1082,8 +1092,10 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 				len(keyRanges),
 				limit,
 				len(resp.ShardLocalCacheInfos),
-				code.String(),
-				resp.Status,
+				&MetaServiceStatusError{
+					Method: "GetShardLocalCacheInfo",
+					Status: code,
+				},
 			)
 		}
 		logutil.BgLogger().Debug("GetShardLocalCacheInfo retryable error",

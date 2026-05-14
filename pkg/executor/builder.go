@@ -4651,6 +4651,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		avgRowSize:                 v.GetAvgTableRowSize(),
 		groupedRanges:              is.GroupedRanges,
 		indexLookUpPushDown:        v.IndexLookUpPushDown,
+		indexReadReqType:           v.ReadReqType,
+		mppInfoSchema:              b.is,
 	}
 
 	if v.ExtraHandleCol != nil {

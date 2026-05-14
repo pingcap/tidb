@@ -114,6 +114,11 @@ type PhysicalIndexScan struct {
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
 }
 
+// IsTiCIFTSScan returns whether this index scan is a TiCI full-text search scan.
+func (p *PhysicalIndexScan) IsTiCIFTSScan() bool {
+	return p != nil && p.Index != nil && p.Index.IsTiCIIndex() && p.FtsQueryInfo != nil
+}
+
 // FullRange represent used all partitions.
 const FullRange = -1
 
@@ -499,12 +504,18 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 		}
 		if !columnIDSet.Has(int(col.ID)) {
 			rowLayout = append(rowLayout, col)
+			columnIDSet.Insert(int(col.ID))
 		}
 	}
 
 	for _, col := range p.DataSourceSchema.Columns {
 		if col.ID == model.ExtraPhysTblID && !columnIDSet.Has(int(col.ID)) {
-			rowLayout = append(rowLayout, col.Clone().(*expression.Column))
+			extraPhysTblCol := col.Clone().(*expression.Column)
+			if extraPhysTblCol.RetType != nil {
+				extraPhysTblCol.RetType = extraPhysTblCol.RetType.Clone()
+				extraPhysTblCol.RetType.SetFlag(extraPhysTblCol.RetType.GetFlag() | mysql.NotNullFlag)
+			}
+			rowLayout = append(rowLayout, extraPhysTblCol)
 			columnIDSet.Insert(int(col.ID))
 			break
 		}
@@ -800,9 +811,6 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		StoreType:        path.StoreType,
 		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	if path.Index.IsTiCIIndex() {
-		is.StoreType = kv.TiCI
-	}
 
 	is.SetNoncacheableReason(path.NoncacheableReason)
 	rowCount := path.CountAfterAccess

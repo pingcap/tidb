@@ -22,76 +22,78 @@ import (
 )
 
 func TestCopRanges(t *testing.T) {
-	ranges := []kv.KeyRange{
-		{StartKey: []byte("a"), EndKey: []byte("b")},
-		{StartKey: []byte("c"), EndKey: []byte("d")},
-		{StartKey: []byte("e"), EndKey: []byte("f")},
-	}
+	t.Run("compose-ranges", func(t *testing.T) {
+		ranges := []kv.KeyRange{
+			{StartKey: []byte("a"), EndKey: []byte("b")},
+			{StartKey: []byte("c"), EndKey: []byte("d")},
+			{StartKey: []byte("e"), EndKey: []byte("f")},
+		}
 
-	checkEqual(t, &KeyRanges{mid: ranges}, ranges, true)
-	checkEqual(t, &KeyRanges{first: &ranges[0], mid: ranges[1:]}, ranges, true)
-	checkEqual(t, &KeyRanges{mid: ranges[:2], last: &ranges[2]}, ranges, true)
-	checkEqual(t, &KeyRanges{first: &ranges[0], mid: ranges[1:2], last: &ranges[2]}, ranges, true)
-}
+		checkEqual(t, &KeyRanges{mid: ranges}, ranges, true)
+		checkEqual(t, &KeyRanges{first: &ranges[0], mid: ranges[1:]}, ranges, true)
+		checkEqual(t, &KeyRanges{mid: ranges[:2], last: &ranges[2]}, ranges, true)
+		checkEqual(t, &KeyRanges{first: &ranges[0], mid: ranges[1:2], last: &ranges[2]}, ranges, true)
+	})
 
-func TestCopRangeSplit(t *testing.T) {
-	first := &kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}
-	mid := []kv.KeyRange{
-		{StartKey: []byte("c"), EndKey: []byte("d")},
-		{StartKey: []byte("e"), EndKey: []byte("g")},
-		{StartKey: []byte("l"), EndKey: []byte("o")},
-	}
-	last := &kv.KeyRange{StartKey: []byte("q"), EndKey: []byte("t")}
-	const left = true
-	const right = false
+	t.Run("split-ranges", func(t *testing.T) {
+		first := &kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}
+		mid := []kv.KeyRange{
+			{StartKey: []byte("c"), EndKey: []byte("d")},
+			{StartKey: []byte("e"), EndKey: []byte("g")},
+			{StartKey: []byte("l"), EndKey: []byte("o")},
+		}
+		last := &kv.KeyRange{StartKey: []byte("q"), EndKey: []byte("t")}
+		const left = true
+		const right = false
 
-	// input range:  [c-d) [e-g) [l-o)
-	ranges := &KeyRanges{mid: mid}
-	testSplit(t, ranges, right,
-		splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
-		splitCase{"d", buildCopRanges("e", "g", "l", "o")},
-		splitCase{"f", buildCopRanges("f", "g", "l", "o")},
-	)
+		// input range:  [c-d) [e-g) [l-o)
+		ranges := &KeyRanges{mid: mid}
+		testSplit(t, ranges, right,
+			splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
+			splitCase{"d", buildCopRanges("e", "g", "l", "o")},
+			splitCase{"f", buildCopRanges("f", "g", "l", "o")},
+		)
 
-	// input range:  [a-b) [c-d) [e-g) [l-o)
-	ranges = &KeyRanges{first: first, mid: mid}
-	testSplit(t, ranges, right,
-		splitCase{"a", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
-		splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
-		splitCase{"m", buildCopRanges("m", "o")},
-	)
+		// input range:  [a-b) [c-d) [e-g) [l-o)
+		ranges = &KeyRanges{first: first, mid: mid}
+		testSplit(t, ranges, right,
+			splitCase{"a", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+			splitCase{"c", buildCopRanges("c", "d", "e", "g", "l", "o")},
+			splitCase{"m", buildCopRanges("m", "o")},
+		)
 
-	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
-	ranges = &KeyRanges{first: first, mid: mid, last: last}
-	testSplit(t, ranges, right,
-		splitCase{"f", buildCopRanges("f", "g", "l", "o", "q", "t")},
-		splitCase{"h", buildCopRanges("l", "o", "q", "t")},
-		splitCase{"r", buildCopRanges("r", "t")},
-	)
+		// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
+		ranges = &KeyRanges{first: first, mid: mid, last: last}
+		testSplit(t, ranges, right,
+			splitCase{"f", buildCopRanges("f", "g", "l", "o", "q", "t")},
+			splitCase{"h", buildCopRanges("l", "o", "q", "t")},
+			splitCase{"r", buildCopRanges("r", "t")},
+		)
 
-	// input range:  [c-d) [e-g) [l-o)
-	ranges = &KeyRanges{mid: mid}
-	testSplit(t, ranges, left,
-		splitCase{"m", buildCopRanges("c", "d", "e", "g", "l", "m")},
-		splitCase{"g", buildCopRanges("c", "d", "e", "g")},
-		splitCase{"g", buildCopRanges("c", "d", "e", "g")},
-	)
+		// input range:  [c-d) [e-g) [l-o)
+		ranges = &KeyRanges{mid: mid}
+		testSplit(t, ranges, left,
+			splitCase{"m", buildCopRanges("c", "d", "e", "g", "l", "m")},
+			splitCase{"g", buildCopRanges("c", "d", "e", "g")},
+			splitCase{"g", buildCopRanges("c", "d", "e", "g")},
+		)
 
-	// input range:  [a-b) [c-d) [e-g) [l-o)
-	ranges = &KeyRanges{first: first, mid: mid}
-	testSplit(t, ranges, left,
-		splitCase{"d", buildCopRanges("a", "b", "c", "d")},
-		splitCase{"d", buildCopRanges("a", "b", "c", "d")},
-		splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
-	)
+		// input range:  [a-b) [c-d) [e-g) [l-o)
+		ranges = &KeyRanges{first: first, mid: mid}
+		testSplit(t, ranges, left,
+			splitCase{"d", buildCopRanges("a", "b", "c", "d")},
+			splitCase{"d", buildCopRanges("a", "b", "c", "d")},
+			splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+		)
 
-	// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
-	ranges = &KeyRanges{first: first, mid: mid, last: last}
-	testSplit(t, ranges, left,
-		splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
-		splitCase{"p", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
-		splitCase{"t", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
-	)
+		// input range:  [a-b) [c-d) [e-g) [l-o) [q-t)
+		ranges = &KeyRanges{first: first, mid: mid, last: last}
+		testSplit(t, ranges, left,
+			splitCase{"o", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+			splitCase{"p", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o")},
+			splitCase{"t", buildCopRanges("a", "b", "c", "d", "e", "g", "l", "o", "q", "t")},
+		)
+	})
 }
 
 func checkEqual(t *testing.T, copRanges *KeyRanges, ranges []kv.KeyRange, slice bool) {

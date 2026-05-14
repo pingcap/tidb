@@ -403,6 +403,7 @@ go_test(
         "stmtsummary_test.go",
         "table_readers_required_rows_test.go",
         "temporary_table_test.go",
+        "tici_mpp_executor_test.go",
         "tikv_regions_peers_table_test.go",
         "trace_test.go",
         "traffic_test.go",

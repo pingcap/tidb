@@ -237,11 +237,49 @@ type MPPBuildTasksRequest struct {
 	StartTS   uint64
 
 	PartitionIDAndRanges []PartitionIDAndRanges
+
+	// TiCI indicates this MPP build request belongs to a TiCI index scan fragment.
+	TiCI bool
+	// TiCITableID is the physical table ID for the TiCI index.
+	TiCITableID int64
+	// TiCIIndexID is the TiCI index ID.
+	TiCIIndexID int64
+	// TiCIExecutorID is the ExplainID string of the IndexScan executor.
+	TiCIExecutorID string
+	// TiCIKeyRanges are TiCI index key ranges used to locate shard ownership.
+	TiCIKeyRanges []KeyRange
+	// TiCIPartitionIDAndRanges are TiCI index key ranges grouped by physical partition table ID.
+	// It is used when scheduling TiCI index scans on partitioned tables.
+	TiCIPartitionIDAndRanges []PartitionIDAndRanges
 }
 
 // ToString returns a string representation of MPPBuildTasksRequest. Used for CacheKey.
 func (req *MPPBuildTasksRequest) ToString() string {
 	sb := strings.Builder{}
+	if req.TiCI {
+		sb.WriteString("tici_index_id")
+		sb.WriteString(strconv.FormatInt(req.TiCIIndexID, 10))
+		sb.WriteString("tici_executor_id")
+		sb.WriteString(req.TiCIExecutorID)
+		if len(req.TiCIPartitionIDAndRanges) > 0 {
+			for _, partitionIDAndRange := range req.TiCIPartitionIDAndRanges {
+				sb.WriteString("tici_partition_id" + strconv.Itoa(int(partitionIDAndRange.ID)))
+				for i, keyRange := range partitionIDAndRange.KeyRanges {
+					sb.WriteString("tici_range_id" + strconv.Itoa(i))
+					sb.WriteString(keyRange.StartKey.String())
+					sb.WriteString(keyRange.EndKey.String())
+				}
+			}
+		} else {
+			sb.WriteString("tici_table_id")
+			sb.WriteString(strconv.FormatInt(req.TiCITableID, 10))
+			for i, keyRange := range req.TiCIKeyRanges {
+				sb.WriteString("tici_range_id" + strconv.Itoa(i))
+				sb.WriteString(keyRange.StartKey.String())
+				sb.WriteString(keyRange.EndKey.String())
+			}
+		}
+	}
 	if req.KeyRanges != nil { // Non-partiton
 		for i, keyRange := range req.KeyRanges {
 			sb.WriteString("range_id" + strconv.Itoa(i))
