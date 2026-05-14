@@ -48,7 +48,10 @@ run_dumpling_parquet() {
         if grep -q "requires --pd" "$parquet_dump_log"; then
             pd_addr=$(curl -sf "http://127.0.0.1:10080/settings" | sed -n 's/.*"path": "\([^"]*\)".*/\1/p' | head -n1)
             [ -n "$pd_addr" ]
-            run_dumpling "$@" --pd "$pd_addr" > "$parquet_dump_log" 2>&1
+            if ! run_dumpling "$@" --pd "$pd_addr" > "$parquet_dump_log" 2>&1; then
+                cat "$parquet_dump_log"
+                exit 1
+            fi
         else
             cat "$parquet_dump_log"
             exit 1
@@ -82,7 +85,11 @@ for parquet_compress in "snappy" "gzip" "zstd" "no-compression"
 do
     rm -rf "$DUMPLING_OUTPUT_DIR"
     mkdir -p "$DUMPLING_OUTPUT_DIR"
-    run_dumpling_parquet --filetype parquet --parquet-compress "$parquet_compress"
+    run_dumpling_parquet --filetype parquet --parquet-compress "$parquet_compress" --filesize 1B
+    parquet_file_num=$(find "$DUMPLING_OUTPUT_DIR" -maxdepth 1 -iname "$PARQUET_SRC_DB.$PARQUET_TABLE_NAME.*.parquet" | wc -l)
+    if [ "$parquet_file_num" -lt 2 ]; then
+        echo "obtain parquet file number: $parquet_file_num, but expect at least: 2" && exit 1
+    fi
     verify_parquet_import
 done
 

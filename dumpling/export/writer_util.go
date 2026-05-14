@@ -628,23 +628,28 @@ func WriteInsertInParquet(
 	var (
 		row            = MakeRowReceiver(meta.ColumnTypes())
 		counter        uint64
+		lastCounter    uint64
+		finishedSize   uint64
 		selectedFields = meta.SelectedField()
 	)
 
-	finishedRowsGauge := metrics.finishedRowsGauge.With(nil)
 	defer func() {
 		if err != nil {
 			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics and start a retry if possible",
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
-				zap.Uint64("finished rows", counter),
+				zap.Uint64("finished rows", lastCounter),
+				zap.Uint64("finished size", finishedSize),
 				log.ShortError(err))
-			finishedRowsGauge.Sub(float64(counter))
+			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
+			SubGauge(metrics.finishedSizeGauge, float64(finishedSize))
 		} else {
 			pCtx.L().Debug("finish dumping table(chunk)",
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
-				zap.Uint64("finished rows", counter))
+				zap.Uint64("finished rows", counter),
+				zap.Uint64("finished size", finishedSize))
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
 			summary.CollectSuccessUnit("total rows", 1, counter)
 		}
 	}()
@@ -661,17 +666,24 @@ func WriteInsertInParquet(
 			}
 		}
 		counter++
-		finishedRowsGauge.Add(1)
+		if counter%1000 == 0 {
+			AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
+			lastCounter = counter
+		}
 		fileRowIter.Next()
 		if cfg.FileSize != UnspecifiedSize && writer.EstimateFileSize() >= cfg.FileSize {
 			break
 		}
 	}
+	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
+	lastCounter = counter
 
 	// write remain data and meta file
 	if err = writer.Close(); err != nil {
 		return counter, errors.Trace(err)
 	}
+	finishedSize = writer.EstimateFileSize()
+	AddGauge(metrics.finishedSizeGauge, float64(finishedSize))
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
 	}
@@ -679,6 +691,8 @@ func WriteInsertInParquet(
 }
 
 func getParquetCompress(tp compressedio.CompressType) compress.Compression {
+	// Keep default as snappy for forward compatibility: ParseParquetCompressType validates
+	// known values at config parse time, and snappy is the documented default.
 	switch tp {
 	case compressedio.NoCompression:
 		return compress.Codecs.Uncompressed
