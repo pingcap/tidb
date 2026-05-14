@@ -14,6 +14,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
@@ -200,12 +201,13 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 		require.Equal(t, expected, string(bytes))
 	}
 
-	t.Run("parquet compression suffix should stay consistent for split files", func(t *testing.T) {
+	t.Run("parquet split files should keep parquet codec suffix", func(t *testing.T) {
 		parquetDir := t.TempDir()
 		parquetConfig := defaultConfigForTest(t)
 		parquetConfig.OutputDirPath = parquetDir
 		parquetConfig.FileType = FileFormatParquetString
 		parquetConfig.FileSize = 1
+		parquetConfig.ParquetCompressType = compressedio.Gzip
 
 		parquetWriter := createTestWriter(parquetConfig, t)
 		parquetData := [][]driver.Value{
@@ -222,7 +224,7 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 		require.NoError(t, err)
 		require.Greater(t, len(entries), 1)
 		for _, entry := range entries {
-			require.Truef(t, strings.HasSuffix(entry.Name(), ".snappy.parquet"), "unexpected file name: %s", entry.Name())
+			require.Truef(t, strings.HasSuffix(entry.Name(), ".gz.parquet"), "unexpected file name: %s", entry.Name())
 		}
 	})
 }
