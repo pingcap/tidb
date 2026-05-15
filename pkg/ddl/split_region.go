@@ -17,9 +17,11 @@ package ddl
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -43,11 +46,72 @@ import (
 // GlobalScatterGroupID is used to indicate the global scatter group ID.
 const GlobalScatterGroupID int64 = -1
 
+func shouldWaitTiFlashPlacementBeforeScatter(tbInfo *model.TableInfo, scatterScope string) bool {
+	return scatterScope != vardef.ScatterOff && tbInfo.TiFlashReplica != nil && tbInfo.TiFlashReplica.Count > 0
+}
+
+func waitTiFlashPlacementBeforeScatter(ctx context.Context, tbInfo *model.TableInfo, physicalIDs ...int64) {
+	if len(physicalIDs) == 0 {
+		return
+	}
+
+	logutil.DDLLogger().Info("wait tiflash placement before scatter",
+		zap.String("table", tbInfo.Name.O),
+		zap.Int64s("physicalIDs", physicalIDs),
+	)
+
+	var warnedErr bool
+	for {
+		allReady := true
+		for _, physicalID := range physicalIDs {
+			startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID))
+			endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID+1))
+			state, err := infosync.GetReplicationState(ctx, startKey, endKey)
+			if err != nil {
+				if !warnedErr {
+					logutil.DDLLogger().Warn("wait tiflash placement before scatter failed",
+						zap.String("table", tbInfo.Name.O),
+						zap.Int64("physicalID", physicalID),
+						zap.Error(err))
+					warnedErr = true
+				}
+				allReady = false
+				break
+			}
+			if state != infosync.PlacementScheduleStateScheduled {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			logutil.DDLLogger().Warn("wait tiflash placement before scatter timeout",
+				zap.String("table", tbInfo.Name.O),
+				zap.Int64s("physicalIDs", physicalIDs),
+				zap.Error(ctx.Err()))
+			return
+		case <-time.After(tiflashCheckTiDBHTTPAPIHalfInterval):
+		}
+	}
+}
+
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
+
+	if shouldWaitTiFlashPlacementBeforeScatter(tbInfo, scatterScope) {
+		physicalIDs := make([]int64, 0, len(parts))
+		for _, def := range parts {
+			physicalIDs = append(physicalIDs, def.ID)
+		}
+		waitTiFlashPlacementBeforeScatter(ctxWithTimeout, tbInfo, physicalIDs...)
+	}
 
 	var regionIDs []uint64
 	if hasSplitPolicies(tbInfo) {
@@ -80,6 +144,10 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
+
+	if shouldWaitTiFlashPlacementBeforeScatter(tbInfo, scatterScope) {
+		waitTiFlashPlacementBeforeScatter(ctxWithTimeout, tbInfo, tbInfo.ID)
+	}
 
 	var regionIDs []uint64
 	if hasSplitPolicies(tbInfo) {
