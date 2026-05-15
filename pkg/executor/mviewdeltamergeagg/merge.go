@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvdeltamergeagg
+package mviewdeltamergeagg
 
 import (
 	"github.com/pingcap/errors"
@@ -23,7 +23,7 @@ import (
 
 type aggMerger interface {
 	outputColIDs() []int
-	mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error
+	mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error
 }
 
 type depRefSource uint8

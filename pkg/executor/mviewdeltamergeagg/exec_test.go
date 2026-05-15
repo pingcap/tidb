@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvdeltamergeagg
+package mviewdeltamergeagg
 
 import (
 	"context"
@@ -1749,7 +1749,7 @@ func TestRejectDependencyFromMVSide(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0, src),
 		AggMappings: []Mapping{
 			{AggFunc: countStarDesc, ColID: []int{1}, DependencyColID: []int{0}},
-			// Dependency col 2 is on MV side (DeltaAggColCount = 1).
+			// Dependency col 2 is on MView side (DeltaAggColCount = 1).
 			{AggFunc: sumDesc, ColID: []int{2}, DependencyColID: []int{2}},
 		},
 		DeltaAggColCount: 1,
@@ -1895,15 +1895,15 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseDatumBinaryCompare(t *testing.T)
 	require.Equal(t, []uint8{0}, setBitmap)
 }
 
-func TestMVDeltaMergeAggRuntimeStatsString(t *testing.T) {
-	stats := newMVDeltaMergeAggRuntimeStats(3)
-	stats.fillFromPipelineStats(&mvDeltaMergeAggPipelineStats{
+func TestMViewDeltaMergeAggRuntimeStatsString(t *testing.T) {
+	stats := newMViewDeltaMergeAggRuntimeStats(3)
+	stats.fillFromPipelineStats(&mviewDeltaMergeAggPipelineStats{
 		readerTime:      15 * time.Millisecond,
 		writerTime:      8 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 0},
 	})
 	s := stats.String()
-	require.Contains(t, s, "mv_delta_merge_agg")
+	require.Contains(t, s, "mview_delta_merge_agg")
 	require.Contains(t, s, "total:3")
 	require.Contains(t, s, "active:2")
 	require.Contains(t, s, "min:10ms")
@@ -1915,13 +1915,13 @@ func TestMVDeltaMergeAggRuntimeStatsString(t *testing.T) {
 	require.Contains(t, s, "row_ops:0")
 }
 
-func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
-	left := newMVDeltaMergeAggRuntimeStats(2)
-	left.fillFromPipelineStats(&mvDeltaMergeAggPipelineStats{
+func TestMViewDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
+	left := newMViewDeltaMergeAggRuntimeStats(2)
+	left.fillFromPipelineStats(&mviewDeltaMergeAggPipelineStats{
 		readerTime:      3 * time.Millisecond,
 		writerTime:      4 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{5 * time.Millisecond, 7 * time.Millisecond},
-		writerDetail: mvDeltaMergeAggWriterStats{
+		writerDetail: mviewDeltaMergeAggWriterStats{
 			chunks:     1,
 			rowOps:     10,
 			insertRows: 3,
@@ -1929,12 +1929,12 @@ func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 			deleteRows: 2,
 		},
 	})
-	right := newMVDeltaMergeAggRuntimeStats(3)
-	right.fillFromPipelineStats(&mvDeltaMergeAggPipelineStats{
+	right := newMViewDeltaMergeAggRuntimeStats(3)
+	right.fillFromPipelineStats(&mviewDeltaMergeAggPipelineStats{
 		readerTime:      2 * time.Millisecond,
 		writerTime:      1 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond},
-		writerDetail: mvDeltaMergeAggWriterStats{
+		writerDetail: mviewDeltaMergeAggWriterStats{
 			chunks:     2,
 			rowOps:     7,
 			insertRows: 1,
@@ -1957,11 +1957,11 @@ func TestMVDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 	require.Equal(t, int64(9), left.writerDetail.updateRows)
 	require.Equal(t, int64(4), left.writerDetail.deleteRows)
 
-	cloned, ok := left.Clone().(*mvDeltaMergeAggRuntimeStats)
+	cloned, ok := left.Clone().(*mviewDeltaMergeAggRuntimeStats)
 	require.True(t, ok)
 	require.Equal(t, left.readerTime, cloned.readerTime)
 	require.Equal(t, left.writerTime, cloned.writerTime)
 	require.Equal(t, left.mergeWorkerTime, cloned.mergeWorkerTime)
 	require.Equal(t, left.writerDetail, cloned.writerDetail)
-	require.Equal(t, execdetails.TpMVDeltaMergeAggRuntimeStats, left.Tp())
+	require.Equal(t, execdetails.TpMViewDeltaMergeAggRuntimeStats, left.Tp())
 }

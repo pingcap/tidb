@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "mvdeltamergeagg",
+    name = "mviewdeltamergeagg",
     srcs = [
         "exec.go",
         "merge.go",
@@ -10,7 +10,7 @@ go_library(
         "merge_sum.go",
         "writer.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/executor/mvdeltamergeagg",
+    importpath = "github.com/pingcap/tidb/pkg/executor/mviewdeltamergeagg",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/executor/internal/exec",
@@ -37,13 +37,13 @@ go_library(
 )
 
 go_test(
-    name = "mvdeltamergeagg_test",
+    name = "mviewdeltamergeagg_test",
     timeout = "short",
     srcs = [
         "exec_test.go",
         "merge_minmax_test.go",
     ],
-    embed = [":mvdeltamergeagg"],
+    embed = [":mviewdeltamergeagg"],
     flaky = True,
     shard_count = 34,
     deps = [

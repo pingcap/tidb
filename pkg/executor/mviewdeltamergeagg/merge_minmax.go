@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvdeltamergeagg
+package mviewdeltamergeagg
 
 import (
 	"cmp"
@@ -322,7 +322,7 @@ const (
 	minMaxDecisionRecompute
 )
 
-func prepareMinMaxRecomputeRows(workerData *mvMergeAggWorkerData, mappingIdx int) ([]int, error) {
+func prepareMinMaxRecomputeRows(workerData *mviewMergeAggWorkerData, mappingIdx int) ([]int, error) {
 	if workerData == nil {
 		return nil, errors.New("min/max recompute requires worker data")
 	}
@@ -332,7 +332,7 @@ func prepareMinMaxRecomputeRows(workerData *mvMergeAggWorkerData, mappingIdx int
 	return workerData.minMaxRecomputeRowsByMapping[mappingIdx], nil
 }
 
-func storeMinMaxRecomputeRows(workerData *mvMergeAggWorkerData, mappingIdx int, rows []int) {
+func storeMinMaxRecomputeRows(workerData *mviewMergeAggWorkerData, mappingIdx int, rows []int) {
 	workerData.minMaxRecomputeRowsByMapping[mappingIdx] = rows
 }
 
@@ -390,7 +390,7 @@ type minMaxIntMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error {
+func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -455,7 +455,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MView-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -538,7 +538,7 @@ type minMaxUintMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error {
+func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -603,7 +603,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MView-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -686,7 +686,7 @@ type minMaxFloat32Merger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error {
+func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -751,7 +751,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MView-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -834,7 +834,7 @@ type minMaxFloat64Merger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error {
+func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -899,7 +899,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MView-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -982,7 +982,7 @@ type minMaxDecimalMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error {
+func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -1047,7 +1047,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MView-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -1130,7 +1130,7 @@ type minMaxTimeMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error {
+func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -1195,7 +1195,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MView-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -1278,7 +1278,7 @@ type minMaxDurationMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error {
+func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -1343,7 +1343,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MView-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {
@@ -1427,7 +1427,7 @@ type minMaxStringMerger struct {
 	collator collate.Collator
 }
 
-func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mvMergeAggWorkerData) error {
+func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -1498,7 +1498,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 			if sameExtremumValue {
 				// added/removed have the same extremum value and the same count.
 				// If old is NULL, or old is strictly smaller (MAX) / strictly larger (MIN)
-				// than that value, this canceled value cannot remain the final extremum after merge, and MV-log delta
+				// than that value, this canceled value cannot remain the final extremum after merge, and MView-log delta
 				// aggregates do not carry the replacement extremum value.
 				// In this case, recompute is required.
 				if !oldExists {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvdeltamergeagg
+package mviewdeltamergeagg
 
 import (
 	"github.com/pingcap/errors"
@@ -71,7 +71,7 @@ func (m *countMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
+func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
 	oldCol, err := resolveSingleOutputOldColumn("count", input, outputCols, m.outputCols)
 	if err != nil {
 		return err

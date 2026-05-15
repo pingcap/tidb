@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvdeltamergeagg
+package mviewdeltamergeagg
 
 import (
 	"bytes"
@@ -96,7 +96,7 @@ type MinMaxRecomputeSingleRowWorker struct {
 
 // MinMaxRecomputeSingleRowExec stores single-row recompute worker slots.
 type MinMaxRecomputeSingleRowExec struct {
-	// Workers has one slot per MV merge worker.
+	// Workers has one slot per MView merge worker.
 	Workers []MinMaxRecomputeSingleRowWorker
 }
 
@@ -118,21 +118,21 @@ type MinMaxRecomputeExec struct {
 	// KeyResultColIdxes are group-key columns in batch recompute result schema, in the same order as KeyInputColIDs.
 	KeyResultColIdxes []int
 	// BatchBuilder creates one batch recompute executor.
-	// Build must be safe for concurrent calls across MV merge workers.
+	// Build must be safe for concurrent calls across MView merge workers.
 	BatchBuilder MinMaxBatchExecBuilder
 }
 
-// RowOpType is the row write operation on MV table.
+// RowOpType is the row write operation on MView table.
 type RowOpType uint8
 
 const (
-	// RowOpNoOp means there is no MV row to touch.
+	// RowOpNoOp means there is no MView row to touch.
 	RowOpNoOp RowOpType = iota
-	// RowOpInsert means insert a new MV row.
+	// RowOpInsert means insert a new MView row.
 	RowOpInsert
-	// RowOpUpdate means update an existing MV row.
+	// RowOpUpdate means update an existing MView row.
 	RowOpUpdate
-	// RowOpDelete means delete an existing MV row.
+	// RowOpDelete means delete an existing MView row.
 	RowOpDelete
 )
 
@@ -166,7 +166,7 @@ type ResultWriter interface {
 	WriteChunk(ctx context.Context, result *ChunkResult) error
 }
 
-// Exec is the sink executor for incremental MV merge.
+// Exec is the sink executor for incremental MView merge.
 type Exec struct {
 	exec.BaseExecutor
 
@@ -188,10 +188,10 @@ type Exec struct {
 	aggOutputColIDs      []int
 	prepared             bool
 	executed             bool
-	runtimeStats         *mvDeltaMergeAggRuntimeStats
+	runtimeStats         *mviewDeltaMergeAggRuntimeStats
 }
 
-type mvMergeAggWorkerData struct {
+type mviewMergeAggWorkerData struct {
 	updateRows                   []int
 	updateOpIndexes              []int
 	updateChanged                []bool
@@ -210,21 +210,21 @@ type mvMergeAggWorkerData struct {
 	batchResultNullByRow         []bool
 }
 
-type mvDeltaMergeAggPipelineStats struct {
+type mviewDeltaMergeAggPipelineStats struct {
 	readerTime      time.Duration
 	writerTime      time.Duration
 	mergeWorkerTime []time.Duration
-	writerDetail    mvDeltaMergeAggWriterStats
+	writerDetail    mviewDeltaMergeAggWriterStats
 }
 
-type mvDeltaMergeAggRuntimeStats struct {
+type mviewDeltaMergeAggRuntimeStats struct {
 	readerTime      time.Duration
 	writerTime      time.Duration
 	mergeWorkerTime []time.Duration
-	writerDetail    mvDeltaMergeAggWriterStats
+	writerDetail    mviewDeltaMergeAggWriterStats
 }
 
-type mvDeltaMergeAggWriterStats struct {
+type mviewDeltaMergeAggWriterStats struct {
 	chunks int64
 	rowOps int64
 
@@ -234,7 +234,7 @@ type mvDeltaMergeAggWriterStats struct {
 	deleteRows int64
 }
 
-func (s *mvDeltaMergeAggWriterStats) merge(other mvDeltaMergeAggWriterStats) {
+func (s *mviewDeltaMergeAggWriterStats) merge(other mviewDeltaMergeAggWriterStats) {
 	s.chunks += other.chunks
 	s.rowOps += other.rowOps
 	s.noopRows += other.noopRows
@@ -243,16 +243,16 @@ func (s *mvDeltaMergeAggWriterStats) merge(other mvDeltaMergeAggWriterStats) {
 	s.deleteRows += other.deleteRows
 }
 
-func newMVDeltaMergeAggRuntimeStats(workerCnt int) *mvDeltaMergeAggRuntimeStats {
+func newMViewDeltaMergeAggRuntimeStats(workerCnt int) *mviewDeltaMergeAggRuntimeStats {
 	if workerCnt < 0 {
 		workerCnt = 0
 	}
-	return &mvDeltaMergeAggRuntimeStats{
+	return &mviewDeltaMergeAggRuntimeStats{
 		mergeWorkerTime: make([]time.Duration, workerCnt),
 	}
 }
 
-func (s *mvDeltaMergeAggRuntimeStats) reset(workerCnt int) {
+func (s *mviewDeltaMergeAggRuntimeStats) reset(workerCnt int) {
 	if workerCnt < 0 {
 		workerCnt = 0
 	}
@@ -266,7 +266,7 @@ func (s *mvDeltaMergeAggRuntimeStats) reset(workerCnt int) {
 	clear(s.mergeWorkerTime)
 }
 
-func (s *mvDeltaMergeAggRuntimeStats) fillFromPipelineStats(stats *mvDeltaMergeAggPipelineStats) {
+func (s *mviewDeltaMergeAggRuntimeStats) fillFromPipelineStats(stats *mviewDeltaMergeAggPipelineStats) {
 	if s == nil || stats == nil {
 		return
 	}
@@ -280,12 +280,12 @@ func (s *mvDeltaMergeAggRuntimeStats) fillFromPipelineStats(stats *mvDeltaMergeA
 	s.writerDetail = stats.writerDetail
 }
 
-func (s *mvDeltaMergeAggRuntimeStats) String() string {
+func (s *mviewDeltaMergeAggRuntimeStats) String() string {
 	if s == nil {
 		return ""
 	}
 	var buf bytes.Buffer
-	buf.WriteString("mv_delta_merge_agg:{merge_worker:{total:")
+	buf.WriteString("mview_delta_merge_agg:{merge_worker:{total:")
 	buf.WriteString(strconv.Itoa(len(s.mergeWorkerTime)))
 	active := 0
 	var minDur, maxDur, sumDur time.Duration
@@ -335,11 +335,11 @@ func (s *mvDeltaMergeAggRuntimeStats) String() string {
 	return buf.String()
 }
 
-func (s *mvDeltaMergeAggRuntimeStats) Clone() execdetails.RuntimeStats {
+func (s *mviewDeltaMergeAggRuntimeStats) Clone() execdetails.RuntimeStats {
 	if s == nil {
-		return &mvDeltaMergeAggRuntimeStats{}
+		return &mviewDeltaMergeAggRuntimeStats{}
 	}
-	newStats := &mvDeltaMergeAggRuntimeStats{
+	newStats := &mviewDeltaMergeAggRuntimeStats{
 		readerTime:      s.readerTime,
 		writerTime:      s.writerTime,
 		mergeWorkerTime: make([]time.Duration, len(s.mergeWorkerTime)),
@@ -349,8 +349,8 @@ func (s *mvDeltaMergeAggRuntimeStats) Clone() execdetails.RuntimeStats {
 	return newStats
 }
 
-func (s *mvDeltaMergeAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*mvDeltaMergeAggRuntimeStats)
+func (s *mviewDeltaMergeAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*mviewDeltaMergeAggRuntimeStats)
 	if !ok || tmp == nil {
 		return
 	}
@@ -370,8 +370,8 @@ func (s *mvDeltaMergeAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	}
 }
 
-func (*mvDeltaMergeAggRuntimeStats) Tp() int {
-	return execdetails.TpMVDeltaMergeAggRuntimeStats
+func (*mviewDeltaMergeAggRuntimeStats) Tp() int {
+	return execdetails.TpMViewDeltaMergeAggRuntimeStats
 }
 
 // Open implements the Executor interface.
@@ -417,7 +417,7 @@ func (e *Exec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.executed = true
 	if e.BaseExecutor.RuntimeStats() != nil {
 		if e.runtimeStats == nil {
-			e.runtimeStats = newMVDeltaMergeAggRuntimeStats(e.WorkerCnt)
+			e.runtimeStats = newMViewDeltaMergeAggRuntimeStats(e.WorkerCnt)
 		} else {
 			e.runtimeStats.reset(e.WorkerCnt)
 		}
@@ -442,9 +442,9 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 	if workerCnt <= 0 {
 		workerCnt = 1
 	}
-	var pipelineStats *mvDeltaMergeAggPipelineStats
+	var pipelineStats *mviewDeltaMergeAggPipelineStats
 	if e.runtimeStats != nil {
-		pipelineStats = &mvDeltaMergeAggPipelineStats{
+		pipelineStats = &mviewDeltaMergeAggPipelineStats{
 			mergeWorkerTime: make([]time.Duration, workerCnt),
 		}
 		if statsWriter, ok := e.Writer.(writerRuntimeStatsAware); ok {
@@ -496,7 +496,7 @@ func (e *Exec) runReader(
 	ctx context.Context,
 	inputCh chan<- *chunk.Chunk,
 	freeInputCh <-chan *chunk.Chunk,
-	stats *mvDeltaMergeAggPipelineStats,
+	stats *mviewDeltaMergeAggPipelineStats,
 ) error {
 	defer close(inputCh)
 	var total time.Duration
@@ -538,9 +538,9 @@ func (e *Exec) runWorker(
 	inputCh <-chan *chunk.Chunk,
 	resultCh chan<- *ChunkResult,
 	workerIdx int,
-	stats *mvDeltaMergeAggPipelineStats,
+	stats *mviewDeltaMergeAggPipelineStats,
 ) error {
-	var workerData mvMergeAggWorkerData
+	var workerData mviewMergeAggWorkerData
 	var total time.Duration
 	defer func() {
 		if stats != nil && workerIdx >= 0 && workerIdx < len(stats.mergeWorkerTime) {
@@ -580,7 +580,7 @@ func (e *Exec) runWriter(
 	ctx context.Context,
 	resultCh <-chan *ChunkResult,
 	freeInputCh chan<- *chunk.Chunk,
-	stats *mvDeltaMergeAggPipelineStats,
+	stats *mviewDeltaMergeAggPipelineStats,
 ) error {
 	var total time.Duration
 	defer func() {
@@ -673,9 +673,7 @@ func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 			len(keyResultColIdxes),
 		)
 	}
-	for key := range seenKey {
-		delete(seenKey, key)
-	}
+	clear(seenKey)
 	seenKeyResult := seenKey
 	for _, resultColIdx := range keyResultColIdxes {
 		if resultColIdx < 0 {
@@ -791,13 +789,13 @@ func (e *Exec) prepareMergers() error {
 
 	firstAgg := e.AggMappings[0].AggFunc
 	if firstAgg == nil {
-		return errors.New("MVDeltaMergeAgg mapping requires AggFunc")
+		return errors.New("MViewDeltaMergeAgg mapping requires AggFunc")
 	}
 	if !isFirstAggCountAllRows(firstAgg) {
-		return errors.Errorf("the first MVDeltaMergeAgg mapping must be COUNT(*)/COUNT(non-NULL constant), got %s", aggFuncForErr(firstAgg))
+		return errors.Errorf("the first MViewDeltaMergeAgg mapping must be COUNT(*)/COUNT(non-NULL constant), got %s", aggFuncForErr(firstAgg))
 	}
 	if len(e.AggMappings[0].ColID) != 1 {
-		return errors.Errorf("the first MVDeltaMergeAgg mapping must output exactly 1 column, got %d", len(e.AggMappings[0].ColID))
+		return errors.Errorf("the first MViewDeltaMergeAgg mapping must output exactly 1 column, got %d", len(e.AggMappings[0].ColID))
 	}
 	minMaxOutputCols := make(map[int]struct{})
 	for i := range e.AggMappings {
@@ -830,7 +828,7 @@ func (e *Exec) prepareMergers() error {
 	for i := range e.AggMappings {
 		mapping := e.AggMappings[i]
 		if mapping.AggFunc == nil {
-			return errors.New("MVDeltaMergeAgg mapping requires AggFunc")
+			return errors.New("MViewDeltaMergeAgg mapping requires AggFunc")
 		}
 		aggName := mapping.AggFunc.Name
 		if len(mapping.ColID) == 0 {
@@ -888,7 +886,7 @@ func (e *Exec) prepareMergers() error {
 	return nil
 }
 
-func (e *Exec) mergeOneChunk(ctx context.Context, chk *chunk.Chunk, workerData *mvMergeAggWorkerData, workerIdx int) (*ChunkResult, error) {
+func (e *Exec) mergeOneChunk(ctx context.Context, chk *chunk.Chunk, workerData *mviewMergeAggWorkerData, workerIdx int) (*ChunkResult, error) {
 	if workerData != nil {
 		workerData.prepareMinMaxRecomputeRows(len(e.AggMappings))
 	}
@@ -938,7 +936,7 @@ func (e *Exec) mergeOneChunk(ctx context.Context, chk *chunk.Chunk, workerData *
 	}, nil
 }
 
-func (d *mvMergeAggWorkerData) prepareMinMaxRecomputeRows(mappingCnt int) {
+func (d *mviewMergeAggWorkerData) prepareMinMaxRecomputeRows(mappingCnt int) {
 	if mappingCnt <= 0 {
 		d.minMaxRecomputeRowsByMapping = nil
 		return
@@ -958,7 +956,7 @@ func (e *Exec) recomputeMinMaxRows(
 	ctx context.Context,
 	input *chunk.Chunk,
 	computedByColID []*chunk.Column,
-	workerData *mvMergeAggWorkerData,
+	workerData *mviewMergeAggWorkerData,
 	workerIdx int,
 ) error {
 	if e.MinMaxRecompute == nil || workerData == nil {
@@ -1182,7 +1180,7 @@ func (e *Exec) recomputeMinMaxBatch(
 	keyTypes []*types.FieldType,
 	countStarVals []int64,
 	batchMappings []int,
-	workerData *mvMergeAggWorkerData,
+	workerData *mviewMergeAggWorkerData,
 	overrides []*mappingRecomputeOverride,
 ) (retErr error) {
 	if e.MinMaxRecompute.BatchBuilder == nil {
@@ -1813,7 +1811,7 @@ func appendDatumToColumn(col *chunk.Column, d *types.Datum, ft *types.FieldType)
 	return nil
 }
 
-func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mvMergeAggWorkerData) ([]RowOp, []uint8, int, int, error) {
+func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, workerData *mviewMergeAggWorkerData) ([]RowOp, []uint8, int, int, error) {
 	if len(e.aggOutputColIDs) == 0 {
 		return nil, nil, 0, 0, errors.New("no aggregate outputs in Exec")
 	}

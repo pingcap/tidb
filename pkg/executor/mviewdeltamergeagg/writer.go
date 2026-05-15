@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvdeltamergeagg
+package mviewdeltamergeagg
 
 import (
 	"context"
@@ -41,14 +41,14 @@ type tableResultWriter struct {
 	newRow  []types.Datum
 	touched []bool
 
-	stats *mvDeltaMergeAggWriterStats
+	stats *mviewDeltaMergeAggWriterStats
 }
 
 type writerRuntimeStatsAware interface {
-	setRuntimeStats(*mvDeltaMergeAggWriterStats)
+	setRuntimeStats(*mviewDeltaMergeAggWriterStats)
 }
 
-func (w *tableResultWriter) setRuntimeStats(stats *mvDeltaMergeAggWriterStats) {
+func (w *tableResultWriter) setRuntimeStats(stats *mviewDeltaMergeAggWriterStats) {
 	w.stats = stats
 }
 
@@ -145,7 +145,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 	stats := w.stats
 	if stats == nil {
 		// Keep a single write path and avoid nil checks in the hot loop.
-		var tmpStats mvDeltaMergeAggWriterStats
+		var tmpStats mviewDeltaMergeAggWriterStats
 		stats = &tmpStats
 	}
 	stats.chunks++
@@ -235,7 +235,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 				return err
 			}
 		default:
-			return errors.Errorf("unknown MVDeltaMergeAgg row op %d", op.Tp)
+			return errors.Errorf("unknown MViewDeltaMergeAgg row op %d", op.Tp)
 		}
 	}
 

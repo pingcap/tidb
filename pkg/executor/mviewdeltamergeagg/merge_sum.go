@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvdeltamergeagg
+package mviewdeltamergeagg
 
 import (
 	"github.com/pingcap/errors"
@@ -175,7 +175,7 @@ func (m *sumIntMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
+func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
 	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
 		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
 	)
@@ -252,7 +252,7 @@ func (m *sumUintMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
+func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
 	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
 		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
 	)
@@ -336,7 +336,7 @@ func (m *sumFloat64Merger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
+func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
 	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
 		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
 	)
@@ -403,7 +403,7 @@ func (m *sumDecimalMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
+func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
 	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
 		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
 	)
