@@ -443,6 +443,31 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"IndexRangeScan"})
 	}
+
+	// issue-67010-binary-literal-sum-pushdown
+	{
+		tk := prepareSharedTestKit(t)
+		query := `SELECT MAKETIME(42, 42, SUM(b'101010')) AS c22
+FROM t0 AS tom13
+WHERE CONVERT_TZ('2025-12-31 14:30:00', 'Europe/Amsterdam', '-04:30')`
+
+		tk.MustExec("create table t0(c0 char)")
+		tk.MustExec("insert ignore into t0 values (1)")
+		tk.MustExec("create index i0 on t0(c0)")
+		tk.MustExec("analyze table t0 index i0")
+		tk.MustQuery(query).Check(testkit.Rows("42:42:42.000000"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustExec("drop table t0")
+		tk.MustExec("create table t0(c0 char)")
+		tk.MustExec("insert ignore into t0 values (1)")
+		tk.MustQuery(query).Check(testkit.Rows("42:42:42.000000"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		noIndexPlan := fmt.Sprint(tk.MustQuery("explain format='brief' " + query).Rows())
+		require.NotContains(t, noIndexPlan, `cop[tikv]  funcs:sum("0x2a")`)
+	}
+
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
