@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -3771,7 +3772,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessi
 		kr := strings.Join(ranges, ", ")
 
 		row := types.MakeDatums(
-			rule.ID,
+			label.RestoreRuleID(rule.ID),
 			rule.RuleType,
 			labels,
 			kr,
@@ -4154,10 +4155,23 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 		err = errors.New("the label rule has no data")
 		return
 	}
-	dbName = s[1]
-	tableName = s[2]
-	if len(s) > 3 {
-		partitionName = s[3]
+	idOffset := 0
+	if kerneltype.IsNextGen() && s[0] == label.KeyspacePrefix {
+		if len(s) < 5 {
+			err = errors.Errorf("invalid keyspace label rule ID: %v", rule.ID)
+			return
+		}
+		idOffset = 2
+	}
+	if s[idOffset] != label.IDPrefix || len(s) < idOffset+3 {
+		err = errors.Errorf("invalid label rule ID: %v", rule.ID)
+		return
+	}
+
+	dbName = s[idOffset+1]
+	tableName = s[idOffset+2]
+	if len(s) > idOffset+3 {
+		partitionName = s[idOffset+3]
 	}
 	return
 }
