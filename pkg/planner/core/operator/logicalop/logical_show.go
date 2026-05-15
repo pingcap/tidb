@@ -328,8 +328,8 @@ func extractStatsMetaEQValue(
 		return "", false
 	}
 
-	var colIdx int = -1
-	for i := 0; i < 2; i++ {
+	var colIdx = -1
+	for i := range 2 {
 		col, isCol := args[i].(*expression.Column)
 		if !isCol {
 			continue
