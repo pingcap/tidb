@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "planner",
@@ -38,5 +38,15 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "planner_test",
+    srcs = ["optimize_test.go"],
+    embed = [":planner"],
+    deps = [
+        "//pkg/sessionctx/variable",
+        "@com_github_stretchr_testify//require",
     ],
 )
