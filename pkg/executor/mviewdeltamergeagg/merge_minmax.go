@@ -29,6 +29,26 @@ import (
 	"go.uber.org/zap"
 )
 
+// MIN/MAX delta-merge update overview:
+//
+// old:
+// current MIN/MAX stored in the MView row.
+// add/remove:
+// MIN/MAX aggregate outputs of inserted/deleted base rows in the current delta batch.
+// addCnt/removeCnt:
+// counts of rows equal to add/remove extremum in those delta aggregates.
+// countRef:
+// final group count reference used by merger (COUNT(expr) when provided; otherwise COUNT(*)).
+//
+// Decision flow:
+//  1. Derive oldExists/addExists/removeExists from value nullability and non-negative counts.
+//  2. Compute chooseAddRemove:
+//     +1 => add side dominates, -1 => remove side dominates, 0 => no dominant side
+//     (both sides absent, or same extremum with balanced counts).
+//  3. Use fast-path update when old/add/remove (+ counts) is sufficient to prove final extremum.
+//  4. Otherwise fallback to recomputing, because delta aggregates do not include the successor extremum.
+//
+// This preserves semantics equivalent to recomputing MIN/MAX from base rows after applying delta.
 func (e *Exec) buildMinMaxMerger(
 	mappingIdx int,
 	mapping Mapping,
@@ -428,7 +448,9 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
 
-		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		// chooseAddRemove indicates which delta side dominates the candidate extremum.
+		// 1 => add dominates, -1 => remove dominates, 0 => no dominant side.
+		// 0 occurs when both sides are absent, or when both sides share the same extremum with balanced counts.
 		chooseAddRemove := 0
 		// sameExtremumValue means added and removed share the same extremum value.
 		sameExtremumValue := false
@@ -576,7 +598,9 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
 
-		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		// chooseAddRemove indicates which delta side dominates the candidate extremum.
+		// 1 => add dominates, -1 => remove dominates, 0 => no dominant side.
+		// 0 occurs when both sides are absent, or when both sides share the same extremum with balanced counts.
 		chooseAddRemove := 0
 		// sameExtremumValue means added and removed share the same extremum value.
 		sameExtremumValue := false
@@ -724,7 +748,9 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
 
-		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		// chooseAddRemove indicates which delta side dominates the candidate extremum.
+		// 1 => add dominates, -1 => remove dominates, 0 => no dominant side.
+		// 0 occurs when both sides are absent, or when both sides share the same extremum with balanced counts.
 		chooseAddRemove := 0
 		// sameExtremumValue means added and removed share the same extremum value.
 		sameExtremumValue := false
@@ -872,7 +898,9 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
 
-		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		// chooseAddRemove indicates which delta side dominates the candidate extremum.
+		// 1 => add dominates, -1 => remove dominates, 0 => no dominant side.
+		// 0 occurs when both sides are absent, or when both sides share the same extremum with balanced counts.
 		chooseAddRemove := 0
 		// sameExtremumValue means added and removed share the same extremum value.
 		sameExtremumValue := false
@@ -1020,7 +1048,9 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
 
-		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		// chooseAddRemove indicates which delta side dominates the candidate extremum.
+		// 1 => add dominates, -1 => remove dominates, 0 => no dominant side.
+		// 0 occurs when both sides are absent, or when both sides share the same extremum with balanced counts.
 		chooseAddRemove := 0
 		// sameExtremumValue means added and removed share the same extremum value.
 		sameExtremumValue := false
@@ -1168,7 +1198,9 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
 
-		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		// chooseAddRemove indicates which delta side dominates the candidate extremum.
+		// 1 => add dominates, -1 => remove dominates, 0 => no dominant side.
+		// 0 occurs when both sides are absent, or when both sides share the same extremum with balanced counts.
 		chooseAddRemove := 0
 		// sameExtremumValue means added and removed share the same extremum value.
 		sameExtremumValue := false
@@ -1316,7 +1348,9 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
 
-		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		// chooseAddRemove indicates which delta side dominates the candidate extremum.
+		// 1 => add dominates, -1 => remove dominates, 0 => no dominant side.
+		// 0 occurs when both sides are absent, or when both sides share the same extremum with balanced counts.
 		chooseAddRemove := 0
 		// sameExtremumValue means added and removed share the same extremum value.
 		sameExtremumValue := false
@@ -1471,7 +1505,9 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 			oldVal = oldCol.GetString(rowIdx)
 		}
 
-		// chooseAddRemove: 1 => choose added extremum, -1 => choose removed extremum, 0 => equal.
+		// chooseAddRemove indicates which delta side dominates the candidate extremum.
+		// 1 => add dominates, -1 => remove dominates, 0 => no dominant side.
+		// 0 occurs when both sides are absent, or when both sides share the same extremum with balanced counts.
 		chooseAddRemove := 0
 		// sameExtremumValue means added and removed share the same extremum value.
 		sameExtremumValue := false
