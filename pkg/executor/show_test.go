@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 
 	fmap := plannercore.ImportIntoFieldMap
 	rowCntIdx := fmap["ImportedRows"]
+	resultMsgIdx := fmap["ResultMessage"]
 	startIdx := fmap["StartTime"]
 	endIdx := fmap["EndTime"]
 
@@ -79,6 +81,46 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	require.False(t, c.GetRow(2).IsNull(startIdx))
 	require.False(t, c.GetRow(2).IsNull(endIdx))
 
+	jobInfo.Summary = &importer.Summary{
+		ImportedRows: 123,
+		TiCIIndexSummary: &importer.TiCIIndexSummary{
+			Incomplete:      true,
+			TableID:         42,
+			IndexIDs:        []int64{101, 102},
+			ReadyIndexIDs:   []int64{101},
+			PendingIndexIDs: []int64{102},
+			ErrorIndexIDs:   []int64{102},
+			Reason:          "check-add-index-progress-failed",
+			ErrorMessage:    "tici unavailable",
+		},
+	}
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	resultMsg := c.GetRow(3).GetString(resultMsgIdx)
+	for _, expected := range []string{
+		"TiKV import completed, but TiCI full-text index is incomplete",
+		"reason: check-add-index-progress-failed.",
+		"table ID: 42.",
+		"index IDs: [101 102].",
+		"ready index IDs: [101].",
+		"pending index IDs: [102].",
+		"error index IDs: [102].",
+		"error: tici unavailable.",
+	} {
+		require.True(t, strings.Contains(resultMsg, expected), resultMsg)
+	}
+
+	jobInfo.Summary.ConflictRowCnt = 2
+	jobInfo.Summary.TooManyConflicts = true
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	resultMsg = c.GetRow(4).GetString(resultMsgIdx)
+	for _, expected := range []string{
+		"2 conflicted rows.",
+		"Too many conflicted rows, checksum skipped.",
+		"TiKV import completed, but TiCI full-text index is incomplete",
+	} {
+		require.True(t, strings.Contains(resultMsg, expected), resultMsg)
+	}
+
 	ri := &importinto.RuntimeInfo{
 		Processed: 10,
 		Total:     100000,
@@ -86,14 +128,14 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	}
 	jobInfo.Summary = &importer.Summary{ImportedRows: 0}
 	executor.FillOneImportJobInfo(c, jobInfo, ri)
-	require.Equal(t, "10B", c.GetRow(3).GetString(fmap["CurStepProcessedSize"]))
-	require.Equal(t, "97.66KiB", c.GetRow(3).GetString(fmap["CurStepTotalSize"]))
-	require.Equal(t, "0", c.GetRow(3).GetString(fmap["CurStepProgressPct"]))
-	require.Equal(t, "13:53:15", c.GetRow(3).GetString(fmap["CurStepETA"]))
+	require.Equal(t, "10B", c.GetRow(5).GetString(fmap["CurStepProcessedSize"]))
+	require.Equal(t, "97.66KiB", c.GetRow(5).GetString(fmap["CurStepTotalSize"]))
+	require.Equal(t, "0", c.GetRow(5).GetString(fmap["CurStepProgressPct"]))
+	require.Equal(t, "13:53:15", c.GetRow(5).GetString(fmap["CurStepETA"]))
 
 	// runtime info have update time, so use it
 	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0, UpdateTime: t2025})
-	require.EqualValues(t, t2025, c.GetRow(4).GetTime(14))
+	require.EqualValues(t, t2025, c.GetRow(6).GetTime(14))
 }
 
 func TestShow(t *testing.T) {
