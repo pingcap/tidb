@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,10 @@ func TestCancelWhileScan(t *testing.T) {
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	const totalRows, batchSize = 1000, 100
+	totalRows, batchSize := 1000, 100
+	if testflag.Long() {
+		totalRows = 10000
+	}
 	for i := 0; i < totalRows; i += batchSize {
 		values := make([]string, 0, batchSize)
 		for j := i; j < i+batchSize; j++ {
@@ -49,7 +53,6 @@ func TestCancelWhileScan(t *testing.T) {
 	}
 	testPhysicalTableCache, err := cache.NewPhysicalTable(ast.NewCIStr("test"), testTable.Meta(), ast.NewCIStr(""))
 	require.NoError(t, err)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", "return(200)")
 
 	delCh := make(chan *ttlworker.TTLDeleteTask)
 	wg := &sync.WaitGroup{}
@@ -61,8 +64,12 @@ func TestCancelWhileScan(t *testing.T) {
 		}
 	}()
 
-	rounds := 10
-	for i := 0; i < rounds; i++ {
+	testStart := time.Now()
+	testDuration := time.Second
+	if testflag.Long() {
+		testDuration = time.Minute
+	}
+	for time.Since(testStart) < testDuration {
 		ctx, cancel := context.WithCancel(context.Background())
 		ttlTask := ttlworker.NewTTLScanTask(ctx, testPhysicalTableCache, &cache.TTLTask{
 			JobID:            "test",
