@@ -67,12 +67,12 @@ func TestParseParquetDefaultFlags(t *testing.T) {
 	require.EqualValues(t, 120*units.MiB, conf.ParquetRowGroupSize)
 	require.Equal(t, parquetfile.DefaultCompressionType, conf.ParquetCompressType)
 
-	t.Run("ParseParquetCompressType uses parquetfile policy", func(t *testing.T) {
-		tp, err := ParseParquetCompressType("")
+	t.Run("parseParquetCompressType uses parquetfile policy", func(t *testing.T) {
+		tp, err := parseParquetCompressType("")
 		require.NoError(t, err)
 		require.Equal(t, parquetfile.DefaultCompressionType, tp)
 
-		tp, err = ParseParquetCompressType("zstd")
+		tp, err = parseParquetCompressType("zstd")
 		require.NoError(t, err)
 		require.Equal(t, compressedio.Zstd, tp)
 	})

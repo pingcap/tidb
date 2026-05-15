@@ -663,7 +663,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.ParquetCompressType, err = ParseParquetCompressType(parquetCompressType)
+	conf.ParquetCompressType, err = parseParquetCompressType(parquetCompressType)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -789,10 +789,13 @@ func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
 	return bytes, nil
 }
 
-// ParseParquetCompressType parses the parquet compression flag value.
+// parseParquetCompressType parses the parquet compression flag value.
 // Empty means the flag is not configured, so Dumpling uses the parquet default.
-func ParseParquetCompressType(compressType string) (compressedio.CompressType, error) {
-	return parquetfile.ParseCompressionType(compressType)
+func parseParquetCompressType(compressType string) (compressedio.CompressType, error) {
+	if compressType == "" {
+		return parquetfile.DefaultCompressionType, nil
+	}
+	return compressedio.ParseCompressType(compressType)
 }
 
 func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {

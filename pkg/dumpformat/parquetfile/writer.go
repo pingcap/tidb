@@ -28,10 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 )
 
-// DefaultCompressionType is the default parquet compression type.
-const DefaultCompressionType = compressedio.Snappy
-
 const (
+	// DefaultCompressionType is the default parquet compression type.
+	DefaultCompressionType = compressedio.Snappy
 	// DefaultRowGroupMemoryLimitBytes is the default row-group flush threshold
 	// by accounted in-memory bytes.
 	DefaultRowGroupMemoryLimitBytes = 120 * units.MiB
@@ -132,15 +131,6 @@ func defaultWriterOptions() writerOptions {
 	}
 }
 
-// ParseCompressionType parses the parquet compression flag value.
-// Empty means the flag is not configured, so Dumpling uses the default.
-func ParseCompressionType(compressType string) (compressedio.CompressType, error) {
-	if compressType == "" {
-		return DefaultCompressionType, nil
-	}
-	return compressedio.ParseCompressType(compressType)
-}
-
 // CompressionCodec converts dumpling compression type to parquet codec.
 func CompressionCodec(compressType compressedio.CompressType) compress.Compression {
 	switch compressType {
@@ -153,10 +143,7 @@ func CompressionCodec(compressType compressedio.CompressType) compress.Compressi
 	case compressedio.Zstd:
 		return compress.Codecs.Zstd
 	default:
-		if compressType != DefaultCompressionType {
-			return CompressionCodec(DefaultCompressionType)
-		}
-		return compress.Codecs.Snappy
+		return CompressionCodec(DefaultCompressionType)
 	}
 }
 

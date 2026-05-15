@@ -99,10 +99,7 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 		require.Equal(t, compress.Codecs.Gzip, CompressionCodec(compressedio.Gzip))
 		require.Equal(t, compress.Codecs.Snappy, CompressionCodec(compressedio.Snappy))
 		require.Equal(t, compress.Codecs.Zstd, CompressionCodec(compressedio.Zstd))
-
-		tp, err := ParseCompressionType("")
-		require.NoError(t, err)
-		require.Equal(t, DefaultCompressionType, tp)
+		require.Equal(t, CompressionCodec(DefaultCompressionType), CompressionCodec(compressedio.CompressType(255)))
 	})
 
 	t.Run("flushes row group by accounted memory bytes", func(t *testing.T) {
