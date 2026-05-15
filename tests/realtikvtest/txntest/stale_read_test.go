@@ -339,29 +339,6 @@ func TestStaleReadKVRequest(t *testing.T) {
 			assert: "github.com/pingcap/tidb/pkg/executor/assertBatchPointReplicaOption",
 		},
 	}
-<<<<<<< HEAD
-	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW()`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
-		require.NoError(t, failpoint.Disable(testcase.assert))
-	}
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW()`)
-		tk.MustExec(`begin;`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
-		require.NoError(t, failpoint.Disable(testcase.assert))
-	}
-	// assert follower read closest read
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustQuery(testcase.sql)
-		require.NoError(t, failpoint.Disable(testcase.assert))
-=======
 	if !kerneltype.IsNextGen() {
 		tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 		for _, testcase := range testcases {
@@ -385,7 +362,6 @@ func TestStaleReadKVRequest(t *testing.T) {
 			tk.MustQuery(testcase.sql)
 			require.NoError(t, failpoint.Disable(testcase.assert))
 		}
->>>>>>> bdd978350e0 (vars: validate some vars for tidb x (#68196))
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
