@@ -3220,6 +3220,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			if refreshFailedReason != nil {
 				refreshErrMsg = *refreshFailedReason
 			}
+			reportMVRefreshFailed(finalizeCtx, histSQLExec, reportRefreshFailed, mviewID, schemaName.O, tblInfo.Name.O, refreshJobID, refreshMethod, isInternalSQL, refreshErrMsg)
 			histErr := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
 				refreshEndAt := time.Now()
 				return finalizeRefreshHistWithRetry(
@@ -3239,8 +3240,34 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			if histErr != nil {
 				return errors.Annotatef(histErr, "refresh materialized view: failed to finalize refresh history after error %v", finalErr)
 			}
-			reportMVRefreshFailed(finalizeCtx, histSQLExec, reportRefreshFailed, mviewID, schemaName.O, tblInfo.Name.O, refreshJobID, refreshMethod, isInternalSQL, refreshErrMsg)
 			return errors.Trace(finalErr)
+		}
+		finalizeSuccess := func(buildReadTSO uint64) {
+			if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+				refreshEndAt := time.Now()
+				return finalizeRefreshHistWithRetry(
+					finalizeCtx,
+					histSQLExec,
+					refreshJobID,
+					mviewID,
+					refreshHistStatusSuccess,
+					&buildReadTSO,
+					nil,
+					histTime(refreshStart),
+					histTime(refreshEndAt),
+					nil,
+					nil,
+				)
+			}); err != nil {
+				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+					errors.Annotate(err, "refresh materialized view: refresh committed but failed to finalize refresh history"),
+				)
+			}
+			if alertErr := deleteRefreshAlertState(finalizeCtx, histSQLExec, mviewID); alertErr != nil {
+				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+					errors.Annotate(alertErr, "refresh materialized view: refresh committed but failed to delete refresh alert"),
+				)
+			}
 		}
 		stopTaskMonitor, err := startMVTaskMonitor(
 			kctx,
@@ -3281,31 +3308,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			return finalizeFailure(err)
 		}
 		refreshStmtResult := captureMVRefreshStmtResult(sessVars)
-		if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
-			refreshEndAt := time.Now()
-			return finalizeRefreshHistWithRetry(
-				finalizeCtx,
-				histSQLExec,
-				refreshJobID,
-				mviewID,
-				refreshHistStatusSuccess,
-				&buildReadTSO,
-				nil,
-				histTime(refreshStart),
-				histTime(refreshEndAt),
-				nil,
-				nil,
-			)
-		}); err != nil {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
-				errors.Annotate(err, "refresh materialized view: refresh committed but failed to finalize refresh history"),
-			)
-		}
-		if alertErr := deleteRefreshAlertState(finalizeCtx, histSQLExec, mviewID); alertErr != nil {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
-				errors.Annotate(alertErr, "refresh materialized view: refresh committed but failed to delete refresh alert"),
-			)
-		}
+		finalizeSuccess(buildReadTSO)
 		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, refreshStmtResult)
 		return nil
 	}
@@ -3420,6 +3423,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				txnTotalDur = time.Since(txnCommitStart)
 			}
 		}
+		reportMVRefreshFailed(finalizeCtx, histSQLExec, reportRefreshFailed, mviewID, schemaName.O, tblInfo.Name.O, refreshJobID, refreshMethod, isInternalSQL, refreshErrMsg)
 		histErr := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
 			refreshEndAt := time.Now()
 			return finalizeRefreshHistWithRetry(
@@ -3445,8 +3449,34 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if rollbackErr != nil {
 			return errors.Annotatef(rollbackErr, "refresh materialized view: rollback failed after error %v", finalErr)
 		}
-		reportMVRefreshFailed(finalizeCtx, histSQLExec, reportRefreshFailed, mviewID, schemaName.O, tblInfo.Name.O, refreshJobID, refreshMethod, isInternalSQL, refreshErrMsg)
 		return errors.Trace(finalErr)
+	}
+	finalizeSuccess := func(refreshReadTSO uint64, refreshCommitTSO *uint64, refreshRows *int64) {
+		if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
+			refreshEndAt := time.Now()
+			return finalizeRefreshHistWithRetry(
+				finalizeCtx,
+				histSQLExec,
+				refreshJobID,
+				mviewID,
+				refreshHistStatusSuccess,
+				&refreshReadTSO,
+				refreshCommitTSO,
+				histTime(refreshStart),
+				histTime(refreshEndAt),
+				refreshRows,
+				nil,
+			)
+		}); err != nil {
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+				errors.Annotate(err, "refresh materialized view: refresh committed but failed to finalize refresh history"),
+			)
+		}
+		if alertErr := deleteRefreshAlertState(finalizeCtx, histSQLExec, mviewID); alertErr != nil {
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+				errors.Annotate(alertErr, "refresh materialized view: refresh committed but failed to delete refresh alert"),
+			)
+		}
 	}
 	stopTaskMonitor, err := startMVTaskMonitor(
 		kctx,
@@ -3581,31 +3611,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 	applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, refreshStmtResult)
 
-	if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
-		refreshEndAt := time.Now()
-		return finalizeRefreshHistWithRetry(
-			finalizeCtx,
-			histSQLExec,
-			refreshJobID,
-			mviewID,
-			refreshHistStatusSuccess,
-			&refreshReadTSO,
-			refreshCommitTSO,
-			histTime(refreshStart),
-			histTime(refreshEndAt),
-			refreshRows,
-			nil,
-		)
-	}); err != nil {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
-			errors.Annotate(err, "refresh materialized view: refresh committed but failed to finalize refresh history"),
-		)
-	}
-	if alertErr := deleteRefreshAlertState(finalizeCtx, histSQLExec, mviewID); alertErr != nil {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
-			errors.Annotate(alertErr, "refresh materialized view: refresh committed but failed to delete refresh alert"),
-		)
-	}
+	finalizeSuccess(refreshReadTSO, refreshCommitTSO, refreshRows)
 	return nil
 }
 
