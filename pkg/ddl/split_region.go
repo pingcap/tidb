@@ -50,12 +50,34 @@ func shouldWaitTiFlashPlacementBeforeScatter(tbInfo *model.TableInfo, scatterSco
 	return scatterScope != vardef.ScatterOff && tbInfo.TiFlashReplica != nil && tbInfo.TiFlashReplica.Count > 0
 }
 
-func waitTiFlashPlacementBeforeScatterIfNeeded(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatterScope string, physicalIDs ...int64) {
+func waitTiFlashPlacementBeforeScatterIfNeeded(ctx sessionctx.Context, tbInfo *model.TableInfo, scatterScope string, physicalIDs ...int64) {
+	waitTiFlashPlacementBeforeScatterIfNeededWithCheck(ctx, tbInfo, scatterScope,
+		infosync.IsReplicationStateAvailable,
+		infosync.GetReplicationState,
+		physicalIDs...)
+}
+
+func waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
+	ctx sessionctx.Context,
+	tbInfo *model.TableInfo,
+	scatterScope string,
+	isReplicationStateAvailable func() (bool, error),
+	getReplicationState func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error),
+	physicalIDs ...int64,
+) {
 	if !shouldWaitTiFlashPlacementBeforeScatter(tbInfo, scatterScope) {
 		return
 	}
-	if !hasPDHTTPClientForPlacementCheck(store) {
-		logutil.DDLLogger().Info("skip wait tiflash placement before scatter because pd http client is unavailable",
+	available, err := isReplicationStateAvailable()
+	if err != nil {
+		logutil.DDLLogger().Warn("skip wait tiflash placement before scatter because replication state is unavailable",
+			zap.String("table", tbInfo.Name.O),
+			zap.Int64s("physicalIDs", physicalIDs),
+			zap.Error(err))
+		return
+	}
+	if !available {
+		logutil.DDLLogger().Info("skip wait tiflash placement before scatter because replication state is unavailable",
 			zap.String("table", tbInfo.Name.O),
 			zap.Int64s("physicalIDs", physicalIDs))
 		return
@@ -63,12 +85,7 @@ func waitTiFlashPlacementBeforeScatterIfNeeded(ctx sessionctx.Context, store kv.
 
 	waitCtx, cancel := newSplitRegionContext(ctx)
 	defer cancel()
-	waitTiFlashPlacementBeforeScatter(waitCtx, tbInfo, physicalIDs...)
-}
-
-func hasPDHTTPClientForPlacementCheck(store kv.SplittableStore) bool {
-	storeWithPD, ok := store.(kv.StorageWithPD)
-	return ok && storeWithPD.GetPDHTTPClient() != nil
+	waitTiFlashPlacementBeforeScatterWithCheck(waitCtx, tbInfo, tiflashCheckTiDBHTTPAPIHalfInterval, getReplicationState, physicalIDs...)
 }
 
 func waitTiFlashPlacementBeforeScatter(ctx context.Context, tbInfo *model.TableInfo, physicalIDs ...int64) {
@@ -93,13 +110,18 @@ func waitTiFlashPlacementBeforeScatterWithCheck(
 
 	var warnedErr bool
 	var lastErr error
+	var lastErrPhysicalID int64
+	pendingPhysicalIDs := append([]int64(nil), physicalIDs...)
 	for {
-		allReady := true
-		for _, physicalID := range physicalIDs {
+		lastErr = nil
+		lastErrPhysicalID = 0
+		nextPendingPhysicalIDs := pendingPhysicalIDs[:0]
+		for _, physicalID := range pendingPhysicalIDs {
 			startKey, endKey := tablePlacementRange(physicalID)
 			state, err := getReplicationState(ctx, startKey, endKey)
 			if err != nil {
 				lastErr = err
+				lastErrPhysicalID = physicalID
 				if !warnedErr {
 					logutil.DDLLogger().Warn("wait tiflash placement before scatter failed",
 						zap.String("table", tbInfo.Name.O),
@@ -107,15 +129,15 @@ func waitTiFlashPlacementBeforeScatterWithCheck(
 						zap.Error(err))
 					warnedErr = true
 				}
-				allReady = false
-				break
+				nextPendingPhysicalIDs = append(nextPendingPhysicalIDs, physicalID)
+				continue
 			}
 			if state != infosync.PlacementScheduleStateScheduled {
-				allReady = false
-				break
+				nextPendingPhysicalIDs = append(nextPendingPhysicalIDs, physicalID)
 			}
 		}
-		if allReady {
+		pendingPhysicalIDs = nextPendingPhysicalIDs
+		if len(pendingPhysicalIDs) == 0 {
 			return
 		}
 
@@ -124,10 +146,14 @@ func waitTiFlashPlacementBeforeScatterWithCheck(
 			fields := []zap.Field{
 				zap.String("table", tbInfo.Name.O),
 				zap.Int64s("physicalIDs", physicalIDs),
+				zap.Int64s("pendingPhysicalIDs", pendingPhysicalIDs),
 				zap.Error(ctx.Err()),
 			}
 			if lastErr != nil {
-				fields = append(fields, zap.NamedError("lastErr", lastErr))
+				fields = append(fields,
+					zap.Int64("lastErrPhysicalID", lastErrPhysicalID),
+					zap.NamedError("lastReplicationStateErr", lastErr),
+				)
 			}
 			logutil.DDLLogger().Warn("wait tiflash placement before scatter timeout", fields...)
 			return
@@ -149,11 +175,13 @@ func newSplitRegionContext(ctx sessionctx.Context) (context.Context, context.Can
 
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatterScope string) {
 	// Max partition count is 8192, should we sample and just choose some partitions to split?
-	physicalIDs := make([]int64, 0, len(parts))
-	for _, def := range parts {
-		physicalIDs = append(physicalIDs, def.ID)
+	if shouldWaitTiFlashPlacementBeforeScatter(tbInfo, scatterScope) {
+		physicalIDs := make([]int64, 0, len(parts))
+		for _, def := range parts {
+			physicalIDs = append(physicalIDs, def.ID)
+		}
+		waitTiFlashPlacementBeforeScatterIfNeeded(ctx, tbInfo, scatterScope, physicalIDs...)
 	}
-	waitTiFlashPlacementBeforeScatterIfNeeded(ctx, store, tbInfo, scatterScope, physicalIDs...)
 
 	ctxWithTimeout, cancel := newSplitRegionContext(ctx)
 	defer cancel()
@@ -186,7 +214,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 }
 
 func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatterScope string) {
-	waitTiFlashPlacementBeforeScatterIfNeeded(ctx, store, tbInfo, scatterScope, tbInfo.ID)
+	waitTiFlashPlacementBeforeScatterIfNeeded(ctx, tbInfo, scatterScope, tbInfo.ID)
 
 	ctxWithTimeout, cancel := newSplitRegionContext(ctx)
 	defer cancel()

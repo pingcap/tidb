@@ -71,6 +71,15 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 	return st, nil
 }
 
+// IsReplicationStateAvailable returns whether GetReplicationState can query PD.
+func IsReplicationStateAvailable() (bool, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false, err
+	}
+	return is.pdHTTPCli != nil, nil
+}
+
 // GetRegionDistributionByKeyRange is used to get the region distributions by given key range from PD.
 func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKey []byte, engine string) (*pd.RegionDistributions, error) {
 	is, err := getGlobalInfoSyncer()

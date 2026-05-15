@@ -22,13 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
-	pdhttp "github.com/tikv/pd/client/http"
 )
 
 func TestShouldWaitTiFlashPlacementBeforeScatter(t *testing.T) {
@@ -44,10 +42,26 @@ func TestShouldWaitTiFlashPlacementBeforeScatter(t *testing.T) {
 	require.True(t, shouldWaitTiFlashPlacementBeforeScatter(tbInfo, vardef.ScatterGlobal))
 }
 
-func TestHasPDHTTPClientForPlacementCheck(t *testing.T) {
-	require.False(t, hasPDHTTPClientForPlacementCheck(mockSplittableStore{}))
-	require.False(t, hasPDHTTPClientForPlacementCheck(mockSplittableStoreWithPD{}))
-	require.True(t, hasPDHTTPClientForPlacementCheck(mockSplittableStoreWithPD{pdHTTPClient: mockPlacementPDHTTPClient{}}))
+func TestWaitTiFlashPlacementBeforeScatterIfNeededSkipsWhenReplicationStateUnavailable(t *testing.T) {
+	tbInfo := &model.TableInfo{
+		Name:           ast.NewCIStr("t"),
+		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+	}
+	var calls atomic.Int32
+	waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
+		mock.NewContext(),
+		tbInfo,
+		vardef.ScatterTable,
+		func() (bool, error) {
+			return false, nil
+		},
+		func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error) {
+			calls.Add(1)
+			return infosync.PlacementScheduleStateScheduled, nil
+		},
+		123,
+	)
+	require.Equal(t, int32(0), calls.Load())
 }
 
 func TestWaitTiFlashPlacementBeforeScatterWaitsUntilScheduled(t *testing.T) {
@@ -71,6 +85,34 @@ func TestWaitTiFlashPlacementBeforeScatterWaitsUntilScheduled(t *testing.T) {
 		physicalID,
 	)
 	require.Equal(t, int32(2), calls.Load())
+}
+
+func TestWaitTiFlashPlacementBeforeScatterSkipsScheduledPhysicalIDs(t *testing.T) {
+	tbInfo := &model.TableInfo{Name: ast.NewCIStr("t")}
+
+	var calls atomic.Int32
+	var scheduledIDCalls atomic.Int32
+	waitTiFlashPlacementBeforeScatterWithCheck(
+		context.Background(),
+		tbInfo,
+		0,
+		func(_ context.Context, startKey []byte, _ []byte) (infosync.PlacementScheduleState, error) {
+			call := calls.Add(1)
+			expectedScheduledStartKey, _ := tablePlacementRange(1)
+			if string(startKey) == string(expectedScheduledStartKey) {
+				scheduledIDCalls.Add(1)
+				return infosync.PlacementScheduleStateScheduled, nil
+			}
+			if call == 2 {
+				return infosync.PlacementScheduleStatePending, nil
+			}
+			return infosync.PlacementScheduleStateScheduled, nil
+		},
+		1,
+		2,
+	)
+	require.Equal(t, int32(3), calls.Load())
+	require.Equal(t, int32(1), scheduledIDCalls.Load())
 }
 
 func TestWaitTiFlashPlacementBeforeScatterRetriesGetReplicationStateError(t *testing.T) {
@@ -112,41 +154,3 @@ func TestWaitTiFlashPlacementBeforeScatterReturnsOnContextDone(t *testing.T) {
 	require.Equal(t, int32(1), calls.Load())
 	require.Less(t, time.Since(start), time.Second)
 }
-
-type mockSplittableStore struct{}
-
-func (mockSplittableStore) SplitRegions(context.Context, [][]byte, bool, *int64) ([]uint64, error) {
-	return nil, nil
-}
-
-func (mockSplittableStore) WaitScatterRegionFinish(context.Context, uint64, int) error {
-	return nil
-}
-
-func (mockSplittableStore) CheckRegionInScattering(uint64) (bool, error) {
-	return false, nil
-}
-
-type mockSplittableStoreWithPD struct {
-	mockSplittableStore
-	pdHTTPClient pdhttp.Client
-}
-
-func (mockSplittableStoreWithPD) GetPDClient() pd.Client {
-	return nil
-}
-
-func (s mockSplittableStoreWithPD) GetPDHTTPClient() pdhttp.Client {
-	return s.pdHTTPClient
-}
-
-type mockPlacementPDHTTPClient struct {
-	pdhttp.Client
-}
-
-var (
-	_ kv.SplittableStore = mockSplittableStore{}
-	_ kv.SplittableStore = mockSplittableStoreWithPD{}
-	_ kv.StorageWithPD   = mockSplittableStoreWithPD{}
-	_ pdhttp.Client      = mockPlacementPDHTTPClient{}
-)
