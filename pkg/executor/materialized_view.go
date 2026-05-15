@@ -4983,6 +4983,11 @@ func insertRefreshHistFailed(
 	if refreshFailedReason != nil {
 		refreshFailedReasonArg = *refreshFailedReason
 	}
+	failpoint.Inject("mockInsertRefreshHistFailedError", func(val failpoint.Value) {
+		if shouldFail, ok := val.(bool); ok && shouldFail {
+			failpoint.Return(errors.New("mock insert failed refresh history error"))
+		}
+	})
 	insertSQL := `INSERT INTO mysql.tidb_mview_refresh_hist (
 	REFRESH_JOB_ID,
 	MVIEW_ID,
@@ -5068,6 +5073,7 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	if refreshFailedReason != nil {
 		refreshErrMsg = *refreshFailedReason
 	}
+	reportMVRefreshFailed(kctx, histSQLExec, reportRefreshFailed, mviewID, mvSchema, mvName, *refreshJobID, refreshMethod, isInternalSQL, refreshErrMsg)
 	refreshEndAt := time.Now()
 	if err := insertRefreshHistFailed(
 		kctx,
@@ -5084,7 +5090,6 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	); err != nil {
 		return errors.Annotatef(err, "refresh materialized view: failed to insert failed refresh history after error %v", finalErr)
 	}
-	reportMVRefreshFailed(kctx, histSQLExec, reportRefreshFailed, mviewID, mvSchema, mvName, *refreshJobID, refreshMethod, isInternalSQL, refreshErrMsg)
 	return errors.Trace(finalErr)
 }
 

@@ -1623,6 +1623,44 @@ func TestMaterializedViewRefreshFailedAlertByAttribute(t *testing.T) {
 		Check(testkit.Rows("0"))
 }
 
+func TestMaterializedViewRefreshFallbackReportsAlertBeforeInsertHistFailure(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_failed_alert_fallback (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_failed_alert_fallback values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_failed_alert_fallback (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_failed_alert_fallback (a, s, cnt) refresh fast attributes='mview_alert_refresh_failed=yes' as select a, sum(b), count(1) from t_mv_refresh_failed_alert_fallback group by a")
+
+	mvIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_failed_alert_fallback'").Rows()
+	require.Len(t, mvIDRows, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	const earlyRefreshFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewErrorBeforeInsertHist"
+	require.NoError(t, failpoint.Enable(earlyRefreshFailpoint, `return("mock fallback refresh failed alert")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(earlyRefreshFailpoint))
+	}()
+	const insertHistFailpoint = "github.com/pingcap/tidb/pkg/executor/mockInsertRefreshHistFailedError"
+	require.NoError(t, failpoint.Enable(insertHistFailpoint, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(insertHistFailpoint))
+	}()
+
+	err = tk.ExecToErr("refresh materialized view mv_refresh_failed_alert_fallback fast")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "failed to insert failed refresh history after error")
+	require.ErrorContains(t, err, "mock fallback refresh failed alert")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_FAILED, ALERT_LEVEL is null from mysql.tidb_mview_refresh_alert where MVIEW_ID = %d",
+		mvID,
+	)).Check(testkit.Rows("YES 1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mvID)).
+		Check(testkit.Rows("0"))
+}
+
 func TestMaterializedViewRefreshFastAsOfTimestampDryRunUsesRefreshInfoWindow(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
