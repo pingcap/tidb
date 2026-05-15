@@ -52,7 +52,7 @@ func shouldWaitTiFlashPlacementBeforeScatter(tbInfo *model.TableInfo, scatterSco
 
 func waitTiFlashPlacementBeforeScatterIfNeeded(ctx sessionctx.Context, tbInfo *model.TableInfo, scatterScope string, physicalIDs ...int64) {
 	waitTiFlashPlacementBeforeScatterIfNeededWithCheck(ctx, tbInfo, scatterScope,
-		infosync.IsReplicationStateAvailable,
+		infosync.HasPDHTTPClient,
 		infosync.GetReplicationState,
 		physicalIDs...)
 }
@@ -61,14 +61,14 @@ func waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
 	ctx sessionctx.Context,
 	tbInfo *model.TableInfo,
 	scatterScope string,
-	isReplicationStateAvailable func() (bool, error),
+	hasPDHTTPClient func() (bool, error),
 	getReplicationState func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error),
 	physicalIDs ...int64,
 ) {
 	if !shouldWaitTiFlashPlacementBeforeScatter(tbInfo, scatterScope) {
 		return
 	}
-	available, err := isReplicationStateAvailable()
+	available, err := hasPDHTTPClient()
 	if err != nil {
 		logutil.DDLLogger().Warn("skip wait tiflash placement before scatter because replication state is unavailable",
 			zap.String("table", tbInfo.Name.O),

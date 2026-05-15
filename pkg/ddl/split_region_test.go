@@ -43,47 +43,44 @@ func TestShouldWaitTiFlashPlacementBeforeScatter(t *testing.T) {
 }
 
 func TestWaitTiFlashPlacementBeforeScatterIfNeededSkipsWhenReplicationStateUnavailable(t *testing.T) {
-	tbInfo := &model.TableInfo{
-		Name:           ast.NewCIStr("t"),
-		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+	tests := []struct {
+		name      string
+		available bool
+		err       error
+	}{
+		{
+			name:      "client unavailable",
+			available: false,
+		},
+		{
+			name:      "availability check failed",
+			available: false,
+			err:       errors.New("replication state unavailable"),
+		},
 	}
-	var calls atomic.Int32
-	waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
-		mock.NewContext(),
-		tbInfo,
-		vardef.ScatterTable,
-		func() (bool, error) {
-			return false, nil
-		},
-		func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error) {
-			calls.Add(1)
-			return infosync.PlacementScheduleStateScheduled, nil
-		},
-		123,
-	)
-	require.Equal(t, int32(0), calls.Load())
-}
-
-func TestWaitTiFlashPlacementBeforeScatterIfNeededSkipsWhenReplicationStateAvailabilityCheckFails(t *testing.T) {
-	tbInfo := &model.TableInfo{
-		Name:           ast.NewCIStr("t"),
-		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tbInfo := &model.TableInfo{
+				Name:           ast.NewCIStr("t"),
+				TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+			}
+			var calls atomic.Int32
+			waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
+				mock.NewContext(),
+				tbInfo,
+				vardef.ScatterTable,
+				func() (bool, error) {
+					return tt.available, tt.err
+				},
+				func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error) {
+					calls.Add(1)
+					return infosync.PlacementScheduleStateScheduled, nil
+				},
+				123,
+			)
+			require.Equal(t, int32(0), calls.Load())
+		})
 	}
-	var calls atomic.Int32
-	waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
-		mock.NewContext(),
-		tbInfo,
-		vardef.ScatterTable,
-		func() (bool, error) {
-			return false, errors.New("replication state unavailable")
-		},
-		func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error) {
-			calls.Add(1)
-			return infosync.PlacementScheduleStateScheduled, nil
-		},
-		123,
-	)
-	require.Equal(t, int32(0), calls.Load())
 }
 
 func TestWaitTiFlashPlacementBeforeScatterWaitsUntilScheduled(t *testing.T) {

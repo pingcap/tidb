@@ -71,8 +71,8 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 	return st, nil
 }
 
-// IsReplicationStateAvailable returns whether GetReplicationState can query PD.
-func IsReplicationStateAvailable() (bool, error) {
+// HasPDHTTPClient returns whether the global info syncer has a PD HTTP client.
+func HasPDHTTPClient() (bool, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return false, err
