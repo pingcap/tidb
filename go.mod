@@ -88,7 +88,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260106110113-438649d89ee7
+	github.com/pingcap/kvproto v0.0.0-20260513130714-a164c29a1dce
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20251110022152-dac449ac5389
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -111,13 +111,8 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tikv/client-go/v2 v2.0.8-0.20260107032934-bc30edbae9e0
+	github.com/tikv/client-go/v2 v2.0.8-0.20260514041053-e91097b8e3f9
 	github.com/tikv/pd/client v0.0.0-20260514095636-e99988475b0c
-=======
-	github.com/tikv/client-go/v2 v2.0.8-0.20260429090231-839228f8c022
-	github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52
->>>>>>> bdd978350e0 (vars: validate some vars for tidb x (#68196))
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -356,7 +351,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect

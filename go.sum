@@ -780,10 +780,8 @@ github.com/pingcap/fn v1.0.0/go.mod h1:u9WZ1ZiOD1RpNhcI42RucFh/lBuzTu6rw88a+oF2Z
 github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 h1:surzm05a8C9dN8dIUmo4Be2+pMRb6f55i+UIYrluu2E=
 github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20191211054548-3c6b38ea5107/go.mod h1:WWLmULLO7l8IOcQG+t+ItJ3fEcrL5FxF0Wu+HrMy26w=
-github.com/pingcap/kvproto v0.0.0-20251121073615-744c58d5a5f1 h1:zSM+1a6ugIcttizSWBe1v9Go/Ko5C74u+52Umm8+VaE=
-github.com/pingcap/kvproto v0.0.0-20251121073615-744c58d5a5f1/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
-github.com/pingcap/kvproto v0.0.0-20260106110113-438649d89ee7 h1:ENZsbCKjZe5GyNVuKHTGYiYd4LnM8PRphBsYU6M19g0=
-github.com/pingcap/kvproto v0.0.0-20260106110113-438649d89ee7/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
+github.com/pingcap/kvproto v0.0.0-20260513130714-a164c29a1dce h1:OWuxbPLOH68b4KnTGrhKJi4MGIkfYFF0Y1j15ptGMKQ=
+github.com/pingcap/kvproto v0.0.0-20260513130714-a164c29a1dce/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7/go.mod h1:8AanEdAHATuRurdGxZXBz0At+9avep+ub7U1AGYLIMM=
 github.com/pingcap/log v1.1.0/go.mod h1:DWQW5jICDR7UJh4HtxXSM20Churx4CQL0fwL/SoOSA4=
 github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9 h1:qG9BSvlWFEE5otQGamuWedx9LRm0nrHvsQRQiW8SxEs=
@@ -934,8 +932,6 @@ github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
 github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
-github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
-github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/tenntenn/modver v1.0.1 h1:2klLppGhDgzJrScMpkj9Ujy3rXPUspSjAcev9tSEBgA=
@@ -956,21 +952,10 @@ github.com/tidwall/pretty v1.2.1 h1:qjsOFOWWQl+N3RsoF5/ssm1pHmJJwhjlSbZ51I6wMl4=
 github.com/tidwall/pretty v1.2.1/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
 github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
 github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
-<<<<<<< HEAD
-github.com/tikv/client-go/v2 v2.0.8-0.20260107032934-bc30edbae9e0 h1:BO/fYWLqAYLLBOjwrdhLh7XWRAlXv8Y9MyYwXKYUQlk=
-github.com/tikv/client-go/v2 v2.0.8-0.20260107032934-bc30edbae9e0/go.mod h1:ZLHQiuG/o3JHzMuE7dT2GnGCf+SPxUNbcr6farUsU18=
-github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500 h1:ZUCeeEEU76I/jFUK3C9EV3dSSrtVZt3rwpHF6cT8V3k=
-github.com/tikv/pd/client v0.0.0-20250703091733-dfd345b89500/go.mod h1:SicyvcZE0fzrGGWW3AEtZWWPRzGw/h5img4/6qiSYws=
-github.com/tikv/pd/client v0.0.0-20260514030526-bbe5de3db1be h1:b8Snffpju4nA73QzIUOeA7vgx0bX1rTqkLcf89b2rPE=
-github.com/tikv/pd/client v0.0.0-20260514030526-bbe5de3db1be/go.mod h1:jT0wOYWnmEeghLMlHVWRNECwznyg7Yp3gc8EB6Vidvc=
+github.com/tikv/client-go/v2 v2.0.8-0.20260514041053-e91097b8e3f9 h1:5alpklp9JgE4+F5yCi872yAUDsnCfAonDTxJNMb5LIM=
+github.com/tikv/client-go/v2 v2.0.8-0.20260514041053-e91097b8e3f9/go.mod h1:ByPgjJXLnFy7HwWR43jLH5RiEz3bCua0LQSy4MqvH0I=
 github.com/tikv/pd/client v0.0.0-20260514095636-e99988475b0c h1:2w5n8tmcoxxk3kOxEMMKM5lv2A6ocaXnLt3O0x93PVs=
 github.com/tikv/pd/client v0.0.0-20260514095636-e99988475b0c/go.mod h1:jT0wOYWnmEeghLMlHVWRNECwznyg7Yp3gc8EB6Vidvc=
-=======
-github.com/tikv/client-go/v2 v2.0.8-0.20260429090231-839228f8c022 h1:XjPXciTE7TwE4XwleMfUqKtFw6KlnY5pAFegPQDjXkM=
-github.com/tikv/client-go/v2 v2.0.8-0.20260429090231-839228f8c022/go.mod h1:rg9c3yf9lfQdj9rt5FvwRP9xDubUY6C9hyH4g9zFH1s=
-github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52 h1:fXIMowblD3qdfHXJYGJpe7SbBlTO4S9GPVZZvL3CPG8=
-github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52/go.mod h1:I2yRx/Yf8Y8kgM5f3VNp4a8fWpnjPC4TxWk554AY8bM=
->>>>>>> bdd978350e0 (vars: validate some vars for tidb x (#68196))
 github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67 h1:9LPGD+jzxMlnk5r6+hJnar67cgpDIz/iyD+rfl5r2Vk=
 github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
 github.com/tjfoc/gmsm v1.3.2/go.mod h1:HaUcFuY0auTiaHB9MHFGCPx5IaLhTUd2atbCFBQXn9w=
@@ -1071,7 +1056,6 @@ go.opentelemetry.io/proto/otlp v1.1.0/go.mod h1:GpBHCBWiqvVLDqmHZsoMM3C5ySeKTC7e
 go.starlark.net v0.0.0-20210223155950-e043a3d3c984/go.mod h1:t3mmBBPzAVvK0L0n1drDmrQsJ8FoIx4INCqVMTr/Zo0=
 go.uber.org/atomic v1.3.2/go.mod h1:gD2HeocX3+yG+ygLZcrzQJaqmWj9AIm7n08wl/qW/PE=
 go.uber.org/atomic v1.5.0/go.mod h1:sABNBOSYdrvTF6hTgEIbc7YasKWGhgEQZyfxyTvoXHQ=
-go.uber.org/atomic v1.6.0/go.mod h1:sABNBOSYdrvTF6hTgEIbc7YasKWGhgEQZyfxyTvoXHQ=
 go.uber.org/atomic v1.7.0/go.mod h1:fEN4uk6kAWBTFdckzkM89CLk9XfWZrxpCo0nPH17wJc=
 go.uber.org/atomic v1.9.0/go.mod h1:fEN4uk6kAWBTFdckzkM89CLk9XfWZrxpCo0nPH17wJc=
 go.uber.org/atomic v1.11.0 h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=
