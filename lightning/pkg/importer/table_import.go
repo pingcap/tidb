@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	pkgprogress "github.com/pingcap/tidb/lightning/pkg/progress"
 	"github.com/pingcap/tidb/pkg/errno"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -189,7 +189,7 @@ func (tr *TableImporter) importTable(
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
 			return false, errors.Trace(err)
 		}
-		web.BroadcastTableCheckpoint(tr.tableName, cp)
+		pkgprogress.BroadcastTableCheckpoint(tr.tableName, cp)
 
 		// rebase the allocator based on the max ID from table info.
 		ti := tr.tableInfo.Core
@@ -1067,15 +1067,19 @@ func (tr *TableImporter) postProcess(
 		// if we came here, it must be a local backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
-		localBackend := rc.backend.(*local.Backend)
-		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		var dupeController *local.DupeController
 		hasDupe := false
 		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
+			localBackend := rc.backend.(*local.Backend)
+			var err error
+			dupeController, err = localBackend.GetDupeController(ctx, rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
 			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
-			var err error
 			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.Conflict.Strategy)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
@@ -1468,7 +1472,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	defer func() {
 		if retErr == nil {
-			web.BroadcastTableProgress(tr.tableName, progressStep, 1)
+			pkgprogress.BroadcastTableProgress(tr.tableName, progressStep, 1)
 		} else if !log.IsContextCanceledError(retErr) {
 			// Try to strip the prefix of the error message.
 			// e.g "add index failed: Error 1062 ..." -> "Error 1062 ..."
@@ -1491,7 +1495,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
 		if totalRows > 0 {
 			progress := min(float64(status.rowCount)/float64(totalRows*len(multiSQLs)), 1)
-			web.BroadcastTableProgress(tableName, progressStep, progress)
+			pkgprogress.BroadcastTableProgress(tableName, progressStep, progress)
 			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 		}
 	})
@@ -1512,7 +1516,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 			if totalRows > 0 {
 				p := float64(status.rowCount) / float64(totalRows)
 				progress := baseProgress + p/float64(len(multiSQLs))
-				web.BroadcastTableProgress(tableName, progressStep, progress)
+				pkgprogress.BroadcastTableProgress(tableName, progressStep, progress)
 				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 			}
 		})
@@ -1520,7 +1524,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 			return err
 		}
 		baseProgress += 1.0 / float64(len(multiSQLs))
-		web.BroadcastTableProgress(tableName, progressStep, baseProgress)
+		pkgprogress.BroadcastTableProgress(tableName, progressStep, baseProgress)
 	}
 	return nil
 }

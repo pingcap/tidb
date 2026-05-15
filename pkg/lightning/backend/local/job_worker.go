@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 	"strings"
 	"sync"
@@ -197,7 +198,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				job.convertStageTo(needRescan)
 				return nil
 			}
-			res, err := w.writeFn(ctx, job)
+			res, err := w.writeWithTimeout(ctx, job)
 			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
@@ -264,6 +265,34 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 		job.keyRange.Start = job.writeResult.remainingStartKey
 		job.convertStageTo(regionScanned)
 	}
+}
+
+func (w *regionJobBaseWorker) writeWithTimeout(
+	ctx context.Context,
+	job *regionJob,
+) (ret *tikvWriteResult, err error) {
+	// set a timeout for the write operation, if it takes too long, we will
+	// return with common.ErrWriteTooSlow and let caller retry the whole job
+	// instead of being stuck forever.
+	timeout := 15 * time.Minute
+	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
+		ms := val.(int)
+		timeout = time.Duration(ms) * time.Millisecond
+	})
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
+	defer cancel()
+
+	ret, err = w.writeFn(ctx, job)
+	if err == nil {
+		return ret, nil
+	}
+	if errors.Cause(err) == context.DeadlineExceeded {
+		if cause := context.Cause(ctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+			tidblogutil.Logger(ctx).Info("experiencing a wait timeout while writing to TiKV")
+			err = errors.Trace(cause)
+		}
+	}
+	return ret, err
 }
 
 func (*regionJobBaseWorker) isRetryableImportTiKVError(err error) bool {

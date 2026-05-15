@@ -122,6 +122,7 @@ type ParquetColumn struct {
 	Name      string
 	Type      parquet.Type
 	Converted schema.ConvertedType
+	Logical   schema.LogicalType
 	TypeLen   int
 	Precision int
 	Scale     int
@@ -171,13 +172,26 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 		if pc.TypeLen > 0 {
 			typeLen = pc.TypeLen
 		}
-		field, err := schema.NewPrimitiveNodeConverted(
-			pc.Name,
-			parquet.Repetitions.Optional,
-			pc.Type, pc.Converted,
-			typeLen, pc.Precision, pc.Scale,
-			-1,
-		)
+		var field schema.Node
+		var err error
+		if pc.Logical != nil {
+			field, err = schema.NewPrimitiveNodeLogical(
+				pc.Name,
+				parquet.Repetitions.Optional,
+				pc.Logical,
+				pc.Type,
+				typeLen,
+				-1,
+			)
+		} else {
+			field, err = schema.NewPrimitiveNodeConverted(
+				pc.Name,
+				parquet.Repetitions.Optional,
+				pc.Type, pc.Converted,
+				typeLen, pc.Precision, pc.Scale,
+				-1,
+			)
+		}
 		if err != nil {
 			return err
 		}

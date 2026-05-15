@@ -160,6 +160,7 @@ go_test(
         "main_test.go",
         "session_test.go",
         "tidb_test.go",
+        "upgrade_backfill_test.go",
         "upgrade_test.go",
     ],
     embed = [":session"],

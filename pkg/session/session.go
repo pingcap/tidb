@@ -147,6 +147,7 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	gouberatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -3466,7 +3467,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
-		return &distsqlctx.DistSQLContext{
+		ret := &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
 			Client:          s.GetClient(),
@@ -3514,6 +3515,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			RUConsumptionReporter:         ruConsumptionReporter,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
+			MaxKeysRead:                   vars.GetMaxKeysRead(),
 
 			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
 			ConnectionID:                vars.ConnectionID,
@@ -3521,6 +3523,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 
 			ExecDetails: &sc.SyncExecDetails,
 		}
+		if ret.MaxKeysRead > 0 {
+			ret.MaxKeysReadCounter = new(gouberatomic.Uint64)
+		}
+		return ret
 	})
 
 	// Check if the runaway checker is updated. This is to avoid that evaluating a non-correlated subquery
