@@ -377,6 +377,9 @@ func WriteInsertInCsv(
 
 	for fileRowIter.HasNext() {
 		lastBfSize := bf.Len()
+		// When all table columns are generated, selectedFields is empty.
+		// Dumpling still iterates source rows via SELECT '' and emits only
+		// line terminators here.
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
@@ -656,6 +659,9 @@ func WriteInsertInParquet(
 	// Add rows to parquet writer; it flushes when accounted in-memory bytes reach
 	// the configured row-group memory limit.
 	for fileRowIter.HasNext() {
+		// When all table columns are generated, selectedFields is empty.
+		// Dumpling still iterates source rows via SELECT '' and writes no parquet
+		// rows in this branch.
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
