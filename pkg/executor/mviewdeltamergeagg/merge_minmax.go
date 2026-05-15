@@ -301,7 +301,7 @@ func (m *minMaxMergerBase) resolveColumns(
 	return
 }
 
-func (*minMaxMergerBase) validateCountColumnsHasNoNull(numRows int, countCol, addedCntCol, removedCntCol *chunk.Column) error {
+func (*minMaxMergerBase) validateCountColumnsAllNotNull(numRows int, countCol, addedCntCol, removedCntCol *chunk.Column) error {
 	if rowIdx := firstNullRow(countCol, numRows); rowIdx >= 0 {
 		return errors.Errorf("count is null at row %d", rowIdx)
 	}
@@ -342,7 +342,7 @@ const (
 	minMaxDecisionRecompute
 )
 
-func prepareMinMaxRecomputeRows(workerData *mviewMergeAggWorkerData, mappingIdx int) ([]int, error) {
+func prepareMinMaxRecomputeRows(workerData *mergeWorkerData, mappingIdx int) ([]int, error) {
 	if workerData == nil {
 		return nil, errors.New("min/max recompute requires worker data")
 	}
@@ -352,7 +352,7 @@ func prepareMinMaxRecomputeRows(workerData *mviewMergeAggWorkerData, mappingIdx 
 	return workerData.minMaxRecomputeRowsByMapping[mappingIdx], nil
 }
 
-func storeMinMaxRecomputeRows(workerData *mviewMergeAggWorkerData, mappingIdx int, rows []int) {
+func storeMinMaxRecomputeRows(workerData *mergeWorkerData, mappingIdx int, rows []int) {
 	workerData.minMaxRecomputeRowsByMapping[mappingIdx] = rows
 }
 
@@ -410,7 +410,7 @@ type minMaxIntMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
+func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mergeWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -423,7 +423,7 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -560,7 +560,7 @@ type minMaxUintMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
+func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mergeWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -573,7 +573,7 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -710,7 +710,7 @@ type minMaxFloat32Merger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
+func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mergeWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -723,7 +723,7 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -860,7 +860,7 @@ type minMaxFloat64Merger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
+func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mergeWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -873,7 +873,7 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -1010,7 +1010,7 @@ type minMaxDecimalMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
+func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mergeWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -1023,7 +1023,7 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -1160,7 +1160,7 @@ type minMaxTimeMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
+func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mergeWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -1173,7 +1173,7 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -1310,7 +1310,7 @@ type minMaxDurationMerger struct {
 	minMaxMergerBase
 }
 
-func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
+func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mergeWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -1323,7 +1323,7 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -1461,7 +1461,7 @@ type minMaxStringMerger struct {
 	collator collate.Collator
 }
 
-func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mviewMergeAggWorkerData) error {
+func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, workerData *mergeWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("min/max merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -1474,7 +1474,7 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 		return err
 	}
 	numRows := input.NumRows()
-	if err := m.validateCountColumnsHasNoNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()

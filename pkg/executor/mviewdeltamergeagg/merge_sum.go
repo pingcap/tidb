@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func validateCountExprHasNoNull(countCol *chunk.Column, numRows int) error {
+func validateCountExprAllNotNull(countCol *chunk.Column, numRows int) error {
 	if rowIdx := firstNullRow(countCol, numRows); rowIdx >= 0 {
 		return errors.Errorf("count is null at row %d", rowIdx)
 	}
@@ -175,7 +175,7 @@ func (m *sumIntMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
+func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mergeWorkerData) error {
 	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
 		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
 	)
@@ -206,7 +206,7 @@ func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.C
 		return nil
 	}
 
-	if err := validateCountExprHasNoNull(countCol, numRows); err != nil {
+	if err := validateCountExprAllNotNull(countCol, numRows); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -252,7 +252,7 @@ func (m *sumUintMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
+func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mergeWorkerData) error {
 	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
 		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
 	)
@@ -286,7 +286,7 @@ func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 		return nil
 	}
 
-	if err := validateCountExprHasNoNull(countCol, numRows); err != nil {
+	if err := validateCountExprAllNotNull(countCol, numRows); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -336,7 +336,7 @@ func (m *sumFloat64Merger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
+func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mergeWorkerData) error {
 	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
 		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
 	)
@@ -362,7 +362,7 @@ func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return nil
 	}
 
-	if err := validateCountExprHasNoNull(countCol, numRows); err != nil {
+	if err := validateCountExprAllNotNull(countCol, numRows); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
@@ -403,7 +403,7 @@ func (m *sumDecimalMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
+func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mergeWorkerData) error {
 	oldCol, deltaCol, countCol, numRows, err := resolveSumMergeColumns(
 		input, computedByOrder, outputCols, m.outputCols, m.deltaRef, m.countRef, m.hasCountRef,
 	)
@@ -431,7 +431,7 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return nil
 	}
 
-	if err := validateCountExprHasNoNull(countCol, numRows); err != nil {
+	if err := validateCountExprAllNotNull(countCol, numRows); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()

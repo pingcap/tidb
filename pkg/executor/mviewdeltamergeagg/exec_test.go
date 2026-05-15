@@ -1896,8 +1896,8 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseDatumBinaryCompare(t *testing.T)
 }
 
 func TestMViewDeltaMergeAggRuntimeStatsString(t *testing.T) {
-	stats := newMViewDeltaMergeAggRuntimeStats(3)
-	stats.fillFromPipelineStats(&mviewDeltaMergeAggPipelineStats{
+	stats := newMergeRuntimeStats(3)
+	stats.fillFromPipelineStats(&mergePipelineStats{
 		readerTime:      15 * time.Millisecond,
 		writerTime:      8 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 0},
@@ -1916,12 +1916,12 @@ func TestMViewDeltaMergeAggRuntimeStatsString(t *testing.T) {
 }
 
 func TestMViewDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
-	left := newMViewDeltaMergeAggRuntimeStats(2)
-	left.fillFromPipelineStats(&mviewDeltaMergeAggPipelineStats{
+	left := newMergeRuntimeStats(2)
+	left.fillFromPipelineStats(&mergePipelineStats{
 		readerTime:      3 * time.Millisecond,
 		writerTime:      4 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{5 * time.Millisecond, 7 * time.Millisecond},
-		writerDetail: mviewDeltaMergeAggWriterStats{
+		writerDetail: mergeWriterStats{
 			chunks:     1,
 			rowOps:     10,
 			insertRows: 3,
@@ -1929,12 +1929,12 @@ func TestMViewDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 			deleteRows: 2,
 		},
 	})
-	right := newMViewDeltaMergeAggRuntimeStats(3)
-	right.fillFromPipelineStats(&mviewDeltaMergeAggPipelineStats{
+	right := newMergeRuntimeStats(3)
+	right.fillFromPipelineStats(&mergePipelineStats{
 		readerTime:      2 * time.Millisecond,
 		writerTime:      1 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond},
-		writerDetail: mviewDeltaMergeAggWriterStats{
+		writerDetail: mergeWriterStats{
 			chunks:     2,
 			rowOps:     7,
 			insertRows: 1,
@@ -1957,7 +1957,7 @@ func TestMViewDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 	require.Equal(t, int64(9), left.writerDetail.updateRows)
 	require.Equal(t, int64(4), left.writerDetail.deleteRows)
 
-	cloned, ok := left.Clone().(*mviewDeltaMergeAggRuntimeStats)
+	cloned, ok := left.Clone().(*mergeRuntimeStats)
 	require.True(t, ok)
 	require.Equal(t, left.readerTime, cloned.readerTime)
 	require.Equal(t, left.writerTime, cloned.writerTime)

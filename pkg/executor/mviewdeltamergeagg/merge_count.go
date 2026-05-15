@@ -71,7 +71,7 @@ func (m *countMerger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mviewMergeAggWorkerData) error {
+func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mergeWorkerData) error {
 	oldCol, err := resolveSingleOutputOldColumn("count", input, outputCols, m.outputCols)
 	if err != nil {
 		return err

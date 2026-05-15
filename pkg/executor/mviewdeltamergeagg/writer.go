@@ -41,14 +41,14 @@ type tableResultWriter struct {
 	newRow  []types.Datum
 	touched []bool
 
-	stats *mviewDeltaMergeAggWriterStats
+	stats *mergeWriterStats
 }
 
 type writerRuntimeStatsAware interface {
-	setRuntimeStats(*mviewDeltaMergeAggWriterStats)
+	setRuntimeStats(*mergeWriterStats)
 }
 
-func (w *tableResultWriter) setRuntimeStats(stats *mviewDeltaMergeAggWriterStats) {
+func (w *tableResultWriter) setRuntimeStats(stats *mergeWriterStats) {
 	w.stats = stats
 }
 
@@ -145,7 +145,7 @@ func (w *tableResultWriter) WriteChunk(_ context.Context, result *ChunkResult) e
 	stats := w.stats
 	if stats == nil {
 		// Keep a single write path and avoid nil checks in the hot loop.
-		var tmpStats mviewDeltaMergeAggWriterStats
+		var tmpStats mergeWriterStats
 		stats = &tmpStats
 	}
 	stats.chunks++
