@@ -131,3 +131,9 @@ func (*MapCache) SetCapacity(int64) {}
 
 // Close implements StatsCacheInner
 func (*MapCache) Close() {}
+
+// TriggerEvict implements statsCacheInner
+func (*MapCache) TriggerEvict() {}
+
+// WaitForAsyncUpdates implements statsCacheInner.
+func (*MapCache) WaitForAsyncUpdates() {}

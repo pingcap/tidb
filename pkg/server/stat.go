@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -32,19 +33,19 @@ var (
 )
 
 var defaultStatus = map[string]*variable.StatusVal{
-	serverNotAfter:  {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
-	serverNotBefore: {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
-	upTime:          {Scope: variable.ScopeGlobal, Value: 0},
+	serverNotAfter:  {Scope: vardef.ScopeGlobal | vardef.ScopeSession, Value: ""},
+	serverNotBefore: {Scope: vardef.ScopeGlobal | vardef.ScopeSession, Value: ""},
+	upTime:          {Scope: vardef.ScopeGlobal, Value: 0},
 }
 
 // GetScope gets the Status variables scope.
-func (*Server) GetScope(_ string) variable.ScopeFlag {
+func (*Server) GetScope(_ string) vardef.ScopeFlag {
 	return variable.DefaultStatusVarScopeFlag
 }
 
 // Stats returns the server statistics.
-func (s *Server) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, len(defaultStatus))
+func (s *Server) Stats(_ *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any, len(defaultStatus))
 
 	for name, v := range defaultStatus {
 		m[name] = v.Value

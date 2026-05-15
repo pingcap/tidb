@@ -15,6 +15,8 @@
 package chunk
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -33,6 +35,9 @@ type List struct {
 	consumedIdx int             // chunk index in "chunks", has been consumed.
 }
 
+// RowPtrSize shows the size of RowPtr
+const RowPtrSize = int(unsafe.Sizeof(RowPtr{}))
+
 // RowPtr is used to get a row from a list.
 // It is only valid for the list that returns it.
 type RowPtr struct {
@@ -40,16 +45,21 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
-// NewList creates a new List with field types, init chunk size and max chunk size.
-func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
+// NewListWithMemTracker creates a new List with field types, init chunk size, max chunk size and memory tracker.
+func NewListWithMemTracker(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int, tracker *memory.Tracker) *List {
 	l := &List{
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
-		memTracker:    memory.NewTracker(memory.LabelForChunkList, -1),
+		memTracker:    tracker,
 		consumedIdx:   -1,
 	}
 	return l
+}
+
+// NewList creates a new List with field types, init chunk size and max chunk size.
+func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
+	return NewListWithMemTracker(fieldTypes, initChunkSize, maxChunkSize, memory.NewTracker(memory.LabelForChunkList, -1))
 }
 
 // GetMemTracker returns the memory tracker of this List.
@@ -86,7 +96,7 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
-		newChk := l.allocChunk()
+		newChk := l.AllocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != l.consumedIdx {
 			l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
@@ -119,7 +129,8 @@ func (l *List) Add(chk *Chunk) {
 	l.length += chk.NumRows()
 }
 
-func (l *List) allocChunk() (chk *Chunk) {
+// AllocChunk allocates a chunk from the freelist or creates a new one.
+func (l *List) AllocChunk() (chk *Chunk) {
 	if len(l.freelist) > 0 {
 		lastIdx := len(l.freelist) - 1
 		chk = l.freelist[lastIdx]
@@ -166,9 +177,9 @@ type ListWalkFunc = func(row Row) error
 
 // Walk iterate the list and call walkFunc for each row.
 func (l *List) Walk(walkFunc ListWalkFunc) error {
-	for i := 0; i < len(l.chunks); i++ {
+	for i := range l.chunks {
 		chk := l.chunks[i]
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := range chk.NumRows() {
 			err := walkFunc(chk.GetRow(j))
 			if err != nil {
 				return errors.Trace(err)

@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -30,10 +32,10 @@ import (
 
 // ScalarSubqueryEvalCtx store the plan for the subquery, used by ScalarSubQueryExpr.
 type ScalarSubqueryEvalCtx struct {
-	base.Plan
+	baseimpl.Plan
 
 	// The context for evaluating the subquery.
-	scalarSubQuery PhysicalPlan
+	scalarSubQuery base.PhysicalPlan
 	ctx            context.Context
 	is             infoschema.InfoSchema
 	evalErr        error
@@ -150,7 +152,7 @@ func (*ScalarSubQueryExpr) EvalJSON(_ expression.EvalContext, _ chunk.Row) (val 
 }
 
 // GetType implements the Expression interface.
-func (s *ScalarSubQueryExpr) GetType() *types.FieldType {
+func (s *ScalarSubQueryExpr) GetType(_ expression.EvalContext) *types.FieldType {
 	return s.RetType
 }
 
@@ -184,13 +186,8 @@ func (*ScalarSubQueryExpr) ConstLevel() expression.ConstLevel {
 }
 
 // Decorrelate implements the Expression interface.
-func (s *ScalarSubQueryExpr) Decorrelate(_ *expression.Schema) expression.Expression {
+func (s *ScalarSubQueryExpr) Decorrelate(*expression.Schema) expression.Expression {
 	return s
-}
-
-// resolveIndices implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndices(_ *expression.Schema) error {
-	return nil
 }
 
 // ResolveIndices implements the Expression interface.
@@ -201,11 +198,6 @@ func (s *ScalarSubQueryExpr) ResolveIndices(_ *expression.Schema) (expression.Ex
 // ResolveIndicesByVirtualExpr implements the Expression interface.
 func (s *ScalarSubQueryExpr) ResolveIndicesByVirtualExpr(_ expression.EvalContext, _ *expression.Schema) (expression.Expression, bool) {
 	return s, false
-}
-
-// resolveIndicesByVirtualExpr implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndicesByVirtualExpr(_ expression.EvalContext, _ *expression.Schema) bool {
-	return false
 }
 
 // RemapColumn implements the Expression interface.
@@ -221,6 +213,27 @@ func (s *ScalarSubQueryExpr) ExplainInfo(expression.EvalContext) string {
 // ExplainNormalizedInfo implements the Expression interface.
 func (s *ScalarSubQueryExpr) ExplainNormalizedInfo() string {
 	return s.String()
+}
+
+// Hash64 implements the HashEquals.<0th> interface.
+func (s *ScalarSubQueryExpr) Hash64(h base2.Hasher) {
+	h.HashByte(expression.ScalarSubQFlag)
+	h.HashInt64(s.scalarSubqueryColID)
+}
+
+// Equals implements the HashEquals.<1st> interface.
+func (s *ScalarSubQueryExpr) Equals(other any) bool {
+	s2, ok := other.(*ScalarSubQueryExpr)
+	if !ok {
+		return false
+	}
+	if s == nil {
+		return s2 == nil
+	}
+	if s2 == nil {
+		return false
+	}
+	return s.scalarSubqueryColID == s2.scalarSubqueryColID
 }
 
 // HashCode implements the Expression interface.
@@ -253,21 +266,6 @@ func (s *ScalarSubQueryExpr) String() string {
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "ScalarQueryCol#%d", s.scalarSubqueryColID)
 	return builder.String()
-}
-
-// MarshalJSON implements the goJSON.Marshaler interface.
-func (s *ScalarSubQueryExpr) MarshalJSON() ([]byte, error) {
-	if s.evalErr != nil {
-		return nil, s.evalErr
-	}
-	if s.evaled {
-		return s.Constant.MarshalJSON()
-	}
-	err := s.selfEvaluate()
-	if err != nil {
-		return nil, err
-	}
-	return s.Constant.MarshalJSON()
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -322,7 +320,7 @@ func (ssctx *ScalarSubqueryEvalCtx) ExplainInfo() string {
 	for i, id := range ssctx.outputColIDs {
 		fmt.Fprintf(builder, "ScalarQueryCol#%d", id)
 		if i+1 != len(ssctx.outputColIDs) {
-			fmt.Fprintf(builder, ",")
+			fmt.Fprintf(builder, ", ")
 		}
 	}
 	return builder.String()

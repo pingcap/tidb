@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbfeature "github.com/pingcap/tidb/pkg/parser/tidb"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 var _ = yyLexer(&Scanner{})
@@ -788,32 +789,12 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 
 // handleEscape handles the case in scanString when previous char is '\'.
 func (*Scanner) handleEscape(b byte, buf *bytes.Buffer) {
-	var ch0 byte
 	/*
 		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
 		\% \_ ==> preserve both char
 		other ==> remove \
 	*/
-	switch b {
-	case 'n':
-		ch0 = '\n'
-	case '0':
-		ch0 = 0
-	case 'b':
-		ch0 = 8
-	case 'Z':
-		ch0 = 26
-	case 'r':
-		ch0 = '\r'
-	case 't':
-		ch0 = '\t'
-	case '%', '_':
-		buf.WriteByte('\\')
-		ch0 = b
-	default:
-		ch0 = b
-	}
-	buf.WriteByte(ch0)
+	buf.Write(util.UnescapeChar(b))
 }
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
@@ -954,13 +935,13 @@ func (s *Scanner) scanDigits() string {
 
 // scanVersionDigits scans for `min` to `max` digits (range inclusive) used in
 // `/*!12345 ... */` comments.
-func (s *Scanner) scanVersionDigits(min, max int) {
+func (s *Scanner) scanVersionDigits(minv, maxv int) {
 	pos := s.r.pos()
-	for i := 0; i < max; i++ {
+	for i := range maxv {
 		ch := s.r.peek()
 		if isDigit(ch) {
 			s.r.inc()
-		} else if i < min {
+		} else if i < minv {
 			s.r.updatePos(pos)
 			return
 		} else {
@@ -1057,7 +1038,7 @@ func (r *reader) inc() {
 }
 
 func (r *reader) incN(n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		r.inc()
 	}
 }

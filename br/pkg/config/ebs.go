@@ -21,7 +21,7 @@ import (
 	"github.com/Masterminds/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -66,8 +66,8 @@ type ClusterInfo struct {
 type Kubernetes struct {
 	PVs     []*corev1.PersistentVolume      `json:"pvs" toml:"pvs"`
 	PVCs    []*corev1.PersistentVolumeClaim `json:"pvcs" toml:"pvcs"`
-	CRD     interface{}                     `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
-	Options map[string]interface{}          `json:"options" toml:"options"`
+	CRD     any                             `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
+	Options map[string]any                  `json:"options" toml:"options"`
 }
 
 type TiKVComponent struct {
@@ -84,13 +84,13 @@ type TiDBComponent struct {
 }
 
 type EBSBasedBRMeta struct {
-	ClusterInfo    *ClusterInfo           `json:"cluster_info" toml:"cluster_info"`
-	TiKVComponent  *TiKVComponent         `json:"tikv" toml:"tikv"`
-	TiDBComponent  *TiDBComponent         `json:"tidb" toml:"tidb"`
-	PDComponent    *PDComponent           `json:"pd" toml:"pd"`
-	KubernetesMeta *Kubernetes            `json:"kubernetes" toml:"kubernetes"`
-	Options        map[string]interface{} `json:"options" toml:"options"`
-	Region         string                 `json:"region" toml:"region"`
+	ClusterInfo    *ClusterInfo   `json:"cluster_info" toml:"cluster_info"`
+	TiKVComponent  *TiKVComponent `json:"tikv" toml:"tikv"`
+	TiDBComponent  *TiDBComponent `json:"tidb" toml:"tidb"`
+	PDComponent    *PDComponent   `json:"pd" toml:"pd"`
+	KubernetesMeta *Kubernetes    `json:"kubernetes" toml:"kubernetes"`
+	Options        map[string]any `json:"options" toml:"options"`
+	Region         string         `json:"region" toml:"region"`
 }
 
 func (c *EBSBasedBRMeta) GetStoreCount() uint64 {
@@ -129,7 +129,7 @@ func (c *EBSBasedBRMeta) ConfigFromFile(path string) error {
 	return nil
 }
 
-func NewMetaFromStorage(ctx context.Context, s storage.ExternalStorage) (*EBSBasedBRMeta, error) {
+func NewMetaFromStorage(ctx context.Context, s storeapi.Storage) (*EBSBasedBRMeta, error) {
 	metaInfo := &EBSBasedBRMeta{}
 	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {

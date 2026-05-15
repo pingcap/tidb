@@ -73,7 +73,7 @@ func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 		last   = 0
 	)
 	// reference: https://gist.github.com/siddontang/8875771
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		escape = 0
 
 		switch s[i] {
@@ -106,8 +106,8 @@ func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 func escapeBackslashCSV(s []byte, bf *bytes.Buffer, opt *csvOption) {
 	var (
 		escape  byte
-		last         = 0
-		specCmt byte = 0
+		last    int
+		specCmt byte
 	)
 	if len(opt.delimiter) > 0 {
 		specCmt = opt.delimiter[0] // if csv has a delimiter, we should use backslash to comment the delimiter in field value
@@ -115,7 +115,7 @@ func escapeBackslashCSV(s []byte, bf *bytes.Buffer, opt *csvOption) {
 		specCmt = opt.separator[0] // if csv's delimiter is "", we should escape the separator to avoid error
 	}
 
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		escape = 0
 
 		switch s[i] {
@@ -198,7 +198,7 @@ type RowReceiverArr struct {
 }
 
 // BindAddress implements RowReceiver.BindAddress
-func (r *RowReceiverArr) BindAddress(args []interface{}) {
+func (r *RowReceiverArr) BindAddress(args []any) {
 	if r.bound {
 		return
 	}
@@ -259,7 +259,7 @@ type SQLTypeString struct {
 }
 
 // BindAddress implements RowReceiver.BindAddress
-func (s *SQLTypeString) BindAddress(arg []interface{}) {
+func (s *SQLTypeString) BindAddress(arg []any) {
 	arg[0] = &s.RawBytes
 }
 
@@ -291,7 +291,7 @@ type SQLTypeBytes struct {
 }
 
 // BindAddress implements RowReceiver.BindAddress
-func (s *SQLTypeBytes) BindAddress(arg []interface{}) {
+func (s *SQLTypeBytes) BindAddress(arg []any) {
 	arg[0] = &s.RawBytes
 }
 

@@ -21,11 +21,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // decoder contains base util for decode row.
@@ -172,6 +173,12 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 		j.TypeCode = colData[0]
 		j.Value = colData[1:]
 		d.SetMysqlJSON(j)
+	case mysql.TypeTiDBVectorFloat32:
+		v, _, err := types.ZeroCopyDeserializeVectorFloat32(colData)
+		if err != nil {
+			return d, err
+		}
+		d.SetVectorFloat32(v)
 	default:
 		return d, errors.Errorf("unknown type %d", col.Ft.GetType())
 	}
@@ -197,7 +204,7 @@ func NewChunkDecoder(columns []ColInfo, handleColIDs []int64, defDatum func(i in
 }
 
 // DecodeToChunk decodes a row to chunk.
-func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk *chunk.Chunk) error {
+func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, commitTS uint64, handle kv.Handle, chk *chunk.Chunk) error {
 	err := decoder.fromBytes(rowData)
 	if err != nil {
 		return err
@@ -205,17 +212,22 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 
 	for colIdx := range decoder.columns {
 		col := &decoder.columns[colIdx]
+		if col.ID == model.ExtraCommitTSID {
+			intest.Assert(commitTS > 0, "commitTS should be valid if ExtraCommitTSID exists")
+			if commitTS > 0 {
+				chk.AppendUint64(colIdx, commitTS)
+			} else {
+				chk.AppendNull(colIdx)
+			}
+			continue
+		}
 		// fill the virtual column value after row calculation
 		if col.VirtualGenCol {
 			chk.AppendNull(colIdx)
 			continue
 		}
 		if col.ID == model.ExtraRowChecksumID {
-			if v := decoder.row.getChecksumInfo(); len(v) > 0 {
-				chk.AppendString(colIdx, v)
-			} else {
-				chk.AppendNull(colIdx)
-			}
+			chk.AppendNull(colIdx)
 			continue
 		}
 
@@ -355,6 +367,12 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		j.TypeCode = colData[0]
 		j.Value = colData[1:]
 		chk.AppendJSON(colIdx, j)
+	case mysql.TypeTiDBVectorFloat32:
+		v, _, err := types.ZeroCopyDeserializeVectorFloat32(colData)
+		if err != nil {
+			return err
+		}
+		chk.AppendVectorFloat32(colIdx, v)
 	default:
 		return errors.Errorf("unknown type %d", col.Ft.GetType())
 	}
@@ -515,6 +533,8 @@ func fieldType2Flag(tp byte, signed bool) (flag byte) {
 		flag = UintFlag
 	case mysql.TypeJSON:
 		flag = JSONFlag
+	case mysql.TypeTiDBVectorFloat32:
+		flag = VectorFloat32Flag
 	case mysql.TypeNull:
 		flag = NilFlag
 	default:

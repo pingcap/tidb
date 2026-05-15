@@ -23,6 +23,7 @@ var (
 	_ Encoding = &encodingLatin1{}
 	_ Encoding = &encodingBin{}
 	_ Encoding = &encodingGBK{}
+	_ Encoding = &encodingGB18030{}
 )
 
 // IsSupportedEncoding checks if the charset is fully supported.
@@ -60,6 +61,7 @@ var encodingMap = map[string]Encoding{
 	CharsetLatin1:  EncodingLatin1Impl,
 	CharsetBin:     EncodingBinImpl,
 	CharsetASCII:   EncodingASCIIImpl,
+	CharsetGB18030: EncodingGB18030Impl,
 }
 
 // Encoding provide encode/decode functions for a string with a specific charset.
@@ -74,7 +76,7 @@ type Encoding interface {
 	MbLen(string) int
 	// IsValid checks whether the utf-8 bytes can be convert to valid string in current encoding.
 	IsValid(src []byte) bool
-	// Foreach iterates the characters in in current encoding.
+	// Foreach iterates the characters in current encoding.
 	Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool)
 	// Transform map the bytes in src to dest according to Op.
 	// **the caller should initialize the dest if it wants to avoid memory alloc every time,
@@ -100,6 +102,7 @@ const (
 	EncodingTpLatin1
 	EncodingTpBin
 	EncodingTpGBK
+	EncodingTpGB18030
 )
 
 //revive:enable
@@ -136,7 +139,7 @@ const (
 // can be encoded to the current encoding.
 func CountValidBytes(e Encoding, src []byte) int {
 	nSrc := 0
-	e.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
+	e.Foreach(src, opFromUTF8, func(from, _ []byte, ok bool) bool {
 		if ok {
 			nSrc += len(from)
 		}
@@ -149,7 +152,7 @@ func CountValidBytes(e Encoding, src []byte) int {
 // can be decoded to utf-8.
 func CountValidBytesDecode(e Encoding, src []byte) int {
 	nSrc := 0
-	e.Foreach(src, opToUTF8, func(from, to []byte, ok bool) bool {
+	e.Foreach(src, opToUTF8, func(from, _ []byte, ok bool) bool {
 		if ok {
 			nSrc += len(from)
 		}

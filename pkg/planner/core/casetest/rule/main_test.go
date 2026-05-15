@@ -29,8 +29,16 @@ var testDataMap = make(testdata.BookKeeper)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
-	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
+	testDataMap.LoadTestSuiteData("testdata", "outer2inner", true)
+	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window", true)
+	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification", true)
+	testDataMap.LoadTestSuiteData("testdata", "outer_to_semi_join_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "correlate_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "cdc_join_reorder_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "order_aware_join_reorder_suite", true)
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
@@ -49,10 +57,38 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
+func GetOuter2InnerSuiteData() testdata.TestData {
+	return testDataMap["outer2inner"]
+}
+
 func GetDerivedTopNSuiteData() testdata.TestData {
 	return testDataMap["derive_topn_from_window"]
 }
 
 func GetJoinReorderSuiteData() testdata.TestData {
 	return testDataMap["join_reorder_suite"]
+}
+
+func GetPredicatePushdownSuiteData() testdata.TestData {
+	return testDataMap["predicate_pushdown_suite"]
+}
+
+func GetPredicateSimplificationSuiteData() testdata.TestData {
+	return testDataMap["predicate_simplification"]
+}
+
+func GetOuterToSemiJoinSuiteData() testdata.TestData {
+	return testDataMap["outer_to_semi_join_suite"]
+}
+
+func GetCorrelateSuiteData() testdata.TestData {
+	return testDataMap["correlate_suite"]
+}
+
+func GetCDCJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["cdc_join_reorder_suite"]
+}
+
+func GetOrderAwareJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["order_aware_join_reorder_suite"]
 }

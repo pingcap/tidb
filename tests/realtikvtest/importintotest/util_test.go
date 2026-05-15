@@ -20,11 +20,12 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -47,12 +48,13 @@ var (
 	maxWaitTime = 30 * time.Second
 )
 
-func TestLoadRemote(t *testing.T) {
+func TestImportInto(t *testing.T) {
 	suite.Run(t, &mockGCSSuite{})
 }
 
 func (s *mockGCSSuite) SetupSuite() {
 	s.Require().True(*realtikvtest.WithRealTiKV)
+	testutil.ReduceCheckInterval(s.T())
 	var err error
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -62,19 +64,31 @@ func (s *mockGCSSuite) SetupSuite() {
 	}
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/domain/deltaUpdateDuration", `return`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	bak := vardef.GetStatsLease()
+	s.T().Cleanup(func() {
+		vardef.SetStatsLease(bak)
+	})
+	vardef.SetStatsLease(time.Second)
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
+	s.tk = testkit.NewTestKit(s.T(), s.store)
+	// when intest, auto analyze is disabled by default, we enable it here.
+	bakRunAutoAnalyze := vardef.RunAutoAnalyze.Load()
+	s.tk.MustExec("set global tidb_enable_auto_analyze=true")
+	s.T().Cleanup(func() {
+		s.tk.MustExec(fmt.Sprintf("set global tidb_enable_auto_analyze=%t", bakRunAutoAnalyze))
+	})
+}
+
+func (s *mockGCSSuite) BeforeTest(_, _ string) {
+	// some test will set session variable, and might not reset it, so we recreate
+	// the testkit on each test.
 	s.tk = testkit.NewTestKit(s.T(), s.store)
 }
 
 func (s *mockGCSSuite) TearDownSuite() {
 	s.server.Stop()
-}
-
-func (s *mockGCSSuite) enableFailpoint(path, term string) {
-	require.NoError(s.T(), failpoint.Enable(path, term))
-	s.T().Cleanup(func() {
-		_ = failpoint.Disable(path)
-	})
 }
 
 func (s *mockGCSSuite) cleanupSysTables() {

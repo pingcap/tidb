@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -97,6 +96,10 @@ func (re *regexpBaseFuncSig) canMemorizeRegexp(matchTypeIdx int) bool {
 
 // buildRegexp builds a new `*regexp.Regexp` from the pattern and matchType
 func (re *regexpBaseFuncSig) buildRegexp(pattern string, matchType string) (reg *regexp.Regexp, err error) {
+	if len(pattern) == 0 {
+		return nil, ErrRegexp.GenWithStackByArgs(emptyPatternErr)
+	}
+
 	matchType, err = getRegexpMatchType(matchType, re.collation)
 	if err != nil {
 		return nil, err
@@ -201,7 +204,7 @@ type regexpLikeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *regexpLikeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -275,7 +278,7 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	params := make([]*funcParam, 0, 3)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)
@@ -308,14 +311,15 @@ func (re *builtinRegexpLikeFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(getBuffers(params)...)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 
 		if !memorized {
 			matchType := params[2].getStringVal(i)
-			reg, err = re.buildRegexp(params[1].getStringVal(i), matchType)
+			pattern := params[1].getStringVal(i)
+			reg, err = re.buildRegexp(pattern, matchType)
 			if err != nil {
 				return err
 			}
@@ -330,7 +334,7 @@ type regexpSubstrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *regexpSubstrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -350,7 +354,7 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	sig := builtinRegexpSubstrFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
@@ -480,7 +484,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 	params := make([]*funcParam, 0, 5)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return err
@@ -543,7 +547,7 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 	buffers := getBuffers(params)
 
 	// Start to calculate
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if isResultNull(buffers, i) {
 			result.AppendNull()
 			continue
@@ -577,15 +581,12 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 		}
 
 		// Get occurrence
-		occurrence := params[3].getIntVal(i)
-		if occurrence < 1 {
-			occurrence = 1
-		}
+		occurrence := max(params[3].getIntVal(i), 1)
 
 		if !memorized {
 			// Get pattern and match type and then generate regexp
-			pattern := params[1].getStringVal(i)
 			matchType := params[4].getStringVal(i)
+			pattern := params[1].getStringVal(i)
 			if reg, err = re.buildRegexp(pattern, matchType); err != nil {
 				return err
 			}
@@ -620,7 +621,7 @@ type regexpInStrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *regexpInStrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
@@ -794,7 +795,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	params := make([]*funcParam, 0, 5)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)
@@ -869,7 +870,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	result.ResizeInt64(n, false)
 	result.MergeNulls(getBuffers(params)...)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -903,10 +904,7 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		}
 
 		// Get occurrence
-		occurrence := params[3].getIntVal(i)
-		if occurrence < 1 {
-			occurrence = 1
-		}
+		occurrence := max(params[3].getIntVal(i), 1)
 
 		returnOption := params[4].getIntVal(i)
 		if returnOption != 0 && returnOption != 1 {
@@ -916,7 +914,8 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		// Get match type and generate regexp
 		if !memorized {
 			matchType := params[5].getStringVal(i)
-			reg, err = re.buildRegexp(params[1].getStringVal(i), matchType)
+			pattern := params[1].getStringVal(i)
+			reg, err = re.buildRegexp(pattern, matchType)
 			if err != nil {
 				return err
 			}
@@ -959,7 +958,7 @@ type regexpReplaceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *regexpReplaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
@@ -981,7 +980,7 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 		return nil, ErrRegexp.GenWithStackByArgs(err)
 	}
 
-	argType := args[0].GetType()
+	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp.SetFlen(argType.GetFlen())
 	sig := builtinRegexpReplaceFuncSig{
 		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
@@ -1270,7 +1269,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 	params := make([]*funcParam, 0, 6)
 	defer releaseBuffers(&re.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &re.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)
@@ -1354,7 +1353,7 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 	}
 
 	// Start to calculate
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if isResultNull(buffers, i) {
 			result.AppendNull()
 			continue
@@ -1402,7 +1401,8 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 		// Get match type and generate regexp
 		if !memorized {
 			matchType := params[5].getStringVal(i)
-			reg, err = re.buildRegexp(params[1].getStringVal(i), matchType)
+			pattern := params[1].getStringVal(i)
+			reg, err = re.buildRegexp(pattern, matchType)
 			if err != nil {
 				return err
 			}

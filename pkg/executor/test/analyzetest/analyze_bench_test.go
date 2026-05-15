@@ -49,6 +49,6 @@ func BenchmarkAnalyzePartition(b *testing.B) {
 	tk.MustExec(insertStr)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tk.MustExec("analyze table t")
+		tk.MustExec("analyze table t all columns")
 	}
 }

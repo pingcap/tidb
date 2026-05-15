@@ -221,17 +221,16 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for j := 0; j < len(b.args); j++{
 		err := b.args[j].VecEval{{ .type.TypeName }}(ctx, input, buf1)
         {{- if eq .type.TypeName "Time" }}
         fsp := b.tp.GetDecimal()
         {{- end }}
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEval{{ .type.TypeName }}(ctx, input, result)
 		}
@@ -254,8 +253,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get()
 		if err != nil {
@@ -263,10 +261,10 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		}
 		defer b.bufAllocator.put(buf)
 		err = b.args[i].VecEval{{ .type.TypeName }}(ctx, input, buf)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEval{{ .type.TypeName }}(ctx, input, result)
 		}
@@ -383,7 +381,7 @@ func generateDotGo(fileName string, compares []CompareContext, types []TypeConte
 	w.WriteString(newLine)
 	w.WriteString(builtinCompareImports)
 
-	var ctx = make(map[string]interface{})
+	var ctx = make(map[string]any)
 	for _, compareCtx := range compares {
 		for _, typeCtx := range types {
 			ctx["compare"] = compareCtx

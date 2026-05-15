@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tikverr "github.com/tikv/client-go/v2/error"
 	pderr "github.com/tikv/pd/client/errs"
 )
@@ -33,15 +35,15 @@ var (
 	// ErrTiKVServerTimeout is the error when tikv server is timeout.
 	ErrTiKVServerTimeout    = dbterror.ClassTiKV.NewStd(errno.ErrTiKVServerTimeout)
 	ErrTiFlashServerTimeout = dbterror.ClassTiKV.NewStd(errno.ErrTiFlashServerTimeout)
-	// ErrGCTooEarly is the error that GC life time is shorter than transaction duration
-	ErrGCTooEarly = dbterror.ClassTiKV.NewStd(errno.ErrGCTooEarly)
+	// ErrTxnAbortedByGC is the error that a transaction has been run for too long and aborted by GC.
+	ErrTxnAbortedByGC = dbterror.ClassTiKV.NewStd(errno.ErrTxnAbortedByGC)
 	// ErrTiKVStaleCommand is the error that the command is stale in tikv.
 	ErrTiKVStaleCommand = dbterror.ClassTiKV.NewStd(errno.ErrTiKVStaleCommand)
 	// ErrQueryInterrupted is the error when the query is interrupted.
 	ErrQueryInterrupted = dbterror.ClassTiKV.NewStd(errno.ErrQueryInterrupted)
 	// ErrTiKVMaxTimestampNotSynced is the error that tikv's max timestamp is not synced.
 	ErrTiKVMaxTimestampNotSynced = dbterror.ClassTiKV.NewStd(errno.ErrTiKVMaxTimestampNotSynced)
-	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is setted.
+	// ErrLockAcquireFailAndNoWaitSet is the error that acquire the lock failed while no wait is set.
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(errno.ErrLockAcquireFailAndNoWaitSet)
 	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(errno.ErrResolveLockTimeout)
 	// ErrLockWaitTimeout is the error that wait for the lock is timeout.
@@ -99,6 +101,11 @@ func ToTiDBErr(err error) error {
 		return kv.ErrEntryTooLarge.GenWithStackByArgs(entryTooLarge.Limit, entryTooLarge.Size)
 	}
 
+	var keyTooLarge *tikverr.ErrKeyTooLarge
+	if stderrs.As(err, &keyTooLarge) {
+		return kv.ErrKeyTooLarge.GenWithStackByArgs(keyTooLarge.KeySize)
+	}
+
 	if stderrs.Is(err, tikverr.ErrInvalidTxn) {
 		return kv.ErrInvalidTxn
 	}
@@ -116,8 +123,23 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerTimeout
 	}
 
-	if stderrs.Is(err, tikverr.ErrQueryInterrupted) {
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryInterrupted}) {
+		// TODO: This error is defined here, while others are using exeerrors as in sql killer. Maybe unify them?
 		return ErrQueryInterrupted
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.MaxExecTimeExceeded}) {
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryMemoryExceeded}) {
+		// connection id is unknown in client, which should be logged or filled by upper layers
+		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(-1)
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.ServerMemoryExceeded}) {
+		// connection id is unknown in client, which should be logged or filled by upper layers
+		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(-1)
+	}
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.RunawayQueryExceeded}) {
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs("exceed tidb side")
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVServerBusy) {
@@ -128,9 +150,21 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerBusy
 	}
 
+	var txnAbortedByGC *tikverr.ErrTxnAbortedByGC
+	if stderrs.As(err, &txnAbortedByGC) {
+		return ErrTxnAbortedByGC.GenWithStackByArgs(
+			txnAbortedByGC.TxnStartTS, txnAbortedByGC.TxnStartTSTime,
+			txnAbortedByGC.TxnSafePoint, txnAbortedByGC.TxnSafePointTime,
+		)
+	}
+
 	var gcTooEarly *tikverr.ErrGCTooEarly
 	if stderrs.As(err, &gcTooEarly) {
-		return ErrGCTooEarly.GenWithStackByArgs(gcTooEarly.TxnStartTS, gcTooEarly.GCSafePoint)
+		// The old error type doesn't contain the exact value of txn start ts and the (GC or txn) safe point, and its
+		// fields are in time.Time format. Pass "<unknown>" to replace the value.
+		// It's expected that `tikverr.ErrTxnAbortedByGC` should never occur again, and are replaced by
+		// tikverr.ErrTxnAbortedByGC.
+		return ErrTxnAbortedByGC.GenWithStackByArgs("<unknown>", gcTooEarly.TxnStartTS, "<unknown>", gcTooEarly.GCSafePoint)
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVStaleCommand) {

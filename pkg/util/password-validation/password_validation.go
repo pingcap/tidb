@@ -21,6 +21,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
@@ -31,7 +33,7 @@ const minPwdValidationLength int = 4
 
 // ValidateDictionaryPassword checks if the password contains words in the dictionary.
 func ValidateDictionaryPassword(pwd string, globalVars *variable.GlobalVarAccessor) (bool, error) {
-	dictionary, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordDictionary)
+	dictionary, err := (*globalVars).GetGlobalSysVar(vardef.ValidatePasswordDictionary)
 	if err != nil {
 		return false, err
 	}
@@ -51,11 +53,9 @@ func ValidateDictionaryPassword(pwd string, globalVars *variable.GlobalVarAccess
 }
 
 // ValidateUserNameInPassword checks whether pwd exists in the dictionary.
-func ValidateUserNameInPassword(pwd string, sessionVars *variable.SessionVars) (string, error) {
-	currentUser := sessionVars.User
-	globalVars := sessionVars.GlobalVarsAccessor
+func ValidateUserNameInPassword(pwd string, currentUser *auth.UserIdentity, globalVars *variable.GlobalVarAccessor) (string, error) {
 	pwdBytes := hack.Slice(pwd)
-	if checkUserName, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordCheckUserName); err != nil {
+	if checkUserName, err := (*globalVars).GetGlobalSysVar(vardef.ValidatePasswordCheckUserName); err != nil {
 		return "", err
 	} else if currentUser != nil && variable.TiDBOptOn(checkUserName) {
 		for _, username := range []string{currentUser.AuthUsername, currentUser.Username} {
@@ -81,7 +81,7 @@ func ValidateUserNameInPassword(pwd string, sessionVars *variable.SessionVars) (
 
 // ValidatePasswordLowPolicy checks whether pwd satisfies the low policy of password validation.
 func ValidatePasswordLowPolicy(pwd string, globalVars *variable.GlobalVarAccessor) (string, error) {
-	if validateLengthStr, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordLength); err != nil {
+	if validateLengthStr, err := (*globalVars).GetGlobalSysVar(vardef.ValidatePasswordLength); err != nil {
 		return "", err
 	} else if validateLength, err := strconv.ParseInt(validateLengthStr, 10, 64); err != nil {
 		return "", err
@@ -95,7 +95,7 @@ func ValidatePasswordLowPolicy(pwd string, globalVars *variable.GlobalVarAccesso
 func ValidatePasswordMediumPolicy(pwd string, globalVars *variable.GlobalVarAccessor) (string, error) {
 	var lowerCaseCount, upperCaseCount, numberCount, specialCharCount int64
 	runes := []rune(pwd)
-	for i := 0; i < len(runes); i++ {
+	for i := range runes {
 		if unicode.IsUpper(runes[i]) {
 			upperCaseCount++
 		} else if unicode.IsLower(runes[i]) {
@@ -106,7 +106,7 @@ func ValidatePasswordMediumPolicy(pwd string, globalVars *variable.GlobalVarAcce
 			specialCharCount++
 		}
 	}
-	if mixedCaseCountStr, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordMixedCaseCount); err != nil {
+	if mixedCaseCountStr, err := (*globalVars).GetGlobalSysVar(vardef.ValidatePasswordMixedCaseCount); err != nil {
 		return "", err
 	} else if mixedCaseCount, err := strconv.ParseInt(mixedCaseCountStr, 10, 64); err != nil {
 		return "", err
@@ -115,14 +115,14 @@ func ValidatePasswordMediumPolicy(pwd string, globalVars *variable.GlobalVarAcce
 	} else if upperCaseCount < mixedCaseCount {
 		return fmt.Sprintf("Require Password Uppercase Count: %d", mixedCaseCount), nil
 	}
-	if requireNumberCountStr, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordNumberCount); err != nil {
+	if requireNumberCountStr, err := (*globalVars).GetGlobalSysVar(vardef.ValidatePasswordNumberCount); err != nil {
 		return "", err
 	} else if requireNumberCount, err := strconv.ParseInt(requireNumberCountStr, 10, 64); err != nil {
 		return "", err
 	} else if numberCount < requireNumberCount {
 		return fmt.Sprintf("Require Password Digit Count: %d", requireNumberCount), nil
 	}
-	if requireSpecialCharCountStr, err := (*globalVars).GetGlobalSysVar(variable.ValidatePasswordSpecialCharCount); err != nil {
+	if requireSpecialCharCountStr, err := (*globalVars).GetGlobalSysVar(vardef.ValidatePasswordSpecialCharCount); err != nil {
 		return "", err
 	} else if requireSpecialCharCount, err := strconv.ParseInt(requireSpecialCharCountStr, 10, 64); err != nil {
 		return "", err
@@ -136,11 +136,11 @@ func ValidatePasswordMediumPolicy(pwd string, globalVars *variable.GlobalVarAcce
 func ValidatePassword(sessionVars *variable.SessionVars, pwd string) error {
 	globalVars := sessionVars.GlobalVarsAccessor
 
-	validatePolicy, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordPolicy)
+	validatePolicy, err := globalVars.GetGlobalSysVar(vardef.ValidatePasswordPolicy)
 	if err != nil {
 		return err
 	}
-	if warn, err := ValidateUserNameInPassword(pwd, sessionVars); err != nil {
+	if warn, err := ValidateUserNameInPassword(pwd, sessionVars.User, &sessionVars.GlobalVarsAccessor); err != nil {
 		return err
 	} else if len(warn) > 0 {
 		return variable.ErrNotValidPassword.GenWithStackByArgs(warn)

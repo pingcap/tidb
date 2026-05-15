@@ -75,7 +75,7 @@ func runCommonParallelTest(t *testing.T, sorter ExternalSorter) {
 	kvCh := make(chan keyValue, 16)
 
 	g, gCtx := errgroup.WithContext(ctx)
-	for i := 0; i < numWriters; i++ {
+	for range numWriters {
 		g.Go(func() (retErr error) {
 			w, err := sorter.NewWriter(gCtx)
 			if err != nil {
@@ -134,7 +134,7 @@ func genRandomKVs(
 	valueSizeRange int,
 ) []keyValue {
 	kvs := make([]keyValue, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		keySize := rng.Intn(keySizeRange-4) + 4
 		kv := keyValue{
 			key:   make([]byte, keySize),

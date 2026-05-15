@@ -15,17 +15,20 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	gotime "time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -83,16 +86,22 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	tk.MustExec("insert t values (1, 1), (2, 2)")
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	oldTblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	oldTblID := oldTblInfo.Meta().ID
+	oldDBID := oldTblInfo.Meta().DBID
+	require.NotEqual(t, oldDBID, 0)
+
 	tk.MustExec("create database test1")
 	tk.MustExec("use test1")
 	tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	newTblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID, newTblInfo.Meta().ID)
+	require.NotEqual(t, newTblInfo.Meta().DBID, oldDBID)
+	require.NotEqual(t, newTblInfo.Meta().DBID, 0)
+	oldDBID = newTblInfo.Meta().DBID
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustExec("use test")
 
@@ -104,11 +113,12 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	tk.MustExec("use test1")
 	tk.MustExec(fmt.Sprintf(sql, "t1", "t2"))
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	newTblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID, newTblInfo.Meta().ID)
+	require.Equal(t, oldDBID, newTblInfo.Meta().DBID)
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
-	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	isExist := is.TableExists(ast.NewCIStr("test1"), ast.NewCIStr("t1"))
 	require.False(t, isExist)
 	tk.MustQuery("show tables").Check(testkit.Rows("t2"))
 
@@ -181,46 +191,46 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("insert t2 values (1, 1), (2, 2)")
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	oldTblInfo1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	oldTblID1 := oldTblInfo1.Meta().ID
-	oldTblInfo2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	oldTblInfo2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	oldTblID2 := oldTblInfo2.Meta().ID
 	tk.MustExec("create database test1")
 	tk.MustExec("use test1")
 	tk.MustExec("rename table test.t1 to test1.t1, test.t2 to test1.t2")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	newTblInfo1, err := is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID1, newTblInfo1.Meta().ID)
-	newTblInfo2, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	newTblInfo2, err := is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID2, newTblInfo2.Meta().ID)
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
 
 	// Make sure t1,t2 doesn't exist.
-	isExist := is.TableExists(model.NewCIStr("test"), model.NewCIStr("t1"))
+	isExist := is.TableExists(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.False(t, isExist)
-	isExist = is.TableExists(model.NewCIStr("test"), model.NewCIStr("t2"))
+	isExist = is.TableExists(ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.False(t, isExist)
 
 	// for the same database
 	tk.MustExec("use test1")
 	tk.MustExec("rename table test1.t1 to test1.t3, test1.t2 to test1.t4")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t3"))
+	newTblInfo1, err = is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID1, newTblInfo1.Meta().ID)
-	newTblInfo2, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t4"))
+	newTblInfo2, err = is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t4"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID2, newTblInfo2.Meta().ID)
 	tk.MustQuery("select * from t3").Check(testkit.Rows("1 1", "2 2"))
-	isExist = is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	isExist = is.TableExists(ast.NewCIStr("test1"), ast.NewCIStr("t1"))
 	require.False(t, isExist)
 	tk.MustQuery("select * from t4").Check(testkit.Rows("1 1", "2 2"))
-	isExist = is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	isExist = is.TableExists(ast.NewCIStr("test1"), ast.NewCIStr("t2"))
 	require.False(t, isExist)
 	tk.MustQuery("show tables").Check(testkit.Rows("t3", "t4"))
 
@@ -228,18 +238,18 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("create table t5 (c1 int, c2 int)")
 	tk.MustExec("insert t5 values (1, 1), (2, 2)")
 	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t5"))
+	oldTblInfo3, err := is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t5"))
 	require.NoError(t, err)
 	oldTblID3 := oldTblInfo3.Meta().ID
 	tk.MustExec("rename table test1.t3 to test1.t1, test1.t4 to test1.t2, test1.t5 to test1.t3")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	newTblInfo1, err = is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID1, newTblInfo1.Meta().ID)
-	newTblInfo2, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	newTblInfo2, err = is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID2, newTblInfo2.Meta().ID)
-	newTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t3"))
+	newTblInfo3, err := is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID3, newTblInfo3.Meta().ID)
 	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
@@ -248,13 +258,13 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("rename table test1.t1 to test.t2, test1.t2 to test.t3, test1.t3 to test.t4")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	newTblInfo1, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID1, newTblInfo1.Meta().ID)
-	newTblInfo2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	newTblInfo2, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID2, newTblInfo2.Meta().ID)
-	newTblInfo3, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	newTblInfo3, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID3, newTblInfo3.Meta().ID)
 	tk.MustQuery("show tables").Check(testkit.Rows("t2", "t3", "t4"))
@@ -289,7 +299,11 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk2.MustExec(`use test`)
+	tk3.MustExec(`use test`)
 	// Use first client session, tidb1
 	tk1.MustExec(`create schema if not exists test1`)
 	tk1.MustExec(`create schema if not exists test2`)
@@ -301,21 +315,18 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 
 	ctx := tk1.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, int64(0), tblInfo.Meta().AutoIDSchemaID)
 	origAllocs := tblInfo.Allocators(nil)
 	require.Equal(t, int64(5), origAllocs.Allocs[0].End())
 
 	// Switch to a new client (tidb2)
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use test`)
 	alterChan := make(chan error)
 	go func() {
 		// will wait for tidb1
 		alterChan <- tk2.ExecToErr(`rename table test1.t1 to test2.t2`)
 	}()
-	tk3 := testkit.NewTestKit(t, store)
 	waitFor := func(tableName, s string, pos int) {
 		for {
 			select {
@@ -326,7 +337,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 			}
 			res := tk3.MustQuery(`admin show ddl jobs where table_name = '` + tableName + `' and job_type = 'rename table'`).Rows()
 			if len(res) == 1 && res[0][pos] == s {
-				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				logutil.DDLLogger().Info("Got state", zap.String("State", s))
 				break
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
@@ -336,8 +347,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 	}
 
 	// Switch to new client (tidb3)
-	waitFor("t1", "public", 4)
-	tk3.MustExec(`use test`)
+	waitFor("t2", "public", 4)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`insert into test2.t2 values (null, "t2 first null")`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from test2.t2`).Sort().Check(testkit.Rows("4 3 t2 first null"))
@@ -366,7 +376,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 	// and if you rename multiple time (so it does not lose the autoID).
 	ctx = tk1.Session()
 	is = domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err = is.TableByName(model.NewCIStr("test2"), model.NewCIStr("t2"))
+	tblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test2"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	originalSchemaID := tblInfo.Meta().AutoIDSchemaID
 	require.NotEqual(t, int64(0), originalSchemaID)
@@ -396,7 +406,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 
 	ctx = tk1.Session()
 	is = domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err = is.TableByName(model.NewCIStr("test2"), model.NewCIStr("t1"))
+	tblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test2"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, originalSchemaID, tblInfo.Meta().AutoIDSchemaID)
 	origAllocs = tblInfo.Allocators(nil)
@@ -436,7 +446,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 
 	ctx = tk1.Session()
 	is = domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	tblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	// Should be cleared when moved back to the original SchemaID
 	require.Equal(t, int64(0), tblInfo.Meta().AutoIDSchemaID)
@@ -453,7 +463,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 
 	ctx = tk1.Session()
 	is = domain.GetDomain(ctx).InfoSchema()
-	tblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	tblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.NotEqual(t, int64(0), tblInfo.Meta().AutoIDSchemaID)
 	origAllocs = tblInfo.Allocators(nil)
@@ -479,4 +489,30 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 		"40 39 Is it 39?",
 		"6 5 t1 second null",
 		"8 7 t1 third null"))
+}
+
+func TestShowRunningRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create database test2")
+	tk1.MustExec("create table t1 (a int, b int)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
+		if job.State != model.JobStateSynced && job.Type == model.ActionRenameTable {
+			rs := tk2.MustQuery("admin show ddl jobs where state != 'synced'").Rows()
+			require.Len(t, rs, 1)
+			require.Equal(t, "test2", rs[0][1])
+			require.Equal(t, "t2", rs[0][2])
+
+			rs = tk2.MustQuery("select db_name, table_name from information_schema.ddl_jobs where job_type = 'rename table'").Rows()
+			require.Len(t, rs, 1)
+			require.Equal(t, "test2", rs[0][0])
+			require.Equal(t, "t2", rs[0][1])
+		}
+	})
+
+	tk1.MustExec("rename table test.t1 to test2.t2")
 }

@@ -16,12 +16,11 @@ package hint
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // QBHintHandler is used to handle hints at different query blocks.
@@ -31,23 +30,48 @@ import (
 // In both cases, the `use_index` hint doesn't take effect directly, since a specific qb_name is specified, and this
 // QBHintHandler is used to handle this cases.
 type QBHintHandler struct {
-	QBNameToSelOffset map[string]int                    // map[QBName]SelectOffset
-	QBOffsetToHints   map[int][]*ast.TableOptimizerHint // map[QueryBlockOffset]Hints
+	QBNameToSelOffset map[string]int // map[QBName]SelectOffset
 
 	// Used for the view's hint
-	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]TableInfo
+	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]HintedTable
 	ViewQBNameToHints map[string][]*ast.TableOptimizerHint // map[QBName]Hints
-	ViewQBNameUsed    map[string]struct{}                  // map[QBName]Used
 
-	Ctx              sessionctx.Context
+	warnHandler      hintWarnHandler
 	selectStmtOffset int
 }
 
+// QBHintBuildState stores the per-build runtime state for a QBHintHandler.
+// The handler itself only keeps AST-derived metadata and can be shared safely.
+type QBHintBuildState struct {
+	QBOffsetToHints map[int][]*ast.TableOptimizerHint // map[QueryBlockOffset]Hints
+	ViewQBNameUsed  map[string]struct{}               // map[QBName]Used
+}
+
+// hintWarnHandler is used to handle the warning when parsing hints.
+type hintWarnHandler interface {
+	SetHintWarning(warn string)
+	SetHintWarningFromError(err error)
+}
+
 // NewQBHintHandler creates a QBHintHandler.
-func NewQBHintHandler(ctx sessionctx.Context) *QBHintHandler {
+func NewQBHintHandler(warnHandler hintWarnHandler) *QBHintHandler {
 	return &QBHintHandler{
-		Ctx: ctx,
+		warnHandler: warnHandler,
 	}
+}
+
+// NewBuildState creates the per-build runtime state for the handler.
+func (p *QBHintHandler) NewBuildState() *QBHintBuildState {
+	if p == nil {
+		return nil
+	}
+
+	state := &QBHintBuildState{}
+	if len(p.ViewQBNameToTable) == 0 {
+		return state
+	}
+	state.ViewQBNameUsed = make(map[string]struct{}, len(p.ViewQBNameToTable))
+	return state
 }
 
 // MaxSelectStmtOffset returns the current stmt offset.
@@ -91,8 +115,8 @@ func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, of
 			continue
 		}
 		if qbName != "" {
-			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("There are more than two query names in same query block, using the first one %s", qbName))
+			if p.warnHandler != nil {
+				p.warnHandler.SetHintWarning(fmt.Sprintf("There are more than two query names in same query block, using the first one %s", qbName))
 			}
 		} else {
 			qbName = hint.QBName.L
@@ -105,8 +129,8 @@ func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, of
 		p.QBNameToSelOffset = make(map[string]int)
 	}
 	if _, ok := p.QBNameToSelOffset[qbName]; ok {
-		if p.Ctx != nil {
-			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s, only the first one is effective", qbName))
+		if p.warnHandler != nil {
+			p.warnHandler.SetHintWarning(fmt.Sprintf("Duplicate query block name %s, only the first one is effective", qbName))
 		}
 	} else {
 		p.QBNameToSelOffset[qbName] = offset
@@ -127,15 +151,14 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 		usedHints[i] = true
 		if p.ViewQBNameToTable == nil {
 			p.ViewQBNameToTable = make(map[string][]ast.HintTable)
-			p.ViewQBNameUsed = make(map[string]struct{})
 		}
 		qbName := hint.QBName.L
 		if qbName == "" {
 			continue
 		}
 		if _, ok := p.ViewQBNameToTable[qbName]; ok {
-			if p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
+			if p.warnHandler != nil {
+				p.warnHandler.SetHintWarning(fmt.Sprintf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
 			}
 		} else {
 			if offset != 1 {
@@ -143,7 +166,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 				// we should add the query block number where it is located to the first table in the view's qb_name hint table list.
 				qbNum := hint.Tables[0].QBName.L
 				if qbNum == "" {
-					hint.Tables[0].QBName = model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, offset))
+					hint.Tables[0].QBName = ast.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, offset))
 				}
 			}
 			p.ViewQBNameToTable[qbName] = hint.Tables
@@ -172,7 +195,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 					}
 				}
 				if !ok {
-					p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Only one query block name is allowed in a view hint, otherwise the hint will be invalid"))
+					p.warnHandler.SetHintWarning("Only one query block name is allowed in a view hint, otherwise the hint will be invalid")
 					usedHints[i] = true
 				}
 			}
@@ -196,15 +219,21 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 }
 
 // HandleUnusedViewHints handle the unused view hints.
-func (p *QBHintHandler) HandleUnusedViewHints() {
+func (p *QBHintHandler) HandleUnusedViewHints(state *QBHintBuildState, warn []string) []string {
+	if state == nil {
+		return warn
+	}
+
+	warn = warn[:0]
 	if p.ViewQBNameToTable != nil {
 		for qbName := range p.ViewQBNameToTable {
-			_, ok := p.ViewQBNameUsed[qbName]
-			if !ok && p.Ctx != nil {
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
+			_, ok := state.ViewQBNameUsed[qbName]
+			if !ok && p.warnHandler != nil {
+				warn = append(warn, fmt.Sprintf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
 			}
 		}
 	}
+	return warn
 }
 
 const (
@@ -215,7 +244,7 @@ const (
 
 // getBlockName finds the offset of query block name. It uses 0 as offset for top level update or delete,
 // -1 for invalid block name.
-func (p *QBHintHandler) getBlockOffset(blockName model.CIStr) int {
+func (p *QBHintHandler) getBlockOffset(blockName ast.CIStr) int {
 	if p.QBNameToSelOffset != nil {
 		level, ok := p.QBNameToSelOffset[blockName.L]
 		if ok {
@@ -237,8 +266,18 @@ func (p *QBHintHandler) getBlockOffset(blockName model.CIStr) int {
 	return -1
 }
 
+// SetWarns set the warning from a list of strings.
+func (p *QBHintHandler) SetWarns(warns []string) {
+	if p == nil || p.warnHandler == nil || len(warns) == 0 {
+		return
+	}
+	for _, one := range warns {
+		p.warnHandler.SetHintWarning(one)
+	}
+}
+
 // GetHintOffset gets the offset of stmt that the hints take effects.
-func (p *QBHintHandler) GetHintOffset(qbName model.CIStr, currentOffset int) int {
+func (p *QBHintHandler) GetHintOffset(qbName ast.CIStr, currentOffset int) int {
 	if qbName.L != "" {
 		return p.getBlockOffset(qbName)
 	}
@@ -274,9 +313,12 @@ func (p *QBHintHandler) isHint4View(hint *ast.TableOptimizerHint) bool {
 }
 
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
-func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int) []*ast.TableOptimizerHint {
-	if p.QBOffsetToHints == nil {
-		p.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
+func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int, state *QBHintBuildState) []*ast.TableOptimizerHint {
+	if state == nil {
+		state = &QBHintBuildState{}
+	}
+	if state.QBOffsetToHints == nil {
+		state.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
 	}
 	for _, hint := range hints {
 		if hint.HintName.L == hintQBName {
@@ -284,27 +326,37 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 		}
 		offset := p.GetHintOffset(hint.QBName, currentOffset)
 		if offset < 0 || !p.checkTableQBName(hint.Tables) {
-			if p.Ctx != nil {
+			if p.warnHandler != nil {
 				hintStr := RestoreTableOptimizerHint(hint)
-				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Hint %s is ignored due to unknown query block name", hintStr))
+				p.warnHandler.SetHintWarning(fmt.Sprintf("Hint %s is ignored due to unknown query block name", hintStr))
 			}
 			continue
 		}
-		p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
+		if !slices.Contains(state.QBOffsetToHints[offset], hint) {
+			state.QBOffsetToHints[offset] = append(state.QBOffsetToHints[offset], hint)
+		}
 	}
-	return p.QBOffsetToHints[currentOffset]
+	return state.QBOffsetToHints[currentOffset]
+}
+
+// MarkViewQBNameUsed records that the named view qb hint was used in the current build.
+func (*QBHintHandler) MarkViewQBNameUsed(qbName string, state *QBHintBuildState) {
+	if state == nil || state.ViewQBNameUsed == nil {
+		return
+	}
+	state.ViewQBNameUsed[qbName] = struct{}{}
 }
 
 // GenerateQBName builds QBName from offset.
-func GenerateQBName(nodeType NodeType, qbOffset int) (model.CIStr, error) {
+func GenerateQBName(nodeType NodeType, qbOffset int) (ast.CIStr, error) {
 	if qbOffset == 0 {
 		if nodeType == TypeDelete {
-			return model.NewCIStr(defaultDeleteBlockName), nil
+			return ast.NewCIStr(defaultDeleteBlockName), nil
 		}
 		if nodeType == TypeUpdate {
-			return model.NewCIStr(defaultUpdateBlockName), nil
+			return ast.NewCIStr(defaultUpdateBlockName), nil
 		}
-		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
+		return ast.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
-	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, qbOffset)), nil
+	return ast.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, qbOffset)), nil
 }

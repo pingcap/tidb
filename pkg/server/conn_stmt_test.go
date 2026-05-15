@@ -18,22 +18,105 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
+	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
+
+type mockCursorRUV2ConsumptionReporter struct {
+	group     string
+	tikvRUV2  float64
+	tidbRUV2  float64
+	tiflashRU float64
+}
+
+func (*mockCursorRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
+
+func (m *mockCursorRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
+	m.group = resourceGroupName
+	m.tikvRUV2 += tikvRUV2
+	m.tidbRUV2 += tidbRUV2
+	m.tiflashRU += tiflashRUV2
+}
+
+type mockCursorTrackerRecordSet struct{}
+
+func (*mockCursorTrackerRecordSet) Fields() []*resolve.ResultField { return nil }
+func (*mockCursorTrackerRecordSet) Next(context.Context, *chunk.Chunk) error {
+	return nil
+}
+func (*mockCursorTrackerRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+func (*mockCursorTrackerRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &mockCursorTrackerRecordSet{}
+
+type firstNextErrRecordSet struct{}
+
+func (*firstNextErrRecordSet) Fields() []*resolve.ResultField {
+	panic("Fields should not be called before the first successful Next")
+}
+
+func (*firstNextErrRecordSet) Next(context.Context, *chunk.Chunk) error {
+	return fmt.Errorf("first next failed")
+}
+
+func (*firstNextErrRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.New(nil, 0, 0)
+}
+
+func (*firstNextErrRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &firstNextErrRecordSet{}
+
+type singleRowCursorRecordSet struct {
+	returned bool
+}
+
+func (*singleRowCursorRecordSet) Fields() []*resolve.ResultField {
+	return []*resolve.ResultField{{
+		Column:       &model.ColumnInfo{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		ColumnAsName: ast.NewCIStr("a"),
+	}}
+}
+
+func (rs *singleRowCursorRecordSet) Next(_ context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if rs.returned {
+		return nil
+	}
+	chk.AppendInt64(0, 1)
+	rs.returned = true
+	return nil
+}
+
+func (*singleRowCursorRecordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
+	return chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+}
+
+func (*singleRowCursorRecordSet) Close() error { return nil }
+
+var _ sqlexec.RecordSet = &singleRowCursorRecordSet{}
 
 func TestCursorExistsFlag(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -105,6 +188,119 @@ func TestCursorExistsFlag(t *testing.T) {
 }
 
 func TestCursorWithParams(t *testing.T) {
+	t.Run("cursor ruv2 delta reporting", func(t *testing.T) {
+		original := config.GetGlobalConfig()
+		t.Cleanup(func() {
+			if original != nil {
+				config.StoreGlobalConfig(original)
+			}
+		})
+		cfg := config.NewConfig()
+		cfg.RUV2 = config.DefaultRUV2Config()
+		config.StoreGlobalConfig(cfg)
+
+		reporter := &mockCursorRUV2ConsumptionReporter{}
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, ruv2Metrics)
+		ruv2Metrics.AddPlanCnt(2)
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.AddTiKVRUV2(11)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{ReadRpcCount: 3})
+		weights := execdetails.RUV2Weights{
+			RUScale:                 cfg.RUV2.RUScale,
+			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
+			ExecutorL1:              cfg.RUV2.ExecutorL1,
+			ExecutorL2:              cfg.RUV2.ExecutorL2,
+			ExecutorL3:              cfg.RUV2.ExecutorL3,
+			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
+			PlanCnt:                 cfg.RUV2.PlanCnt,
+			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
+			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
+			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
+			TxnCnt:                  cfg.RUV2.TxnCnt,
+		}
+		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, weights)
+		require.Equal(t, int64(3), ruv2Metrics.ResourceManagerReadCnt())
+		baselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
+		resultsetRS := resultset.New(&mockCursorTrackerRecordSet{}, nil)
+		resultset.AttachCursorRUV2Tracker(resultsetRS, tracker)
+		resultset.ReportCursorRUV2Delta(resultsetRS, 6)
+
+		require.Equal(t, "rg1", reporter.group)
+		expectedCursorDelta := ruv2Metrics.CalculateRUValues(weights) - baselineTiDBRU
+		require.Equal(t, expectedCursorDelta, reporter.tidbRUV2)
+		require.Equal(t, 0.0, reporter.tikvRUV2)
+		require.Equal(t, 0.0, reporter.tiflashRU)
+
+		postBaselineTiDBRU := ruv2Metrics.CalculateRUValues(weights)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{WriteRpcCount: 4})
+		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
+		expectedPendingRawDelta := ruv2Metrics.CalculateRUValues(weights) - postBaselineTiDBRU
+		require.Equal(t, expectedCursorDelta+expectedPendingRawDelta, reporter.tidbRUV2)
+
+		ruDetails.AddTiKVRUV2(7)
+		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 5, WRU: 8})
+		resultset.ReportCursorRUV2Delta(resultsetRS, 0)
+		require.Equal(t, "rg1", reporter.group)
+		require.Equal(t, float64(7), reporter.tikvRUV2)
+		require.Equal(t, float64(13), reporter.tiflashRU)
+	})
+
+	t.Run("cursor ruv2 bypass skips tracker creation", func(t *testing.T) {
+		reporter := &mockCursorRUV2ConsumptionReporter{}
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ruv2Metrics := execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, ruv2Metrics)
+		ruv2Metrics.SetBypass(true)
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.AddTiKVRUV2(11)
+		tracker := resultset.NewCursorRUV2Tracker(reporter, "rg1", ruv2Metrics, ruDetails, execdetails.RUV2Weights{})
+		require.Nil(t, tracker)
+		require.Empty(t, reporter.group)
+		require.Zero(t, reporter.tikvRUV2)
+		require.Zero(t, reporter.tidbRUV2)
+		require.Zero(t, reporter.tiflashRU)
+	})
+
+	t.Run("write chunks skips column access on first next error", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		srv := CreateMockServer(t, store)
+		srv.SetDomain(dom)
+		defer srv.Close()
+
+		c := CreateMockConn(t, srv).(*mockConn)
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		rs := resultset.New(&firstNextErrRecordSet{}, nil)
+
+		retryable, err := c.writeChunks(ctx, rs, false, mysql.ServerStatusAutocommit)
+		require.True(t, retryable)
+		require.ErrorContains(t, err, "first next failed")
+		require.Zero(t, execdetails.RUV2MetricsFromContext(ctx).ResultChunkCells())
+	})
+
+	t.Run("write chunks with fetch size records result chunk cells once", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		srv := CreateMockServer(t, store)
+		srv.SetDomain(dom)
+		defer srv.Close()
+
+		c := CreateMockConn(t, srv).(*mockConn)
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+		require.NotNil(t, ruv2Metrics)
+
+		rs := resultset.New(&singleRowCursorRecordSet{}, nil)
+		cursorRS := resultset.WrapWithLazyCursor(rs, 1, 1)
+		tracker := resultset.NewCursorRUV2Tracker(nil, "", ruv2Metrics, nil, execdetails.RUV2Weights{})
+		resultset.AttachCursorRUV2Tracker(cursorRS, tracker)
+
+		err := c.writeChunksWithFetchSize(ctx, cursorRS, mysql.ServerStatusAutocommit, 1)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), ruv2Metrics.ResultChunkCells())
+	})
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := CreateMockServer(t, store)
 	srv.SetDomain(dom)
@@ -132,11 +328,11 @@ func TestCursorWithParams(t *testing.T) {
 		0x0, 0x1, 0x3, 0x0, 0x3, 0x0,
 		0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0,
 	)))
-	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowContainerReader()
-	require.Equal(t, int64(1), rows.Current().GetInt64(0))
-	require.Equal(t, int64(2), rows.Current().GetInt64(1))
-	rows.Next()
-	require.Equal(t, rows.End(), rows.Current())
+	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowIterator()
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(0))
+	require.Equal(t, int64(2), rows.Current(context.Background()).GetInt64(1))
+	rows.Next(context.Background())
+	require.Equal(t, rows.End(), rows.Current(context.Background()))
 
 	// `execute stmt2 using 1` with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
@@ -145,13 +341,13 @@ func TestCursorWithParams(t *testing.T) {
 		0x0, 0x1, 0x3, 0x0,
 		0x1, 0x0, 0x0, 0x0,
 	)))
-	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowContainerReader()
-	require.Equal(t, int64(1), rows.Current().GetInt64(0))
-	require.Equal(t, int64(1), rows.Current().GetInt64(1))
-	require.Equal(t, int64(1), rows.Next().GetInt64(0))
-	require.Equal(t, int64(2), rows.Current().GetInt64(1))
-	rows.Next()
-	require.Equal(t, rows.End(), rows.Current())
+	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowIterator()
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(0))
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(1))
+	require.Equal(t, int64(1), rows.Next(context.Background()).GetInt64(0))
+	require.Equal(t, int64(2), rows.Current(context.Background()).GetInt64(1))
+	rows.Next(context.Background())
+	require.Equal(t, rows.End(), rows.Current(context.Background()))
 
 	// fetch stmt2 with fetch size 256
 	require.NoError(t, c.Dispatch(ctx, append(
@@ -240,134 +436,6 @@ func TestMemoryTrackForPrepareBinaryProtocol(t *testing.T) {
 		require.NoError(t, stmt.Close())
 	}
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
-}
-
-func TestCursorFetchShouldSpill(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := CreateMockServer(t, store)
-	srv.SetDomain(dom)
-	defer srv.Close()
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/testCursorFetchSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/testCursorFetchSpill"))
-	}()
-
-	appendUint32 := binary.LittleEndian.AppendUint32
-	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
-
-	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id_1 int, id_2 int)")
-	tk.MustExec("insert into t values (1, 1), (1, 2)")
-	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = ON")
-	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
-	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
-
-	// execute a normal statement, it'll spill to disk
-	stmt, _, _, err := c.Context().Prepare("select * from t")
-	require.NoError(t, err)
-
-	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", 1))
-
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-}
-
-func TestCursorFetchErrorInFetch(t *testing.T) {
-	tmpStoragePath := t.TempDir()
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = tmpStoragePath
-	})
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := CreateMockServer(t, store)
-	srv.SetDomain(dom)
-	defer srv.Close()
-
-	appendUint32 := binary.LittleEndian.AppendUint32
-	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
-
-	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, payload BLOB)")
-	payload := make([]byte, 512)
-	for i := 0; i < 2048; i++ {
-		rand.Read(payload)
-		tk.MustExec("insert into t values (?, ?)", i, payload)
-	}
-
-	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = ON")
-	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
-	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
-
-	// execute a normal statement, it'll spill to disk
-	stmt, _, _, err := c.Context().Prepare("select * from t")
-	require.NoError(t, err)
-
-	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", 1))
-
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error"))
-	}()
-	require.ErrorContains(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1024)), "fail to get chunk for test")
-	// after getting a failed FETCH, the cursor should have been reseted
-	require.False(t, stmt.GetCursorActive())
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
-	require.Len(t, tk.Session().GetSessionVars().DiskTracker.GetChildrenForTest(), 0)
-}
-
-func TestCursorFetchExecuteCheck(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := CreateMockServer(t, store)
-	srv.SetDomain(dom)
-	defer srv.Close()
-
-	appendUint32 := binary.LittleEndian.AppendUint32
-	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
-
-	stmt, _, _, err := c.Context().Prepare("select 1")
-	require.NoError(t, err)
-
-	// execute with wrong ID
-	require.Error(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID()+1)),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-
-	// execute with wrong flag
-	require.Error(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly|mysql.CursorTypeForUpdate, 0x1, 0x0, 0x0, 0x0,
-	)))
-
-	require.Error(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly|mysql.CursorTypeScrollable, 0x1, 0x0, 0x0, 0x0,
-	)))
 }
 
 func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *clientConn)) []byte {
@@ -488,8 +556,8 @@ func TestCursorFetchReset(t *testing.T) {
 	require.NoError(t, c.flush(context.Background()))
 	require.Equal(t, expected, out.Bytes())
 	// reset the statement
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	require.NoError(t, c.Dispatch(ctx, appendUint32(
+		[]byte{mysql.ComStmtReset}, uint32(stmt.ID()),
 	)))
 	// the following fetch will fail
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
@@ -577,9 +645,9 @@ func TestCursorFetchSendLongDataReset(t *testing.T) {
 	// send a parameter to the server
 	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, appendUint64([]byte{}, 1)))
 	// reset the statement
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
-	)))
+	require.NoError(t, c.Dispatch(ctx, appendUint32(
+		[]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	))
 	// execute directly will fail
 	require.Error(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),

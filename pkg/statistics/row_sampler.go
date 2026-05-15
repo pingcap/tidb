@@ -105,12 +105,12 @@ func (h WeightedRowSampleHeap) Less(i, j int) bool {
 }
 
 // Push implements the Heap interface.
-func (h *WeightedRowSampleHeap) Push(i interface{}) {
+func (h *WeightedRowSampleHeap) Push(i any) {
 	*h = append(*h, i.(*ReservoirRowSampleItem))
 }
 
 // Pop implements the Heap interface.
-func (h *WeightedRowSampleHeap) Pop() interface{} {
+func (h *WeightedRowSampleHeap) Pop() any {
 	old := *h
 	n := len(old)
 	item := old[n-1]
@@ -161,7 +161,7 @@ func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirR
 // Then use the weighted reservoir sampling to collect the samples.
 func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 	collector := NewRowSampleCollector(s.MaxSampleSize, s.SampleRate, len(s.ColsFieldType)+len(s.ColGroups))
-	for i := 0; i < len(s.ColsFieldType)+len(s.ColGroups); i++ {
+	for range len(s.ColsFieldType) + len(s.ColGroups) {
 		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
 	}
 	ctx := context.TODO()
@@ -231,9 +231,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 }
 
 func (s *baseCollector) destroyAndPutToPool() {
-	for _, sketch := range s.FMSketches {
-		sketch.DestroyAndPutToPool()
-	}
+	s.FMSketches = nil // Release for GC.
 }
 
 func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
@@ -317,9 +315,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		rowLen := len(pbSample.Row)
 		data := make([]types.Datum, 0, rowLen)
 		for _, col := range pbSample.Row {
-			b := make([]byte, len(col))
-			copy(b, col)
-			data = append(data, types.NewBytesDatum(b))
+			data = append(data, types.NewBytesDatum(col))
 		}
 		// Directly copy the weight.
 		sampleItem := &ReservoirRowSampleItem{Columns: data, Weight: pbSample.Weight}

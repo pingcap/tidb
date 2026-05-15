@@ -164,7 +164,7 @@ func TestBenchMark(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
 		LoopCount  int
-		Expression interface{}
+		Expression any
 		Expected   int64
 		IsNil      bool
 	}{
@@ -181,7 +181,7 @@ func TestBenchMark(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Benchmark, primitiveValsToConstants(ctx, []interface{}{
+		f, err := newFunctionForTest(ctx, ast.Benchmark, primitiveValsToConstants(ctx, []any{
 			c.LoopCount,
 			c.Expression,
 		})...)
@@ -248,7 +248,7 @@ func TestRowCount(t *testing.T) {
 // TestTiDBVersion for tidb_server().
 func TestTiDBVersion(t *testing.T) {
 	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []interface{}{})...)
+	f, err := newFunctionForTest(ctx, ast.TiDBVersion, primitiveValsToConstants(ctx, []any{})...)
 	require.NoError(t, err)
 	v, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -260,7 +260,7 @@ func TestLastInsertID(t *testing.T) {
 	maxUint64 := uint64(math.MaxUint64)
 	cases := []struct {
 		insertID uint64
-		args     interface{}
+		args     any
 		expected uint64
 		isNil    bool
 		getErr   bool
@@ -283,11 +283,11 @@ func TestLastInsertID(t *testing.T) {
 		}
 
 		if c.args != nil {
-			f, err = newFunctionForTest(ctx, ast.LastInsertId, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+			f, err = newFunctionForTest(ctx, ast.LastInsertId, primitiveValsToConstants(ctx, []any{c.args})...)
 		} else {
 			f, err = newFunctionForTest(ctx, ast.LastInsertId)
 		}
-		tp := f.GetType()
+		tp := f.GetType(ctx)
 		require.NoError(t, err)
 		require.Equal(t, mysql.TypeLonglong, tp.GetType())
 		require.Equal(t, charset.CharsetBin, tp.GetCharset())
@@ -314,8 +314,8 @@ func TestLastInsertID(t *testing.T) {
 func TestFormatBytes(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+		Arg any
+		Ret any
 	}{
 		{nil, nil},
 		{float64(0), "0 bytes"},
@@ -343,8 +343,8 @@ func TestFormatBytes(t *testing.T) {
 func TestFormatNanoTime(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Arg interface{}
-		Ret interface{}
+		Arg any
+		Ret any
 	}{
 		{nil, nil},
 		{float64(0), "0 ns"},

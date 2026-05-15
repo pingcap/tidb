@@ -67,3 +67,20 @@ func (es *Extensions) NewSessionExtensions() *SessionExtensions {
 	}
 	return newSessionExtensions(es)
 }
+
+// GetAuthPlugins returns the registered authentication plugins.
+func (es *Extensions) GetAuthPlugins() map[string]*AuthPlugin {
+	if es == nil {
+		return nil
+	}
+
+	authPlugins := make(map[string]*AuthPlugin)
+	for _, m := range es.manifests {
+		if m.authPlugins != nil {
+			for _, p := range m.authPlugins {
+				authPlugins[p.Name] = p
+			}
+		}
+	}
+	return authPlugins
+}

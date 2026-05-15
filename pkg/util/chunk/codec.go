@@ -16,7 +16,6 @@ package chunk
 
 import (
 	"encoding/binary"
-	"reflect"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -64,7 +63,7 @@ func (*Codec) encodeColumn(buffer []byte, col *Column) []byte {
 	}
 
 	// encode offsets.
-	if !col.isFixed() {
+	if !col.IsFixed() {
 		numOffsetBytes := (col.length + 1) * 8
 		offsetBytes := i64SliceToBytes(col.offsets)
 		buffer = append(buffer, offsetBytes[:numOffsetBytes]...)
@@ -79,11 +78,7 @@ func i64SliceToBytes(i64s []int64) (b []byte) {
 	if len(i64s) == 0 {
 		return nil
 	}
-	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	hdr.Len = len(i64s) * 8
-	hdr.Cap = hdr.Len
-	hdr.Data = uintptr(unsafe.Pointer(&i64s[0]))
-	return b
+	return unsafe.Slice((*byte)(unsafe.Pointer(&i64s[0])), len(i64s)*8)
 }
 
 // Decode decodes a Chunk from a byte slice, return the remained unused bytes.
@@ -99,7 +94,7 @@ func (c *Codec) Decode(buffer []byte) (*Chunk, []byte) {
 
 // DecodeToChunk decodes a Chunk from a byte slice, return the remained unused bytes.
 func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
-	for i := 0; i < len(chk.columns); i++ {
+	for i := range len(chk.columns) {
 		buffer = c.decodeColumn(buffer, chk.columns[i], i)
 	}
 	return buffer
@@ -161,15 +156,11 @@ func bytesToI64Slice(b []byte) (i64s []int64) {
 	if len(b) == 0 {
 		return nil
 	}
-	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&i64s))
-	hdr.Len = len(b) / 8
-	hdr.Cap = hdr.Len
-	hdr.Data = uintptr(unsafe.Pointer(&b[0]))
-	return i64s
+	return unsafe.Slice((*int64)(unsafe.Pointer(&b[0])), len(b)/8)
 }
 
-// varElemLen indicates this Column is a variable length Column.
-const varElemLen = -1
+// VarElemLen indicates this Column is a variable length Column.
+const VarElemLen = -1
 
 func getFixedLen(colType *types.FieldType) int {
 	switch colType.GetType() {
@@ -183,12 +174,12 @@ func getFixedLen(colType *types.FieldType) int {
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:
-		return varElemLen
+		return VarElemLen
 	}
 }
 
 // GetFixedLen get the memory size of a fixed-length type.
-// if colType is not fixed-length, it returns varElemLen, aka -1.
+// if colType is not fixed-length, it returns VarElemLen, aka -1.
 func GetFixedLen(colType *types.FieldType) int {
 	return getFixedLen(colType)
 }
@@ -201,7 +192,7 @@ func GetFixedLen(colType *types.FieldType) int {
 func EstimateTypeWidth(colType *types.FieldType) int {
 	colLen := getFixedLen(colType)
 	// Easy if it's a fixed-width type
-	if colLen != varElemLen {
+	if colLen != VarElemLen {
 		return colLen
 	}
 
@@ -225,7 +216,7 @@ func EstimateTypeWidth(colType *types.FieldType) int {
 }
 
 func init() {
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		allNotNullBitmap[i] = 0xFF
 	}
 }
@@ -258,11 +249,8 @@ func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
 func (c *Decoder) Decode(chk *Chunk) {
 	requiredRows := chk.RequiredRows() - chk.NumRows()
 	// Set the requiredRows to a multiple of 8.
-	requiredRows = (requiredRows + 7) >> 3 << 3
-	if requiredRows > c.remainedRows {
-		requiredRows = c.remainedRows
-	}
-	for i := 0; i < chk.NumCols(); i++ {
+	requiredRows = min((requiredRows+7)>>3<<3, c.remainedRows)
+	for i := range chk.NumCols() {
 		c.decodeColumn(chk, i, requiredRows)
 	}
 	c.remainedRows -= requiredRows
@@ -293,10 +281,10 @@ func (c *Decoder) ReuseIntermChk(chk *Chunk) {
 	for i, col := range c.intermChk.columns {
 		col.length = c.remainedRows
 		elemLen := getFixedLen(c.codec.colTypes[i])
-		if elemLen == varElemLen {
+		if elemLen == VarElemLen {
 			// For var-length types, we need to adjust the offsets before reuse.
 			if deltaOffset := col.offsets[0]; deltaOffset != 0 {
-				for j := 0; j < len(col.offsets); j++ {
+				for j := range col.offsets {
 					col.offsets[j] -= deltaOffset
 				}
 			}
@@ -312,7 +300,7 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 	srcCol := c.intermChk.columns[ordinal]
 	destCol := chk.columns[ordinal]
 
-	if elemLen == varElemLen {
+	if elemLen == VarElemLen {
 		// For var-length types, we need to adjust the offsets after appending to destCol.
 		numDataBytes = srcCol.offsets[requiredRows] - srcCol.offsets[0]
 		deltaOffset := destCol.offsets[destCol.length] - srcCol.offsets[0]
@@ -332,7 +320,7 @@ func (c *Decoder) decodeColumn(chk *Chunk, ordinal int, requiredRows int) {
 		// bitOffset indicates the number of valid bits in destCol.nullBitmap's last byte.
 		bitOffset := destCol.length % 8
 		startIdx := (destCol.length - 1) >> 3
-		for i := 0; i < numNullBitmapBytes; i++ {
+		for i := range numNullBitmapBytes {
 			destCol.nullBitmap[startIdx+i] |= srcCol.nullBitmap[i] << bitOffset
 			// The high order 8-bitOffset bits in `srcCol.nullBitmap[i]` should be appended to the low order of the next slot.
 			if startIdx+i+1 < bitMapLen {

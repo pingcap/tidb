@@ -15,39 +15,46 @@
 package optimizor_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
-	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDumpStatsAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
+	tmp := t.TempDir()
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
 	cfg := util.NewTestConfig()
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
@@ -55,19 +62,19 @@ func TestDumpStatsAPI(t *testing.T) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
 
 	statsHandler := optimizor.NewStatsHandler(dom)
 
 	prepareData(t, client, statsHandler)
-	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("tidb"), ast.NewCIStr("test"))
 	require.NoError(t, err)
 	err = dom.GetHistoricalStatsWorker().DumpHistoricalStats(tableInfo.Meta().ID, dom.StatsHandle())
 	require.NoError(t, err)
@@ -81,7 +88,7 @@ func TestDumpStatsAPI(t *testing.T) {
 		require.NoError(t, resp0.Body.Close())
 	}()
 
-	path := "/tmp/stats.json"
+	path := filepath.Join(tmp, "stats.json")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
@@ -113,7 +120,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "null", string(js))
 
-	path1 := "/tmp/stats_history.json"
+	path1 := filepath.Join(tmp, "stats_history.json")
 	fp1, err := os.Create(path1)
 	require.NoError(t, err)
 	require.NotNil(t, fp1)
@@ -149,17 +156,17 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("create database tidb")
 	tk.MustExec("use tidb")
 	tk.MustExec("create table test (a int, b varchar(20))")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("create index c on test (a, b)")
 	tk.MustExec("insert test values (1, 's')")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table test")
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	tk.MustExec("flush stats_delta *.*")
+	require.NoError(t, h.Update(context.Background(), is))
 }
 
 func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServerClient, handler *optimizor.StatsHandler) {
@@ -177,10 +184,10 @@ func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServ
 		}()
 		b, err := io.ReadAll(resp0.Body)
 		require.NoError(t, err)
-		jsonTable := &util2.JSONTable{}
+		jsonTable := &statsutil.JSONTable{}
 		err = json.Unmarshal(b, jsonTable)
 		require.NoError(t, err)
-		require.NotNil(t, jsonTable.Partitions[util2.TiDBGlobalStats])
+		require.NotNil(t, jsonTable.Partitions[statsutil.TiDBGlobalStats])
 		require.Len(t, jsonTable.Partitions, expectedLen)
 	}
 	check(false)
@@ -196,12 +203,12 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	}()
 	h := statHandle.Domain().StatsHandle()
 	tk := testkit.NewDBTestKit(t, db)
-	tk.MustExec("create table test2(a int) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
+	tk.MustExec("create table test2(a int, index idx(a)) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
 	tk.MustExec("insert into test2 (a) values (1)")
 	tk.MustExec("analyze table test2")
 	is := statHandle.Domain().InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	tk.MustExec("flush stats_delta *.*")
+	require.NoError(t, h.Update(context.Background(), is))
 }
 
 func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerClient) {
@@ -279,12 +286,133 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 	require.True(t, rows.Next(), "unexpected data")
 	var dbName, tableName string
 	var modifyCount, count int64
-	var other interface{}
-	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
+	var other any
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count, &other)
 	require.NoError(t, err)
 	require.Equal(t, "tidb", dbName)
 	require.Equal(t, "test", tableName)
 	require.Equal(t, int64(3), modifyCount)
 	require.Equal(t, int64(4), count)
 	require.NoError(t, rows.Close())
+}
+
+func TestStatsPriorityQueueAPI(t *testing.T) {
+	tmp := t.TempDir()
+	store := testkit.CreateMockStore(t)
+	driver := server2.NewTiDBDriver(store)
+	client := testserverclient.NewTestServerClient()
+	cfg := util.NewTestConfig()
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
+	cfg.Status.ReportStatus = true
+	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
+
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, driver)
+	require.NoError(t, err)
+	defer server.Close()
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	client.WaitUntilServerOnline()
+
+	router := mux.NewRouter()
+	handler := optimizor.NewStatsPriorityQueueHandler(dom)
+	router.Handle("/stats/priority-queue", handler)
+
+	resp, err := client.FetchStatus("/stats/priority-queue")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	js, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "priority queue not initialized", string(js))
+
+	// Init the queue.
+	handle := dom.StatsHandle()
+	require.False(t, handle.HandleAutoAnalyze())
+
+	resp, err = client.FetchStatus("/stats/priority-queue")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	js, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var snapshot types.PriorityQueueSnapshot
+	err = json.Unmarshal(js, &snapshot)
+	require.NoError(t, err)
+	require.Empty(t, snapshot.CurrentJobs)
+	require.Empty(t, snapshot.MustRetryTables)
+}
+
+// fix issue 53966
+func TestLoadNullStatsFile(t *testing.T) {
+	tmp := t.TempDir()
+	// Setting up the mock store
+	store := testkit.CreateMockStore(t)
+
+	// Creating a new TiDB driver and client
+	driver := server2.NewTiDBDriver(store)
+	client := testserverclient.NewTestServerClient()
+	cfg := util.NewTestConfig()
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
+	cfg.Status.ReportStatus = true
+	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
+
+	// Creating and running the server
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, driver)
+	require.NoError(t, err)
+	defer server.Close()
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	client.WaitUntilServerOnline()
+
+	// Creating the stats file
+	path := filepath.Join(tmp, "stats.json")
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+	fp.Write([]byte("null"))
+	require.NoError(t, err)
+
+	// Connecting to the database and executing SQL commands
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}))
+	require.NoError(t, err, "Error connecting")
+	tk := testkit.NewDBTestKit(t, db)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("load stats '%s'", path))
 }

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -37,31 +36,28 @@ type jsonObjectAgg struct {
 }
 
 type partialResult4JsonObjectAgg struct {
-	entries map[string]interface{}
-	bInMap  int // indicate there are 2^bInMap buckets in entries.
+	entries hack.MemAwareMap[string, any]
 }
 
 func (*jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
-	p.entries = make(map[string]interface{})
-	p.bInMap = 0
-	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*hack.DefBucketMemoryUsageForMapStringToAny
+	p.entries.Init(make(map[string]any))
+	return PartialResult(&p), DefPartialResult4JsonObjectAgg + int64(p.entries.Bytes)
 }
 
 func (*jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
-	p.entries = make(map[string]interface{})
-	p.bInMap = 0
+	p.entries.Init(make(map[string]any))
 }
 
-func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
-	if len(p.entries) == 0 {
+	if len(p.entries.M) == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
 
-	bj, err := types.CreateBinaryJSONWithCheck(p.entries)
+	bj, err := types.CreateBinaryJSONWithCheck(p.entries.M)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -69,7 +65,7 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partial
 	return nil
 }
 
-func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, keyIsNull, err := e.args[0].EvalString(sctx, row)
@@ -81,8 +77,8 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return 0, types.ErrJSONDocumentNULLKey
 		}
 
-		if e.args[0].GetType().GetCharset() == charset.CharsetBin {
-			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType().GetCharset())
+		if e.args[0].GetType(sctx).GetCharset() == charset.CharsetBin {
+			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType(sctx).GetCharset())
 		}
 
 		key = strings.Clone(key)
@@ -91,22 +87,16 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return 0, errors.Trace(err)
 		}
 
-		realVal, err := getRealJSONValue(value, e.args[1].GetType())
+		realVal, err := getRealJSONValue(value, e.args[1].GetType(sctx))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
-			if _, ok := p.entries[key]; !ok {
-				memDelta += int64(len(key)) + getValMemDelta(realVal)
-				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-					memDelta += (1 << p.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
-					p.bInMap++
-				}
+			if delta, insert := p.entries.SetExt(key, realVal); insert {
+				memDelta += int64(len(key)) + getValMemDelta(realVal) + delta
 			}
-			p.entries[key] = realVal
-
 		default:
 			return 0, types.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
@@ -134,7 +124,7 @@ func (e *jsonObjectAgg) deserializeForSpill(helper *deserializeHelper) (PartialR
 	return pr, memDelta + deserializeMemDelta
 }
 
-func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, error) {
+func getRealJSONValue(value types.Datum, ft *types.FieldType) (any, error) {
 	realVal := value.Clone().GetValue()
 	switch value.Kind() {
 	case types.KindBinaryLiteral, types.KindMysqlBit, types.KindBytes:
@@ -180,7 +170,7 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, erro
 	return realVal, nil
 }
 
-func getValMemDelta(val interface{}) (memDelta int64) {
+func getValMemDelta(val any) (memDelta int64) {
 	memDelta = DefInterfaceSize
 	switch v := val.(type) {
 	case bool:
@@ -211,17 +201,12 @@ func getValMemDelta(val interface{}) (memDelta int64) {
 	return memDelta
 }
 
-func (*jsonObjectAgg) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*jsonObjectAgg) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonObjectAgg)(src), (*partialResult4JsonObjectAgg)(dst)
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object
-	for k, v := range p1.entries {
-		p2.entries[k] = v
-		memDelta += int64(len(k)) + getValMemDelta(v)
-		if len(p2.entries)+1 > (1<<p2.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			memDelta += (1 << p2.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
-			p2.bInMap++
-		}
+	for k, v := range p1.entries.M {
+		memDelta += int64(len(k)) + getValMemDelta(v) + p2.entries.Set(k, v)
 	}
 	return memDelta, nil
 }

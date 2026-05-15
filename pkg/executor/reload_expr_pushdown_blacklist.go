@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // ReloadExprPushdownBlacklistExec indicates ReloadExprPushdownBlacklist executor.
@@ -41,7 +40,7 @@ func (e *ReloadExprPushdownBlacklistExec) Next(context.Context, *chunk.Chunk) er
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
 func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist")
 	if err != nil {
 		return err
@@ -69,11 +68,11 @@ func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 		}
 		newBlocklist[name] = value
 	}
-	if isSameExprPushDownBlackList(newBlocklist, expression.DefaultExprPushDownBlacklist.Load().(map[string]uint32)) {
+	if isSameExprPushDownBlackList(newBlocklist, *expression.DefaultExprPushDownBlacklist.Load()) {
 		return nil
 	}
 	expression.ExprPushDownBlackListReloadTimeStamp.Store(time.Now().UnixNano())
-	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
+	expression.DefaultExprPushDownBlacklist.Store(&newBlocklist)
 	return nil
 }
 
@@ -302,11 +301,14 @@ var funcName2Alias = map[string]string{
 	"is_ipv4_mapped":             ast.IsIPv4Mapped,
 	"is_ipv6":                    ast.IsIPv6,
 	"is_used_lock":               ast.IsUsedLock,
-	"master_pos_wait":            ast.MasterPosWait,
 	"name_const":                 ast.NameConst,
 	"release_all_locks":          ast.ReleaseAllLocks,
 	"sleep":                      ast.Sleep,
 	"uuid":                       ast.UUID,
+	"uuid_v4":                    ast.UUIDv4,
+	"uuid_v7":                    ast.UUIDv7,
+	"uuid_version":               ast.UUIDVersion,
+	"uuid_timestamp":             ast.UUIDTimestamp,
 	"uuid_short":                 ast.UUIDShort,
 	"get_lock":                   ast.GetLock,
 	"release_lock":               ast.ReleaseLock,
@@ -314,13 +316,9 @@ var funcName2Alias = map[string]string{
 	"aes_encrypt":                ast.AesEncrypt,
 	"compress":                   ast.Compress,
 	"decode":                     ast.Decode,
-	"des_decrypt":                ast.DesDecrypt,
-	"des_encrypt":                ast.DesEncrypt,
 	"encode":                     ast.Encode,
-	"encrypt":                    ast.Encrypt,
 	"md5":                        ast.MD5,
-	"old_password":               ast.OldPassword,
-	"password_func":              ast.PasswordFunc,
+	"password":                   ast.PasswordFunc,
 	"random_bytes":               ast.RandomBytes,
 	"sha1":                       ast.SHA1,
 	"sha":                        ast.SHA,
@@ -348,9 +346,18 @@ var funcName2Alias = map[string]string{
 	"json_merge_preserve":        ast.JSONMergePreserve,
 	"json_pretty":                ast.JSONPretty,
 	"json_quote":                 ast.JSONQuote,
+	"json_schema_valid":          ast.JSONSchemaValid,
 	"json_search":                ast.JSONSearch,
 	"json_storage_size":          ast.JSONStorageSize,
 	"json_depth":                 ast.JSONDepth,
 	"json_keys":                  ast.JSONKeys,
 	"json_length":                ast.JSONLength,
+	"vec_dims":                   ast.VecDims,
+	"vec_l1_distance":            ast.VecL1Distance,
+	"vec_l2_distance":            ast.VecL2Distance,
+	"vec_negative_inner_product": ast.VecNegativeInnerProduct,
+	"vec_cosine_distance":        ast.VecCosineDistance,
+	"vec_l2_norm":                ast.VecL2Norm,
+	"vec_from_text":              ast.VecFromText,
+	"vec_as_text":                ast.VecAsText,
 }

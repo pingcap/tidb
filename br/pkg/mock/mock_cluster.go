@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -61,7 +62,7 @@ func NewCluster() (*Cluster, error) {
 		}()
 	})
 
-	storage, err := mockstore.NewMockStore(
+	storage, err := teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster.Cluster = c
@@ -72,7 +73,6 @@ func NewCluster() (*Cluster, error) {
 	}
 	cluster.Storage = storage
 
-	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
@@ -88,11 +88,12 @@ func NewCluster() (*Cluster, error) {
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
 	server.RunInGoTest = true
+	server.RunInGoTestChan = make(chan struct{})
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
 	// let tidb random select a port
 	cfg.Port = 0
-	cfg.Store = "tikv"
+	cfg.Store = config.StoreTypeTiKV
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
@@ -103,10 +104,11 @@ func (mock *Cluster) Start() error {
 	}
 	mock.Server = svr
 	go func() {
-		if err1 := svr.Run(); err1 != nil {
+		if err1 := svr.Run(nil); err1 != nil {
 			panic(err1)
 		}
 	}()
+	<-server.RunInGoTestChan
 	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
@@ -168,7 +170,7 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	}
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
-	for retry = 0; retry < retryTime; retry++ {
+	for retry = range retryTime {
 		// #nosec G107
 		resp, err := http.Get(statusURL) // nolint:noctx,gosec
 		if err == nil {
@@ -181,7 +183,8 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	}
 	if retry == retryTime {
 		log.Panic("failed to connect HTTP status in every 10 ms",
-			zap.Int("retryTime", retryTime))
+			zap.Int("retryTime", retryTime),
+			zap.String("url", statusURL))
 	}
 	return strings.SplitAfter(dsn, "/")[0]
 }

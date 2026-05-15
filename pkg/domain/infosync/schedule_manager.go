@@ -16,6 +16,7 @@ package infosync
 
 import (
 	"context"
+	"maps"
 	"sync"
 
 	pd "github.com/tikv/pd/client/http"
@@ -34,32 +35,28 @@ type PDScheduleManager struct {
 
 type mockScheduleManager struct {
 	sync.RWMutex
-	schedules map[string]interface{}
+	schedules map[string]any
 }
 
 // GetScheduleConfig get schedule config from schedules map
-func (mm *mockScheduleManager) GetScheduleConfig(context.Context) (map[string]interface{}, error) {
+func (mm *mockScheduleManager) GetScheduleConfig(context.Context) (map[string]any, error) {
 	mm.Lock()
 
-	schedules := make(map[string]interface{})
-	for key, values := range mm.schedules {
-		schedules[key] = values
-	}
+	schedules := make(map[string]any)
+	maps.Copy(schedules, mm.schedules)
 
 	mm.Unlock()
 	return schedules, nil
 }
 
 // SetScheduleConfig set schedule config to schedules map
-func (mm *mockScheduleManager) SetScheduleConfig(_ context.Context, config map[string]interface{}) error {
+func (mm *mockScheduleManager) SetScheduleConfig(_ context.Context, config map[string]any) error {
 	mm.Lock()
 
 	if mm.schedules == nil {
 		mm.schedules = make(map[string]any)
 	}
-	for key, value := range config {
-		mm.schedules[key] = value
-	}
+	maps.Copy(mm.schedules, config)
 
 	mm.Unlock()
 	return nil

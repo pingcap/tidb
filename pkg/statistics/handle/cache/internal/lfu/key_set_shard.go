@@ -26,7 +26,7 @@ type keySetShard struct {
 
 func newKeySetShard() *keySetShard {
 	result := keySetShard{}
-	for i := 0; i < keySetCnt; i++ {
+	for i := range keySetCnt {
 		result.resultKeySet[i] = keySet{
 			set: make(map[int64]*statistics.Table),
 		}

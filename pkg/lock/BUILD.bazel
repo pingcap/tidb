@@ -7,10 +7,11 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
-        "//pkg/parser/model",
+        "//pkg/infoschema/context",
+        "//pkg/lock/context",
+        "//pkg/meta/metadef",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx",
         "//pkg/table",
-        "//pkg/util",
     ],
 )

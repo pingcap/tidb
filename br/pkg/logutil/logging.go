@@ -3,10 +3,12 @@
 package logutil
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"testing"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -14,8 +16,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -40,7 +44,7 @@ func (abb AbbreviatedArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncode
 
 // AbbreviatedArray constructs a field that abbreviates an array of elements.
 func AbbreviatedArray(
-	key string, elements interface{}, marshalFunc func(interface{}) []string,
+	key string, elements any, marshalFunc func(any) []string,
 ) zap.Field {
 	return zap.Array(key, AbbreviatedArrayMarshaler(marshalFunc(elements)))
 }
@@ -59,6 +63,18 @@ func (file zapFileMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	enc.AddUint64("totalBytes", file.GetTotalBytes())
 	enc.AddUint64("CRC64Xor", file.GetCrc64Xor())
 	return nil
+}
+
+func AbbreviatedStringers[T fmt.Stringer](key string, stringers []T) zap.Field {
+	if len(stringers) < 4 {
+		return zap.Stringers(key, stringers)
+	}
+	return zap.Array(key, zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+		ae.AppendString(stringers[0].String())
+		ae.AppendString(fmt.Sprintf("(skip %d)", len(stringers)-2))
+		ae.AppendString(stringers[len(stringers)-1].String())
+		return nil
+	}))
 }
 
 type zapFilesMarshaler []*backuppb.File
@@ -208,6 +224,44 @@ func (m zapSSTMetasMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 	return nil
 }
 
+// Describes the overall range of the SST metas and their size.
+func BriefSSTMetas(key string, sstMetas []*import_sstpb.SSTMeta) zap.Field {
+	var (
+		startKey, endKey []byte
+		total            int
+		totalSize        uint64
+		totalKv          uint64
+		totalKvSize      uint64
+	)
+
+	for _, meta := range sstMetas {
+		if total == 0 {
+			startKey = meta.GetRange().GetStart()
+			endKey = meta.GetRange().GetEnd()
+		}
+		if bytes.Compare(meta.GetRange().GetStart(), startKey) < 0 {
+			startKey = meta.GetRange().GetStart()
+		}
+		// NOTE: SST meta shouldn't has an empty end key?
+		if bytes.Compare(meta.GetRange().GetEnd(), endKey) > 0 {
+			endKey = meta.GetRange().GetEnd()
+		}
+		totalSize += meta.GetLength()
+		totalKv += meta.GetTotalKvs()
+		totalKvSize += meta.GetTotalBytes()
+		total++
+	}
+	return zap.Object(key, zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+		enc.AddInt("total", total)
+		enc.AddString("startKey", redact.Key(startKey))
+		enc.AddString("endKey", redact.Key(endKey))
+		enc.AddUint64("totalSize", totalSize)
+		enc.AddUint64("totalKvs", totalKv)
+		enc.AddUint64("totalKvSize", totalKvSize)
+		return nil
+	}))
+}
+
 // SSTMetas make the zap fields for SST metas.
 func SSTMetas(sstMetas []*import_sstpb.SSTMeta) zap.Field {
 	return zap.Array("sstMetas", zapSSTMetasMarshaler(sstMetas))
@@ -263,7 +317,7 @@ func WarnTerm(message string, fields ...zap.Field) {
 }
 
 // RedactAny constructs a redacted field that carries an interface{}.
-func RedactAny(fieldKey string, key interface{}) zap.Field {
+func RedactAny(fieldKey string, key any) zap.Field {
 	if redact.NeedRedact() {
 		return zap.String(fieldKey, "?")
 	}
@@ -276,6 +330,10 @@ func Redact(field zap.Field) zap.Field {
 		return zap.String(field.Key, "?")
 	}
 	return field
+}
+
+func StringifyRangeOf(start, end []byte) StringifyRange {
+	return StringifyRange{StartKey: start, EndKey: end}
 }
 
 // StringifyKeys wraps the key range into a stringer.
@@ -308,7 +366,7 @@ func (rng StringifyRange) String() string {
 	} else {
 		endKey = redact.Key(rng.EndKey)
 	}
-	sb.WriteString(redact.String(endKey))
+	sb.WriteString(redact.Value(endKey))
 	sb.WriteString(")")
 	return sb.String()
 }
@@ -339,4 +397,37 @@ func (b HexBytes) String() string {
 // MarshalJSON implements json.Marshaler.
 func (b HexBytes) MarshalJSON() ([]byte, error) {
 	return json.Marshal(hex.EncodeToString(b))
+}
+
+func MarshalHistogram(m prometheus.Histogram) zapcore.ObjectMarshaler {
+	return zapcore.ObjectMarshalerFunc(func(mal zapcore.ObjectEncoder) error {
+		if m == nil {
+			return nil
+		}
+
+		met := metric.ReadHistogram(m)
+		if met == nil || met.Histogram == nil {
+			return nil
+		}
+
+		hist := met.Histogram
+		for _, b := range hist.GetBucket() {
+			key := fmt.Sprintf("lt_%f", b.GetUpperBound())
+			mal.AddUint64(key, b.GetCumulativeCount())
+		}
+		mal.AddUint64("count", hist.GetSampleCount())
+		mal.AddFloat64("total", hist.GetSampleSum())
+		return nil
+	})
+}
+
+// OverrideLevel temporary sets level to the global logger.
+//
+// Don't use this in parallel test cases.
+func OverrideLevelForTest(t *testing.T, lvl zapcore.Level) {
+	t.Helper()
+
+	oldLvl := log.GetLevel()
+	t.Cleanup(func() { log.SetLevel(oldLvl) })
+	log.SetLevel(lvl)
 }

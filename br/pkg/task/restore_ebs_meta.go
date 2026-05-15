@@ -18,7 +18,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -116,8 +115,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	var (
 		tlsConf *tls.Config
 	)
-	pdAddress := strings.Join(h.cfg.PD, ",")
-	if len(pdAddress) == 0 {
+	if len(h.cfg.PD) == 0 {
 		return errors.Annotate(berrors.ErrInvalidArgument, "pd address can not be empty")
 	}
 
@@ -132,7 +130,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 		}
 	}
 
-	controller, err := pdutil.NewPdController(ctx, pdAddress, tlsConf, securityOption)
+	controller, err := pdutil.NewPdController(ctx, h.cfg.PD, tlsConf, securityOption)
 	if err != nil {
 		log.Error("fail to create pd controller", zap.Error(err))
 		return errors.Trace(err)
@@ -205,7 +203,7 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	}
 
 	if h.cfg.SkipAWS {
-		for i := 0; i < int(h.metaInfo.GetStoreCount()); i++ {
+		for i := range int(h.metaInfo.GetStoreCount()) {
 			progress.Inc()
 			log.Info("mock: create volume from snapshot finished.", zap.Int("index", i))
 			time.Sleep(800 * time.Millisecond)
@@ -230,7 +228,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		err         error
 		totalSize   int64
 		// a map whose key is available zone, and value is the snapshot id array
-		snapshotsIDsMap = make(map[string][]*string)
+		snapshotsIDsMap = make(map[string][]string)
 	)
 	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency, h.cfg.S3.Region)
 	if err != nil {

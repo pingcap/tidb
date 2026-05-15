@@ -22,17 +22,20 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,8 +48,9 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err = core.Preprocess(context.Background(), ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
-	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(context.Background(), ctx, nodeW, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
+	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v, terr:%v", sql, err, terr)
 }
 
 func TestValidator(t *testing.T) {
@@ -58,7 +62,7 @@ func TestValidator(t *testing.T) {
 		{"select ?", false, parser.ErrSyntax},
 		{"select ?", true, nil},
 		{"create table t(id int not null auto_increment default 2, key (id))", true,
-			errors.New("Invalid default value for 'id'")},
+			errors.New("[types:1067]Invalid default value for 'id'")},
 		{"create table t(id int not null default 2 auto_increment, key (id))", true,
 			errors.New("Invalid default value for 'id'")},
 		// Default value can be null when the column is primary key in MySQL 5.6.
@@ -71,6 +75,8 @@ func TestValidator(t *testing.T) {
 		{"create table t(id int not null auto_increment, c int, key (c, id))", true, nil},
 		{"create table t(id decimal auto_increment, key (id))", true,
 			errors.New("Incorrect column specifier for column 'id'")},
+		{"create table t0 (c int(10), c1 date auto_increment default (current_date()))", true,
+			errors.New("[types:1067]Invalid default value for 'c1'")},
 		{"create table t(id float auto_increment, key (id))", true, nil},
 		{"create table t(id int auto_increment) ENGINE=MYISAM", true, nil},
 		{"create table t(a int primary key, b int, c varchar(10), d char(256));", true,
@@ -174,7 +180,7 @@ func TestValidator(t *testing.T) {
 		{"CREATE TABLE `t` (`a` varchar(10) DEFAULT now());", false, types.ErrInvalidDefault},
 		{"CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );", false, nil},
 
-		{`explain format = "xx" select 100;`, false, core.ErrUnknownExplainFormat.GenWithStackByArgs("xx")},
+		{`explain format = "xx" select 100;`, false, plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs("xx")},
 
 		// issue 4472
 		{`select sum(distinct(if('a', (select adddate(elt(999, count(*)), interval 1 day)), .1))) as foo;`, true, nil},
@@ -208,16 +214,16 @@ func TestValidator(t *testing.T) {
 		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 
 		// issue 24309
-		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
 
 		// Error caused by "Table 'test.u' doesn't exist".
-		// {"(SELECT * FROM t INTO OUTFILE 'ttt') UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+		// {"(SELECT * FROM t INTO OUTFILE 'ttt') UNION SELECT * FROM u", false, plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
 
-		{"select * from ( select 1 ) a, (select 2) a;", false, core.ErrNonUniqTable},
-		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, core.ErrNonUniqTable},
-		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, core.ErrNonUniqTable},
-		{"select * from ( select 1 ) a join (select 2) b join (select 3) a;", false, core.ErrNonUniqTable},
-		{"select person.id from person inner join person on person.id = person.id;", false, core.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) a;", false, plannererrors.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, plannererrors.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, plannererrors.ErrNonUniqTable},
+		{"select * from ( select 1 ) a join (select 2) b join (select 3) a;", false, plannererrors.ErrNonUniqTable},
+		{"select person.id from person inner join person on person.id = person.id;", false, plannererrors.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b;", true, nil},
 		{"select * from (select * from ( select 1 ) a join (select 2) b) b join (select 3) a;", false, nil},
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
@@ -228,8 +234,8 @@ func TestValidator(t *testing.T) {
 		{"CREATE VIEW V AS SELECT 5 LOCK IN SHARE MODE", false, nil},
 
 		// issue 9464
-		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
-		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, plannererrors.ErrUnsupportedOnGeneratedColumn},
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, plannererrors.ErrUnsupportedOnGeneratedColumn},
 		{"create table t (a DOUBLE NULL, b_sto DOUBLE GENERATED ALWAYS AS (a + 2) STORED UNIQUE KEY NOT NULL PRIMARY KEY);", false, nil},
 
 		// ~~issue 13032~~
@@ -275,13 +281,76 @@ func TestValidator(t *testing.T) {
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
+
+		// issue 45674
+		{"alter table t2 add (b int)", true, nil},
+		{"alter table t2 add (b int)", false, infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t2")},
+		{"create index x on t2(x)", true, nil},
+		{"create index x on t2(x)", false, infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t2")},
+
+		// Invalid usages of columnar indexes
+		// Note: USING VECTOR is currently not introduced yet.
+		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", false, errors.New(`[ddl:8200]'USING HYPO' is not supported for VECTOR INDEX`)},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a)", false, errors.New(`[ddl:8200]COLUMNAR INDEX must specify 'USING <index_type>'`)},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a, b) USING INVERTED COMMENT 'a'", false, errors.New(`[ddl:8200]COLUMNAR INDEX of INVERTED type must specify one column name`)},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING HYPO COMMENT 'a'", false, errors.New(`[ddl:8200]'USING HYPO' is not supported for COLUMNAR INDEX`)},
+		{"ALTER TABLE t ADD COLUMNAR INDEX ((a - 1)) USING HYPO COMMENT 'a'", false, errors.New(`[ddl:8200]'USING HYPO' is not supported for COLUMNAR INDEX`)},
+		{"ALTER TABLE t ADD INDEX (a) USING HNSW", false, errors.New(`[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX`)},
+		{"ALTER TABLE t ADD INDEX (a) USING INVERTED", false, errors.New(`[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX`)},
+		// {"ALTER TABLE t ADD INDEX (a) USING VECTOR", false, errors.New(`[ddl:8200]'USING VECTOR' can be only used for COLUMNAR INDEX`)},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) WITH PARSER foo", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
+		{"ALTER TABLE t ADD FULLTEXT INDEX (a) USING HNSW", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
+		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", false, errors.New(`[ddl:8200]'USING BTREE' is not supported for VECTOR INDEX`)},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE VECTOR INDEX idx ON t (a, (VEC_COSINE_DISTANCE(a))) USING HNSW", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE VECTOR INDEX ident ON d_n.t_n ( ident , ident2 ASC ) TYPE HNSW", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE UNIQUE INDEX ident USING HNSW ON d_n.t_n ( ident , ident2 ASC )", false, errors.New(`[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX`)},
+		{"CREATE INDEX ident USING HNSW ON d_n.t_n ( ident )", false, errors.New(`[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX`)},
+		{"CREATE INDEX ident USING INVERTED ON d_n.t_n ( ident )", false, errors.New(`[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX`)},
+		// {"CREATE INDEX ident USING VECTOR ON d_n.t_n ( ident )", false, errors.New(`[ddl:8200]'USING VECTOR' can be only used for COLUMNAR INDEX`)},
+		{"CREATE COLUMNAR INDEX ident USING HNSW ON d_n.t_n ( ident )", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for COLUMNAR INDEX`)},
+		{"CREATE VECTOR INDEX ident USING HNSW ON d_n.t_n ( ident )", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		// {"CREATE VECTOR INDEX ident USING VECTOR ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[ddl:8200]'USING VECTOR' is not supported for VECTOR INDEX`)},
+		{"CREATE COLUMNAR INDEX ident ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[ddl:8200]COLUMNAR INDEX must specify 'USING <index_type>'`)},
+		{"CREATE COLUMNAR INDEX ident ON d_n.t_n (ident)", false, errors.New(`[ddl:8200]COLUMNAR INDEX must specify 'USING <index_type>'`)},
+		{"CREATE COLUMNAR INDEX ident USING HNSW ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for COLUMNAR INDEX`)},
+		// {"CREATE COLUMNAR INDEX ident USING VECTOR ON d_n.t_n (ident)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE COLUMNAR INDEX ident USING INVERTED ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[ddl:8200]COLUMNAR INDEX of INVERTED type must specify one column name`)},
+		{"CREATE FULLTEXT INDEX ident ON d_n.t_n (ident) WITH PARSER foo", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
+		{"CREATE FULLTEXT INDEX ident ON d_n.t_n (ident) USING HNSW", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
+		{"CREATE TABLE t(a int, b vector(3), UNIQUE INDEX(b) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX`)},
+		{"CREATE TABLE t(a int, b vector(3), UNIQUE INDEX(b) USING INVERTED)", false, errors.New(`[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX`)},
+		// {"CREATE TABLE t(a int, b vector(3), UNIQUE INDEX(b) USING VECTOR)", false, errors.New(`[ddl:8200]'USING VECTOR' can be only used for COLUMNAR INDEX`)},
+		{"CREATE TABLE t(a int, b vector(3), VECTOR INDEX(b) USING HNSW)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE TABLE t(a int, b vector(3), VECTOR INDEX(a, b) USING HNSW)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE TABLE t(a int, b vector(3), VECTOR INDEX((VEC_COSINE_DISTANCE(b))) USING HASH)", false, errors.New(`[ddl:8200]'USING HASH' is not supported for VECTOR INDEX`)},
+		{"CREATE TABLE t(a int, b vector(3), VECTOR INDEX(a, (VEC_COSINE_DISTANCE(b))) USING HNSW)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE TABLE t(a int, b vector(3), VECTOR INDEX((VEC_COSINE_DISTANCE(b)), a) USING HNSW)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE TABLE t(a int, COLUMNAR INDEX(b))", false, errors.New(`[ddl:8200]COLUMNAR INDEX must specify 'USING <index_type>'`)},
+		{"CREATE TABLE t(a int, COLUMNAR INDEX(b) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for COLUMNAR INDEX`)},
+		// {"CREATE TABLE t(a int, COLUMNAR INDEX(b) USING VECTOR)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) WITH PARSER foo)", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
+		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
+
+		// The following columnar index usages are valid, they only fail due to table not found.
+		{"CREATE VECTOR INDEX ident USING HNSW ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		{"CREATE VECTOR INDEX ident ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		// {"CREATE COLUMNAR INDEX ident USING VECTOR ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		{"CREATE FULLTEXT INDEX x ON ident (col_x)", false, errors.New(`[schema:1146]Table 'test.ident' doesn't exist`)},
+
+		// LATERAL derived tables pass preprocessing; validation happens in the planner.
+		{"SELECT * FROM t, LATERAL (SELECT t.a) AS dt", false, nil},
+		{"SELECT * FROM t LEFT JOIN LATERAL (SELECT t.a) AS dt ON true", false, nil},
 	}
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	for _, tt := range tests {
 		runSQL(t, tk.Session(), is, tt.sql, tt.inPrepare, tt.err)
 	}
@@ -316,15 +385,15 @@ func TestDropGlobalTempTable(t *testing.T) {
 	tk.MustExec("create global temporary table test2.temp2(id int) on commit delete rows;")
 
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	runSQL(t, tk.Session(), is, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table tb;", false, plannererrors.ErrDropTableOnTemporaryTable)
 	runSQL(t, tk.Session(), is, "drop global temporary table temp", false, nil)
-	runSQL(t, tk.Session(), is, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.tb;", false, plannererrors.ErrDropTableOnTemporaryTable)
 	runSQL(t, tk.Session(), is, "drop global temporary table test.temp1", false, nil)
-	runSQL(t, tk.Session(), is, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	runSQL(t, tk.Session(), is, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table ltemp1", false, plannererrors.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.ltemp1", false, plannererrors.ErrDropTableOnTemporaryTable)
 	runSQL(t, tk.Session(), is, "drop global temporary table temp, temp1", false, nil)
-	runSQL(t, tk.Session(), is, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
-	runSQL(t, tk.Session(), is, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, tb", false, plannererrors.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, ltemp1", false, plannererrors.ErrDropTableOnTemporaryTable)
 	runSQL(t, tk.Session(), is, "drop global temporary table test2.temp2, temp1", false, nil)
 }
 
@@ -334,7 +403,7 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
 		errors.New("[types:1074]Column length too big for column 'a' (max = 65535); use BLOB or TEXT instead"))
 
@@ -399,7 +468,8 @@ func TestPreprocessCTE(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, stmts, 1)
 
-		err = core.Preprocess(context.Background(), tk.Session(), stmts[0])
+		nodeW := resolve.NewNodeW(stmts[0])
+		err = core.Preprocess(context.Background(), tk.Session(), nodeW)
 		require.NoError(t, err)
 
 		var rs strings.Builder
@@ -407,4 +477,15 @@ func TestPreprocessCTE(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, tc.after, rs.String())
 	}
+}
+
+func TestPreprocessDeleteFromWithAlias(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/56726
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int);")
+	tk.MustExec(" create table t2(id int);")
+	tk.MustExec("delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
+	tk.MustExec("create global binding for delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id using delete /*+ MAX_EXECUTION_TIME(10)*/ tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
 }

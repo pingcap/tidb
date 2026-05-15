@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,6 +49,7 @@ func testKeyTable(t *testing.T, collations []string, tests []keyTable) {
 		for _, test := range tests {
 			comment := fmt.Sprintf("key %v, using %v", test.Str, c)
 			require.Equal(t, test.Expect[i], collator.Key(test.Str), comment)
+			require.Equal(t, test.Expect[i], collator.ImmutableKey(test.Str), comment)
 		}
 	}
 }
@@ -176,7 +178,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &unicodeCICollator{}, GetCollator("utf8_unicode_ci"))
 	require.IsType(t, &zhPinyinTiDBASCSCollator{}, GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"))
 	require.IsType(t, &unicode0900AICICollator{}, GetCollator("utf8mb4_0900_ai_ci"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_0900_bin"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_0900_bin"))
 	require.IsType(t, &binPaddingCollator{}, GetCollator("default_test"))
 	require.IsType(t, &binCollator{}, GetCollatorByID(63))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(46))
@@ -190,30 +192,59 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(9999))
 
 	SetNewCollationEnabledForTest(false)
-	require.IsType(t, &binCollator{}, GetCollator("binary"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_bin"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8_bin"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_general_ci"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8_general_ci"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_unicode_ci"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8_unicode_ci"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"))
-	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_0900_ai_ci"))
-	require.IsType(t, &binCollator{}, GetCollator("default_test"))
-	require.IsType(t, &binCollator{}, GetCollatorByID(63))
-	require.IsType(t, &binCollator{}, GetCollatorByID(46))
-	require.IsType(t, &binCollator{}, GetCollatorByID(83))
-	require.IsType(t, &binCollator{}, GetCollatorByID(45))
-	require.IsType(t, &binCollator{}, GetCollatorByID(33))
-	require.IsType(t, &binCollator{}, GetCollatorByID(224))
-	require.IsType(t, &binCollator{}, GetCollatorByID(255))
-	require.IsType(t, &binCollator{}, GetCollatorByID(309))
-	require.IsType(t, &binCollator{}, GetCollatorByID(192))
-	require.IsType(t, &binCollator{}, GetCollatorByID(2048))
-	require.IsType(t, &binCollator{}, GetCollatorByID(9999))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("binary"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_bin"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8_bin"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_general_ci"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8_general_ci"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_unicode_ci"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8_unicode_ci"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("utf8mb4_0900_ai_ci"))
+	require.IsType(t, &derivedBinCollator{}, GetCollator("default_test"))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(63))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(46))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(83))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(45))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(33))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(224))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(255))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(309))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(192))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(2048))
+	require.IsType(t, &derivedBinCollator{}, GetCollatorByID(9999))
 
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
 	require.IsType(t, &gbkBinCollator{}, GetCollator("gbk_bin"))
 	require.IsType(t, &gbkBinCollator{}, GetCollatorByID(87))
+}
+
+type collator interface {
+	Compare(a, b string) int
+	Key(str string) []byte
+}
+
+func TestCampareInvalidUTF8Rune(t *testing.T) {
+	collaters := []collator{
+		&generalCICollator{},                                   // index: 0
+		&unicode0900AICICollator{},                             // index: 1
+		&unicodeCICollator{},                                   // index: 2
+		&gbkChineseCICollator{},                                // index: 3
+		&gb18030BinCollator{charset.NewCustomGB18030Encoder()}, // index: 4
+		&gbkBinCollator{charset.NewCustomGBKEncoder()},         // index: 5
+	}
+
+	for i, c := range collaters {
+		require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xff})), 0)
+		require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xfe})), 0)
+		// For `gbk_bin` and `gb18030_bin`, it will use 0x3f instead of invalid utf8 rune.
+		if i < 4 {
+			require.Equal(t, c.Compare(string([]byte{0xff}), string([]byte{0xff, 0x3e})), 0)
+			require.Equal(t, c.Compare(string([]byte{0x3e, 0xff}), string([]byte{0x3e, 0xff, 0x3e})), 0)
+		}
+		require.NotNil(t, c.Key(string([]byte{0xff})))
+		require.NotNil(t, c.Key(string([]byte{0x3e, 0xff})))
+		require.NotNil(t, c.Key(string([]byte{0x3e, 0xff, 0x3e})))
+	}
 }

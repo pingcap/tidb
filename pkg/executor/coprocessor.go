@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -44,7 +43,7 @@ func copHandlerCtx(ctx context.Context, req *coprocessor.Request) context.Contex
 		return ctx
 	}
 
-	traceInfo := &model.TraceInfo{
+	traceInfo := &tracing.TraceInfo{
 		ConnectionID: source.ConnectionId,
 		SessionAlias: source.SessionAlias,
 	}
@@ -71,7 +70,7 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	ctx = copHandlerCtx(ctx, req)
 
-	e, err := h.buildDAGExecutor(req)
+	e, err := h.buildDAGExecutor(ctx, req)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
@@ -114,7 +113,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	ctx = copHandlerCtx(ctx, req)
 	logutil.Logger(ctx).Debug("handle coprocessor stream request")
 
-	e, err := h.buildDAGExecutor(req)
+	e, err := h.buildDAGExecutor(ctx, req)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
@@ -155,7 +154,7 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 	return nil
 }
 
-func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec.Executor, error) {
+func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *coprocessor.Request) (exec.Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
@@ -172,11 +171,11 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 				Username: dagReq.User.UserName,
 				Hostname: dagReq.User.UserHost,
 			}
-			authName, authHost, success := pm.MatchIdentity(dagReq.User.UserName, dagReq.User.UserHost, false)
+			authName, authHost, success := pm.MatchIdentity(ctx, dagReq.User.UserName, dagReq.User.UserHost, false)
 			if success && pm.GetAuthWithoutVerification(authName, authHost) {
 				h.sctx.GetSessionVars().User.AuthUsername = authName
 				h.sctx.GetSessionVars().User.AuthHostname = authHost
-				h.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)
+				h.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(ctx, authName, authHost)
 			}
 		}
 	}
@@ -193,14 +192,14 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 	h.dagReq = dagReq
 	is := h.sctx.GetInfoSchema().(infoschema.InfoSchema)
 	// Build physical plan.
-	bp := core.NewPBPlanBuilder(h.sctx, is, req.Ranges)
+	bp := core.NewPBPlanBuilder(h.sctx.GetPlanCtx(), is, req.Ranges)
 	plan, err := bp.Build(dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is, nil)
+	b := newExecutorBuilder(ctx, h.sctx, is, nil)
 	return b.build(plan), nil
 }
 
@@ -221,7 +220,7 @@ func (h *CoprocessorDAGHandler) buildUnaryResponse(chunks []tipb.Chunk) *coproce
 		Chunks:     chunks,
 		EncodeType: h.dagReq.EncodeType,
 	}
-	if h.dagReq.CollectExecutionSummaries != nil && *h.dagReq.CollectExecutionSummaries {
+	if h.dagReq.GetCollectExecutionSummaries() {
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(h.dagReq.Executors))
 		for i := range execSummary {
 			// TODO: Add real executor execution summary information.
@@ -256,7 +255,7 @@ func (h *CoprocessorDAGHandler) buildStreamResponse(chunk *tipb.Chunk) *coproces
 
 func (*CoprocessorDAGHandler) buildErrorResponse(err error) *coprocessor.Response {
 	return &coprocessor.Response{
-		OtherError: err.Error(),
+		OtherError: errors.ErrorStack(err),
 	}
 }
 
@@ -278,7 +277,7 @@ func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 	requestedRow := make([]byte, 0)
 	chunks := []tipb.Chunk{}
 	errCtx := stmtCtx.ErrCtx()
-	for i := 0; i < chk.NumRows(); i++ {
+	for i := range chk.NumRows() {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {

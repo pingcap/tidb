@@ -15,15 +15,21 @@
 package executor
 
 import (
-	"runtime"
-	"strconv"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
-	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -49,16 +55,16 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(2, 1, 2, 1, 1))
 
-	joinKeyRows := make([]*indexJoinLookUpContent, 0, 5)
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 1)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, 2)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 1)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 2)})
-	joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(2, 3)})
+	joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 5)
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, 1)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, 2)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 1)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 2)})
+	joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(2, 3)})
 
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
-	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
+	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
 	require.NoError(t, err)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
@@ -80,15 +86,15 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	bytesConsumed1 := int64(0)
 	{
-		joinKeyRows := make([]*indexJoinLookUpContent, 0, 10)
+		joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 10)
 		for i := int64(0); i < 10; i++ {
-			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+			joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, i)})
 		}
 
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -102,15 +108,15 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	bytesConsumed2 := int64(0)
 	{
-		joinKeyRows := make([]*indexJoinLookUpContent, 0, 20)
+		joinKeyRows := make([]*join.IndexJoinLookUpContent, 0, 20)
 		for i := int64(0); i < 20; i++ {
-			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
+			joinKeyRows = append(joinKeyRows, &join.IndexJoinLookUpContent{Keys: generateDatumSlice(1, i)})
 		}
 
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -123,13 +129,12 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 	}
 
 	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
-	require.Equal(t, int64(20760), bytesConsumed1)
+	require.Equal(t, int64(23640), bytesConsumed1)
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
 	lowDatums := generateDatumSlice(vals...)
-	highDatums := make([]types.Datum, len(vals))
-	copy(highDatums, lowDatums)
+	highDatums := slices.Clone(lowDatums)
 	return &ranger.Range{LowVal: lowDatums, HighVal: highDatums, Collators: collate.GetBinaryCollatorSlice(len(lowDatums))}
 }
 
@@ -157,100 +162,6 @@ func TestSlowQueryRuntimeStats(t *testing.T) {
 	require.Equal(t, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB", stats.String())
 }
 
-// Test whether the actual buckets in Golang Map is same with the estimated number.
-// The test relies the implement of Golang Map. ref https://github.com/golang/go/blob/go1.13/src/runtime/map.go#L114
-func TestAggPartialResultMapperB(t *testing.T) {
-	if runtime.Version() < `go1.13` {
-		t.Skip("Unsupported version")
-	}
-	type testCase struct {
-		rowNum          int
-		expectedB       int
-		expectedGrowing bool
-	}
-	cases := []testCase{
-		{
-			rowNum:          0,
-			expectedB:       0,
-			expectedGrowing: false,
-		},
-		{
-			rowNum:          100,
-			expectedB:       5,
-			expectedGrowing: true,
-		},
-		{
-			rowNum:          10000,
-			expectedB:       11,
-			expectedGrowing: false,
-		},
-		{
-			rowNum:          1000000,
-			expectedB:       18,
-			expectedGrowing: false,
-		},
-		{
-			rowNum:          851968, // 6.5 * (1 << 17)
-			expectedB:       18,
-			expectedGrowing: true,
-		},
-		{
-			rowNum:          851969, // 6.5 * (1 << 17) + 1
-			expectedB:       18,
-			expectedGrowing: true,
-		},
-		{
-			rowNum:          425984, // 6.5 * (1 << 16)
-			expectedB:       17,
-			expectedGrowing: true,
-		},
-		{
-			rowNum:          425985, // 6.5 * (1 << 16) + 1
-			expectedB:       17,
-			expectedGrowing: true,
-		},
-	}
-
-	for _, tc := range cases {
-		aggMap := make(aggfuncs.AggPartialResultMapper)
-		tempSlice := make([]aggfuncs.PartialResult, 10)
-		for num := 0; num < tc.rowNum; num++ {
-			aggMap[strconv.Itoa(num)] = tempSlice
-		}
-
-		require.Equal(t, tc.expectedB, getB(aggMap))
-		require.Equal(t, tc.expectedGrowing, getGrowing(aggMap))
-	}
-}
-
-// A header for a Go map.
-// nolint:structcheck
-type hmap struct {
-	// Note: the format of the hmap is also encoded in cmd/compile/internal/gc/reflect.go.
-	// Make sure this stays in sync with the compiler's definition.
-	count     int    // nolint:unused // # live cells == size of map.  Must be first (used by len() builtin)
-	flags     uint8  // nolint:unused
-	B         uint8  // nolint:unused // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
-	noverflow uint16 // nolint:unused // approximate number of overflow buckets; see incrnoverflow for details
-	hash0     uint32 // nolint:unused // hash seed
-
-	buckets    unsafe.Pointer // nolint:unused // array of 2^B Buckets. may be nil if count==0.
-	oldbuckets unsafe.Pointer // nolint:unused // previous bucket array of half the size, non-nil only when growing
-	nevacuate  uintptr        // nolint:unused // progress counter for evacuation (buckets less than this have been evacuated)
-}
-
-func getB(m aggfuncs.AggPartialResultMapper) int {
-	point := (**hmap)(unsafe.Pointer(&m))
-	value := *point
-	return int(value.B)
-}
-
-func getGrowing(m aggfuncs.AggPartialResultMapper) bool {
-	point := (**hmap)(unsafe.Pointer(&m))
-	value := *point
-	return value.oldbuckets != nil
-}
-
 func TestFilterTemporaryTableKeys(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	const tableID int64 = 3
@@ -262,4 +173,383 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
 	require.Len(t, res, 1)
+}
+
+func TestErrLevelsForResetStmtContext(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
+
+	cases := []struct {
+		name    string
+		sqlMode mysql.SQLMode
+		stmt    []ast.StmtNode
+		levels  errctx.LevelMap
+	}{
+		{
+			name:    "strict,write",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,write",
+			sqlMode: mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,insert ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "strict,update ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.UpdateStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "strict,delete ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.DeleteStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict without error_for_division_by_zero,write",
+			sqlMode: mysql.ModeStrictAllTables,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,select/union",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,select/union",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,load_data",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.LoadDataStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,load_data",
+			sqlMode: mysql.SQLMode(0),
+			stmt:    []ast.StmtNode{&ast.LoadDataStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+	}
+
+	for i, c := range cases {
+		require.NotEmpty(t, c.stmt, c.name)
+		for _, stmt := range c.stmt {
+			msg := fmt.Sprintf("%d: %s, stmt: %T", i, c.name, stmt)
+			ctx.GetSessionVars().EnableStrictNotNullCheck = true
+			ctx.GetSessionVars().SQLMode = c.sqlMode
+			require.NoError(t, ResetContextOfStmt(ctx, stmt), msg)
+			ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+			require.Equal(t, c.levels, ec.LevelMap(), msg)
+		}
+	}
+}
+
+func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
+
+	const (
+		tableID    int64 = 1000
+		newTableID int64 = 2000
+		indexID    int64 = 10
+		part0ID    int64 = 1001
+		part1ID    int64 = 1002
+		handleID   int64 = 999
+	)
+
+	tblInfo := &model.TableInfo{
+		ID:   tableID,
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				State:     model.StatePublic,
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("b"),
+				State:     model.StatePublic,
+				Offset:    1,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:   indexID,
+				Name: ast.NewCIStr("uk_b"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("b"),
+						Offset: 1,
+						Length: types.UnspecifiedLength,
+					},
+				},
+				Unique:             true,
+				Global:             true,
+				GlobalIndexVersion: model.GlobalIndexVersionV1,
+				State:              model.StatePublic,
+			},
+		},
+		Partition: &model.PartitionInfo{
+			Enable: true,
+			Type:   ast.PartitionTypeHash,
+			Expr:   "a",
+			Num:    2,
+			Definitions: []model.PartitionDefinition{
+				{ID: part0ID, Name: ast.NewCIStr("p0")},
+				{ID: part1ID, Name: ast.NewCIStr("p1")},
+			},
+			NewTableID:      newTableID,
+			DDLChangedIndex: map[int64]bool{indexID: true},
+		},
+		// Non-clustered table.
+		PKIsHandle:     false,
+		IsCommonHandle: false,
+	}
+
+	tbl := tables.MockTableFromMeta(tblInfo)
+	require.NotNil(t, tbl)
+
+	pt, ok := tbl.(table.PartitionedTable)
+	require.True(t, ok)
+
+	// a=1 => 1%2=1 => partition index 1 => part1ID.
+	row := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewDatum(nil), // NULL => distinct=false for UNIQUE index
+	}
+	h := kv.IntHandle(handleID)
+
+	physicalTbl, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
+	require.NoError(t, err)
+	physicalID := physicalTbl.GetPhysicalID()
+	require.Equal(t, part1ID, physicalID)
+
+	// Expected: same key as idx.GenIndexKey, which switches to pi.NewTableID when
+	// pi.DDLChangedIndex[idx.ID] is true.
+	idx := tbl.Indices()[0]
+	ukVals, err := idx.FetchValues(row, nil)
+	require.NoError(t, err)
+	fullHandle := kv.NewPartitionHandle(physicalID, h)
+	expectedKey, _, err := idx.GenIndexKey(
+		errctx.StrictNoWarningContext,
+		sctx.GetSessionVars().StmtCtx.TimeZone(),
+		ukVals,
+		fullHandle,
+		nil,
+	)
+	require.NoError(t, err)
+
+	count, err := addUnchangedKeysForLockByRow(sctx, tbl, h, row, lockUniqueKeys)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
+	require.Len(t, gotKeys, 1)
+	require.Equal(t, expectedKey, []byte(gotKeys[0]))
+}
+
+func TestStrictNotNullCheckForInsert(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
+
+	cases := []struct {
+		name                     string
+		sqlMode                  mysql.SQLMode
+		enableStrictNotNullCheck bool
+		isSingleInsert           bool
+		expectBadNullLevel       errctx.Level
+		expectNoDefaultLevel     errctx.Level
+	}{
+		{
+			name:                     "non-strict,single-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,single-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,enable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,multi-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,multi-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,enable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+	}
+
+	for _, c := range cases {
+		ctx.GetSessionVars().EnableStrictNotNullCheck = true
+		ctx.GetSessionVars().SQLMode = c.sqlMode
+		ctx.GetSessionVars().EnableStrictNotNullCheck = c.enableStrictNotNullCheck
+		stmt := &ast.InsertStmt{Lists: [][]ast.ExprNode{{}}}
+		if c.isSingleInsert {
+			stmt.Lists = make([][]ast.ExprNode, 1)
+		} else {
+			stmt.Lists = make([][]ast.ExprNode, 2)
+		}
+		require.NoError(t, ResetContextOfStmt(ctx, stmt), c.name)
+		ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+		require.Equal(t, c.expectBadNullLevel, ec.LevelMap()[errctx.ErrGroupBadNull], "%s: BadNull level", c.name)
+		require.Equal(t, c.expectNoDefaultLevel, ec.LevelMap()[errctx.ErrGroupNoDefault], "%s: NoDefault level", c.name)
+	}
 }

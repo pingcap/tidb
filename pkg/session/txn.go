@@ -26,18 +26,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -57,7 +56,6 @@ type LazyTxn struct {
 
 	initCnt       int
 	stagingHandle kv.StagingHandle
-	mutations     map[int64]*binlog.TableMutation
 	writeSLI      sli.TxnWriteThroughputSLI
 
 	enterFairLockingOnValid bool
@@ -73,6 +71,9 @@ type LazyTxn struct {
 
 	// mark the txn enables lazy uniqueness check in pessimistic transactions.
 	lazyUniquenessCheckEnabled bool
+
+	// commit ts of the last successful transaction, to ensure ordering of TS
+	lastCommitTS uint64
 }
 
 // GetTableInfo returns the cached index name.
@@ -86,7 +87,6 @@ func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
 func (txn *LazyTxn) init() {
-	txn.mutations = make(map[int64]*binlog.TableMutation)
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
@@ -113,7 +113,9 @@ func (txn *LazyTxn) initStmtBuf() {
 	}
 	buf := txn.Transaction.GetMemBuffer()
 	txn.initCnt = buf.Len()
-	txn.stagingHandle = buf.Staging()
+	if !txn.IsPipelined() {
+		txn.stagingHandle = buf.Staging()
+	}
 }
 
 // countHint is estimated count of mutations.
@@ -131,7 +133,7 @@ func (txn *LazyTxn) flushStmtBuf() {
 	buf := txn.Transaction.GetMemBuffer()
 
 	if txn.lazyUniquenessCheckEnabled {
-		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) bool {
+		keysNeedSetPersistentPNE := kv.FindKeysInStage(buf, txn.stagingHandle, func(_ kv.Key, flags kv.KeyFlags, _ []byte) bool {
 			return flags.HasPresumeKeyNotExists()
 		})
 		for _, key := range keysNeedSetPersistentPNE {
@@ -139,7 +141,9 @@ func (txn *LazyTxn) flushStmtBuf() {
 		}
 	}
 
-	buf.Release(txn.stagingHandle)
+	if !txn.IsPipelined() {
+		buf.Release(txn.stagingHandle)
+	}
 	txn.initCnt = buf.Len()
 }
 
@@ -148,7 +152,9 @@ func (txn *LazyTxn) cleanupStmtBuf() {
 		return
 	}
 	buf := txn.Transaction.GetMemBuffer()
-	buf.Cleanup(txn.stagingHandle)
+	if !txn.IsPipelined() {
+		buf.Cleanup(txn.stagingHandle)
+	}
 	txn.initCnt = buf.Len()
 
 	txn.mu.Lock()
@@ -208,6 +214,14 @@ func (txn *LazyTxn) SetMemoryFootprintChangeHook(hook func(uint64)) {
 	txn.Transaction.SetMemoryFootprintChangeHook(hook)
 }
 
+// MemHookSet returns whether the memory footprint change hook is set.
+func (txn *LazyTxn) MemHookSet() bool {
+	if txn.Transaction == nil {
+		return false
+	}
+	return txn.Transaction.MemHookSet()
+}
+
 // Valid implements the kv.Transaction interface.
 func (txn *LazyTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
@@ -244,9 +258,6 @@ func (txn *LazyTxn) GoString() string {
 	} else if txn.Valid() {
 		s.WriteString("state=valid")
 		fmt.Fprintf(&s, ", txnStartTS=%d", txn.Transaction.StartTS())
-		if len(txn.mutations) > 0 {
-			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(txn.mutations), txn.mutations)
-		}
 	} else {
 		s.WriteString("state=invalid")
 	}
@@ -256,7 +267,7 @@ func (txn *LazyTxn) GoString() string {
 }
 
 // GetOption implements the GetOption
-func (txn *LazyTxn) GetOption(opt int) interface{} {
+func (txn *LazyTxn) GetOption(opt int) any {
 	if txn.Transaction == nil {
 		if opt == kv.TxnScope {
 			return ""
@@ -320,7 +331,7 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Co
 }
 
 func (txn *LazyTxn) changeToInvalid() {
-	if txn.stagingHandle != kv.InvalidStagingHandle {
+	if txn.stagingHandle != kv.InvalidStagingHandle && !txn.IsPipelined() {
 		txn.Transaction.GetMemBuffer().Cleanup(txn.stagingHandle)
 	}
 	txn.stagingHandle = kv.InvalidStagingHandle
@@ -395,14 +406,6 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 // Commit overrides the Transaction interface.
 func (txn *LazyTxn) Commit(ctx context.Context) error {
 	defer txn.reset()
-	if len(txn.mutations) != 0 || txn.countHint() != 0 {
-		logutil.BgLogger().Error("the code should never run here",
-			zap.String("TxnState", txn.GoString()),
-			zap.Int("staging handler", int(txn.stagingHandle)),
-			zap.Int("mutations", txn.countHint()),
-			zap.Stack("something must be wrong"))
-		return errors.Trace(kv.ErrInvalidTxn)
-	}
 
 	txn.mu.Lock()
 	txn.updateState(txninfo.TxnCommitting)
@@ -432,7 +435,16 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 		}
 	})
 
-	return txn.Transaction.Commit(ctx)
+	err := txn.Transaction.Commit(ctx)
+	if err == nil {
+		txn.lastCommitTS = txn.Transaction.CommitTS()
+		failpoint.Inject("mockFutureCommitTS", func(val failpoint.Value) {
+			if ts, ok := val.(int); ok {
+				txn.lastCommitTS = uint64(ts)
+			}
+		})
+	}
+	return err
 }
 
 // Rollback overrides the Transaction interface.
@@ -443,6 +455,8 @@ func (txn *LazyTxn) Rollback() error {
 	txn.mu.Unlock()
 	// mockSlowRollback is used to mock a rollback which takes a long time
 	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
+	// When rolling back a txn, swap with a dummy hook to avoid operations on an invalid memory tracker.
+	txn.SetMemoryFootprintChangeHook(func(uint64) {})
 	return txn.Transaction.Rollback()
 }
 
@@ -563,9 +577,6 @@ func (txn *LazyTxn) reset() {
 func (txn *LazyTxn) cleanup() {
 	txn.cleanupStmtBuf()
 	txn.initStmtBuf()
-	for key := range txn.mutations {
-		delete(txn.mutations, key)
-	}
 }
 
 // KeysNeedToLock returns the keys need to be locked.
@@ -599,7 +610,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		if err := txn.changePendingToValid(ctx, sctx); err != nil {
-			logutil.BgLogger().Error("active transaction fail",
+			logutil.BgLogger().Warn("active transaction fail",
 				zap.Error(err))
 			txn.cleanup()
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
@@ -642,6 +653,11 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	}
 
 	if tablecodec.IsTempIndexKey(k) {
+		// We force DMLs to lock all temporary index keys in next-gen, because
+		// next-gen enforces conflict check on all keys, including non-unique index keys.
+		if kerneltype.IsNextGen() {
+			return true
+		}
 		tmpVal, err := tablecodec.DecodeTempIndexValue(v)
 		if err != nil {
 			logutil.BgLogger().Warn("decode temp index value failed", zap.Error(err))
@@ -651,28 +667,19 @@ func KeyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		return current.Handle != nil || tablecodec.IndexKVIsUnique(current.Value)
 	}
 
-	return tablecodec.IndexKVIsUnique(v)
-}
-
-func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
-	bin := binloginfo.GetPrewriteValue(ctx, true)
-	for i := range bin.Mutations {
-		if bin.Mutations[i].TableId == tableID {
-			return &bin.Mutations[i]
-		}
+	if !tablecodec.IndexKVIsUnique(v) {
+		// In most times, if an index is not unique, its primary record is assumed to be locked if mutated.
+		// So we don't need to lock the index key for performance purposes.
+		// However, the above assumption is not always true, for example, when adding the index, the DDL background task
+		// may not lock the primary record.
+		// So, the SQL layer can use the flag `flagNeedLocked` to indicate whether the index key should be force locked.
+		// - If `flagNeedLocked` is true, we should lock the index key by force to guarantee the correctness.
+		// - If `flagNeedLocked` is false, it indicates we can skip locking the index key.
+		return flags.HasNeedLocked()
 	}
-	idx := len(bin.Mutations)
-	bin.Mutations = append(bin.Mutations, binlog.TableMutation{TableId: tableID})
-	return &bin.Mutations[idx]
-}
 
-func mergeToMutation(m1, m2 *binlog.TableMutation) {
-	m1.InsertedRows = append(m1.InsertedRows, m2.InsertedRows...)
-	m1.UpdatedRows = append(m1.UpdatedRows, m2.UpdatedRows...)
-	m1.DeletedIds = append(m1.DeletedIds, m2.DeletedIds...)
-	m1.DeletedPks = append(m1.DeletedPks, m2.DeletedPks...)
-	m1.DeletedRows = append(m1.DeletedRows, m2.DeletedRows...)
-	m1.Sequence = append(m1.Sequence, m2.Sequence...)
+	// Force to lock the unique index key to ensure the correctness.
+	return true
 }
 
 type txnFailFuture struct{}
@@ -683,29 +690,47 @@ func (txnFailFuture) Wait() (uint64, error) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future   oracle.Future
-	store    kv.Storage
-	txnScope string
+	future                          oracle.Future
+	store                           kv.Storage
+	txnScope                        string
+	pipelined                       bool
+	pipelinedFlushConcurrency       int
+	pipelinedResolveLockConcurrency int
+	pipelinedWriteThrottleRatio     float64
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	options := []tikv.TxnOption{tikv.WithTxnScope(tf.txnScope)}
 	startTS, err := tf.future.Wait()
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
-	} else if config.GetGlobalConfig().Store == "unistore" {
-		return nil, err
+		options = append(options, tikv.WithStartTS(startTS))
+	} else {
+		if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+			return nil, err
+		}
+		logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	}
 
-	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
-	// It would retry get timestamp.
-	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
+	if tf.pipelined {
+		options = append(
+			options,
+			tikv.WithPipelinedTxn(
+				tf.pipelinedFlushConcurrency,
+				tf.pipelinedResolveLockConcurrency,
+				tf.pipelinedWriteThrottleRatio,
+			),
+		)
+	}
+
+	return tf.store.Begin(options...)
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.
 // Put this function here is to avoid cycle import.
 func (s *session) HasDirtyContent(tid int64) bool {
-	if s.txn.Transaction == nil {
+	// There should not be dirty content in a txn with pipelined memdb, and it also doesn't support Iter function.
+	if s.txn.Transaction == nil || s.txn.Transaction.IsPipelined() {
 		return false
 	}
 	seekKey := tablecodec.EncodeTablePrefix(tid)
@@ -728,12 +753,6 @@ func (s *session) StmtCommit(ctx context.Context) {
 
 	st := &s.txn
 	st.flushStmtBuf()
-
-	// Need to flush binlog.
-	for tableID, delta := range st.mutations {
-		mutation := getBinlogMutation(s, tableID)
-		mergeToMutation(mutation, delta)
-	}
 }
 
 // StmtRollback implements the sessionctx.Context interface.
@@ -744,13 +763,4 @@ func (s *session) StmtRollback(ctx context.Context, isForPessimisticRetry bool) 
 		logutil.Logger(ctx).Error("txnManager failed to handle OnStmtRollback", zap.Error(err))
 	}
 	s.txn.cleanup()
-}
-
-// StmtGetMutation implements the sessionctx.Context interface.
-func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
-	st := &s.txn
-	if _, ok := st.mutations[tableID]; !ok {
-		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
-	}
-	return st.mutations[tableID]
 }

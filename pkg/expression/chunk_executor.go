@@ -15,6 +15,9 @@
 package expression
 
 import (
+	"slices"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -25,10 +28,8 @@ import (
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
 func Vectorizable(exprs []Expression) bool {
-	for _, expr := range exprs {
-		if HasGetSetVarFunc(expr) {
-			return false
-		}
+	if slices.ContainsFunc(exprs, HasGetSetVarFunc) {
+		return false
 	}
 	return checkSequenceFunction(exprs)
 }
@@ -75,12 +76,7 @@ func HasGetSetVarFunc(expr Expression) bool {
 	if scalaFunc.FuncName.L == ast.GetVar {
 		return true
 	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if HasGetSetVarFunc(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasGetSetVarFunc)
 }
 
 // HasAssignSetVarFunc checks whether an expression contains SetVar function and assign a value
@@ -96,12 +92,7 @@ func HasAssignSetVarFunc(expr Expression) bool {
 			}
 		}
 	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if HasAssignSetVarFunc(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasAssignSetVarFunc)
 }
 
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
@@ -116,7 +107,7 @@ func VectorizedExecute(ctx EvalContext, exprs []Expression, iterator *chunk.Iter
 }
 
 func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *chunk.Chunk, colIdx int) error {
-	ft := expr.GetType()
+	ft := expr.GetType(ctx)
 	result := output.Column(colIdx)
 	switch ft.EvalType() {
 	case types.ETInt:
@@ -168,6 +159,8 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 		return expr.VecEvalDuration(ctx, input, result)
 	case types.ETJson:
 		return expr.VecEvalJSON(ctx, input, result)
+	case types.ETVectorFloat32:
+		return expr.VecEvalVectorFloat32(ctx, input, result)
 	case types.ETString:
 		if err := expr.VecEvalString(ctx, input, result); err != nil {
 			return err
@@ -176,7 +169,7 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 			n := input.NumRows()
 			buf := chunk.NewColumn(ft, n)
 			buf.ReserveEnum(n)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
@@ -196,7 +189,7 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 			n := input.NumRows()
 			buf := chunk.NewColumn(ft, n)
 			buf.ReserveSet(n)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
@@ -213,12 +206,14 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 			}
 			output.SetCol(colIdx, buf)
 		}
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", ft.EvalType())
 	}
 	return nil
 }
 
 func evalOneColumn(ctx EvalContext, expr Expression, iterator *chunk.Iterator4Chunk, output *chunk.Chunk, colID int) (err error) {
-	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
+	switch fieldType, evalType := expr.GetType(ctx), expr.GetType(ctx).EvalType(); evalType {
 	case types.ETInt:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToInt(ctx, expr, fieldType, row, output, colID)
@@ -243,16 +238,22 @@ func evalOneColumn(ctx EvalContext, expr Expression, iterator *chunk.Iterator4Ch
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToJSON(ctx, expr, fieldType, row, output, colID)
 		}
+	case types.ETVectorFloat32:
+		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
+			err = executeToVectorFloat32(ctx, expr, fieldType, row, output, colID)
+		}
 	case types.ETString:
 		for row := iterator.Begin(); err == nil && row != iterator.End(); row = iterator.Next() {
 			err = executeToString(ctx, expr, fieldType, row, output, colID)
 		}
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", evalType)
 	}
 	return err
 }
 
 func evalOneCell(ctx EvalContext, expr Expression, row chunk.Row, output *chunk.Chunk, colID int) (err error) {
-	switch fieldType, evalType := expr.GetType(), expr.GetType().EvalType(); evalType {
+	switch fieldType, evalType := expr.GetType(ctx), expr.GetType(ctx).EvalType(); evalType {
 	case types.ETInt:
 		err = executeToInt(ctx, expr, fieldType, row, output, colID)
 	case types.ETReal:
@@ -265,8 +266,12 @@ func evalOneCell(ctx EvalContext, expr Expression, row chunk.Row, output *chunk.
 		err = executeToDuration(ctx, expr, fieldType, row, output, colID)
 	case types.ETJson:
 		err = executeToJSON(ctx, expr, fieldType, row, output, colID)
+	case types.ETVectorFloat32:
+		err = executeToVectorFloat32(ctx, expr, fieldType, row, output, colID)
 	case types.ETString:
 		err = executeToString(ctx, expr, fieldType, row, output, colID)
+	default:
+		return errors.Errorf("unsupported type %s during evaluation", evalType)
 	}
 	return err
 }
@@ -370,6 +375,19 @@ func executeToJSON(ctx EvalContext, expr Expression, fieldType *types.FieldType,
 	return nil
 }
 
+func executeToVectorFloat32(ctx EvalContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
+	res, isNull, err := expr.EvalVectorFloat32(ctx, row)
+	if err != nil {
+		return err
+	}
+	if isNull {
+		output.AppendNull(colID)
+	} else {
+		output.AppendVectorFloat32(colID, res)
+	}
+	return nil
+}
+
 func executeToString(ctx EvalContext, expr Expression, fieldType *types.FieldType, row chunk.Row, output *chunk.Chunk, colID int) error {
 	res, isNull, err := expr.EvalString(ctx, row)
 	if err != nil {
@@ -392,8 +410,8 @@ func executeToString(ctx EvalContext, expr Expression, fieldType *types.FieldTyp
 // VectorizedFilter applies a list of filters to a Chunk and
 // returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
-func VectorizedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) (_ []bool, err error) {
-	selected, _, err = VectorizedFilterConsiderNull(ctx, filters, iterator, selected, nil)
+func VectorizedFilter(ctx EvalContext, vecEnabled bool, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool) (_ []bool, err error) {
+	selected, _, err = VectorizedFilterConsiderNull(ctx, vecEnabled, filters, iterator, selected, nil)
 	return selected, err
 }
 
@@ -401,7 +419,7 @@ func VectorizedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Ite
 // returns two bool slices, `selected` indicates whether a row passed the
 // filters, `isNull` indicates whether the result of the filter is null.
 // Filters is executed vectorized.
-func VectorizedFilterConsiderNull(ctx EvalContext, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+func VectorizedFilterConsiderNull(ctx EvalContext, vecEnabled bool, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
 	// canVectorized used to check whether all of the filters can be vectorized evaluated
 	canVectorized := true
 	for _, filter := range filters {
@@ -414,8 +432,8 @@ func VectorizedFilterConsiderNull(ctx EvalContext, filters []Expression, iterato
 	input := iterator.GetChunk()
 	sel := input.Sel()
 	var err error
-	if canVectorized && ctx.GetSessionVars().EnableVectorizedExpression {
-		selected, isNull, err = vectorizedFilter(ctx, filters, iterator, selected, isNull)
+	if canVectorized && vecEnabled {
+		selected, isNull, err = vectorizedFilter(ctx, vecEnabled, filters, iterator, selected, isNull)
 	} else {
 		selected, isNull, err = rowBasedFilter(ctx, filters, iterator, selected, isNull)
 	}
@@ -429,13 +447,13 @@ func VectorizedFilterConsiderNull(ctx EvalContext, filters []Expression, iterato
 	unselected := allocZeroSlice(selectedLength)
 	defer deallocateZeroSlice(unselected)
 	// unselected[i] == 1 means that the i-th row is not selected
-	for i := 0; i < selectedLength; i++ {
+	for i := range selectedLength {
 		unselected[i] = 1
 	}
 	for _, ind := range sel {
 		unselected[ind] = 0
 	}
-	for i := 0; i < selectedLength; i++ {
+	for i := range selectedLength {
 		if selected[i] && unselected[i] == 1 {
 			selected[i] = false
 		}
@@ -472,7 +490,7 @@ func rowBasedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Itera
 	)
 	for _, filter := range filters {
 		isIntType := true
-		if filter.GetType().EvalType() != types.ETInt {
+		if filter.GetType(ctx).EvalType() != types.ETInt {
 			isIntType = false
 		}
 		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
@@ -502,8 +520,8 @@ func rowBasedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Itera
 }
 
 // vectorizedFilter filters by vector.
-func vectorizedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
-	selected, isNull, err := VecEvalBool(ctx, filters, iterator.GetChunk(), selected, isNull)
+func vectorizedFilter(ctx EvalContext, vecEnabled bool, filters []Expression, iterator *chunk.Iterator4Chunk, selected []bool, isNull []bool) ([]bool, []bool, error) {
+	selected, isNull, err := VecEvalBool(ctx, vecEnabled, filters, iterator.GetChunk(), selected, isNull)
 	if err != nil {
 		return nil, nil, err
 	}

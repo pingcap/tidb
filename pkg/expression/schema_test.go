@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -30,16 +31,16 @@ type schemaGenerator struct {
 func generateKeys4Schema(schema *Schema) {
 	keyCount := len(schema.Columns) - 1
 	keys := make([]KeyInfo, 0, keyCount)
-	for i := 0; i < keyCount; i++ {
+	for i := range keyCount {
 		keys = append(keys, []*Column{schema.Columns[i]})
 	}
-	schema.Keys = keys
+	schema.PKOrUK = keys
 }
 
 // generateSchema will generate a schema for test. Used only in this file.
 func (s *schemaGenerator) generateSchema(colCount int) *Schema {
 	cols := make([]*Column, 0, colCount)
-	for i := 0; i < colCount; i++ {
+	for range colCount {
 		s.colID++
 		cols = append(cols, &Column{
 			UniqueID: s.colID,
@@ -48,12 +49,30 @@ func (s *schemaGenerator) generateSchema(colCount int) *Schema {
 	return NewSchema(cols...)
 }
 
+func TestSchemaClone(t *testing.T) {
+	s := &schemaGenerator{}
+	schema := s.generateSchema(5)
+	generateKeys4Schema(schema)
+
+	uniKeys := make([]KeyInfo, 0, len(schema.Columns)-1)
+	for i := range len(schema.Columns) - 1 {
+		uniKeys = append(uniKeys, []*Column{schema.Columns[i]})
+	}
+	schema.SetUniqueKeys(uniKeys)
+
+	clonedSchema := schema.Clone()
+	require.Equal(t, schema.String(), clonedSchema.String())
+
+	require.NotSame(t, unsafe.SliceData(schema.PKOrUK), unsafe.SliceData(clonedSchema.PKOrUK))
+	require.NotSame(t, unsafe.SliceData(schema.NullableUK), unsafe.SliceData(clonedSchema.NullableUK))
+}
+
 func TestSchemaString(t *testing.T) {
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
-	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: []", schema.String())
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] PKOrUK: [] NullableUK: []", schema.String())
 	generateKeys4Schema(schema)
-	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: [[Column#1],[Column#2],[Column#3],[Column#4]]", schema.String())
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] PKOrUK: [[Column#1],[Column#2],[Column#3],[Column#4]] NullableUK: []", schema.String())
 }
 
 func TestSchemaRetrieveColumn(t *testing.T) {
@@ -77,12 +96,12 @@ func TestSchemaIsUniqueKey(t *testing.T) {
 	}
 	for i, col := range schema.Columns {
 		if i < len(schema.Columns)-1 {
-			require.Equal(t, true, schema.IsUniqueKey(col))
+			require.Equal(t, true, schema.IsUnique(true, col))
 		} else {
-			require.Equal(t, false, schema.IsUniqueKey(col))
+			require.Equal(t, false, schema.IsUnique(true, col))
 		}
 	}
-	require.Equal(t, false, schema.IsUniqueKey(colOutSchema))
+	require.Equal(t, false, schema.IsUnique(true, colOutSchema))
 }
 
 func TestSchemaContains(t *testing.T) {
@@ -103,7 +122,7 @@ func TestSchemaColumnsIndices(t *testing.T) {
 	colOutSchema := &Column{
 		UniqueID: 100,
 	}
-	for i := 0; i < len(schema.Columns)-1; i++ {
+	for i := range len(schema.Columns) - 1 {
 		colIndices := schema.ColumnsIndices([]*Column{schema.Columns[i], schema.Columns[i+1]})
 		for j, res := range colIndices {
 			require.Equal(t, i+j, res)
@@ -135,10 +154,10 @@ func TestSchemaMergeSchema(t *testing.T) {
 	require.Equal(t, rSchema.String(), MergeSchema(nil, rSchema).String())
 
 	schema := MergeSchema(lSchema, rSchema)
-	for i := 0; i < len(lSchema.Columns); i++ {
+	for i := range lSchema.Columns {
 		require.Equal(t, lSchema.Columns[i].UniqueID, schema.Columns[i].UniqueID)
 	}
-	for i := 0; i < len(rSchema.Columns); i++ {
+	for i := range rSchema.Columns {
 		require.Equal(t, rSchema.Columns[i].UniqueID, schema.Columns[i+len(lSchema.Columns)].UniqueID)
 	}
 }

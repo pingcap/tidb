@@ -65,6 +65,13 @@ func WithCustomAccessCheck(fn AccessCheckFunc) Option {
 	}
 }
 
+// WithCustomAuthPlugins specifies the custom authentication plugins available for the system.
+func WithCustomAuthPlugins(authPlugins []*AuthPlugin) Option {
+	return func(m *Manifest) {
+		m.authPlugins = authPlugins
+	}
+}
+
 // WithSessionHandlerFactory specifies a factory function to handle session
 func WithSessionHandlerFactory(factory func() *SessionHandler) Option {
 	return func(m *Manifest) {
@@ -118,6 +125,7 @@ type Manifest struct {
 	bootstrap             func(BootstrapContext) error
 	funcs                 []*FunctionDef
 	accessCheckFunc       AccessCheckFunc
+	authPlugins           []*AuthPlugin
 	sessionHandlerFactory func() *SessionHandler
 	close                 func()
 }
@@ -213,6 +221,10 @@ func newManifestWithSetup(name string, factory func() ([]Option, error)) (_ *Man
 		if err != nil {
 			return nil, nil, err
 		}
+	}
+
+	if err := validateAuthPlugin(m); err != nil {
+		return nil, nil, err
 	}
 
 	return m, clearBuilder.Build(), nil

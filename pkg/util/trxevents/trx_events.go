@@ -33,7 +33,7 @@ type CopMeetLock struct {
 
 // TransactionEvent represents a transaction event that may belong to any of the possible types.
 type TransactionEvent struct {
-	inner     interface{}
+	inner     any
 	eventType EventType
 }
 

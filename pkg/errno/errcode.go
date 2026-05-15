@@ -846,12 +846,15 @@ const (
 	ErrWarnConflictingHint                                   = 3126
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
+	ErrInvalidJSONTextInParam                                = 3141
 	ErrInvalidJSONPath                                       = 3143
 	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
 	ErrInvalidJSONPathMultipleSelection                      = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
+	ErrJSONVacuousPath                                       = 3153
+	ErrJSONBadOneOrAllArg                                    = 3154
 	ErrJSONDocumentTooDeep                                   = 3157
 	ErrJSONDocumentNULLKey                                   = 3158
 	ErrSecureTransportRequired                               = 3159
@@ -916,6 +919,7 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrInvalidLateralJoin                                    = 3809
 	ErrNonBooleanExprForCheckConstraint                      = 3812
 	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
 	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
@@ -927,6 +931,7 @@ const (
 	ErrCheckConstraintDupName                                = 3822
 	ErrCheckConstraintClauseUsingFKReferActionColumn         = 3823
 	ErrDependentByFunctionalIndex                            = 3837
+	ErrInvalidJSONType                                       = 3853
 	ErrCannotConvertString                                   = 3854
 	ErrDependentByPartitionFunctional                        = 3855
 	ErrInvalidJSONValueForFuncIndex                          = 3903
@@ -937,6 +942,7 @@ const (
 	ErrConstraintNotFound                                    = 3940
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
 	ErrDependentByCheckConstraint                            = 3959
+	ErrEngineAttributeNotSupported                           = 3981
 	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
@@ -1068,12 +1074,12 @@ const (
 	ErrLoadDataInvalidURI                  = 8158
 	ErrLoadDataCantAccess                  = 8159
 	ErrLoadDataCantRead                    = 8160
-	ErrLoadDataPhysicalImportTableNotEmpty = 8161
 	ErrLoadDataWrongFormatConfig           = 8162
 	ErrUnknownOption                       = 8163
 	ErrInvalidOptionVal                    = 8164
 	ErrDuplicateOption                     = 8165
 	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataDuplicateKeyConflict        = 8167
 	ErrLoadDataJobNotFound                 = 8170
 	ErrLoadDataInvalidOperation            = 8171
 	ErrLoadDataLocalUnsupportedOption      = 8172
@@ -1081,6 +1087,11 @@ const (
 	ErrBRJobNotFound                       = 8174
 	ErrMemoryExceedForQuery                = 8175
 	ErrMemoryExceedForInstance             = 8176
+	ErrDeleteNotFoundColumn                = 8177
+	ErrKeyTooLarge                         = 8178
+	ErrTimeStampInDSTTransition            = 8179
+	ErrQueryExecStopped                    = 8180
+	_                                      = 8181 // reserved for ErrPDTimestampLagsTooMuch
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1131,11 +1142,18 @@ const (
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
 	ErrIngestCheckEnvFailed               = 8256
-
-	ErrCannotPauseDDLJob  = 8260
-	ErrCannotResumeDDLJob = 8261
-	ErrPausedDDLJob       = 8262
-	ErrBDRRestrictedDDL   = 8263
+	ErrProtectedTableMode                 = 8258
+	ErrInvalidTableModeSet                = 8259
+	ErrCannotPauseDDLJob                  = 8260
+	ErrCannotResumeDDLJob                 = 8261
+	ErrPausedDDLJob                       = 8262
+	ErrBDRRestrictedDDL                   = 8263
+	ErrGlobalIndexNotExplicitlySet        = 8264
+	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+	ErrInvalidAffinityOption              = 8266
+	ErrForbiddenDDL                       = 8267
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1146,6 +1164,16 @@ const (
 	ErrResourceGroupQueryRunawayInterrupted   = 8253
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
+	ErrResourceGroupInvalidForRole            = 8257
+
+	// Reserved for future use.
+	ErrEngineAttributeInvalidFormat             = 8270
+	ErrStorageClassInvalidSpec                  = 8271
+	ErrModifyColumnReferencedByPartialCondition = 8272
+	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrMaxKeysReadExceeded                      = 8274
+
+	// [8800, 8900) are reserved for a downstream fork
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
@@ -1153,7 +1181,7 @@ const (
 	ErrTiKVServerBusy            = 9003
 	ErrResolveLockTimeout        = 9004
 	ErrRegionUnavailable         = 9005
-	ErrGCTooEarly                = 9006
+	ErrTxnAbortedByGC            = 9006
 	ErrWriteConflict             = 9007
 	ErrTiKVStoreLimit            = 9008
 	ErrPrometheusAddrIsNotSet    = 9009
@@ -1161,4 +1189,5 @@ const (
 	ErrTiKVMaxTimestampNotSynced = 9011
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
+	ErrTiFlashBackfillIndex      = 9014
 )

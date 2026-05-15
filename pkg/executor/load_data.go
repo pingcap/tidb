@@ -20,17 +20,21 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -41,6 +45,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -51,17 +57,26 @@ import (
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
-// LoadDataReaderBuilderKey stores the reader channel that reads from the connection.
+// LoadDataReaderBuilderKey stores the builder of reader channel that reads from the connection.
 const LoadDataReaderBuilderKey loadDataVarKeyType = 1
+
+// LoadDataReaderWg stores the wait group for reader channel.
+const LoadDataReaderWg loadDataVarKeyType = 2
 
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
 
-// LoadDataReaderBuilder is a function type that builds a reader from a file path.
-type LoadDataReaderBuilder func(filepath string) (
-	r io.ReadCloser, err error,
-)
+// LoadDataReaderBuilder stores a function to start background goroutines to read from connection and
+// a `Wg` to wait for all background goroutines to finish.
+type LoadDataReaderBuilder struct {
+	// Build is a function that builds a reader from a file path.
+	Build func(filepath string) (
+		r io.ReadCloser, err error,
+	)
+	// Wg is a wait group to wait for the background goroutines created by Build to finish.
+	Wg *sync.WaitGroup
+}
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
@@ -78,7 +93,7 @@ type LoadDataExec struct {
 func (e *LoadDataExec) Open(_ context.Context) error {
 	if rb, ok := e.Ctx().Value(LoadDataReaderBuilderKey).(LoadDataReaderBuilder); ok {
 		var err error
-		e.infileReader, err = rb(e.loadDataWorker.GetInfilePath())
+		e.infileReader, err = rb.Build(e.loadDataWorker.GetInfilePath())
 		if err != nil {
 			return err
 		}
@@ -88,6 +103,9 @@ func (e *LoadDataExec) Open(_ context.Context) error {
 
 // Close implements the Executor interface.
 func (e *LoadDataExec) Close() error {
+	if e.loadDataWorker != nil {
+		e.loadDataWorker.Close()
+	}
 	return e.closeLocalReader(nil)
 }
 
@@ -148,9 +166,11 @@ type LoadDataWorker struct {
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 	// meaning of this flag is not clear. I can only reuse it here.
-	stmtCtx.DupKeyAsWarning = true
-	stmtCtx.BadNullAsWarning = true
-
+	levels := stmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+	stmtCtx.SetErrLevels(levels)
 	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
 }
 
@@ -208,7 +228,9 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{})
+			return objstore.InterceptDecompressReader(addedSeekReader, compressTp2, compressedio.DecompressConfig{
+				ZStdDecodeConcurrency: 1,
+			})
 		}}}
 	return e.load(ctx, readers)
 }
@@ -255,7 +277,7 @@ sendReaderInfoLoop:
 	return err
 }
 
-func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
+func (e *LoadDataWorker) setResult(colAssignExprWarnings []contextutil.SQLWarn) {
 	stmtCtx := e.UserSctx.GetSessionVars().StmtCtx
 	numWarnings := uint64(stmtCtx.WarningCount())
 	numRecords := stmtCtx.RecordRows()
@@ -271,7 +293,7 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
 	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	warns := make([]stmtctx.SQLWarn, numWarnings)
+	warns := make([]contextutil.SQLWarn, numWarnings)
 	n := copy(warns, stmtCtx.GetWarnings())
 	for i := 0; i < int(numRecords) && n < len(warns); i++ {
 		n += copy(warns[n:], colAssignExprWarnings)
@@ -281,12 +303,19 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
 	stmtCtx.SetWarnings(warns)
 }
 
+// Close closes the LoadDataWorker and releases resources.
+func (e *LoadDataWorker) Close() {
+	if e.controller != nil {
+		e.controller.Close()
+	}
+}
+
 func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, error) {
 	insertValues, err2 := createInsertValues(e)
 	if err2 != nil {
 		return nil, nil, err2
 	}
-	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx())
+	colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(insertValues.Ctx().GetPlanCtx())
 	if err2 != nil {
 		return nil, nil, err2
 	}
@@ -342,7 +371,7 @@ type encodeWorker struct {
 	colAssignExprs []expression.Expression
 	// sessionCtx generate warnings when rewrite AST node into expression.
 	// we should generate such warnings for each row encoded.
-	exprWarnings []stmtctx.SQLWarn
+	exprWarnings []contextutil.SQLWarn
 	killer       *sqlkiller.SQLKiller
 	rows         [][]types.Datum
 }
@@ -353,7 +382,7 @@ type commitTask struct {
 	rows [][]types.Datum
 }
 
-// processStream always trys to build a parser from channel and process it. When
+// processStream always tries to build a parser from channel and process it. When
 // it returns nil, it means all data is read.
 func (w *encodeWorker) processStream(
 	ctx context.Context,
@@ -372,7 +401,7 @@ func (w *encodeWorker) processStream(
 			if err != nil {
 				return err
 			}
-			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
+			if err = importer.HandleSkipNRows(dataParser, w.controller.IgnoreLines); err != nil {
 				return err
 			}
 			err = w.processOneStream(ctx, dataParser, outCh)
@@ -506,7 +535,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 
 	fieldMappings := w.controller.FieldMappings
-	for i := 0; i < len(fieldMappings); i++ {
+	for i := range fieldMappings {
 		if i >= len(parserData) {
 			if fieldMappings[i].Column == nil {
 				setVar(fieldMappings[i].UserVar.Name, nil)
@@ -536,9 +565,9 @@ func (w *encodeWorker) parserData2TableData(
 
 		row = append(row, parserData[i])
 	}
-	for i := 0; i < len(w.colAssignExprs); i++ {
+	for i := range w.colAssignExprs {
 		// eval expression of `SET` clause
-		d, err := w.colAssignExprs[i].Eval(w.Ctx(), chunk.Row{})
+		d, err := w.colAssignExprs[i].Eval(w.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err
@@ -554,9 +583,15 @@ func (w *encodeWorker) parserData2TableData(
 		if w.controller.Restrictive {
 			return nil, err
 		}
+		// ErrInvalidAutoRandom should always be returned as a real error,
+		// not treated as a warning, because returning nil row causes panic
+		// when looking up index. See https://github.com/pingcap/tidb/issues/65585
+		if dbterror.ErrInvalidAutoRandom.Equal(err) {
+			return nil, err
+		}
 		w.handleWarning(err)
 		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
-		// TODO: should not return nil! caller will panic when lookup index
+		// TODO: shall we ignore this row? Returning nil will make the caller panic.
 		return nil, nil
 	}
 
@@ -586,6 +621,10 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 		taskCnt uint64
 	)
 	for {
+		failpoint.Inject("CommitWorkError", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("mock commit work error"))
+		})
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -636,12 +675,27 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	}
 	w.Ctx().GetSessionVars().StmtCtx.AddRecordRows(cnt)
 
+	// LOAD DATA LOW_PRIORITY should lower both read and write priority of its KV operations
+	// (unique/PK conflict checks + 2PC requests).
+	if w.Ctx().GetSessionVars().StmtCtx.Priority == mysql.LowPriority {
+		txn, err := w.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		txn.SetOption(kv.Priority, kv.PriorityLow)
+	}
+
 	switch w.controller.OnDuplicate {
 	case ast.OnDuplicateKeyHandlingReplace:
 		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, true)
 	case ast.OnDuplicateKeyHandlingIgnore:
 		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
+		txn, err := w.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		dupKeyCheck := optimizeDupKeyCheckForNormalInsert(w.Ctx().GetSessionVars(), txn)
 		for i, row := range rows[0:cnt] {
 			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
@@ -650,9 +704,9 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 				if sizeHint > remain {
 					sizeHint = remain
 				}
-				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint)
+				err = w.addRecordWithAutoIDHint(ctx, row, sizeHint, dupKeyCheck)
 			} else {
-				err = w.addRecord(ctx, row)
+				err = w.addRecord(ctx, row, dupKeyCheck)
 			}
 			if err != nil {
 				return err
@@ -665,11 +719,11 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 	}
 }
 
-func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
+func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
 	if row == nil {
 		return nil
 	}
-	return w.addRecord(ctx, row)
+	return w.addRecord(ctx, row, dupKeyCheck)
 }
 
 // GetInfilePath get infile path.
@@ -700,7 +754,7 @@ func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 		return err
 	}
 
-	for i := uint64(0); i < e.controller.IgnoreLines; i++ {
+	for range e.controller.IgnoreLines {
 		//nolint: errcheck
 		_ = parser.ReadRow()
 	}
@@ -761,7 +815,7 @@ func (s *SimpleSeekerOnReadCloser) Close() error {
 	return s.r.Close()
 }
 
-// GetFileSize implements storage.ExternalFileReader.
+// GetFileSize implements objectio.Reader.
 func (*SimpleSeekerOnReadCloser) GetFileSize() (int64, error) {
 	return 0, errors.Errorf("unsupported GetFileSize on SimpleSeekerOnReadCloser")
 }

@@ -16,22 +16,43 @@ package timer_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/timer/runtime"
 	"github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+type mockSessionPool struct {
+	t *testing.T
+	syssession.Pool
+	pool  syssession.Pool
+	inuse atomic.Bool
+}
+
+func (p *mockSessionPool) WithSession(fn func(*syssession.Session) error) error {
+	return p.pool.WithSession(func(s *syssession.Session) error {
+		require.True(p.t, p.inuse.CompareAndSwap(false, true))
+		defer func() {
+			require.True(p.t, p.inuse.CompareAndSwap(true, false))
+		}()
+		return fn(s)
+	})
+}
 
 func TestMemTimerStore(t *testing.T) {
 	timeutil.SetSystemTZ("Asia/Shanghai")
@@ -44,32 +65,35 @@ func TestMemTimerStore(t *testing.T) {
 	runTimerStoreWatchTest(t, store)
 }
 
+// createTimerTableSQL returns a SQL to create timer table
+func createTimerTableSQL(dbName, tableName string) string {
+	return strings.Replace(metadef.CreateTiDBTimersTable, "mysql.tidb_timers", fmt.Sprintf("`%s`.`%s`", dbName, tableName), 1)
+}
+
 func TestTableTimerStore(t *testing.T) {
 	timeutil.SetSystemTZ("Asia/Shanghai")
-	store := testkit.CreateMockStore(t)
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	dbName := "test"
 	tblName := "timerstore"
 	tk.MustExec("use test")
-	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
+	tk.MustExec(createTimerTableSQL(dbName, tblName))
 
+	pool := &mockSessionPool{t: t, pool: do.AdvancedSysSessionPool()}
 	// test CURD
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
-	defer pool.Close()
-
 	timerStore := tablestore.NewTableTimerStore(1, pool, dbName, tblName, nil)
 	defer timerStore.Close()
 	runTimerStoreTest(t, timerStore)
 
 	// test cluster time zone
 	runClusterTimeZoneTest(t, timerStore, func(tz string) {
-		r, err := pool.Get()
-		defer pool.Put(r)
-		require.NoError(t, err)
-		err = r.(sessionctx.Context).GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), "time_zone", tz)
-		require.NoError(t, err)
+		require.NoError(t, pool.WithSession(func(s *syssession.Session) error {
+			ctx := util.WithInternalSourceType(context.TODO(), kv.InternalTimer)
+			rs, err := s.ExecuteInternal(ctx, "SET @@global.time_zone = %?", tz)
+			require.NoError(t, err)
+			require.Nil(t, rs)
+			return nil
+		}))
 	})
 
 	// test notifications
@@ -79,10 +103,13 @@ func TestTableTimerStore(t *testing.T) {
 
 	cli := testEtcdCluster.RandClient()
 	tk.MustExec("drop table " + tblName)
-	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
+	tk.MustExec(createTimerTableSQL(dbName, tblName))
 	timerStore = tablestore.NewTableTimerStore(1, pool, dbName, tblName, cli)
 	defer timerStore.Close()
 	runTimerStoreWatchTest(t, timerStore)
+
+	// check pool
+	require.False(t, pool.inuse.Load())
 }
 
 func runClusterTimeZoneTest(t *testing.T, store *api.TimerStore, setClusterTZ func(string)) {
@@ -256,6 +283,7 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 		EventManualRequestID: "req2",
 		EventWatermark:       time.Unix(456, 0),
 	}
+	tpl.CreateTime = tpl.CreateTime.In(time.UTC)
 	require.Equal(t, *tpl, *record)
 
 	// tags full update again
@@ -328,6 +356,7 @@ func runTimerStoreUpdate(ctx context.Context, t *testing.T, store *api.TimerStor
 	tpl.EventExtra = api.EventExtra{}
 	tpl.Watermark = zeroTime
 	tpl.SummaryData = nil
+	tpl.CreateTime = tpl.CreateTime.In(tpl.Location)
 	require.Equal(t, *tpl, *record)
 
 	// err check version
@@ -784,19 +813,14 @@ func (h *mockHook) OnSchedEvent(ctx context.Context, event api.TimerShedEvent) e
 }
 
 func TestTableStoreManualTrigger(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	dbName := "test"
 	tblName := "timerstore"
 	tk.MustExec("use test")
-	tk.MustExec(tablestore.CreateTimerTableSQL(dbName, tblName))
+	tk.MustExec(createTimerTableSQL(dbName, tblName))
 
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
-	defer pool.Close()
-
-	timerStore := tablestore.NewTableTimerStore(1, pool, dbName, tblName, nil)
+	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), dbName, tblName, nil)
 	defer timerStore.Close()
 
 	var hookReqID atomic.Pointer[string]
@@ -871,4 +895,136 @@ func TestTableStoreManualTrigger(t *testing.T) {
 	require.Equal(t, eventID, timer.ManualEventID)
 	require.True(t, timer.ManualProcessed)
 	require.Equal(t, api.EventExtra{}, timer.EventExtra)
+}
+
+func TestTimerStoreWithTimeZone(t *testing.T) {
+	// mem store
+	testTimerStoreWithTimeZone(t, api.NewMemoryTimerStore(), timeutil.SystemLocation().String())
+
+	// table store
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	dbName := "test"
+	tblName := "timerstore"
+	tk.MustExec("use test")
+	tk.MustExec(createTimerTableSQL(dbName, tblName))
+	tk.MustExec("set @@time_zone = 'America/Los_Angeles'")
+
+	pool := &mockSessionPool{t: t, pool: do.AdvancedSysSessionPool()}
+	timerStore := tablestore.NewTableTimerStore(1, pool, dbName, tblName, nil)
+	defer timerStore.Close()
+
+	testTimerStoreWithTimeZone(t, timerStore, timeutil.SystemLocation().String())
+	tk.MustExec("set @@global.time_zone='Asia/Tokyo'")
+	tk.MustExec(fmt.Sprintf("truncate table %s.%s", dbName, tblName))
+	testTimerStoreWithTimeZone(t, timerStore, "Asia/Tokyo")
+
+	// check time zone should be set back to the previous one.
+	require.Equal(t, "America/Los_Angeles", tk.Session().GetSessionVars().Location().String())
+
+	// check pool
+	require.False(t, pool.inuse.Load())
+}
+
+func testTimerStoreWithTimeZone(t *testing.T, timerStore *api.TimerStore, defaultTZ string) {
+	// 2024-11-03 09:30:00 UTC is 2024-11-03 01:30:00 -08:00 in `America/Los_Angeles`
+	// We should notice that it should not be regarded as 2024-11-03 01:30:00 -07:00
+	// because of DST these two times have the same format in time zone `America/Los_Angeles`.
+	time1, err := time.ParseInLocation(time.DateTime, "2024-11-03 09:30:00", time.UTC)
+	require.NoError(t, err)
+
+	time2, err := time.ParseInLocation(time.DateTime, "2024-11-03 08:30:00", time.UTC)
+	require.NoError(t, err)
+
+	id1, err := timerStore.Create(context.TODO(), &api.TimerRecord{
+		TimerSpec: api.TimerSpec{
+			Namespace:       "default",
+			Key:             "test1",
+			SchedPolicyType: api.SchedEventInterval,
+			SchedPolicyExpr: "1h",
+			Watermark:       time1,
+		},
+		EventStatus: api.SchedEventTrigger,
+		EventStart:  time2,
+	})
+	require.NoError(t, err)
+
+	id2, err := timerStore.Create(context.TODO(), &api.TimerRecord{
+		TimerSpec: api.TimerSpec{
+			Namespace:       "default",
+			Key:             "test2",
+			SchedPolicyType: api.SchedEventInterval,
+			SchedPolicyExpr: "1h",
+			Watermark:       time2,
+		},
+		EventStatus: api.SchedEventTrigger,
+		EventStart:  time1,
+	})
+	require.NoError(t, err)
+
+	// create case
+	timer1, err := timerStore.GetByID(context.TODO(), id1)
+	require.NoError(t, err)
+	require.Equal(t, time1.In(time.UTC).String(), timer1.Watermark.In(time.UTC).String())
+	require.Equal(t, time2.In(time.UTC).String(), timer1.EventStart.In(time.UTC).String())
+	checkTimerRecordLocation(t, timer1, defaultTZ)
+
+	timer2, err := timerStore.GetByID(context.TODO(), id2)
+	require.NoError(t, err)
+	require.Equal(t, time2.In(time.UTC).String(), timer2.Watermark.In(time.UTC).String())
+	require.Equal(t, time1.In(time.UTC).String(), timer2.EventStart.In(time.UTC).String())
+	checkTimerRecordLocation(t, timer2, defaultTZ)
+
+	// update time
+	require.NoError(t, timerStore.Update(context.TODO(), id1, &api.TimerUpdate{
+		Watermark:  api.NewOptionalVal(time2),
+		EventStart: api.NewOptionalVal(time1),
+	}))
+
+	require.NoError(t, timerStore.Update(context.TODO(), id2, &api.TimerUpdate{
+		Watermark:  api.NewOptionalVal(time1),
+		EventStart: api.NewOptionalVal(time2),
+	}))
+
+	timer1, err = timerStore.GetByID(context.TODO(), id1)
+	require.NoError(t, err)
+	require.Equal(t, time2.In(time.UTC).String(), timer1.Watermark.In(time.UTC).String())
+	require.Equal(t, time1.In(time.UTC).String(), timer1.EventStart.In(time.UTC).String())
+	checkTimerRecordLocation(t, timer1, defaultTZ)
+
+	timer2, err = timerStore.GetByID(context.TODO(), id2)
+	require.NoError(t, err)
+	require.Equal(t, time1.In(time.UTC).String(), timer2.Watermark.In(time.UTC).String())
+	require.Equal(t, time2.In(time.UTC).String(), timer2.EventStart.In(time.UTC).String())
+	checkTimerRecordLocation(t, timer2, defaultTZ)
+
+	// update timezone
+	require.NoError(t, timerStore.Update(context.TODO(), id1, &api.TimerUpdate{
+		TimeZone: api.NewOptionalVal("Europe/Berlin"),
+	}))
+
+	timer1, err = timerStore.GetByID(context.TODO(), id1)
+	require.NoError(t, err)
+	require.Equal(t, time2.In(time.UTC).String(), timer1.Watermark.In(time.UTC).String())
+	require.Equal(t, time1.In(time.UTC).String(), timer1.EventStart.In(time.UTC).String())
+	checkTimerRecordLocation(t, timer1, "Europe/Berlin")
+
+	require.NoError(t, timerStore.Update(context.TODO(), id1, &api.TimerUpdate{
+		TimeZone: api.NewOptionalVal(""),
+	}))
+
+	timer1, err = timerStore.GetByID(context.TODO(), id1)
+	require.NoError(t, err)
+	require.Equal(t, time2.In(time.UTC).String(), timer1.Watermark.In(time.UTC).String())
+	require.Equal(t, time1.In(time.UTC).String(), timer1.EventStart.In(time.UTC).String())
+	checkTimerRecordLocation(t, timer1, defaultTZ)
+}
+
+func checkTimerRecordLocation(t *testing.T, r *api.TimerRecord, tz string) {
+	require.Equal(t, tz, r.Location.String())
+	require.Same(t, r.Location, r.Watermark.Location())
+	require.Same(t, r.Location, r.CreateTime.Location())
+	if !r.EventStart.IsZero() {
+		require.Same(t, r.Location, r.EventStart.Location())
+	}
 }

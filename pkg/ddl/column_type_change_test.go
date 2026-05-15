@@ -23,9 +23,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -34,13 +33,14 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -57,9 +57,8 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	require.Equal(t, 2, len(tbl.Cols()))
 	require.NotNil(t, external.GetModifyColumn(t, tk, "test", "t", "c2", false))
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -87,8 +86,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 				checkErr = errors.New("changingCol is nil")
 			}
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 	// Alter sql will modify column c2 to tinyint not null.
 	SQL := "alter table t modify column c2 tinyint not null"
 	tk.MustExec(SQL)
@@ -109,7 +107,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 }
 
 func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -122,40 +120,35 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	require.Equal(t, 2, len(tbl.Cols()))
 	require.NotNil(t, external.GetModifyColumn(t, tk, "test", "t", "c2", false))
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	// Mock roll back at model.StateNone.
-	customizeHookRollbackAtState(hook, tbl, model.StateNone)
-	dom.DDL().SetHook(hook)
+	customizeHookRollbackAtState(t, tbl, model.StateNone)
 	// Alter sql will modify column c2 to bigint not null.
-	SQL := "alter table t modify column c2 int not null"
+	SQL := "alter table t modify column c2 varchar(16) not null"
 	err := tk.ExecToErr(SQL)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-none")
 	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateDeleteOnly.
-	customizeHookRollbackAtState(hook, tbl, model.StateDeleteOnly)
-	dom.DDL().SetHook(hook)
+	customizeHookRollbackAtState(t, tbl, model.StateDeleteOnly)
 	err = tk.ExecToErr(SQL)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-delete only")
 	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateWriteOnly.
-	customizeHookRollbackAtState(hook, tbl, model.StateWriteOnly)
-	dom.DDL().SetHook(hook)
+	customizeHookRollbackAtState(t, tbl, model.StateWriteOnly)
 	err = tk.ExecToErr(SQL)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write only")
 	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateWriteReorg.
-	customizeHookRollbackAtState(hook, tbl, model.StateWriteReorganization)
-	dom.DDL().SetHook(hook)
+	customizeHookRollbackAtState(t, tbl, model.StateWriteReorganization)
 	err = tk.ExecToErr(SQL)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write reorganization")
 	assertRollBackedColUnchanged(t, tk)
 }
 
-func customizeHookRollbackAtState(hook *callback.TestDDLCallback, tbl table.Table, state model.SchemaState) {
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+func customizeHookRollbackAtState(t *testing.T, tbl table.Table, state model.SchemaState) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -163,7 +156,7 @@ func customizeHookRollbackAtState(hook *callback.TestDDLCallback, tbl table.Tabl
 			job.State = model.JobStateRollingback
 			job.Error = mockTerrorMap[state.String()]
 		}
-	}
+	})
 }
 
 func assertRollBackedColUnchanged(t *testing.T, tk *testkit.TestKit) {
@@ -190,7 +183,7 @@ func init() {
 
 // Test issue #20529.
 func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -199,32 +192,21 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 	assertHasAlterWriteReorg := func(tbl table.Table) {
 		// Restore assertResult to false.
 		assertResult = false
-		hook := &callback.TestDDLCallback{Do: dom}
-		hook.OnJobRunBeforeExported = func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 			if tbl.Meta().ID != job.TableID {
 				return
 			}
 			if job.SchemaState == model.StateWriteReorganization {
 				assertResult = true
 			}
-		}
-		dom.DDL().SetHook(hook)
+		})
 	}
-
-	// Change int to tinyint.
-	// Although display length is increased, the default flen is decreased, reorg is needed.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int(1))")
-	tbl := external.GetTableByName(t, tk, "test", "t")
-	assertHasAlterWriteReorg(tbl)
-	tk.MustExec("alter table t modify column a tinyint(3)")
-	require.True(t, assertResult)
 
 	// Change tinyint to tinyint
 	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
-	tbl = external.GetTableByName(t, tk, "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(1)")
 	require.False(t, assertResult)
@@ -233,6 +215,8 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 
 // TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
 func TestRowFormat(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -253,6 +237,8 @@ func TestRowFormat(t *testing.T) {
 }
 
 func TestRowFormatWithChecksums(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
@@ -269,11 +255,14 @@ func TestRowFormatWithChecksums(t *testing.T) {
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	require.NoError(t, err)
 	// row value with checksums
-	require.Equal(t, []byte{0x80, 0x2, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x8, 0x52, 0x78, 0xc9, 0x28, 0x52, 0x78, 0xc9, 0x28}, data.Info.Writes[0].ShortValue)
+	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x2, 0x9e, 0x56, 0xf5, 0x45}
+	require.Equal(t, expected, data.Info.Writes[0].ShortValue)
 	tk.MustExec("drop table if exists t")
 }
 
 func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -292,7 +281,8 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 	data, err := h.GetMvccByEncodedKey(encodedKey)
 	require.NoError(t, err)
 	// checksum skipped and with a null col vv
-	require.Equal(t, []byte{0x80, 0x0, 0x3, 0x0, 0x1, 0x0, 0x1, 0x2, 0x4, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33}, data.Info.Writes[0].ShortValue)
+	expected := []byte{0x80, 0x2, 0x3, 0x0, 0x1, 0x0, 0x1, 0x2, 0x4, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33, 0x2, 0x0, 0x4f, 0xd2, 0x26}
+	require.Equal(t, expected, data.Info.Writes[0].ShortValue)
 	tk.MustExec("drop table if exists t")
 }
 
@@ -303,7 +293,7 @@ func TestRowLevelChecksumWithMultiSchemaChange(t *testing.T) {
 // It's good because the insert / update logic will cast the related column to changing column rather than use
 // origin default value directly.
 func TestChangingColOriginDefaultValue(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -317,14 +307,12 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2)")
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
-	originalHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
 	)
 	i := 0
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -339,7 +327,8 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 					checkErr = errors.New("assert the writable column number error")
 					return
 				}
-				if tbl.WritableCols()[2].OriginDefaultValue.(string) != "0" {
+				targetCol := tbl.WritableCols()[2]
+				if targetCol.OriginDefaultValue != "0" {
 					checkErr = errors.New("assert the write only column origin default value error")
 					return
 				}
@@ -369,11 +358,9 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			}
 			i++
 		}
-	}
-	hook.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	dom.DDL().SetHook(hook)
-	tk.MustExec("alter table t modify column b tinyint NOT NULL")
-	dom.DDL().SetHook(originalHook)
+	})
+	tk.MustExec("alter table t modify column b varchar(16) DEFAULT '0' NOT NULL")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
@@ -381,7 +368,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 }
 
 func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -398,14 +385,12 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 	tk.MustExec("alter table t add column c timestamp default '1971-06-09' not null")
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
-	originalHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var (
 		once     bool
 		checkErr error
 	)
 	i, stableTimes := 0, 0
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -421,7 +406,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 					return
 				}
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-				expectVal := "1971-06-09"
+				expectVal := "0000-00-00"
 				if originalDV != expectVal {
 					errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
 					checkErr = errors.New("assert the write only column origin default value error" + errMsg)
@@ -456,11 +441,10 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 			stableTimes++
 		}
 		i++
-	}
+	})
 
-	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column c date NOT NULL")
-	dom.DDL().SetHook(originalHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(
@@ -470,7 +454,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 
 // TestChangingColOriginDefaultValueAfterAddColAndCastFail tests #25383.
 func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -484,10 +468,9 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 	tk.MustExec("ALTER TABLE t ADD COLUMN x CHAR(218) NULL DEFAULT 'lkittuae'")
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
-	originalHook := dom.DDL().GetHook()
-	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	var firstJobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -495,40 +478,54 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			return
 		}
 
+		if firstJobID == 0 {
+			firstJobID = job.ID
+		}
 		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
 			tbl := external.GetTableByName(t, tk, "test", "t")
 			if len(tbl.WritableCols()) != 4 {
-				errMsg := fmt.Sprintf("cols len:%v", len(tbl.WritableCols()))
+				errMsg := fmt.Sprintf("job ID:%d, cols len:%v", job.ID, len(tbl.WritableCols()))
 				checkErr = errors.New("assert the writable column number error" + errMsg)
 				return
 			}
-			originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
-			expectVal := "0000-00-00 00:00:00"
-			if originalDV != expectVal {
-				errMsg := fmt.Sprintf("expect: %v, got: %v", expectVal, originalDV)
-				checkErr = errors.New("assert the write only column origin default value error" + errMsg)
-				return
+			// modify column x
+			if job.ID == firstJobID {
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				expectVal := "3771-02-28 13:00:11"
+				require.Equal(t, expectVal, originalDV)
+				// The cast value will be inserted into changing column too.
+				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
+				if err != nil {
+					checkErr = err
+					return
+				}
 			}
-			// The casted value will be inserted into changing column too.
-			_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE x = '' AND a = 'mul'")
-			if err != nil {
-				checkErr = err
-				return
+			// modify column b
+			if job.ID == firstJobID+1 {
+				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
+				require.Len(t, originalDV, 32)
+				// The cast value will be inserted into changing column too.
+				_, err := tk1.Exec("UPDATE t SET a = '18apf' WHERE a = '1'")
+				if err != nil {
+					checkErr = err
+					return
+				}
 			}
 		}
-	}
+	})
 
-	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
-	dom.DDL().SetHook(originalHook)
+	tk.MustExec("insert into t(a) value('1')")
+	tk.MustExec("alter table t modify column b varchar(256) default (REPLACE(UPPER(UUID()), '-', ''));")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	require.NoError(t, checkErr)
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("18apf -729850476163 3771-02-28 13:00:11"))
 	tk.MustExec("drop table if exists t")
 }
 
 // Close issue #23202
 func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -544,17 +541,15 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit"))
 	}()
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var jobID int64
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if jobID != 0 {
 			return
 		}
 		if job.Type == model.ActionDropIndex {
 			jobID = job.ID
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	// when it panics in write-reorg state, the job will be pulled up as a cancelling job. Since drop-index with
 	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
@@ -571,39 +566,30 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 
 // Close issue #24584
 func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic"))
-	}()
-
-	// set ddl hook
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originalHook)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockInfiniteReorgLogic", `return()`)
 
 	tk.MustExec("drop table if exists ctc_goroutine_leak")
 	tk.MustExec("create table ctc_goroutine_leak (a int)")
 	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
 	tbl := external.GetTableByName(t, tk, "test", "ctc_goroutine_leak")
 
-	hook := &callback.TestDDLCallback{Do: dom}
 	var jobID int64
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if jobID != 0 {
 			return
 		}
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.Query == "alter table ctc_goroutine_leak modify column a tinyint" {
+		if job.Query == "alter table ctc_goroutine_leak modify column a varchar(16)" {
 			jobID = job.ID
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -613,7 +599,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	)
 	wg.Run(func() {
 		// This ddl will be hang over in the failpoint loop, waiting for outside cancel.
-		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a tinyint")
+		_, alterErr = tk1.Exec("alter table ctc_goroutine_leak modify column a varchar(16)")
 	})
 
 	<-ddl.TestReorgGoroutineRunning
@@ -627,7 +613,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 // For select statement, it truncates the string and return no errors. (which is 3977-02-22 00:00:00 here)
 // For ddl reorging or changing column in ctc, it needs report some errors.
 func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
+	store := testkit.CreateMockStoreWithSchemaLease(t, 600*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 	tk.MustExec("use test")
@@ -641,8 +627,7 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 	var checkErr1 error
 	var checkErr2 error
 
-	hook := &callback.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr1 != nil || checkErr2 != nil || tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -653,8 +638,7 @@ func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
 			checkErr1 = tk.ExecToErr("insert into `t` set  `a` = '3977-02-22'") // this(string) will be cast to a as date, then cast a(date) as timestamp to changing column.
 			checkErr2 = tk.ExecToErr("update t set `a` = '3977-02-22'")
 		}
-	}
-	dom.DDL().SetHook(hook)
+	})
 
 	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
 	require.EqualError(t, checkErr1, "[types:1292]Incorrect timestamp value: '3977-02-22'")

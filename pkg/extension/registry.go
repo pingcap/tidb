@@ -107,12 +107,12 @@ func (r *registry) doSetup() (_ *Extensions, err error) {
 		name := r.extensionNames[i]
 		err = clearBuilder.DoWithCollectClear(func() (func(), error) {
 			factory := r.factories[name]
-			m, clear, err := newManifestWithSetup(name, factory)
+			m, clearFunc, err := newManifestWithSetup(name, factory)
 			if err != nil {
 				return nil, err
 			}
 			manifests = append(manifests, m)
-			return clear, nil
+			return clearFunc, nil
 		})
 
 		if err != nil {

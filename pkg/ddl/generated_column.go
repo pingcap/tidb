@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -122,7 +122,7 @@ func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (
 
 // findDependedColumnNames returns a set of string, which indicates
 // the names of the columns that are depended by colDef.
-func findDependedColumnNames(schemaName model.CIStr, tableName model.CIStr, colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}, err error) {
+func findDependedColumnNames(schemaName ast.CIStr, tableName ast.CIStr, colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}, err error) {
 	colsMap = make(map[string]struct{})
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
@@ -151,7 +151,7 @@ func FindColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 }
 
 // hasDependentByGeneratedColumn checks whether there are other columns depend on this column or not.
-func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName model.CIStr) (bool, string, bool) {
+func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName ast.CIStr) (bool, string, bool) {
 	for _, col := range tblInfo.Columns {
 		for dep := range col.Dependences {
 			if dep == colName.L {
@@ -163,10 +163,12 @@ func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName model.CIStr
 }
 
 func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
-	if newCol.IsGenerated() || col.IsGenerated() {
-		// TODO: Make it compatible with MySQL error.
-		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	// TODO: Make it compatible with MySQL error.
+	if newCol.IsGenerated() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column is generated")
+	}
+	if col.IsGenerated() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("old column is generated")
 	}
 	if ok, dep, _ := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
 		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
@@ -197,10 +199,10 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  3. check if the modified expr contains non-deterministic functions
 //  4. check whether new column refers to any auto-increment columns.
 //  5. check if the new column is indexed or stored
-func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName model.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
+func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
-	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
-	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
+	oldColIsStored := !oldCol.IsVirtualGenerated()
+	newColIsStored := !newCol.IsVirtualGenerated()
 	if oldColIsStored != newColIsStored {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}
@@ -261,6 +263,7 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName model.CIStr,
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint:forbidigo
 		if !sctx.GetSessionVars().EnableAutoIncrementInGenerated {
 			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
 				return errors.Trace(err)
@@ -289,6 +292,11 @@ type illegalFunctionChecker struct {
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
+		// Grouping function is not allowed, issue #49909.
+		if node.FnName.L == ast.Grouping {
+			c.hasAggFunc = true
+			return inNode, true
+		}
 		// Blocked functions & non-builtin functions is not allowed
 		_, isFunctionBlocked := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
 		if isFunctionBlocked || !expression.IsFunctionSupported(node.FnName.L) {
@@ -381,20 +389,32 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 }
 
 func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
+	isIndexed := false
+	for _, idx := range tbl.Indices() {
+		for _, col := range idx.Meta().Columns {
+			if col.Name.L == oldCol.Name.L || col.Name.L == newCol.Name.L {
+				isIndexed = true
+				break
+			}
+		}
+		if isIndexed {
+			break
+		}
+	}
+
 	if oldCol.GeneratedExprString == newCol.GeneratedExprString {
-		return nil
+		if oldCol.FieldType.Equal(&newCol.FieldType) || !isIndexed {
+			return nil
+		}
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Unsupported modification for generated columns covered by an index")
 	}
 
 	if newCol.GeneratedStored {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
 	}
 
-	for _, idx := range tbl.Indices() {
-		for _, col := range idx.Meta().Columns {
-			if col.Name.L == newCol.Name.L {
-				return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
-			}
-		}
+	if isIndexed {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Unsupported modification for generated columns covered by an index")
 	}
 	return nil
 }

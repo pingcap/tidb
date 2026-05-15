@@ -46,7 +46,7 @@ func TestJoin2(t *testing.T) {
 	tk.MustExec("insert t values (1)")
 	tests := []struct {
 		sql    string
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			"select 1 from t as a left join t as b on 0",
@@ -78,7 +78,7 @@ func TestJoin2(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
-	result = tk.MustQuery("select t.c1, t1.c1 from t left outer join t1 on t.c1 = t1.c1 and t.c2 + t1.c2 <= 5")
+	result = tk.MustQuery("select t.c1, t1.c1 from t left outer join t1 on t.c1 = t1.c1 and t.c2 + t1.c2 <= 5 order by t.c1")
 	result.Check(testkit.Rows("1 <nil>", "2 2"))
 
 	tk.MustExec("drop table if exists t1")
@@ -136,10 +136,10 @@ func TestJoin2(t *testing.T) {
 	// The physical plans of the two sql are tested at physical_plan_test.go
 	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 4", "1 1 1 3", "1 1 1 2", "3 3 3 4"))
 	tk.MustQuery("select /*+ INL_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Sort().Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 4 1 1", "1 3 1 1", "1 2 1 1", "3 4 3 3"))
 	// Test single index reader.
 	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Sort().Check(testkit.Rows("2", "3"))
@@ -254,7 +254,7 @@ func TestJoin2(t *testing.T) {
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int)")
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tk.MustExec("insert into t value(1)")
 	}
 	result = tk.MustQuery("select /*+ TIDB_HJ(s, r) */ * from t as s join t as r on s.a = r.a limit 1;")
@@ -295,7 +295,7 @@ func TestJoinLeak(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("begin")
-	for i := 0; i < 1002; i++ {
+	for range 1002 {
 		tk.MustExec("insert t values (1)")
 	}
 	tk.MustExec("commit")
@@ -352,7 +352,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results := []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -403,7 +403,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1, null, 0), (2, 1, 0)")
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -447,7 +447,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1, null, 0), (2, 1, 0), (null, 2, 0)")
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -498,7 +498,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -531,7 +531,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(
@@ -590,7 +590,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),
@@ -622,7 +622,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),
@@ -663,7 +663,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),
@@ -720,7 +720,7 @@ func TestIssue18070(t *testing.T) {
 	err := tk.ExecToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 
-	fpName := "github.com/pingcap/tidb/pkg/executor/mockIndexMergeJoinOOMPanic"
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/mockIndexMergeJoinOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
@@ -738,12 +738,12 @@ func TestIssue20779(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1);")
 	tk.MustExec("insert into t1 select * from t1;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIssue20779", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIssue20779", "return"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIssue20779"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIssue20779"))
 	}()
 
-	rs, err := tk.Exec("select /*+ inl_hash_join(t2) */ t1.b from t1 left join t1 t2 on t1.b=t2.b order by t1.b;")
+	rs, err := tk.Exec("select /*+ inl_hash_join(t2) */ t1.b from t1 use index(idx) left join t1 t2 use index(idx) on t1.b=t2.b order by t1.b;")
 	require.NoError(t, err)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.EqualError(t, err, "testIssue20779")
@@ -757,8 +757,14 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(a int, index(a));")
 	tk.MustExec("create table t2(a int, index(a));")
+	fpName2 := "github.com/pingcap/tidb/pkg/executor/join/TestIssue49692"
+	require.NoError(t, failpoint.Enable(fpName2, `return`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName2))
+	}()
+
 	func() {
-		fpName := "github.com/pingcap/tidb/pkg/executor/TestIssue30211"
+		fpName := "github.com/pingcap/tidb/pkg/executor/join/TestIssue30211"
 		require.NoError(t, failpoint.Enable(fpName, `panic("TestIssue30211 IndexJoinPanic")`))
 		defer func() {
 			require.NoError(t, failpoint.Disable(fpName))
@@ -771,13 +777,21 @@ func TestIssue30211(t *testing.T) {
 	}()
 	tk.MustExec("insert into t1 values(1),(2);")
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
-	tk.MustExec("set @@tidb_mem_quota_query=8000;")
+
+	// the memory used in planner stage is less than the memory used in executor stage, so we have to use
+	// the Plan Cache so that the query will not be canceled during compilation.
+	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a';")
+	tk.MustExec("prepare stmt2 from 'select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a';")
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2"))
+
+	tk.MustExec("set @@tidb_mem_quota_query=1000;")
 	tk.MustExec("set tidb_index_join_batch_size = 1;")
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
 	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
-	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	err := tk.QueryToErr("execute stmt1")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;")
+	err = tk.QueryToErr("execute stmt2")
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
@@ -898,4 +912,82 @@ func TestIssue49033(t *testing.T) {
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.EqualError(t, err, "testIssue49033")
 	require.NoError(t, rs.Close())
+}
+
+func TestIssue11895(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 bigint unsigned);")
+	tk.MustExec("create table t1(c1 bit(64));")
+	tk.MustExec("insert into t value(18446744073709551615);")
+	tk.MustExec("insert into t1 value(-1);")
+
+	tk.MustQuery("select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;").Check(testkit.Rows("18446744073709551615 FFFFFFFFFFFFFFFF"))
+}
+
+func TestIssue11896(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 bigint);")
+	tk.MustExec("create table t1(c1 bit(64));")
+	tk.MustExec("insert into t value(1);")
+	tk.MustExec("insert into t1 value(1);")
+
+	tk.MustQuery("select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 bigint);")
+	tk.MustExec("create table t1(c1 bit(64));")
+	tk.MustExec("insert into t value(-1);")
+	tk.MustExec("insert into t1 value(18446744073709551615);")
+
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;").Check(nil)
+}
+
+func TestSingleTaskIncrementalIndexHashJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key)")
+	tk.MustExec("create table t2(b int not null, c varchar(100), index idx_b(b))")
+
+	sql1 := "insert into t1 values "
+	// insert 9 rows to t1, a is 2-10
+	for i := 2; i <= 10; i++ {
+		if i > 2 {
+			sql1 += ","
+		}
+		sql1 += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec(sql1)
+
+	sql2 := "insert into t2 values "
+	// insert 9000 rows to t2, b is 1-9
+	for i := 1; i <= 9000; i++ {
+		if i > 1 {
+			sql2 += ","
+		}
+		sql2 += fmt.Sprintf("(%d, 'abc')", i/1000)
+	}
+	tk.MustExec(sql2)
+
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t1 inner join t2 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ count(*) from t1 inner join t2 on t1.a = t2.b").Check(testkit.Rows("7001"))
+
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ count(*) from t1 left join t2 on t1.a = t2.b").Check(testkit.Rows("7002"))
+
+	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ * from t2 right join t1 on t1.a = t2.b")
+	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ count(*) from t2 right join t1 on t1.a = t2.b").Check(testkit.Rows("7002"))
+
+	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ * from t1 where t1.a not in (select t2.b from t2 where t2.b = t1.a)")
+	tk.MustQuery("select /*+ inl_hash_join(t2,t1) */ count(*) from t1 where t1.a not in (select t2.b from t2 where t2.b = t1.a)").Check(testkit.Rows("1"))
 }

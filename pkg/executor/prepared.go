@@ -26,11 +26,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -52,12 +56,14 @@ type PrepareExec struct {
 
 	ID         uint32
 	ParamCount int
-	Fields     []*ast.ResultField
-	Stmt       interface{}
+	Fields     []*resolve.ResultField
+	Stmt       any
 
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
 	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
+	// Also, the second case need charset_client param since SQL is directly passed from clients.
+	// While the text-prepare already transformed charset by parser.
 	needReset bool
 }
 
@@ -83,28 +89,45 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return nil
 		}
 	}
-	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
 	)
+	var params []parser.ParseParam
+	if e.needReset {
+		params = vars.GetParseParams()
+	} else {
+		var paramsArr [2]parser.ParseParam
+		charset, collation := vars.GetCharsetInfo()
+		paramsArr[0] = parser.CharsetConnection(charset)
+		paramsArr[1] = parser.CollationConnection(collation)
+		params = paramsArr[:]
+	}
+
+	warnCountBeforeParse := len(vars.StmtCtx.GetWarnings())
 	if sqlParser, ok := e.Ctx().(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
-			parser.CharsetConnection(charset),
-			parser.CollationConnection(collation))
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, params...)
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.ParseSQL(e.sqlText,
-			parser.CharsetConnection(charset),
-			parser.CollationConnection(collation))
+		stmts, warns, err = p.ParseSQL(e.sqlText, params...)
 		for _, warn := range warns {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
 	}
 	if err != nil {
+		if !vars.InRestrictedSQL {
+			vars.StmtCtx.AppendError(err)
+		}
+
+		if e.needReset {
+			// If an error happened, we'll need to remove the warnings in previous execution because the `ResetContextOfStmt` will not be called.
+			// Ref https://github.com/pingcap/tidb/issues/59132
+			vars.StmtCtx.SetWarnings(vars.StmtCtx.GetWarnings()[warnCountBeforeParse:])
+		}
+
 		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
@@ -117,11 +140,11 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 	}
-	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.Ctx(), true, stmt0.Text(), stmt0, nil)
+	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.Ctx(), true, stmt0.Text(), stmt0, sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema())
 	if err != nil {
 		return err
 	}
-	if topsqlstate.TopSQLEnabled() {
+	if topsqlstate.TopProfilingEnabled() {
 		e.Ctx().GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
 		topsql.AttachAndRegisterSQLInfo(ctx, stmt.NormalizedSQL, stmt.SQLDigest, vars.InRestrictedSQL)
 	}
@@ -158,7 +181,7 @@ type ExecuteExec struct {
 	usingVars     []expression.Expression
 	stmtExec      exec.Executor
 	stmt          ast.StmtNode
-	plan          plannercore.Plan
+	plan          base.Plan
 	lowerPriority bool
 	outputNames   []*types.FieldName
 }
@@ -195,19 +218,16 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	vars := e.Ctx().GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return errors.Trace(plannercore.ErrStmtNotFound)
+		return errors.Trace(plannererrors.ErrStmtNotFound)
 	}
 	preparedPointer := vars.PreparedStmts[id]
 	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 	if !ok {
 		return errors.Errorf("invalid PlanCacheStmt type")
 	}
-	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
-		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.Ctx(), preparedObj)
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
-			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+		cacheKey, _, _, _, err := plannercore.NewPlanCacheKey(e.Ctx(), preparedObj)
 		if err != nil {
 			return err
 		}

@@ -43,7 +43,7 @@ func (s *mockGCSSuite) TestLoadCSV() {
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-csv/no-new-line-at-end.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, gcsEndpoint)
+		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"100 test100",
@@ -70,7 +70,7 @@ func (s *mockGCSSuite) TestLoadCSV() {
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-csv/new-line-at-end.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, gcsEndpoint)
+		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"100 test100",
@@ -104,7 +104,7 @@ func (s *mockGCSSuite) TestLoadCsvInTransaction() {
 	sql := fmt.Sprintf(
 		`LOAD DATA INFILE 'gs://test-load-csv/data.csv?endpoint=%s' INTO TABLE load_csv.t `+
 			"FIELDS TERMINATED BY ','",
-		gcsEndpoint,
+		s.GetGCSEndpoint(),
 	)
 	// test: load data stmt doesn't commit it
 	s.tk.MustExec("insert into load_csv.t values (1, 'a')")
@@ -144,7 +144,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ignore-lines-bad-syntax.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, gcsEndpoint)
+		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"b 2",
@@ -154,7 +154,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ignore-lines-bad-syntax.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-		LINES TERMINATED BY '\n' IGNORE 100 LINES;`, gcsEndpoint)
+		LINES TERMINATED BY '\n' IGNORE 100 LINES;`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows())
 	s.tk.MustExec("TRUNCATE TABLE load_csv.t;")
@@ -176,7 +176,7 @@ func (s *mockGCSSuite) TestIgnoreNLines() {
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/count-terminator-inside-quotes.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-		LINES TERMINATED BY '\n' IGNORE 2 LINES;`, gcsEndpoint)
+		LINES TERMINATED BY '\n' IGNORE 2 LINES;`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"b\n 2",
@@ -204,7 +204,7 @@ mynull,"mynull"
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ','
-		LINES TERMINATED BY '\n';`, gcsEndpoint)
+		LINES TERMINATED BY '\n';`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`<nil> "N"`,
@@ -216,7 +216,7 @@ mynull,"mynull"
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' ESCAPED BY '\\'
-		LINES TERMINATED BY '\n';`, gcsEndpoint)
+		LINES TERMINATED BY '\n';`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`<nil> "N"`,
@@ -228,7 +228,7 @@ mynull,"mynull"
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '!'
-		LINES TERMINATED BY '\n';`, gcsEndpoint)
+		LINES TERMINATED BY '\n';`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`\N \N`,
@@ -240,7 +240,7 @@ mynull,"mynull"
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY 'NULL'
-		LINES TERMINATED BY '\n';`, gcsEndpoint)
+		LINES TERMINATED BY '\n';`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`<nil> <nil>`,
@@ -252,7 +252,7 @@ mynull,"mynull"
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY 'NULL' OPTIONALLY ENCLOSED
-		LINES TERMINATED BY '\n'`, gcsEndpoint)
+		LINES TERMINATED BY '\n'`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`<nil> <nil>`,
@@ -264,7 +264,7 @@ mynull,"mynull"
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '!' DEFINED NULL BY 'mynull' OPTIONALLY ENCLOSED
-		LINES TERMINATED BY '\n'`, gcsEndpoint)
+		LINES TERMINATED BY '\n'`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`\N \N`,
@@ -280,12 +280,12 @@ mynull,"mynull"
 			BucketName: "test-bucket",
 			Name:       "ascii-0.csv",
 		},
-		Content: []byte(fmt.Sprintf(`\0,"\0"
-%s,"%s"`, ascii0, ascii0)),
+		Content: fmt.Appendf(nil, `\0,"\0"
+%s,"%s"`, ascii0, ascii0),
 	})
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ascii-0.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '' DEFINED NULL BY x'00' OPTIONALLY ENCLOSED
-		LINES TERMINATED BY '\n';`, gcsEndpoint)
+		LINES TERMINATED BY '\n';`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		`\0 \0`,
@@ -295,7 +295,7 @@ mynull,"mynull"
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ascii-0.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '\\' DEFINED NULL BY x'00'
-		LINES TERMINATED BY '\n';`, gcsEndpoint)
+		LINES TERMINATED BY '\n';`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"<nil> \000",
@@ -305,7 +305,7 @@ mynull,"mynull"
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/customize-null.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' DEFINED NULL BY 'mynull' OPTIONALLY ENCLOSED
-		LINES TERMINATED BY '\n';`, gcsEndpoint)
+		LINES TERMINATED BY '\n';`, s.GetGCSEndpoint())
 	s.tk.MustMatchErrMsg(sql, `must specify FIELDS \[OPTIONALLY\] ENCLOSED BY`)
 }
 
@@ -325,31 +325,31 @@ func (s *mockGCSSuite) TestGeneratedColumns() {
 	})
 
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen1", gcsEndpoint))
+		" INTO TABLE load_csv.t_gen1", s.GetGCSEndpoint()))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 	s.tk.MustExec("delete from t_gen1")
 
 	// Specify the column, this should also work.
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen1 (a)", gcsEndpoint))
+		" INTO TABLE load_csv.t_gen1 (a)", s.GetGCSEndpoint()))
 	s.tk.MustQuery("select * from t_gen1").Check(testkit.Rows("1 2", "2 3"))
 
 	// Swap the column and test again.
 	s.tk.MustExec(`create table t_gen2 (a int generated ALWAYS AS (b+1), b int);`)
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2", gcsEndpoint))
+		" INTO TABLE load_csv.t_gen2", s.GetGCSEndpoint()))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("3 2", "4 3"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column b
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2 (b)", gcsEndpoint))
+		" INTO TABLE load_csv.t_gen2 (b)", s.GetGCSEndpoint()))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("2 1", "3 2"))
 	s.tk.MustExec(`delete from t_gen2`)
 
 	// Specify the column a
 	s.tk.MustExec(fmt.Sprintf("LOAD DATA INFILE 'gcs://test-bucket/generated_columns.csv?endpoint=%s'"+
-		" INTO TABLE load_csv.t_gen2 (a)", gcsEndpoint))
+		" INTO TABLE load_csv.t_gen2 (a)", s.GetGCSEndpoint()))
 	s.tk.MustQuery("select * from t_gen2").Check(testkit.Rows("<nil> <nil>", "<nil> <nil>"))
 }
 
@@ -373,7 +373,7 @@ func (s *mockGCSSuite) TestMultiValueIndex() {
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load-csv/1.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'
-		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, gcsEndpoint)
+		LINES TERMINATED BY '\n' IGNORE 1 LINES;`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_csv.t;").Check(testkit.Rows(
 		"1 [1, 2, 3]",
@@ -411,14 +411,14 @@ func (s *mockGCSSuite) TestGBK() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
-		INTO TABLE load_charset.gbk CHARACTER SET gbk`, gcsEndpoint)
+		INTO TABLE load_charset.gbk CHARACTER SET gbk`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.gbk;").Check(testkit.Rows(
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
 		"2 丐丑丒专且丕世丗丘丙业丛东丝丞丢",
 	))
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4 CHARACTER SET gbk`, gcsEndpoint)
+		INTO TABLE load_charset.utf8mb4 CHARACTER SET gbk`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
@@ -428,7 +428,7 @@ func (s *mockGCSSuite) TestGBK() {
 	s.tk.MustExec("TRUNCATE TABLE load_charset.utf8mb4;")
 	s.tk.MustExec("SET SESSION character_set_database = 'gbk';")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4`, gcsEndpoint)
+		INTO TABLE load_charset.utf8mb4`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
@@ -446,7 +446,7 @@ func (s *mockGCSSuite) TestGBK() {
 
 	s.tk.MustExec("TRUNCATE TABLE load_charset.gbk;")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/utf8mb4.tsv?endpoint=%s'
-		INTO TABLE load_charset.gbk CHARACTER SET utf8mb4`, gcsEndpoint)
+		INTO TABLE load_charset.gbk CHARACTER SET utf8mb4`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.gbk;").Check(testkit.Rows(
 		"1 一丁丂七丄丅丆万丈三上下丌不与丏",
@@ -464,12 +464,12 @@ func (s *mockGCSSuite) TestGBK() {
 
 	s.tk.MustExec("TRUNCATE TABLE load_charset.gbk;")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/emoji.tsv?endpoint=%s'
-		INTO TABLE load_charset.gbk CHARACTER SET utf8mb4`, gcsEndpoint)
+		INTO TABLE load_charset.gbk CHARACTER SET utf8mb4`, s.GetGCSEndpoint())
 	err := s.tk.ExecToErr(sql)
 	checkClientErrorMessage(s.T(), err, `ERROR 1366 (HY000): Incorrect string value '\xF0\x9F\x98\x80' for column 'j'`)
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/emoji.tsv?endpoint=%s'
-		IGNORE INTO TABLE load_charset.gbk CHARACTER SET utf8mb4`, gcsEndpoint)
+		IGNORE INTO TABLE load_charset.gbk CHARACTER SET utf8mb4`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	require.Equal(s.T(), "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2", s.tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	s.tk.MustQuery("SELECT HEX(j) FROM load_charset.gbk;").Check(testkit.Rows(
@@ -478,7 +478,7 @@ func (s *mockGCSSuite) TestGBK() {
 	))
 
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/gbk.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4 CHARACTER SET unknown`, gcsEndpoint)
+		INTO TABLE load_charset.utf8mb4 CHARACTER SET unknown`, s.GetGCSEndpoint())
 	err = s.tk.ExecToErr(sql)
 	require.ErrorContains(s.T(), err, "Unknown character set: 'unknown'")
 }
@@ -502,14 +502,14 @@ func (s *mockGCSSuite) TestOtherCharset() {
 	})
 
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/utf8.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8 CHARACTER SET utf8`, gcsEndpoint)
+		INTO TABLE load_charset.utf8 CHARACTER SET utf8`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8;").Check(testkit.Rows(
 		"1 ကခဂဃ",
 		"2 ငစဆဇ",
 	))
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/utf8.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4 CHARACTER SET utf8`, gcsEndpoint)
+		INTO TABLE load_charset.utf8mb4 CHARACTER SET utf8`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 ကခဂဃ",
@@ -528,7 +528,7 @@ func (s *mockGCSSuite) TestOtherCharset() {
 		i INT, j VARCHAR(255)
 		) CHARACTER SET latin1;`)
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/latin1.tsv?endpoint=%s'
-		INTO TABLE load_charset.latin1 CHARACTER SET latin1`, gcsEndpoint)
+		INTO TABLE load_charset.latin1 CHARACTER SET latin1`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.latin1;").Check(testkit.Rows(
 		"1 ‘’“”",
@@ -537,7 +537,7 @@ func (s *mockGCSSuite) TestOtherCharset() {
 
 	s.tk.MustExec("TRUNCATE TABLE load_charset.utf8mb4;")
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/latin1.tsv?endpoint=%s'
-		INTO TABLE load_charset.utf8mb4 CHARACTER SET latin1`, gcsEndpoint)
+		INTO TABLE load_charset.utf8mb4 CHARACTER SET latin1`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_charset.utf8mb4;").Check(testkit.Rows(
 		"1 ‘’“”",
@@ -558,13 +558,13 @@ func (s *mockGCSSuite) TestOtherCharset() {
 		j VARCHAR(255)
 		) CHARACTER SET binary;`)
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/ascii.tsv?endpoint=%s'
-		INTO TABLE load_charset.ascii CHARACTER SET ascii`, gcsEndpoint)
+		INTO TABLE load_charset.ascii CHARACTER SET ascii`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT HEX(j) FROM load_charset.ascii;").Check(testkit.Rows(
 		"0001020304050607",
 	))
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/ascii.tsv?endpoint=%s'
-		INTO TABLE load_charset.binary CHARACTER SET binary`, gcsEndpoint)
+		INTO TABLE load_charset.binary CHARACTER SET binary`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT HEX(j) FROM load_charset.binary;").Check(testkit.Rows(
 		"0001020304050607",
@@ -586,7 +586,7 @@ func (s *mockGCSSuite) TestColumnsAndUserVars() {
 	})
 	sql := fmt.Sprintf(`LOAD DATA INFILE 'gs://test-load/cols_and_vars-*.tsv?endpoint=%s'
 		INTO TABLE load_data.cols_and_vars fields terminated by ','
-		(@V1, @v2, @v3) set a=@V1, b=@V2*10, c=123`, gcsEndpoint)
+		(@V1, @v2, @v3) set a=@V1, b=@V2*10, c=123`, s.GetGCSEndpoint())
 	s.tk.MustExec(sql)
 	s.tk.MustQuery("SELECT * FROM load_data.cols_and_vars;").Sort().Check(testkit.Rows(
 		"1 110 123",

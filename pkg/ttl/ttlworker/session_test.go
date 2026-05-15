@@ -18,14 +18,17 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -35,20 +38,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var idAllocator atomic.Int64
+
 func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 	tblInfo := &model.TableInfo{
-		Name: model.NewCIStr(name),
+		ID:   idAllocator.Add(1),
+		Name: ast.NewCIStr(name),
 		Columns: []*model.ColumnInfo{
 			{
 				ID:        1,
-				Name:      model.NewCIStr("time"),
+				Name:      ast.NewCIStr("time"),
 				Offset:    0,
 				FieldType: *types.NewFieldType(mysql.TypeDatetime),
 				State:     model.StatePublic,
 			},
 		},
 		TTLInfo: &model.TTLInfo{
-			ColumnName:       model.NewCIStr("time"),
+			ColumnName:       ast.NewCIStr("time"),
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitSecond),
 			Enable:           true,
@@ -57,7 +63,7 @@ func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 		State: model.StatePublic,
 	}
 
-	tbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tblInfo, model.NewCIStr(""))
+	tbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
 	require.NoError(t, err)
 	return tbl
 }
@@ -84,7 +90,7 @@ func newMockRows(t *testing.T, fieldTypes ...*types.FieldType) *mockRows {
 	}
 }
 
-func (r *mockRows) Append(row ...interface{}) *mockRows {
+func (r *mockRows) Append(row ...any) *mockRows {
 	require.Equal(r.t, len(r.fieldTypes), len(row))
 	for i, ft := range r.fieldTypes {
 		tp := ft.GetType()
@@ -97,6 +103,10 @@ func (r *mockRows) Append(row ...interface{}) *mockRows {
 			val, ok := row[i].(int)
 			require.True(r.t, ok)
 			r.AppendInt64(i, int64(val))
+		case mysql.TypeString:
+			val, ok := row[i].(string)
+			require.True(r.t, ok)
+			r.AppendString(i, val)
 		default:
 			require.FailNow(r.t, "unsupported tp %v", tp)
 		}
@@ -106,28 +116,45 @@ func (r *mockRows) Append(row ...interface{}) *mockRows {
 
 func (r *mockRows) Rows() []chunk.Row {
 	rows := make([]chunk.Row, r.NumRows())
-	for i := 0; i < r.NumRows(); i++ {
+	for i := range r.NumRows() {
 		rows[i] = r.GetRow(i)
 	}
 	return rows
 }
 
 type mockSessionPool struct {
+	syssession.Pool
 	t           *testing.T
 	se          *mockSession
 	lastSession *mockSession
+	inuse       atomic.Int64
 }
 
-func (p *mockSessionPool) Get() (pools.Resource, error) {
+func (p *mockSessionPool) WithSession(fn func(*syssession.Session) error) error {
 	se := *(p.se)
 	p.lastSession = &se
-	return p.lastSession, nil
+	p.inuse.Add(1)
+	defer p.inuse.Add(-1)
+	s, err := syssession.NewSessionForTest(p.lastSession)
+	if err != nil {
+		return err
+	}
+	p.lastSession.inPool = false
+	defer func() {
+		p.lastSession.inPool = true
+	}()
+	return fn(s)
 }
 
-func (p *mockSessionPool) Put(pools.Resource) {}
+func (p *mockSessionPool) AssertNoSessionInUse() {
+	require.Equal(p.t, int64(0), p.inuse.Load())
+}
+
+func (p *mockSessionPool) Close() {}
 
 func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *mockSessionPool {
 	return &mockSessionPool{
+		t:  t,
 		se: newMockSession(t, tbl...),
 	}
 }
@@ -137,13 +164,14 @@ type mockSession struct {
 	sessionctx.Context
 	sessionVars        *variable.SessionVars
 	sessionInfoSchema  infoschema.InfoSchema
-	executeSQL         func(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error)
+	executeSQL         func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)
 	rows               []chunk.Row
 	execErr            error
-	evalExpire         time.Time
 	resetTimeZoneCalls int
+	inPool             bool
 	closed             bool
 	commitErr          error
+	killed             chan struct{}
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -156,29 +184,44 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 	return &mockSession{
 		t:                 t,
 		sessionInfoSchema: newMockInfoSchema(tbls...),
-		evalExpire:        time.Now(),
 		sessionVars:       sessVars,
+		killed:            make(chan struct{}),
 	}
 }
 
-func (s *mockSession) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+func (s *mockSession) GetStore() kv.Storage {
+	return nil
+}
+
+func (s *mockSession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
 }
 
-func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
+func (s *mockSession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
+	return s.GetLatestInfoSchema()
+}
+
+func (s *mockSession) SessionInfoSchema() infoschemactx.MetaOnlyInfoSchema {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	return s.sessionInfoSchema
 }
 
 func (s *mockSession) GetSessionVars() *variable.SessionVars {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	return s.sessionVars
 }
 
-func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
+func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	if strings.HasPrefix(strings.ToUpper(sql), "SELECT FROM_UNIXTIME") {
-		return newMockRows(s.t, types.NewFieldType(mysql.TypeTimestamp)).Append(s.evalExpire.In(s.GetSessionVars().TimeZone)).Rows(), nil
+		panic("not supported")
+	}
+
+	if strings.ToUpper(sql) == "SELECT @@TIME_ZONE" {
+		panic("not supported")
 	}
 
 	if strings.HasPrefix(strings.ToUpper(sql), "SET ") {
@@ -192,6 +235,7 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...interf
 }
 
 func (s *mockSession) RunInTxn(_ context.Context, fn func() error, _ session.TxnMode) error {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	if err := fn(); err != nil {
 		return err
@@ -200,12 +244,24 @@ func (s *mockSession) RunInTxn(_ context.Context, fn func() error, _ session.Txn
 }
 
 func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	s.resetTimeZoneCalls++
 	return nil
 }
 
+// GlobalTimeZone returns the global timezone
+func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) {
+	return time.Local, nil
+}
+
+// KillStmt kills the current statement execution
+func (s *mockSession) KillStmt() {
+	close(s.killed)
+}
+
 func (s *mockSession) Close() {
+	require.False(s.t, s.closed)
 	s.closed = true
 }
 
@@ -216,6 +272,8 @@ func (s *mockSession) Now() time.Time {
 	}
 	return time.Now().In(tz)
 }
+
+func (s *mockSession) AvoidReuse() {}
 
 func TestExecuteSQLWithCheck(t *testing.T) {
 	ctx := context.TODO()
@@ -262,7 +320,7 @@ func TestValidateTTLWork(t *testing.T) {
 
 	s := newMockSession(t, tbl)
 	s.execErr = errors.New("mockErr")
-	s.evalExpire = time.UnixMilli(0).In(time.UTC)
+	ctx = cache.SetMockExpireTime(ctx, time.UnixMilli(0).In(time.UTC))
 
 	// test table dropped
 	s.sessionInfoSchema = newMockInfoSchema()
@@ -285,7 +343,7 @@ func TestValidateTTLWork(t *testing.T) {
 
 	// test table name changed
 	tbl2 = tbl.TableInfo.Clone()
-	tbl2.Name = model.NewCIStr("testcc")
+	tbl2.Name = ast.NewCIStr("testcc")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
@@ -300,8 +358,8 @@ func TestValidateTTLWork(t *testing.T) {
 	// test time column name changed
 	tbl2 = tbl.TableInfo.Clone()
 	tbl2.Columns[0] = tbl2.Columns[0].Clone()
-	tbl2.Columns[0].Name = model.NewCIStr("time2")
-	tbl2.TTLInfo.ColumnName = model.NewCIStr("time2")
+	tbl2.Columns[0].Name = ast.NewCIStr("time2")
+	tbl2.TTLInfo.ColumnName = ast.NewCIStr("time2")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "time column name changed")
@@ -310,13 +368,13 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2 = tbl.TableInfo.Clone()
 	tbl2.TTLInfo.IntervalExprStr = "10"
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	s.evalExpire = time.UnixMilli(-1)
+	ctx = cache.SetMockExpireTime(ctx, time.UnixMilli(-1))
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "expire interval changed")
 
 	tbl2 = tbl.TableInfo.Clone()
 	tbl2.TTLInfo.IntervalTimeUnit = int(ast.TimeUnitDay)
-	s.evalExpire = time.UnixMilli(-1)
+	ctx = cache.SetMockExpireTime(ctx, time.UnixMilli(-1))
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "expire interval changed")
@@ -327,7 +385,7 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2.Columns[0].ID += 10
 	tbl2.Columns[0].FieldType = *types.NewFieldType(mysql.TypeDate)
 	tbl2.TTLInfo.IntervalExprStr = "100"
-	s.evalExpire = time.UnixMilli(1000)
+	ctx = cache.SetMockExpireTime(ctx, time.UnixMilli(1000))
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.NoError(t, err)
@@ -336,14 +394,14 @@ func TestValidateTTLWork(t *testing.T) {
 	tp := tbl.TableInfo.Clone()
 	tp.Partition = &model.PartitionInfo{
 		Definitions: []model.PartitionDefinition{
-			{ID: 1023, Name: model.NewCIStr("p0")},
+			{ID: 1023, Name: ast.NewCIStr("p0")},
 		},
 	}
-	tbl, err = cache.NewPhysicalTable(model.NewCIStr("test"), tp, model.NewCIStr("p0"))
+	tbl, err = cache.NewPhysicalTable(ast.NewCIStr("test"), tp, ast.NewCIStr("p0"))
 	require.NoError(t, err)
 	tbl2 = tp.Clone()
 	tbl2.Partition = tp.Partition.Clone()
-	tbl2.Partition.Definitions[0].Name = model.NewCIStr("p1")
+	tbl2.Partition.Definitions[0].Name = ast.NewCIStr("p1")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	err = validateTTLWork(ctx, s, tbl, expire)
 	require.EqualError(t, err, "partition 'p0' is not found in ttl table 'test.t1'")

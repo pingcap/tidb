@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -75,10 +75,12 @@ type rowSampler interface {
 }
 
 type tableRegionSampler struct {
-	ctx        sessionctx.Context
-	table      table.Table
-	startTS    uint64
-	partTables []table.PartitionedTable
+	ctx             sessionctx.Context
+	table           table.Table
+	startTS         uint64
+	physicalTableID int64
+	partTables      []table.PartitionedTable
+
 	schema     *expression.Schema
 	fullSchema *expression.Schema
 	isDesc     bool
@@ -89,18 +91,28 @@ type tableRegionSampler struct {
 	isFinished   bool
 }
 
-func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, partTables []table.PartitionedTable,
-	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldType, desc bool) *tableRegionSampler {
+func newTableRegionSampler(
+	ctx sessionctx.Context,
+	t table.Table,
+	startTs uint64,
+	pyhsicalTableID int64,
+	partTables []table.PartitionedTable,
+	schema *expression.Schema,
+	fullSchema *expression.Schema,
+	retTypes []*types.FieldType,
+	desc bool,
+) *tableRegionSampler {
 	return &tableRegionSampler{
-		ctx:        ctx,
-		table:      t,
-		startTS:    startTs,
-		partTables: partTables,
-		schema:     schema,
-		fullSchema: fullSchema,
-		isDesc:     desc,
-		retTypes:   retTypes,
-		rowMap:     make(map[int64]types.Datum),
+		ctx:             ctx,
+		table:           t,
+		startTS:         startTs,
+		partTables:      partTables,
+		physicalTableID: pyhsicalTableID,
+		schema:          schema,
+		fullSchema:      fullSchema,
+		isDesc:          desc,
+		retTypes:        retTypes,
+		rowMap:          make(map[int64]types.Datum),
 	}
 }
 
@@ -141,10 +153,7 @@ func (s *tableRegionSampler) initRanges() error {
 
 func (s *tableRegionSampler) pickRanges(count int) ([]kv.KeyRange, error) {
 	var regionKeyRanges []kv.KeyRange
-	cutPoint := count
-	if len(s.restKVRanges) < cutPoint {
-		cutPoint = len(s.restKVRanges)
-	}
+	cutPoint := min(len(s.restKVRanges), count)
 	regionKeyRanges, s.restKVRanges = s.restKVRanges[:cutPoint], s.restKVRanges[cutPoint:]
 	return regionKeyRanges, nil
 }
@@ -157,7 +166,7 @@ func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chu
 	}
 	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap)
 	err = s.scanFirstKVForEachRange(ranges, func(handle kv.Handle, value []byte) error {
-		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, s.rowMap)
+		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx.GetExprCtx(), handle, value, decLoc, s.rowMap)
 		if err != nil {
 			return err
 		}
@@ -176,23 +185,31 @@ func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chu
 }
 
 func (s *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
-	if len(s.partTables) != 0 {
-		var ranges []kv.KeyRange
-		for _, t := range s.partTables {
-			for _, pid := range t.GetAllPartitionIDs() {
-				start := tablecodec.GenTableRecordPrefix(pid)
-				end := start.PrefixNext()
-				rs, err := splitIntoMultiRanges(s.ctx.GetStore(), start, end)
-				if err != nil {
-					return nil, err
-				}
-				ranges = append(ranges, rs...)
-			}
-		}
-		return ranges, nil
+	partitionTable := s.table.GetPartitionedTable()
+	if partitionTable == nil {
+		startKey, endKey := s.table.RecordPrefix(), s.table.RecordPrefix().PrefixNext()
+		return splitIntoMultiRanges(s.ctx.GetStore(), startKey, endKey)
 	}
-	startKey, endKey := s.table.RecordPrefix(), s.table.RecordPrefix().PrefixNext()
-	return splitIntoMultiRanges(s.ctx.GetStore(), startKey, endKey)
+
+	var partIDs []int64
+	if partitionTable.Meta().ID == s.physicalTableID {
+		for _, p := range s.partTables {
+			partIDs = append(partIDs, p.GetAllPartitionIDs()...)
+		}
+	} else {
+		partIDs = []int64{s.physicalTableID}
+	}
+	ranges := make([]kv.KeyRange, 0, len(partIDs))
+	for _, pid := range partIDs {
+		start := tablecodec.GenTableRecordPrefix(pid)
+		end := start.PrefixNext()
+		rs, err := splitIntoMultiRanges(s.ctx.GetStore(), start, end)
+		if err != nil {
+			return nil, err
+		}
+		ranges = append(ranges, rs...)
+	}
+	return ranges, nil
 }
 
 func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange, error) {
@@ -215,7 +232,7 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 		if kv.Key(start).Cmp(startKey) < 0 {
 			start = startKey
 		}
-		if end == nil || kv.Key(end).Cmp(endKey) > 0 {
+		if len(end) == 0 || kv.Key(end).Cmp(endKey) > 0 {
 			end = endKey
 		}
 		ranges = append(ranges, kv.KeyRange{StartKey: start, EndKey: end})
@@ -265,11 +282,32 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 		}
 	}
 	// Schema columns contain _tidb_rowid, append extra handle column info.
-	if len(cols) < len(schemaCols) && schemaCols[len(schemaCols)-1].ID == model.ExtraHandleID {
+	hasExtraHandleID := false
+	hasExtraCommitTSID := false
+	for _, c := range schemaCols {
+		if c.ID == model.ExtraHandleID {
+			hasExtraHandleID = true
+			continue
+		}
+		if c.ID == model.ExtraCommitTSID {
+			hasExtraCommitTSID = true
+			continue
+		}
+	}
+	if len(cols) < len(schemaCols) && hasExtraHandleID {
 		extraHandle := model.NewExtraHandleColInfo()
 		extraHandle.Offset = len(cols)
 		tableCol := &table.Column{ColumnInfo: extraHandle}
 		colMap[model.ExtraHandleID] = decoder.Column{
+			Col: tableCol,
+		}
+		cols = append(cols, tableCol)
+	}
+	if len(cols) < len(schemaCols) && hasExtraCommitTSID {
+		extraCommitTS := model.NewExtraCommitTSColInfo()
+		extraCommitTS.Offset = len(cols)
+		tableCol := &table.Column{ColumnInfo: extraCommitTS}
+		colMap[model.ExtraCommitTSID] = decoder.Column{
 			Col: tableCol,
 		}
 		cols = append(cols, tableCol)
@@ -282,13 +320,10 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
 	setOptionForTopSQL(s.ctx.GetSessionVars().StmtCtx, snap)
-	concurrency := s.ctx.GetSessionVars().ExecutorConcurrency
-	if len(ranges) < concurrency {
-		concurrency = len(ranges)
-	}
+	concurrency := min(len(ranges), s.ctx.GetSessionVars().ExecutorConcurrency)
 
 	fetchers := make([]*sampleFetcher, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		fetchers[i] = &sampleFetcher{
 			workerID:    i,
 			concurrency: concurrency,
@@ -383,7 +418,7 @@ func (s *sampleSyncer) sync() error {
 			channel.Clear(f.kvChan)
 		}
 	}()
-	for i := 0; i < s.totalCount; i++ {
+	for i := range s.totalCount {
 		f := s.fetchers[i%len(s.fetchers)]
 		v, ok := <-f.kvChan
 		if f.err != nil {

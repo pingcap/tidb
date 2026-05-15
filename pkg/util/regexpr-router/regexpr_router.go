@@ -148,11 +148,7 @@ func (r *RouteTable) Route(schema, table string) (targetSchema string, targetTab
 }
 
 // AllRules is to get all rules
-func (r *RouteTable) AllRules() ([]router.TableRule, []router.TableRule) {
-	var (
-		schmRouteRules  []router.TableRule
-		tableRouteRules []router.TableRule
-	)
+func (r *RouteTable) AllRules() (schmRouteRules []router.TableRule, tableRouteRules []router.TableRule) {
 	for _, f := range r.filters {
 		if f.typ == SchmFilter {
 			schmRouteRules = append(schmRouteRules, *f.rawRule)
@@ -164,9 +160,7 @@ func (r *RouteTable) AllRules() ([]router.TableRule, []router.TableRule) {
 }
 
 // FetchExtendColumn is to fetch extend column
-func (r *RouteTable) FetchExtendColumn(schema, table, source string) ([]string, []string) {
-	var cols []string
-	var vals []string
+func (r *RouteTable) FetchExtendColumn(schema, table, source string) (cols []string, vals []string) {
 	rules := []*filterWrapper{}
 	curTable := &filter.Table{
 		Schema: schema,
@@ -215,7 +209,7 @@ func (r *RouteTable) FetchExtendColumn(schema, table, source string) ([]string, 
 	return cols, vals
 }
 
-func extractVal(s string, ext interface{}) string {
+func extractVal(s string, ext any) string {
 	var params []string
 	switch e := ext.(type) {
 	case *router.TableExtractor:

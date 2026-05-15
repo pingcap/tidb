@@ -27,14 +27,14 @@ import (
 )
 
 // DatumEqual verifies that the actual value is equal to the expected value. For string datum, they are compared by the binary collation.
-func DatumEqual(t testing.TB, expected, actual types.Datum, msgAndArgs ...interface{}) {
+func DatumEqual(t testing.TB, expected, actual types.Datum, msgAndArgs ...any) {
 	res, err := actual.Compare(types.DefaultStmtNoWarningContext, &expected, collate.GetBinaryCollator())
 	require.NoError(t, err, msgAndArgs)
 	require.Zero(t, res, msgAndArgs)
 }
 
 // HandleEqual verifies that the actual handle is equal to the expected handle.
-func HandleEqual(t testing.TB, expected, actual kv.Handle, msgAndArgs ...interface{}) {
+func HandleEqual(t testing.TB, expected, actual kv.Handle, msgAndArgs ...any) {
 	require.Equal(t, expected.IsInt(), actual.IsInt(), msgAndArgs)
 	require.Equal(t, expected.String(), actual.String(), msgAndArgs)
 }
@@ -76,6 +76,28 @@ func CompareUnorderedStringSlice(a []string, b []string) bool {
 }
 
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+const defaultSessionConnectAttrsJSON = `{"_client_name":"Go-MySQL-Driver","_os":"linux","app_name":"test_app"}`
+
+// DefaultSessionConnectAttrsJSON returns the shared fixture JSON used in slow-log tests.
+func DefaultSessionConnectAttrsJSON() string {
+	return defaultSessionConnectAttrsJSON
+}
+
+// DefaultSessionConnectAttrsSlowLogLine returns the shared slow-log line for Session_connect_attrs fixture.
+func DefaultSessionConnectAttrsSlowLogLine() string {
+	return "# Session_connect_attrs: " + defaultSessionConnectAttrsJSON
+}
+
+// RequireContainsDefaultSessionConnectAttrs verifies the expected fixture keys/values are present.
+func RequireContainsDefaultSessionConnectAttrs(t testing.TB, attrsText string) {
+	require.Contains(t, attrsText, `"_client_name"`)
+	require.Contains(t, attrsText, `"Go-MySQL-Driver"`)
+	require.Contains(t, attrsText, `"_os"`)
+	require.Contains(t, attrsText, `"linux"`)
+	require.Contains(t, attrsText, `"app_name"`)
+	require.Contains(t, attrsText, `"test_app"`)
+}
 
 // RandStringRunes generate random string of length n.
 func RandStringRunes(n int) string {

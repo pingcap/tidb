@@ -16,6 +16,7 @@ package expression
 
 import (
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,9 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -38,7 +37,7 @@ func evalBuiltinFuncConcurrent(f builtinFunc, ctx EvalContext, row chunk.Row) (d
 	concurrency := 10
 	var lock sync.Mutex
 	err = nil
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		wg.Run(func() {
 			di, erri := evalBuiltinFunc(f, ctx, chunk.Row{})
 			lock.Lock()
@@ -53,8 +52,9 @@ func evalBuiltinFuncConcurrent(f builtinFunc, ctx EvalContext, row chunk.Row) (d
 }
 
 func evalBuiltinFunc(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
+	ctx = wrapEvalAssert(ctx, f)
 	var (
-		res    interface{}
+		res    any
 		isNull bool
 	)
 	switch f.getRetTp().EvalType() {
@@ -80,24 +80,24 @@ func evalBuiltinFunc(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Dat
 		res, isNull, err = f.evalString(ctx, row)
 	}
 
-	if isNull || err != nil {
+	d.SetValue(res, f.getRetTp())
+	if isNull {
 		d.SetNull()
 		return d, err
 	}
-	d.SetValue(res, f.getRetTp())
 	return
 }
 
 // tblToDtbl is a utility function for test.
-func tblToDtbl(i interface{}) []map[string][]types.Datum {
+func tblToDtbl(i any) []map[string][]types.Datum {
 	l := reflect.ValueOf(i).Len()
 	tbl := make([]map[string][]types.Datum, l)
-	for j := 0; j < l; j++ {
+	for j := range l {
 		v := reflect.ValueOf(i).Index(j).Interface()
 		val := reflect.ValueOf(v)
 		t := reflect.TypeOf(v)
 		item := make(map[string][]types.Datum, val.NumField())
-		for k := 0; k < val.NumField(); k++ {
+		for k := range val.NumField() {
 			tmp := val.Field(k).Interface()
 			item[t.Field(k).Name] = makeDatums(tmp)
 		}
@@ -106,7 +106,7 @@ func tblToDtbl(i interface{}) []map[string][]types.Datum {
 	return tbl
 }
 
-func makeDatums(i interface{}) []types.Datum {
+func makeDatums(i any) []types.Datum {
 	if i != nil {
 		t := reflect.TypeOf(i)
 		val := reflect.ValueOf(i)
@@ -114,7 +114,7 @@ func makeDatums(i interface{}) []types.Datum {
 		case reflect.Slice:
 			l := val.Len()
 			res := make([]types.Datum, l)
-			for j := 0; j < l; j++ {
+			for j := range l {
 				res[j] = types.NewDatum(val.Index(j).Interface())
 			}
 			return res
@@ -178,7 +178,7 @@ func TestBuiltinFuncCacheConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	concurrency := 8
 	wg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			defer wg.Done()
 			v, err := cache.getOrInitCache(ctx, construct)
@@ -260,19 +260,18 @@ func TestBuiltinFuncCache(t *testing.T) {
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,
 // it is different from expression.NewFunction which needs an additional retType argument.
-func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Expression) (Expression, error) {
+func newFunctionForTest(ctx BuildContext, funcName string, args ...Expression) (Expression, error) {
 	fc, ok := funcs[funcName]
 	if !ok {
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
-	funcArgs := make([]Expression, len(args))
-	copy(funcArgs, args)
+	funcArgs := slices.Clone(args)
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
 		return nil, err
 	}
 	return &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
+		FuncName: ast.NewCIStr(funcName),
 		RetType:  f.getRetTp(),
 		Function: f,
 	}, nil

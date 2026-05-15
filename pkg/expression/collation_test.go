@@ -20,10 +20,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll string) Expression {
@@ -31,6 +33,71 @@ func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll s
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(repertoire)
 	return constant
+}
+
+func TestCollationHashEquals(t *testing.T) {
+	c1 := collationInfo{
+		coer:       1,
+		coerInit:   atomic.Bool{},
+		repertoire: 1,
+		charset:    "aa",
+		collation:  "bb",
+	}
+	c2 := collationInfo{
+		coer:       1,
+		coerInit:   atomic.Bool{},
+		repertoire: 1,
+		charset:    "aabb",
+		collation:  "",
+	}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	c1.Hash64(hasher1)
+	c2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, c1.Equals(c2))
+
+	c2.charset = "aa"
+	c2.collation = "bb"
+	hasher2.Reset()
+	c2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, c1.Equals(c2))
+
+	c2.coer = 2
+	hasher2.Reset()
+	c2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, c1.Equals(c2))
+
+	c2.coer = 1
+	c2.coerInit.Store(true)
+	hasher2.Reset()
+	c2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, c1.Equals(c2))
+
+	c2.coerInit.Store(false)
+	c2.repertoire = 2
+	hasher2.Reset()
+	c2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, c1.Equals(c2))
+
+	c2.repertoire = 1
+	c2.charset = ""
+	c2.collation = "aabb"
+	hasher2.Reset()
+	c2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, c1.Equals(c2))
+
+	c2.charset = "aa"
+	c2.collation = "bb"
+	hasher2.Reset()
+	c2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, c1.Equals(c2))
 }
 
 func TestInferCollation(t *testing.T) {
@@ -218,8 +285,9 @@ func TestInferCollation(t *testing.T) {
 		},
 	}
 
+	ctx := createContext(t)
 	for i, test := range tests {
-		ec := inferCollation(test.exprs...)
+		ec := inferCollation(ctx, test.exprs...)
 		if test.err {
 			require.Nil(t, ec, i)
 		} else {
@@ -230,7 +298,7 @@ func TestInferCollation(t *testing.T) {
 
 func newConstString(s string, coercibility Coercibility, chs, coll string) *Constant {
 	repe := ASCII
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if s[i] >= 0x80 {
 			repe = UNICODE
 		}
@@ -756,7 +824,7 @@ func TestCompareString(t *testing.T) {
 	chk.Column(1).AppendString("😃")
 	chk.Column(0).AppendString("a ")
 	chk.Column(1).AppendString("a  ")
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
 		require.NoError(t, err)
 		require.False(t, isNull)

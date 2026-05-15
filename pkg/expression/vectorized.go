@@ -107,12 +107,27 @@ func genVecFromConstExpr(ctx EvalContext, expr Expression, targetType types.Eval
 			return err
 		}
 		if isNull {
-			for i := 0; i < n; i++ {
+			for range n {
 				result.AppendNull()
 			}
 		} else {
-			for i := 0; i < n; i++ {
+			for range n {
 				result.AppendJSON(v)
+			}
+		}
+	case types.ETVectorFloat32:
+		result.ReserveVectorFloat32(n)
+		v, isNull, err := expr.EvalVectorFloat32(ctx, chunk.Row{})
+		if err != nil {
+			return err
+		}
+		if isNull {
+			for range n {
+				result.AppendNull()
+			}
+		} else {
+			for range n {
+				result.AppendVectorFloat32(v)
 			}
 		}
 	case types.ETString:
@@ -122,16 +137,16 @@ func genVecFromConstExpr(ctx EvalContext, expr Expression, targetType types.Eval
 			return err
 		}
 		if isNull {
-			for i := 0; i < n; i++ {
+			for range n {
 				result.AppendNull()
 			}
 		} else {
-			for i := 0; i < n; i++ {
+			for range n {
 				result.AppendString(v)
 			}
 		}
 	default:
-		return errors.Errorf("unsupported Constant type for vectorized evaluation")
+		return errors.Errorf("unsupported type %s during evaluation", targetType)
 	}
 	return nil
 }

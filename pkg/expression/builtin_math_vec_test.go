@@ -134,6 +134,9 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 			types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).SetFlag(mysql.UnsignedFlag).BuildP(),
 		}, geners: []dataGenerator{nil, newRangeInt64Gener(-10, 10)}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt}},
+
+		// For issue 57651
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{newSelectRealGener([]float64{0, -0.1, 0.1, -1.1, 1.1}), newRangeInt64Gener(-1000, 1000)}},
 	},
 	ast.Rand: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{newDefaultGener(0, types.ETInt)}},

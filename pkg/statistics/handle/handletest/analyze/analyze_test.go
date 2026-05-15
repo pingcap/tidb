@@ -16,19 +16,26 @@ package analyze
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
 // nolint:unused
 func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp string, topn, buckets int) {
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(tt))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tt))
 	require.NoError(t, err)
 
 	tblInfo := tbl.Meta()
@@ -44,9 +51,9 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 	require.NoError(t, err)
 
 	delta := buckets/2 + 10
-	for _, idxStats := range tblStats.Indices {
+	tblStats.ForEachIndexImmutable(func(_ int64, idxStats *statistics.Index) bool {
 		if len(idxStats.Buckets) == 0 {
-			continue // it's not loaded
+			return false // it's not loaded
 		}
 		numTopN := idxStats.TopN.Num()
 		numBuckets := len(idxStats.Buckets)
@@ -55,17 +62,19 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 		require.Equal(t, topn, numTopN)
 		require.GreaterOrEqual(t, numBuckets, buckets-delta)
 		require.LessOrEqual(t, numBuckets, buckets+delta)
-	}
-	for _, colStats := range tblStats.Columns {
+		return false
+	})
+	tblStats.ForEachColumnImmutable(func(_ int64, colStats *statistics.Column) bool {
 		if len(colStats.Buckets) == 0 {
-			continue // it's not loaded
+			return false // it's not loaded
 		}
 		numTopN := colStats.TopN.Num()
 		numBuckets := len(colStats.Buckets)
 		require.Equal(t, topn, numTopN)
 		require.GreaterOrEqual(t, numBuckets, buckets-delta)
 		require.LessOrEqual(t, numBuckets, buckets+delta)
-	}
+		return false
+	})
 }
 
 // nolint:unused
@@ -77,7 +86,7 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 		`(partition p0 values less than (100000), partition p1 values less than (200000))`)
 	buf1 := bytes.NewBufferString("insert into " + tblName + " values (0)")
 	buf2 := bytes.NewBufferString("insert into " + tblName + " values (100000)")
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		buf1.WriteString(fmt.Sprintf(", (%v)", 2))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100002))
 		buf1.WriteString(fmt.Sprintf(", (%v)", 1))
@@ -93,7 +102,7 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 }
 
 // nolint:unused
@@ -109,7 +118,7 @@ func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit
 		buf1.WriteString(fmt.Sprintf(", (%v)", i))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100000+i))
 	}
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		buf1.WriteString(fmt.Sprintf(", (%v)", 0))
 		buf2.WriteString(fmt.Sprintf(", (%v)", 100000))
 	}
@@ -117,7 +126,7 @@ func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 }
 
 func TestAnalyzeVirtualCol(t *testing.T) {
@@ -127,6 +136,7 @@ func TestAnalyzeVirtualCol(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int generated always as (-a) virtual, c int generated always as (-a) stored, index (c))")
 	tk.MustExec("insert into t(a) values(2),(1),(1),(3),(NULL)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("analyze table t")
 	require.Len(t, tk.MustQuery("show stats_histograms where table_name ='t'").Rows(), 3)
@@ -151,8 +161,8 @@ func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
 		{77, 219, false},
 		{-31, 222, true},
 		{10, -77, true},
-		{100000, 47, true},
-		{77, 47000, true},
+		{100001, 47, true},
+		{77, 100001, true},
 	}
 	for _, ca := range cases {
 		sql := fmt.Sprintf("analyze table test_gstats_opt with %v topn, %v buckets", ca.topn, ca.buckets)
@@ -206,6 +216,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = '" + string(variable.Dynamic) + "'")
 	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	tk.MustExec(`create table t (a int, key(a)) partition by range(a)
 					(partition p0 values less than (10),
 					partition p1 values less than (22))`)
@@ -224,6 +235,7 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][6])
+	tk.MustExec("set @@global.tidb_enable_auto_analyze=DEFAULT")
 }
 
 func TestFMSWithAnalyzePartition(t *testing.T) {
@@ -243,4 +255,59 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+}
+
+func TestAnalyzeMetricsCounters(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	readCounter := func(counter prometheus.Counter) float64 {
+		var metric dto.Metric
+		require.NoError(t, counter.Write(&metric))
+		return metric.Counter.GetValue()
+	}
+
+	manualSucc := metrics.ManualAnalyzeCounter.WithLabelValues("succ")
+	manualFail := metrics.ManualAnalyzeCounter.WithLabelValues("failed")
+	autoSucc := metrics.AutoAnalyzeCounter.WithLabelValues("succ")
+	autoFail := metrics.AutoAnalyzeCounter.WithLabelValues("failed")
+
+	h := dom.StatsHandle()
+
+	tk.MustExec("create table t_metrics_manual(a int)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("insert into t_metrics_manual values (1),(2)")
+
+	beforeManualSucc := readCounter(manualSucc)
+	beforeManualFail := readCounter(manualFail)
+
+	tk.MustExec("analyze table t_metrics_manual")
+
+	require.Equal(t, beforeManualSucc+1, readCounter(manualSucc))
+	require.Equal(t, beforeManualFail, readCounter(manualFail))
+
+	tk.MustExec("create table t_metrics_auto(a int)")
+	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
+	tk.MustExec("insert into t_metrics_auto values (1)")
+	tk.MustExec("flush stats_delta *.*")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	origMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = origMinCnt
+	}()
+
+	// Keep this test scoped to the single unanalyzed table created above. The
+	// global default may schedule multiple auto-analyze jobs in parallel.
+	autoAnalyzeConcurrencySysVar := variable.GetSysVar("tidb_auto_analyze_concurrency")
+	require.NoError(t, autoAnalyzeConcurrencySysVar.SetGlobalFromHook(context.Background(), tk.Session().GetSessionVars(), "1", false))
+	beforeAutoSucc := readCounter(autoSucc)
+	beforeAutoFail := readCounter(autoFail)
+
+	require.True(t, h.HandleAutoAnalyze())
+
+	require.Equal(t, beforeAutoSucc+1, readCounter(autoSucc))
+	require.Equal(t, beforeAutoFail, readCounter(autoFail))
 }

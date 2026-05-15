@@ -17,7 +17,8 @@ package expression
 import (
 	"bytes"
 	goJSON "encoding/json"
-	"strconv"
+	"fmt"
+	"hash/crc32"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -62,7 +63,7 @@ func vecJSONModify(ctx EvalContext, args []Expression, bufAllocator columnBuffer
 		}
 	}
 	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if jsonBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -119,7 +120,7 @@ func (b *builtinJSONStorageFreeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	int64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -146,7 +147,7 @@ func (b *builtinJSONStorageSizeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	int64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -174,7 +175,7 @@ func (b *builtinJSONDepthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	int64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -201,7 +202,7 @@ func (b *builtinJSONKeysSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, re
 
 	result.ReserveJSON(n)
 	var j types.BinaryJSON
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -241,9 +242,9 @@ func (b *builtinJSONArraySig) vectorized() bool {
 
 func (b *builtinJSONArraySig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
-	jsons := make([][]interface{}, nr)
-	for i := 0; i < nr; i++ {
-		jsons[i] = make([]interface{}, 0, len(b.args))
+	jsons := make([][]any, nr)
+	for i := range nr {
+		jsons[i] = make([]any, 0, len(b.args))
 	}
 	for _, arg := range b.args {
 		j, err := b.bufAllocator.get()
@@ -254,7 +255,7 @@ func (b *builtinJSONArraySig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 		if err = arg.VecEvalJSON(ctx, input, j); err != nil {
 			return err
 		}
-		for i := 0; i < nr; i++ {
+		for i := range nr {
 			if j.IsNull(i) {
 				jsons[i] = append(jsons[i], types.CreateBinaryJSON(nil))
 			} else {
@@ -263,7 +264,7 @@ func (b *builtinJSONArraySig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 		}
 	}
 	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		bj, err := types.CreateBinaryJSONWithCheck(jsons[i])
 		if err != nil {
 			return err
@@ -304,7 +305,7 @@ func (b *builtinJSONMemberOfSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	resI64s := result.Int64s()
 
 	result.MergeNulls(targetCol, objCol)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if result.IsNull(i) {
 			continue
 		}
@@ -314,7 +315,7 @@ func (b *builtinJSONMemberOfSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 			resI64s[i] = boolToInt64(types.CompareBinaryJSON(obj, target) == 0)
 		} else {
 			elemCount := obj.GetElemCount()
-			for j := 0; j < elemCount; j++ {
+			for j := range elemCount {
 				if types.CompareBinaryJSON(obj.ArrayGetElem(j), target) == 0 {
 					resI64s[i] = 1
 					break
@@ -370,7 +371,7 @@ func (b *builtinJSONContainsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		result.MergeNulls(objCol, targetCol, pathCol)
 
 		var pathExpr types.JSONPathExpression
-		for i := 0; i < nr; i++ {
+		for i := range nr {
 			if result.IsNull(i) {
 				continue
 			}
@@ -396,7 +397,7 @@ func (b *builtinJSONContainsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		}
 	} else {
 		result.MergeNulls(objCol, targetCol)
-		for i := 0; i < nr; i++ {
+		for i := range nr {
 			if result.IsNull(i) {
 				continue
 			}
@@ -442,7 +443,7 @@ func (b *builtinJSONOverlapsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	resI64s := result.Int64s()
 
 	result.MergeNulls(objCol, targetCol)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if result.IsNull(i) {
 			continue
 		}
@@ -472,12 +473,19 @@ func (b *builtinJSONQuoteSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(strconv.Quote(buf.GetString(i)))
+		buffer := &bytes.Buffer{}
+		encoder := goJSON.NewEncoder(buffer)
+		encoder.SetEscapeHTML(false)
+		err = encoder.Encode(buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		result.AppendString(string(bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))))
 	}
 	return nil
 }
@@ -543,7 +551,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 
 	result.ReserveJSON(nr)
 
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if jsonBuf.IsNull(i) || searchBuf.IsNull(i) || typeBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -560,20 +568,28 @@ func (b *builtinJSONSearchSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 				return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 			}
 		}
+
+		var isNull bool
 		var pathExprs []types.JSONPathExpression
 		if pathBufs != nil {
 			pathExprs = make([]types.JSONPathExpression, 0, len(b.args)-4)
-			for j := 0; j < len(b.args)-4; j++ {
+			for j := range len(b.args) - 4 {
 				if pathBufs[j].IsNull(i) {
+					isNull = true
 					break
 				}
 				pathExpr, err := types.ParseJSONPathExpr(pathBufs[j].GetString(i))
 				if err != nil {
-					return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+					return err
 				}
 				pathExprs = append(pathExprs, pathExpr)
 			}
 		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+
 		bj, isNull, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
 		if err != nil {
 			return err
@@ -607,14 +623,14 @@ func (b *builtinJSONObjectSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 		return err
 	}
 
-	jsons := make([]map[string]interface{}, nr)
-	for i := 0; i < nr; i++ {
-		jsons[i] = make(map[string]interface{}, len(b.args)>>1)
+	jsons := make([]map[string]any, nr)
+	for i := range nr {
+		jsons[i] = make(map[string]any, len(b.args)>>1)
 	}
 
 	argBuffers := make([]*chunk.Column, len(b.args))
 	var err error
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		if i&1 == 0 {
 			if argBuffers[i], err = b.bufAllocator.get(); err != nil {
 				return err
@@ -641,17 +657,16 @@ func (b *builtinJSONObjectSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 	}
 
 	result.ReserveJSON(nr)
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		if i&1 == 1 {
 			keyCol := argBuffers[i-1]
 			valueCol := argBuffers[i]
 
 			var key string
 			var value types.BinaryJSON
-			for j := 0; j < nr; j++ {
+			for j := range nr {
 				if keyCol.IsNull(j) {
-					err := errors.New("JSON documents may not contain NULL member names")
-					return err
+					return types.ErrJSONDocumentNULLKey
 				}
 				key = keyCol.GetString(j)
 				if valueCol.IsNull(j) {
@@ -664,7 +679,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 		}
 	}
 
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		bj, err := types.CreateBinaryJSONWithCheck(jsons[i])
 		if err != nil {
 			return err
@@ -714,7 +729,7 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(ctx EvalContext, input *chunk.Ch
 	var pathExpr types.JSONPathExpression
 	var value types.BinaryJSON
 	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -722,14 +737,14 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(ctx EvalContext, input *chunk.Ch
 
 		res := buf.GetJSON(i)
 		isnull := false
-		for j := 0; j < (len(b.args)-1)/2; j++ {
+		for j := range (len(b.args) - 1) / 2 {
 			if pathBufs[j].IsNull(i) {
 				isnull = true
 				break
 			}
 			pathExpr, err = types.ParseJSONPathExpr(pathBufs[j].GetString(i))
 			if err != nil {
-				return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+				return err
 			}
 			if pathExpr.CouldMatchMultipleValues() {
 				return types.ErrInvalidJSONPathMultipleSelection
@@ -777,7 +792,7 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 	}
 
 	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if jsonBuf.IsNull(i) || pathBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -792,11 +807,6 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 		}
 
 		jsonItem := jsonBuf.GetJSON(i)
-		if jsonItem.TypeCode != types.JSONTypeCodeObject {
-			result.AppendNull()
-			continue
-		}
-
 		res, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})
 		if !exists || res.TypeCode != types.JSONTypeCodeObject {
 			result.AppendNull()
@@ -814,6 +824,9 @@ func (b *builtinJSONLengthSig) vectorized() bool {
 func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
 
+	result.ResizeInt64(nr, false)
+	resI64s := result.Int64s()
+
 	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -822,8 +835,7 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	if err := b.args[0].VecEvalJSON(ctx, input, jsonBuf); err != nil {
 		return err
 	}
-	result.ResizeInt64(nr, false)
-	resI64s := result.Int64s()
+	result.MergeNulls(jsonBuf)
 
 	if len(b.args) == 2 {
 		pathBuf, err := b.bufAllocator.get()
@@ -834,21 +846,10 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 		if err := b.args[1].VecEvalString(ctx, input, pathBuf); err != nil {
 			return err
 		}
+		result.MergeNulls(pathBuf)
 
-		result.MergeNulls(jsonBuf)
-		for i := 0; i < nr; i++ {
+		for i := range nr {
 			if result.IsNull(i) {
-				continue
-			}
-			jsonItem := jsonBuf.GetJSON(i)
-
-			if jsonItem.TypeCode != types.JSONTypeCodeObject && jsonItem.TypeCode != types.JSONTypeCodeArray {
-				resI64s[i] = 1
-				continue
-			}
-
-			if pathBuf.IsNull(i) {
-				result.SetNull(i, true)
 				continue
 			}
 
@@ -860,6 +861,7 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 				return types.ErrInvalidJSONPathMultipleSelection
 			}
 
+			jsonItem := jsonBuf.GetJSON(i)
 			obj, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})
 			if !exists {
 				result.SetNull(i, true)
@@ -872,8 +874,7 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 			resI64s[i] = int64(obj.GetElemCount())
 		}
 	} else {
-		result.MergeNulls(jsonBuf)
-		for i := 0; i < nr; i++ {
+		for i := range nr {
 			if result.IsNull(i) {
 				continue
 			}
@@ -906,13 +907,66 @@ func (b *builtinJSONTypeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		result.AppendString(buf.GetJSON(i).Type())
 	}
+	return nil
+}
+
+func (b *builtinJSONSumCRC32Sig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	ft := b.tp.ArrayType()
+	f := convertJSON2Tp(ft.EvalType())
+	if f == nil {
+		return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
+	}
+
+	nr := input.NumRows()
+	jsonBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+
+	defer b.bufAllocator.put(jsonBuf)
+	if err = b.args[0].VecEvalJSON(ctx, input, jsonBuf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(nr, false)
+	result.MergeNulls(jsonBuf)
+	i64s := result.Int64s()
+
+	for i := range nr {
+		if result.IsNull(i) {
+			continue
+		}
+
+		jsonItem := jsonBuf.GetJSON(i)
+		if jsonItem.TypeCode != types.JSONTypeCodeArray {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
+		}
+
+		var sum int64
+		for j := range jsonItem.GetElemCount() {
+			item, err := f(fakeSctx, jsonItem.ArrayGetElem(j), ft)
+			if err != nil {
+				if ErrInvalidJSONForFuncIndex.Equal(err) {
+					err = errors.Errorf("Invalid JSON value for CAST to type %s", ft.CompactStr())
+				}
+				return err
+			}
+			sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
+		}
+		i64s[i] = sum
+	}
+
 	return nil
 }
 
@@ -935,7 +989,7 @@ func (b *builtinJSONExtractSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk,
 
 	pathArgs := b.args[1:]
 	pathBuffers := make([]*chunk.Column, len(pathArgs))
-	for k := 0; k < len(pathArgs); k++ {
+	for k := range pathArgs {
 		if pathBuffers[k], err = b.bufAllocator.get(); err != nil {
 			return err
 		}
@@ -949,7 +1003,7 @@ func (b *builtinJSONExtractSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk,
 	}
 
 	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if jsonBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1011,7 +1065,7 @@ func (b *builtinJSONRemoveSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 	}
 
 	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if jsonBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1069,9 +1123,9 @@ func (b *builtinJSONMergeSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 
 	jsonValues := make([][]types.BinaryJSON, nr)
 
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		isNullFlag := false
-		for j := 0; j < len(b.args); j++ {
+		for j := range b.args {
 			isNullFlag = isNullFlag || argBuffers[j].IsNull(i)
 		}
 		if isNullFlag {
@@ -1080,8 +1134,8 @@ func (b *builtinJSONMergeSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 			jsonValues[i] = make([]types.BinaryJSON, 0, len(b.args))
 		}
 	}
-	for i := 0; i < len(b.args); i++ {
-		for j := 0; j < nr; j++ {
+	for i := range b.args {
+		for j := range nr {
 			if jsonValues[j] == nil {
 				continue
 			}
@@ -1090,7 +1144,7 @@ func (b *builtinJSONMergeSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 	}
 
 	result.ReserveJSON(nr)
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if jsonValues[i] == nil {
 			result.AppendNull()
 			continue
@@ -1099,11 +1153,12 @@ func (b *builtinJSONMergeSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 	}
 
 	if b.pbCode == tipb.ScalarFuncSig_JsonMergeSig {
-		for i := 0; i < nr; i++ {
+		for i := range nr {
 			if result.IsNull(i) {
 				continue
 			}
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE"))
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE", ""))
 		}
 	}
 
@@ -1134,13 +1189,13 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	}
 	pathBufs := make([]*chunk.Column, len(b.args)-2)
 	defer func() {
-		for i := 0; i < len(pathBufs); i++ {
+		for i := range pathBufs {
 			if pathBufs[i] != nil {
 				b.bufAllocator.put(pathBufs[i])
 			}
 		}
 	}()
-	for i := 0; i < len(pathBufs); i++ {
+	for i := range pathBufs {
 		pathBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
@@ -1154,18 +1209,18 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 	result.ResizeInt64(n, false)
 	result.MergeNulls(jsonBuf, typeBuf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		containType := strings.ToLower(typeBuf.GetString(i))
 		if containType != types.JSONContainsPathAll && containType != types.JSONContainsPathOne {
-			return types.ErrInvalidJSONContainsPathType
+			return types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains_path")
 		}
 		obj := jsonBuf.GetJSON(i)
 		contains := int64(1)
 		var pathExpr types.JSONPathExpression
-		for j := 0; j < len(pathBufs); j++ {
+		for j := range pathBufs {
 			if pathBufs[j].IsNull(i) {
 				result.SetNull(i, true)
 				contains = -1
@@ -1240,14 +1295,14 @@ func (b *builtinJSONArrayAppendSig) vecEvalJSON(ctx EvalContext, input *chunk.Ch
 	}
 
 	result.ReserveJSON(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if jsonBufs.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		res := jsonBufs.GetJSON(i)
 		isNull := false
-		for j := 0; j < m; j++ {
+		for j := range m {
 			if pathBufs[j].IsNull(i) {
 				isNull = true
 				break
@@ -1293,7 +1348,7 @@ func (b *builtinJSONUnquoteSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1326,7 +1381,7 @@ func (b *builtinJSONSPrettySig) vecEvalString(ctx EvalContext, input *chunk.Chun
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -1370,9 +1425,9 @@ func (b *builtinJSONMergePatchSig) vecEvalJSON(ctx EvalContext, input *chunk.Chu
 
 	result.ReserveJSON(nr)
 	jsonValue := make([]*types.BinaryJSON, 0, len(b.args))
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		jsonValue = jsonValue[:0]
-		for j := 0; j < len(b.args); j++ {
+		for j := range b.args {
 			if argBuffers[j].IsNull(i) {
 				jsonValue = append(jsonValue, nil)
 			} else {

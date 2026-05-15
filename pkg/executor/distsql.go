@@ -21,6 +21,7 @@ import (
 	"runtime/trace"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,19 +30,23 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/expression"
+	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -52,10 +57,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -72,6 +80,7 @@ var LookupTableTaskChannelSize int32 = 50
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
 type lookupTableTask struct {
+	id      int
 	handles []kv.Handle
 	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
 	rows    []chunk.Row
@@ -148,23 +157,48 @@ func closeAll(objs ...Closeable) error {
 
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
 // by substituting correlated column with the constant.
-func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
+func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerContext, is *physicalop.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
-		newCond, err1 := expression.SubstituteCorCol2Constant(ctx, cond)
+		newCond, err1 := expression.SubstituteCorCol2Constant(ectx, cond)
 		if err1 != nil {
 			return nil, err1
 		}
 		access = append(access, newCond)
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, access, idxCols, colLens, 0)
+	ranges, _, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
 	return ranges, err
+}
+
+type indexReaderExecutorContext struct {
+	rctx       *rangerctx.RangerContext
+	dctx       *distsqlctx.DistSQLContext
+	ectx       expression.BuildContext
+	infoSchema isctx.MetaOnlyInfoSchema
+	buildPBCtx *planctx.BuildPBContext
+
+	stmtMemTracker *memory.Tracker
+}
+
+func newIndexReaderExecutorContext(sctx sessionctx.Context) indexReaderExecutorContext {
+	pctx := sctx.GetPlanCtx()
+
+	return indexReaderExecutorContext{
+		rctx:           pctx.GetRangerCtx(),
+		dctx:           sctx.GetDistSQLCtx(),
+		ectx:           sctx.GetExprCtx(),
+		infoSchema:     pctx.GetInfoSchema(),
+		buildPBCtx:     pctx.GetBuildPBCtx(),
+		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
+	}
 }
 
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
-	exec.BaseExecutor
+	indexReaderExecutorContext
+	exec.BaseExecutorV2
+	indexUsageReporter *exec.IndexUsageReporter
 
 	// For a partitioned table, the IndexReaderExecutor works on a partition, so
 	// the type of this table field is actually `table.PhysicalTable`.
@@ -172,9 +206,12 @@ type IndexReaderExecutor struct {
 	index           *model.IndexInfo
 	physicalTableID int64
 	ranges          []*ranger.Range
-	partitions      []table.PhysicalTable
-	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
-	partitionIDMap  map[int64]struct{}        // partitionIDs that global index access
+	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
+	// In brief, it splits IndexReaderExecutor.ranges into groups. When it's set, we need to access them respectively
+	// and use a merge sort to combine them.
+	groupedRanges [][]*ranger.Range
+	partitions    []table.PhysicalTable
+	partRangeMap  map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
@@ -190,6 +227,8 @@ type IndexReaderExecutor struct {
 	columns []*model.ColumnInfo
 	// outputColumns are only required by union scan.
 	outputColumns []*expression.Column
+	// partitionIDMap are only required by union scan with global index.
+	partitionIDMap map[int64]struct{}
 
 	paging bool
 
@@ -202,7 +241,7 @@ type IndexReaderExecutor struct {
 	corColInAccess bool
 	idxCols        []*expression.Column
 	colLens        []int
-	plans          []plannercore.PhysicalPlan
+	plans          []base.PhysicalPlan
 
 	memTracker *memory.Tracker
 
@@ -224,6 +263,10 @@ func (e *IndexReaderExecutor) setDummy() {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() (err error) {
+	if e.indexUsageReporter != nil {
+		e.indexUsageReporter.ReportCopIndexUsageForTable(e.table, e.index.ID, e.plans[0].ID())
+	}
+
 	if e.result != nil {
 		err = e.result.Close()
 	}
@@ -245,52 +288,63 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	return e.result.Next(ctx, req)
 }
 
-// TODO: cleanup this method.
-func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, ranges []*ranger.Range, physicalID int64) ([]kv.KeyRange, error) {
-	var (
-		rRanges *kv.KeyRanges
-		err     error
-	)
-	if e.index.ID == -1 {
-		rRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
-	} else {
-		rRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges)
-	}
-	return rRanges.FirstPartitionRange(), err
-}
-
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.Ctx(), e.plans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
+		is := e.plans[0].(*physicalop.PhysicalIndexScan)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, is, e.idxCols, e.colLens)
 		if err != nil {
 			return err
 		}
-	}
-
-	sc := e.Ctx().GetSessionVars().StmtCtx
-	var kvRanges []kv.KeyRange
-	if len(e.partitions) > 0 {
-		for _, p := range e.partitions {
-			partRange := e.ranges
-			if pRange, ok := e.partRangeMap[p.GetPhysicalID()]; ok {
-				partRange = pRange
-			}
-			kvRange, err := e.buildKeyRanges(sc, partRange, p.GetPhysicalID())
+		// Rebuild groupedRanges if it was originally set
+		if len(is.GroupByColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
 			if err != nil {
 				return err
 			}
-			kvRanges = append(kvRanges, kvRange...)
 		}
-	} else {
-		kvRanges, err = e.buildKeyRanges(sc, e.ranges, e.physicalTableID)
 	}
+
+	// partRangeMap comes from the index join code path, while groupedRanges will not be set in that case.
+	// They are two different sources of ranges, and should not appear together.
+	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
+
+	// Build kvRanges considering both partitions and groupedRanges
+	kvRanges, err := e.buildKVRangesForIndexReader()
 	if err != nil {
 		return err
 	}
 
 	return e.open(ctx, kvRanges)
+}
+
+// buildKVRangesForIndexReader builds kvRanges for IndexReaderExecutor considering both partitions and groupedRanges.
+func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, error) {
+	tableIDs := make([]int64, 0, len(e.partitions))
+	for _, p := range e.partitions {
+		tableIDs = append(tableIDs, p.GetPhysicalID())
+	}
+	if len(e.partitions) == 0 {
+		tableIDs = append(tableIDs, e.physicalTableID)
+	}
+
+	groupedRanges := e.groupedRanges
+	if len(groupedRanges) == 0 {
+		groupedRanges = [][]*ranger.Range{e.ranges}
+	}
+
+	results := make([]kv.KeyRange, 0, len(groupedRanges))
+	for _, ranges := range groupedRanges {
+		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, kvRange := range kvRanges {
+			results = append(results, kvRange...)
+		}
+	}
+	return results, nil
 }
 
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
@@ -303,11 +357,11 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
-		SetFromSessionVars(e.Ctx().GetSessionVars()).
-		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
+		SetFromSessionVars(e.dctx).
+		SetFromInfoSchema(e.infoSchema).
 		SetMemTracker(e.memTracker).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.netDataSize)).
-		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 	kvReq, err := builder.Build()
 	return kvReq, err
 }
@@ -315,45 +369,9 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.plans)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 		if err != nil {
 			return err
-		}
-	}
-
-	if e.index.Global {
-		idxScanExec := e.dagPB.Executors[0]
-		args := make([]expression.Expression, 0, len(e.partitionIDMap))
-		column := &expression.Column{
-			UniqueID: model.ExtraPidColID,
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Index:    len(idxScanExec.IdxScan.Columns) - 1,
-			OrigName: model.ExtraPartitionIdName.L,
-		}
-		args = append(args, column)
-		for pid := range e.partitionIDMap {
-			args = append(args, expression.NewInt64Const(pid))
-		}
-
-		inCondition, err := expression.NewFunction(e.Ctx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
-		if err != nil {
-			return err
-		}
-		pbConditions, err := expression.ExpressionsToPBList(e.Ctx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
-		if err != nil {
-			return err
-		}
-		if len(e.dagPB.Executors) > 1 && e.dagPB.Executors[1].Tp == tipb.ExecType_TypeSelection {
-			e.dagPB.Executors[1].Selection.Conditions = append(e.dagPB.Executors[1].Selection.Conditions, pbConditions...)
-		} else {
-			selExec := &tipb.Selection{
-				Conditions: pbConditions,
-			}
-			executors := make([]*tipb.Executor, 0, len(e.dagPB.Executors)+1)
-			executors = append(executors, e.dagPB.Executors[0])
-			executors = append(executors, &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec})
-			executors = append(executors, e.dagPB.Executors[1:]...)
-			e.dagPB.Executors = executors
 		}
 	}
 
@@ -374,21 +392,21 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	} else {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.stmtMemTracker)
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) int {
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
-	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
-	if e.byItems == nil || len(e.partitions) <= 1 {
+	if !needMergeSort(e.byItems, len(kvRanges)) {
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
 			return err
 		}
-		e.result, err = e.SelectResult(ctx, e.Ctx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+		e.result, err = e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 		if err != nil {
 			return err
 		}
 	} else {
+		// Use sortedSelectResults for merge sort
 		kvReqs := make([]*kv.Request, 0, len(kvRanges))
 		for _, kvRange := range kvRanges {
 			kvReq, err := e.buildKVReq([]kv.KeyRange{kvRange})
@@ -399,48 +417,82 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		}
 		var results []distsql.SelectResult
 		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.Ctx(), kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
+			result, err := e.SelectResult(ctx, e.dctx, kvReq, exec.RetTypes(e), getPhysicalPlanIDs(e.plans), e.ID())
 			if err != nil {
 				return err
 			}
 			results = append(results, result)
 		}
-		e.result = distsql.NewSortedSelectResults(results, e.Schema(), e.byItems, e.memTracker)
+		e.result = distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, e.Schema(), e.byItems, e.memTracker)
 	}
 	return nil
 }
 
+type indexLookUpExecutorContext struct {
+	tableReaderExecutorContext
+
+	stmtRuntimeStatsColl *execdetails.RuntimeStatsColl
+
+	indexLookupSize        int
+	indexLookupConcurrency int
+	enableRedactLog        string
+	storage                kv.Storage
+	weakConsistency        bool
+}
+
+func newIndexLookUpExecutorContext(sctx sessionctx.Context) indexLookUpExecutorContext {
+	return indexLookUpExecutorContext{
+		tableReaderExecutorContext: newTableReaderExecutorContext(sctx),
+
+		stmtRuntimeStatsColl: sctx.GetSessionVars().StmtCtx.RuntimeStatsColl,
+
+		indexLookupSize:        sctx.GetSessionVars().IndexLookupSize,
+		indexLookupConcurrency: sctx.GetSessionVars().IndexLookupConcurrency(),
+		enableRedactLog:        sctx.GetSessionVars().EnableRedactLog,
+		storage:                sctx.GetStore(),
+		weakConsistency:        sctx.GetSessionVars().StmtCtx.WeakConsistency,
+	}
+}
+
 // IndexLookUpExecutor implements double read for index scan.
 type IndexLookUpExecutor struct {
-	exec.BaseExecutor
+	indexLookUpExecutorContext
+	exec.BaseExecutorV2
+	indexUsageReporter *exec.IndexUsageReporter
 
-	table   table.Table
-	index   *model.IndexInfo
-	ranges  []*ranger.Range
-	dagPB   *tipb.DAGRequest
-	startTS uint64
+	table  table.Table
+	index  *model.IndexInfo
+	ranges []*ranger.Range
+	// groupedRanges is from AccessPath.groupedRanges, please see the comment there for more details.
+	// In brief, it splits IndexLookUpExecutor.ranges into groups. When it's set, we need to access them respectively
+	// and use a merge sort to combine them.
+	groupedRanges [][]*ranger.Range
+	dagPB         *tipb.DAGRequest
+	startTS       uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx       []int
 	handleCols      []*expression.Column
 	primaryKeyIndex *model.IndexInfo
 	tableRequest    *tipb.DAGRequest
+
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
+	// partitionIDMap are only required by union scan with global index.
+	partitionIDMap map[int64]struct{}
+
 	*dataReaderBuilder
 	idxNetDataSize float64
 	avgRowSize     float64
 
 	// fields about accessing partition tables
-	partitionTableMode bool                  // if this executor is accessing a partition table
+	partitionTableMode bool                  // if this executor is accessing a local index with partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
-	partitionIDMap     map[int64]struct{}    // partitionIDs that global index access
 	partitionRangeMap  map[int64][]*ranger.Range
-	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
 
 	// All fields above are immutable.
 
-	idxWorkerWg sync.WaitGroup
-	tblWorkerWg sync.WaitGroup
+	idxWorkerWg *sync.WaitGroup
+	tblWorkerWg *sync.WaitGroup
 	finished    chan struct{}
 
 	resultCh   chan *lookupTableTask
@@ -452,7 +504,12 @@ type IndexLookUpExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
-	kvRanges      []kv.KeyRange
+	// groupedKVRanges is built from ranger.Range and needed to access tikv. It's a unified form that considers both
+	// ranges and groupedRanges, and also considers the partitioned table.
+	// The extra PhysicalTableID is needed by the memIndexLookUpReader because it can't get it from PartitionHandle like
+	// the IndexLookUpExecutor here.
+	groupedKVRanges []*kvRangesWithPhysicalTblID
+
 	workerStarted bool
 
 	byItems   []*plannerutil.ByItems
@@ -461,24 +518,35 @@ type IndexLookUpExecutor struct {
 
 	indexPaging bool
 
-	corColInIdxSide bool
-	corColInTblSide bool
-	corColInAccess  bool
-	idxPlans        []plannercore.PhysicalPlan
-	tblPlans        []plannercore.PhysicalPlan
-	idxCols         []*expression.Column
-	colLens         []int
+	corColInIdxSide       bool
+	corColInTblSide       bool
+	corColInAccess        bool
+	idxPlans              []base.PhysicalPlan
+	idxPlanUnNatureOrders map[int]int
+	tblPlans              []base.PhysicalPlan
+	idxCols               []*expression.Column
+	colLens               []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
-	PushedLimit *plannercore.PushedDownLimit
+	PushedLimit *physicalop.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
 
 	// cancelFunc is called when close the executor
 	cancelFunc context.CancelFunc
+	workerCtx  context.Context
+	pool       *workerPool
 
 	// If dummy flag is set, this is not a real IndexLookUpReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	// Whether to push down the index lookup to TiKV
+	indexLookUpPushDown bool
+}
+
+type kvRangesWithPhysicalTblID struct {
+	PhysicalTableID int64
+	KeyRanges       []kv.KeyRange
 }
 
 type getHandleType int8
@@ -507,11 +575,32 @@ func (e *IndexLookUpExecutor) setDummy() {
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.Ctx(), e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
+		is := e.idxPlans[0].(*physicalop.PhysicalIndexScan)
+		e.ranges, err = rebuildIndexRanges(e.ectx, e.rctx, is, e.idxCols, e.colLens)
 		if err != nil {
 			return err
 		}
+		// Rebuild groupedRanges if it was originally set
+		if len(is.GroupByColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+			if err != nil {
+				return err
+			}
+		}
 	}
+
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
+	e.memTracker.AttachTo(e.stmtMemTracker)
+
+	// partitionRangeMap comes from the index join code path, while groupedRanges will not be set in that case.
+	// They are two different sources of ranges, and should not appear together.
+	intest.Assert(!(len(e.partitionRangeMap) > 0 && len(e.groupedRanges) > 0),
+		"partitionRangeMap and groupedRanges should not appear together")
+
 	err = e.buildTableKeyRanges()
 	if err != nil {
 		return err
@@ -525,41 +614,75 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	return e.open(ctx)
 }
 
-func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
-	sc := e.Ctx().GetSessionVars().StmtCtx
-	if e.partitionTableMode {
-		e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.prunedPartitions))
-		for _, p := range e.prunedPartitions {
-			// TODO: prune and adjust e.ranges for each partition again, since not all e.ranges are suitable for all e.prunedPartitions.
-			// For example, a table partitioned by range(a), and p0=(1, 10), p1=(11, 20), for the condition "(a>1 and a<10) or (a>11 and a<20)",
-			// the first range is only suitable to p0 and the second is to p1, but now we'll also build kvRange for range0+p1 and range1+p0.
-			physicalID := p.GetPhysicalID()
-			ranges := e.ranges
-			if e.partitionRangeMap != nil && e.partitionRangeMap[physicalID] != nil {
-				ranges = e.partitionRangeMap[physicalID]
-			}
-			var kvRange *kv.KeyRanges
-			if e.index.ID == -1 {
-				kvRange, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
-			} else {
-				kvRange, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges)
-			}
+func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
+	ranges []*ranger.Range,
+	rangeOverrideForPartitionID map[int64][]*ranger.Range,
+	physicalIDs []int64,
+	indexID int64,
+	memTracker *memory.Tracker,
+) ([][]kv.KeyRange, error) {
+	results := make([][]kv.KeyRange, 0, len(physicalIDs))
+	for _, physicalID := range physicalIDs {
+		if pRange, ok := rangeOverrideForPartitionID[physicalID]; ok {
+			ranges = pRange
+		}
+		if indexID == -1 {
+			rRanges, err := distsql.CommonHandleRangesToKVRanges(dctx, []int64{physicalID}, ranges)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			e.partitionKVRanges = append(e.partitionKVRanges, kvRange.FirstPartitionRange())
+			results = append(results, rRanges.FirstPartitionRange())
+		} else {
+			singleRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, indexID, ranges, memTracker, nil)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, singleRanges.FirstPartitionRange())
+		}
+	}
+	return results, nil
+}
+
+func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
+	tableIDs := make([]int64, 0, len(e.prunedPartitions))
+	if e.partitionTableMode {
+		for _, p := range e.prunedPartitions {
+			tableIDs = append(tableIDs, p.GetPhysicalID())
 		}
 	} else {
-		physicalID := getPhysicalTableID(e.table)
-		var kvRanges *kv.KeyRanges
-		if e.index.ID == -1 {
-			kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
-		} else {
-			kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges)
-		}
-		e.kvRanges = kvRanges.FirstPartitionRange()
+		tableIDs = append(tableIDs, getPhysicalTableID(e.table))
 	}
-	return err
+
+	groupedRanges := e.groupedRanges
+	if len(groupedRanges) == 0 {
+		groupedRanges = [][]*ranger.Range{e.ranges}
+	}
+
+	kvRanges := make([][]kv.KeyRange, 0, len(groupedRanges))
+	physicalTblIDsForPartitionKVRanges := make([]int64, 0, len(tableIDs)*len(groupedRanges))
+	for _, ranges := range groupedRanges {
+		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, e.memTracker)
+		if err != nil {
+			return err
+		}
+		kvRanges = append(kvRanges, kvRange...)
+		physicalTblIDsForPartitionKVRanges = append(physicalTblIDsForPartitionKVRanges, tableIDs...)
+	}
+
+	if len(kvRanges) > 1 {
+		// If there are more than one kv ranges, it must come from the partitioned table, or groupedRanges, or both.
+		intest.Assert(e.partitionTableMode || len(e.groupedRanges) > 0)
+	}
+	e.groupedKVRanges = make([]*kvRangesWithPhysicalTblID, 0, len(kvRanges))
+	for i, kvRange := range kvRanges {
+		partitionKVRange := &kvRangesWithPhysicalTblID{
+			PhysicalTableID: physicalTblIDsForPartitionKVRanges[i],
+			KeyRanges:       kvRange,
+		}
+		e.groupedKVRanges = append(e.groupedKVRanges, partitionKVRange)
+	}
+
+	return nil
 }
 
 func (e *IndexLookUpExecutor) open(_ context.Context) error {
@@ -568,69 +691,86 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
 	e.initRuntimeStats()
-	e.memTracker = memory.NewTracker(e.ID(), -1)
-	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+	if e.memTracker != nil {
+		e.memTracker.Reset()
+	} else {
+		e.memTracker = memory.NewTracker(e.ID(), -1)
+	}
+	e.memTracker.AttachTo(e.stmtMemTracker)
 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.idxPlans)
+		if e.indexLookUpPushDown {
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExecForUnNatureOrderPlans(e.buildPBCtx, e.idxPlans, e.idxPlanUnNatureOrders)
+		} else {
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
+		}
 		if err != nil {
 			return err
 		}
 	}
 
 	if e.corColInTblSide {
-		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx(), e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.tblPlans)
 		if err != nil {
 			return err
 		}
 	}
+
+	e.idxWorkerWg = &sync.WaitGroup{}
+	e.tblWorkerWg = &sync.WaitGroup{}
 	return nil
 }
 
 func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
-	// indexWorker will write to workCh and tableWorker will read from workCh,
+	// indexWorker will submit lookup-table tasks (processed by tableWorker) to the pool,
 	// so fetching index and getting table data can run concurrently.
-	ctx, cancel := context.WithCancel(ctx)
-	e.cancelFunc = cancel
-	workCh := make(chan *lookupTableTask, 1)
-	if err := e.startIndexWorker(ctx, workCh, initBatchSize); err != nil {
+	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
+	e.pool = &workerPool{
+		needSpawn: func(workers, tasks uint32) bool {
+			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
+		},
+	}
+	if err := e.startIndexWorker(ctx, initBatchSize); err != nil {
 		return err
 	}
-	e.startTableWorker(ctx, workCh)
 	e.workerStarted = true
 	return nil
 }
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
+	if e.indexLookUpPushDown {
+		// For index lookup push down, needPartitionHandle should always return false because
+		// global index or keep order for partition table is not supported now.
+		intest.Assert(!e.index.Global && !e.keepOrder)
+		return false, nil
+	}
+
 	var col *expression.Column
-	var needPartitionHandle, hasExtraCol bool
+	var needPartitionHandle bool
 	if tp == getHandleFromIndex {
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 		// For indexScan, need partitionHandle when global index or keepOrder with partitionTable
 		needPartitionHandle = e.index.Global || e.partitionTableMode && e.keepOrder
-		hasExtraCol = col.ID == model.ExtraPhysTblID || col.ID == model.ExtraPidColID
 	} else {
 		cols := e.tblPlans[0].Schema().Columns
 		outputOffsets := e.tableRequest.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
 
-		// For TableScan, need partitionHandle in `indexOrder` when e.keepOrder == true
-		needPartitionHandle = (e.index.Global || e.partitionTableMode) && e.keepOrder
-		// no ExtraPidColID here, because TableScan shouldn't contain them.
-		hasExtraCol = col.ID == model.ExtraPhysTblID
+		// For TableScan, need partitionHandle in `indexOrder` when e.keepOrder == true or execute `admin check [table|index]` with global index
+		needPartitionHandle = ((e.index.Global || e.partitionTableMode) && e.keepOrder) || (e.index.Global && e.checkIndexValue != nil)
 	}
+	hasExtraCol := col.ID == model.ExtraPhysTblID
 
-	// TODO: fix global index related bugs later
 	// There will be two needPartitionHandle != hasExtraCol situations.
 	// Only `needPartitionHandle` == true and `hasExtraCol` == false are not allowed.
 	// `ExtraPhysTblID` will be used in `SelectLock` when `needPartitionHandle` == false and `hasExtraCol` == true.
-	if needPartitionHandle && !hasExtraCol && !e.index.Global {
+	if needPartitionHandle && !hasExtraCol {
 		return needPartitionHandle, errors.Errorf("Internal error, needPartitionHandle != ret, tp(%d)", tp)
 	}
 	return needPartitionHandle, nil
@@ -647,7 +787,7 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	var tps []*types.FieldType
 	if len(e.byItems) != 0 {
 		for _, item := range e.byItems {
-			tps = append(tps, item.Expr.GetType())
+			tps = append(tps, item.Expr.GetType(e.ectx.GetEvalCtx()))
 		}
 	}
 	if e.isCommonHandle() {
@@ -663,8 +803,8 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	return tps
 }
 
-// startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
-func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<- *lookupTableTask, initBatchSize int) error {
+// startIndexWorker launch a background goroutine to fetch handles, submit lookup-table tasks to the pool.
+func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSize int) error {
 	if e.RuntimeStats() != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
@@ -672,49 +812,55 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 
-	kvRanges := [][]kv.KeyRange{e.kvRanges}
-	if e.partitionTableMode {
-		kvRanges = e.partitionKVRanges
+	kvRanges := make([][]kv.KeyRange, 0, len(e.groupedKVRanges))
+	for _, ranges := range e.groupedKVRanges {
+		kvRanges = append(kvRanges, ranges.KeyRanges)
 	}
+
 	// When len(kvrange) = 1, no sorting is required,
-	// so remove byItems and non-necessary output colums
+	// so remove byItems and non-necessary output columns
 	if len(kvRanges) == 1 {
 		e.dagPB.OutputOffsets = e.dagPB.OutputOffsets[len(e.byItems):]
 		e.byItems = nil
 	}
-	tps := e.getRetTpsForIndexReader()
+	var tps []*types.FieldType
+	tblScanIdxForRewritePartitionID := -1
+	if e.indexLookUpPushDown {
+		tps = e.RetFieldTypes()
+		if e.partitionTableMode {
+			for idx, executor := range e.dagPB.Executors {
+				if executor.Tp == tipb.ExecType_TypeTableScan {
+					tblScanIdxForRewritePartitionID = idx
+					break
+				}
+			}
+			if tblScanIdxForRewritePartitionID < 0 {
+				intest.Assert(false)
+				return errors.New("cannot find table scan executor in for partition index lookup push down")
+			}
+		}
+	} else {
+		tps = e.getRetTpsForIndexReader()
+	}
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
-	go func() {
-		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
+	e.pool.submit(func() {
+		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
+		growWorkerStack16K()
 		worker := &indexWorker{
 			idxLookup:       e,
-			workCh:          workCh,
 			finished:        e.finished,
 			resultCh:        e.resultCh,
 			keepOrder:       e.keepOrder,
 			checkIndexValue: e.checkIndexValue,
-			maxBatchSize:    e.Ctx().GetSessionVars().IndexLookupSize,
+			maxBatchSize:    e.indexLookupSize,
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
 		}
-		var builder distsql.RequestBuilder
-		builder.SetDAGRequest(e.dagPB).
-			SetStartTS(e.startTS).
-			SetDesc(e.desc).
-			SetKeepOrder(e.keepOrder).
-			SetPaging(e.indexPaging).
-			SetTxnScope(e.txnScope).
-			SetReadReplicaScope(e.readReplicaScope).
-			SetIsStaleness(e.isStaleness).
-			SetFromSessionVars(e.Ctx().GetSessionVars()).
-			SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.Ctx(), &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-			SetMemTracker(tracker).
-			SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias)
+		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for _, kvRange := range kvRanges {
+		for idx, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -724,6 +870,41 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 			if finished {
 				break
+			}
+
+			if tblScanIdxForRewritePartitionID >= 0 {
+				// We should set the TblScan's TableID to the partition physical ID to make sure
+				// the push-down index lookup can encode the table handle key correctly.
+				e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
+			}
+
+			var builder distsql.RequestBuilder
+			builder.SetDAGRequest(e.dagPB).
+				SetStartTS(e.startTS).
+				SetDesc(e.desc).
+				SetKeepOrder(e.keepOrder).
+				SetTxnScope(e.txnScope).
+				SetReadReplicaScope(e.readReplicaScope).
+				SetIsStaleness(e.isStaleness).
+				SetFromSessionVars(e.dctx).
+				SetFromInfoSchema(e.infoSchema).
+				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
+				SetMemTracker(tracker).
+				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+
+			if e.indexLookUpPushDown {
+				// Paging and Cop-cache is not supported in index lookup push down.
+				builder.Request.Paging.Enable = false
+				builder.Request.Cacheable = false
+			}
+
+			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
+				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
+				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
+					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
+				}
 			}
 
 			// init kvReq, result and worker for this partition
@@ -736,84 +917,96 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.syncErr(err)
 				break
 			}
-			result, err := distsql.SelectWithRuntimeStats(ctx, e.Ctx(), kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
+			result, err := distsql.SelectWithRuntimeStats(ctx, e.dctx, kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
 			if err != nil {
 				worker.syncErr(err)
 				break
 			}
 			results = append(results, result)
 		}
-		worker.batchSize = min(initBatchSize, worker.maxBatchSize)
-		if len(results) > 1 && len(e.byItems) != 0 {
+		if needMergeSort(e.byItems, len(results)) {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
-			ssr := distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
+			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		// this error is synced in fetchHandles(), don't sync it again
-		_ = worker.fetchHandles(ctx1, results)
-		cancel()
-		for _, result := range results {
-			if err := result.Close(); err != nil {
-				logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
+		var selResultList selectResultList
+		indexTypes := e.getRetTpsForIndexReader()
+		if e.indexLookUpPushDown {
+			var err error
+			if selResultList, err = newSelectResultRowIterList(results, [][]*types.FieldType{indexTypes}); err != nil {
+				cancel()
+				worker.syncErr(err)
+				return
 			}
+		} else {
+			selResultList = newSelectResultList(results)
 		}
-		close(workCh)
+		_ = worker.fetchHandles(ctx1, selResultList, indexTypes)
+		cancel()
+		selResultList.Close()
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
-	}()
+	})
 	return nil
 }
 
-// startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
-func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
-	lookupConcurrencyLimit := e.Ctx().GetSessionVars().IndexLookupConcurrency()
-	e.tblWorkerWg.Add(lookupConcurrencyLimit)
-	for i := 0; i < lookupConcurrencyLimit; i++ {
-		workerID := i
-		worker := &tableWorker{
-			idxLookup:       e,
-			workCh:          workCh,
-			finished:        e.finished,
-			keepOrder:       e.keepOrder,
-			handleIdx:       e.handleIdx,
-			checkIndexValue: e.checkIndexValue,
-			memTracker:      memory.NewTracker(workerID, -1),
-		}
-		worker.memTracker.AttachTo(e.memTracker)
-		ctx1, cancel := context.WithCancel(ctx)
-		go func() {
-			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
-			worker.pickAndExecTask(ctx1)
-			cancel()
-			e.tblWorkerWg.Done()
-		}()
+// calculateBatchSize calculates a suitable initial batch size.
+func (e *IndexLookUpExecutor) calculateBatchSize(initBatchSize, maxBatchSize int) int {
+	if e.indexPaging {
+		// If indexPaging is true means this query has limit, so use initBatchSize to avoid scan some unnecessary data.
+		return min(initBatchSize, maxBatchSize)
 	}
+	var estRows int
+	if len(e.idxPlans) > 0 {
+		estRows = int(e.idxPlans[0].StatsCount())
+	}
+	return CalculateBatchSize(estRows, initBatchSize, maxBatchSize)
 }
 
-func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (exec.Executor, error) {
+// CalculateBatchSize calculates a suitable initial batch size. It exports for testing.
+func CalculateBatchSize(estRows, initBatchSize, maxBatchSize int) int {
+	batchSize := min(initBatchSize, maxBatchSize)
+	if estRows >= maxBatchSize {
+		return maxBatchSize
+	}
+	for batchSize < estRows {
+		// If batchSize less than estRows, increase batch size to avoid unnecessary rpc.
+		batchSize = batchSize * 2
+		if batchSize >= maxBatchSize {
+			return maxBatchSize
+		}
+	}
+	return batchSize
+}
+
+func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (*TableReaderExecutor, error) {
 	table := e.table
 	if e.partitionTableMode && task.partitionTable != nil {
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		BaseExecutor:     exec.NewBaseExecutor(e.Ctx(), e.Schema(), e.getTableRootPlanID()),
-		table:            table,
-		dagPB:            e.tableRequest,
-		startTS:          e.startTS,
-		txnScope:         e.txnScope,
-		readReplicaScope: e.readReplicaScope,
-		isStaleness:      e.isStaleness,
-		columns:          e.columns,
-		corColInFilter:   e.corColInTblSide,
-		plans:            e.tblPlans,
-		netDataSize:      e.avgRowSize * float64(len(task.handles)),
-		byItems:          e.byItems,
+		BaseExecutorV2:             e.BuildNewBaseExecutorV2(e.stmtRuntimeStatsColl, e.Schema(), e.getTableRootPlanID()),
+		tableReaderExecutorContext: e.tableReaderExecutorContext,
+		table:                      table,
+		dagPB:                      e.tableRequest,
+		startTS:                    e.startTS,
+		txnScope:                   e.txnScope,
+		readReplicaScope:           e.readReplicaScope,
+		isStaleness:                e.isStaleness,
+		columns:                    e.columns,
+		corColInFilter:             e.corColInTblSide,
+		plans:                      e.tblPlans,
+		netDataSize:                e.avgRowSize * float64(len(task.handles)),
+		byItems:                    e.byItems,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
 	if err != nil {
-		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
+		if ctx.Err() != context.Canceled {
+			logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
+		}
 		return nil, err
 	}
 	return tableReader, nil
@@ -822,9 +1015,32 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			indexScanCopTasks, _ := e.stmtRuntimeStatsColl.GetCopCountAndRows(e.getIndexPlanRootID())
+			if e.indexLookUpPushDown {
+				metrics.IndexLookUpExecutorWithPushDownEnabledRowNumber.Observe(float64(e.stats.indexScanBasicStats.GetActRows()))
+				metrics.IndexLookUpIndexScanCopTasksWithPushDownEnabled.Add(float64(indexScanCopTasks))
+			} else {
+				metrics.IndexLookUpIndexScanCopTasksNormal.Add(float64(indexScanCopTasks))
+			}
+		}()
 	}
-	e.kvRanges = e.kvRanges[:0]
+
+	if stats := e.RuntimeStats(); stats != nil {
+		if e.indexLookUpPushDown {
+			defer func() {
+				metrics.IndexLookUpExecutorWithPushDownEnabledDuration.Observe(time.Duration(stats.GetTime()).Seconds())
+			}()
+		}
+	}
+
+	if e.indexUsageReporter != nil {
+		e.indexUsageReporter.ReportCopIndexUsageForTable(
+			e.table,
+			e.index.ID,
+			e.idxPlans[0].ID())
+	}
 	if e.dummy {
 		return nil
 	}
@@ -845,7 +1061,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.tblWorkerWg.Wait()
 	e.finished = nil
 	e.workerStarted = false
-	e.memTracker = nil
 	e.resultCurr = nil
 	return nil
 }
@@ -925,7 +1140,7 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.RuntimeStats() != nil {
 		e.stats = &IndexLookUpRunTimeStats{
 			indexScanBasicStats: &execdetails.BasicRuntimeStats{},
-			Concurrency:         e.Ctx().GetSessionVars().IndexLookupConcurrency(),
+			Concurrency:         e.indexLookupConcurrency,
 		}
 	}
 }
@@ -947,7 +1162,6 @@ func (e *IndexLookUpExecutor) getTableRootPlanID() int {
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
 type indexWorker struct {
 	idxLookup *IndexLookUpExecutor
-	workCh    chan<- *lookupTableTask
 	finished  <-chan struct{}
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
@@ -960,7 +1174,7 @@ type indexWorker struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
-	PushedLimit *plannercore.PushedDownLimit
+	PushedLimit *physicalop.PushedDownLimit
 	// scannedKeys indicates how many keys be scanned
 	scannedKeys uint64
 }
@@ -973,13 +1187,55 @@ func (w *indexWorker) syncErr(err error) {
 	}
 }
 
+type selectResultList []struct {
+	Result  distsql.SelectResult
+	RowIter distsql.SelectResultIter
+}
+
+func newSelectResultList(results []distsql.SelectResult) selectResultList {
+	l := make(selectResultList, len(results))
+	for i, r := range results {
+		l[i].Result = r
+	}
+	return l
+}
+
+func newSelectResultRowIterList(results []distsql.SelectResult, intermediateResultTypes [][]*types.FieldType) (selectResultList, error) {
+	ret := newSelectResultList(results)
+	for i, r := range ret {
+		rowIter, err := r.Result.IntoIter(intermediateResultTypes)
+		if err != nil {
+			ret.Close()
+			return nil, err
+		}
+		ret[i].RowIter = rowIter
+		ret[i].Result = nil
+	}
+	return ret, nil
+}
+
+func (l selectResultList) Close() {
+	for _, r := range l {
+		var err error
+		if r.RowIter != nil {
+			err = r.RowIter.Close()
+		} else if r.Result != nil {
+			err = r.Result.Close()
+		}
+
+		if err != nil {
+			logutil.BgLogger().Error("close Select result failed", zap.Error(err))
+		}
+	}
+}
+
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
-// The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
+// The tasks are submitted to the pool and processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.SelectResult) (err error) {
+func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList, indexTps []*types.FieldType) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := util.GetRecoverError(r)
 			w.syncErr(err4Panic)
 			if err != nil {
@@ -987,41 +1243,103 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			}
 		}
 	}()
-	chk := w.idxLookup.AllocPool.Alloc(w.idxLookup.getRetTpsForIndexReader(), w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
+	var chk *chunk.Chunk
+	if !w.idxLookup.indexLookUpPushDown {
+		// chk is only used by non-indexLookUpPushDown mode for mem-reuse
+		chk = w.idxLookup.AllocPool.Alloc(indexTps, w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
+	}
+	handleOffsets, err := w.getHandleOffsets(len(indexTps))
+	if err != nil {
+		w.syncErr(err)
+		return err
+	}
 	idxID := w.idxLookup.getIndexPlanRootID()
-	if w.idxLookup.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+	if w.idxLookup.stmtRuntimeStatsColl != nil {
 		if idxID != w.idxLookup.ID() && w.idxLookup.stats != nil {
-			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(idxID)
+			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.stmtRuntimeStatsColl.GetBasicRuntimeStats(idxID, true)
 		}
 	}
+	taskID := 0
 	for i := 0; i < len(results); {
-		result := results[i]
+		curResultIdx := i
+		result := results[curResultIdx]
 		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
 			break
 		}
 		startTime := time.Now()
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
+		var completedRows []chunk.Row
+		var handles []kv.Handle
+		var retChunk *chunk.Chunk
+		var curResultExhausted bool
+		if w.idxLookup.indexLookUpPushDown {
+			completedRows, handles, curResultExhausted, err = w.extractLookUpPushDownRowsOrHandles(ctx, result.RowIter, handleOffsets)
+		} else {
+			handles, retChunk, err = w.extractTaskHandles(ctx, chk, result.Result, handleOffsets)
+			curResultExhausted = len(handles) == 0
+		}
 		finishFetch := time.Now()
 		if err != nil {
 			w.syncErr(err)
 			return err
 		}
-		if len(handles) == 0 {
+
+		if curResultExhausted {
 			i++
+		}
+
+		if len(handles) == 0 && len(completedRows) == 0 {
 			continue
 		}
-		task := w.buildTableTask(handles, retChunk)
-		finishBuild := time.Now()
-		if w.idxLookup.partitionTableMode {
-			task.partitionTable = w.idxLookup.prunedPartitions[i]
+
+		var completedTask *lookupTableTask
+		if rowCnt := len(completedRows); rowCnt > 0 {
+			metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
+			// Currently, completedRows is only produced by index lookup push down which does not support keep order.
+			// for non-keep-order request, the completed rows can be sent to resultCh directly.
+			completedTask = w.buildCompletedTask(taskID, completedRows)
+			taskID++
 		}
+
+		var tableLookUpTask *lookupTableTask
+		if rowCnt := len(handles); rowCnt > 0 {
+			if w.idxLookup.indexLookUpPushDown {
+				metrics.IndexLookUpPushDownRowsCounterMiss.Add(float64(rowCnt))
+			} else {
+				metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
+			}
+			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
+			if w.idxLookup.partitionTableMode {
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
+			}
+			taskID++
+		}
+
+		finishBuild := time.Now()
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-w.finished:
 			return nil
-		case w.workCh <- task:
-			w.resultCh <- task
+		default:
+			if completedTask != nil {
+				w.resultCh <- completedTask
+			}
+
+			if tableLookUpTask != nil {
+				e := w.idxLookup
+				e.tblWorkerWg.Add(1)
+				e.pool.submit(func() {
+					defer e.tblWorkerWg.Done()
+					select {
+					case <-e.finished:
+						return
+					default:
+						growWorkerStack16K()
+						execTableTask(e, tableLookUpTask)
+					}
+				})
+				w.resultCh <- tableLookUpTask
+			}
 		}
 		if w.idxLookup.stats != nil {
 			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
@@ -1032,12 +1350,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 	return nil
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
-	handles []kv.Handle, retChk *chunk.Chunk, err error) {
-	numColsWithoutPid := chk.NumCols()
+func (w *indexWorker) getHandleOffsets(indexTpsLen int) ([]int, error) {
+	numColsWithoutPid := indexTpsLen
 	ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if ok {
 		numColsWithoutPid = numColsWithoutPid - 1
@@ -1049,7 +1366,69 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	if len(handleOffset) == 0 {
 		handleOffset = []int{numColsWithoutPid - 1}
 	}
-	handles = make([]kv.Handle, 0, w.batchSize)
+	return handleOffset, nil
+}
+
+func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, iter distsql.SelectResultIter, handleOffset []int) (rows []chunk.Row, handles []kv.Handle, exhausted bool, err error) {
+	intest.Assert(w.checkIndexValue == nil, "CheckIndex or CheckTable should not use index lookup push down")
+	const channelIdxIndex = 0
+	const channelIdxRow = 1
+
+	startTime := time.Now()
+	startScanKeys := w.scannedKeys
+	defer func() {
+		if cnt := w.scannedKeys - startScanKeys; w.idxLookup.stats != nil {
+			w.idxLookup.stats.indexScanBasicStats.Record(time.Since(startTime), int(cnt))
+		}
+	}()
+
+	checkLimit := w.PushedLimit != nil
+	for len(handles)+len(rows) < w.batchSize {
+		var row distsql.SelectResultRow
+		row, err = iter.Next(ctx)
+		if err != nil {
+			return nil, nil, false, errors.Trace(err)
+		}
+
+		if row.IsEmpty() {
+			exhausted = true
+			return
+		}
+
+		w.scannedKeys++
+		if checkLimit {
+			if w.scannedKeys <= w.PushedLimit.Offset {
+				continue
+			}
+			if w.scannedKeys > (w.PushedLimit.Offset + w.PushedLimit.Count) {
+				// Skip the handles after Offset+Count.
+				return
+			}
+		}
+
+		switch row.ChannelIndex {
+		case channelIdxRow:
+			rows = append(rows, row.Row)
+		case channelIdxIndex:
+			h, err := w.idxLookup.getHandle(row.Row, handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
+			if err != nil {
+				return nil, nil, false, errors.Trace(err)
+			}
+			handles = append(handles, h)
+		default:
+			return nil, nil, false, errors.Errorf("unexpected channel index %d", row.ChannelIndex)
+		}
+	}
+
+	w.batchSize *= 2
+	if w.batchSize > w.maxBatchSize {
+		w.batchSize = w.maxBatchSize
+	}
+	return
+}
+
+func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleOffset []int) (
+	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
 	for len(handles) < w.batchSize {
@@ -1075,7 +1454,10 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		if chk.NumRows() == 0 {
 			return handles, retChk, nil
 		}
-		for i := 0; i < chk.NumRows(); i++ {
+		if handles == nil {
+			handles = make([]kv.Handle, 0, chk.NumRows())
+		}
+		for i := range chk.NumRows() {
 			w.scannedKeys++
 			if checkLimit {
 				if w.scannedKeys <= w.PushedLimit.Offset {
@@ -1089,11 +1471,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return handles, retChk, err
-			}
-			if ph, ok := h.(kv.PartitionHandle); ok {
-				if _, exist := w.idxLookup.partitionIDMap[ph.PartitionID]; !exist {
-					continue
-				}
 			}
 			handles = append(handles, h)
 		}
@@ -1111,7 +1488,17 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	return handles, retChk, nil
 }
 
-func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
+func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTableTask {
+	task := &lookupTableTask{
+		id:     taskID,
+		rows:   rows,
+		doneCh: make(chan error, 1),
+	}
+	task.doneCh <- nil
+	return task
+}
+
+func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder *kv.HandleMap
 	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
@@ -1136,6 +1523,7 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 	}
 
 	task := &lookupTableTask{
+		id:                   taskID,
 		handles:              handles,
 		indexOrder:           indexOrder,
 		duplicatedIndexOrder: duplicatedIndexOrder,
@@ -1146,10 +1534,46 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 	return task
 }
 
+func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask) {
+	var (
+		ctx    = e.workerCtx
+		region *trace.Region
+	)
+	if trace.IsEnabled() {
+		region = trace.StartRegion(ctx, "IndexLookUpTableTask"+strconv.Itoa(task.id))
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.Logger(ctx).Warn("TableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err := util.GetRecoverError(r)
+			task.doneCh <- err
+		}
+		if region != nil {
+			region.End()
+		}
+	}()
+	tracker := memory.NewTracker(task.id, -1)
+	tracker.AttachTo(e.memTracker)
+	w := &tableWorker{
+		idxLookup:       e,
+		finished:        e.finished,
+		keepOrder:       e.keepOrder,
+		handleIdx:       e.handleIdx,
+		checkIndexValue: e.checkIndexValue,
+		memTracker:      tracker,
+	}
+	startTime := time.Now()
+	err := w.executeTask(ctx, task)
+	if e.stats != nil {
+		atomic.AddInt64(&e.stats.TableRowScan, int64(time.Since(startTime)))
+		atomic.AddInt64(&e.stats.TableTaskNum, 1)
+	}
+	task.doneCh <- err
+}
+
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
 	idxLookup *IndexLookUpExecutor
-	workCh    <-chan *lookupTableTask
 	finished  <-chan struct{}
 	keepOrder bool
 	handleIdx []int
@@ -1159,39 +1583,6 @@ type tableWorker struct {
 
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
-}
-
-// pickAndExecTask picks tasks from workCh, and execute them.
-func (w *tableWorker) pickAndExecTask(ctx context.Context) {
-	var task *lookupTableTask
-	var ok bool
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
-			err := util.GetRecoverError(r)
-			task.doneCh <- err
-		}
-	}()
-	for {
-		// Don't check ctx.Done() on purpose. If background worker get the signal and all
-		// exit immediately, session's goroutine doesn't know this and still calling Next(),
-		// it may block reading task.doneCh forever.
-		select {
-		case task, ok = <-w.workCh:
-			if !ok {
-				return
-			}
-		case <-w.finished:
-			return
-		}
-		startTime := time.Now()
-		err := w.executeTask(ctx, task)
-		if w.idxLookup.stats != nil {
-			atomic.AddInt64(&w.idxLookup.stats.TableRowScan, int64(time.Since(startTime)))
-			atomic.AddInt64(&w.idxLookup.stats.TableTaskNum, 1)
-		}
-		task.doneCh <- err
-	}
 }
 
 func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
@@ -1216,8 +1607,10 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
 		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
-		handleEncoded, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx.TimeZone(), nil, datums...)
-		err = e.Ctx().GetSessionVars().StmtCtx.HandleError(err)
+		ectx := e.ectx.GetEvalCtx()
+		handleEncoded, err = codec.EncodeKey(ectx.Location(), nil, datums...)
+		errCtx := ectx.ErrCtx()
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
@@ -1268,17 +1661,17 @@ func (e *IndexLookUpRunTimeStats) String() string {
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task: {total_time: %s, fetch_handle: %s, build: %s, wait: %s}",
+		fmt.Fprintf(&buf, "index_task: {total_time: %s, fetch_handle: %s, build: %s, wait: %s}",
 			execdetails.FormatDuration(time.Duration(fetchHandle)),
 			execdetails.FormatDuration(time.Duration(indexScan)),
 			execdetails.FormatDuration(time.Duration(fetchHandle-indexScan-taskWait)),
-			execdetails.FormatDuration(time.Duration(taskWait))))
+			execdetails.FormatDuration(time.Duration(taskWait)))
 	}
 	if tableScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency))
+		fmt.Fprintf(&buf, " table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency)
 	}
 	if e.NextWaitIndexScan > 0 || e.NextWaitTableLookUpBuild > 0 || e.NextWaitTableLookUpResp > 0 {
 		if buf.Len() > 0 {
@@ -1346,15 +1739,17 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				if idx == nil {
 					return nil
 				}
-				k, _, err := idx.GenIndexKey(w.idxLookup.Ctx().GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+				ectx := w.idxLookup.ectx.GetEvalCtx()
+				k, _, err := idx.GenIndexKey(ectx.ErrCtx(), ectx.Location(), idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
 				if err != nil {
 					return nil
 				}
 				return k
 			},
-			Tbl:  tblInfo,
-			Idx:  w.idxLookup.index,
-			Sctx: w.idxLookup.Ctx(),
+			Tbl:             tblInfo,
+			Idx:             w.idxLookup.index,
+			EnableRedactLog: w.idxLookup.enableRedactLog,
+			Storage:         w.idxLookup.storage,
 		}
 	}
 
@@ -1373,7 +1768,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		}
 
 		if chk.NumRows() == 0 {
-			task.indexOrder.Range(func(h kv.Handle, val interface{}) bool {
+			task.indexOrder.Range(func(h kv.Handle, val any) bool {
 				idxRow := task.idxRows.GetRow(val.(int))
 				err = ir().ReportAdminCheckInconsistent(ctx, h, &consistency.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
 				return false
@@ -1402,12 +1797,12 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
-			sctx := w.idxLookup.Ctx().GetSessionVars().StmtCtx
+			tc := w.idxLookup.ectx.GetEvalCtx().TypeCtx()
 			for i := range vals {
 				col := w.idxTblCols[i]
 				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := tables.CompareIndexAndVal(sctx, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
+				cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
 				if err != nil {
 					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
 						handle,
@@ -1436,7 +1831,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 func getDatumRow(r *chunk.Row, fields []*types.FieldType) []types.Datum {
 	datumRow := make([]types.Datum, 0, r.Chunk().NumCols())
-	for colIdx := 0; colIdx < r.Chunk().NumCols(); colIdx++ {
+	for colIdx := range r.Chunk().NumCols() {
 		if colIdx >= len(fields) {
 			break
 		}
@@ -1452,7 +1847,9 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
 	task.buildDoneTime = time.Now()
 	if err != nil {
-		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
+		if ctx.Err() != context.Canceled {
+			logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
+		}
 		return err
 	}
 	defer func() { terror.Log(exec.Close(tableReader)) }()
@@ -1461,25 +1858,41 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		return w.compareData(ctx, task, tableReader)
 	}
 
-	task.memTracker = w.memTracker
-	memUsage := int64(cap(task.handles) * 8)
-	task.memUsage = memUsage
-	task.memTracker.Consume(memUsage)
+	{
+		task.memTracker = w.memTracker
+		memUsage := int64(cap(task.handles))*size.SizeOfInterface + tableReader.memUsage()
+		for _, h := range task.handles {
+			memUsage += int64(h.MemUsage())
+		}
+		if task.indexOrder != nil {
+			memUsage += task.indexOrder.MemUsage()
+		}
+		if task.duplicatedIndexOrder != nil {
+			memUsage += task.duplicatedIndexOrder.MemUsage()
+		}
+		memUsage += task.idxRows.MemoryUsage()
+		task.memUsage = memUsage
+		task.memTracker.Consume(memUsage)
+	}
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := exec.TryNewCacheChunk(tableReader)
 		err = exec.Next(ctx, tableReader, chk)
 		if err != nil {
-			logutil.Logger(ctx).Error("table reader fetch next chunk failed", zap.Error(err))
+			if ctx.Err() != context.Canceled {
+				logutil.Logger(ctx).Warn("table reader fetch next chunk failed", zap.Error(err))
+			}
 			return err
 		}
 		if chk.NumRows() == 0 {
 			break
 		}
-		memUsage = chk.MemoryUsage()
-		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
+		{
+			memUsage := chk.MemoryUsage()
+			task.memUsage += memUsage
+			task.memTracker.Consume(memUsage)
+		}
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
@@ -1487,9 +1900,11 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	}
 
 	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
-	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
-	task.memUsage += memUsage
-	task.memTracker.Consume(memUsage)
+	{
+		memUsage := int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
+		task.memUsage += memUsage
+		task.memTracker.Consume(memUsage)
+	}
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for i := range task.rows {
@@ -1500,14 +1915,16 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			rowIdx, _ := task.indexOrder.Get(handle)
 			task.rowIdx = append(task.rowIdx, rowIdx.(int))
 		}
-		memUsage = int64(cap(task.rowIdx) * 4)
-		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
+		{
+			memUsage := int64(cap(task.rowIdx) * int(size.SizeOfInt))
+			task.memUsage += memUsage
+			task.memTracker.Consume(memUsage)
+		}
 		sort.Sort(task)
 	}
 
 	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) &&
-		!w.idxLookup.Ctx().GetSessionVars().StmtCtx.WeakConsistency {
+		!w.idxLookup.weakConsistency {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for _, row := range task.rows {
@@ -1522,9 +1939,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				HandleEncode: func(hd kv.Handle) kv.Key {
 					return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), hd)
 				},
-				Tbl:  w.idxLookup.table.Meta(),
-				Idx:  w.idxLookup.index,
-				Sctx: w.idxLookup.Ctx(),
+				Tbl:             w.idxLookup.table.Meta(),
+				Idx:             w.idxLookup.index,
+				EnableRedactLog: w.idxLookup.enableRedactLog,
+				Storage:         w.idxLookup.storage,
 			}).ReportLookupInconsistent(ctx,
 				handleCnt,
 				len(task.rows),
@@ -1562,10 +1980,14 @@ func GetLackHandles(expectedHandles []kv.Handle, obtainedHandlesMap *kv.HandleMa
 	return diffHandles
 }
 
-func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []int {
+func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 	planIDs := make([]int, 0, len(plans))
 	for _, p := range plans {
 		planIDs = append(planIDs, p.ID())
 	}
 	return planIDs
+}
+
+func needMergeSort(byItems []*plannerutil.ByItems, kvRangesCount int) bool {
+	return len(byItems) > 0 && kvRangesCount > 1
 }

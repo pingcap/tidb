@@ -213,7 +213,7 @@ func (tk *SteppedTestKit) Continue() *SteppedTestKit {
 }
 
 // SteppedMustExec creates a new stepped task for MustExec
-func (tk *SteppedTestKit) SteppedMustExec(sql string, args ...interface{}) *SteppedTestKit {
+func (tk *SteppedTestKit) SteppedMustExec(sql string, args ...any) *SteppedTestKit {
 	return tk.steppedCommand(func(_ *steppedTestKitCommandContext) any {
 		tk.MustExec(sql, args...)
 		return nil
@@ -221,21 +221,21 @@ func (tk *SteppedTestKit) SteppedMustExec(sql string, args ...interface{}) *Step
 }
 
 // SteppedMustQuery creates a new stepped task for MustQuery
-func (tk *SteppedTestKit) SteppedMustQuery(sql string, args ...interface{}) *SteppedTestKit {
+func (tk *SteppedTestKit) SteppedMustQuery(sql string, args ...any) *SteppedTestKit {
 	return tk.steppedCommand(func(_ *steppedTestKitCommandContext) any {
 		return tk.MustQuery(sql, args...)
 	})
 }
 
 // MustExec executes a sql statement and asserts nil error.
-func (tk *SteppedTestKit) MustExec(sql string, args ...interface{}) {
+func (tk *SteppedTestKit) MustExec(sql string, args ...any) {
 	tk.beforeCommand()
 	tk.tk.MustExec(sql, args...)
 }
 
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
-func (tk *SteppedTestKit) MustQuery(sql string, args ...interface{}) *Result {
+func (tk *SteppedTestKit) MustQuery(sql string, args ...any) *Result {
 	tk.beforeCommand()
 	result := tk.tk.MustQuery(sql, args...)
 	tk.cmdResult = result

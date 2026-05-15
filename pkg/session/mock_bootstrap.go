@@ -22,7 +22,7 @@ import (
 	"flag"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -66,8 +66,9 @@ var allDDLs = []string{
 	"alter table mock_sys_t alter index idx_v invisible",
 	"alter table mock_sys_partition add partition (partition p6 values less than (8192))",
 	"alter table mock_sys_partition drop partition p6",
-	"alter table mock_sys_t add index mul_idx1(c1), add index mul_idx2(c1)",
-	"alter table mock_sys_t drop index mul_idx1, drop index mul_idx2",
+	// Should not use multi-schema change to add index in bootstrap DDL.
+	// "alter table mock_sys_t add index mul_idx1(c1), add index mul_idx2(c1)",
+	// "alter table mock_sys_t drop index mul_idx1, drop index mul_idx2",
 	// TODO: Support check the DB for ActionAlterPlacementPolicy.
 	// "alter database mock_sys_db_placement placement policy = 'alter_x'",
 	"alter table mock_sys_t add index rename_idx1(c1)",
@@ -76,7 +77,7 @@ var allDDLs = []string{
 
 var mockLatestVer = currentBootstrapVersion + 1
 
-func mockUpgradeToVerLatest(s types.Session, ver int64) {
+func mockUpgradeToVerLatest(s sessionapi.Session, ver int64) {
 	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
 	if ver >= mockLatestVer {
 		return
@@ -115,7 +116,7 @@ func mockUpgradeToVerLatest(s types.Session, ver int64) {
 }
 
 // mockSimpleUpgradeToVerLatest mocks a simple bootstrapVersion(make the test faster).
-func mockSimpleUpgradeToVerLatest(s types.Session, ver int64) {
+func mockSimpleUpgradeToVerLatest(s sessionapi.Session, ver int64) {
 	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
 	if ver >= mockLatestVer {
 		return
@@ -152,68 +153,68 @@ const (
 // MockUpgradeToVerLatestKind is used to indicate the use of different mock bootstrapVersion.
 var MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatest
 
-func addMockBootstrapVersionForTest(s types.Session) {
+func addMockBootstrapVersionForTest(s sessionapi.Session) []versionedUpgradeFunction {
 	if WithMockUpgrade == nil || !*WithMockUpgrade {
-		return
+		return upgradeToVerFunctions
 	}
 
 	TestHook.OnBootstrapBefore(s)
-	if MockUpgradeToVerLatestKind == defaultMockUpgradeToVerLatest {
-		bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
-	} else {
-		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)
-	}
 	currentBootstrapVersion = mockLatestVer
+	additionalUpgradeFn := versionedUpgradeFunction{version: mockLatestVer, fn: mockUpgradeToVerLatest}
+	if MockUpgradeToVerLatestKind == MockSimpleUpgradeToVerLatest {
+		additionalUpgradeFn = versionedUpgradeFunction{version: mockLatestVer, fn: mockSimpleUpgradeToVerLatest}
+	}
+	return append(upgradeToVerFunctions, additionalUpgradeFn)
 }
 
 // Callback is used for Test.
 type Callback interface {
 	// OnBootstrapBefore is called before doing bootstrap.
-	OnBootstrapBefore(s types.Session)
+	OnBootstrapBefore(s sessionapi.Session)
 	// OnBootstrap is called doing bootstrap.
-	OnBootstrap(s types.Session)
+	OnBootstrap(s sessionapi.Session)
 	// OnBootstrapAfter is called after doing bootstrap.
-	OnBootstrapAfter(s types.Session)
+	OnBootstrapAfter(s sessionapi.Session)
 }
 
 // BaseCallback implements Callback interfaces.
 type BaseCallback struct{}
 
 // OnBootstrapBefore implements Callback interface.
-func (*BaseCallback) OnBootstrapBefore(types.Session) {}
+func (*BaseCallback) OnBootstrapBefore(sessionapi.Session) {}
 
 // OnBootstrap implements Callback interface.
-func (*BaseCallback) OnBootstrap(types.Session) {}
+func (*BaseCallback) OnBootstrap(sessionapi.Session) {}
 
 // OnBootstrapAfter implements Callback interface.
-func (*BaseCallback) OnBootstrapAfter(types.Session) {}
+func (*BaseCallback) OnBootstrapAfter(sessionapi.Session) {}
 
 // TestCallback is used to customize user callback themselves.
 type TestCallback struct {
 	*BaseCallback
 
 	Cnt                       *atomicutil.Int32
-	OnBootstrapBeforeExported func(s types.Session)
-	OnBootstrapExported       func(s types.Session)
-	OnBootstrapAfterExported  func(s types.Session)
+	OnBootstrapBeforeExported func(s sessionapi.Session)
+	OnBootstrapExported       func(s sessionapi.Session)
+	OnBootstrapAfterExported  func(s sessionapi.Session)
 }
 
 // OnBootstrapBefore mocks the same behavior with the main bootstrap hook.
-func (tc *TestCallback) OnBootstrapBefore(s types.Session) {
+func (tc *TestCallback) OnBootstrapBefore(s sessionapi.Session) {
 	if tc.OnBootstrapBeforeExported != nil {
 		tc.OnBootstrapBeforeExported(s)
 	}
 }
 
 // OnBootstrap mocks the same behavior with the main bootstrap hook.
-func (tc *TestCallback) OnBootstrap(s types.Session) {
+func (tc *TestCallback) OnBootstrap(s sessionapi.Session) {
 	if tc.OnBootstrapExported != nil {
 		tc.OnBootstrapExported(s)
 	}
 }
 
 // OnBootstrapAfter mocks the same behavior with the main bootstrap hook.
-func (tc *TestCallback) OnBootstrapAfter(s types.Session) {
+func (tc *TestCallback) OnBootstrapAfter(s sessionapi.Session) {
 	if tc.OnBootstrapAfterExported != nil {
 		tc.OnBootstrapAfterExported(s)
 	}

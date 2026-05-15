@@ -51,7 +51,7 @@ func (c *etcdClient) WatchNotification(ctx context.Context, typ string) clientv3
 // NewMockNotificationClient creates a mock notification client
 func NewMockNotificationClient() NotificationClient {
 	return &mockClient{
-		store:                make(map[string]interface{}),
+		store:                make(map[string]any),
 		commandWatchers:      make([]chan *CmdRequest, 0, 1),
 		notificationWatchers: make(map[string][]chan clientv3.WatchResponse),
 	}
@@ -75,7 +75,7 @@ loop:
 			return ctx.Err()
 		case ch <- clientv3.WatchResponse{}:
 		default:
-			unsent = make([]chan clientv3.WatchResponse, len(watchers), 0)
+			unsent = make([]chan clientv3.WatchResponse, len(watchers))
 			copy(unsent, watchers[i:])
 			break loop
 		}

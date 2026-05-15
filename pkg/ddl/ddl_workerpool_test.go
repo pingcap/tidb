@@ -15,19 +15,24 @@
 package ddl
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ngaut/pools"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDDLWorkerPool(t *testing.T) {
 	f := func() func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
-			wk := newWorker(nil, addIdxWorker, nil, nil, nil)
+			wk := newWorker(context.Background(), addIdxWorker, nil, nil, nil)
 			return wk, nil
 		}
 	}
-	pool := newDDLWorkerPool(pools.NewResourcePool(f(), 1, 2, 0), reorg)
+	pool := newDDLWorkerPool(pools.NewResourcePool(f(), 1, 2, 0), jobTypeReorg)
+	require.Equal(t, 1, pool.available())
 	pool.close()
+	require.Zero(t, pool.available())
 	pool.put(nil)
+	require.Zero(t, pool.available())
 }

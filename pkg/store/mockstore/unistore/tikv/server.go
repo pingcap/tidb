@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pberror"
@@ -49,6 +51,7 @@ type Server struct {
 	tikvpb.UnimplementedTikvServer
 	mvccStore     *MVCCStore
 	regionManager RegionManager
+	pdClient      pd.Client
 	innerServer   InnerServer
 	RPCClient     client.Client
 	refCount      int32
@@ -56,10 +59,11 @@ type Server struct {
 }
 
 // NewServer returns a new server.
-func NewServer(rm RegionManager, store *MVCCStore, innerServer InnerServer) *Server {
+func NewServer(rm RegionManager, pdClient pd.Client, store *MVCCStore, innerServer InnerServer) *Server {
 	return &Server{
 		mvccStore:     store,
 		regionManager: rm,
+		pdClient:      pdClient,
 		innerServer:   innerServer,
 	}
 }
@@ -108,6 +112,9 @@ type requestCtx struct {
 	storeID          uint64
 	asyncMinCommitTS uint64
 	onePCCommitTS    uint64
+	regionManager    RegionManager
+	pdClient         pd.Client
+	returnCommitTS   bool
 }
 
 func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCtx, error) {
@@ -126,6 +133,8 @@ func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCt
 	storeAddr, storeID, regErr := svr.regionManager.GetStoreInfoFromCtx(ctx)
 	req.storeAddr = storeAddr
 	req.storeID = storeID
+	req.regionManager = svr.regionManager
+	req.pdClient = svr.pdClient
 	if regErr != nil {
 		req.regErr = regErr
 	}
@@ -139,8 +148,43 @@ func (req *requestCtx) getDBReader() *dbreader.DBReader {
 		txn := mvccStore.db.NewTransaction(false)
 		req.reader = dbreader.NewDBReader(req.regCtx.RawStart(), req.regCtx.RawEnd(), txn)
 		req.reader.RcCheckTS = req.isRcCheckTSIsolationLevel()
+		req.reader.ExtraDbReaderProvider = req
 	}
 	return req.reader
+}
+
+func (req *requestCtx) LocateExtraRegion(ctx context.Context, key []byte) (dbreader.LocateExtraRegionResult, error) {
+	region, err := req.pdClient.GetRegion(ctx, key)
+	if err != nil {
+		return dbreader.LocateExtraRegionResult{}, err
+	}
+
+	if region.Leader == nil || region.Leader.StoreId != req.storeID {
+		return dbreader.LocateExtraRegionResult{}, nil
+	}
+
+	return dbreader.LocateExtraRegionResult{
+		Found:    true,
+		Region:   region.Meta,
+		Peer:     region.Leader,
+		IsLeader: true,
+	}, nil
+}
+
+func (req *requestCtx) GetExtraDBReaderByRegion(ctx dbreader.GetExtraDBReaderContext) (*dbreader.DBReader, *errorpb.Error) {
+	regCtx, err := req.regionManager.GetRegionFromCtx(&kvrpcpb.Context{
+		RegionId:    ctx.Region.GetId(),
+		RegionEpoch: ctx.Region.RegionEpoch,
+		Peer:        ctx.Peer,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	mvccStore := req.svr.mvccStore
+	txn := mvccStore.db.NewTransaction(false)
+	return dbreader.NewDBReader(regCtx.RawStart(), regCtx.RawEnd(), txn), nil
 }
 
 func (req *requestCtx) isSnapshotIsolation() bool {
@@ -168,10 +212,16 @@ func (svr *Server) KvGet(ctx context.Context, req *kvrpcpb.GetRequest) (*kvrpcpb
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.GetResponse{RegionError: reqCtx.regErr}, nil
 	}
-	val, err := svr.mvccStore.Get(reqCtx, req.Key, req.Version)
+	reqCtx.returnCommitTS = req.NeedCommitTs
+	pair, err := svr.mvccStore.GetPair(reqCtx, req.Key, req.Version)
+	if err != nil {
+		return &kvrpcpb.GetResponse{
+			Error: convertToKeyError(err),
+		}, nil
+	}
 	return &kvrpcpb.GetResponse{
-		Value: val,
-		Error: convertToKeyError(err),
+		Value:    pair.Value,
+		CommitTs: pair.CommitTs,
 	}, nil
 }
 
@@ -193,6 +243,18 @@ func (svr *Server) KvScan(ctx context.Context, req *kvrpcpb.ScanRequest) (*kvrpc
 
 // KvPessimisticLock implements the tikvpb.TikvServer interface.
 func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.PessimisticLockRequest) (*kvrpcpb.PessimisticLockResponse, error) {
+	failpoint.Inject("pessimisticLockReturnWriteConflict", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(time.Millisecond * 100)
+			err := &kverrors.ErrConflict{
+				StartTS:          req.GetForUpdateTs(),
+				ConflictTS:       req.GetForUpdateTs() + 1,
+				ConflictCommitTS: req.GetForUpdateTs() + 2,
+			}
+			failpoint.Return(&kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil)
+		}
+	})
+
 	reqCtx, err := newRequestCtx(svr, req.Context, "PessimisticLock")
 	if err != nil {
 		return &kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil
@@ -270,7 +332,11 @@ func (svr *Server) KVPessimisticRollback(ctx context.Context, req *kvrpcpb.Pessi
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.PessimisticRollbackResponse{RegionError: reqCtx.regErr}, nil
 	}
-	err = svr.mvccStore.PessimisticRollback(reqCtx, req)
+	if len(req.Keys) == 0 {
+		err = svr.mvccStore.PessimisticRollbackWithScanFirst(reqCtx, req)
+	} else {
+		err = svr.mvccStore.PessimisticRollback(reqCtx, req)
+	}
 	resp := &kvrpcpb.PessimisticRollbackResponse{}
 	resp.Errors, resp.RegionError = convertToPBErrors(err)
 	return resp, nil
@@ -378,6 +444,38 @@ func (svr *Server) KvCommit(ctx context.Context, req *kvrpcpb.CommitRequest) (*k
 	return resp, nil
 }
 
+// KvFlush implements the tikvpb.TikvServer interface.
+func (svr *Server) KvFlush(ctx context.Context, req *kvrpcpb.FlushRequest) (*kvrpcpb.FlushResponse, error) {
+	reqCtx, err := newRequestCtx(svr, req.Context, "KvFlush")
+	if err != nil {
+		return &kvrpcpb.FlushResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil
+	}
+	defer reqCtx.finish()
+	if reqCtx.regErr != nil {
+		return &kvrpcpb.FlushResponse{RegionError: reqCtx.regErr}, nil
+	}
+	err = svr.mvccStore.Flush(reqCtx, req)
+	resp := &kvrpcpb.FlushResponse{}
+	resp.Errors, resp.RegionError = convertToPBErrors(err)
+	return resp, nil
+}
+
+// KvBufferBatchGet implements the tikvpb.TikvServer interface.
+func (svr *Server) KvBufferBatchGet(ctx context.Context, req *kvrpcpb.BufferBatchGetRequest) (*kvrpcpb.BufferBatchGetResponse, error) {
+	reqCtx, err := newRequestCtx(svr, req.Context, "KvBufferBatchGet")
+	if err != nil {
+		return &kvrpcpb.BufferBatchGetResponse{Pairs: []*kvrpcpb.KvPair{{Error: convertToKeyError(err)}}}, nil
+	}
+	defer reqCtx.finish()
+	if reqCtx.regErr != nil {
+		return &kvrpcpb.BufferBatchGetResponse{RegionError: reqCtx.regErr}, nil
+	}
+	pairs := svr.mvccStore.ReadBufferFromLock(req.GetVersion(), req.Keys...)
+	return &kvrpcpb.BufferBatchGetResponse{
+		Pairs: pairs,
+	}, nil
+}
+
 // RawGetKeyTTL implements the tikvpb.TikvServer interface.
 func (svr *Server) RawGetKeyTTL(ctx context.Context, req *kvrpcpb.RawGetKeyTTLRequest) (*kvrpcpb.RawGetKeyTTLResponse, error) {
 	// TODO
@@ -421,6 +519,7 @@ func (svr *Server) KvBatchGet(ctx context.Context, req *kvrpcpb.BatchGetRequest)
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.BatchGetResponse{RegionError: reqCtx.regErr}, nil
 	}
+	reqCtx.returnCommitTS = req.NeedCommitTs
 	pairs := svr.mvccStore.BatchGet(reqCtx, req.Keys, req.GetVersion())
 	return &kvrpcpb.BatchGetResponse{
 		Pairs: pairs,
@@ -858,7 +957,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		err        error
 	)
 	maxRetryTime := 5
-	for i := 0; i < maxRetryTime; i++ {
+	for range maxRetryTime {
 		mppHandler, err = svr.GetMPPTaskHandler(req.SenderMeta.TaskId, storeID)
 		if err != nil {
 			return errors.Trace(err)

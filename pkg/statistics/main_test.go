@@ -87,8 +87,8 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)
-	for i := 0; i < len(samples); i++ {
-		samples[i] = &SampleItem{}
+	for i := range samples {
+		samples[i] = &SampleItem{Value: types.Datum{}}
 	}
 	start := 1000
 	samples[0].Value.SetInt64(0)
@@ -138,7 +138,7 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 		cursor: 0,
 	}
 	pk.setFields(mysql.TypeLonglong)
-	for i := 0; i < rc.count; i++ {
+	for i := range rc.count {
 		pk.data[i].SetInt64(int64(i))
 	}
 	s.pk = pk

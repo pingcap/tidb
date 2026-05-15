@@ -24,6 +24,10 @@ import (
 type unicode0900Impl struct {
 }
 
+func (unicode0900Impl) Clone() unicode0900Impl {
+	return unicode0900Impl{}
+}
+
 func (unicode0900Impl) Preprocess(s string) string {
 	return s
 }
@@ -60,7 +64,7 @@ func (p *unicode0900AICIPattern) Compile(patternStr string, escape byte) {
 
 // DoMatch implements WildcardPattern interface.
 func (p *unicode0900AICIPattern) DoMatch(str string) bool {
-	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
 		aFirst, aSecond := convertRuneUnicodeCI0900(a)
 		bFirst, bSecond := convertRuneUnicodeCI0900(b)
 

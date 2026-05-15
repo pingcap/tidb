@@ -16,33 +16,24 @@ package sessionctx
 
 import (
 	"context"
-	"fmt"
-	"time"
+	"sync"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	tablelock "github.com/pingcap/tidb/pkg/lock/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/session/cursor"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
+	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 )
-
-// InfoschemaMetaVersion is a workaround. Due to circular dependency,
-// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
-// So we give a convenience for that.
-// FIXME: remove this interface
-type InfoschemaMetaVersion interface {
-	SchemaMetaVersion() int64
-}
 
 // SessionStatesHandler is an interface for encoding and decoding session states.
 type SessionStatesHandler interface {
@@ -52,120 +43,97 @@ type SessionStatesHandler interface {
 	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
 }
 
-// PlanCache is an interface for prepare and non-prepared plan cache
-type PlanCache interface {
-	Get(key kvcache.Key, opts *utilpc.PlanCacheMatchOpts) (value kvcache.Value, ok bool)
-	Put(key kvcache.Key, value kvcache.Value, opts *utilpc.PlanCacheMatchOpts)
-	Delete(key kvcache.Key)
+// SessionPlanCache is an interface for prepare and non-prepared plan cache
+type SessionPlanCache interface {
+	Get(key string, paramTypes any) (value any, ok bool)
+	Put(key string, value, paramTypes any)
+	Delete(key string)
 	DeleteAll()
 	Size() int
 	SetCapacity(capacity uint) error
 	Close()
 }
 
+// InstancePlanCache represents the instance/node level plan cache.
+// Value and Opts should always be *PlanCacheValue and *PlanCacheMatchOpts, use any to avoid cycle-import.
+type InstancePlanCache interface {
+	// Get gets the cached value from the cache according to key and opts.
+	Get(key string, paramTypes any) (value any, ok bool)
+	// Put puts the key and value into the cache.
+	Put(key string, value, paramTypes any) (succ bool)
+	// All returns all cached values.
+	// Returned values are read-only, don't modify them.
+	All() (values []any)
+	// Evict evicts some cached values.
+	Evict(evictAll bool) (detailInfo string, numEvicted int)
+	// Size returns the number of cached values.
+	Size() int64
+	// MemUsage returns the total memory usage of this plan cache.
+	MemUsage() int64
+	// GetLimits returns the soft and hard memory limits of this plan cache.
+	GetLimits() (softLimit, hardLimit int64)
+	// SetLimits sets the soft and hard memory limits of this plan cache.
+	SetLimits(softLimit, hardLimit int64)
+}
+
 // Context is an interface for transaction and executive args environment.
 type Context interface {
-	SessionStatesHandler
-	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	planctx.Common
+	// EncodeStates encodes session states into a JSON.
+	EncodeStates(context.Context, *sessionstates.SessionStates) error
+	// DecodeStates decodes a map into session states.
+	DecodeStates(context.Context, *sessionstates.SessionStates) error
+	tablelock.TableLockContext
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
+	// buffered KV changes will be discarded, call StmtCommit if you want to commit them.
 	CommitTxn(ctx context.Context) error
-	// Txn returns the current transaction which is created before executing a statement.
-	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
-	// If the active parameter is true, call this function will wait for the pending txn
-	// to become valid.
-	Txn(active bool) (kv.Transaction, error)
-
-	// GetClient gets a kv.Client.
-	GetClient() kv.Client
-
-	// GetMPPClient gets a kv.MPPClient.
-	GetMPPClient() kv.MPPClient
-
-	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value interface{})
-
-	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) interface{}
-
-	// ClearValue clears the value associated with this context for key.
-	ClearValue(key fmt.Stringer)
-
-	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
-	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	// If you want to get the latest infoschema use `GetDomainInfoSchema`
-	GetInfoSchema() InfoschemaMetaVersion
-
-	// GetDomainInfoSchema returns the latest information schema in domain
-	// Different with `domain.InfoSchema()`, the information schema returned by this method
-	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() InfoschemaMetaVersion
-
-	GetSessionVars() *variable.SessionVars
-
-	GetSessionManager() util.SessionManager
-
+	// GetSchemaValidator returns the schema validator.
+	GetSchemaValidator() validatorapi.Validator
+	// GetSQLServer returns the sqlsvrapi.Server.
+	GetSQLServer() sqlsvrapi.Server
+	// GetTableCtx returns the table.MutateContext
+	GetTableCtx() tblctx.MutateContext
+	// GetPlanCtx gets the plan context of the current session.
+	GetPlanCtx() planctx.PlanContext
+	// GetDistSQLCtx gets the distsql ctx of the current session
+	GetDistSQLCtx() *distsqlctx.DistSQLContext
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
-
-	// GetStore returns the store of session.
-	GetStore() kv.Storage
-
 	// GetSessionPlanCache returns the session-level cache of the physical plan.
-	GetSessionPlanCache() PlanCache
-
-	// UpdateColStatsUsage updates the column stats usage.
-	UpdateColStatsUsage(predicateColumns []model.TableItemID)
-
-	// HasDirtyContent checks whether there's dirty update on the given table.
-	HasDirtyContent(tid int64) bool
-
+	GetSessionPlanCache() SessionPlanCache
 	// StmtCommit flush all changes by the statement to the underlying transaction.
+	// it must be called before CommitTxn, else all changes since last StmtCommit
+	// will be lost. For SQL statement, StmtCommit or StmtRollback is called automatically.
+	// the "Stmt" not only means SQL statement, but also any KV changes, such as
+	// meta KV.
 	StmtCommit(ctx context.Context)
 	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
 	// for auto-retrying execution of DMLs in pessimistic transactions.
+	// if error happens when you are handling batch of KV changes since last StmtCommit
+	// or StmtRollback, and you don't want them to be committed, you must call StmtRollback
+	// before you start another batch, otherwise, the previous changes might be committed
+	// unexpectedly.
 	StmtRollback(ctx context.Context, isForPessimisticRetry bool)
-	// StmtGetMutation gets the binlog mutation for current statement.
-	StmtGetMutation(int64) *binlog.TableMutation
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
-	// AddTableLock adds table lock to the session lock map.
-	AddTableLock([]model.TableLockTpInfo)
-	// ReleaseTableLocks releases table locks in the session lock map.
-	ReleaseTableLocks(locks []model.TableLockTpInfo)
-	// ReleaseTableLockByTableIDs releases table locks in the session lock map by table IDs.
-	ReleaseTableLockByTableIDs(tableIDs []int64)
-	// CheckTableLocked checks the table lock.
-	CheckTableLocked(tblID int64) (bool, model.TableLockType)
-	// GetAllTableLocks gets all table locks table id and db id hold by the session.
-	GetAllTableLocks() []model.TableLockTpInfo
-	// ReleaseAllTableLocks releases all table locks hold by the session.
-	ReleaseAllTableLocks()
-	// HasLockedTables uses to check whether this session locked any tables.
-	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
 	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
 	// It returns nil otherwise.
 	GetPreparedTxnFuture() TxnFuture
-	// StoreIndexUsage stores the index usage information.
-	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
 	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
 	GetBuiltinFunctionUsage() map[string]uint32
-	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
-	// Notice that this is a thread safe function
-	BuiltinFunctionUsageInc(scalarFuncSigName string)
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
-	ShowProcess() *util.ProcessInfo
+	ShowProcess() *sessmgr.ProcessInfo
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
 	GetAdvisoryLock(string, int64) error
 	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
@@ -183,6 +151,19 @@ type Context interface {
 	EnableSandBoxMode()
 	// DisableSandBoxMode enable the sandbox mode of this Session
 	DisableSandBoxMode()
+	// ReportUsageStats reports the usage stats to the global collector
+	ReportUsageStats()
+	// NewStmtIndexUsageCollector creates a new index usage collector for statement
+	NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
+	// GetCursorTracker returns the cursor tracker of the session
+	GetCursorTracker() cursor.Tracker
+	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
+	GetCommitWaitGroup() *sync.WaitGroup
+	// GetTraceCtx returns the context bind with trace information.
+	// The trace information is set when entering server/conn.dispatch and reset after dispatch returns.
+	// The context only contains the initial trace information, which is used to track the execution of the current statement.
+	// During the execution of the statement, additional information may be added to the context, like context.WithValue(), that is not included.
+	GetTraceCtx() context.Context
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after
@@ -216,51 +197,10 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-// ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
-func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
-	if err != nil || readTS > latestTS {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		if readTS > currentVer.Ver {
-			return errors.Errorf("cannot set read timestamp to a future time")
-		}
-	}
-	return nil
-}
-
-// How far future from now ValidateStaleReadTS allows at most
-const allowedTimeFromNow = 100 * time.Millisecond
-
-// ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
-func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	currentTS, err := sctx.GetSessionVars().StmtCtx.GetStaleTSO()
-	if currentTS == 0 || err != nil {
-		currentTS, err = sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
-	}
-	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
-	if err != nil {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		currentTS = currentVer.Ver
-	}
-	if oracle.GetTimeFromTS(readTS).After(oracle.GetTimeFromTS(currentTS).Add(allowedTimeFromNow)) {
-		return errors.Errorf("cannot set read timestamp to a future time")
-	}
-	return nil
-}
-
-// SysProcTracker is used to track background sys processes
-type SysProcTracker interface {
-	Track(id uint64, proc Context) error
-	UnTrack(id uint64)
-	GetSysProcessList() map[uint64]*util.ProcessInfo
-	KillSysProcess(id uint64)
+// ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp.
+// For read requests to the storage, the check can be implicitly performed when sending the RPC request. So this
+// function is only needed when it's not proper to delay the check to when RPC requests are being sent (e.g., `BEGIN`
+// statements that don't make reading operation immediately).
+func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64, isStaleRead bool) error {
+	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 }

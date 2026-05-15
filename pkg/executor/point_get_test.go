@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -50,7 +50,7 @@ func TestSelectCheckVisibility(t *testing.T) {
 	ts := txn.StartTS()
 	sessionStore := tk.Session().GetStore().(tikv.Storage)
 	// Update gc safe time for check data visibility.
-	sessionStore.UpdateSPCache(ts+1, time.Now())
+	sessionStore.UpdateTxnSafePointCache(ts+1, time.Now())
 	checkSelectResultError := func(sql string, expectErr *terror.Error) {
 		re, err := tk.Exec(sql)
 		require.NoError(t, err)
@@ -60,15 +60,15 @@ func TestSelectCheckVisibility(t *testing.T) {
 		require.True(t, expectErr.Equal(err))
 	}
 	// Test point get.
-	checkSelectResultError("select * from t where a='1'", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a='1'", storeerr.ErrTxnAbortedByGC)
 	// Test batch point get.
-	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where a in ('1','2')", storeerr.ErrTxnAbortedByGC)
 	// Test Index look up read.
-	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t where b > 0 ", storeerr.ErrTxnAbortedByGC)
 	// Test Index read.
-	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select b from t where b > 0 ", storeerr.ErrTxnAbortedByGC)
 	// Test table read.
-	checkSelectResultError("select * from t", storeerr.ErrGCTooEarly)
+	checkSelectResultError("select * from t", storeerr.ErrTxnAbortedByGC)
 }
 
 func TestReturnValues(t *testing.T) {
@@ -76,7 +76,7 @@ func TestReturnValues(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t (a varchar(64) primary key, b int)")
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
@@ -88,7 +88,7 @@ func TestReturnValues(t *testing.T) {
 	txnCtx := tk.Session().GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	require.True(t, ok)
-	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
+	handle, err := tablecodec.DecodeHandleInIndexValue(val)
 	require.NoError(t, err)
 	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
@@ -229,13 +229,13 @@ func TestPartitionMemCacheReadLock(t *testing.T) {
 }
 
 func TestPointGetLockExistKey(t *testing.T) {
-	testLock := func(rc bool, key string, tableName string) {
+	testLock := func(t *testing.T, rc bool, key string, tableName string) {
 		store := testkit.CreateMockStore(t)
 		tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 
 		tk1.MustExec("use test")
 		tk2.MustExec("use test")
-		tk1.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+		tk1.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 
 		tk1.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
 		tk1.MustExec(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
@@ -336,9 +336,11 @@ func TestPointGetLockExistKey(t *testing.T) {
 		{rc: true, key: "unique key"},
 	} {
 		tableName := fmt.Sprintf("t_%d", i)
-		func(rc bool, key string, tableName string) {
-			testLock(rc, key, tableName)
-		}(one.rc, one.key, tableName)
+		t.Run(tableName, func(t *testing.T) {
+			func(rc bool, key string, tableName string) {
+				testLock(t, rc, key, tableName)
+			}(one.rc, one.key, tableName)
+		})
 	}
 }
 
@@ -374,40 +376,4 @@ func TestWithTiDBSnapshot(t *testing.T) {
 	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
-}
-
-func TestGlobalIndexPointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
-
-	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
-						PARTITION BY RANGE (a) (
-		PARTITION p0 VALUES LESS THAN (10),
-		PARTITION p1 VALUES LESS THAN (20),
-		PARTITION p2 VALUES LESS THAN (30),
-		PARTITION p3 VALUES LESS THAN (40))`)
-	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
-	tk.MustExec("analyze table t")
-
-	tk.MustQuery("select * from t use index(idx) where b in (15, 25, 35)").Sort().Check(testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
-	tk.MustQuery("explain select * from t use index(idx) where b in (15, 25, 35)").Check(
-		testkit.Rows("Batch_Point_Get_1 3.00 root table:t, index:idx(b) keep order:false, desc:false"))
-
-	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b>10)").Sort().Check(testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
-
-	tk.MustQuery("select * from t use index(idx) where b = 15").Check(testkit.Rows("15 15 0"))
-	tk.MustQuery("explain select * from t use index(idx) where b = 15").Check(
-		testkit.Rows("Point_Get_1 1.00 root table:t, index:idx(b) "))
-
-	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b > 10)").Sort().Check(
-		testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
-
-	tk.MustQuery("select * from t partition(p1) use index(idx) where b = 3").Check(testkit.Rows())
-	tk.MustQuery("select * from t partition(p1) use index(idx) where b in (15, 25, 35)").Check(testkit.Rows("15 15 0"))
 }

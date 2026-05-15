@@ -153,7 +153,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
 	for tp := version.ServerTypeUnknown; tp < version.ServerTypeAll; tp++ {
-		mockConf.ServerInfo.ServerType = version.ServerType(tp)
+		mockConf.ServerInfo.ServerType = tp
 		comment := fmt.Sprintf("current server type: %v", tp)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").
@@ -899,6 +899,17 @@ func TestBuildPartitionClauses(t *testing.T) {
 	}
 }
 
+func TestBuildTiDBTableSampleQuery(t *testing.T) {
+	require.Equal(t,
+		"SELECT `a`,`b` FROM `test`.`t` TABLESAMPLE REGIONS() ORDER BY `a`,`b`",
+		buildTiDBTableSampleQuery([]string{"a", "b"}, "test", "t"),
+	)
+	require.Equal(t,
+		"SELECT `a` FROM `test`.`t` PARTITION(`p0`,`p1`) TABLESAMPLE REGIONS() ORDER BY `a`",
+		buildTiDBTableSampleQuery([]string{"a"}, "test", "t", "p0", "p1"),
+	)
+}
+
 func TestBuildWhereCondition(t *testing.T) {
 	conf := DefaultConfig()
 	testCases := []struct {
@@ -1618,8 +1629,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 	}()
 
 	tidbConf := dbconfig.NewConfig()
-	stores := []string{"unistore", "mocktikv", "tikv"}
-	for _, store := range stores {
+	for _, store := range dbconfig.StoreTypeList() {
 		tidbConf.Store = store
 		tidbConfBytes, err := json.Marshal(tidbConf)
 		require.NoError(t, err)
@@ -1627,7 +1637,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 			sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
 		hasTiKV, err := CheckTiDBWithTiKV(db)
 		require.NoError(t, err)
-		if store == "tikv" {
+		if store == dbconfig.StoreTypeTiKV {
 			require.True(t, hasTiKV)
 		} else {
 			require.False(t, hasTiKV)
@@ -1636,7 +1646,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 	}
 
 	errLackPrivilege := errors.New("ERROR 1142 (42000): SELECT command denied to user 'test'@'%' for table 'tidb'")
-	expectedResults := []interface{}{errLackPrivilege, 1, 0}
+	expectedResults := []any{errLackPrivilege, 1, 0}
 	for i, res := range expectedResults {
 		t.Logf("case #%d", i)
 		mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(errLackPrivilege)
@@ -1816,7 +1826,7 @@ func TestCheckIfSeqExists(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).
 			AddRow("1"))
 
-	exists, err := CheckIfSeqExists(conn)
+	exists, err := checkIfSeqExists(conn)
 	require.NoError(t, err)
 	require.Equal(t, true, exists)
 
@@ -1824,7 +1834,7 @@ func TestCheckIfSeqExists(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).
 			AddRow("0"))
 
-	exists, err = CheckIfSeqExists(conn)
+	exists, err = checkIfSeqExists(conn)
 	require.NoError(t, err)
 	require.Equal(t, false, exists)
 }

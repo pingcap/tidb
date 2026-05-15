@@ -21,15 +21,21 @@ import (
 
 // planner core metrics vars
 var (
-	PseudoEstimationNotAvailable           prometheus.Counter
-	PseudoEstimationOutdate                prometheus.Counter
-	preparedPlanCacheHitCounter            prometheus.Counter
-	nonPreparedPlanCacheHitCounter         prometheus.Counter
-	preparedPlanCacheMissCounter           prometheus.Counter
-	nonPreparedPlanCacheMissCounter        prometheus.Counter
-	nonPreparedPlanCacheUnsupportedCounter prometheus.Counter
-	sessionPlanCacheInstancePlanNumCounter prometheus.Gauge
-	sessionPlanCacheInstanceMemoryUsage    prometheus.Gauge
+	PseudoEstimationNotAvailable            prometheus.Counter
+	PseudoEstimationOutdate                 prometheus.Counter
+	preparedPlanCacheHitCounter             prometheus.Counter
+	nonPreparedPlanCacheHitCounter          prometheus.Counter
+	preparedPlanCacheMissCounter            prometheus.Counter
+	nonPreparedPlanCacheMissCounter         prometheus.Counter
+	nonPreparedPlanCacheUnsupportedCounter  prometheus.Counter
+	sessionPlanCacheInstancePlanNumCounter  prometheus.Gauge
+	sessionPlanCacheInstanceMemoryUsage     prometheus.Gauge
+	instancePlanCacheInstancePlanNumCounter prometheus.Gauge
+	instancePlanCacheInstanceMemoryUsage    prometheus.Gauge
+	instancePlanCacheInstanceNumEvict       prometheus.Gauge
+	sessionPlanCacheLookupDuration          prometheus.Observer
+	instancePlanCacheLookupDuration         prometheus.Observer
+	instancePlanCacheCloneDuration          prometheus.Observer
 )
 
 func init() {
@@ -48,6 +54,12 @@ func InitMetricsVars() {
 	nonPreparedPlanCacheUnsupportedCounter = metrics.PlanCacheMissCounter.WithLabelValues("non-prepared-unsupported")
 	sessionPlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" session-plan-cache")
 	sessionPlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" session-plan-cache")
+	instancePlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" instance-plan-cache")
+	instancePlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" instance-plan-cache")
+	instancePlanCacheInstanceNumEvict = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" instance-plan-cache-last-evict")
+	sessionPlanCacheLookupDuration = metrics.PlanCacheProcessDuration.WithLabelValues(" session-plan-cache-lookup")
+	instancePlanCacheLookupDuration = metrics.PlanCacheProcessDuration.WithLabelValues(" instance-plan-cache-lookup")
+	instancePlanCacheCloneDuration = metrics.PlanCacheProcessDuration.WithLabelValues(" instance-plan-cache-clone")
 }
 
 // GetPlanCacheHitCounter get different plan cache hit counter
@@ -72,11 +84,35 @@ func GetNonPrepPlanCacheUnsupportedCounter() prometheus.Counter {
 }
 
 // GetPlanCacheInstanceNumCounter get different plan counter of plan cache
-func GetPlanCacheInstanceNumCounter() prometheus.Gauge {
+func GetPlanCacheInstanceNumCounter(instancePlanCache bool) prometheus.Gauge {
+	if instancePlanCache {
+		return instancePlanCacheInstancePlanNumCounter
+	}
 	return sessionPlanCacheInstancePlanNumCounter
 }
 
 // GetPlanCacheInstanceMemoryUsage get different plan memory usage counter of plan cache
-func GetPlanCacheInstanceMemoryUsage() prometheus.Gauge {
+func GetPlanCacheInstanceMemoryUsage(instancePlanCache bool) prometheus.Gauge {
+	if instancePlanCache {
+		return instancePlanCacheInstanceMemoryUsage
+	}
 	return sessionPlanCacheInstanceMemoryUsage
+}
+
+// GetPlanCacheCloneDuration get different plan cache clone duration.
+func GetPlanCacheCloneDuration() prometheus.Observer {
+	return instancePlanCacheCloneDuration
+}
+
+// GetPlanCacheLookupDuration get different plan cache lookup duration.
+func GetPlanCacheLookupDuration(instancePlanCache bool) prometheus.Observer {
+	if instancePlanCache {
+		return instancePlanCacheLookupDuration
+	}
+	return sessionPlanCacheLookupDuration
+}
+
+// GetPlanCacheInstanceEvict get instance plan cache evict counter.
+func GetPlanCacheInstanceEvict() prometheus.Gauge {
+	return instancePlanCacheInstanceNumEvict
 }

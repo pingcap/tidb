@@ -43,21 +43,21 @@ func NewSnapshot(snapshot *txnsnapshot.KVSnapshot) kv.Snapshot {
 
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
-func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	if s.interceptor != nil {
-		return s.interceptor.OnBatchGet(ctx, NewSnapshot(s.KVSnapshot), keys)
+		return s.interceptor.OnBatchGet(ctx, NewSnapshot(s.KVSnapshot), keys, options...)
 	}
-	data, err := s.KVSnapshot.BatchGet(ctx, toTiKVKeys(keys))
+	data, err := s.KVSnapshot.BatchGet(ctx, toTiKVKeys(keys), options...)
 	return data, extractKeyErr(err)
 }
 
 // Get gets the value for key k from snapshot.
-func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
 	if s.interceptor != nil {
-		return s.interceptor.OnGet(ctx, NewSnapshot(s.KVSnapshot), k)
+		return s.interceptor.OnGet(ctx, NewSnapshot(s.KVSnapshot), k, options...)
 	}
 
-	data, err := s.KVSnapshot.Get(ctx, k)
+	data, err := s.KVSnapshot.Get(ctx, k, options...)
 	return data, extractKeyErr(err)
 }
 
@@ -87,7 +87,7 @@ func (s *tikvSnapshot) IterReverse(k kv.Key, lowerBound kv.Key) (kv.Iterator, er
 	return &tikvScanner{scanner.(*txnsnapshot.Scanner)}, err
 }
 
-func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
+func (s *tikvSnapshot) SetOption(opt int, val any) {
 	switch opt {
 	case kv.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
@@ -118,7 +118,12 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	case kv.ResourceGroupTag:
 		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
 	case kv.ResourceGroupTagger:
-		s.KVSnapshot.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
+		switch tagger := val.(type) {
+		case tikvrpc.ResourceGroupTagger:
+			s.KVSnapshot.SetResourceGroupTagger(tagger)
+		case *kv.ResourceGroupTagBuilder:
+			s.KVSnapshot.SetResourceGroupTagger(tagger.BuildProtoTagger())
+		}
 	case kv.ReadReplicaScope:
 		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:

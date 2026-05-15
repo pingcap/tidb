@@ -20,23 +20,27 @@ package session
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	"github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
@@ -46,15 +50,34 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
+
+// StoreBootstrappedKey is used by store.G/SetOption to store related bootstrap context for kv.Storage.
+const StoreBootstrappedKey = "bootstrap"
 
 type domainMap struct {
 	mu      syncutil.Mutex
 	domains map[string]*domain.Domain
 }
 
+// Get or create the domain for store.
+// TODO decouple domain create from it, it's more clear to create domain explicitly
+// before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, nil)
+}
+
+// GetOrCreateWithEtcdClient gets or creates the domain for store with etcd client.
+//
+// Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
+// the actual schema filter of the returned `Domain` is the one when the domain were created.
+func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, filter)
+}
+
+func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -73,25 +96,29 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return
 	}
 
-	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
-	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	idxUsageSyncLease := GetIndexUsageSyncLease()
-	planReplayerGCLease := GetPlanReplayerGCLease()
+	ddlLease := vardef.GetSchemaLease()
+	statisticLease := vardef.GetStatsLease()
+	planReplayerGCLease := vardef.GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
-			zap.Stringer("stats lease", statisticLease),
-			zap.Stringer("index usage sync lease", idxUsageSyncLease))
-		factory := createSessionFunc(store)
-		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory)
+			zap.Stringer("stats lease", statisticLease))
+		factory := getSessionFactory(store)
+		sysFactory := getSessionFactoryWithDom(store)
+		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory,
+			func(targetKS string, schemaValidator validatorapi.Validator) pools.Factory {
+				return getCrossKSSessionFactory(store, targetKS, schemaValidator)
+			},
+			etcdClient,
+			schemaFilter,
+		)
 
-		var ddlInjector func(ddl.DDL) *schematracker.Checker
+		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}
-		err1 = d.Init(ddlLease, sysFactory, ddlInjector)
+		err1 = d.Init(sysFactory, ddlInjector)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
@@ -121,86 +148,18 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-	// store.UUID()-> IfBootstrapped
-	storeBootstrapped     = make(map[string]bool)
-	storeBootstrappedLock sync.Mutex
-
-	// schemaLease is the time for re-updating remote schema.
-	// In online DDL, we must wait 2 * SchemaLease time to guarantee
-	// all servers get the neweset schema.
-	// Default schema lease time is 1 second, you can change it with a proper time,
-	// but you must know that too little may cause badly performance degradation.
-	// For production, you should set a big schema lease, like 300s+.
-	schemaLease = int64(1 * time.Second)
-
-	// statsLease is the time for reload stats table.
-	statsLease = int64(3 * time.Second)
-
-	// indexUsageSyncLease is the time for index usage synchronization.
-	// Because we have not completed GC and other functions, we set it to 0.
-	// TODO: Set indexUsageSyncLease to 60s.
-	indexUsageSyncLease = int64(0 * time.Second)
-
-	// planReplayerGCLease is the time for plan replayer gc.
-	planReplayerGCLease = int64(10 * time.Minute)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
 // TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
 func ResetStoreForWithTiKVTest(store kv.Storage) {
 	domap.Delete(store)
-	unsetStoreBootstrapped(store.UUID())
-}
-
-func setStoreBootstrapped(storeUUID string) {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
-	storeBootstrapped[storeUUID] = true
-}
-
-// unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
-// currently this function only used for test.
-func unsetStoreBootstrapped(storeUUID string) {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
-	delete(storeBootstrapped, storeUUID)
-}
-
-// SetSchemaLease changes the default schema lease time for DDL.
-// This function is very dangerous, don't use it if you really know what you do.
-// SetSchemaLease only affects not local storage after bootstrapped.
-func SetSchemaLease(lease time.Duration) {
-	atomic.StoreInt64(&schemaLease, int64(lease))
-}
-
-// SetStatsLease changes the default stats lease time for loading stats info.
-func SetStatsLease(lease time.Duration) {
-	atomic.StoreInt64(&statsLease, int64(lease))
-}
-
-// SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
-func SetIndexUsageSyncLease(lease time.Duration) {
-	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
-}
-
-// GetIndexUsageSyncLease returns the index usage sync lease time.
-func GetIndexUsageSyncLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
-}
-
-// SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
-func SetPlanReplayerGCLease(lease time.Duration) {
-	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
-}
-
-// GetPlanReplayerGCLease returns the plan replayer gc lease time.
-func GetPlanReplayerGCLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
+	store.SetOption(StoreBootstrappedKey, nil)
 }
 
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
-	SetStatsLease(-1)
+	vardef.SetStatsLease(-1)
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -238,10 +197,29 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
 		}
 	}
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddTxnCnt(1)
+	}
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	sessVars := se.sessionVars
+	failpoint.Inject("finishStmtError", func(val failpoint.Value) {
+		failCurrentSession := true
+		switch v := val.(type) {
+		case int:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		case int64:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		case uint64:
+			failCurrentSession = v == sessVars.ConnectionID
+		case float64:
+			failCurrentSession = uint64(v) == sessVars.ConnectionID
+		}
+		if failCurrentSession {
+			failpoint.Return(errors.New("occur an error after finishStmt"))
+		}
+	})
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
@@ -377,7 +355,7 @@ func GetRows4Test(ctx context.Context, _ sessionctx.Context, rs sqlexec.RecordSe
 }
 
 // ResultSetToStringSlice changes the RecordSet to [][]string.
-func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.RecordSet) ([][]string, error) {
+func ResultSetToStringSlice(ctx context.Context, s sessionapi.Session, rs sqlexec.RecordSet) ([][]string, error) {
 	rows, err := GetRows4Test(ctx, s, rs)
 	if err != nil {
 		return nil, err
@@ -390,7 +368,7 @@ func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.Rec
 	for i := range rows {
 		row := rows[i]
 		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
+		for j := range row.Len() {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {

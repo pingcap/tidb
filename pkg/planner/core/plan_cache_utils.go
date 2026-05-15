@@ -17,35 +17,48 @@ package core
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"hash"
 	"math"
 	"slices"
-	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
-	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -56,9 +69,6 @@ const (
 var (
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
-
-	// NormalizeStmtForPlanCache extract the select statement and normalize it.
-	NormalizeStmtForPlanCache func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
 )
 
 type paramMarkerExtractor struct {
@@ -80,33 +90,34 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
 func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
-	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, Plan, int, error) {
+	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
 
 	// DDL Statements can not accept parameters
 	if _, ok := paramStmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
-		return nil, nil, 0, ErrPrepareDDL
+		return nil, nil, 0, plannererrors.ErrPrepareDDL
 	}
 
 	switch stmt := paramStmt.(type) {
 	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
-		return nil, nil, 0, ErrUnsupportedPs
+		return nil, nil, 0, plannererrors.ErrUnsupportedPs
 	case *ast.SelectStmt:
 		if stmt.SelectIntoOpt != nil {
-			return nil, nil, 0, ErrUnsupportedPs
+			return nil, nil, 0, plannererrors.ErrUnsupportedPs
 		}
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
 	if len(extractor.markers) > math.MaxUint16 {
-		return nil, nil, 0, ErrPsManyParam
+		return nil, nil, 0, plannererrors.ErrPsManyParam
 	}
 
 	ret := &PreprocessorReturn{InfoSchema: is} // is can be nil, and
-	err := Preprocess(ctx, sctx, paramStmt, InPrepare, WithPreprocessorReturn(ret))
+	nodeW := resolve.NewNodeW(paramStmt)
+	err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -118,23 +129,20 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
 	paramCount := len(extractor.markers)
-	for i := 0; i < paramCount; i++ {
+	for i := range paramCount {
 		extractor.markers[i].SetOrder(i)
 	}
 
 	prepared := &ast.Prepared{
-		Stmt:          paramStmt,
-		StmtType:      ast.GetStmtLabel(paramStmt),
-		Params:        extractor.markers,
-		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
+		Stmt:     paramStmt,
+		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
 
 	var (
-		normalizedSQL4PC, digest4PC string
-		selectStmtNode              ast.StmtNode
-		cacheable                   bool
-		reason                      string
+		cacheable bool
+		reason    string
 	)
 	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
 		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
@@ -142,17 +150,19 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		reason = "plan cache is disabled"
 	} else {
 		if isPrepStmt {
-			cacheable, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
+			cacheable, reason = IsASTCacheable(ctx, sctx.GetPlanCtx(), paramStmt, ret.InfoSchema)
 		} else {
 			cacheable = true // it is already checked here
 		}
-		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
+
+		if !cacheable && fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false) {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason))
+			cacheable = true
+			reason = ""
 		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = NormalizeStmtForPlanCache(paramStmt, vars.CurrentDB)
-		if err != nil || selectStmtNode == nil {
-			normalizedSQL4PC = ""
-			digest4PC = ""
+
+		if !cacheable {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
 		}
 	}
 
@@ -160,25 +170,50 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	// parameters are unknown here, so regard them all as NULL.
 	// For non-prepared statements, all parameters are already initialized at `ParameterizeAST`, so no need to set NULL.
 	if isPrepStmt {
-		for i := range prepared.Params {
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		for i := range extractor.markers {
+			param := extractor.markers[i].(*driver.ParamMarkerExpr)
 			param.Datum.SetNull()
 			param.InExecute = false
 		}
 	}
 
-	var p Plan
-	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, hint.NewQBHintHandler(nil))
-	p, err = destBuilder.Build(ctx, paramStmt)
+	var p base.Plan
+	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+	p, err = destBuilder.Build(ctx, nodeW)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
-	features := new(PlanCacheQueryFeatures)
-	paramStmt.Accept(features)
+	if cacheable && destBuilder.optFlag&rule.FlagPartitionProcessor > 0 {
+		// dynamic prune mode is not used, could be that global statistics not yet available!
+		cacheable = false
+		reason = "static partition prune mode used"
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: " + reason))
+	}
+
+	// Collect information for metadata lock.
+	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
+	for id := range vars.StmtCtx.RelatedTableIDs {
+		tbl, ok := is.TableByID(ctx, id)
+		if !ok {
+			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
+			return nil, nil, 0, errors.New("table not found in info schema")
+		}
+		db, ok := is.SchemaByID(tbl.Meta().DBID)
+		if !ok {
+			logutil.BgLogger().Error("database not found in info schema", zap.Int64("dbID", tbl.Meta().DBID))
+			return nil, nil, 0, errors.New("database not found in info schema")
+		}
+		dbName = append(dbName, db.Name)
+		tbls = append(tbls, tbl)
+		relateVersion[id] = tbl.Meta().Revision
+	}
 
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
+		ResolveCtx:          nodeW.GetResolveContext(),
 		StmtDB:              vars.CurrentDB,
 		StmtText:            paramSQL,
 		VisitInfos:          destBuilder.GetVisitInfo(),
@@ -186,174 +221,363 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
-		NormalizedSQL4PC:    normalizedSQL4PC,
-		SQLDigest4PC:        digest4PC,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
-		QueryFeatures:       features,
+		HasUsePlanCacheHint: hasUsePlanCacheHint,
+		dbName:              dbName,
+		tbls:                tbls,
+		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
+		RelateVersion:       relateVersion,
+		Params:              extractor.markers,
 	}
-	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
+
+	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
+	paramStmt.Accept(stmtProcessor)
+
+	if err = checkPreparedPriv(ctx, sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
 	}
 	return preparedObj, p, paramCount, nil
 }
 
-// planCacheKey is used to access Plan Cache. We put some variables that do not affect the plan into planCacheKey, such as the sql text.
-// Put the parameters that may affect the plan in planCacheValue.
-// However, due to some compatibility reasons, we will temporarily keep some system variable-related values in planCacheKey.
-// At the same time, because these variables have a small impact on plan, we will move them to PlanCacheValue later if necessary.
-// TODO: maintain a sync.pool for this structure.
-type planCacheKey struct {
-	database      string
-	connID        uint64
-	stmtText      string
-	schemaVersion int64
+// tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
+var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
 
+func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
+	n := len(m)
+
+	// Fast path for common cases (covers most scenarios)
+	if n == 0 {
+		return b
+	}
+	if n == 1 {
+		// Single table: no need for allocation or sorting
+		for k, v := range m {
+			b = codec.EncodeInt(b, k)
+			b = codec.EncodeUint(b, v)
+			return b
+		}
+	}
+	if n == 2 {
+		// Two tables: direct comparison without array allocation
+		var k1, k2 int64
+		var v1, v2 uint64
+		i := 0
+		for k, v := range m {
+			if i == 0 {
+				k1, v1 = k, v
+			} else {
+				k2, v2 = k, v
+			}
+			i++
+		}
+		// Ensure sorted order
+		if k1 > k2 {
+			k1, k2 = k2, k1
+			v1, v2 = v2, v1
+		}
+		b = codec.EncodeInt(b, k1)
+		b = codec.EncodeUint(b, v1)
+		b = codec.EncodeInt(b, k2)
+		b = codec.EncodeUint(b, v2)
+		return b
+	}
+
+	// Slow path for multiple tables
+	keys := tableIDSlicePool.Get()[:0]
+	defer tableIDSlicePool.Put(keys)
+
+	// Ensure sufficient capacity
+	if cap(keys) < n {
+		keys = make([]int64, 0, n)
+	}
+
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+
+	for _, k := range keys {
+		v := m[k]
+		b = codec.EncodeInt(b, k)
+		b = codec.EncodeUint(b, v)
+	}
+	return b
+}
+
+// NewPlanCacheKey creates the plan cache key for this statement.
+// Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
+// differentiate the cache key. In other cases, it will be 0.
+// All information that might affect the plan should be considered in this function.
+func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
+	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
+}
+
+func newPlanCacheKeyWithMatchedBinding(
+	sctx sessionctx.Context,
+	stmt *PlanCacheStmt,
+	matchedBinding *bindinfo.Binding,
+	bindingMatched bool,
+) (key, binding string, cacheable bool, reason string, err error) {
+	if !bindingMatched && stmt.PreparedAst != nil {
+		matchedBinding, bindingMatched, _ = bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	}
+	if bindingMatched && matchedBinding != nil {
+		// Record the matched binding SQL so the plan cache key reflects the effective hints.
+		binding = matchedBinding.BindSQL
+	}
+
+	// In rc or for update read, we need the latest schema version to decide whether we need to
+	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
+	var latestSchemaVersion int64
+	if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
+		// In Rc or ForUpdateRead, we should check if the information schema has been changed since
+		// last time. If it changed, we should rebuild the plan. Here, we use a different and more
+		// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
+		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+	}
+
+	// rebuild key to exclude kv.TiFlash when stmt is not read only
+	vars := sctx.GetSessionVars()
+	if _, isolationReadContainTiFlash := vars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt.PreparedAst.Stmt, vars) {
+		delete(vars.IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			vars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
+	}
+
+	if stmt.StmtText == "" {
+		return "", "", false, "", errors.New("no statement text")
+	}
+	if stmt.SchemaVersion == 0 && !intest.InTest {
+		return "", "", false, "", errors.New("Schema version uninitialized")
+	}
+	if stmt.hasSubquery && !vars.EnablePlanCacheForSubquery {
+		return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
+	}
+	if len(stmt.limits) > 0 && !vars.EnablePlanCacheForParamLimit {
+		return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
+	}
+
+	stmtDB := stmt.StmtDB
+	if stmtDB == "" {
+		stmtDB = vars.CurrentDB
+	}
+	timezoneOffset := 0
+	if vars.TimeZone != nil {
+		_, timezoneOffset = time.Now().In(vars.TimeZone).Zone()
+	}
+	connCharset, connCollation := vars.GetCharsetInfo()
+
+	// not allow to share the same plan among different users for safety.
+	var userName, hostName string
+	if sctx.GetSessionVars().User != nil { // might be nil if in test
+		userName = sctx.GetSessionVars().User.AuthUsername
+		hostName = sctx.GetSessionVars().User.AuthHostname
+	}
+
+	// the user might switch the prune mode dynamically
+	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
+
+	// precalculate the length of the hash buffer, note each time add an element to the buffer, need
+	// to update hashLen accordingly
+	// basic informations
+	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
+	// schemaVersion + relateVersion + pruneMode
+	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
+	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	if len(stmt.limits) > 0 {
+		// '|' + each limit count/offset takes 8 bytes + '|'
+		hashLen += 2 + len(stmt.limits)*2*8
+	}
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+		// statsVerHash: skipped when a binding is matched and PlanCacheSkipStatsOnBinding is on,
+		// because a binding pins the plan via hints so stats changes cannot alter the chosen plan.
+		hashLen += 8
+	}
+	// dirty tables
+	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
+	// txn status
+	hashLen += 6
+
+	hash := make([]byte, 0, hashLen)
+	// hashInitCap is not used, just for test purposes
+	hashInitCap := cap(hash)
+	hash = append(hash, userName...)
+	hash = append(hash, hostName...)
+	hash = append(hash, stmtDB...)
+	hash = append(hash, stmt.StmtText...)
+	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
 	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
 	// the plan in rc or for update read.
-	lastUpdatedSchemaVersion int64
-	sqlMode                  mysql.SQLMode
-	timezoneOffset           int
-	isolationReadEngines     map[kv.StoreType]struct{}
-	selectLimit              uint64
-	bindSQL                  string
-	connCollation            string
-	inRestrictedSQL          bool
-	restrictedReadOnly       bool
-	TiDBSuperReadOnly        bool
-	exprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
+	hash = codec.EncodeInt(hash, latestSchemaVersion)
+	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
+	hash = codec.EncodeInt(hash, int64(timezoneOffset))
+	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
+		hash = append(hash, kv.TiDB.Name()...)
+	}
+	if _, ok := vars.IsolationReadEngines[kv.TiKV]; ok {
+		hash = append(hash, kv.TiKV.Name()...)
+	}
+	if _, ok := vars.IsolationReadEngines[kv.TiFlash]; ok {
+		hash = append(hash, kv.TiFlash.Name()...)
+	}
+	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
+	hash = append(hash, binding...)
+	hash = append(hash, connCharset...)
+	hash = append(hash, connCollation...)
+	hash = append(hash, bool2Byte(vars.InRestrictedSQL))
+	hash = append(hash, bool2Byte(vardef.RestrictedReadOnly.Load()))
+	hash = append(hash, bool2Byte(vardef.VarTiDBSuperReadOnly.Load()))
+	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
+	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 
-	memoryUsage int64 // Do not include in hash
-	hash        []byte
+	// whether this query has sub-query
+	hash = append(hash, bool2Byte(stmt.hasSubquery))
+
+	// this variable might affect the plan
+	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
+
+	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
+	if len(stmt.limits) > 0 {
+		hash = append(hash, '|')
+		for _, node := range stmt.limits {
+			for _, valNode := range []ast.ExprNode{node.Count, node.Offset} {
+				if valNode == nil {
+					continue
+				}
+				if param, isParam := valNode.(*driver.ParamMarkerExpr); isParam {
+					typeExpected, val := CheckParamTypeInt64orUint64(param)
+					if !typeExpected {
+						return "", "", false, "unexpected value after LIMIT", nil
+					}
+					if val > MaxCacheableLimitCount {
+						return "", "", false, "limit count is too large", nil
+					}
+					hash = codec.EncodeUint(hash, val)
+				}
+			}
+		}
+		hash = append(hash, '|')
+	}
+
+	// stats ver can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
+	// is enabled — a binding pins the plan via hints, so stats changes cannot alter the chosen plan.
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+		var statsVerHash uint64
+		for _, t := range stmt.tables {
+			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
+		}
+		hash = codec.EncodeUint(hash, statsVerHash)
+	}
+
+	// handle dirty tables
+	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
+	if len(dirtyTables) > 0 {
+		// Get int64 slice from pool
+		dirtyTableIDs := dirtyTableIDsPool.Get()[:0]
+		if cap(dirtyTableIDs) < len(dirtyTables) {
+			dirtyTableIDs = make([]int64, 0, len(dirtyTables))
+		}
+		for t, dirty := range dirtyTables {
+			if !dirty {
+				continue
+			}
+			dirtyTableIDs = append(dirtyTableIDs, t.ID)
+		}
+		slices.Sort(dirtyTableIDs)
+		for _, id := range dirtyTableIDs {
+			hash = codec.EncodeInt(hash, id)
+		}
+		// Return slice to pool
+		dirtyTableIDsPool.Put(dirtyTableIDs)
+	}
+
+	// txn status
+	hash = append(hash, '|')
+	hash = append(hash, bool2Byte(vars.InTxn()))
+	hash = append(hash, bool2Byte(vars.IsAutocommit()))
+	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
+	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
+	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
+
+	if intest.InTest {
+		if cap(hash) != hashInitCap {
+			panic("unexpected hash buffer realloc in NewPlanCacheKey")
+		}
+	}
+
+	return string(hack.String(hash)), binding, true, "", nil
 }
 
-// Hash implements Key interface.
-func (key *planCacheKey) Hash() []byte {
-	if len(key.hash) == 0 {
-		if key.hash == nil {
-			key.hash = make([]byte, 0, len(key.stmtText)*2)
-		}
-		key.hash = append(key.hash, hack.Slice(key.database)...)
-		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
-		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
-		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
-		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
-		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
-		if _, ok := key.isolationReadEngines[kv.TiDB]; ok {
-			key.hash = append(key.hash, kv.TiDB.Name()...)
-		}
-		if _, ok := key.isolationReadEngines[kv.TiKV]; ok {
-			key.hash = append(key.hash, kv.TiKV.Name()...)
-		}
-		if _, ok := key.isolationReadEngines[kv.TiFlash]; ok {
-			key.hash = append(key.hash, kv.TiFlash.Name()...)
-		}
-		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
-		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
-		key.hash = append(key.hash, hack.Slice(key.connCollation)...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
-		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
-		key.hash = codec.EncodeInt(key.hash, key.exprBlacklistTS)
+func bool2Byte(flag bool) byte {
+	if flag {
+		return '1'
 	}
-	return key.hash
-}
-
-const emptyPlanCacheKeySize = int64(unsafe.Sizeof(planCacheKey{}))
-
-// MemoryUsage return the memory usage of planCacheKey
-func (key *planCacheKey) MemoryUsage() (sum int64) {
-	if key == nil {
-		return
-	}
-
-	if key.memoryUsage > 0 {
-		return key.memoryUsage
-	}
-	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)+len(key.connCollation)) +
-		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
-	key.memoryUsage = sum
-	return
-}
-
-// SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
-// so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
-	psStmtKey, isPsStmtKey := key.(*planCacheKey)
-	if !isPsStmtKey {
-		return
-	}
-	psStmtKey.stmtText = stmtText
-	psStmtKey.schemaVersion = schemaVersion
-	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
-	for k, v := range isolationReadEngines {
-		psStmtKey.isolationReadEngines[k] = v
-	}
-	psStmtKey.hash = psStmtKey.hash[:0]
-}
-
-// NewPlanCacheKey creates a new planCacheKey object.
-// Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
-// differentiate the cache key. In other cases, it will be 0.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64) (kvcache.Key, error) {
-	if stmtText == "" {
-		return nil, errors.New("no statement text")
-	}
-	if schemaVersion == 0 && !intest.InTest {
-		return nil, errors.New("Schema version uninitialized")
-	}
-	if stmtDB == "" {
-		stmtDB = sessionVars.CurrentDB
-	}
-	timezoneOffset := 0
-	if sessionVars.TimeZone != nil {
-		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
-	}
-	_, connCollation := sessionVars.GetCharsetInfo()
-
-	key := &planCacheKey{
-		database:                 stmtDB,
-		connID:                   sessionVars.ConnectionID,
-		stmtText:                 stmtText,
-		schemaVersion:            schemaVersion,
-		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
-		sqlMode:                  sessionVars.SQLMode,
-		timezoneOffset:           timezoneOffset,
-		isolationReadEngines:     make(map[kv.StoreType]struct{}),
-		selectLimit:              sessionVars.SelectLimit,
-		bindSQL:                  bindSQL,
-		connCollation:            connCollation,
-		inRestrictedSQL:          sessionVars.InRestrictedSQL,
-		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
-		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
-		exprBlacklistTS:          exprBlacklistTS,
-	}
-	for k, v := range sessionVars.IsolationReadEngines {
-		key.isolationReadEngines[k] = v
-	}
-	return key, nil
+	return '0'
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan              Plan
-	OutPutNames       []*types.FieldName
-	TblInfo2UnionScan map[*model.TableInfo]bool
-	memoryUsage       int64
+	// Meta Info, all are READ-ONLY once initialized.
+	SQLDigest        string
+	SQLText          string
+	StmtType         string             // select, update, insert, delete, etc.
+	ParseUser        string             // the user who parses/compiles this plan.
+	Binding          string             // the binding of this plan.
+	OptimizerEnvHash string             // other environment information that might affect the plan like "time_zone", "sql_mode".
+	ParseValues      string             // the actual values used when parsing/compiling this plan.
+	PlanDigest       string             // digest of the plan, used to identify the plan in the cache.
+	BinaryPlan       string             // binary of this Plan, use tidb_decode_binary_plan to decode this.
+	Memory           int64              // the memory usage of this plan, in bytes.
+	LoadTime         time.Time          // the time when this plan is loaded into the cache.
+	Plan             base.Plan          // READ-ONLY for Instance Cache, READ-WRITE for Session Cache.
+	OutputColumns    types.NameSlice    // output column names of this plan
+	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
+	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 
-	// matchOpts stores some fields help to choose a suitable plan
-	matchOpts *utilpc.PlanCacheMatchOpts
-	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
-	stmtHints *stmtctx.StmtHints
+	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
+	executions         int64 // the execution times.
+	processedKeys      int64 // the total number of processed keys in TiKV.
+	totalKeys          int64 // the total number of returned keys in TiKV.
+	sumLatency         int64 // the total latency of this plan, in nanoseconds.
+	lastUsedTimeInUnix int64 // the last time when this plan is used, in Unix timestamp.
+
+	testKey int64 // test-only
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
 // 100 KiB is approximate consumption of a plan from our internal tests
 const unKnownMemoryUsage = int64(50 * size.KB)
+
+// UpdateRuntimeInfo accumulates the runtime information of the plan.
+func (v *PlanCacheValue) UpdateRuntimeInfo(proKeys, totKeys, latency int64) {
+	atomic.AddInt64(&v.executions, 1)
+	atomic.AddInt64(&v.processedKeys, proKeys)
+	atomic.AddInt64(&v.totalKeys, totKeys)
+	atomic.AddInt64(&v.sumLatency, latency)
+	atomic.StoreInt64(&v.lastUsedTimeInUnix, time.Now().Unix())
+}
+
+// RuntimeInfo returns the runtime information of the plan.
+func (v *PlanCacheValue) RuntimeInfo() (exec, procKeys, totKeys, sumLat int64, lastUsedTime time.Time) {
+	exec = atomic.LoadInt64(&v.executions)
+	procKeys = atomic.LoadInt64(&v.processedKeys)
+	totKeys = atomic.LoadInt64(&v.totalKeys)
+	sumLat = atomic.LoadInt64(&v.sumLatency)
+	lastUsedTime = time.Unix(atomic.LoadInt64(&v.lastUsedTimeInUnix), 0)
+	return
+}
 
 // MemoryUsage return the memory usage of PlanCacheValue
 func (v *PlanCacheValue) MemoryUsage() (sum int64) {
@@ -361,106 +585,188 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		return
 	}
 
-	if v.memoryUsage > 0 {
-		return v.memoryUsage
+	if v.Memory > 0 {
+		return v.Memory
 	}
 	switch x := v.Plan.(type) {
-	case PhysicalPlan:
+	case base.PhysicalPlan:
 		sum = x.MemoryUsage()
-	case *Insert:
+	case *physicalop.Insert:
 		sum = x.MemoryUsage()
-	case *Update:
+	case *physicalop.Update:
 		sum = x.MemoryUsage()
-	case *Delete:
+	case *physicalop.Delete:
 		sum = x.MemoryUsage()
 	default:
 		sum = unKnownMemoryUsage
 	}
 
-	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames))*size.SizeOfPointer +
-		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
-	if v.matchOpts != nil {
-		sum += int64(cap(v.matchOpts.ParamTypes)) * size.SizeOfPointer
-		for _, ft := range v.matchOpts.ParamTypes {
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
+		size.SizeOfMap + size.SizeOfInt64*2
+	if v.ParamTypes != nil {
+		sum += int64(cap(v.ParamTypes)) * size.SizeOfPointer
+		for _, ft := range v.ParamTypes {
 			sum += ft.MemoryUsage()
 		}
 	}
 
-	for _, name := range v.OutPutNames {
+	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
-	v.memoryUsage = sum
+	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) + int64(len(v.BinaryPlan)) +
+		int64(len(v.ParseUser)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.ParseValues))
+
+	// Runtime Info Size
+	sum += size.SizeOfFloat64 * 7
+
+	v.Memory = sum
 	return
 }
 
-// NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	matchOpts *utilpc.PlanCacheMatchOpts, stmtHints *stmtctx.StmtHints) *PlanCacheValue {
-	dstMap := make(map[*model.TableInfo]bool)
-	for k, v := range srcMap {
-		dstMap[k] = v
-	}
-	userParamTypes := make([]*types.FieldType, len(matchOpts.ParamTypes))
-	for i, tp := range matchOpts.ParamTypes {
-		userParamTypes[i] = tp.Clone()
-	}
-	return &PlanCacheValue{
-		Plan:              plan,
-		OutPutNames:       names,
-		TblInfo2UnionScan: dstMap,
-		matchOpts:         matchOpts,
-		stmtHints:         stmtHints.Clone(),
-	}
+var planCacheHasherPool = sync.Pool{
+	New: func() any {
+		return sha256.New()
+	},
 }
 
-// PlanCacheQueryFeatures records all query features which may affect plan selection.
-type PlanCacheQueryFeatures struct {
-	limits      []*ast.Limit
-	hasSubquery bool
-	tables      []*ast.TableName // to capture table stats changes
+// dirtyTableIDsPool is a pool for int64 slices used in NewPlanCacheKey.
+var dirtyTableIDsPool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
+
+// NewPlanCacheValue creates a SQLCacheValue.
+func NewPlanCacheValue(
+	sctx sessionctx.Context,
+	stmt *PlanCacheStmt,
+	cacheKey string,
+	binding string,
+	plan base.Plan, // the cached plan,
+	names []*types.FieldName, // output column names of this plan,
+	paramTypes []*types.FieldType, // corresponding parameter types of this plan,
+	stmtHints *hint.StmtHints, // corresponding hints of this plan,
+) *PlanCacheValue {
+	userParamTypes := make([]*types.FieldType, len(paramTypes))
+	for i, tp := range paramTypes {
+		userParamTypes[i] = tp.Clone()
+	}
+	var userName string
+	if sctx.GetSessionVars().User != nil { // might be nil if in test
+		userName = sctx.GetSessionVars().User.AuthUsername
+	}
+
+	flat := FlattenPhysicalPlan(plan, false)
+	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat, false)
+
+	// calculate opt env hash using cacheKey and paramTypes
+	// (cacheKey, paramTypes) contains all factors that can affect the plan
+	// use the same hash algo with SQLDigest: sha256 + hex
+	hasher := planCacheHasherPool.Get().(hash.Hash)
+	hasher.Write(hack.Slice(cacheKey))
+	for _, tp := range paramTypes {
+		hasher.Write(hack.Slice(tp.String()))
+	}
+	optEnvHash := hex.EncodeToString(hasher.Sum(nil))
+	hasher.Reset()
+	planCacheHasherPool.Put(hasher)
+
+	pcv := &PlanCacheValue{
+		SQLDigest:        stmt.SQLDigest.String(),
+		SQLText:          stmt.StmtText,
+		StmtType:         stmt.PreparedAst.StmtType,
+		ParseUser:        userName,
+		Binding:          binding,
+		OptimizerEnvHash: optEnvHash,
+		ParseValues:      types.DatumsToStrNoErr(sctx.GetSessionVars().PlanCacheParams.AllParamValues()),
+		PlanDigest:       stmt.PlanDigest.String(),
+		BinaryPlan:       binaryPlan,
+
+		LoadTime:      time.Now(),
+		Plan:          plan,
+		OutputColumns: names,
+		ParamTypes:    userParamTypes,
+		StmtHints:     stmtHints.Clone(),
+	}
+	pcv.MemoryUsage() // initialize the memory usage field
+	return pcv
+}
+
+// planCacheStmtProcessor records all query features which may affect plan selection.
+type planCacheStmtProcessor struct {
+	ctx  context.Context
+	is   infoschema.InfoSchema
+	stmt *PlanCacheStmt
 }
 
 // Enter implements Visitor interface.
-func (f *PlanCacheQueryFeatures) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
-		f.limits = append(f.limits, node)
+		f.stmt.limits = append(f.stmt.limits, node)
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
-		f.hasSubquery = true
+		f.stmt.hasSubquery = true
 	case *ast.TableName:
-		f.tables = append(f.tables, node)
+		t, err := f.is.TableByName(f.ctx, node.Schema, node.Name)
+		if err == nil {
+			f.stmt.tables = append(f.stmt.tables, t)
+		}
 	}
 	return in, false
 }
 
 // Leave implements Visitor interface.
-func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
+}
+
+// PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
+// Don't forget to reset this executor when the prior plan is invalid.
+type PointGetExecutorCache struct {
+	ColumnInfos any
+	// Executor is only used for point get scene.
+	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+	Executor any
+
+	// FastPlan is only used for instance plan cache.
+	// To ensure thread-safe, we have to clone each plan before reusing if using instance plan cache.
+	// To reduce the memory allocation and increase performance, we cache the FastPlan here.
+	FastPlan *physicalop.PointGetPlan
 }
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
+	ResolveCtx  *resolve.Context
 	StmtDB      string // which DB the statement will be processed over
 	VisitInfos  []visitInfo
-	ColumnInfos interface{}
-	// Executor is only used for point get scene.
-	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
-	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
-	Executor interface{}
+	Params      []ast.ParamMarkerExpr
+
+	PointGet PointGetExecutorCache
+
+	// below fields are for PointGet short path
+	SchemaVersion int64
+
+	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
+	RelateVersion map[int64]uint64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
-	QueryFeatures     *PlanCacheQueryFeatures
+	// HasUsePlanCacheHint indicates whether this stmt contains the use_plan_cache() hint.
+	HasUsePlanCacheHint bool
+
+	limits      []*ast.Limit
+	hasSubquery bool
+	tables      []table.Table // to capture table stats changes
 
 	NormalizedSQL       string
 	NormalizedPlan      string
 	SQLDigest           *parser.Digest
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
-	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
-	NormalizedSQL4PC    string
-	SQLDigest4PC        string
+	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
+
+	// BindingInfo caches normalization results for binding matching across executions.
+	BindingInfo bindinfo.BindingMatchInfo
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then
@@ -468,6 +774,61 @@ type PlanCacheStmt struct {
 	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
+
+	// dbName and tbls are used to add metadata lock.
+	dbName []ast.CIStr
+	tbls   []table.Table
+}
+
+// PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.
+// It holds the result of a full Prepare flow so that subsequent Prepares of
+// the same SQL text can skip the expensive Preprocess + PlanBuilder.Build.
+type PrepareStmtCacheEntry struct {
+	Stmt       *PlanCacheStmt
+	Fields     []*resolve.ResultField
+	ParamCount int
+}
+
+// ExtractAndSortParamMarkers extracts ParamMarkerExpr nodes from the AST,
+// sorts them by position, assigns their order indices, and initialises each
+// marker's Datum to NULL (matching the behaviour of GeneratePlanCacheStmtWithAST
+// for prepared statements where the actual parameter values are not yet known).
+func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
+	var extractor paramMarkerExtractor
+	stmtNode.Accept(&extractor)
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
+		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
+	})
+	for i, m := range extractor.markers {
+		m.SetOrder(i)
+		p := m.(*driver.ParamMarkerExpr)
+		p.Datum.SetNull()
+		p.InExecute = false
+	}
+	return extractor.markers
+}
+
+// CollectPlanCacheStmtInfo walks the AST to populate the limits, hasSubquery,
+// and tables fields of stmt. It must be called on the fresh AST after a
+// re-parse so that limit nodes and table references point into the new tree.
+func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, stmtNode ast.StmtNode) {
+	processor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: stmt}
+	stmtNode.Accept(processor)
+}
+
+// DBName returns the dbName field (used for metadata lock during Execute).
+func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
+
+// Tbls returns the tbls field (used for metadata lock during Execute).
+func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
+
+// SetDBNameAndTbls sets the dbName and tbls fields, cloning the input slices
+// so that this PlanCacheStmt owns independent backing arrays. This is required
+// because planCachePreprocess replaces tbls[i] in-place during Execute, and
+// sharing the backing array with a cached template would cause cross-stmt contamination.
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
+	s.dbName = slices.Clone(dbName)
+	s.tbls = slices.Clone(tbls)
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
@@ -483,66 +844,19 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		stmt.PrepStmt = prepStmt
 		return prepStmt.(*PlanCacheStmt), nil
 	}
-	return nil, ErrStmtNotFound
-}
-
-// GetMatchOpts get options to fetch plan or generate new plan
-// we can add more options here
-func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
-	var statsVerHash uint64
-	var limitOffsetAndCount []uint64
-
-	if stmt.QueryFeatures != nil {
-		for _, node := range stmt.QueryFeatures.tables {
-			t, err := is.TableByName(node.Schema, node.Name)
-			if err != nil { // CTE in this case
-				continue
-			}
-			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
-		}
-
-		for _, node := range stmt.QueryFeatures.limits {
-			if node.Count != nil {
-				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
-					typeExpected, val := CheckParamTypeInt64orUint64(count)
-					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
-						break
-					}
-					if val > MaxCacheableLimitCount {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("limit count is too large"))
-						break
-					}
-					limitOffsetAndCount = append(limitOffsetAndCount, val)
-				}
-			}
-			if node.Offset != nil {
-				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
-					typeExpected, val := CheckParamTypeInt64orUint64(offset)
-					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
-						break
-					}
-					limitOffsetAndCount = append(limitOffsetAndCount, val)
-				}
-			}
-		}
-	}
-
-	return &utilpc.PlanCacheMatchOpts{
-		LimitOffsetAndCount: limitOffsetAndCount,
-		HasSubQuery:         stmt.QueryFeatures.hasSubquery,
-		StatsVersionHash:    statsVerHash,
-		ParamTypes:          parseParamTypes(sctx, params),
-		ForeignKeyChecks:    sctx.GetSessionVars().ForeignKeyChecks,
-	}, nil
+	return nil, plannererrors.ErrStmtNotFound
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
 // Currently this is only used in plan cache to check whether the types of parameters are compatible.
 // If the types of parameters are compatible, we can use the cached plan.
 // tpsExpected is types from cached plan
-func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool {
+func checkTypesCompatibility4PC(expected, actual any) bool {
+	if expected == nil || actual == nil {
+		return true // no need to compare types
+	}
+	tpsExpected := expected.([]*types.FieldType)
+	tpsActual := actual.([]*types.FieldType)
 	if len(tpsExpected) != len(tpsActual) {
 		return false
 	}
@@ -566,7 +880,7 @@ func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool 
 	return true
 }
 
-func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
 
@@ -577,7 +891,9 @@ func isSafePointGetPath4PlanCache(sctx sessionctx.Context, path *util.AccessPath
 	// TODO: enable this fix control switch by default after more test cases are added.
 	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
 		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
-		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) ||
+			isSafePointGetPath4PlanCacheScenario3(path) ||
+			isSafePointGetPath4PlanCacheScenario4(path)) {
 			return true
 		}
 	}
@@ -651,4 +967,59 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 		}
 	}
 	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario4(path *util.AccessPath) bool {
+	// safe scenario 4: each key column corresponds to a single EQ, except one column that corresponds
+	// to a single IN. The IN can appear at the beginning, in the middle, or at the end of the key,
+	// like `a in (1, 2) and b=3 and c=4`, `a=1 and b in (2, 3) and c=4`, or
+	// `a=1 and b=2 and c in (3, 4)`.
+	// This currently supports exactly one IN predicate only.
+	// TODO: support multiple IN predicates, like `a in (1, 2) and b in (3, 4)`, after the plan-cache
+	// safety check and rebuild path can verify the cartesian-product case safely.
+	if len(path.Ranges) <= 0 || len(path.AccessConds) < 2 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	var inExpr *expression.ScalarFunction
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ:
+		case ast.In:
+			// Only one IN predicate is supported in this scenario for now.
+			if inExpr != nil {
+				return false
+			}
+			inExpr = f
+		default:
+			return false
+		}
+	}
+	// The range builder deduplicates IN values, so len(path.Ranges) < len(args)-1 when duplicates exist.
+	// The equality check below relies on that invariant to reject duplicate IN values from plan cache.
+	return inExpr != nil && len(path.Ranges) == len(inExpr.GetArgs())-1
+}
+
+// parseParamTypes get parameters' types in PREPARE statement
+func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (paramTypes []*types.FieldType) {
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	paramTypes = make([]*types.FieldType, 0, len(params))
+	for _, param := range params {
+		if c, ok := param.(*expression.Constant); ok { // from binary protocol
+			paramTypes = append(paramTypes, c.GetType(ectx))
+			continue
+		}
+
+		// from text protocol, there must be a GetVar function
+		name := param.(*expression.ScalarFunction).GetArgs()[0].StringWithCtx(ectx, errors.RedactLogDisable)
+		tp, ok := sctx.GetSessionVars().GetUserVarType(name)
+		if !ok {
+			tp = types.NewFieldType(mysql.TypeNull)
+		}
+		paramTypes = append(paramTypes, tp)
+	}
+	return
 }

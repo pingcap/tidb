@@ -19,13 +19,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-func genCastIntAsInt(ctx sessionctx.Context) (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
+func genCastIntAsInt(ctx BuildContext) (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
 	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeLonglong))
 	if err != nil {
@@ -34,7 +33,7 @@ func genCastIntAsInt(ctx sessionctx.Context) (*builtinCastIntAsIntSig, *chunk.Ch
 	baseCast := newBaseBuiltinCastFunc(baseFunc, false)
 	cast := &builtinCastIntAsIntSig{baseCast}
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		input.AppendInt64(0, rand.Int63n(10000)-5000)
 	}
 	result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)

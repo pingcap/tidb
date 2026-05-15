@@ -16,7 +16,9 @@ package collate
 
 import (
 	"bytes"
+	"unicode/utf8"
 
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"golang.org/x/text/encoding"
 )
@@ -26,6 +28,11 @@ type gbkBinCollator struct {
 	e *encoding.Encoder
 }
 
+// Clone implements Collator interface.
+func (*gbkBinCollator) Clone() Collator {
+	return &gbkBinCollator{charset.NewCustomGBKEncoder()}
+}
+
 // Compare implement Collator interface.
 func (g *gbkBinCollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
@@ -33,7 +40,7 @@ func (g *gbkBinCollator) Compare(a, b string) int {
 
 	// compare the character one by one.
 	for len(a) > 0 && len(b) > 0 {
-		aLen, bLen := runeLen(a[0]), runeLen(b[0])
+		aLen, bLen := min(len(a), runeLen(a[0])), min(len(b), runeLen(b[0]))
 		aGbk, err := g.e.Bytes(hack.Slice(a[:aLen]))
 		// if convert error happened, we use '?'(0x3F) replace it.
 		// It should not happen.
@@ -61,11 +68,16 @@ func (g *gbkBinCollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gbkBinCollator) ImmutableKey(str string) []byte {
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str))
 	for len(str) > 0 {
-		l := runeLen(str[0])
+		l := min(len(str), runeLen(str[0]))
 		gbk, err := g.e.Bytes(hack.Slice(str[:l]))
 		if err != nil {
 			buf = append(buf, byte('?'))
@@ -78,6 +90,11 @@ func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
+// MaxKeyLen implements Collator interface.
+func (*gbkBinCollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 2
+}
+
 // Pattern implements Collator interface.
 func (*gbkBinCollator) Pattern() WildcardPattern {
 	return &gbkBinPattern{}
@@ -85,5 +102,5 @@ func (*gbkBinCollator) Pattern() WildcardPattern {
 
 // use binPattern directly, they are totally same.
 type gbkBinPattern struct {
-	binPattern
+	derivedBinPattern
 }

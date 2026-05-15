@@ -18,14 +18,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,15 +57,23 @@ func TestAlterTableCache(t *testing.T) {
 	checkTableCacheStatus(t, tk, "test", "t1", model.TableCacheStatusEnable)
 	tk.MustExec("alter table t1 nocache")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set global tidb_enable_metadata_lock=0")
-	/*Test can't skip schema checker*/
-	tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("CREATE TABLE t1 (a int)")
-	tk.MustExec("CREATE TABLE t2 (a int)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 set a=1;")
-	tk2.MustExec("alter table t1 cache;")
-	tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_metadata_lock=0")
+		/*Test can't skip schema checker*/
+		tk.MustExec("drop table if exists t1,t2")
+		tk.MustExec("CREATE TABLE t1 (a int)")
+		tk.MustExec("CREATE TABLE t2 (a int)")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t1 set a=1;")
+		tk2.MustExec("alter table t1 cache;")
+		tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
+	} else {
+		tk.MustExec("drop table if exists t1,t2")
+		tk.MustExec("CREATE TABLE t1 (a int)")
+		tk.MustExec("CREATE TABLE t2 (a int)")
+		tk.MustExec("insert into t1 set a=1;")
+		tk2.MustExec("alter table t1 cache;")
+	}
 	/* Test can skip schema checker */
 	tk.MustExec("begin")
 	tk.MustExec("alter table t1 nocache")
@@ -93,6 +102,50 @@ func TestAlterTableCache(t *testing.T) {
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
 	tk.MustGetErrMsg("alter table tmp1 cache", dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache").Error())
+	// create table like
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("alter table t cache")
+	tk.MustExec("create table t3 like t")
+	checkTableCacheStatus(t, tk, "test", "t", model.TableCacheStatusEnable)
+	checkTableCacheStatus(t, tk, "test", "t3", model.TableCacheStatusDisable)
+}
+
+// TestAlterTableNoCacheRemovesTableCacheMeta verifies that ALTER TABLE NOCACHE
+// removes the record from mysql.table_cache_meta (fix for issue #66042).
+func TestAlterTableNoCacheRemovesTableCacheMeta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.SetStatsUpdating(true)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists cache_test")
+	defer tk.MustExec("drop table if exists cache_test")
+
+	tk.MustExec("create table cache_test (id int primary key)")
+	tk.MustExec("alter table cache_test cache")
+
+	// Get table ID from information_schema
+	idRows := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = database() and TABLE_NAME = 'cache_test'").Rows()
+	require.Len(t, idRows, 1, "table should exist")
+	tableID := idRows[0][0].(string)
+
+	// SELECT triggers READ lock (as in issue #66042)
+	tk.MustQuery("select * from cache_test")
+
+	// Record should exist in mysql.table_cache_meta with expected columns
+	rows := tk.MustQuery("select tid, lock_type, lease, oldReadLease from mysql.table_cache_meta where tid = ?", tableID).Rows()
+	require.Len(t, rows, 1, "record should exist before NOCACHE")
+	require.Equal(t, tableID, rows[0][0], "tid should match")
+	require.Contains(t, []string{"NONE", "READ"}, rows[0][1], "lock_type should be NONE or READ after SELECT")
+
+	// ALTER TABLE NOCACHE should remove the record
+	tk.MustExec("alter table cache_test nocache")
+
+	// Record should be deleted from mysql.table_cache_meta
+	rows = tk.MustQuery("select tid, lock_type, lease, oldReadLease from mysql.table_cache_meta where tid = ?", tableID).Rows()
+	require.Len(t, rows, 0, "record should be deleted after NOCACHE")
+	checkTableCacheStatus(t, tk, "test", "cache_test", model.TableCacheStatusDisable)
 }
 
 func TestCacheTableSizeLimit(t *testing.T) {
@@ -106,12 +159,12 @@ func TestCacheTableSizeLimit(t *testing.T) {
 	tk.MustExec("create table tmp (c1 int, c varchar(1024))")
 	defer tk.MustExec("drop table if exists cache_t1")
 
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		tk.MustExec("insert into tmp values (?, repeat('x', 1024));", i)
 	}
 
 	// Make the cache_t1 size large than 64K
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		tk.MustExec("insert into cache_t1 select * from tmp;")
 		if i == 900 {
 			tk.MustExec("insert into cache_t2 select * from cache_t1;")
@@ -124,7 +177,7 @@ func TestCacheTableSizeLimit(t *testing.T) {
 	tk.MustExec("alter table cache_t2 cache")
 
 	// But after continuously insertion, the table reachs the size limit
-	for i := 0; i < 124; i++ {
+	for range 124 {
 		_, err := tk.Exec("insert into cache_t2 select * from tmp;")
 		// The size limit check is not accurate, so it's not detected here.
 		require.NoError(t, err)
@@ -135,7 +188,7 @@ func TestCacheTableSizeLimit(t *testing.T) {
 	}
 
 	cached := false
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		tk.MustQuery("select count(*) from (select * from cache_t2 limit 1) t1").Check(testkit.Rows("1"))
 		if lastReadFromCache(tk) {
 			cached = true
@@ -157,9 +210,13 @@ func TestCacheTableSizeLimit(t *testing.T) {
 }
 
 func TestIssue34069(t *testing.T) {
+	testIssue34069(t, sem.V1)
+	testIssue34069(t, sem.V2)
+}
+
+func testIssue34069(t *testing.T, semVer string) {
 	store := testkit.CreateMockStore(t)
-	sem.Enable()
-	defer sem.Disable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))

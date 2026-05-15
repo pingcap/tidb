@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -76,8 +77,9 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 	s.prepareAndUseDB("load_data")
 	s.tk.MustExec("drop table if exists t;")
 	s.tk.MustExec("create table t (a bigint primary key, b varchar(100), c int);")
+	s.tk.MustExec("create table dst (a bigint primary key, b varchar(100), c int);")
 
-	client, err := importer.GetEtcdClient()
+	client, err := importer.GetEtcdClient(s.store)
 	s.NoError(err)
 	s.T().Cleanup(func() {
 		_ = client.Close()
@@ -90,10 +92,10 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 	pitrTaskInfo := brpb.StreamBackupTaskInfo{Name: "dummy-task"}
 	data, err := pitrTaskInfo.Marshal()
 	s.NoError(err)
-	_, err = client.GetClient().Put(context.Background(), pitrKey, string(data))
+	_, err = client.Put(context.Background(), pitrKey, string(data))
 	s.NoError(err)
 	s.T().Cleanup(func() {
-		_, err2 := client.GetClient().Delete(context.Background(), pitrKey)
+		_, err2 := client.Delete(context.Background(), pitrKey)
 		s.NoError(err2)
 	})
 	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-cdc-pitr/file.csv?endpoint=%s'`, gcsEndpoint)
@@ -101,16 +103,29 @@ func (s *mockGCSSuite) TestPreCheckCDCPiTRTasks() {
 	log.Error("error", zap.Error(err))
 	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
 	s.ErrorContains(err, "found PiTR log streaming task(s): [dummy-task],")
+	// disable precheck
+	s.tk.MustQuery(sql + " WITH disable_precheck")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1 test1 11"))
 
-	_, err2 := client.GetClient().Delete(context.Background(), pitrKey)
+	// test import from select
+	err = s.tk.ExecToErr("import into dst from select * from t")
+	log.Error("error", zap.Error(err))
+	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
+	s.ErrorContains(err, "found PiTR log streaming task(s): [dummy-task],")
+	// disable precheck
+	s.tk.MustExec("import into dst from select * from t with disable_precheck")
+	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 test1 11"))
+
+	_, err2 := client.Delete(context.Background(), pitrKey)
 	s.NoError(err2)
 	cdcKey := "/tidb/cdc/cluster-123/test/changefeed/info/feed-test"
-	_, err = client.GetClient().Put(context.Background(), cdcKey, `{"state": "normal"}`)
+	_, err = client.Put(context.Background(), cdcKey, `{"state": "normal"}`)
 	s.NoError(err)
 	s.T().Cleanup(func() {
-		_, err2 := client.GetClient().Delete(context.Background(), cdcKey)
+		_, err2 := client.Delete(context.Background(), cdcKey)
 		s.NoError(err2)
 	})
+	s.tk.MustExec("truncate table t")
 	err = s.tk.QueryToErr(sql)
 	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
 	s.ErrorContains(err, "found CDC changefeed(s): cluster/namespace: cluster-123/test changefeed(s): [feed-test]")

@@ -48,6 +48,7 @@ func (c *CheckpointAdvancer) Name() string {
 
 func (c *CheckpointAdvancer) OnStop() {
 	metrics.AdvancerOwner.Set(0.0)
+	metrics.LastCheckpoint.Reset()
 	c.stopSubscriber()
 }
 

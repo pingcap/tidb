@@ -15,25 +15,29 @@
 package importintotest
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/tikv/client-go/v2/util"
 )
 
 type mockGCSSuite struct {
 	suite.Suite
 
-	server *fakestorage.Server
-	store  kv.Storage
-	tk     *testkit.TestKit
+	server  *fakestorage.Server
+	store   kv.Storage
+	tk      *testkit.TestKit
+	taskMgr *storage.TaskManager
+	ctx     context.Context
 }
 
 var (
@@ -45,12 +49,14 @@ var (
 	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
-func TestLoadRemote(t *testing.T) {
+func TestImportInto(t *testing.T) {
 	suite.Run(t, &mockGCSSuite{})
 }
 
 func (s *mockGCSSuite) SetupSuite() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	s.Require().True(*realtikvtest.WithRealTiKV)
+	testutil.ReduceCheckInterval(s.T())
 	var err error
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -62,17 +68,18 @@ func (s *mockGCSSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
 	s.tk = testkit.NewTestKit(s.T(), s.store)
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	s.taskMgr = taskManager
+
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	s.ctx = ctx
 }
 
 func (s *mockGCSSuite) TearDownSuite() {
 	s.server.Stop()
-}
-
-func (s *mockGCSSuite) enableFailpoint(path, term string) {
-	require.NoError(s.T(), failpoint.Enable(path, term))
-	s.T().Cleanup(func() {
-		_ = failpoint.Disable(path)
-	})
 }
 
 func (s *mockGCSSuite) cleanupSysTables() {
@@ -88,10 +95,7 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 }
 
 func init() {
-	// need a real PD
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Path = "127.0.0.1:2379"
-	})
+	realtikvtest.UpdateTiDBConfig()
 }
 
 func TestMain(m *testing.M) {

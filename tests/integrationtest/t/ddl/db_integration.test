@@ -392,18 +392,9 @@ alter table t add unique index idx_a(a);
 delete from t where a = 4;
 alter table t add unique index idx_a(a);
 alter table t add unique index idx_ac(a, c);
--- error 1503
+-- error 8264
 alter table t add unique index idx_b(b);
 drop table if exists t;
-
-# TestFulltextIndexIgnore
-drop table if exists t_ft;
-create table t_ft (a text, fulltext key (a));
-show warnings;
-alter table t_ft add fulltext key (a);
-show warnings;
-show create table t_ft;
-drop table if exists t_ft;
 
 # TestDefaultValueIsString
 drop table if exists t;
@@ -1061,6 +1052,8 @@ create table t (j json, key k (((j,j))));
 create table t (j json, key k ((j+1),(j+1)));
 -- error 3761
 create table t1 (col1 int, index ((concat(''))));
+-- error 3761
+create table t1 (col1 int, index ((null)));
 -- error 3756
 CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);
 
@@ -1108,3 +1101,17 @@ create temporary table t2(id int primary key, v int);
 select * from t2 where id=234;
 commit;
 disconnect conn1;
+
+# Test Generated column use Grouping function, issue #49909.
+drop table if exists t;
+--error 1111
+create table t(a int, b int as ((grouping(a))) stored);
+create table t(a int);
+--error 1111
+alter table t add column  b int as ((grouping(a))) stored;
+drop table t;
+
+# Test composite primary key should have correct TIDB_ROW_ID_SHARDING_INFO.
+drop table if exists t;
+create table t (a bigint auto_random, b int, c char(255), primary key(a, b) clustered);
+select TIDB_ROW_ID_SHARDING_INFO from information_schema.tables where TABLE_SCHEMA = 'ddl__db_integration' and TABLE_NAME = 't';

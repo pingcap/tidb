@@ -26,7 +26,7 @@ go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_P
 row_count_ori=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 
 # add shuffle leader scheduler
-run_pd_ctl -u https://$PD_ADDR sched add shuffle-leader-scheduler
+run_pd_ctl -u https://$PD_ADDR scheduler add shuffle-leader-scheduler
 
 # backup with shuffle leader
 echo "backup start..."
@@ -39,7 +39,7 @@ echo "restore start..."
 run_br restore table --db $DB --table $TABLE -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 # remove shuffle leader scheduler
-run_pd_ctl -u https://$PD_ADDR sched remove shuffle-leader-scheduler
+run_pd_ctl -u https://$PD_ADDR scheduler remove shuffle-leader-scheduler
 
 row_count_new=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 

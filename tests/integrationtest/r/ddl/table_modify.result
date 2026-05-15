@@ -13,7 +13,7 @@ CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHAR
 show create table collateTest;
 Table	Create Table
 collateTest	CREATE TABLE `collateTest` (
-  `a` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
   `b` varchar(10) COLLATE utf8_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci
 CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci;
@@ -24,7 +24,7 @@ CREATE TABLE `collateTest4` (`a` int) COLLATE utf8_uniCOde_ci;
 show create table collateTest4;
 Table	Create Table
 collateTest4	CREATE TABLE `collateTest4` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
 create database test2 default charset utf8 collate utf8_general_ci;
 use test2;

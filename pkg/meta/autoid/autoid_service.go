@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -56,10 +58,13 @@ type ClientDiscover struct {
 		// See https://github.com/grpc/grpc-go/issues/5321
 		*grpc.ClientConn
 	}
+	// version is increased in every ResetConn() to make the operation safe.
+	version uint64
 }
 
 const (
-	autoIDLeaderPath = "tidb/autoid/leader"
+	// AutoIDLeaderPath is etcd key of auto id service leader, exported for test.
+	AutoIDLeaderPath = "tidb/autoid/leader"
 )
 
 // NewClientDiscover creates a ClientDiscover object.
@@ -69,29 +74,48 @@ func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
 	}
 }
 
+// GetAutoIDServiceLeaderEtcdPath exported for test.
+func GetAutoIDServiceLeaderEtcdPath(keyspaceID uint32) string {
+	if keyspaceID == uint32(tikv.NullspaceID) {
+		return AutoIDLeaderPath
+	}
+	return "/" + AutoIDLeaderPath
+}
+
 // GetClient gets the AutoIDAllocClient.
-func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, error) {
+func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (autoid.AutoIDAllocClient, uint64, error) {
 	d.mu.RLock()
 	cli := d.mu.AutoIDAllocClient
 	if cli != nil {
 		d.mu.RUnlock()
-		return cli, nil
+		return cli, atomic.LoadUint64(&d.version), nil
 	}
 	d.mu.RUnlock()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.mu.AutoIDAllocClient != nil {
-		return d.mu.AutoIDAllocClient, nil
+		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
-
-	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
+	// write a for loop to retry in case of etcd connection error.
+	var resp *clientv3.GetResponse
+	var err error
+	var bo backoffer
+retry:
+	resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-		return nil, errors.New("autoid service leader not found")
+		// If the key is not found, it means the autoid service leader is not elected yet.
+		// We can retry to get the leader.
+		if err := ctx.Err(); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		bo.Backoff()
+		goto retry
 	}
+	bo.Reset()
 
 	addr := string(resp.Kvs[0].Value)
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -100,19 +124,19 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		clusterSecurity := security.ClusterSecurity()
 		tlsConfig, err := clusterSecurity.ToTLSConfig()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
 	logutil.BgLogger().Info("connect to leader", zap.String("category", "autoid client"), zap.String("addr", addr))
-	grpcConn, err := grpc.Dial(addr, opt)
+	grpcConn, err := grpc.NewClient(addr, opt)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	cli = autoid.NewAutoIDAllocClient(grpcConn)
 	d.mu.AutoIDAllocClient = cli
 	d.mu.ClientConn = grpcConn
-	return cli, nil
+	return cli, atomic.LoadUint64(&d.version), nil
 }
 
 // Alloc allocs N consecutive autoID for table with tableID, returning (min, max] of the allocated autoID batch.
@@ -121,22 +145,25 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 // The returned range is (min, max]:
 // case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
 // case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
-func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, _ error) {
+func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, _ error) {
 	r, ctx := tracing.StartRegionEx(ctx, "autoid.Alloc")
 	defer r.End()
 
+	logutil.BgLogger().Info("alloc autoid",
+		zap.Int64("dbID", sp.dbID))
 	if !validIncrementAndOffset(increment, offset) {
 		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 	}
 
 	var bo backoffer
+	start := time.Now()
 retry:
-	cli, err := sp.GetClient(ctx)
+	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	start := time.Now()
+	clientStart := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
@@ -146,10 +173,13 @@ retry:
 		IsUnsigned: sp.isUnsigned,
 		KeyspaceID: sp.keyspaceID,
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			sp.ResetConn(err)
+			sp.resetConn(ver, err)
+			if err := ctx.Err(); err != nil {
+				return 0, 0, errors.Trace(err)
+			}
 			bo.Backoff()
 			goto retry
 		}
@@ -166,8 +196,8 @@ retry:
 	return resp.Min, resp.Max, err
 }
 
-const backoffMin = 200 * time.Millisecond
-const backoffMax = 5 * time.Second
+const backoffMin = 5 * time.Millisecond
+const backoffMax = 100 * time.Millisecond
 
 type backoffer struct {
 	time.Duration
@@ -188,6 +218,14 @@ func (b *backoffer) Backoff() {
 	time.Sleep(b.Duration)
 }
 
+func (d *ClientDiscover) resetConn(version uint64, reason error) {
+	// Avoid repeated Reset operation
+	if !atomic.CompareAndSwapUint64(&d.version, version, version+1) {
+		return
+	}
+	d.ResetConn(reason)
+}
+
 // ResetConn reset the AutoIDAllocClient and underlying grpc connection.
 // The next GetClient() call will recreate the client connecting to the correct leader by querying etcd.
 func (d *ClientDiscover) ResetConn(reason error) {
@@ -205,11 +243,24 @@ func (d *ClientDiscover) ResetConn(reason error) {
 	d.mu.Unlock()
 	// Close grpc.ClientConn to release resource.
 	if grpcConn != nil {
-		err := grpcConn.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("close grpc connection error", zap.String("category", "autoid client"), zap.Error(err))
-		}
+		go func() {
+			// Doen't close the conn immediately, in case the other sessions are still using it.
+			time.Sleep(200 * time.Millisecond)
+			err := grpcConn.Close()
+			if err != nil {
+				logutil.BgLogger().Warn("close grpc connection error", zap.String("category", "autoid client"), zap.Error(err))
+			}
+		}()
 	}
+}
+
+func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
+	if sp.dbID == databaseID && sp.tblID == tableID {
+		return nil
+	}
+	sp.dbID = databaseID
+	sp.tblID = tableID
+	return sp.Rebase(context.Background(), sp.lastAllocated+1, false)
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
@@ -235,7 +286,7 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) e
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {
 	var bo backoffer
 retry:
-	cli, err := sp.GetClient(ctx)
+	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -249,7 +300,7 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			sp.ResetConn(err)
+			sp.resetConn(ver, err)
 			bo.Backoff()
 			goto retry
 		}
@@ -289,8 +340,8 @@ func (sp *singlePointAlloc) End() int64 {
 // NextGlobalAutoID returns the next global autoID.
 // Used by 'show create table', 'alter table auto_increment = xxx'
 func (sp *singlePointAlloc) NextGlobalAutoID() (int64, error) {
-	_, max, err := sp.Alloc(context.Background(), 0, 1, 1)
-	return max + 1, err
+	_, maxv, err := sp.Alloc(context.Background(), 0, 1, 1)
+	return maxv + 1, err
 }
 
 func (*singlePointAlloc) GetType() AllocatorType {

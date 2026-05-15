@@ -66,19 +66,19 @@ func main() {
 			return errors.Trace(err)
 		}
 
-		query := fmt.Sprintf("insert into %s values('aaaaaaaaaa')", table) // nolint:gosec
+		query := fmt.Sprintf("insert into %s values('aaaaaaaaaa')", table)
 		for i := 1; i < 10000; i++ {
 			query += ",('aaaaaaaaaa')"
 		}
 		ch := make(chan struct{}, worker)
-		for i := 0; i < worker; i++ {
+		for range worker {
 			ch <- struct{}{}
 		}
 		var eg *errgroup.Group
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		eg, ctx = errgroup.WithContext(ctx)
-		for i := 0; i < 500; i++ {
+		for range 500 {
 			if ctx.Err() != nil {
 				break
 			}

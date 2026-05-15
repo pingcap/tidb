@@ -36,12 +36,20 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error)
 
 	// replace 2018-12-19-unified-log-format text encoder with slow log encoder
 	newCore := log.NewTextCore(&slowLogEncoder{}, prop.Syncer, prop.Level)
-	sqLogger = sqLogger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+	sqLogger = sqLogger.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
 		return newCore
 	}))
 	prop.Core = newCore
 
 	return sqLogger, prop, nil
+}
+
+func newSlowQueryLoggerFromZapLogger(l *zap.Logger, p *log.ZapProperties) *zap.Logger {
+	newCore := log.NewTextCore(&slowLogEncoder{}, p.Syncer, p.Level)
+	sqLogger := l.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
+		return newCore
+	}))
+	return sqLogger
 }
 
 func newSlowQueryLogConfig(cfg *LogConfig) *log.Config {
@@ -91,5 +99,5 @@ func (*slowLogEncoder) AddUint32(string, uint32)                        {}
 func (*slowLogEncoder) AddUint16(string, uint16)                        {}
 func (*slowLogEncoder) AddUint8(string, uint8)                          {}
 func (*slowLogEncoder) AddUintptr(string, uintptr)                      {}
-func (*slowLogEncoder) AddReflected(string, interface{}) error          { return nil }
+func (*slowLogEncoder) AddReflected(string, any) error                  { return nil }
 func (*slowLogEncoder) OpenNamespace(string)                            {}

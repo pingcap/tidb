@@ -25,17 +25,19 @@ import (
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,9 +75,6 @@ func TestShowCreateTablePlacement(t *testing.T) {
 
 	// Partitioned tables
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
-	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
-	tk.MustExec("set tidb_enable_list_partition = 1")
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY LIST (a)\n" +
@@ -279,7 +278,6 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`set tidb_cost_model_version=2`)
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
@@ -288,31 +286,28 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	// create tiflash replica
 	{
 		is := dom.InfoSchema()
-		db, exists := is.SchemaByName(model.NewCIStr("test"))
-		require.True(t, exists)
-		for _, tblInfo := range db.Tables {
-			if tblInfo.Name.L == "show_warnings_expr_pushdown" {
-				tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-					Count:     1,
-					Available: true,
-				}
-			}
+		tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("show_warnings_expr_pushdown"))
+		require.NoError(t, err)
+		tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
 		}
 	}
 	tk.MustExec("set tidb_allow_mpp=0")
-	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
+	tk.MustExec("explain format = 'brief' select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
-	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(md5(value)) from show_warnings_expr_pushdown group by a")
+	tk.MustExec("explain format = 'brief' select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(md5(value)) from show_warnings_expr_pushdown group by a")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
-	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(a) from show_warnings_expr_pushdown group by md5(value)")
+	tk.MustExec("explain format = 'brief' select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(a) from show_warnings_expr_pushdown group by md5(value)")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
+		"Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
+		"Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
-	tk.MustExec("explain select max(distinct a) from show_warnings_expr_pushdown group by value")
+	tk.MustExec("explain format = 'brief' select max(distinct a) from show_warnings_expr_pushdown group by value")
 	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	// tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
 }
 
 func TestShowGrantsPrivilege(t *testing.T) {
@@ -345,7 +340,7 @@ func TestShowStatsPrivilege(t *testing.T) {
 	err = tk1.ExecToErr("SHOW STATS_HISTOGRAMS")
 	require.ErrorContains(t, err, e)
 
-	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
+	eqErr := plannererrors.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
 	err = tk1.ExecToErr("SHOW STATS_HEALTHY")
 	require.EqualError(t, err, eqErr.Error())
 	tk.MustExec("grant select on mysql.* to show_stats")
@@ -362,6 +357,13 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk1.MustExec("show stats_meta")
 	tk1.MustExec("SHOW STATS_BUCKETS")
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
+}
+
+func TestShowStatsExtendedRemoved(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	err := tk.QueryToErr("SHOW STATS_EXTENDED")
+	require.EqualError(t, err, "Extended statistics feature has been removed")
 }
 
 func TestIssue18878(t *testing.T) {
@@ -478,41 +480,40 @@ func TestShow2(t *testing.T) {
 				);`)
 
 	tk.MustQuery(`show full columns from test_full_column`).Check(testkit.Rows(
-		"" +
-			"c_int int(11) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_float float <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_bit bit(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_bool tinyint(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_char char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varchar_default varchar(20) ascii_bin YES  cUrrent_tImestamp  select,insert,update,references ]\n" +
-			"[c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_year year(4) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_date date <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_time time <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_datetime datetime <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_datetime_default datetime <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
-			"[c_datetime_default_2 datetime(2) <nil> YES  CURRENT_TIMESTAMP(2)  select,insert,update,references ]\n" +
-			"[c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
-			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
-			"[c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ]\n" +
-			"[c_date_default date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
-			"[c_date_default_2 date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
-			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_longblob longblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_text text ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_tinytext tinytext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_mediumtext mediumtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_longtext longtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_json json <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_enum enum('1') ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_set set('1') ascii_bin YES  <nil>  select,insert,update,references "))
+		"c_int int(11) <nil> YES  <nil>  select,insert,update,references ",
+		"c_float float <nil> YES  <nil>  select,insert,update,references ",
+		"c_bit bit(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_bool tinyint(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_char char(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_varchar_default varchar(20) ascii_bin YES  cUrrent_tImestamp  select,insert,update,references ",
+		"c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_year year(4) <nil> YES  <nil>  select,insert,update,references ",
+		"c_date date <nil> YES  <nil>  select,insert,update,references ",
+		"c_time time <nil> YES  <nil>  select,insert,update,references ",
+		"c_datetime datetime <nil> YES  <nil>  select,insert,update,references ",
+		"c_datetime_default datetime <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ",
+		"c_datetime_default_2 datetime(2) <nil> YES  CURRENT_TIMESTAMP(2)  select,insert,update,references ",
+		"c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ",
+		"c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ",
+		"c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ",
+		"c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ",
+		"c_date_default date <nil> YES  CURRENT_DATE  select,insert,update,references ",
+		"c_date_default_2 date <nil> YES  CURRENT_DATE  select,insert,update,references ",
+		"c_blob blob <nil> YES  <nil>  select,insert,update,references ",
+		"c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_longblob longblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_text text ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_tinytext tinytext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_mediumtext mediumtext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_longtext longtext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_json json <nil> YES  <nil>  select,insert,update,references ",
+		"c_enum enum('1') ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_set set('1') ascii_bin YES  <nil>  select,insert,update,references "))
 
 	tk.MustExec("drop table if exists test_full_column")
 
@@ -523,7 +524,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery(`describe t`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`show columns from v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1,PAD SPACE"))
 	tk.MustExec(`drop sequence if exists seq`)
 	tk.MustExec(`create sequence seq`)
 	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
@@ -535,7 +536,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -678,7 +679,7 @@ func TestUnprivilegedShow(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("testshow"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -810,7 +811,7 @@ func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 
 	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
 	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
@@ -998,10 +999,13 @@ func TestShowVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	var showSQL string
+	sessionOnlyVars := make([]string, 0, len(variable.GetSysVars()))
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if v.Scope == variable.ScopeSession {
+		if v.Scope == vardef.ScopeSession {
+			sessionOnlyVars = append(sessionOnlyVars, v.Name)
+		} else if !v.HasSessionScope() && !v.InternalSessionVariable {
 			sessionVars = append(sessionVars, v.Name)
 		} else {
 			globalVars = append(globalVars, v.Name)
@@ -1009,18 +1013,20 @@ func TestShowVar(t *testing.T) {
 	}
 
 	// When ScopeSession only. `show global variables` must return empty.
-	sessionVarsStr := strings.Join(sessionVars, "','")
-	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
+	sessionOnlyVarsStr := strings.Join(sessionOnlyVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionOnlyVarsStr + "')"
 	res := tk.MustQuery(showSQL)
-	require.Len(t, res.Rows(), len(sessionVars))
-	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
+	require.Len(t, res.Rows(), len(sessionOnlyVars))
+	showSQL = "show global variables where variable_name in('" + sessionOnlyVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), 0)
 
-	globalVarsStr := strings.Join(globalVars, "','")
-	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
+	sessionVarsStr := strings.Join(sessionVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
 	res = tk.MustQuery(showSQL)
-	require.Len(t, res.Rows(), len(globalVars))
+	require.Len(t, res.Rows(), len(sessionVars))
+
+	globalVarsStr := strings.Join(globalVars, "','")
 	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))
@@ -1032,7 +1038,7 @@ func TestShowVar(t *testing.T) {
 		if strings.HasPrefix(line, "version ") {
 			require.Equal(t, mysql.ServerVersion, line[len("version "):])
 		} else if strings.HasPrefix(line, "version_comment ") {
-			require.Equal(t, variable.GetSysVar(variable.VersionComment), line[len("version_comment "):])
+			require.Equal(t, variable.GetSysVar(vardef.VersionComment), line[len("version_comment "):])
 		}
 	}
 
@@ -1049,96 +1055,18 @@ func TestShowCreatePlacementPolicy(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
+	tk.MustExec("CREATE PLACEMENT POLICY xyz2 FOLLOWERS=1 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz2").Check(testkit.Rows("xyz2 CREATE PLACEMENT POLICY `xyz2` FOLLOWERS=1 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
+	tk.MustExec("DROP PLACEMENT POLICY xyz2")
 	// non existent policy
 	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
 	require.Equal(t, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error(), err.Error())
 	// alter and try second example
 	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
+	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\"")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[zone, dc, host]\""))
 	tk.MustExec("DROP PLACEMENT POLICY xyz")
-}
-
-func TestShowBindingCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec(`set global tidb_mem_quota_binding_cache = 1`)
-	tk.MustQuery("select @@global.tidb_mem_quota_binding_cache").Check(testkit.Rows("1"))
-	tk.MustExec("admin reload bindings;")
-	res := tk.MustQuery("show global bindings")
-	require.Equal(t, 0, len(res.Rows()))
-
-	tk.MustExec("create global binding for select * from t using select * from t")
-	res = tk.MustQuery("show global bindings")
-	require.Equal(t, 0, len(res.Rows()))
-
-	tk.MustExec(`set global tidb_mem_quota_binding_cache = default`)
-	tk.MustQuery("select @@global.tidb_mem_quota_binding_cache").Check(testkit.Rows("67108864"))
-	tk.MustExec("admin reload bindings")
-	res = tk.MustQuery("show global bindings")
-	require.Equal(t, 1, len(res.Rows()))
-
-	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
-	res = tk.MustQuery("show global bindings")
-	require.Equal(t, 2, len(res.Rows()))
-}
-
-func TestShowBindingCacheStatus(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"0 0 0 Bytes 64 MB"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
-	result := tk.MustQuery("show global bindings")
-	rows := result.Rows()
-	require.Equal(t, len(rows), 0)
-	tk.MustExec("create global binding for select * from t using select * from t")
-
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 1 159 Bytes 64 MB"))
-
-	tk.MustExec(`set global tidb_mem_quota_binding_cache = 250`)
-	tk.MustQuery(`select @@global.tidb_mem_quota_binding_cache`).Check(testkit.Rows("250"))
-	tk.MustExec("admin reload bindings;")
-	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 2 187 Bytes 250 Bytes"))
-
-	tk.MustExec("drop global binding for select * from t where a > 1")
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 0)
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"0 1 0 Bytes 250 Bytes"))
-
-	tk.MustExec("admin reload bindings")
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 1 159 Bytes 250 Bytes"))
-
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
-
-	result = tk.MustQuery("show global bindings")
-	rows = result.Rows()
-	require.Equal(t, len(rows), 1)
-
-	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 1 198 Bytes 250 Bytes"))
 }
 
 func TestShowLimitReturnRow(t *testing.T) {
@@ -1189,36 +1117,9 @@ func TestShowLimitReturnRow(t *testing.T) {
 	require.Equal(t, rows[0][0], "server_id")
 
 	tk.MustQuery("Show Collation where collation='utf8_bin'").Check(testkit.RowsWithSep("|", ""+
-		"utf8_bin utf8 83 Yes Yes 1"))
+		"utf8_bin utf8 83 Yes Yes 1 PAD SPACE"))
 
 	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
 	rows = result.Rows()
 	require.Equal(t, rows[0][2], "idx_b")
-}
-
-func TestShowBindingDigestField(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(id int, key(id))")
-	tk.MustExec("create table t2(id int, key(id))")
-	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
-	result := tk.MustQuery("show bindings;")
-	rows := result.Rows()[0]
-	require.Equal(t, len(rows), 11)
-	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
-	tk.MustExec("drop binding for select * from t1, t2 where t1.id = t2.id")
-	result = tk.MustQuery("show bindings;")
-	require.Equal(t, len(result.Rows()), 0)
-
-	tk.MustExec("create global binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
-	result = tk.MustQuery("show global bindings;")
-	rows = result.Rows()[0]
-	require.Equal(t, len(rows), 11)
-	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
-	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
-	result = tk.MustQuery("show global bindings;")
-	require.Equal(t, len(result.Rows()), 0)
 }

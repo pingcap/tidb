@@ -19,7 +19,7 @@ check_cluster_version 5 4 0 'new collation' || { echo 'TiDB does not support new
 set -eu
 
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
-. $cur/../_utils/run_services
+. $UTILS_DIR/run_services
 
 # restart cluster with new collation enabled
 start_services --tidb-cfg $cur/tidb-new-collation.toml

@@ -20,14 +20,17 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -64,11 +67,15 @@ func (r *requiredRowsSelectResult) Next(ctx context.Context, chk *chunk.Chunk) e
 		return nil
 	}
 	required := min(chk.RequiredRows(), r.totalRows-r.count)
-	for i := 0; i < required; i++ {
+	for range required {
 		chk.AppendRow(r.genOneRow())
 	}
 	r.count += required
 	return nil
+}
+
+func (r *requiredRowsSelectResult) IntoIter(_ [][]*types.FieldType) (distsql.SelectResultIter, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (r *requiredRowsSelectResult) genOneRow() chunk.Row {
@@ -79,7 +86,7 @@ func (r *requiredRowsSelectResult) genOneRow() chunk.Row {
 	return row.ToRow()
 }
 
-func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) interface{} {
+func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) any {
 	switch valType.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -111,7 +118,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 	return
 }
 
-func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+func mockSelectResult(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, copPlanIDs []int) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
@@ -122,17 +129,25 @@ func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Re
 }
 
 func buildTableReader(sctx sessionctx.Context) exec.Executor {
+	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
+	cols := make([]*expression.Column, len(retTypes))
+	for i := range retTypes {
+		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
+	}
+	schema := expression.NewSchema(cols...)
+
 	e := &TableReaderExecutor{
-		BaseExecutor:     buildMockBaseExec(sctx),
-		table:            &tables.TableCommon{},
-		dagPB:            buildMockDAGRequest(sctx),
-		selectResultHook: selectResultHook{mockSelectResult},
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), schema, 0),
+		tableReaderExecutorContext: newTableReaderExecutorContext(sctx),
+		table:                      &tables.TableCommon{},
+		dagPB:                      buildMockDAGRequest(sctx),
+		selectResultHook:           selectResultHook{mockSelectResult},
 	}
 	return e
 }
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
-	req, err := builder.ConstructDAGReq(sctx, []core.PhysicalPlan{&core.PhysicalTableScan{
+	req, err := builder.ConstructDAGReq(sctx, []base.PhysicalPlan{&physicalop.PhysicalTableScan{
 		Columns: []*model.ColumnInfo{},
 		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
 		Desc:    false,
@@ -143,14 +158,14 @@ func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
 	return req
 }
 
-func buildMockBaseExec(sctx sessionctx.Context) exec.BaseExecutor {
+func buildMockBaseExec(sctx sessionctx.Context) exec.BaseExecutorV2 {
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := exec.NewBaseExecutor(sctx, schema, 0)
+	baseExec := exec.NewBaseExecutorV2(sctx.GetSessionVars(), schema, 0)
 	return baseExec
 }
 
@@ -198,10 +213,11 @@ func TestTableReaderRequiredRows(t *testing.T) {
 
 func buildIndexReader(sctx sessionctx.Context) exec.Executor {
 	e := &IndexReaderExecutor{
-		BaseExecutor:     buildMockBaseExec(sctx),
-		dagPB:            buildMockDAGRequest(sctx),
-		index:            &model.IndexInfo{},
-		selectResultHook: selectResultHook{mockSelectResult},
+		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
+		BaseExecutorV2:             buildMockBaseExec(sctx),
+		dagPB:                      buildMockDAGRequest(sctx),
+		index:                      &model.IndexInfo{},
+		selectResultHook:           selectResultHook{mockSelectResult},
 	}
 	return e
 }

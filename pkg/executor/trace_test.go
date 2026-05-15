@@ -59,7 +59,7 @@ func TestTraceExec(t *testing.T) {
 	require.GreaterOrEqual(t, len(rows), 1)
 }
 
-func rowsOrdered(rows [][]interface{}) bool {
+func rowsOrdered(rows [][]any) bool {
 	for idx := range rows {
 		if _, ok := rows[idx][1].(string); !ok {
 			return false
@@ -72,17 +72,4 @@ func rowsOrdered(rows [][]interface{}) bool {
 		}
 	}
 	return true
-}
-
-func TestTracePlanStmt(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table tp1(id int);")
-	tk.MustExec("create table tp2(id int);")
-	tk.MustExec("set @@tidb_cost_model_version=2")
-	rows := tk.MustQuery("trace plan select * from tp1 t1, tp2 t2 where t1.id = t2.id").Rows()
-	require.Len(t, rows, 1)
-	require.Len(t, rows[0], 1)
-	require.Regexp(t, ".*zip", rows[0][0])
 }

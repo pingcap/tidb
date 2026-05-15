@@ -32,11 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 )
@@ -56,7 +56,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 
 // TiDBContext implements QueryCtx.
 type TiDBContext struct {
-	sessiontypes.Session
+	sessionapi.Session
 	stmts map[int]*TiDBStatement
 }
 
@@ -150,8 +150,9 @@ func (ts *TiDBStatement) Reset() error {
 	}
 	ts.hasActiveCursor = false
 
-	if ts.rs != nil && ts.rs.GetRowContainerReader() != nil {
-		ts.rs.GetRowContainerReader().Close()
+	resultset.ReportCursorRUV2Delta(ts.rs, 0)
+	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
+		ts.rs.GetRowIterator().Close()
 	}
 	ts.rs = nil
 
@@ -173,8 +174,9 @@ func (ts *TiDBStatement) Reset() error {
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
-	if ts.rs != nil && ts.rs.GetRowContainerReader() != nil {
-		ts.rs.GetRowContainerReader().Close()
+	resultset.ReportCursorRUV2Delta(ts.rs, 0)
+	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
+		ts.rs.GetRowIterator().Close()
 	}
 
 	if ts.rowContainer != nil {
@@ -200,9 +202,7 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid PlanCacheStmt type")
 			}
-			bindSQL, _ := core.GetBindSQL4PlanCache(ts.ctx, preparedObj)
-			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
-				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+			cacheKey, _, _, _, err := core.NewPlanCacheKey(ts.ctx, preparedObj)
 			if err != nil {
 				return err
 			}
@@ -260,7 +260,7 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 }
 
 // GetWarnings implements QueryCtx GetWarnings method.
-func (tc *TiDBContext) GetWarnings() []stmtctx.SQLWarn {
+func (tc *TiDBContext) GetWarnings() []contextutil.SQLWarn {
 	return tc.GetSessionVars().StmtCtx.GetWarnings()
 }
 

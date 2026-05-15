@@ -39,7 +39,7 @@ func TestMVMap(t *testing.T) {
 
 	results := []string{"abc abc1", "abc abc2", "def def1", "def def2"}
 	it := m.NewIterator()
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		key, val := it.Next()
 		require.Equal(t, results[i], fmt.Sprintf("%s %s", key, val))
 	}

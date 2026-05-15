@@ -33,14 +33,31 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 		enc = util2.NewInputDecoder(charset.CharsetUTF8)
 	}
 
-	for i := 0; i < len(params); i++ {
+	for i := range params {
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
 			params[i] = param.BinaryParam{
 				Tp:  mysql.TypeBlob,
-				Val: enc.DecodeInput(boundParams[i]),
+				Val: boundParams[i],
+			}
+
+			// The legacy logic is kept: if the `paramTypes` somehow didn't contain the type information, it will be treated as
+			// BLOB type. We didn't return `mysql.ErrMalformPacket` to keep compatibility with older versions, though it's
+			// meaningless if every clients work properly.
+			if (i<<1)+1 < len(paramTypes) {
+				// Only TEXT or BLOB type will be sent through `SEND_LONG_DATA`.
+				tp := paramTypes[i<<1]
+
+				switch tp {
+				case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBit:
+					params[i].Tp = tp
+					params[i].Val = enc.DecodeInput(boundParams[i])
+				case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+					params[i].Tp = tp
+					params[i].Val = boundParams[i]
+				}
 			}
 			continue
 		}

@@ -17,9 +17,11 @@ package isolation
 import (
 	"math"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -45,9 +47,15 @@ func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, c
 	p.getStmtForUpdateTSFunc = p.getTxnStartTS
 }
 
-func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
+func (p *OptimisticTxnContextProvider) onTxnActive(
+	txn kv.Transaction,
+	tp sessiontxn.EnterNewTxnType,
+) {
 	sessVars := p.sctx.GetSessionVars()
-	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
+	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp, txn.IsPipelined())
+	failpoint.Inject("injectOptimisticTxnRetryable", func(val failpoint.Value) {
+		sessVars.TxnCtx.CouldRetry = val.(bool)
+	})
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.
@@ -55,8 +63,16 @@ func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiont
 // If the session is already in transaction, enable retry or internal SQL could retry.
 // If not, the transaction could always retry, because it should be auto committed transaction.
 // Anyway the retry limit is 0, the transaction could not retry.
-func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.EnterNewTxnType) bool {
+func isOptimisticTxnRetryable(
+	sessVars *variable.SessionVars,
+	tp sessiontxn.EnterNewTxnType,
+	isPipelined bool,
+) bool {
 	if tp == sessiontxn.EnterNewTxnDefault {
+		return false
+	}
+
+	if isPipelined {
 		return false
 	}
 
@@ -109,7 +125,7 @@ func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
 // It will use MaxTS as the startTS in autocommit txn for some plans.
-func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
+func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err error) {
 	if p.optimizeWithMaxTS || p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
@@ -120,7 +136,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 		return nil
 	}
 
-	realPlan, ok := plan.(plannercore.Plan)
+	realPlan, ok := plan.(base.Plan)
 	if !ok {
 		return nil
 	}
@@ -129,10 +145,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 		realPlan = execute.Plan
 	}
 
-	ok, err = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx, realPlan)
-	if err != nil {
-		return err
-	}
+	ok = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx.GetSessionVars(), realPlan)
 
 	if ok {
 		sessVars := p.sctx.GetSessionVars()

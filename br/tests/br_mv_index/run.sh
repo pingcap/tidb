@@ -58,7 +58,7 @@ fi
 
 # incremental restore
 echo "incremental restore start..."
-run_br restore table --db $DB --table $TABLE -s "local://$TEST_DIR/$DB/inc" --pd $PD_ADDR
+run_br restore table --db $DB --table $TABLE -s "local://$TEST_DIR/$DB/inc" --pd $PD_ADDR --allow-pitr-from-incremental=false
 row_count_inc=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 # check full restore
 if [ "${row_count_inc}" != "${ROW_COUNT}" ];then

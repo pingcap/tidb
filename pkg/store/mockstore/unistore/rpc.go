@@ -35,7 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -59,8 +61,17 @@ var CheckResourceTagForTopSQLInGoTest bool
 // UnistoreRPCClientSendHook exports for test.
 var UnistoreRPCClientSendHook atomic.Pointer[func(*tikvrpc.Request)]
 
+// SendRequestAsync sends a request to mock cluster asynchronously.
+func (c *RPCClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	go func() {
+		cb.Schedule(c.SendRequest(ctx, addr, req, tikv.ReadTimeoutMedium))
+	}()
+}
+
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	tikvrpc.AttachContext(req, req.Context)
+
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
@@ -90,6 +101,15 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	failpoint.Inject("unistoreRPCDeadlineExceeded", func(val failpoint.Value) {
 		if val.(bool) && timeout < time.Second {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "Deadline is exceeded"}))
+		}
+	})
+	failpoint.Inject("unistoreRPCSlowByInjestSleep", func(val failpoint.Value) {
+		time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
+		failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "Deadline is exceeded"}))
+	})
+	failpoint.Inject("unistoreRPCSlowCop", func(val failpoint.Value) {
+		if req.Type == tikvrpc.CmdCop {
+			time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
 		}
 	})
 
@@ -186,6 +206,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			case "keyError":
 				failpoint.Return(&tikvrpc.Response{
 					Resp: &kvrpcpb.CommitResponse{Error: &kvrpcpb.KeyError{}},
+				}, nil)
+			case "undeterminedResult":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.CommitResponse{RegionError: &errorpb.Error{
+						UndeterminedResult: &errorpb.UndeterminedResult{}},
+					},
 				}, nil)
 			}
 		})
@@ -314,6 +340,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		// (dr *delRange) startEmulator()
 		resp.Resp = &kvrpcpb.UnsafeDestroyRangeResponse{}
 		return resp, nil
+	case tikvrpc.CmdFlush:
+		r := req.Flush()
+		c.cluster.handleDelay(r.StartTs, r.Context.RegionId)
+		resp.Resp, err = c.usSvr.KvFlush(ctx, r)
+	case tikvrpc.CmdBufferBatchGet:
+		r := req.BufferBatchGet()
+		resp.Resp, err = c.usSvr.KvBufferBatchGet(ctx, r)
 	default:
 		err = errors.Errorf("not support this request type %v", req.Type)
 	}
@@ -450,6 +483,9 @@ func (c *RPCClient) CloseAddr(addr string) error {
 	return nil
 }
 
+// SetEventListener implements tikv.Client interface.
+func (c *RPCClient) SetEventListener(listener tikv.ClientEventListener) {}
+
 type mockClientStream struct{}
 
 // Header implements grpc.ClientStream interface
@@ -465,10 +501,10 @@ func (mockClientStream) CloseSend() error { return nil }
 func (mockClientStream) Context() context.Context { return nil }
 
 // SendMsg implements grpc.ClientStream interface
-func (mockClientStream) SendMsg(m interface{}) error { return nil }
+func (mockClientStream) SendMsg(m any) error { return nil }
 
 // RecvMsg implements grpc.ClientStream interface
-func (mockClientStream) RecvMsg(m interface{}) error { return nil }
+func (mockClientStream) RecvMsg(m any) error { return nil }
 
 type mockCopStreamClient struct {
 	mockClientStream
@@ -543,8 +579,8 @@ func (mockServerStream) SetHeader(metadata.MD) error  { return nil }
 func (mockServerStream) SendHeader(metadata.MD) error { return nil }
 func (mockServerStream) SetTrailer(metadata.MD)       {}
 func (mockServerStream) Context() context.Context     { return nil }
-func (mockServerStream) SendMsg(interface{}) error    { return nil }
-func (mockServerStream) RecvMsg(interface{}) error    { return nil }
+func (mockServerStream) SendMsg(any) error            { return nil }
+func (mockServerStream) RecvMsg(any) error            { return nil }
 
 type mockBatchCoprocessorStreamServer struct {
 	mockServerStream

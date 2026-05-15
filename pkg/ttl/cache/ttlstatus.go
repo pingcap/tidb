@@ -18,7 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -44,8 +43,8 @@ const (
 const selectFromTTLTableStatus = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statistics,last_job_id,last_job_start_time,last_job_finish_time,last_job_ttl_expire,last_job_summary,current_job_id,current_job_owner_id,current_job_owner_addr,current_job_owner_hb_time,current_job_start_time,current_job_ttl_expire,current_job_state,current_job_status,current_job_status_update_time FROM mysql.tidb_ttl_table_status"
 
 // SelectFromTTLTableStatusWithID returns an SQL statement to get the table status from table id
-func SelectFromTTLTableStatusWithID(tableID int64) (string, []interface{}) {
-	return selectFromTTLTableStatus + " WHERE table_id = %?", []interface{}{tableID}
+func SelectFromTTLTableStatusWithID(tableID int64) (string, []any) {
+	return selectFromTTLTableStatus + " WHERE table_id = %?", []any{tableID}
 }
 
 // TableStatus contains the corresponding information in the system table `mysql.tidb_ttl_table_status`
@@ -97,7 +96,7 @@ func (tsc *TableStatusCache) Update(ctx context.Context, se session.Session) err
 
 	newTables := make(map[int64]*TableStatus, len(rows))
 	for _, row := range rows {
-		status, err := RowToTableStatus(se, row)
+		status, err := RowToTableStatus(se.GetSessionVars().Location(), row)
 		if err != nil {
 			return err
 		}
@@ -110,9 +109,8 @@ func (tsc *TableStatusCache) Update(ctx context.Context, se session.Session) err
 }
 
 // RowToTableStatus converts a row to table status
-func RowToTableStatus(sctx sessionctx.Context, row chunk.Row) (*TableStatus, error) {
+func RowToTableStatus(timeZone *time.Location, row chunk.Row) (*TableStatus, error) {
 	var err error
-	timeZone := sctx.GetSessionVars().Location()
 
 	status := &TableStatus{
 		TableID: row.GetInt64(0),

@@ -17,7 +17,6 @@ package stmtsummary
 import (
 	"context"
 	"errors"
-	"maps"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -25,9 +24,9 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -39,7 +38,7 @@ const (
 	defaultEnabled             = true
 	defaultEnableInternalQuery = false
 	defaultMaxStmtCount        = 3000
-	defaultMaxSQLLength        = 4096
+	defaultMaxSQLLength        = 32768
 	defaultRefreshInterval     = 30 * 60 // 30 min
 	defaultRotateCheckInterval = 1       // s
 )
@@ -245,19 +244,15 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		return
 	}
 
-	k := &stmtKey{
-		schemaName:        info.SchemaName,
-		digest:            info.Digest,
-		prevDigest:        info.PrevSQLDigest,
-		planDigest:        info.PlanDigest,
-		resourceGroupName: info.ResourceGroupName,
-	}
-	k.Hash() // Calculate hash value in advance, to reduce the time holding the window lock.
+	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
+	// Init hash value in advance, to reduce the time holding the lock.
+	k.Init(info.SchemaName, info.Digest, info.PrevSQLDigest, info.PlanDigest, info.ResourceGroupName)
 
 	// Add info to the current statistics window.
 	s.windowLock.Lock()
 	var record *lockedStmtRecord
-	if v, ok := s.window.lru.Get(k); ok {
+	v, exist := s.window.lru.Get(k)
+	if exist {
 		record = v.(*lockedStmtRecord)
 	} else {
 		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
@@ -268,6 +263,9 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	record.Lock()
 	record.Add(info)
 	record.Unlock()
+	if exist {
+		stmtsummary.StmtDigestKeyPool.Put(k)
+	}
 }
 
 // Evicted returns the number of statements evicted for the current
@@ -333,51 +331,6 @@ func (s *StmtSummary) flush() {
 	}
 }
 
-// GetMoreThanCntBindableStmt is used to get bindable statements.
-// Statements whose execution times exceed the threshold will be
-// returned. Since the historical data has been persisted, we only
-// refer to the statistics data of the current window in memory.
-func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.BindableStmt {
-	s.windowLock.Lock()
-	values := s.window.lru.Values()
-	s.windowLock.Unlock()
-	stmts := make([]*stmtsummary.BindableStmt, 0, len(values))
-	for _, value := range values {
-		record := value.(*lockedStmtRecord)
-		func() {
-			record.Lock()
-			defer record.Unlock()
-			if record.StmtType == "Select" ||
-				record.StmtType == "Delete" ||
-				record.StmtType == "Update" ||
-				record.StmtType == "Insert" ||
-				record.StmtType == "Replace" {
-				if len(record.AuthUsers) > 0 && record.ExecCount > cnt {
-					stmt := &stmtsummary.BindableStmt{
-						Schema:    record.SchemaName,
-						Query:     record.SampleSQL,
-						PlanHint:  record.PlanHint,
-						Charset:   record.Charset,
-						Collation: record.Collation,
-						Users:     make(map[string]struct{}),
-					}
-					maps.Copy(stmt.Users, record.AuthUsers)
-
-					// If it is SQL command prepare / execute, the ssElement.sampleSQL
-					// is `execute ...`, we should get the original select query.
-					// If it is binary protocol prepare / execute, ssbd.normalizedSQL
-					// should be same as ssElement.sampleSQL.
-					if record.Prepared {
-						stmt.Query = record.NormalizedSQL
-					}
-					stmts = append(stmts, stmt)
-				}
-			}
-		}()
-	}
-	return stmts
-}
-
 func (s *StmtSummary) rotateLoop() {
 	tick := time.NewTicker(defaultRotateCheckInterval * time.Second)
 	defer tick.Stop()
@@ -393,9 +346,20 @@ func (s *StmtSummary) rotateLoop() {
 			if now.After(s.window.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
 				s.rotate(now)
 			}
+			s.updateMetrics()
 			s.windowLock.Unlock()
 		}
 	}
+}
+
+// updateMetrics reports the current window's record count and eviction count
+// to Prometheus gauges. Must be called with windowLock held.
+func (s *StmtSummary) updateMetrics() {
+	metrics.SetStmtSummaryWindowMetrics(
+		metrics.StmtSummaryTypeV2,
+		float64(s.window.lru.Size()),
+		float64(s.window.evictedCount.Load()),
+	)
 }
 
 func (s *StmtSummary) rotate(now time.Time) {
@@ -417,9 +381,10 @@ func (s *StmtSummary) rotate(now time.Time) {
 // according to the LRU strategy. All evicted data will be aggregated
 // into stmtEvicted.
 type stmtWindow struct {
-	begin   time.Time
-	lru     *kvcache.SimpleLRUCache // *stmtKey => *lockedStmtRecord
-	evicted *stmtEvicted
+	begin        time.Time
+	lru          *kvcache.SimpleLRUCache // *StmtDigestKey => *lockedStmtRecord
+	evicted      *stmtEvicted
+	evictedCount atomic.Int64 // total number of LRU evictions in this window
 }
 
 func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
@@ -429,10 +394,11 @@ func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
 		evicted: newStmtEvicted(),
 	}
 	w.lru.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		w.evictedCount.Add(1)
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		defer r.Unlock()
-		w.evicted.add(k.(*stmtKey), r.StmtRecord)
+		w.evicted.add(k.(*stmtsummary.StmtDigestKey), r.StmtRecord)
 	})
 	return w
 }
@@ -440,41 +406,12 @@ func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
 func (w *stmtWindow) clear() {
 	w.lru.DeleteAll()
 	w.evicted = newStmtEvicted()
+	w.evictedCount.Store(0)
 }
 
 type stmtStorage interface {
 	persist(w *stmtWindow, end time.Time)
 	sync() error
-}
-
-// stmtKey defines key for stmtElement.
-type stmtKey struct {
-	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
-	// The digest of the previous statement.
-	prevDigest string
-	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
-	// `hash` is the hash value of this object.
-	hash []byte
-}
-
-// Hash implements SimpleLRUCache.Key.
-// Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
-// `prevSQL` is included in the key To distinguish different transactions.
-func (k *stmtKey) Hash() []byte {
-	if len(k.hash) == 0 {
-		k.hash = make([]byte, 0, len(k.schemaName)+len(k.digest)+len(k.prevDigest)+len(k.planDigest))
-		k.hash = append(k.hash, hack.Slice(k.digest)...)
-		k.hash = append(k.hash, hack.Slice(k.schemaName)...)
-		k.hash = append(k.hash, hack.Slice(k.prevDigest)...)
-		k.hash = append(k.hash, hack.Slice(k.planDigest)...)
-		k.hash = append(k.hash, hack.Slice(k.resourceGroupName)...)
-	}
-	return k.hash
 }
 
 type stmtEvicted struct {
@@ -490,12 +427,13 @@ func newStmtEvicted() *stmtEvicted {
 			AuthUsers:    make(map[string]struct{}),
 			MinLatency:   time.Duration(math.MaxInt64),
 			BackoffTypes: make(map[string]int),
-			FirstSeen:    time.Unix(math.MaxInt64, 0),
+			FirstSeen:    time.Now(),
+			LastSeen:     time.Now(),
 		},
 	}
 }
 
-func (e *stmtEvicted) add(key *stmtKey, record *StmtRecord) {
+func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord) {
 	if key == nil || record == nil {
 		return
 	}
@@ -605,13 +543,4 @@ func SetMaxSQLLength(v int) error {
 		return GlobalStmtSummary.SetMaxSQLLength(uint32(v))
 	}
 	return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(v)
-}
-
-// GetMoreThanCntBindableStmt wraps GlobalStmtSummary.GetMoreThanCntBindableStmt and
-// stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt.
-func GetMoreThanCntBindableStmt(frequency int64) []*stmtsummary.BindableStmt {
-	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
-		return GlobalStmtSummary.GetMoreThanCntBindableStmt(frequency)
-	}
-	return stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(frequency)
 }

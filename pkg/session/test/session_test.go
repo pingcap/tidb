@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,28 +30,38 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
+	"go.uber.org/zap"
 )
 
 func TestSchemaCheckerSQL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second)
 
 	setTxnTk := testkit.NewTestKit(t, store)
@@ -65,13 +77,6 @@ func TestSchemaCheckerSQL(t *testing.T) {
 	tk.MustExec(`create table t1 (id int, c int);`)
 	// insert data
 	tk.MustExec(`insert into t values(1, 1);`)
-
-	// The schema version is out of date in the first transaction, but the SQL can be retried.
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec(`begin;`)
-	tk1.MustExec(`alter table t add index idx(c);`)
-	tk.MustExec(`insert into t values(2, 2);`)
-	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
 	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
@@ -152,13 +157,10 @@ func TestLoadSchemaFailed(t *testing.T) {
 	tk2.MustExec("begin")
 
 	// Make sure loading information schema is failed and server is invalid.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`)
 	require.Error(t, domain.GetDomain(tk.Session()).Reload())
 
-	lease := domain.GetDomain(tk.Session()).DDL().GetLease()
+	lease := domain.GetDomain(tk.Session()).GetSchemaLease()
 	time.Sleep(lease * 2)
 
 	// Make sure executing insert statement is failed when server is invalid.
@@ -173,7 +175,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, ver)
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"))
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")
@@ -201,7 +203,7 @@ func TestWriteOnMultipleCachedTable(t *testing.T) {
 	}
 
 	cached := false
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		tk.MustQuery("select * from ct1")
 		if lastReadFromCache(tk) {
 			cached = true
@@ -294,9 +296,9 @@ func TestParseWithParams(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	exec := se.GetRestrictedSQLExecutor()
 
-	// test compatibility with ExcuteInternal
+	// test compatibility with ExecuteInternal
 	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
 	require.NoError(t, err)
 
@@ -348,11 +350,12 @@ func TestDoDDLJobQuit(t *testing.T) {
 	require.NoError(t, err)
 	defer se.Close()
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", `return`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop")) }()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", func() {
+		_ = dom.DDL().Stop()
+	})
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
+	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: ast.NewCIStr("testschema")})
 	require.Equal(t, "context canceled", err.Error())
 }
 
@@ -408,7 +411,7 @@ func TestStmtHints(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ 1;")
-	val = int64(0)
+	val = int64(-1)
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "Setting the MEMORY_QUOTA to 0 means no memory limit")
@@ -419,11 +422,11 @@ func TestStmtHints(t *testing.T) {
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 
-	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(3 MB) */ * from t1;")
+	tk.MustExec("insert /*+ MEMORY_QUOTA(1 MB) */  into t1 select /*+ MEMORY_QUOTA(1 MB) */ * from t1;")
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[util:3126]Hint MEMORY_QUOTA(`3145728`) is ignored as conflicting/duplicated.")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3126]Hint MEMORY_QUOTA(`1048576`) is ignored as conflicting/duplicated.")
 
 	// Test NO_INDEX_MERGE hint
 	tk.Session().GetSessionVars().SetEnableIndexMerge(true)
@@ -485,7 +488,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 
 	tk.MustExec("rename table t to t2")
 	var meetErr bool
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, err := tk2.Exec("insert t values (1)")
 		if err != nil {
 			meetErr = true
@@ -496,7 +499,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 
 	tk.MustExec("rename table t2 to t")
 	var recoverErr bool
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, err := tk2.Exec("insert t values (1)")
 		if err == nil {
 			recoverErr = true
@@ -572,52 +575,6 @@ func TestFieldText(t *testing.T) {
 	}
 }
 
-// TestRowLock . See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
-func TestRowLock(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	txn, err := tk.Session().Txn(true)
-	require.True(t, kv.ErrInvalidTxn.Equal(err))
-	require.False(t, txn.Valid())
-	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
-	tk.MustExec("insert t values (11, 2, 3)")
-	tk.MustExec("insert t values (12, 2, 3)")
-	tk.MustExec("insert t values (13, 2, 3)")
-
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("begin")
-	tk1.MustExec("update t set c2=21 where c1=11")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=211 where c1=11")
-	tk2.MustExec("commit")
-
-	// tk1 will retry and the final value is 21
-	tk1.MustExec("commit")
-
-	// Check the result is correct
-	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
-
-	tk1.MustExec("begin")
-	tk1.MustExec("update t set c2=21 where c1=11")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=22 where c1=12")
-	tk2.MustExec("commit")
-
-	tk1.MustExec("commit")
-}
-
 func TestMatchIdentity(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -630,24 +587,24 @@ func TestMatchIdentity(t *testing.T) {
 
 	// The MySQL matching rule is most specific to least specific.
 	// So if I log in from 192.168.1.1 I should match that entry always.
-	identity, err := tk.Session().MatchIdentity("useridentity", "192.168.1.1")
+	identity, err := tk.Session().MatchIdentity(context.Background(), "useridentity", "192.168.1.1")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "192.168.1.1", identity.Hostname)
 
 	// If I log in from localhost, I should match localhost
-	identity, err = tk.Session().MatchIdentity("useridentity", "localhost")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "localhost")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "localhost", identity.Hostname)
 
 	// If I log in from 192.168.1.2 I should match wildcard.
-	identity, err = tk.Session().MatchIdentity("useridentity", "192.168.1.2")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "192.168.1.2")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "%", identity.Hostname)
 
-	identity, err = tk.Session().MatchIdentity("useridentity", "127.0.0.1")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "127.0.0.1")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "localhost", identity.Hostname)
@@ -657,37 +614,12 @@ func TestMatchIdentity(t *testing.T) {
 	// entry in the privileges table (by reverse lookup).
 	ips, err := net.LookupHost("example.com")
 	require.NoError(t, err)
-	identity, err = tk.Session().MatchIdentity("useridentity", ips[0])
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", ips[0])
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	// FIXME: we *should* match example.com instead
 	// as long as skip-name-resolve is not set (DEFAULT)
 	require.Equal(t, "%", identity.Hostname)
-}
-
-func TestBinaryReadOnly(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (i int key)")
-	id, _, _, err := tk.Session().PrepareStmt("select i from t where i = ?")
-	require.NoError(t, err)
-	id2, _, _, err := tk.Session().PrepareStmt("insert into t values (?)")
-	require.NoError(t, err)
-	tk.MustExec("set autocommit = 0")
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("insert into t values (1)")
-	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id2, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("commit")
 }
 
 func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {
@@ -761,6 +693,7 @@ func TestRequestSource(t *testing.T) {
 	withCheckInterceptor := func(source string) interceptor.RPCInterceptor {
 		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+				tikvrpc.AttachContext(req, req.Context)
 				requestSource := ""
 				readType := ""
 				switch r := req.Req.(type) {
@@ -777,6 +710,10 @@ func TestRequestSource(t *testing.T) {
 				case *kvrpcpb.BatchGetRequest:
 					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
+				case *kvrpcpb.PessimisticLockRequest:
+					requestSource = r.GetContext().GetRequestSource()
+				default:
+					fmt.Printf("unexpected request type %T\n", r)
 				}
 				require.Equal(t, readType+source, requestSource)
 				return next(target, req)
@@ -798,7 +735,7 @@ func TestRequestSource(t *testing.T) {
 
 func TestEmptyInitSQLFile(t *testing.T) {
 	// A non-existent sql file would stop the bootstrap of the tidb cluster
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
 	defer func() {
@@ -832,7 +769,7 @@ func TestInitSystemVariable(t *testing.T) {
 
 	// Create a mock store
 	// Set the config parameter for initialize sql file
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = initializeSQLFile.Name()
 	defer func() {
@@ -921,7 +858,7 @@ DROP USER root;
 	_, err = sqlFiles[1].WriteString("drop user cloud_admin;")
 	require.NoError(t, err)
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
 	defer func() {
@@ -973,6 +910,78 @@ DROP USER root;
 	dom.Close()
 }
 
+func TestBootstrapSQLWithExtension(t *testing.T) {
+	authChecks := []*extension.AuthPlugin{{
+		Name: "my_auth_plugin",
+		AuthenticateUser: func(request extension.AuthenticateRequest) error {
+			return nil
+		},
+		ValidateAuthString: func(pwdHash string) bool {
+			return pwdHash != ""
+		},
+		GenerateAuthString: func(pwd string) (string, bool) {
+			return pwd, pwd != ""
+		},
+		RequiredClientSidePlugin: mysql.AuthNativePassword,
+	}}
+
+	require.NoError(t, extension.Register(
+		"extension_authentication_plugin",
+		extension.WithCustomAuthPlugins(authChecks),
+		extension.WithCustomSysVariables([]*variable.SysVar{
+			{
+				Scope:          vardef.ScopeGlobal,
+				Name:           "extension_authentication_plugin",
+				Value:          mysql.AuthNativePassword,
+				Type:           vardef.TypeEnum,
+				PossibleValues: []string{authChecks[0].Name},
+			},
+		}),
+	))
+	require.NoError(t, extension.Setup())
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
+
+	sqlFile, err := os.CreateTemp("", "TestBootstrapSQLWithExtension.sql")
+	require.NoError(t, err)
+	defer func() {
+		path := sqlFile.Name()
+		err = sqlFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	// Create a user with the custom auth plugin.
+	_, err = sqlFile.WriteString(`CREATE USER myuser IDENTIFIED WITH my_auth_plugin BY 'password';`)
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = sqlFile.Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the sql file
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	se := session.CreateSessionAndSetID(t, store)
+	se.SetExtensions(ext.NewSessionExtensions())
+	ctx := context.Background()
+	// 'myuser' has been created successfully
+	r := session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'myuser'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "myuser", row.GetString(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}
+
 func TestErrorHappenWhileInit(t *testing.T) {
 	// 1. parser error in sql file (1.sql) makes the bootstrap panic
 	// 2. other errors in sql file (2.sql) will be ignored
@@ -999,7 +1008,7 @@ insert into test.t values ("abc"); -- invalid statement
 `)
 	require.NoError(t, err)
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
 	defer func() {
@@ -1015,7 +1024,7 @@ insert into test.t values ("abc"); -- invalid statement
 	session.DisableRunBootstrapSQLFileInTest()
 
 	// Bootstrap with the second sql file, which would not been executed.
-	store, err = mockstore.NewMockStore()
+	store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -1046,4 +1055,134 @@ insert into test.t values ("abc"); -- invalid statement
 	require.Equal(t, 0, req.NumRows())
 	require.NoError(t, r.Close())
 	dom.Close()
+}
+
+func TestIssue60266(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set session sql_mode='NO_BACKSLASH_ESCAPES';")
+	tk.MustExec(`create table t1(id bigint primary key, a text, b text as ((regexp_replace(a, '^[1-9]\d{9,29}$', 'aaaaa'))), c text)`)
+	tk.MustExec(`insert into t1 (id, a, c) values(1,123456, 'ab\\\\c');`)
+	tk.MustExec(`insert into t1 (id, a, c) values(2,1234567890123, 'ab\\c');`)
+	tk.MustQuery("select * from t1;").Sort().
+		Check(testkit.Rows("1 123456 123456 ab\\\\\\\\c", "2 1234567890123 aaaaa ab\\\\c"))
+}
+
+func expectTxnStart(t *testing.T, store kv.Storage, execute func(tk *testkit.TestKit), txnStart uint64) {
+	tk := testkit.NewTestKit(t, store)
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		execute(tk)
+	}()
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.Eventually(t, func() bool {
+		sm := tk2.Session().GetSessionManager()
+		if sm == nil {
+			return false
+		}
+
+		pl := sm.ShowProcessList()
+		for _, pi := range pl {
+			if pi.ID == tk.Session().GetSessionVars().ConnectionID {
+				if pi.CurTxnStartTS == txnStart {
+					return true
+				}
+
+				logutil.BgLogger().Info("ProcessInfo TxnStartTS for current process is not correct",
+					zap.Uint64("expected", txnStart),
+					zap.Uint64("actual", pi.CurTxnStartTS))
+				return false
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond, "ProcessInfo TxnStartTS for current process is not correct")
+
+	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	wg.Wait()
+}
+
+func TestProcessInfoForStaleReadAutoCommit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("begin")
+	tsStr := tk.MustQuery("select @@tidb_current_ts;").Rows()[0][0]
+	tk.MustExec("set global tidb_external_ts = @@tidb_current_ts;")
+	tk.MustExec("commit")
+
+	ts, err := strconv.Atoi(tsStr.(string))
+	require.NoError(t, err)
+	expectTxnStart(t, store, func(tk *testkit.TestKit) {
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_external_ts_read = ON;")
+		err := tk.QueryToErr("select *, sleep(1000) from t")
+		require.Contains(t, err.Error(), "Query execution was interrupted")
+	}, uint64(ts))
+
+	// increase the ts to make it strictly greater than the previous ts, to avoid that
+	// the `t` is still empty or it cannot find the schema of `t`
+	time.Sleep(time.Millisecond)
+	tsTime := oracle.GetTimeFromTS(uint64(ts)).In(tk.Session().GetSessionVars().Location()).Add(time.Millisecond)
+	// Convert to the ts again to avoid precision issue
+	ts = int(oracle.GoTimeToTS(tsTime))
+	expectTxnStart(t, store, func(tk *testkit.TestKit) {
+		tk.MustExec("use test")
+		err := tk.QueryToErr(fmt.Sprintf("select *, sleep(1000) from t as of timestamp '%s';",
+			tsTime))
+		require.Contains(t, err.Error(), "Query execution was interrupted")
+	}, uint64(ts))
+}
+
+func TestGetDBNames(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Status.RecordDBLabel = true
+	config.StoreGlobalConfig(&newCfg)
+	defer config.StoreGlobalConfig(originCfg)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database DatabaseA;")
+	tk.MustExec("use DatabaseA;")
+	dbs := session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`create table t1(id bigint primary key, a int, b varchar(32), c text)`)
+	tk.MustExec(`create table t2(id bigint primary key, a int, b varchar(32), c text)`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`insert into t1 (id, b, c) values(1, 'ab', 'ab\\\\c');`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 <nil> ab ab\\\\c"))
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`insert into t1 (id, b, c) values(2, 'xy', 'ab\\c');`)
+	tk.MustExec(`update t1 set a = 123 where id = 2`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`delete from t1 where id = 1;`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("2 123 xy ab\\c"))
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
+		plannererrors.ErrWrongValueCountOnRow)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustQuery("show tables")
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
+	tk.MustExec(`drop table t1`)
+	dbs = session.GetDBNames(tk.Session().GetSessionVars())
+	require.Equal(t, dbs[0], "databasea")
 }

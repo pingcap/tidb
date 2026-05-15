@@ -19,19 +19,15 @@ import (
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
 type mockTxn struct {
-	opts  map[int]interface{}
+	opts  map[int]any
 	valid bool
-}
-
-func (t *mockTxn) SetAssertion(_ []byte, _ ...FlagsOp) error {
-	return nil
 }
 
 // Commit always returns a retryable error.
@@ -59,11 +55,11 @@ func (t *mockTxn) LockKeysFunc(_ context.Context, _ *LockCtx, fn func(), _ ...Ke
 	return nil
 }
 
-func (t *mockTxn) SetOption(opt int, val interface{}) {
+func (t *mockTxn) SetOption(opt int, val any) {
 	t.opts[opt] = val
 }
 
-func (t *mockTxn) GetOption(opt int) interface{} {
+func (t *mockTxn) GetOption(opt int) any {
 	return t.opts[opt]
 }
 
@@ -75,11 +71,15 @@ func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
 
-func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
-	return nil, nil
+func (t *mockTxn) CommitTS() uint64 {
+	return 0
 }
 
-func (t *mockTxn) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+func (t *mockTxn) Get(ctx context.Context, k Key, _ ...GetOption) (ValueEntry, error) {
+	return ValueEntry{}, nil
+}
+
+func (t *mockTxn) BatchGet(ctx context.Context, keys []Key, _ ...BatchGetOption) (map[string]ValueEntry, error) {
 	return nil, nil
 }
 
@@ -134,10 +134,10 @@ func (t *mockTxn) Reset() {
 	t.valid = false
 }
 
-func (t *mockTxn) SetVars(vars interface{}) {
+func (t *mockTxn) SetVars(vars any) {
 }
 
-func (t *mockTxn) GetVars() interface{} {
+func (t *mockTxn) GetVars() any {
 	return nil
 }
 
@@ -164,13 +164,10 @@ func (t *mockTxn) ClearDiskFullOpt() {
 	// TODO nothing
 }
 
-func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
-
-}
-
 func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
-
 }
+
+func (t *mockTxn) MemHookSet() bool { return false }
 
 func (t *mockTxn) Mem() uint64 {
 	return 0
@@ -181,17 +178,26 @@ func (t *mockTxn) RetryFairLocking(_ context.Context) error  { return nil }
 func (t *mockTxn) CancelFairLocking(_ context.Context) error { return nil }
 func (t *mockTxn) DoneFairLocking(_ context.Context) error   { return nil }
 func (t *mockTxn) IsInFairLockingMode() bool                 { return false }
+func (t *mockTxn) IsPipelined() bool                         { return false }
+func (t *mockTxn) MayFlush() error                           { return nil }
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
-		opts:  make(map[int]interface{}),
+		opts:  make(map[int]any),
 		valid: true,
 	}
 }
 
 // mockStorage is used to start a must commit-failed txn.
 type mockStorage struct{}
+
+func (s *mockStorage) GetOption(k any) (any, bool) {
+	return nil, false
+}
+
+func (s *mockStorage) SetOption(k any, v any) {
+}
 
 func (s *mockStorage) GetCodec() tikv.Codec {
 	return nil
@@ -248,7 +254,7 @@ func (s *mockStorage) Describe() string {
 	return "KVMockStorage is a mock Store implementation, only for unittests in KV package"
 }
 
-func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (any, error) {
 	return nil, nil
 }
 
@@ -264,6 +270,14 @@ func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
 	return 0
 }
 
+func (s *mockStorage) GetClusterID() uint64 {
+	return 1
+}
+
+func (s *mockStorage) GetKeyspace() string {
+	return ""
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}
@@ -273,17 +287,18 @@ type mockSnapshot struct {
 	store Retriever
 }
 
-func (s *mockSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
+func (s *mockSnapshot) Get(ctx context.Context, k Key, options ...GetOption) (ValueEntry, error) {
 	return s.store.Get(ctx, k)
 }
 
 func (s *mockSnapshot) SetPriority(priority int) {
 }
 
-func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
-	m := make(map[string][]byte, len(keys))
+func (s *mockSnapshot) BatchGet(ctx context.Context, keys []Key, options ...BatchGetOption) (map[string]ValueEntry, error) {
+	m := make(map[string]ValueEntry, len(keys))
+	getOptions := BatchGetToGetOptions(options)
 	for _, k := range keys {
-		v, err := s.store.Get(ctx, k)
+		v, err := s.store.Get(ctx, k, getOptions...)
 		if IsErrNotFound(err) {
 			continue
 		}
@@ -303,7 +318,7 @@ func (s *mockSnapshot) IterReverse(k Key, lowerBound Key) (Iterator, error) {
 	return s.store.IterReverse(k, lowerBound)
 }
 
-func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
+func (s *mockSnapshot) SetOption(opt int, val any) {}
 
 func (s *mockSnapshot) GetLockWaits() []deadlockpb.WaitForEntry {
 	return nil

@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
@@ -69,7 +70,7 @@ func TestRemovedSysVars(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "bogus_var", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "bogus_var", Value: "acdc"})
 	result := tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'bogus_var'")
 	result.Check(testkit.Rows("bogus_var acdc"))
 	result = tk.MustQuery("SELECT @@GLOBAL.bogus_var")
@@ -185,6 +186,25 @@ func TestUpgradeSysvars(t *testing.T) {
 	require.Equal(t, "OFF", v) // the default value is restored.
 }
 
+func TestIndexJoinBuildV2SysVarCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("SHOW VARIABLES LIKE 'tidb_opt_index_join_build_v2'").Check(testkit.Rows("tidb_opt_index_join_build_v2 ON"))
+	tk.MustQuery("SELECT @@tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_opt_index_join_build_v2', 'OFF')`)
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_opt_index_join_build_v2'").Check(testkit.Rows("tidb_opt_index_join_build_v2 ON"))
+	tk2.MustQuery("SELECT @@GLOBAL.tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+	tk2.MustQuery("SELECT @@tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+	tk2.MustContainErrMsg("SET @@tidb_opt_index_join_build_v2 = OFF", "tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
+}
+
 func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	varName := "tidb_general_log"
 	defaultValue := "OFF" // This is the default value for tidb_general_log
@@ -203,12 +223,11 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, defaultValue, v)
 
-	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
-	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
-	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
+	// session.GetGlobalSysVar would not get the value which session.SetInstanceSysVar writes,
+	// because SetInstanceSysVar did not persist values into the mysql.global_variable table.
 
 	// set to "1"
-	err = se.SetGlobalSysVar(context.Background(), varName, "ON")
+	err = se.SetInstanceSysVar(context.Background(), varName, "ON")
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
@@ -216,7 +235,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 
 	// set back to "0"
-	err = se.SetGlobalSysVar(context.Background(), varName, defaultValue)
+	err = se.SetInstanceSysVar(context.Background(), varName, defaultValue)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
@@ -249,7 +268,7 @@ func TestTimeZone(t *testing.T) {
 
 func TestGlobalVarAccessor(t *testing.T) {
 	varName := "max_allowed_packet"
-	varValue := strconv.FormatUint(variable.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
+	varValue := strconv.FormatUint(vardef.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
 
 	// The value of max_allowed_packet should be a multiple of 1024,
 	// so the setting of varValue1 and varValue2 would be truncated to varValue0
@@ -345,41 +364,41 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 
 	type hintCheck struct {
 		hint  string
-		check func(*stmtctx.StmtHints)
+		check func(*hint.StmtHints)
 	}
 
 	hintChecks := []hintCheck{
 		{
 			hint: "MEMORY_QUOTA(1024 MB)",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasMemQuotaHint)
 				require.Equal(t, int64(1024*1024*1024), stmtHint.MemQuotaQuery)
 			},
 		},
 		{
 			hint: "READ_CONSISTENT_REPLICA()",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasReplicaReadHint)
 				require.Equal(t, byte(tikv.ReplicaReadFollower), stmtHint.ReplicaRead)
 			},
 		},
 		{
 			hint: "MAX_EXECUTION_TIME(1000)",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasMaxExecutionTime)
 				require.Equal(t, uint64(1000), stmtHint.MaxExecutionTime)
 			},
 		},
 		{
 			hint: "USE_TOJA(TRUE)",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasAllowInSubqToJoinAndAggHint)
 				require.True(t, stmtHint.AllowInSubqToJoinAndAgg)
 			},
 		},
 		{
 			hint: "RESOURCE_GROUP(rg1)",
-			check: func(stmtHint *stmtctx.StmtHints) {
+			check: func(stmtHint *hint.StmtHints) {
 				require.True(t, stmtHint.HasResourceGroup)
 				require.Equal(t, "rg1", stmtHint.ResourceGroup)
 			},
@@ -389,15 +408,41 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 	for i, check := range hintChecks {
 		// common path
 		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 		// fast path
 		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 	}
+}
+
+func TestTiDBValidateTS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("insert into t values (1)")
+
+	// default is on
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set off
+	tk.MustExec("set global tidb_enable_ts_validation = off")
+	tk.MustQuery("select * from t as of timestamp NOW() + interval 1 day")
+
+	// set on
+	tk.MustExec("set global tidb_enable_ts_validation = on")
+	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
+}
+
+func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
+	require.Equal(t, time.Hour*100, vardef.AdvancerCheckPointLagLimit.Load())
 }

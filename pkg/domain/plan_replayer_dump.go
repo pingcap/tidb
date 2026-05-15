@@ -20,8 +20,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -31,13 +33,16 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -90,13 +95,13 @@ type tableNameExtractor struct {
 	ctx      context.Context
 	executor sqlexec.RestrictedSQLExecutor
 	is       infoschema.InfoSchema
-	curDB    model.CIStr
+	curDB    ast.CIStr
 	names    map[tableNamePair]struct{}
 	cteNames map[string]struct{}
 	err      error
 }
 
-func (tne *tableNameExtractor) getTablesAndViews() map[tableNamePair]struct{} {
+func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, error) {
 	r := make(map[tableNamePair]struct{})
 	for tablePair := range tne.names {
 		if tablePair.IsView {
@@ -108,8 +113,37 @@ func (tne *tableNameExtractor) getTablesAndViews() map[tableNamePair]struct{} {
 		if !ok {
 			r[tablePair] = struct{}{}
 		}
+		// if the table has a foreign key, we need to add the referenced table to the list
+		err := findFK(tne.is, tablePair.DBName, tablePair.TableName, r)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return r
+	return r, nil
+}
+
+func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tableNamePair]struct{}) error {
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
+	if err != nil {
+		return err
+	}
+	for _, fk := range tblInfo.Meta().ForeignKeys {
+		key := tableNamePair{
+			DBName:    fk.RefSchema.L,
+			TableName: fk.RefTable.L,
+			IsView:    false,
+		}
+		// Skip already visited tables to prevent infinite recursion in case of circular foreign key definitions.
+		if _, ok := tableMap[key]; ok {
+			continue
+		}
+		tableMap[key] = struct{}{}
+		err := findFK(is, key.DBName, key.TableName, tableMap)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (*tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -129,11 +163,12 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 			tne.err = err
 			return in, true
 		}
-		if tne.is.TableExists(t.Schema, t.Name) {
-			tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L, IsView: isView}
-			if tp.DBName == "" {
-				tp.DBName = tne.curDB.L
-			}
+		schema := t.Schema
+		if schema.L == "" {
+			schema = tne.curDB
+		}
+		if tne.is.TableExists(schema, t.Name) {
+			tp := tableNamePair{DBName: schema.L, TableName: t.Name.L, IsView: isView}
 			tne.names[tp] = struct{}{}
 		}
 	} else if s, ok := in.(*ast.SelectStmt); ok {
@@ -152,11 +187,11 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 		schema = tne.curDB
 	}
 	table := t.Name
-	isView := tne.is.TableIsView(schema, table)
+	isView := infoschema.TableIsView(tne.is, schema, table)
 	if !isView {
 		return false, nil
 	}
-	viewTbl, err := tne.is.TableByName(schema, table)
+	viewTbl, err := tne.is.TableByName(context.Background(), schema, table)
 	if err != nil {
 		return false, err
 	}
@@ -171,38 +206,34 @@ func (tne *tableNameExtractor) handleIsView(t *ast.TableName) (bool, error) {
 
 // DumpPlanReplayerInfo will dump the information about sqls.
 // The files will be organized into the following format:
-/*
- |-sql_meta.toml
- |-meta.txt
- |-schema
- |	 |-schema_meta.txt
- |	 |-db1.table1.schema.txt
- |	 |-db2.table2.schema.txt
- |	 |-....
- |-view
- | 	 |-db1.view1.view.txt
- |	 |-db2.view2.view.txt
- |	 |-....
- |-stats
- |   |-stats1.json
- |   |-stats2.json
- |   |-....
- |-statsMem
- |   |-stats1.txt
- |   |-stats2.txt
- |   |-....
- |-config.toml
- |-table_tiflash_replica.txt
- |-variables.toml
- |-bindings.sql
- |-sql
- |   |-sql1.sql
- |   |-sql2.sql
- |	 |-....
- |-explain.txt
-*/
+//
+// Single SQL dump:
+//
+//	|-sql_meta.toml
+//	|-meta.txt
+//	|-schema/...
+//	|-view/...
+//	|-stats/...
+//	|-statsMem/...
+//	|-config.toml
+//	|-table_tiflash_replica.txt
+//	|-variables.toml
+//	|-bindings.sql
+//	|-sql/sql0.sql
+//	|-explain.txt
+//
+// Multiple SQL dump (PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... )):
+//
+//	|-(same as above)
+//	|-sql/sql0.sql
+//	|-sql/sql1.sql
+//	|-...
+//	|-explain/explain0.txt
+//	|-explain/explain1.txt
+//	|-...
 func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
-	task *PlanReplayerDumpTask) (err error) {
+	task *PlanReplayerDumpTask,
+) (err error) {
 	zf := task.Zf
 	fileName := task.FileName
 	sessionVars := task.SessionVars
@@ -244,12 +275,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 		err1 := zw.Close()
 		if err1 != nil {
-			logutil.BgLogger().Error("Closing zip writer failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
+			logutil.BgLogger().Warn("Closing zip writer failed", zap.String("category", "plan-replayer-dump"), zap.Error(err1), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err1.Error()
 		}
 		err2 := zf.Close()
 		if err2 != nil {
-			logutil.BgLogger().Error("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
+			logutil.BgLogger().Warn("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err2), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err2.Error()
 		}
 		if len(errMsg) > 0 {
@@ -275,7 +306,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	// Retrieve current DB
-	dbName := model.NewCIStr(sessionVars.CurrentDB)
+	dbName := ast.NewCIStr(sessionVars.CurrentDB)
 	do := GetDomain(sctx)
 
 	// Retrieve all tables
@@ -297,7 +328,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	// For continuous capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
 	// For manual plan replayer dump command or capture, we directly dump stats in storage
 	if task.IsCapture && task.IsContinuesCapture {
-		if !variable.EnableHistoricalStatsForCapture.Load() {
+		if !vardef.EnableHistoricalStatsForCapture.Load() {
 			// Dump stats
 			fallbackMsg, err := dumpStats(zw, pairs, do, 0)
 			if err != nil {
@@ -355,21 +386,19 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	if len(task.EncodedPlan) > 0 {
-		records = generateRecords(task)
+		records = generateRecords(ctx, task)
 		if err = dumpEncodedPlan(sctx, zw, task.EncodedPlan); err != nil {
 			return err
 		}
 	} else {
 		// Dump explain
-		if err = dumpPlanReplayerExplain(sctx, zw, task, &records); err != nil {
-			return err
+		if err = dumpPlanReplayerExplain(ctx, sctx, zw, task, &records); err != nil {
+			errMsgs = append(errMsgs, err.Error())
 		}
 	}
 
-	if task.DebugTrace != nil {
-		if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
-			return err
-		}
+	if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
+		return err
 	}
 
 	if len(errMsgs) > 0 {
@@ -380,8 +409,9 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	return nil
 }
 
-func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
+func generateRecords(ctx context.Context, task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 	records := make([]PlanReplayerStatusRecord, 0)
+	setTaskPresignedURL(ctx, task)
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
 			records = append(records, PlanReplayerStatusRecord{
@@ -395,6 +425,26 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 	return records
 }
 
+func setTaskPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) {
+	if task.IsCapture {
+		return
+	}
+	url, err := getPresignedURL(ctx, task)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get plan replayer presigned URL", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", task.FileName))
+		return
+	}
+	task.PresignedURL = url
+}
+
+func getPresignedURL(ctx context.Context, task *PlanReplayerDumpTask) (string, error) {
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return "", err
+	}
+	return storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 1*time.Hour)
+}
+
 func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	cf, err := zw.Create(PlanReplayerSQLMetaFile)
 	if err != nil {
@@ -406,7 +456,7 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
 	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
 	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
-	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(variable.EnableHistoricalStatsForCapture.Load())
+	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(vardef.EnableHistoricalStatsForCapture.Load())
 	if task.HistoricalStatsTS > 0 {
 		varMap[PlanReplayerHistoricalStatsTS] = strconv.FormatUint(task.HistoricalStatsTS, 10)
 	}
@@ -439,16 +489,17 @@ func dumpMeta(zw *zip.Writer) error {
 	return nil
 }
 
-func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
+func dumpTiFlashReplica(sctx sessionctx.Context, zw *zip.Writer, pairs map[tableNamePair]struct{}) error {
 	bf, err := zw.Create(PlanReplayerTiFlashReplicasFile)
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	is := GetDomain(ctx).InfoSchema()
+	is := GetDomain(sctx).InfoSchema()
+	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
-		dbName := model.NewCIStr(pair.DBName)
-		tableName := model.NewCIStr(pair.TableName)
-		t, err := is.TableByName(dbName, tableName)
+		dbName := ast.NewCIStr(pair.DBName)
+		tableName := ast.NewCIStr(pair.TableName)
+		t, err := is.TableByName(ctx, dbName, tableName)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
 				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
@@ -495,15 +546,16 @@ func dumpSchemaMeta(zw *zip.Writer, tables map[tableNamePair]struct{}) error {
 func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Domain) error {
 	statsHandle := do.StatsHandle()
 	is := do.InfoSchema()
+	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
 		if pair.IsView {
 			continue
 		}
-		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		tbl, err := is.TableByName(ctx, ast.NewCIStr(pair.DBName), ast.NewCIStr(pair.TableName))
 		if err != nil {
 			return err
 		}
-		tblStats := statsHandle.GetTableStats(tbl.Meta())
+		tblStats := statsHandle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 		if tblStats == nil {
 			continue
 		}
@@ -512,13 +564,15 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 			return errors.AddStack(err)
 		}
 		fmt.Fprintf(statsMemFw, "[INDEX]\n")
-		for _, indice := range tblStats.Indices {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", indice.Info.Name.String(), indice.StatusToString()))
-		}
+		tblStats.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", idx.Info.Name.String(), idx.StatusToString()))
+			return false
+		})
 		fmt.Fprintf(statsMemFw, "[COLUMN]\n")
-		for _, col := range tblStats.Columns {
-			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", col.Info.Name.String(), col.StatusToString()))
-		}
+		tblStats.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			fmt.Fprintf(statsMemFw, "%s\n", fmt.Sprintf("%s=%s", c.Info.Name.String(), c.StatusToString()))
+			return false
+		})
 	}
 	return nil
 }
@@ -571,7 +625,7 @@ func dumpSQLs(execStmts []ast.StmtNode, zw *zip.Writer) error {
 func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, zw *zip.Writer) error {
 	varMap := make(map[string]string)
 	for _, v := range variable.GetSysVars() {
-		if v.IsNoop && !variable.EnableNoopVariables.Load() {
+		if v.IsNoop && !vardef.EnableNoopVariables.Load() {
 			continue
 		}
 		if infoschema.SysVarHiddenForSem(sctx, v.Name) {
@@ -593,14 +647,14 @@ func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, z
 	return nil
 }
 
-func dumpSessionBindRecords(records []*bindinfo.BindRecord, zw *zip.Writer) error {
+func dumpSessionBindRecords(records [][]*bindinfo.Binding, zw *zip.Writer) error {
 	sRows := make([][]string, 0)
 	for _, bindData := range records {
-		for _, hint := range bindData.Bindings {
+		for _, hint := range bindData {
 			sRows = append(sRows, []string{
-				bindData.OriginalSQL,
+				hint.OriginalSQL,
 				hint.BindSQL,
-				bindData.Db,
+				hint.Db,
 				hint.Status,
 				hint.CreateTime.String(),
 				hint.UpdateTime.String(),
@@ -621,7 +675,7 @@ func dumpSessionBindRecords(records []*bindinfo.BindRecord, zw *zip.Writer) erro
 }
 
 func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show bindings")
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), "show bindings")
 	if err != nil {
 		return err
 	}
@@ -645,7 +699,7 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 }
 
 func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show global bindings")
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), "show global bindings")
 	if err != nil {
 		return err
 	}
@@ -671,7 +725,7 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string) error {
 	var recordSets []sqlexec.RecordSet
 	var err error
-	recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("select tidb_decode_plan('%s')", encodedPlan))
+	recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("select tidb_decode_plan('%s')", encodedPlan))
 	if err != nil {
 		return err
 	}
@@ -694,32 +748,47 @@ func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string)
 	return nil
 }
 
-func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) (debugTraces []interface{}, err error) {
-	fw, err := zw.Create("explain.txt")
-	if err != nil {
-		return nil, errors.AddStack(err)
-	}
+func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []string, emptyAsNil bool) (debugTraces []any, err error) {
 	ctx.GetSessionVars().InPlanReplayer = true
 	defer func() {
 		ctx.GetSessionVars().InPlanReplayer = false
 	}()
+
+	// If there are multiple SQLs, write separate explain files
+	useSeparateFiles := len(sqls) > 1
+
+	// For single SQL, create explain.txt once before the loop
+	var fw io.Writer
+	if !useSeparateFiles && len(sqls) > 0 {
+		fw, err = zw.Create("explain.txt")
+		if err != nil {
+			return nil, errors.AddStack(err)
+		}
+	}
+
 	for i, sql := range sqls {
+		// For multiple SQLs, create a separate file for each
+		if useSeparateFiles {
+			fw, err = zw.Create(fmt.Sprintf("explain/explain%v.txt", i))
+			if err != nil {
+				return nil, errors.AddStack(err)
+			}
+		}
+
 		var recordSets []sqlexec.RecordSet
 		if isAnalyze {
 			// Explain analyze
-			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
+			recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
 			if err != nil {
 				return nil, err
 			}
 		} else {
 			// Explain
-			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain %s", sql))
+			recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("explain %s", sql))
 			if err != nil {
 				return nil, err
 			}
 		}
-		debugTrace := ctx.GetSessionVars().StmtCtx.OptimizerDebugTrace
-		debugTraces = append(debugTraces, debugTrace)
 		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0], emptyAsNil)
 		if err != nil {
 			return nil, err
@@ -732,14 +801,17 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 				return nil, err
 			}
 		}
-		if i < len(sqls)-1 {
+
+		// For single SQL, add separator between multiple explains in the same file
+		if !useSeparateFiles && i < len(sqls)-1 {
 			fmt.Fprintf(fw, "<--------->\n")
 		}
 	}
 	return
 }
 
-func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+func dumpPlanReplayerExplain(ctx context.Context, sctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+	setTaskPresignedURL(ctx, task)
 	sqls := make([]string, 0)
 	for _, execStmt := range task.ExecStmts {
 		sql := execStmt.Text()
@@ -749,16 +821,18 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 			Token:     task.FileName,
 		})
 	}
-	debugTraces, err := dumpExplain(ctx, zw, task.Analyze, sqls, false)
+	debugTraces, err := dumpExplain(sctx, zw, task.Analyze, sqls, false)
 	task.DebugTrace = debugTraces
 	return err
 }
 
+// extractTableNames extracts table names from the given stmts.
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
-	execStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
+	execStmts []ast.StmtNode, curDB ast.CIStr,
+) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
-		executor: sctx.(sqlexec.RestrictedSQLExecutor),
+		executor: sctx.GetRestrictedSQLExecutor(),
 		is:       GetDomain(sctx).InfoSchema(),
 		curDB:    curDB,
 		names:    make(map[tableNamePair]struct{}),
@@ -770,13 +844,13 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	if tableExtractor.err != nil {
 		return nil, tableExtractor.err
 	}
-	return tableExtractor.getTablesAndViews(), nil
+	return tableExtractor.getTablesAndViews()
 }
 
 func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(pair.DBName), ast.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -788,7 +862,7 @@ func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*u
 }
 
 func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
 	if err != nil {
 		return err
 	}
@@ -836,7 +910,7 @@ func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet, emptyAsNi
 	sRows := make([][]string, len(rows))
 	for i, row := range rows {
 		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
+		for j := range row.Len() {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {
@@ -879,7 +953,10 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	return rows, nil
 }
 
-func dumpDebugTrace(zw *zip.Writer, debugTraces []interface{}) error {
+func dumpDebugTrace(zw *zip.Writer, debugTraces []any) error {
+	if debugTraces == nil { // if no debug trace collected, we still create one empty file for compatibility
+		debugTraces = append(debugTraces, nil)
+	}
 	for i, trace := range debugTraces {
 		fw, err := zw.Create(fmt.Sprintf("debug_trace/debug_trace%d.json", i))
 		if err != nil {
@@ -893,7 +970,10 @@ func dumpDebugTrace(zw *zip.Writer, debugTraces []interface{}) error {
 	return nil
 }
 
-func dumpOneDebugTrace(w io.Writer, debugTrace interface{}) error {
+func dumpOneDebugTrace(w io.Writer, debugTrace any) error {
+	if debugTrace == nil {
+		return nil
+	}
 	jsonEncoder := json.NewEncoder(w)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
 	jsonEncoder.SetEscapeHTML(false)

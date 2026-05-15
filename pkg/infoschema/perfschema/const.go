@@ -17,6 +17,7 @@ package perfschema
 // perfSchemaTables is a shortcut to involve all table names.
 var perfSchemaTables = []string{
 	tableGlobalStatus,
+	tableGlobalVariables,
 	tableSessionAccountConnectAttrs,
 	tableSessionConnectAttrs,
 	tableSessionStatus,
@@ -49,6 +50,7 @@ var perfSchemaTables = []string{
 	tablePDProfileAllocs,
 	tablePDProfileBlock,
 	tablePDProfileGoroutines,
+	tableStatusByConnection,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -60,6 +62,11 @@ const tableGlobalStatus = "CREATE TABLE performance_schema." + tableNameGlobalSt
 const tableSessionStatus = "CREATE TABLE performance_schema." + tableNameSessionStatus + " (" +
 	"VARIABLE_NAME VARCHAR(64) not null," +
 	"VARIABLE_VALUE VARCHAR(1024));"
+
+// tableGlobalVariables contains the column name definitions for table global_variables, same as MySQL.
+const tableGlobalVariables = "CREATE TABLE performance_schema." + tableNameGlobalVariables + " (" +
+	"VARIABLE_NAME varchar(64) NOT NULL," +
+	"VARIABLE_VALUE varchar(1024) DEFAULT NULL);"
 
 // tableSetupActors contains the column name definitions for table setup_actors, same as MySQL.
 const tableSetupActors = "CREATE TABLE if not exists performance_schema." + tableNameSetupActors + " (" +
@@ -565,3 +572,10 @@ const tableSessionAccountConnectAttrs = "CREATE TABLE IF NOT EXISTS " + tableNam
 	"ATTR_NAME varchar(32) COLLATE utf8mb4_bin NOT NULL," +
 	"ATTR_VALUE varchar(1024) COLLATE utf8mb4_bin DEFAULT NULL," +
 	"ORDINAL_POSITION int DEFAULT NULL);"
+
+// tableStatusByConnection contains the column name definitions for the table status_by_connection
+const tableStatusByConnection = "CREATE TABLE IF NOT EXISTS " + tableNameStatusByConnection + " (" +
+	"CONNECTION_ID bigint unsigned NOT NULL," +
+	"VARIABLE_NAME varchar(64) NOT NULL," +
+	"VARIABLE_VALUE varchar(1024) DEFAULT NULL," +
+	"PRIMARY KEY (CONNECTION_ID,VARIABLE_NAME));"

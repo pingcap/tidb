@@ -38,7 +38,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 		preSetVal    types.Set
 	)
 
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			continue
@@ -131,7 +131,6 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.funcName, func(t *testing.T) {
 			testMergePartialResult(t, test)
 		})
@@ -163,7 +162,6 @@ func TestMaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, types.CreateBinaryJSON(int64(0))),
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.funcName, func(t *testing.T) {
 			testAggFunc(t, test)
 		})
@@ -219,7 +217,6 @@ func TestMemMaxMin(t *testing.T) {
 			aggfuncs.DefPartialResult4MaxMinSetSize, minUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.aggTest.funcName, func(t *testing.T) {
 			testAggMemFunc(t, test)
 		})
@@ -336,7 +333,7 @@ func TestMaxSlidingWindow(t *testing.T) {
 }
 
 func TestDequeReset(t *testing.T) {
-	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+	deque := aggfuncs.NewDeque(true, func(i, j any) int {
 		return cmp.Compare(i.(int64), j.(int64))
 	})
 	deque.PushBack(0, 12)
@@ -346,12 +343,12 @@ func TestDequeReset(t *testing.T) {
 }
 
 func TestDequePushPop(t *testing.T) {
-	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+	deque := aggfuncs.NewDeque(true, func(i, j any) int {
 		return cmp.Compare(i.(int64), j.(int64))
 	})
 	times := 15
 	// pushes element from back of deque
-	for i := 0; i < times; i++ {
+	for i := range times {
 		if i != 0 {
 			front, isEnd := deque.Front()
 			require.False(t, isEnd)
@@ -366,7 +363,7 @@ func TestDequePushPop(t *testing.T) {
 	}
 
 	// pops element from back of deque
-	for i := 0; i < times; i++ {
+	for i := range times {
 		pair, isEnd := deque.Back()
 		require.False(t, isEnd)
 		require.Equal(t, pair.Item, times-i-1)

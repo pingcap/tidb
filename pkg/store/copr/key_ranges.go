@@ -137,6 +137,22 @@ func (r *KeyRanges) Split(key []byte) (*KeyRanges, *KeyRanges) {
 	return r.Slice(0, n), r.Slice(n, r.Len())
 }
 
+// ToRanges converts ranges to []kv.KeyRange.
+func (r *KeyRanges) ToRanges() []kv.KeyRange {
+	ranges := make([]kv.KeyRange, 0, r.Len())
+	r.Do(func(ran *kv.KeyRange) {
+		ranges = append(ranges, *ran)
+	})
+	return ranges
+}
+
+// Reset replaces the internal representation with the provided ranges.
+func (r *KeyRanges) Reset(newRanges []kv.KeyRange) {
+	r.first = nil
+	r.last = nil
+	r.mid = newRanges
+}
+
 // ToPBRanges converts ranges to wire type.
 func (r *KeyRanges) ToPBRanges() []*coprocessor.KeyRange {
 	ranges := make([]*coprocessor.KeyRange, 0, r.Len())

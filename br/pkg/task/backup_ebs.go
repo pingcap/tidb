@@ -21,19 +21,25 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/aws"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 	"github.com/pingcap/tidb/br/pkg/common"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -97,7 +103,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	storeCount := backupInfo.GetStoreCount()
 	if storeCount == 0 {
 		log.Info("nothing to backup")
-		return nil
+		return errors.Trace(errors.Annotate(berrors.ErrInvalidArgument, "store count is 0"))
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -106,7 +112,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	backend, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -117,7 +123,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	defer mgr.Close()
 	client := backup.NewBackupClient(ctx, mgr)
 
-	opts := storage.ExternalStorageOptions{
+	opts := storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
@@ -136,43 +142,38 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 	// Step.1.1 stop scheduler as much as possible.
 	log.Info("starting to remove some PD schedulers and pausing GC", zap.Bool("already-paused-by-operator", cfg.SkipPauseGCAndScheduler))
-	var restoreFunc pdutil.UndoFunc
+	var (
+		restoreFunc  pdutil.UndoFunc
+		finalizeOnce sync.Once
+		preparer     = preparesnap.New(preparesnap.CliEnv{
+			Cache: tikv.NewRegionCache(mgr.PDClient()),
+			Mgr:   mgr.StoreManager,
+		})
+		goBackupToNormal = func(ctx context.Context) error {
+			var err error
+			finalizeOnce.Do(func() {
+				var restoreE error
+				if restoreFunc != nil {
+					restoreE = restoreFunc(ctx)
+				}
+				err = multierr.Combine(preparer.Finalize(ctx), restoreE)
+			})
+			return err
+		}
+	)
 
+	// NOTE: we need to use the same technique as the `operator` command did.
+	// But it is impossible for now due to importing cycle.
 	if !cfg.SkipPauseGCAndScheduler {
 		var e error
 		restoreFunc, e = mgr.RemoveAllPDSchedulers(ctx)
 		if e != nil {
 			return errors.Trace(err)
 		}
-		denyLightning := utils.NewSuspendImporting("backup_ebs_command", mgr.StoreManager)
-		_, err := denyLightning.DenyAllStores(ctx, utils.DefaultBRGCSafePointTTL)
-		if err != nil {
-			return errors.Annotate(err, "lightning from running")
+		if err := preparer.DriveLoopAndWaitPrepare(ctx); err != nil {
+			return err
 		}
-		go func() {
-			if err := denyLightning.Keeper(ctx, utils.DefaultBRGCSafePointTTL); err != nil {
-				log.Warn("cannot keep deny importing, the backup archive may not be useable if there were importing.", logutil.ShortError(err))
-			}
-		}()
-		defer func() {
-			if ctx.Err() != nil {
-				log.Warn("context canceled, doing clean work with background context")
-				ctx = context.Background()
-			}
-			if restoreFunc == nil {
-				return
-			}
-			if restoreE := restoreFunc(ctx); restoreE != nil {
-				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-			}
-			res, err := denyLightning.AllowAllStores(ctx)
-			if err != nil {
-				log.Warn("failed to restore importing, you may need to wait until you are able to start importing", zap.Duration("wait_for", utils.DefaultBRGCSafePointTTL))
-			}
-			if err := denyLightning.ConsistentWithPrev(res); err != nil {
-				log.Warn("lightning hasn't been denied, the backup archive may not be usable.", logutil.ShortError(err))
-			}
-		}()
+		defer utils.WithCleanUp(nil, 2*time.Minute, goBackupToNormal)
 	}
 
 	if err := waitAllScheduleStoppedAndNoRegionHole(ctx, cfg.Config, mgr); err != nil {
@@ -185,13 +186,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	if !cfg.SkipPauseGCAndScheduler {
-		sp := utils.BRServiceSafePoint{
+		sp := gc.BRServiceSafePoint{
 			BackupTS: resolvedTs,
-			TTL:      utils.DefaultBRGCSafePointTTL,
-			ID:       utils.MakeSafePointID(),
+			TTL:      gc.DefaultBRGCSafePointTTL,
+			ID:       gc.MakeSafePointID(),
 		}
 		log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
-		err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+		err = gc.StartServiceSafePointKeeper(ctx, sp, mgr.GetGCManager())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -209,9 +210,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
-
-	progress := g.StartProgress(ctx, "backup", int64(storeCount)*100, !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(storeCount)*100, cfg.ProgressFile)
+	volumeCount := storeCount * backupInfo.GetTiKVVolumeCount()
+	progress := g.StartProgress(ctx, "backup", int64(volumeCount)*100, !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(volumeCount)*100, cfg.ProgressFile)
 
 	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency, cfg.S3.Region)
 	if err != nil {
@@ -248,11 +249,8 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 		if !cfg.SkipPauseGCAndScheduler {
 			log.Info("snapshot started, restore schedule")
-			if restoreE := restoreFunc(ctx); restoreE != nil {
+			if restoreE := goBackupToNormal(ctx); restoreE != nil {
 				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-			} else {
-				// Clear the restore func, so we won't execute it many times.
-				restoreFunc = nil
 			}
 		}
 
@@ -263,7 +261,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		}
 		log.Info("async snapshots finished.")
 	} else {
-		for i := 0; i < int(storeCount); i++ {
+		for i := range int(storeCount) {
 			progress.IncBy(100)
 			totalSize = 1024
 			timeToSleep := getMockSleepTime()
@@ -301,7 +299,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 	}
 	// we wait for nearly 15*40 = 600s = 10m
 	backoffer := utils.InitialRetryState(40, 5*time.Second, waitAllScheduleStoppedInterval)
-	for backoffer.Attempt() > 0 {
+	for backoffer.RemainingAttempts() > 0 {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -332,7 +330,7 @@ func isRegionsHasHole(allRegions []*metapb.Region) bool {
 		return bytes.Compare(left.StartKey, right.StartKey) < 0
 	})
 
-	for j := 0; j < len(allRegions)-1; j++ {
+	for j := range len(allRegions) - 1 {
 		left, right := allRegions[j], allRegions[j+1]
 		// we don't need to handle the empty end key specially, since
 		// we sort by start key of region, and the end key of the last region is not checked
@@ -346,7 +344,7 @@ func isRegionsHasHole(allRegions []*metapb.Region) bool {
 
 func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*metapb.Store, mgr *conn.Mgr) ([]*metapb.Region, error) {
 	concurrency := min(len(allStores), common.MaxStoreConcurrency)
-	workerPool := utils.NewWorkerPool(uint(concurrency), "collect schedule info")
+	workerPool := tidbutil.NewWorkerPool(uint(concurrency), "collect schedule info")
 	eg, ectx := errgroup.WithContext(ctx)
 
 	// init this slice with guess that there are 100 leaders on each store
@@ -423,7 +421,7 @@ func newBackupClient(ctx context.Context, storeAddr string, cfg Config, tlsConfi
 	return brpb.NewBackupClient(connection), connection, nil
 }
 
-func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, externalStorage storage.ExternalStorage) error {
+func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, externalStorage storeapi.Storage) error {
 	data, err := json.Marshal(backupInfo)
 	if err != nil {
 		return errors.Trace(err)

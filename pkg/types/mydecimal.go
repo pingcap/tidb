@@ -51,8 +51,6 @@ const (
 	wordMax       = wordBase - 1
 	notFixedDec   = 31
 
-	DivFracIncr = 4
-
 	// Round up to the next integer if positive or down to the next integer if negative.
 	ModeHalfUp RoundMode = 5
 	// Truncate just truncates the decimal.
@@ -395,7 +393,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
-	for i := 0; i < len(str); i++ {
+	for i := range str {
 		if !isSpace(str[i]) {
 			str = str[i:]
 			break
@@ -403,7 +401,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if len(str) == 0 {
 		*d = zeroMyDecimal
-		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
+		return ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", str)
 	}
 	switch str[0] {
 	case '-':
@@ -431,7 +429,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if digitsInt+digitsFrac == 0 {
 		*d = zeroMyDecimal
-		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
+		return ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", str)
 	}
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)
@@ -522,7 +520,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		}
 	}
 	allZero := true
-	for i := 0; i < wordBufLen; i++ {
+	for i := range wordBufLen {
 		if d.wordBuf[i] != 0 {
 			allZero = false
 			break
@@ -567,14 +565,8 @@ func (d *MyDecimal) Shift(shift int) error {
 		return nil
 	}
 
-	digitsInt = newPoint - digitBegin
-	if digitsInt < 0 {
-		digitsInt = 0
-	}
-	digitsFrac = digitEnd - newPoint
-	if digitsFrac < 0 {
-		digitsFrac = 0
-	}
+	digitsInt = max(newPoint-digitBegin, 0)
+	digitsFrac = max(digitEnd-newPoint, 0)
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)
 	newLen := wordsInt + wordsFrac
@@ -990,6 +982,77 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	return
 }
 
+// FromParquetArray sets the decimal value from Parquet byte array representation.
+// It assumes that the input buffer is disposable, which will be modified during
+// the conversion.
+// Note:
+//  1. The input buffer will be modified in-place. Callers must pass a disposable
+//     copy if they need to preserve the original data.
+//     For the data layout stored in parquet, please refer to
+//     https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#decimal
+//  2. This function doesn't handle overflow/truncate, use it with caution.
+func (d *MyDecimal) FromParquetArray(buf []byte, scale int) (err error) {
+	// MyDecimal's wordBuf stores absolute value, so we need to get absolute
+	// value from two's complement first.
+	d.negative = (buf[0] & 0x80) != 0
+	if d.negative {
+		for i := range buf {
+			buf[i] = ^buf[i]
+		}
+		for i := len(buf) - 1; i >= 0; i-- {
+			buf[i]++
+			if buf[i] != 0 {
+				break
+			}
+		}
+	}
+
+	var (
+		startIndex = 0
+		endIndex   = len(buf)
+	)
+
+	for startIndex < endIndex && buf[startIndex] == 0 {
+		startIndex++
+	}
+
+	// Apply long‑division algorithm to do radix conversion.
+	wordIdx := 0
+	for startIndex < endIndex {
+		var rem uint64
+		for i := startIndex; i < endIndex; i++ {
+			v := (rem << 8) | uint64(buf[i])
+			q := v / ten9
+			rem = v % ten9
+			buf[i] = byte(q)
+			if q == 0 && i == startIndex {
+				startIndex++
+			}
+		}
+
+		if wordIdx >= wordBufLen {
+			return ErrOverflow
+		}
+
+		d.wordBuf[wordIdx] = int32(rem)
+		wordIdx++
+	}
+
+	for idx := range wordIdx / 2 {
+		d.wordBuf[idx], d.wordBuf[wordIdx-idx-1] =
+			d.wordBuf[wordIdx-idx-1], d.wordBuf[idx]
+	}
+
+	d.digitsFrac = 0
+	d.resultFrac = 0
+	d.digitsInt = int8(wordIdx * digitsPerWord)
+	if err := d.Shift(-scale); err != nil {
+		return err
+	}
+
+	return d.Round(d, scale, ModeTruncate)
+}
+
 // FromInt sets the decimal value from int64.
 func (d *MyDecimal) FromInt(val int64) *MyDecimal {
 	var uVal uint64
@@ -1356,6 +1419,23 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	}
 	buf = append(buf, byte(digitsFrac))
 	return buf, err
+}
+
+// HashKeySize returns the size of hash key
+func (d *MyDecimal) HashKeySize() (int, error) {
+	_, digitsInt := d.removeLeadingZeros()
+	_, digitsFrac := d.removeTrailingZeros()
+	prec := digitsInt + digitsFrac
+	if prec == 0 { // zeroDecimal
+		prec = 1
+	}
+
+	size, err := DecimalBinSize(prec, digitsFrac)
+	if err != nil {
+		return 0, err
+	}
+
+	return size + 1, nil
 }
 
 // PrecisionAndFrac returns the internal precision and frac number.
@@ -1729,10 +1809,7 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 
 	wordsInt1, wordsFracTo, err = fixWordCntError(wordsInt1, wordsFracTo)
 	idxTo := wordsInt1 + wordsFracTo
-	to.digitsFrac = from1.digitsFrac
-	if to.digitsFrac < from2.digitsFrac {
-		to.digitsFrac = from2.digitsFrac
-	}
+	to.digitsFrac = max(from1.digitsFrac, from2.digitsFrac)
 	to.digitsInt = int8(wordsInt1 * digitsPerWord)
 	if err != nil {
 		if to.digitsFrac > int8(wordsFracTo*digitsPerWord) {
@@ -1980,10 +2057,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 	to.resultFrac = min(from1.resultFrac+from2.resultFrac, mysql.MaxDecimalScale)
 	wordsIntTo, wordsFracTo, err = fixWordCntError(wordsIntTo, wordsFracTo)
 	to.negative = from1.negative != from2.negative
-	to.digitsFrac = from1.digitsFrac + from2.digitsFrac
-	if to.digitsFrac > notFixedDec {
-		to.digitsFrac = notFixedDec
-	}
+	to.digitsFrac = min(from1.digitsFrac+from2.digitsFrac, notFixedDec)
 	to.digitsInt = int8(wordsIntTo * digitsPerWord)
 	if err == ErrOverflow {
 		return err
@@ -2208,10 +2282,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		}
 	}
 	i = digitsToWords(prec1)
-	len1 := i + digitsToWords(2*frac2+fracIncr+1) + 1
-	if len1 < 3 {
-		len1 = 3
-	}
+	len1 := max(i+digitsToWords(2*frac2+fracIncr+1)+1, 3)
 
 	tmp1 := make([]int32, len1)
 	copy(tmp1, from1.wordBuf[idx1:idx1+i])
@@ -2428,7 +2499,7 @@ func NewDecFromStringForTest(s string) *MyDecimal {
 // NewMaxOrMinDec returns the max or min value decimal for given precision and fraction.
 func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 	str := make([]byte, prec+2)
-	for i := 0; i < len(str); i++ {
+	for i := range str {
 		str[i] = '9'
 	}
 	if negative {

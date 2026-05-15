@@ -16,9 +16,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -37,14 +38,14 @@ func createMockCluster(t *testing.T) *mock.Cluster {
 	return m
 }
 
-func GetRandomStorage(t *testing.T) storage.ExternalStorage {
+func GetRandomStorage(t *testing.T) storeapi.Storage {
 	base := t.TempDir()
-	es, err := storage.NewLocalStorage(base)
+	es, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	return es
 }
 
-func GetSchemasFromMeta(t *testing.T, es storage.ExternalStorage) []*metautil.Table {
+func GetSchemasFromMeta(t *testing.T, es storeapi.Storage) []*metautil.Table {
 	ctx := context.Background()
 	metaBytes, err := es.ReadFile(ctx, metautil.MetaFile)
 	require.NoError(t, err)
@@ -108,7 +109,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	testFilter, err := filter.Parse([]string{"test.t1"})
 	require.NoError(t, err)
 	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(
-		m.Storage, testFilter, math.MaxUint64, false, true)
+		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.NotNil(t, backupSchemas)
 
@@ -116,16 +117,16 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
 	require.NoError(t, err)
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(
-		m.Storage, fooFilter, math.MaxUint64, false, true)
+		m.Storage, fooFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Nil(t, backupSchemas)
 
 	// Empty database.
 	// Filter out system tables manually.
-	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*"})
+	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*", "!sys.*"})
 	require.NoError(t, err)
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(
-		m.Storage, noFilter, math.MaxUint64, false, true)
+		m.Storage, noFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.NotNil(t, backupSchemas)
 
@@ -137,7 +138,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 
 	var policies []*backuppb.PlacementPolicy
 	_, backupSchemas, policies, err = backup.BuildBackupRangeAndInitSchema(
-		m.Storage, testFilter, math.MaxUint64, false, true)
+		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
 	// we expect no policies collected, because it's not full backup.
@@ -151,7 +152,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, vardef.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.Equal(t, int64(1), updateCh.get())
 	require.NoError(t, err)
 	err = metaWriter.FlushBackupMeta(ctx)
@@ -170,7 +171,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	tk.MustExec("insert into t2 values (11);")
 
 	_, backupSchemas, policies, err = backup.BuildBackupRangeAndInitSchema(
-		m.Storage, noFilter, math.MaxUint64, true, true)
+		m.Storage, noFilter, math.MaxUint64, true)
 	require.NoError(t, err)
 	require.Equal(t, 2, backupSchemas.Len())
 	// we expect the policy fivereplicas collected in full backup.
@@ -180,7 +181,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	es2 := GetRandomStorage(t)
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter2, nil, m.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter2, nil, m.Storage, nil, math.MaxUint64, nil, 2, vardef.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.Equal(t, int64(2), updateCh.get())
 	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
@@ -206,7 +207,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	tk.MustExec("drop table if exists t3;")
 	tk.MustExec("create table t3 (a char(1));")
 	tk.MustExec("insert into t3 values ('1');")
-	tk.MustExec("analyze table t3;")
+	tk.MustExec("analyze table t3 all columns;")
 	// corrupt the statistics like pingcap/br#679.
 	tk.MustExec(`
 		update mysql.stats_buckets set upper_bound = 0xffffffff
@@ -219,7 +220,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	f, err := filter.Parse([]string{"test.t3"})
 	require.NoError(t, err)
 
-	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false, true)
+	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
 
@@ -234,7 +235,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter, nil, m.Storage, nil, math.MaxUint64, nil, 1, vardef.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.NoError(t, err)
 	err = metaWriter.FlushBackupMeta(ctx)
 	require.NoError(t, err)
@@ -243,7 +244,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, schemas, 1)
 	// the stats should be empty, but other than that everything should be backed up.
-	require.Nil(t, schemas[0].Stats)
+	require.Nil(t, schemas[0].StatsFileIndexes)
 	require.NotZerof(t, schemas[0].Crc64Xor, "%v", schemas[0])
 	require.NotZerof(t, schemas[0].TotalKvs, "%v", schemas[0])
 	require.NotZerof(t, schemas[0].TotalBytes, "%v", schemas[0])
@@ -251,9 +252,9 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	require.NotNil(t, schemas[0].DB)
 
 	// recover the statistics.
-	tk.MustExec("analyze table t3;")
+	tk.MustExec("analyze table t3 all columns;")
 
-	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false, true)
+	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
 
@@ -262,7 +263,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	es2 := GetRandomStorage(t)
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(
-		ctx, metaWriter2, nil, m.Storage, statsHandle, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
+		ctx, metaWriter2, nil, m.Storage, statsHandle, math.MaxUint64, nil, 1, vardef.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
 	require.NoError(t, err)
@@ -270,7 +271,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	schemas2 := GetSchemasFromMeta(t, es2)
 	require.Len(t, schemas2, 1)
 	// the stats should now be filled, and other than that the result should be equivalent to the first backup.
-	require.NotNil(t, schemas2[0].Stats)
+	require.True(t, len(schemas2[0].StatsFileIndexes[0].InlineData) > 0 || len(schemas2[0].StatsFileIndexes[0].Name) > 0)
 	require.Equal(t, schemas[0].Crc64Xor, schemas2[0].Crc64Xor)
 	require.Equal(t, schemas[0].TotalKvs, schemas2[0].TotalKvs)
 	require.Equal(t, schemas[0].TotalBytes, schemas2[0].TotalBytes)
@@ -294,7 +295,7 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 
 	f, err := filter.Parse([]string{"mysql.systable*"})
 	require.NoError(t, err)
-	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false, true)
+	_, backupSchemas, _, err := backup.BuildBackupRangeAndInitSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, systemTablesCount, backupSchemas.Len())
 
@@ -306,7 +307,7 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 
 	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, "", &cipher)
 	err = backupSchemas.BackupSchemas(ctx, metaWriter2, nil, m.Storage, nil,
-		math.MaxUint64, 1, variable.DefChecksumTableConcurrency, true, updateCh)
+		math.MaxUint64, nil, 1, vardef.DefChecksumTableConcurrency, true, updateCh)
 	require.NoError(t, err)
 	err = metaWriter2.FlushBackupMeta(ctx)
 	require.NoError(t, err)

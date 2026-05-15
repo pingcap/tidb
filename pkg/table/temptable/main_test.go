@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -67,7 +68,7 @@ func (is *mockedInfoSchema) AddTable(tempType model.TempTableType, id ...int64) 
 	return is
 }
 
-func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
+func (is *mockedInfoSchema) TableByID(_ context.Context, tblID int64) (table.Table, bool) {
 	tempType, ok := is.tables[tblID]
 	if !ok {
 		return nil, false
@@ -75,10 +76,10 @@ func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
 
 	tblInfo := &model.TableInfo{
 		ID:   tblID,
-		Name: model.NewCIStr(fmt.Sprintf("tb%d", tblID)),
+		Name: ast.NewCIStr(fmt.Sprintf("tb%d", tblID)),
 		Columns: []*model.ColumnInfo{{
 			ID:        1,
-			Name:      model.NewCIStr("col1"),
+			Name:      ast.NewCIStr("col1"),
 			Offset:    0,
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			State:     model.StatePublic,
@@ -94,31 +95,35 @@ func (is *mockedInfoSchema) TableByID(tblID int64) (table.Table, bool) {
 	return tbl, true
 }
 
+const mockCommitTS = 1024
+
 type mockedSnapshot struct {
 	*mockedRetriever
 }
 
 func newMockedSnapshot(retriever *mockedRetriever) *mockedSnapshot {
+	retriever.commitTS = mockCommitTS
 	return &mockedSnapshot{mockedRetriever: retriever}
 }
 
-func (s *mockedSnapshot) SetOption(_ int, _ interface{}) {
+func (s *mockedSnapshot) SetOption(_ int, _ any) {
 	require.FailNow(s.t, "SetOption not supported")
 }
 
 type methodInvoke struct {
 	Method string
-	Args   []interface{}
-	Ret    []interface{}
+	Args   []any
+	Ret    []any
 }
 
 type mockedRetriever struct {
-	t       *testing.T
-	data    []*kv.Entry
-	dataMap map[string][]byte
-	invokes []*methodInvoke
+	t        *testing.T
+	data     []*kv.Entry
+	commitTS uint64
+	dataMap  map[string][]byte
+	invokes  []*methodInvoke
 
-	allowInvokes map[string]interface{}
+	allowInvokes map[string]any
 	errorMap     map[string]error
 }
 
@@ -129,7 +134,7 @@ func newMockedRetriever(t *testing.T) *mockedRetriever {
 func (r *mockedRetriever) SetData(data []*kv.Entry) *mockedRetriever {
 	lessFunc := func(i, j *kv.Entry) int { return bytes.Compare(i.Key, j.Key) }
 	if !slices.IsSortedFunc(data, lessFunc) {
-		data = append([]*kv.Entry{}, data...)
+		data = slices.Clone(data)
 		slices.SortFunc(data, lessFunc)
 	}
 
@@ -150,7 +155,7 @@ func (r *mockedRetriever) InjectMethodError(method string, err error) *mockedRet
 }
 
 func (r *mockedRetriever) SetAllowedMethod(methods ...string) *mockedRetriever {
-	r.allowInvokes = make(map[string]interface{})
+	r.allowInvokes = make(map[string]any)
 	for _, m := range methods {
 		r.allowInvokes[m] = struct{}{}
 	}
@@ -165,32 +170,47 @@ func (r *mockedRetriever) GetInvokes() []*methodInvoke {
 	return r.invokes
 }
 
-func (r *mockedRetriever) Get(ctx context.Context, k kv.Key) (val []byte, err error) {
+func (r *mockedRetriever) Get(ctx context.Context, k kv.Key, options ...kv.GetOption) (entry kv.ValueEntry, err error) {
+	var opt kv.GetOptions
+	opt.Apply(options)
+	var commitTS uint64
+	if opt.ReturnCommitTS() {
+		commitTS = r.commitTS
+	}
 	r.checkMethodInvokeAllowed("Get")
 	if err = r.getMethodErr("Get"); err == nil {
 		var ok bool
-		val, ok = r.dataMap[string(k)]
+		val, ok := r.dataMap[string(k)]
 		if !ok {
+			commitTS = 0
 			err = kv.ErrNotExist
 		}
+		entry = kv.NewValueEntry(val, commitTS)
 	}
-	r.appendInvoke("Get", []interface{}{ctx, k}, []interface{}{val, err})
+	r.appendInvoke("Get", []any{ctx, k}, []any{entry, err})
 	return
 }
 
-func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key) (data map[string][]byte, err error) {
+func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (data map[string]kv.ValueEntry, err error) {
+	var opt kv.BatchGetOptions
+	opt.Apply(options)
+	var commitTS uint64
+	if opt.ReturnCommitTS() {
+		commitTS = r.commitTS
+	}
+
 	r.checkMethodInvokeAllowed("BatchGet")
 	if err = r.getMethodErr("BatchGet"); err == nil {
-		data = make(map[string][]byte)
+		data = make(map[string]kv.ValueEntry)
 		for _, k := range keys {
 			val, ok := r.dataMap[string(k)]
 			if ok {
-				data[string(k)] = val
+				data[string(k)] = kv.NewValueEntry(val, commitTS)
 			}
 		}
 	}
 
-	r.appendInvoke("BatchGet", []interface{}{ctx, keys}, []interface{}{data, err})
+	r.appendInvoke("BatchGet", []any{ctx, keys}, []any{data, err})
 	return
 }
 
@@ -214,7 +234,7 @@ func (r *mockedRetriever) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, e
 		}
 		iter = mockIter
 	}
-	r.appendInvoke("Iter", []interface{}{k, upperBound}, []interface{}{iter, err})
+	r.appendInvoke("Iter", []any{k, upperBound}, []any{iter, err})
 	return
 }
 
@@ -222,7 +242,7 @@ func (r *mockedRetriever) IterReverse(k kv.Key, lowerBound kv.Key) (iter kv.Iter
 	r.checkMethodInvokeAllowed("IterReverse")
 	if err = r.getMethodErr("IterReverse"); err == nil {
 		data := make([]*kv.Entry, 0)
-		for i := 0; i < len(r.data); i++ {
+		for i := range r.data {
 			item := r.data[len(r.data)-i-1]
 			if (len(k) == 0 || bytes.Compare(item.Key, k) < 0) && (len(lowerBound) == 0 || bytes.Compare(item.Key, lowerBound) >= 0) {
 				data = append(data, item)
@@ -234,11 +254,11 @@ func (r *mockedRetriever) IterReverse(k kv.Key, lowerBound kv.Key) (iter kv.Iter
 		}
 		iter = mockIter
 	}
-	r.appendInvoke("IterReverse", []interface{}{k}, []interface{}{iter, err})
+	r.appendInvoke("IterReverse", []any{k}, []any{iter, err})
 	return
 }
 
-func (r *mockedRetriever) appendInvoke(method string, args []interface{}, ret []interface{}) {
+func (r *mockedRetriever) appendInvoke(method string, args []any, ret []any) {
 	r.invokes = append(r.invokes, &methodInvoke{
 		Method: method,
 		Args:   args,

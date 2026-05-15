@@ -1,0 +1,253 @@
+# Issue 60080: adding `OR A` to `(A IS NULL)` must not reduce rows for
+# a nullable scalar-subquery predicate.
+DROP TABLE IF EXISTS `t0`;
+CREATE TABLE `t0` (
+  `c0` int
+);
+INSERT INTO `t0` VALUES (61);
+DROP TABLE IF EXISTS `t1`;
+CREATE TABLE `t1` (
+  `c1` int,
+  `c2` double
+);
+INSERT INTO `t1` VALUES (NULL,0);
+DROP TABLE IF EXISTS `t2`;
+CREATE TABLE `t2` (
+  `c3` varchar(100),
+  `c4` varchar(100)
+) ;
+INSERT INTO `t2` VALUES (NULL,NULL);
+select
+  subq_0.c_0 as c_0,
+  subq_0.c_1 as c_1,
+  subq_0.c_2 as c_2
+from
+  (select
+        ref_1.c0 as c_0,
+        ref_0.c2 as c_1,
+        ref_0.c2 as c_2
+      from
+        (t1 as ref_0
+          right join (t0 as ref_1
+            )
+          on (ref_0.c1 = ref_1.c0 ))
+       ) as subq_0
+where ((('' = (
+      select
+          (' n1`')  as c_0
+        from
+          (t2 as ref_3
+            left join t2 as ref_4
+            on (ref_3.c4 = ref_4.c3 ))
+        where ((subq_0.c_1) <> (subq_0.c_2))
+          or (true)
+        order by c_0 desc
+         limit 1)) is null));
+
+explain format='plan_tree' select
+  subq_0.c_0 as c_0,
+  subq_0.c_1 as c_1,
+  subq_0.c_2 as c_2
+from
+  (select
+        ref_1.c0 as c_0,
+        ref_0.c2 as c_1,
+        ref_0.c2 as c_2
+      from
+        (t1 as ref_0
+          right join (t0 as ref_1
+            )
+          on (ref_0.c1 = ref_1.c0 ))
+       ) as subq_0
+where ((('' = (
+      select
+          (' n1`')  as c_0
+        from
+          (t2 as ref_3
+            left join t2 as ref_4
+            on (ref_3.c4 = ref_4.c3 ))
+        where ((subq_0.c_1) <> (subq_0.c_2))
+          or (true)
+        order by c_0 desc
+         limit 1)) is null));
+
+# Issue 60080 follow-up query from the same report.
+select
+  subq_0.c_0 as c_0,
+  subq_0.c_1 as c_1,
+  subq_0.c_2 as c_2
+from
+  (select
+        ref_1.c0 as c_0,
+        ref_0.c2 as c_1,
+        ref_0.c2 as c_2
+      from
+        (t1 as ref_0
+          right join (t0 as ref_1
+            )
+          on (ref_0.c1 = ref_1.c0 ))
+       ) as subq_0
+where (('' = (
+      select
+          (' n1`')  as c_0
+        from
+          (t2 as ref_3
+            left join t2 as ref_4
+            on (ref_3.c4 = ref_4.c3 ))
+        where ((subq_0.c_1) <> (subq_0.c_2))
+          or (true)
+        order by c_0 desc
+         limit 1)) is null)
+   or ('' = (
+      select
+          (' n1`')  as c_0
+        from
+          (t2 as ref_3
+            left join t2 as ref_4
+            on (ref_3.c4 = ref_4.c3 ))
+        where ((subq_0.c_1) <> (subq_0.c_2))
+          or (true)
+        order by c_0 desc
+         limit 1));
+
+# Issue 60081: filtering a derived scalar-subquery column with IS NULL
+# must not synthesize a NULL row.
+DROP TABLE IF EXISTS `t0`;
+CREATE TABLE `t0` (
+  `c0` int
+);
+INSERT INTO `t0` VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+
+DROP TABLE IF EXISTS `t1`;
+CREATE TABLE `t1` (
+  `c1` double
+);
+INSERT INTO `t1` VALUES (1),(2),(3),(4),(5),(6),(7),(8);
+
+DROP TABLE IF EXISTS `t2`;
+DROP VIEW IF EXISTS `t2`;
+CREATE VIEW `t2` (`c_0`,  `c_1`,  `c_2`)
+  AS SELECT DISTINCT `ref_0`.`c0` AS `c_0`,
+  RIGHT( ((_UTF8MB4'1>yQ') ),
+    CASE WHEN (((`ref_0`.`c0`)>(SELECT DISTINCT `ref_0`.`c0` AS `c_0` FROM `t0`
+                  WHERE  ((SELECT `c1` AS `c1` FROM `t1` ORDER BY `t1`.`c1` LIMIT 2,1)) <
+                ((SELECT `c1` AS `c1` FROM `t1` ORDER BY `t1`.`c1` LIMIT 1,1)) ORDER BY `c_0` LIMIT 1)))
+    THEN (1) ELSE (2) END) AS `c_1`,
+  (SELECT SUM(`t1`.`c1`) AS `sum(t1.c1)` FROM `t1`) AS `c_2`
+FROM `t0` AS `ref_0`
+ORDER BY`c_0`, `c_1`, `c_2`;
+
+select distinct
+  subq_0.c_0 as c_0
+from
+  (select
+        (select c_2 from t2 order by t2.c_2 limit 1 offset 6)
+           as c_0
+      from
+        t2 as ref_0
+      where (ref_0.c_2) is not null
+      order by c_0 desc
+       ) as subq_0;
+
+select distinct
+  subq_0.c_0 as c_0
+from
+  (select
+        (select c_2 from t2 order by t2.c_2 limit 1 offset 6)
+           as c_0
+      from
+        t2 as ref_0
+      where (ref_0.c_2) is not null
+      order by c_0 desc
+       ) as subq_0
+where
+   ((subq_0.c_0) is null);
+
+# Issues 60370 and 59162: predicates using COALESCE or IS FALSE can still be TRUE
+# on null-extended rows and must not trigger outer-to-inner conversion.
+drop table if exists t0;
+drop table if exists t1;
+create table t0(c0 int);
+create table t1(c0 int);
+insert into t0 values (1);
+insert into t1 values (-71);
+
+explain format='plan_tree' select
+  coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
+    length(nullif(char(t1.c0), 'KV'))) as w_1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
+  length(nullif(char(t1.c0), 'KV'))) > 1;
+
+select
+  coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
+    length(nullif(char(t1.c0), 'KV'))) as w_1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
+  length(nullif(char(t1.c0), 'KV'))) > 1;
+
+drop table if exists t0;
+drop table if exists t1;
+create table t0(c0 int);
+insert into t0 values (1);
+create table t1(c0 int);
+insert into t1(c0) values (0);
+
+explain format='plan_tree' select
+  t0.c0 as ref0,
+  t1.c0 as ref1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where (t1.c0 and (t0.c0 != null)) is false;
+
+select
+  t0.c0 as ref0,
+  t1.c0 as ref1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where (t1.c0 and (t0.c0 != null)) is false;
+
+# Issues 53506 and 59026: bitwise and XOR predicates can be truthy on
+# null-extended rows, so these outer joins must be preserved.
+drop table if exists t0;
+drop table if exists t1;
+create table t0(c0 int);
+create table t1(c0 int);
+insert into t0 values (1);
+insert into t1 values (0);
+
+explain format='plan_tree' select
+  t0.c0 as ref0,
+  t1.c0 as ref1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where ((~(t1.c0 and null)) - (case 0 when t0.c0 then 0 else 1 end));
+
+select
+  t0.c0 as ref0,
+  t1.c0 as ref1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where ((~(t1.c0 and null)) - (case 0 when t0.c0 then 0 else 1 end));
+
+drop table if exists t0;
+drop table if exists t1;
+create table t0(c0 int);
+create table t1(c0 int);
+insert into t0 values (0);
+
+explain format='plan_tree' select
+  t1.c0 as ref0,
+  t0.c0 as ref1
+from t1
+right outer join t0 on t1.c0 = t0.c0
+where (null and t0.c0) ^ (case when t1.c0 then t0.c0 else true end);
+
+select
+  t1.c0 as ref0,
+  t0.c0 as ref1
+from t1
+right outer join t0 on t1.c0 = t0.c0
+where (null and t0.c0) ^ (case when t1.c0 then t0.c0 else true end);

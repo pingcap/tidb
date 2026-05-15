@@ -15,17 +15,10 @@
 package telemetry
 
 import (
-	"context"
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/prometheus/client_golang/api"
-	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 var (
@@ -35,7 +28,7 @@ var (
 	CurrentTiFlashPushDownCount atomic.Uint64
 	// CurrentTiFlashExchangePushDownCount is CurrentTiFlashExchangePushDownCount
 	CurrentTiFlashExchangePushDownCount atomic.Uint64
-	// CurrentCoprCacheHitRatioGTE0Count is CurrentCoprCacheHitRatioGTE1Count
+	// CurrentCoprCacheHitRatioGTE0Count is CurrentCoprCacheHitRatioGTE0Count
 	CurrentCoprCacheHitRatioGTE0Count atomic.Uint64
 	// CurrentCoprCacheHitRatioGTE1Count is CurrentCoprCacheHitRatioGTE1Count
 	CurrentCoprCacheHitRatioGTE1Count atomic.Uint64
@@ -63,7 +56,6 @@ const (
 
 	maxSubWindowLength         = int(ReportInterval / SubWindowSize) // TODO: Ceiling?
 	maxSubWindowLengthInWindow = int(WindowSize / SubWindowSize)     // TODO: Ceiling?
-	promReadTimeout            = time.Second * 30
 )
 
 type windowData struct {
@@ -71,15 +63,7 @@ type windowData struct {
 	ExecuteCount          uint64             `json:"executeCount"`
 	TiFlashUsage          tiFlashUsageData   `json:"tiFlashUsage"`
 	CoprCacheUsage        coprCacheUsageData `json:"coprCacheUsage"`
-	SQLUsage              sqlUsageData       `json:"SQLUsage"`
 	BuiltinFunctionsUsage map[string]uint32  `json:"builtinFunctionsUsage"`
-}
-
-type sqlType map[string]uint64
-
-type sqlUsageData struct {
-	SQLTotal uint64  `json:"total"`
-	SQLType  sqlType `json:"type"`
 }
 
 type coprCacheUsageData struct {
@@ -158,73 +142,6 @@ var (
 	subWindowsLock    = sync.RWMutex{}
 )
 
-func getSQLSum(sqlTypeData *sqlType) uint64 {
-	result := uint64(0)
-	for _, v := range *sqlTypeData {
-		result += v
-	}
-	return result
-}
-
-func readSQLMetric(timepoint time.Time, sqlResult *sqlUsageData) error {
-	ctx := context.TODO()
-	promQL := "avg(tidb_executor_statement_total{}) by (type)"
-	result, err := querySQLMetric(ctx, timepoint, promQL)
-	if err != nil {
-		return err
-	}
-	analysisSQLUsage(result, sqlResult)
-	return nil
-}
-
-func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (result pmodel.Value, err error) {
-	// Add retry to avoid network error.
-	var prometheusAddr string
-	for i := 0; i < 5; i++ {
-		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
-		prometheusAddr, err = infosync.GetPrometheusAddr()
-		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if err != nil {
-		return nil, err
-	}
-	promClient, err := api.NewClient(api.Config{
-		Address: prometheusAddr,
-	})
-	if err != nil {
-		return nil, err
-	}
-	promQLAPI := promv1.NewAPI(promClient)
-	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
-	defer cancel()
-	// Add retry to avoid network error.
-	for i := 0; i < 5; i++ {
-		result, _, err = promQLAPI.Query(ctx, promQL, queryTime)
-		if err == nil {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return result, err
-}
-
-func analysisSQLUsage(promResult pmodel.Value, sqlResult *sqlUsageData) {
-	if promResult == nil {
-		return
-	}
-	if promResult.Type() == pmodel.ValVector {
-		matrix := promResult.(pmodel.Vector)
-		for _, m := range matrix {
-			v := m.Value
-			promLable := string(m.Metric[pmodel.LabelName("type")])
-			sqlResult.SQLType[promLable] = uint64(v)
-		}
-	}
-}
-
 // RotateSubWindow rotates the telemetry sub window.
 func RotateSubWindow() {
 	thisSubWindow := windowData{
@@ -245,20 +162,8 @@ func RotateSubWindow() {
 			GTE80:  CurrentCoprCacheHitRatioGTE80Count.Swap(0),
 			GTE100: CurrentCoprCacheHitRatioGTE100Count.Swap(0),
 		},
-		SQLUsage: sqlUsageData{
-			SQLTotal: 0,
-			SQLType:  make(sqlType),
-		},
 		BuiltinFunctionsUsage: GlobalBuiltinFunctionsUsage.Dump(),
 	}
-
-	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
-	if err != nil {
-		logutil.BgLogger().Info("Error exists when getting the SQL Metric.",
-			zap.Error(err))
-	}
-
-	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
 
 	subWindowsLock.Lock()
 	rotatedSubWindows = append(rotatedSubWindows, &thisSubWindow)
@@ -267,14 +172,6 @@ func RotateSubWindow() {
 		rotatedSubWindows = rotatedSubWindows[len(rotatedSubWindows)-maxSubWindowLength:]
 	}
 	subWindowsLock.Unlock()
-}
-
-func calDeltaSQLTypeMap(cur sqlType, last sqlType) sqlType {
-	deltaMap := make(sqlType)
-	for key, value := range cur {
-		deltaMap[key] = value - (last)[key]
-	}
-	return deltaMap
 }
 
 // getWindowData returns data aggregated by window size.
@@ -286,12 +183,6 @@ func getWindowData() []*windowData {
 	i := 0
 	for i < len(rotatedSubWindows) {
 		thisWindow := *rotatedSubWindows[i]
-		var startWindow windowData
-		if i == 0 {
-			startWindow = thisWindow
-		} else {
-			startWindow = *rotatedSubWindows[i-1]
-		}
 		aggregatedSubWindows := 1
 		// Aggregate later sub windows
 		i++
@@ -308,8 +199,6 @@ func getWindowData() []*windowData {
 			thisWindow.CoprCacheUsage.GTE40 += rotatedSubWindows[i].CoprCacheUsage.GTE40
 			thisWindow.CoprCacheUsage.GTE80 += rotatedSubWindows[i].CoprCacheUsage.GTE80
 			thisWindow.CoprCacheUsage.GTE100 += rotatedSubWindows[i].CoprCacheUsage.GTE100
-			thisWindow.SQLUsage.SQLTotal = rotatedSubWindows[i].SQLUsage.SQLTotal - startWindow.SQLUsage.SQLTotal
-			thisWindow.SQLUsage.SQLType = calDeltaSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
 
 			mergedBuiltinFunctionsUsage := BuiltinFunctionsUsage(thisWindow.BuiltinFunctionsUsage)
 			mergedBuiltinFunctionsUsage.Merge(BuiltinFunctionsUsage(rotatedSubWindows[i].BuiltinFunctionsUsage))

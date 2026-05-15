@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -102,13 +101,13 @@ func (*LockExec) Open(context.Context) error {
 // populatePartitionIDAndNames returns the table ID and partition IDs for the given table name and partition names.
 func populatePartitionIDAndNames(
 	table *ast.TableName,
-	partitionNames []model.CIStr,
+	partitionNames []ast.CIStr,
 	is infoschema.InfoSchema,
 ) (int64, map[int64]string, error) {
 	if len(partitionNames) == 0 {
 		return 0, nil, errors.New("partition list should not be empty")
 	}
-	tbl, err := is.TableByName(table.Schema, table.Name)
+	tbl, err := is.TableByName(context.Background(), table.Schema, table.Name)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -142,7 +141,7 @@ func populateTableAndPartitionIDs(
 	tableWithPartitions := make(map[int64]*types.StatsLockTable, len(tables))
 
 	for _, table := range tables {
-		tbl, err := is.TableByName(table.Schema, table.Name)
+		tbl, err := is.TableByName(context.Background(), table.Schema, table.Name)
 		if err != nil {
 			return nil, err
 		}

@@ -11,7 +11,7 @@ import (
 )
 
 func TestRepeatableRead(t *testing.T) {
-	data := [][]interface{}{
+	data := [][]any{
 		{version.ServerTypeUnknown, ConsistencyTypeNone, true},
 		{version.ServerTypeMySQL, ConsistencyTypeFlush, true},
 		{version.ServerTypeMariaDB, ConsistencyTypeLock, true},
@@ -19,8 +19,8 @@ func TestRepeatableRead(t *testing.T) {
 		{version.ServerTypeTiDB, ConsistencyTypeSnapshot, false},
 		{version.ServerTypeTiDB, ConsistencyTypeLock, true},
 	}
-	dec := func(d []interface{}) (version.ServerType, string, bool) {
-		return version.ServerType(d[0].(int)), d[1].(string), d[2].(bool)
+	dec := func(d []any) (version.ServerType, string, bool) {
+		return d[0].(version.ServerType), d[1].(string), d[2].(bool)
 	}
 	for tag, datum := range data {
 		serverTp, consistency, expectRepeatableRead := dec(datum)
@@ -33,11 +33,11 @@ func TestRepeatableRead(t *testing.T) {
 func TestInfiniteChan(t *testing.T) {
 	in, out := infiniteChan[int]()
 	go func() {
-		for i := 0; i < 10000; i++ {
+		for i := range 10000 {
 			in <- i
 		}
 	}()
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		j := <-out
 		require.Equal(t, i, j)
 	}

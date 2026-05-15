@@ -18,9 +18,10 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 // All the AggFunc implementations are listed here for navigation.
@@ -33,6 +34,7 @@ var (
 	_ AggFunc = (*countOriginal4Time)(nil)
 	_ AggFunc = (*countOriginal4Duration)(nil)
 	_ AggFunc = (*countOriginal4JSON)(nil)
+	_ AggFunc = (*countOriginal4VectorFloat32)(nil)
 	_ AggFunc = (*countOriginal4String)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Int)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Real)(nil)
@@ -61,6 +63,7 @@ var (
 	_ AggFunc = (*firstRow4Float32)(nil)
 	_ AggFunc = (*firstRow4Float64)(nil)
 	_ AggFunc = (*firstRow4JSON)(nil)
+	_ AggFunc = (*firstRow4VectorFloat32)(nil)
 	_ AggFunc = (*firstRow4Enum)(nil)
 	_ AggFunc = (*firstRow4Set)(nil)
 
@@ -71,8 +74,10 @@ var (
 	_ AggFunc = (*maxMin4Float64)(nil)
 	_ AggFunc = (*maxMin4Decimal)(nil)
 	_ AggFunc = (*maxMin4String)(nil)
+	_ AggFunc = (*maxMin4Time)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
+	_ AggFunc = (*maxMin4VectorFloat32)(nil)
 	_ AggFunc = (*maxMin4Enum)(nil)
 	_ AggFunc = (*maxMin4Set)(nil)
 
@@ -140,7 +145,17 @@ const (
 type PartialResult unsafe.Pointer
 
 // AggPartialResultMapper contains aggregate function results
-type AggPartialResultMapper map[string][]PartialResult
+type AggPartialResultMapper = *hack.MemAwareMap[string, []PartialResult]
+
+// NewAggPartialResultMapper creates a new AggPartialResultMapper
+func NewAggPartialResultMapper() AggPartialResultMapper {
+	return NewAggPartialResultMapperWithCap(0)
+}
+
+// NewAggPartialResultMapperWithCap creates a new AggPartialResultMapper with specified capacity
+func NewAggPartialResultMapperWithCap(capacity int) AggPartialResultMapper {
+	return hack.NewMemAwareMap[string, []PartialResult](capacity)
+}
 
 type serializer interface {
 	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
@@ -149,6 +164,9 @@ type serializer interface {
 	// DeserializePartialResult deserializes from bytes to PartialResult.
 	DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64)
 }
+
+// AggFuncUpdateContext is used to update the aggregate result.
+type AggFuncUpdateContext = exprctx.EvalContext
 
 // AggFunc is the interface to evaluate the aggregate functions.
 type AggFunc interface {
@@ -175,21 +193,21 @@ type AggFunc interface {
 	// partial result according to the functionality and the state of the
 	// aggregate function. The returned value is the memDelta used to trace memory
 	// usage.
-	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
+	UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific
 	// data structure which stores the partial results, and then evaluate the
 	// final result using the partial results as input values. The returned value
 	// is the memDelta used to trace memory usage.
-	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error)
+	MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error)
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
 	// input PartialResult to the specific data structure which stores the
 	// partial result and then calculates the final result and append that
 	// final result to the chunk provided.
-	AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error
+	AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error
 }
 
 type baseAggFunc struct {
@@ -205,7 +223,7 @@ type baseAggFunc struct {
 	retTp *types.FieldType
 }
 
-func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
+func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
 	return 0, nil
 }
 
@@ -224,7 +242,7 @@ type SlidingWindowAggFunc interface {
 	// PartialResult stores the intermediate result which will be used in the next
 	// sliding window, ensure call ResetPartialResult after a frame are evaluated
 	// completely.
-	Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+	Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
 
 // MaxMinSlidingWindowAggFunc is the interface to evaluate the max/min agg function using sliding window

@@ -16,6 +16,7 @@ package deadlockhistory
 
 import (
 	"encoding/hex"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -69,13 +70,13 @@ type DeadlockRecord struct {
 }
 
 var columnValueGetterMap = map[string]func(rec *DeadlockRecord, waitChainIdx int) types.Datum{
-	ColDeadlockIDStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+	ColDeadlockIDStr: func(rec *DeadlockRecord, _ int) types.Datum {
 		return types.NewDatum(rec.ID)
 	},
-	ColOccurTimeStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+	ColOccurTimeStr: func(rec *DeadlockRecord, _ int) types.Datum {
 		return types.NewDatum(types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp))
 	},
-	ColRetryableStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+	ColRetryableStr: func(rec *DeadlockRecord, _ int) types.Datum {
 		return types.NewDatum(rec.IsRetryable)
 	},
 	ColTryLockTrxIDStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
@@ -153,7 +154,7 @@ func (d *DeadlockHistory) Resize(newCapacity uint) {
 		} else {
 			// shrink deadlocks, keep the last len(current)-newCapacity items
 			// use append here to force golang to realloc the underlying array to save memory
-			d.deadlocks = append([]*DeadlockRecord{}, current[uint(len(current))-newCapacity:]...)
+			d.deadlocks = slices.Clone(current[uint(len(current))-newCapacity:])
 			d.size = int(newCapacity)
 		}
 	}
@@ -209,7 +210,7 @@ func (d *DeadlockHistory) getAll() []*DeadlockRecord {
 func (d *DeadlockHistory) Clear() {
 	d.Lock()
 	defer d.Unlock()
-	for i := 0; i < len(d.deadlocks); i++ {
+	for i := range d.deadlocks {
 		d.deadlocks[i] = nil
 	}
 	d.head = 0

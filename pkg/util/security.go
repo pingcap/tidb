@@ -46,7 +46,7 @@ func addVerifyPeerCertificate(tlsCfg *tls.Config, verifyCN []string) {
 			checkCN[cn] = struct{}{}
 		}
 		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
-		tlsCfg.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		tlsCfg.VerifyPeerCertificate = func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
 			cns := make([]string, 0, len(verifiedChains))
 			for _, chains := range verifiedChains {
 				for _, chain := range chains {
@@ -94,7 +94,7 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 	}
 	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS10,
+		MinVersion:   tls.VersionTLS12,
 		Certificates: certificates,
 		RootCAs:      certPool,
 		ClientCAs:    certPool,
@@ -109,6 +109,7 @@ type tlsConfigBuilder struct {
 	caPath, certPath, keyPath          string
 	caContent, certContent, keyContent []byte
 	verifyCN                           []string
+	minTLSVersion                      uint16
 }
 
 // TLSConfigOption is used to build a tls.Config in NewTLSConfig.
@@ -162,6 +163,13 @@ func WithCertAndKeyContent(certContent, keyContent []byte) TLSConfigOption {
 	}
 }
 
+// WithMinTLSVersion sets the min tls version to build a tls.Config.
+func WithMinTLSVersion(minTLSVersion uint16) TLSConfigOption {
+	return func(builder *tlsConfigBuilder) {
+		builder.minTLSVersion = minTLSVersion
+	}
+}
+
 // NewTLSConfig creates a tls.Config from the given options. If no certificate is provided, it will return (nil, nil).
 func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 	builder := &tlsConfigBuilder{}
@@ -183,9 +191,13 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 
 	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:         tls.VersionTLS10,
+		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"h2", "http/1.2"}, // specify `h2` to let Go use HTTP/2.
+	}
+
+	if builder.minTLSVersion != 0 {
+		tlsCfg.MinVersion = builder.minTLSVersion
 	}
 
 	// 1. handle client certificates
@@ -204,7 +216,7 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 		tlsCfg.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 			return loadCert()
 		}
-		tlsCfg.GetCertificate = func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		tlsCfg.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return loadCert()
 		}
 	}
@@ -277,7 +289,10 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 	// 3. handle verify Common Name
 
 	if len(builder.verifyCN) > 0 {
+		// set RequireAndVerifyClientCert so server can verify the Common Name of client
 		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+		// set InsecureSkipVerify to false so client can verify the Common Name of server
+		tlsCfg.InsecureSkipVerify = false
 		verifyFuncs = append(verifyFuncs, verifyCommonName(builder.verifyCN))
 	}
 

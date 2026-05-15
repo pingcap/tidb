@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -80,7 +81,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 		err := store.Close()
 		require.NoError(t, err)
 	}()
-	session.SetSchemaLease(50 * time.Millisecond)
+	vardef.SetSchemaLease(50 * time.Millisecond)
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domain.Close()
@@ -92,7 +93,7 @@ func TestStoreGlobalConfig(t *testing.T) {
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "set @@global.tidb_source_id=2;")
 	require.NoError(t, err)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		time.Sleep(100 * time.Millisecond)
 		client :=
 			store.(kv.StorageWithPD).GetPDClient()

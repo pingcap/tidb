@@ -17,8 +17,11 @@ package copr
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	// make sure mock.MockInfoschema is initialized to make sure the test pass
+	_ "github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -29,15 +32,20 @@ type CopContext interface {
 	GetBase() *CopContextBase
 	IndexColumnOutputOffsets(idxID int64) []int
 	IndexInfo(idxID int64) *model.IndexInfo
+	// GetCondition returns the condition of the index as an expression.
+	// If it's `nil`, it means we'll need to scan all the data to build the index.
+	// The condition represents the condition to push down in cop request, so it can be
+	// a single expression or a DNF expression.
+	GetCondition() (expression.Expression, error)
 }
 
 // CopContextBase contains common fields for CopContextSingleIndex and CopContextMultiIndex.
 type CopContextBase struct {
 	TableInfo      *model.TableInfo
 	PrimaryKeyInfo *model.IndexInfo
-	SessionContext sessionctx.Context
-
-	RequestSource string
+	ExprCtx        exprctx.BuildContext
+	PushDownFlags  uint64
+	RequestSource  string
 
 	ColumnInfos []*model.ColumnInfo
 	FieldTypes  []*types.FieldType
@@ -65,10 +73,12 @@ type CopContextMultiIndex struct {
 }
 
 // NewCopContextBase creates a CopContextBase.
+// `idxCols` contains all the index columns and also the columns referenced by the index condition.
 func NewCopContextBase(
+	exprCtx exprctx.BuildContext,
+	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	idxCols []*model.IndexColumn,
-	sessCtx sessionctx.Context,
 	requestSource string,
 ) (*CopContextBase, error) {
 	var err error
@@ -115,18 +125,19 @@ func NewCopContextBase(
 		handleIDs = []int64{extra.ID}
 	}
 
-	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx,
-		model.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
+	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(exprCtx,
+		ast.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
 	if err != nil {
 		return nil, err
 	}
 	hdColOffsets := resolveIndicesForHandle(expColInfos, handleIDs)
-	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(expColInfos)
+	vColOffsets, vColFts := collectVirtualColumnOffsetsAndTypes(exprCtx.GetEvalCtx(), expColInfos)
 
 	return &CopContextBase{
 		TableInfo:                   tblInfo,
 		PrimaryKeyInfo:              primaryIdx,
-		SessionContext:              sessCtx,
+		ExprCtx:                     exprCtx,
+		PushDownFlags:               pushDownFlags,
 		RequestSource:               requestSource,
 		ColumnInfos:                 colInfos,
 		FieldTypes:                  fieldTps,
@@ -139,25 +150,35 @@ func NewCopContextBase(
 
 // NewCopContext creates a CopContext.
 func NewCopContext(
+	exprCtx exprctx.BuildContext,
+	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
-	sessCtx sessionctx.Context,
 	requestSource string,
 ) (CopContext, error) {
 	if len(allIdxInfo) == 1 {
-		return NewCopContextSingleIndex(tblInfo, allIdxInfo[0], sessCtx, requestSource)
+		return NewCopContextSingleIndex(exprCtx, pushDownFlags, tblInfo, allIdxInfo[0], requestSource)
 	}
-	return NewCopContextMultiIndex(tblInfo, allIdxInfo, sessCtx, requestSource)
+	return NewCopContextMultiIndex(exprCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource)
 }
 
 // NewCopContextSingleIndex creates a CopContextSingleIndex.
 func NewCopContextSingleIndex(
+	exprCtx exprctx.BuildContext,
+	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
-	sessCtx sessionctx.Context,
 	requestSource string,
 ) (*CopContextSingleIndex, error) {
-	base, err := NewCopContextBase(tblInfo, idxInfo.Columns, sessCtx, requestSource)
+	cols := idxInfo.Columns
+	neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
+	if err != nil {
+		return nil, err
+	}
+	cols = append(cols, neededCols...)
+	cols = tables.DedupIndexColumns(cols)
+
+	base, err := NewCopContextBase(exprCtx, pushDownFlags, tblInfo, cols, requestSource)
 	if err != nil {
 		return nil, err
 	}
@@ -184,29 +205,54 @@ func (c *CopContextSingleIndex) IndexInfo(_ int64) *model.IndexInfo {
 	return c.idxInfo
 }
 
+// GetCondition implements the CopContext interface.
+func (c *CopContextSingleIndex) GetCondition() (expression.Expression, error) {
+	if !c.idxInfo.HasCondition() {
+		return nil, nil
+	}
+
+	schema, names := c.GetBase().GetSchemaAndNames()
+
+	expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
+		c.idxInfo.ConditionExprString,
+		expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo))
+	if err != nil {
+		return nil, err
+	}
+	for _, col := range expression.ExtractColumns(expr) {
+		if col.VirtualExpr != nil {
+			// Virtual generated columns cannot be pushed down.
+			return nil, nil
+		}
+	}
+	return expr, nil
+}
+
 // NewCopContextMultiIndex creates a CopContextMultiIndex.
 func NewCopContextMultiIndex(
+	exprCtx exprctx.BuildContext,
+	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
-	sessCtx sessionctx.Context,
 	requestSource string,
 ) (*CopContextMultiIndex, error) {
 	approxColLen := 0
 	for _, idxInfo := range allIdxInfo {
 		approxColLen += len(idxInfo.Columns)
 	}
-	distinctOffsets := make(map[int]struct{}, approxColLen)
 	allIdxCols := make([]*model.IndexColumn, 0, approxColLen)
 	for _, idxInfo := range allIdxInfo {
-		for _, idxCol := range idxInfo.Columns {
-			if _, found := distinctOffsets[idxCol.Offset]; !found {
-				distinctOffsets[idxCol.Offset] = struct{}{}
-				allIdxCols = append(allIdxCols, idxCol)
-			}
-		}
-	}
+		allIdxCols = append(allIdxCols, idxInfo.Columns...)
 
-	base, err := NewCopContextBase(tblInfo, allIdxCols, sessCtx, requestSource)
+		neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
+		if err != nil {
+			return nil, err
+		}
+		allIdxCols = append(allIdxCols, neededCols...)
+	}
+	allIdxCols = tables.DedupIndexColumns(allIdxCols)
+
+	base, err := NewCopContextBase(exprCtx, pushDownFlags, tblInfo, allIdxCols, requestSource)
 	if err != nil {
 		return nil, err
 	}
@@ -245,6 +291,37 @@ func (c *CopContextMultiIndex) IndexInfo(indexID int64) *model.IndexInfo {
 		}
 	}
 	return nil
+}
+
+// GetCondition implements the CopContext interface.
+func (c *CopContextMultiIndex) GetCondition() (expression.Expression, error) {
+	exprs := make([]expression.Expression, 0, len(c.allIndexInfos))
+	for _, idxInfo := range c.allIndexInfos {
+		if !idxInfo.HasCondition() {
+			return nil, nil
+		}
+
+		schema, names := c.GetBase().GetSchemaAndNames()
+		expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
+			idxInfo.ConditionExprString,
+			expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo))
+		if err != nil {
+			return nil, err
+		}
+		for _, col := range expression.ExtractColumns(expr) {
+			if col.VirtualExpr != nil {
+				// Virtual generated columns cannot be pushed down.
+				return nil, nil
+			}
+		}
+		exprs = append(exprs, expr)
+	}
+
+	// Use `OR` to combine all the conditions.
+	if len(exprs) > 0 {
+		return expression.ComposeDNFCondition(c.GetBase().ExprCtx, exprs...), nil
+	}
+	return nil, nil
 }
 
 func fillUsedColumns(
@@ -305,14 +382,42 @@ func resolveIndicesForHandle(cols []*expression.Column, handleIDs []int64) []int
 	return offsets
 }
 
-func collectVirtualColumnOffsetsAndTypes(cols []*expression.Column) ([]int, []*types.FieldType) {
+func collectVirtualColumnOffsetsAndTypes(ctx expression.EvalContext, cols []*expression.Column) ([]int, []*types.FieldType) {
 	var offsets []int
 	var fts []*types.FieldType
 	for i, col := range cols {
 		if col.VirtualExpr != nil {
 			offsets = append(offsets, i)
-			fts = append(fts, col.GetType())
+			fts = append(fts, col.GetType(ctx))
 		}
 	}
 	return offsets, fts
+}
+
+// GetSchemaAndNames returns the schema and nameslice returned from the internal cop request.
+func (c *CopContextBase) GetSchemaAndNames() (*expression.Schema, types.NameSlice) {
+	exprColumns := make([]*expression.Column, 0, len(c.ExprColumnInfos))
+	names := types.NameSlice{}
+	for i, col := range c.ExprColumnInfos {
+		newCol := col.Clone().(*expression.Column)
+		newCol.Index = i
+		exprColumns = append(exprColumns, newCol)
+
+		// Specially handle the extra handle column.
+		// We cannot get the name of extra handle column from tableInfo.
+		var colName ast.CIStr
+		if col.ID == model.ExtraHandleID {
+			colName = model.ExtraHandleName
+		} else {
+			colName = c.TableInfo.Columns[col.Index].Name
+		}
+
+		names = append(names, &types.FieldName{
+			TblName: c.TableInfo.Name,
+			ColName: colName,
+		})
+	}
+	schema := expression.NewSchema(exprColumns...)
+
+	return schema, names
 }

@@ -16,6 +16,8 @@ package testserverclient
 
 import (
 	"bytes"
+	"context"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -26,26 +28,34 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	mysqlcursor "github.com/YangKeao/go-mysql-driver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 //revive:disable:exported
@@ -111,6 +121,18 @@ func (cli *TestServerClient) GetDSN(overriders ...configOverrider) string {
 			overrider(config)
 		}
 	}
+	return config.FormatDSN()
+}
+
+// GetDSN generates a DSN string for MySQL connection.
+func (cli *TestServerClient) GetDSNWithCursor(fetchSize uint32) string {
+	config := mysqlcursor.NewConfig()
+	config.User = "root"
+	config.Net = "tcp"
+	config.Addr = fmt.Sprintf("127.0.0.1:%d", cli.Port)
+	config.DBName = "test"
+	config.Params = make(map[string]string)
+	config.FetchSize = fetchSize
 	return config.FormatDSN()
 }
 
@@ -386,11 +408,11 @@ func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T) 
 		dbt.MustExec("create table t1 (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t1 with thread=1", outfile))
 
-		fetchResults := func(table string) [][]interface{} {
-			var res [][]interface{}
+		fetchResults := func(table string) [][]any {
+			var res [][]any
 			row := dbt.MustQuery("select * from " + table + " order by i")
 			for row.Next() {
-				r := make([]interface{}, 7)
+				r := make([]any, 7)
 				require.NoError(t, row.Scan(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6]))
 				res = append(res, r)
 			}
@@ -501,7 +523,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandom(t *testing.T) {
 
 	cksum1 := 0
 	cksum2 := 0
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		n1 := rand.Intn(1000)
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
@@ -556,7 +578,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandomWithSpecialTerm(t *testing
 
 	cksum1 := 0
 	cksum2 := 0
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		n1 := rand.Intn(1000)
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
@@ -609,7 +631,6 @@ func (cli *TestServerClient) RunTestLoadDataForListPartition(t *testing.T) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.MustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -663,7 +684,6 @@ func (cli *TestServerClient) RunTestLoadDataForListPartition2(t *testing.T) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.MustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual,
 		unique index idx (id,b)) partition by list (id*2 + b*b + b*b - b*b*2 - abs(id)) (
     	partition p0 values in (3,5,6,9,17),
@@ -718,7 +738,6 @@ func (cli *TestServerClient) RunTestLoadDataForListColumnPartition(t *testing.T)
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.MustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
@@ -773,7 +792,6 @@ func (cli *TestServerClient) RunTestLoadDataForListColumnPartition2(t *testing.T
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
 	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
 		dbt.MustExec(`create table t (location varchar(10), id int, a int, unique index idx (location,id)) partition by list columns (location,id) (
     	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
     	partition p_east  values in (('e', 5),('e', 6),('e', 7),('e', 8)),
@@ -831,7 +849,7 @@ func (*TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 		cols, err := rows.Columns()
 		require.NoError(t, err)
 		rawResult := make([][]byte, len(cols))
-		dest := make([]interface{}, len(cols))
+		dest := make([]any, len(cols))
 		for i := range rawResult {
 			dest[i] = &rawResult[i]
 		}
@@ -1004,7 +1022,7 @@ func (cli *TestServerClient) RunTestLoadDataWithColumnList(t *testing.T, _ *serv
 func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []string) {
 	require.Equal(t, len(columns), len(expected))
 
-	for i := 0; i < len(columns); i++ {
+	for i := range columns {
 		require.Equal(t, expected[i], columns[i].String)
 	}
 }
@@ -1228,7 +1246,7 @@ func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server
 
 	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit.Load()
 	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
-	kv.TxnTotalSizeLimit.Store(10240)
+	kv.TxnTotalSizeLimit.Store(12000)
 	defer func() { kv.TxnTotalSizeLimit.Store(originalTxnTotalSizeLimit) }()
 
 	// support ClientLocalFiles capability
@@ -1774,39 +1792,6 @@ func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server
 	})
 }
 
-func (cli *TestServerClient) RunTestConcurrentUpdate(t *testing.T) {
-	dbName := "Concurrent"
-	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
-		config.Params["sql_mode"] = "''"
-	}, dbName, func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("drop table if exists test2")
-		dbt.MustExec("create table test2 (a int, b int)")
-		dbt.MustExec("insert test2 values (1, 1)")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-
-		txn1, err := dbt.GetDB().Begin()
-		require.NoError(t, err)
-		_, err = txn1.Exec(fmt.Sprintf("USE `%s`;", dbName))
-		require.NoError(t, err)
-
-		txn2, err := dbt.GetDB().Begin()
-		require.NoError(t, err)
-		_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
-		require.NoError(t, err)
-
-		_, err = txn2.Exec("update test2 set a = a + 1 where b = 1")
-		require.NoError(t, err)
-		err = txn2.Commit()
-		require.NoError(t, err)
-
-		_, err = txn1.Exec("update test2 set a = a + 1 where b = 1")
-		require.NoError(t, err)
-
-		err = txn1.Commit()
-		require.NoError(t, err)
-	})
-}
-
 func (cli *TestServerClient) RunTestExplainForConn(t *testing.T) {
 	cli.RunTestsOnNewDB(t, nil, "explain_for_conn", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("drop table if exists t")
@@ -1818,7 +1803,10 @@ func (cli *TestServerClient) RunTestExplainForConn(t *testing.T) {
 		err := rows.Scan(&connID)
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
-		dbt.MustQuery("select * from t where a=1")
+		// Seed the statement inspected by EXPLAIN FOR CONNECTION, then close rows so
+		// database/sql releases the connection.
+		rows = dbt.MustQuery("select * from t where a=1")
+		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("explain for connection " + strconv.Itoa(int(connID)))
 		require.True(t, rows.Next())
 		row := make([]string, 9)
@@ -1892,13 +1880,7 @@ func checkErrorCode(t *testing.T, e error, codes ...uint16) {
 	if len(codes) == 1 {
 		require.Equal(t, codes[0], me.Number)
 	}
-	isMatchCode := false
-	for _, code := range codes {
-		if me.Number == code {
-			isMatchCode = true
-			break
-		}
-	}
+	isMatchCode := slices.Contains(codes, me.Number)
 	require.Truef(t, isMatchCode, "got err %v, expected err codes %v", me, codes)
 }
 
@@ -2437,6 +2419,8 @@ func (cli *TestServerClient) RunReloadTLS(t *testing.T, overrider configOverride
 
 func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.GetDB().SetMaxOpenConns(1)
+		dbt.GetDB().SetMaxIdleConns(1)
 		dbt.MustExec("create table sumavg (a int, b decimal, c double)")
 		dbt.MustExec("insert sumavg values (1, 1, 1)")
 		rows := dbt.MustQuery("select sum(a), sum(b), sum(c) from sumavg")
@@ -2447,6 +2431,7 @@ func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 		require.Equal(t, 1.0, outA)
 		require.Equal(t, 1.0, outB)
 		require.Equal(t, 1.0, outC)
+		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select avg(a), avg(b), avg(c) from sumavg")
 		require.True(t, rows.Next())
 		err = rows.Scan(&outA, &outB, &outC)
@@ -2454,6 +2439,7 @@ func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 		require.Equal(t, 1.0, outA)
 		require.Equal(t, 1.0, outB)
 		require.Equal(t, 1.0, outC)
+		require.NoError(t, rows.Close())
 	})
 }
 
@@ -2597,6 +2583,10 @@ func (cli *TestServerClient) RunTestInitConnect(t *testing.T) {
 // and not internal SQL statements. Thus, this test is in the server-test suite.
 func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
 	cli.RunTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@tidb_enable_cache_prepare_stmt = off")
+		defer func() {
+			dbt.MustExec("set @@tidb_enable_cache_prepare_stmt = default")
+		}()
 		clientErrors := []struct {
 			stmt              string
 			incrementWarnings bool
@@ -2663,77 +2653,458 @@ func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
 	})
 }
 
-func (cli *TestServerClient) RunTestStmtCountLimit(t *testing.T) {
-	originalStmtCountLimit := config.GetGlobalConfig().Performance.StmtCountLimit
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.StmtCountLimit = 3
+func (cli *TestServerClient) RunTestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "set global sql_mode='NO_BACKSLASH_ESCAPES';")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, `
+		CREATE TABLE t1 (
+			id bigint(20) NOT NULL,
+			t text DEFAULT NULL,
+			PRIMARY KEY (id)
+		);`)
+		require.NoError(t, err)
+
+		// use another new connection
+		conn1, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "insert into t1 values (1, 'ab\\\\c');")
+		require.NoError(t, err)
+		result, err := conn1.QueryContext(ctx, "select t from t1 where id = 1;")
+		require.NoError(t, err)
+		require.True(t, result.Next())
+		var tStr string
+		require.NoError(t, result.Scan(&tStr))
+
+		require.Equal(t, "ab\\\\c", tStr)
 	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Performance.StmtCountLimit = originalStmtCountLimit
+}
+
+func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
+	readConnCount := func(resourceGroupName string) float64 {
+		metric, err := metrics.ConnGauge.GetMetricWith(map[string]string{
+			metrics.LblResourceGroup: resourceGroupName,
 		})
-	}()
+		require.NoError(t, err)
+		output := &dto.Metric{}
+		metric.Write(output)
+
+		return output.GetGauge().GetValue()
+	}
+
+	resourceGroupConnCountReached := func(t *testing.T, resourceGroupName string, expected float64) {
+		require.Eventually(t, func() bool {
+			return readConnCount(resourceGroupName) == expected
+		}, 5*time.Second, 100*time.Millisecond)
+	}
 
 	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("create table t (id int key);")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
-		dbt.MustExec("set autocommit=0;")
-		dbt.MustExec("begin optimistic;")
-		dbt.MustExec("insert into t values (1);")
-		dbt.MustExec("insert into t values (2);")
-		_, err := dbt.GetDB().Query("select * from t for update;")
-		require.Error(t, err)
-		require.Equal(t, "Error 1105 (HY000): statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
-		dbt.MustExec("insert into t values (3);")
-		dbt.MustExec("commit;")
-		rows := dbt.MustQuery("select * from t;")
-		var id int
-		count := 0
-		for rows.Next() {
-			rows.Scan(&id)
-			count++
-		}
-		require.NoError(t, rows.Close())
-		require.Equal(t, 3, id)
-		require.Equal(t, 1, count)
+		ctx := context.Background()
+		dbt.GetDB().SetMaxIdleConns(0)
 
-		dbt.MustExec("delete from t;")
-		dbt.MustExec("commit;")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
-		dbt.MustExec("set autocommit=0;")
-		dbt.MustExec("begin optimistic;")
-		dbt.MustExec("insert into t values (1);")
-		dbt.MustExec("insert into t values (2);")
-		_, err = dbt.GetDB().Exec("insert into t values (3);")
-		require.Error(t, err)
-		require.Equal(t, "Error 1105 (HY000): statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
-		dbt.MustExec("commit;")
-		rows = dbt.MustQuery("select count(*) from t;")
-		for rows.Next() {
-			rows.Scan(&count)
+		// start 100 connections
+		conns := make([]*sql.Conn, 100)
+		for i := range 100 {
+			conn, err := dbt.GetDB().Conn(ctx)
+			require.NoError(t, err)
+			conns[i] = conn
 		}
-		require.NoError(t, rows.Close())
-		require.Equal(t, 0, count)
+		resourceGroupConnCountReached(t, "default", 100.0)
 
-		dbt.MustExec("delete from t;")
-		dbt.MustExec("commit;")
-		dbt.MustExec("set @@tidb_batch_commit=1;")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
-		dbt.MustExec("set autocommit=0;")
-		dbt.MustExec("begin optimistic;")
-		dbt.MustExec("insert into t values (1);")
-		dbt.MustExec("insert into t values (2);")
-		dbt.MustExec("insert into t values (3);")
-		dbt.MustExec("insert into t values (4);")
-		dbt.MustExec("insert into t values (5);")
-		dbt.MustExec("commit;")
-		rows = dbt.MustQuery("select count(*) from t;")
-		for rows.Next() {
-			rows.Scan(&count)
+		// close 50 connections
+		for i := range 50 {
+			err := conns[i].Close()
+			require.NoError(t, err)
 		}
-		require.NoError(t, rows.Close())
-		require.Equal(t, 5, count)
+		resourceGroupConnCountReached(t, "default", 50.0)
+
+		// close 25 connections
+		for i := 50; i < 75; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 25.0)
+
+		// change the following 25 connections from `default` resource group to `test`
+		dbt.MustExec("create resource group test RU_PER_SEC = 1000;")
+		for i := 75; i < 100; i++ {
+			_, err := conns[i].ExecContext(ctx, "set resource group test")
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 25.0)
+
+		// close 25 connections
+		for i := 75; i < 100; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 0.0)
 	})
+
+	// The connection closed before handshake will not decrease the count below 0.
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.User = "randomusername"
+	}, func(dbt *testkit.DBTestKit) {
+		_, err := dbt.GetDB().Conn(context.Background())
+		require.NotNil(t, err)
+		resourceGroupConnCountReached(t, "default", 0.0)
+	})
+
+	// The resource group set by user authantication info is tracked by the count
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		// Create a user with resource group
+		_, err := dbt.GetDB().Exec("CREATE USER 'testuser'@'%' RESOURCE GROUP test;")
+		require.NoError(t, err)
+	})
+	cli.RunTests(t, func(c *mysql.Config) {
+		c.User = "testuser"
+		c.DBName = ""
+	}, func(dbt *testkit.DBTestKit) {
+		// By default, the resource group is set to `test`
+		ctx := context.Background()
+		dbt.GetDB().SetMaxIdleConns(0)
+
+		// start 100 connections
+		conns := make([]*sql.Conn, 100)
+		for i := range 100 {
+			conn, err := dbt.GetDB().Conn(ctx)
+			require.NoError(t, err)
+			conns[i] = conn
+		}
+		resourceGroupConnCountReached(t, "test", 100.0)
+
+		// close 25 connections
+		for i := 75; i < 100; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "test", 75.0)
+
+		// close the rest of them
+		for i := range 75 {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "test", 0.0)
+	})
+
+	// The resource group set by `SET SESSION_STATE` will be tracked by the counter
+	// At first, create a new cert/key pair to encode session state
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "cert.pem")
+	keyPath := filepath.Join(tempDir, "key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 1024, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
+
+	sessionstates.SetCertPath(certPath)
+	sessionstates.SetKeyPath(keyPath)
+	sessionstates.ReloadSigningCert()
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		resourceGroupConnCountReached(t, "default", 1.0)
+		// Now set the resource group to `test`
+		_, err = conn.ExecContext(ctx, "set resource group test")
+		require.NoError(t, err)
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 1.0)
+
+		// Encode the session state
+		rows, err := conn.QueryContext(ctx, "show session_states")
+		require.NoError(t, err)
+		var sessionStates, signInfo string
+		rows.Next()
+		err = rows.Scan(&sessionStates, &signInfo)
+		require.NoError(t, err)
+		require.NoError(t, rows.Close())
+
+		// Now reset the resource group to `default`
+		_, err = conn.ExecContext(ctx, "set resource group default")
+		require.NoError(t, err)
+		resourceGroupConnCountReached(t, "default", 1.0)
+		resourceGroupConnCountReached(t, "test", 0.0)
+		// Set the session state
+		sessionStates = strings.ReplaceAll(sessionStates, "\\", "\\\\")
+		sessionStates = strings.ReplaceAll(sessionStates, "'", "\\'")
+		_, err = conn.ExecContext(ctx, fmt.Sprintf("set session_states '%s'", sessionStates))
+		require.NoError(t, err)
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 1.0)
+	})
+}
+
+func (cli *TestServerClient) RunTestTypeAndCharsetOfSendLongData(t *testing.T) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "CREATE TABLE t (j JSON);")
+		require.NoError(t, err)
+
+		str := `"` + strings.Repeat("a", 1024) + `"`
+		stmt, err := conn.PrepareContext(ctx, "INSERT INTO t VALUES (cast(? as JSON));")
+		require.NoError(t, err)
+		_, err = stmt.ExecContext(ctx, str)
+		require.NoError(t, err)
+		result, err := conn.QueryContext(ctx, "SELECT j FROM t;")
+		require.NoError(t, err)
+
+		for result.Next() {
+			var j string
+			require.NoError(t, result.Scan(&j))
+			require.Equal(t, str, j)
+		}
+	})
+
+	str := strings.Repeat("你好", 1024)
+	enc := simplifiedchinese.GBK.NewEncoder()
+	gbkStr, err := enc.String(str)
+	require.NoError(t, err)
+
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+		config.Params["charset"] = "gbk"
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "drop table t")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "CREATE TABLE t (t TEXT);")
+		require.NoError(t, err)
+
+		stmt, err := conn.PrepareContext(ctx, "INSERT INTO t VALUES (?);")
+		require.NoError(t, err)
+		_, err = stmt.ExecContext(ctx, gbkStr)
+		require.NoError(t, err)
+
+		result, err := conn.QueryContext(ctx, "SELECT * FROM t;")
+		require.NoError(t, err)
+
+		for result.Next() {
+			var txt string
+			require.NoError(t, result.Scan(&txt))
+			require.Equal(t, gbkStr, txt)
+		}
+	})
+}
+
+func (cli *TestServerClient) getNewDB(t *testing.T, overrider configOverrider) *testkit.DBTestKit {
+	db, err := sql.Open("mysql", cli.GetDSN(overrider))
+	require.NoError(t, err)
+
+	return testkit.NewDBTestKit(t, db)
+}
+
+func MustExec(ctx context.Context, t *testing.T, conn *sql.Conn, sql string) {
+	_, err := conn.QueryContext(ctx, sql)
+	require.NoError(t, err)
+}
+
+func MustQuery(ctx context.Context, t *testing.T, cli *TestServerClient, conn *sql.Conn, sql string) {
+	rs, err := conn.QueryContext(ctx, sql)
+	require.NoError(t, err)
+	if rs != nil {
+		cli.Rows(t, rs)
+		rs.Close()
+	}
+}
+
+type sqlWithErr struct {
+	stmt *sql.Stmt
+	sql  string
+}
+
+type expectQuery struct {
+	sql  string
+	rows []string
+}
+
+func (cli *TestServerClient) RunTestIssue53634(t *testing.T) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		MustExec(ctx, t, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
+		MustExec(ctx, t, conn, "use test_db_state")
+		MustExec(ctx, t, conn, `CREATE TABLE stock (
+  a int NOT NULL,
+  b char(30) NOT NULL,
+  c int,
+  d char(64),
+  PRIMARY KEY(a,b)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+		MustExec(ctx, t, conn, "insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
+		MustExec(ctx, t, conn, "alter table stock add column cct_1 int default 10")
+		MustExec(ctx, t, conn, "alter table stock modify cct_1 json")
+		MustExec(ctx, t, conn, "alter table stock add column adc_1 smallint")
+		defer MustExec(ctx, t, conn, "drop database test_db_state")
+
+		sqls := make([]sqlWithErr, 5)
+		sqls[0] = sqlWithErr{nil, "begin"}
+		sqls[1] = sqlWithErr{nil, "SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE"}
+		sqls[2] = sqlWithErr{nil, "UPDATE stock SET c = ? WHERE a= ? AND b = 'a'"}
+		sqls[3] = sqlWithErr{nil, "UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'"}
+		sqls[4] = sqlWithErr{nil, "commit"}
+		dropColumnSQL := "alter table stock drop column cct_1"
+		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
+		runTestInSchemaState(t, conn, cli, model.StateWriteReorganization, true, dropColumnSQL, sqls, query)
+	})
+}
+
+func (cli *TestServerClient) RunTestIssue54254(t *testing.T) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		MustExec(ctx, t, conn, "create database test_db_state default charset utf8 default collate utf8_bin")
+		MustExec(ctx, t, conn, "use test_db_state")
+		MustExec(ctx, t, conn, `CREATE TABLE stock (
+  a int NOT NULL,
+  b char(30) NOT NULL,
+  c int,
+  d char(64),
+  PRIMARY KEY(a,b)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+		MustExec(ctx, t, conn, "insert into stock values(1, 'a', 11, 'x'), (2, 'b', 22, 'y')")
+		defer MustExec(ctx, t, conn, "drop database test_db_state")
+
+		sqls := make([]sqlWithErr, 5)
+		sqls[0] = sqlWithErr{nil, "begin"}
+		sqls[1] = sqlWithErr{nil, "SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE"}
+		sqls[2] = sqlWithErr{nil, "UPDATE stock SET c = ? WHERE a= ? AND b = 'a'"}
+		sqls[3] = sqlWithErr{nil, "UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'"}
+		sqls[4] = sqlWithErr{nil, "commit"}
+		addColumnSQL := "alter table stock add column cct_1 int"
+		query := &expectQuery{sql: "select * from stock;", rows: []string{"1 a 101 x <nil>\n2 b 102 z <nil>"}}
+		runTestInSchemaState(t, conn, cli, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
+	})
+}
+
+func runTestInSchemaState(
+	t *testing.T,
+	conn *sql.Conn,
+	cli *TestServerClient,
+	state model.SchemaState,
+	isOnJobUpdated bool,
+	dropColumnSQL string,
+	sqlWithErrs []sqlWithErr,
+	expectQuery *expectQuery,
+) {
+	ctx := context.Background()
+	MustExec(ctx, t, conn, "use test_db_state")
+
+	prevState := model.StateNone
+	var checkErr error
+	dbt := cli.getNewDB(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	})
+	conn1, err := dbt.GetDB().Conn(ctx)
+	require.NoError(t, err)
+	defer func() {
+		err := dbt.GetDB().Close()
+		require.NoError(t, err)
+	}()
+	MustExec(ctx, t, conn1, "use test_db_state")
+
+	for i, sqlWithErr := range sqlWithErrs {
+		// Start the test txn.
+		// Step 1: begin(when i = 0).
+		if i == 0 || i == len(sqlWithErrs)-1 {
+			sqlWithErr := sqlWithErrs[i]
+			MustExec(ctx, t, conn1, sqlWithErr.sql)
+		} else {
+			// Step 2: prepare stmts.
+			// SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE
+			// UPDATE stock SET c = ? WHERE a= ? AND b = 'a'
+			// UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b'
+			stmt, err := conn1.PrepareContext(ctx, sqlWithErr.sql)
+			require.NoError(t, err)
+			sqlWithErr.stmt = stmt
+			sqlWithErrs[i] = sqlWithErr
+		}
+	}
+
+	// Step 3: begin.
+	sqlWithErr := sqlWithErrs[0]
+	MustExec(ctx, t, conn1, sqlWithErr.sql)
+
+	prevState = model.StateNone
+	state = model.StateWriteOnly
+	cbFunc1 := func(job *model.Job) {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
+			return
+		}
+		prevState = jobStateOrLastSubJobState(job)
+		if prevState != state {
+			return
+		}
+		// Step 4: exec stmts in write-only state (dropping a colum).
+		// SELECT a, c, d from stock where (a, b) IN ((?, ?),(?, ?)) FOR UPDATE, args:(1,"a"),(2,"b")
+		// UPDATE stock SET c = ? WHERE a= ? AND b = 'a',                        args:(100+1, 1)
+		// UPDATE stock SET c = ?, d = 'z' WHERE a= ? AND b = 'b',               args:(100+2, 2)
+		// commit.
+		sqls := sqlWithErrs[1:]
+		for i, sqlWithErr := range sqls {
+			if i == 0 {
+				_, err = sqlWithErr.stmt.ExecContext(ctx, 1, "a", 2, "b")
+				require.NoError(t, err)
+			} else if i == 1 || i == 2 {
+				_, err = sqlWithErr.stmt.ExecContext(ctx, 100+i, i)
+				require.NoError(t, err)
+			} else {
+				MustQuery(ctx, t, cli, conn1, sqlWithErr.sql)
+			}
+		}
+	}
+	if isOnJobUpdated {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	} else {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	}
+	MustExec(ctx, t, conn, dropColumnSQL)
+	require.NoError(t, checkErr)
+
+	// Check the result.
+	// select * from stock
+	if expectQuery != nil {
+		rs, err := conn.QueryContext(ctx, expectQuery.sql)
+		require.NoError(t, err)
+		if expectQuery.rows == nil {
+			require.Nil(t, rs)
+		} else {
+			cli.CheckRows(t, rs, expectQuery.rows[0])
+		}
+	}
+}
+
+func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		subs := job.MultiSchemaInfo.SubJobs
+		return subs[len(subs)-1].SchemaState
+	}
+	return job.SchemaState
 }
 
 //revive:enable:exported

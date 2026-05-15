@@ -18,24 +18,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDistinct(t *testing.T) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	dc := createDistinctChecker(sc)
+	ctx := mock.NewContext()
+	ctx.ResetSessionAndStmtTimeZone(time.Local)
+	dc := createDistinctChecker(ctx)
 	testCases := []struct {
-		vals   []interface{}
+		vals   []any
 		expect bool
 	}{
-		{[]interface{}{1, 1}, true},
-		{[]interface{}{1, 1}, false},
-		{[]interface{}{1, 2}, true},
-		{[]interface{}{1, 2}, false},
-		{[]interface{}{1, nil}, true},
-		{[]interface{}{1, nil}, false},
+		{[]any{1, 1}, true},
+		{[]any{1, 1}, false},
+		{[]any{1, 2}, true},
+		{[]any{1, 2}, false},
+		{[]any{1, nil}, true},
+		{[]any{1, nil}, false},
 	}
 	for _, tc := range testCases {
 		d, err := dc.Check(types.MakeDatums(tc.vals...))

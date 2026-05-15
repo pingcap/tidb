@@ -17,27 +17,45 @@ package builder
 import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // ConstructTreeBasedDistExec constructs tree based DAGRequest
-func ConstructTreeBasedDistExec(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
-	execPB, err := p.ToPB(sctx, kv.TiFlash)
+func ConstructTreeBasedDistExec(pctx *planctx.BuildPBContext, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
+	execPB, err := p.ToPB(pctx, kv.TiFlash)
 	return []*tipb.Executor{execPB}, err
 }
 
 // ConstructListBasedDistExec constructs list based DAGRequest
-func ConstructListBasedDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
+func ConstructListBasedDistExec(pctx *planctx.BuildPBContext, plans []plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
 	executors := make([]*tipb.Executor, 0, len(plans))
 	for _, p := range plans {
-		execPB, err := p.ToPB(sctx, kv.TiKV)
+		execPB, err := p.ToPB(pctx, kv.TiKV)
 		if err != nil {
 			return nil, err
 		}
 		executors = append(executors, execPB)
+	}
+	return executors, nil
+}
+
+// ConstructListBasedDistExecForUnNatureOrderPlans constructs list based executors and
+// sets ParentIdx for those executors whose parent is not the next one in the list.
+func ConstructListBasedDistExecForUnNatureOrderPlans(
+	pctx *planctx.BuildPBContext, plans []plannercore.PhysicalPlan, unNatureOrders map[int]int,
+) ([]*tipb.Executor, error) {
+	executors, err := ConstructListBasedDistExec(pctx, plans)
+	if err != nil {
+		return nil, err
+	}
+	for i, j := range unNatureOrders {
+		parentIdx := uint32(j)
+		executors[i].ParentIdx = &parentIdx
 	}
 	return executors, nil
 }
@@ -52,14 +70,36 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		dagReq.CollectExecutionSummaries = &collExec
 	}
 	dagReq.Flags = sc.PushDownFlags()
+	if ctx.GetSessionVars().GetDivPrecisionIncrement() != vardef.DefDivPrecisionIncrement {
+		var divPrecIncr uint32 = uint32(ctx.GetSessionVars().GetDivPrecisionIncrement())
+		dagReq.DivPrecisionIncrement = &divPrecIncr
+	}
 	if storeType == kv.TiFlash {
 		var executors []*tipb.Executor
-		executors, err = ConstructTreeBasedDistExec(ctx, plans[0])
+		executors, err = ConstructTreeBasedDistExec(ctx.GetBuildPBCtx(), plans[0])
 		dagReq.RootExecutor = executors[0]
 	} else {
-		dagReq.Executors, err = ConstructListBasedDistExec(ctx, plans)
+		dagReq.Executors, err = ConstructListBasedDistExec(ctx.GetBuildPBCtx(), plans)
 	}
 
-	distsql.SetEncodeType(ctx, dagReq)
+	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)
 	return dagReq, err
+}
+
+// ConstructDAGReqForUnNatureOrderPlans constructs DAGRequest for physical plans.
+// The unNatureOrders map is used to set the ParentIdx of executors in DAGRequest.
+// `unNatureOrders` is a map with layout {childIndex => parentIndex} and
+// contains the children indexes whose parent is not the next one.
+func ConstructDAGReqForUnNatureOrderPlans(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, unNatureOrders map[int]int, storeType kv.StoreType) (*tipb.DAGRequest, error) {
+	dagReq, err := ConstructDAGReq(ctx, plans, storeType)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, j := range unNatureOrders {
+		parentIdx := uint32(j)
+		dagReq.Executors[i].ParentIdx = &parentIdx
+	}
+
+	return dagReq, nil
 }

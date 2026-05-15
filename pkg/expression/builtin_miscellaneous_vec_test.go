@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -38,7 +39,15 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 			newSelectRealGener([]float64{0, 0.000001}),
 		}},
 	},
-	ast.UUID: {},
+	ast.UUID:   {},
+	ast.UUIDv4: {},
+	ast.UUIDv7: {},
+	ast.UUIDTimestamp: {
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidStrGener{newDefaultRandGen()}}},
+	},
+	ast.UUIDVersion: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidStrGener{newDefaultRandGen()}}},
+	},
 	ast.Inet6Ntoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
 			newSelectStringGener(
@@ -146,28 +155,32 @@ func TestSleepVectorized(t *testing.T) {
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := fc.getFunction(ctx, []Expression{col0})
 	require.NoError(t, err)
+	require.True(t, f.vectorized() && f.isChildrenVectorized())
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 	warnCnt := counter{}
 
 	// non-strict model
-	sessVars.StmtCtx.BadNullAsWarning = true
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+	sessVars.StmtCtx.SetErrLevels(levels)
 	input.AppendFloat64(0, 1)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, uint16(warnCnt.add(0)), sessVars.StmtCtx.WarningCount())
 
 	input.Reset()
 	input.AppendFloat64(0, -1)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, uint16(warnCnt.add(1)), sessVars.StmtCtx.WarningCount())
 
 	input.Reset()
 	input.AppendNull(0)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, uint16(warnCnt.add(1)), sessVars.StmtCtx.WarningCount())
@@ -176,7 +189,7 @@ func TestSleepVectorized(t *testing.T) {
 	input.AppendNull(0)
 	input.AppendFloat64(0, 1)
 	input.AppendFloat64(0, -1)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	require.Equal(t, int64(0), result.GetInt64(1))
@@ -184,17 +197,19 @@ func TestSleepVectorized(t *testing.T) {
 	require.Equal(t, uint16(warnCnt.add(2)), sessVars.StmtCtx.WarningCount())
 
 	// for error case under the strict model
-	sessVars.StmtCtx.BadNullAsWarning = false
+	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
+	sessVars.StmtCtx.SetErrLevels(levels)
 	input.Reset()
 	input.AppendNull(0)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.Error(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 
 	sessVars.StmtCtx.SetWarnings(nil)
 	input.Reset()
 	input.AppendFloat64(0, -2.5)
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.Error(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 
@@ -202,7 +217,7 @@ func TestSleepVectorized(t *testing.T) {
 	input.Reset()
 	input.AppendFloat64(0, 0.5)
 	start := time.Now()
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))
 	sub := time.Since(start)
@@ -217,7 +232,7 @@ func TestSleepVectorized(t *testing.T) {
 		time.Sleep(1 * time.Second)
 		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
-	err = f.vecEvalInt(ctx, input, result)
+	err = vecEvalType(ctx, f, types.ETInt, input, result)
 	sub = time.Since(start)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), result.GetInt64(0))

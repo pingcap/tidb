@@ -15,6 +15,7 @@
 package types
 
 import (
+	"cmp"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -23,7 +24,7 @@ import (
 // VecCompareUU returns []int64 comparing the []uint64 x to []uint64 y
 func VecCompareUU(x, y []uint64, res []int64) {
 	n := len(x)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if x[i] < y[i] {
 			res[i] = -1
 		} else if x[i] == y[i] {
@@ -37,7 +38,7 @@ func VecCompareUU(x, y []uint64, res []int64) {
 // VecCompareII returns []int64 comparing the []int64 x to []int64 y
 func VecCompareII(x, y, res []int64) {
 	n := len(x)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if x[i] < y[i] {
 			res[i] = -1
 		} else if x[i] == y[i] {
@@ -51,7 +52,7 @@ func VecCompareII(x, y, res []int64) {
 // VecCompareUI returns []int64 comparing the []uint64 x to []int64y
 func VecCompareUI(x []uint64, y, res []int64) {
 	n := len(x)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if y[i] < 0 || x[i] > math.MaxInt64 {
 			res[i] = 1
 		} else if int64(x[i]) < y[i] {
@@ -67,7 +68,7 @@ func VecCompareUI(x []uint64, y, res []int64) {
 // VecCompareIU returns []int64 comparing the []int64 x to []uint64y
 func VecCompareIU(x []int64, y []uint64, res []int64) {
 	n := len(x)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if x[i] < 0 || y[i] > math.MaxInt64 {
 			res[i] = -1
 		} else if x[i] < int64(y[i]) {
@@ -83,4 +84,28 @@ func VecCompareIU(x []int64, y []uint64, res []int64) {
 // CompareString returns an integer comparing the string x to y with the specified collation and length.
 func CompareString(x, y, collation string) int {
 	return collate.GetCollator(collation).Compare(x, y)
+}
+
+// CompareInt return an integer comparing the integer x to y with signed or unsigned.
+func CompareInt(arg0 int64, isUnsigned0 bool, arg1 int64, isUnsigned1 bool) int {
+	var res int
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		res = cmp.Compare(uint64(arg0), uint64(arg1))
+	case isUnsigned0 && !isUnsigned1:
+		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
+			res = 1
+		} else {
+			res = cmp.Compare(arg0, arg1)
+		}
+	case !isUnsigned0 && isUnsigned1:
+		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
+			res = -1
+		} else {
+			res = cmp.Compare(arg0, arg1)
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		res = cmp.Compare(arg0, arg1)
+	}
+	return res
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -38,7 +39,7 @@ type worker interface {
 	Stop()
 	Status() workerStatus
 	Error() error
-	Send() chan<- interface{}
+	Send() chan<- any
 	WaitStopped(ctx context.Context, timeout time.Duration) error
 }
 
@@ -46,7 +47,7 @@ type baseWorker struct {
 	sync.Mutex
 	ctx      context.Context
 	cancel   func()
-	ch       chan interface{}
+	ch       chan any
 	loopFunc func() error
 
 	err    error
@@ -58,7 +59,7 @@ func (w *baseWorker) init(loop func() error) {
 	w.ctx, w.cancel = context.WithCancel(context.Background())
 	w.status = workerStatusCreated
 	w.loopFunc = loop
-	w.ch = make(chan interface{})
+	w.ch = make(chan any)
 }
 
 func (w *baseWorker) Start() {
@@ -117,7 +118,7 @@ func (w *baseWorker) WaitStopped(ctx context.Context, timeout time.Duration) err
 	return nil
 }
 
-func (w *baseWorker) Send() chan<- interface{} {
+func (w *baseWorker) Send() chan<- any {
 	return w.ch
 }
 
@@ -126,6 +127,7 @@ func (w *baseWorker) loop() {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Info("ttl worker panic", zap.Any("recover", r), zap.Stack("stack"))
+			intest.Assert(false, "ttl worker panic")
 		}
 		w.Lock()
 		w.toStopped(err)

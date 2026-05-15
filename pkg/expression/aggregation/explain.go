@@ -18,14 +18,26 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // ExplainAggFunc generates explain information for a aggregation function.
-func ExplainAggFunc(ctx sessionctx.Context, agg *AggFuncDesc, normalized bool) string {
+func ExplainAggFunc(ctx expression.EvalContext, agg *AggFuncDesc, normalized bool) string {
 	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", agg.Name)
+	showMode := false
+	failpoint.Inject("show-agg-mode", func(v failpoint.Value) {
+		if v.(bool) {
+			showMode = true
+		}
+	})
+	if showMode {
+		fmt.Fprintf(&buffer, "%s(%s,", agg.Name, agg.Mode.ToString())
+	} else {
+		fmt.Fprintf(&buffer, "%s(", agg.Name)
+	}
+
 	if agg.HasDistinct {
 		buffer.WriteString("distinct ")
 	}

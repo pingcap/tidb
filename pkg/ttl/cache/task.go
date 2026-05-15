@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -48,35 +47,35 @@ const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	created_time = %?`
 
 // SelectFromTTLTaskWithJobID returns an SQL statement to get all tasks of the specified job in mysql.tidb_ttl_task
-func SelectFromTTLTaskWithJobID(jobID string) (string, []interface{}) {
-	return selectFromTTLTask + " WHERE job_id = %?", []interface{}{jobID}
+func SelectFromTTLTaskWithJobID(jobID string) (string, []any) {
+	return selectFromTTLTask + " WHERE job_id = %?", []any{jobID}
 }
 
 // SelectFromTTLTaskWithID returns an SQL statement to get all tasks of the specified job
 // and scanID in mysql.tidb_ttl_task
-func SelectFromTTLTaskWithID(jobID string, scanID int64) (string, []interface{}) {
-	return selectFromTTLTask + " WHERE job_id = %? AND scan_id = %?", []interface{}{jobID, scanID}
+func SelectFromTTLTaskWithID(jobID string, scanID int64) (string, []any) {
+	return selectFromTTLTask + " WHERE job_id = %? AND scan_id = %?", []any{jobID, scanID}
 }
 
 // PeekWaitingTTLTask returns an SQL statement to get `limit` waiting ttl task
-func PeekWaitingTTLTask(hbExpire time.Time) (string, []interface{}) {
+func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 	return selectFromTTLTask +
 			" WHERE status = 'waiting' OR (owner_hb_time < %? AND status = 'running') ORDER BY created_time ASC",
-		[]interface{}{hbExpire.Format(time.DateTime)}
+		[]any{hbExpire.Format(time.DateTime)}
 }
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
-func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
-	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []interface{}, error) {
-	rangeStart, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), []byte{}, scanRangeStart...)
+func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
+	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []any, error) {
+	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
 	}
-	rangeEnd, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), []byte{}, scanRangeEnd...)
+	rangeEnd, err := codec.EncodeKey(loc, []byte{}, scanRangeEnd...)
 	if err != nil {
 		return "", nil, err
 	}
-	return insertIntoTTLTask, []interface{}{jobID, tableID, int64(scanID),
+	return insertIntoTTLTask, []any{jobID, tableID, int64(scanID),
 		rangeStart, rangeEnd, expireTime, createdTime}, nil
 }
 
@@ -87,9 +86,9 @@ const (
 	// TaskStatusWaiting means the task hasn't started
 	TaskStatusWaiting TaskStatus = "waiting"
 	// TaskStatusRunning means this task is running
-	TaskStatusRunning = "running"
+	TaskStatusRunning TaskStatus = "running"
 	// TaskStatusFinished means this task has finished
-	TaskStatusFinished = "finished"
+	TaskStatusFinished TaskStatus = "finished"
 )
 
 // TTLTask is a row recorded in mysql.tidb_ttl_task
@@ -116,12 +115,14 @@ type TTLTaskState struct {
 	ErrorRows   uint64 `json:"error_rows"`
 
 	ScanTaskErr string `json:"scan_task_err"`
+
+	// When PreviousOwner != "", it means this task is resigned from another owner
+	PreviousOwner string `json:"prev_owner,omitempty"`
 }
 
 // RowToTTLTask converts a row into TTL task
-func RowToTTLTask(sctx sessionctx.Context, row chunk.Row) (*TTLTask, error) {
+func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 	var err error
-	timeZone := sctx.GetSessionVars().Location()
 
 	task := &TTLTask{
 		JobID:   row.GetString(0),

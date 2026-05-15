@@ -79,7 +79,7 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 	if !ok {
 		return "", false
 	}
-	if insert.Select != nil || insert.Setlist || insert.OnDuplicate != nil || (insert.TableHints != nil && len(insert.TableHints) != 0) {
+	if insert.Select != nil || insert.Setlist || insert.OnDuplicate != nil || len(insert.TableHints) != 0 {
 		return "", false
 	}
 	join := insert.Table.TableRefs

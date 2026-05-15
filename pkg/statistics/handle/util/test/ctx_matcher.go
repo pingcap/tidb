@@ -25,7 +25,7 @@ import (
 type CtxMatcher struct{}
 
 // Matches returns true if the context is internal_stats source.
-func (*CtxMatcher) Matches(x interface{}) bool {
+func (*CtxMatcher) Matches(x any) bool {
 	ctx := x.(context.Context)
 	s := util.RequestSourceFromCtx(ctx)
 	return s == util.InternalRequest+"_"+kv.InternalTxnStats

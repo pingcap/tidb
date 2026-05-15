@@ -43,7 +43,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 
 	topsqlstate.EnableTopSQL()
 	mc := mock.NewTopSQLCollector()
-	topsql.SetupTopSQLForTest(mc)
+	topsql.SetupTopProfilingForTest(mc)
 	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
 	sqlCPUCollector.Start()
 	defer sqlCPUCollector.Stop()
@@ -99,7 +99,8 @@ func TestTopSQLReporter(t *testing.T) {
 	server, err := mockServer.StartMockAgentServer()
 	require.NoError(t, err)
 	topsqlstate.GlobalState.MaxStatementCount.Store(200)
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
+	restoreTicker := reporter.SetReportTickerIntervalSecondsForTest(1)
+	t.Cleanup(restoreTicker)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = server.Address()
 	})
@@ -109,7 +110,7 @@ func TestTopSQLReporter(t *testing.T) {
 	report.Start()
 	ds := reporter.NewSingleTargetDataSink(report)
 	ds.Start()
-	topsql.SetupTopSQLForTest(report)
+	topsql.SetupTopProfilingForTest(report)
 
 	defer func() {
 		ds.Close()
@@ -149,7 +150,7 @@ func TestTopSQLReporter(t *testing.T) {
 		})
 	}
 	checkSQLPlanMap := map[string]struct{}{}
-	for retry := 0; retry < 5; retry++ {
+	for range 5 {
 		server.WaitCollectCnt(recordsCnt, 1, time.Second*5)
 		records := server.GetLatestRecords()
 		for _, req := range records {
@@ -185,7 +186,7 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	defer cpuprofile.StopCPUProfiler()
 
 	collector := mock.NewTopSQLCollector()
-	topsql.SetupTopSQLForTest(collector)
+	topsql.SetupTopProfilingForTest(collector)
 
 	ctx := context.Background()
 
@@ -224,13 +225,14 @@ func TestTopSQLPubSub(t *testing.T) {
 	defer cpuprofile.StopCPUProfiler()
 
 	topsqlstate.GlobalState.MaxStatementCount.Store(200)
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
+	restoreTicker := reporter.SetReportTickerIntervalSecondsForTest(1)
+	t.Cleanup(restoreTicker)
 
 	topsqlstate.EnableTopSQL()
 	report := reporter.NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	report.Start()
 	defer report.Close()
-	topsql.SetupTopSQLForTest(report)
+	topsql.SetupTopProfilingForTest(report)
 
 	server, err := mockServer.NewMockPubSubServer()
 	require.NoError(t, err)
@@ -383,6 +385,41 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 	require.Error(t, err, "reporter is closed")
 }
 
+func TestTopRUOnlyRegistersSQLAndPlan(t *testing.T) {
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	topsqlstate.DisableTopSQL()
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.DisableTopSQL()
+	})
+
+	collector := mock.NewTopSQLCollector()
+	topsql.SetupTopProfilingForTest(collector)
+
+	topsqlstate.EnableTopRU()
+	require.True(t, topsqlstate.TopProfilingEnabled())
+	require.False(t, topsqlstate.TopSQLEnabled())
+
+	ctx := context.Background()
+	sql := "select * from t where a=?"
+	plan := "point-get"
+	sqlDigest := mock.GenSQLDigest(sql)
+	planDigest := genDigest(plan)
+
+	if topsqlstate.TopProfilingEnabled() {
+		topsql.AttachAndRegisterSQLInfo(ctx, sql, sqlDigest, false)
+		topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+		topsql.RegisterPlan(plan, planDigest)
+	}
+
+	require.Equal(t, sql, collector.GetSQL(sqlDigest.Bytes()))
+	require.Equal(t, plan, collector.GetPlan(planDigest.Bytes()))
+}
+
 func mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
@@ -397,7 +434,7 @@ func mockExecuteSQL(sql, plan string) {
 func mockExecute(d time.Duration) {
 	start := time.Now()
 	for {
-		for i := 0; i < 10e5; i++ {
+		for range int(10e5) {
 		}
 		if time.Since(start) > d {
 			return

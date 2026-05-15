@@ -15,10 +15,11 @@
 package domainutil
 
 import (
+	"slices"
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 type repairInfo struct {
@@ -52,6 +53,30 @@ func (r *repairInfo) GetRepairTableList() []string {
 	return r.repairTableList
 }
 
+// GetMustLoadRepairTableListByDB gets must load repair table ID list.
+func (r *repairInfo) GetMustLoadRepairTableListByDB(dbName string, tableName2ID map[string]int64) []int64 {
+	r.RLock()
+	defer r.RUnlock()
+	dbNamePrefix := dbName + "."
+	repairTableSet := make(map[string]struct{}, len(r.repairTableList))
+	for _, fullTableName := range r.repairTableList {
+		lowerFullTableName := strings.ToLower(fullTableName)
+		if strings.HasPrefix(lowerFullTableName, dbNamePrefix) {
+			repairTableSet[lowerFullTableName] = struct{}{}
+		}
+	}
+
+	var tableIDList []int64
+	// tableName2ID is case sensitive and needs to be traversed to match the table id
+	for tableName, id := range tableName2ID {
+		fullName := dbName + "." + tableName
+		if _, ok := repairTableSet[strings.ToLower(fullName)]; ok {
+			tableIDList = append(tableIDList, id)
+		}
+	}
+	return tableIDList
+}
+
 // SetRepairTableList sets repairing table list.
 func (r *repairInfo) SetRepairTableList(list []string) {
 	for i, one := range list {
@@ -80,12 +105,12 @@ func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.Tab
 	if isRepair {
 		// Record the repaired table in Map.
 		if repairedDB, ok := r.repairDBInfoMap[di.ID]; ok {
-			repairedDB.Tables = append(repairedDB.Tables, tbl)
+			repairedDB.Deprecated.Tables = append(repairedDB.Deprecated.Tables, tbl)
 		} else {
 			// Shallow copy the DBInfo.
 			repairedDB := di.Copy()
 			// Clean the tables and set repaired table.
-			repairedDB.Tables = []*model.TableInfo{tbl}
+			repairedDB.Deprecated.Tables = []*model.TableInfo{tbl}
 			r.repairDBInfoMap[di.ID] = repairedDB
 		}
 		return true
@@ -101,7 +126,7 @@ func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLower
 		if db.Name.L != schemaLowerName {
 			continue
 		}
-		for _, t := range db.Tables {
+		for _, t := range db.Deprecated.Tables {
 			if t.Name.L == tableLowerName {
 				return t, db
 			}
@@ -119,20 +144,22 @@ func (r *repairInfo) RemoveFromRepairInfo(schemaLowerName, tableLowerName string
 	defer r.Unlock()
 	for i, rt := range r.repairTableList {
 		if strings.ToLower(rt) == repairedLowerName {
-			r.repairTableList = append(r.repairTableList[:i], r.repairTableList[i+1:]...)
+			r.repairTableList = slices.Delete(r.repairTableList, i, i+1)
 			break
 		}
 	}
 	// Remove from the repair map.
 	for _, db := range r.repairDBInfoMap {
 		if db.Name.L == schemaLowerName {
-			for j, t := range db.Tables {
+			tables := db.Deprecated.Tables
+			for j, t := range tables {
 				if t.Name.L == tableLowerName {
-					db.Tables = append(db.Tables[:j], db.Tables[j+1:]...)
+					tables = slices.Delete(tables, j, j+1)
 					break
 				}
 			}
-			if len(db.Tables) == 0 {
+			db.Deprecated.Tables = tables
+			if len(tables) == 0 {
 				delete(r.repairDBInfoMap, db.ID)
 			}
 			break

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -47,13 +48,13 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(ctx EvalContext, input *c
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		x[i] = x[i] * y[i]
 		if math.IsInf(x[i], 0) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s * %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 	}
 	return nil
@@ -82,12 +83,12 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 	y := buf.Decimals()
 	var to types.MyDecimal
 	var frac int
-	sc := ctx.GetSessionVars().StmtCtx
-	for i := 0; i < n; i++ {
+	ec := errCtx(ctx)
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
-		err = types.DecimalDiv(&x[i], &y[i], &to, types.DivFracIncr)
+		err = types.DecimalDiv(&x[i], &y[i], &to, ctx.GetDivPrecisionIncrement())
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(ctx); err != nil {
 				return err
@@ -95,7 +96,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 			result.SetNull(i, true)
 			continue
 		} else if err == types.ErrTruncated {
-			if err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
+			if err = ec.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
 				return err
 			}
 		} else if err == nil {
@@ -106,7 +107,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 				}
 			}
 		} else if err == types.ErrOverflow {
-			return types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		} else {
 			return err
 		}
@@ -138,7 +139,7 @@ func (b *builtinArithmeticModIntUnsignedUnsignedSig) vecEvalInt(ctx EvalContext,
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		if lh.IsNull(i) || rh.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -179,7 +180,7 @@ func (b *builtinArithmeticModIntUnsignedSignedSig) vecEvalInt(ctx EvalContext, i
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		if lh.IsNull(i) || rh.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -224,7 +225,7 @@ func (b *builtinArithmeticModIntSignedUnsignedSig) vecEvalInt(ctx EvalContext, i
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		if lh.IsNull(i) || rh.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -269,7 +270,7 @@ func (b *builtinArithmeticModIntSignedSignedSig) vecEvalInt(ctx EvalContext, inp
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		if lh.IsNull(i) || rh.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -308,12 +309,12 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(ctx EvalContext, input *chun
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if !mathutil.IsFinite(x[i] - y[i]) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 		x[i] = x[i] - y[i]
 	}
@@ -342,13 +343,13 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(ctx EvalContext, input
 	x := result.Decimals()
 	y := buf.Decimals()
 	var to types.MyDecimal
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		if err = types.DecimalSub(&x[i], &y[i], &to); err != nil {
 			if err == types.ErrOverflow {
-				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s - %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 			}
 			return err
 		}
@@ -383,16 +384,16 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.
 	rhi64s := rh.Int64s()
 	resulti64s := result.Int64s()
 
-	forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	forceToSigned := sqlMode(ctx).HasNoUnsignedSubtractionMode()
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 
 	errType := "BIGINT UNSIGNED"
 	signed := forceToSigned || (!isLHSUnsigned && !isRHSUnsigned)
 	if signed {
 		errType = "BIGINT"
 	}
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		overflow := b.overflowCheck(isLHSUnsigned, isRHSUnsigned, signed, lh, rh)
@@ -400,7 +401,7 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 
 		resulti64s[i] = lh - rh
@@ -429,7 +430,7 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || result.IsNull(i) {
 			continue
 		}
@@ -468,7 +469,7 @@ func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(ctx EvalContext, input *
 	x := result.Decimals()
 	y := buf.Decimals()
 	var to types.MyDecimal
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) || buf.IsNull(i) {
 			continue
 		}
@@ -509,12 +510,12 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(ctx EvalContext, input *chunk
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if !mathutil.IsFinite(x[i] + y[i]) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 		x[i] = x[i] + y[i]
 	}
@@ -543,14 +544,14 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(ctx EvalContext, in
 	x := result.Decimals()
 	y := buf.Decimals()
 	var to types.MyDecimal
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		err = types.DecimalMul(&x[i], &y[i], &to)
 		if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 			if err == types.ErrOverflow {
-				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s * %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 			}
 			return err
 		}
@@ -564,7 +565,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sc := ctx.GetSessionVars().StmtCtx
+	ec := errCtx(ctx)
 	n := input.NumRows()
 	var err error
 	var buf [2]*chunk.Column
@@ -583,20 +584,20 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 		num[i] = buf[i].Decimals()
 	}
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	isUnsigned := isLHSUnsigned || isRHSUnsigned
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf[0], buf[1])
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 
 		c := &types.MyDecimal{}
-		err = types.DecimalDiv(&num[0][i], &num[1][i], c, types.DivFracIncr)
+		err = types.DecimalDiv(&num[0][i], &num[1][i], c, ctx.GetDivPrecisionIncrement())
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(ctx); err != nil {
 				return err
@@ -605,10 +606,10 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 			continue
 		}
 		if err == types.ErrTruncated {
-			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+			err = ec.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 		} else if err == types.ErrOverflow {
 			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
-			err = sc.HandleError(newErr)
+			err = ec.HandleError(newErr)
 		}
 		if err != nil {
 			return err
@@ -661,14 +662,14 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(ctx EvalContext, input *chu
 	y := buf.Int64s()
 	result.MergeNulls(buf)
 	var tmp int64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		tmp = x[i] * y[i]
 		if (x[i] != 0 && tmp/x[i] != y[i]) || (tmp == math.MinInt64 && x[i] == -1) {
 			if result.IsNull(i) {
 				continue
 			}
 			result.SetNull(i, true)
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 
 		x[i] = tmp
@@ -698,7 +699,7 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(ctx EvalContext, input *chu
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -712,7 +713,7 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(ctx EvalContext, input *chu
 
 		x[i] = x[i] / y[i]
 		if math.IsInf(x[i], 0) {
-			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s / %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s / %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 	}
 	return nil
@@ -745,8 +746,8 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(ctx EvalContext, input *ch
 	rhsI64s := rhsBuf.Int64s()
 	resultI64s := result.Int64s()
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
@@ -762,7 +763,7 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(ctx EvalContext, input *ch
 }
 
 func (b *builtinArithmeticIntDivideIntSig) divideUU(ctx EvalContext, result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
-	for i := 0; i < len(lhsI64s); i++ {
+	for i := range lhsI64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -781,7 +782,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(ctx EvalContext, result *chu
 }
 
 func (b *builtinArithmeticIntDivideIntSig) divideUS(ctx EvalContext, result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
-	for i := 0; i < len(lhsI64s); i++ {
+	for i := range lhsI64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -803,7 +804,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUS(ctx EvalContext, result *chu
 }
 
 func (b *builtinArithmeticIntDivideIntSig) divideSU(ctx EvalContext, result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
-	for i := 0; i < len(lhsI64s); i++ {
+	for i := range lhsI64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -826,7 +827,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideSU(ctx EvalContext, result *chu
 }
 
 func (b *builtinArithmeticIntDivideIntSig) divideSS(ctx EvalContext, result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
-	for i := 0; i < len(lhsI64s); i++ {
+	for i := range lhsI64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -875,30 +876,30 @@ func (b *builtinArithmeticPlusIntSig) vecEvalInt(ctx EvalContext, input *chunk.C
 	rhi64s := rh.Int64s()
 	resulti64s := result.Int64s()
 
-	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
-	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
+	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
-		err = b.plusUU(result, lhi64s, rhi64s, resulti64s)
+		err = b.plusUU(ctx, result, lhi64s, rhi64s, resulti64s)
 	case isLHSUnsigned && !isRHSUnsigned:
-		err = b.plusUS(result, lhi64s, rhi64s, resulti64s)
+		err = b.plusUS(ctx, result, lhi64s, rhi64s, resulti64s)
 	case !isLHSUnsigned && isRHSUnsigned:
-		err = b.plusSU(result, lhi64s, rhi64s, resulti64s)
+		err = b.plusSU(ctx, result, lhi64s, rhi64s, resulti64s)
 	case !isLHSUnsigned && !isRHSUnsigned:
-		err = b.plusSS(result, lhi64s, rhi64s, resulti64s)
+		err = b.plusSS(ctx, result, lhi64s, rhi64s, resulti64s)
 	}
 	return err
 }
-func (b *builtinArithmeticPlusIntSig) plusUU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+func (b *builtinArithmeticPlusIntSig) plusUU(ctx EvalContext, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if uint64(lh) > math.MaxUint64-uint64(rh) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 
 		resulti64s[i] = lh + rh
@@ -906,21 +907,21 @@ func (b *builtinArithmeticPlusIntSig) plusUU(result *chunk.Column, lhi64s, rhi64
 	return nil
 }
 
-func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+func (b *builtinArithmeticPlusIntSig) plusUS(ctx EvalContext, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if rh < 0 && uint64(-rh) > uint64(lh) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(rh) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 
 		resulti64s[i] = lh + rh
@@ -928,36 +929,36 @@ func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64
 	return nil
 }
 
-func (b *builtinArithmeticPlusIntSig) plusSU(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+func (b *builtinArithmeticPlusIntSig) plusSU(ctx EvalContext, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if lh < 0 && uint64(-lh) > uint64(rh) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 		if lh > 0 && uint64(rh) > math.MaxUint64-uint64(lh) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 
 		resulti64s[i] = lh + rh
 	}
 	return nil
 }
-func (b *builtinArithmeticPlusIntSig) plusSS(result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+func (b *builtinArithmeticPlusIntSig) plusSS(ctx EvalContext, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if (lh > 0 && rh > math.MaxInt64-lh) || (lh < 0 && rh < math.MinInt64-lh) {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 
 		resulti64s[i] = lh + rh
@@ -987,13 +988,13 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(ctx EvalContext, input 
 	x := result.Decimals()
 	y := buf.Decimals()
 	to := new(types.MyDecimal)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		if err = types.DecimalAdd(&x[i], &y[i], to); err != nil {
 			if err == types.ErrOverflow {
-				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s + %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 			}
 			return err
 		}
@@ -1025,13 +1026,13 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(ctx EvalContext, in
 	y := buf.Uint64s()
 	result.MergeNulls(buf)
 	var res uint64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		res = x[i] * y[i]
 		if x[i] != 0 && res/x[i] != y[i] {
 			if result.IsNull(i) {
 				continue
 			}
-			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
+			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s * %s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable), b.args[1].StringWithCtx(ctx, errors.RedactLogDisable)))
 		}
 		x[i] = res
 	}

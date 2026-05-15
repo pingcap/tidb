@@ -28,9 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // TestAutocommit . See https://dev.mysql.com/doc/internals/en/status-flags.html
@@ -89,7 +92,7 @@ func TestAutocommit(t *testing.T) {
 	tk.MustQuery("select count(*) from t where id = 1").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.autocommit").Check(testkit.Rows("1"))
 
-	// When the transaction is committed because of switching mode, the session set statement shold succeed.
+	// When the transaction is committed because of switching mode, the session set statement should succeed.
 	tk.MustExec("set autocommit = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
@@ -157,8 +160,10 @@ func testTxnLazyInitialize(t *testing.T, isPessimistic bool) {
 	tk.MustExec("set @@tidb_general_log = 0")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
+	// Explain now also build the query and starts a transaction
 	tk.MustQuery("explain select * from t")
-	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+	res := tk.MustQuery("select @@tidb_current_ts")
+	require.NotEqual(t, "0", res.Rows()[0][0])
 
 	// Begin statement should start a new transaction.
 	tk.MustExec("begin")
@@ -209,7 +214,7 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	err = tk1.Session().PrepareTxnCtx(context.Background())
+	err = tk1.Session().PrepareTxnCtx(context.Background(), nil)
 	require.NoError(t, err)
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
@@ -290,12 +295,12 @@ func TestAutoCommitRespectsReadOnly(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		err := tk1.ExecToErr("INSERT INTO test.auto_commit_test VALUES (SLEEP(1))")
-		require.True(t, terror.ErrorEqual(err, plannercore.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
+		require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
 		wg.Done()
 	}()
 	tk2.MustExec("SET GLOBAL tidb_restricted_read_only = 1")
 	err := tk2.ExecToErr("INSERT INTO test.auto_commit_test VALUES (0)") // should also be an error
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
 	// Reset and check with the privilege to ignore the readonly flag and continue to insert.
 	wg.Wait()
 	tk1.MustExec("SET GLOBAL tidb_restricted_read_only = 0")
@@ -314,78 +319,6 @@ func TestAutoCommitRespectsReadOnly(t *testing.T) {
 	wg.Wait()
 	tk1.MustExec("SET GLOBAL tidb_restricted_read_only = 0")
 	tk1.MustExec("SET GLOBAL tidb_super_read_only = 0")
-}
-
-func TestBatchCommit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_batch_commit = 1")
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("create table t (id int)")
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.StmtCountLimit = 3
-	})
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk.MustExec("SET SESSION autocommit = 1")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("insert into t values (2)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("rollback")
-	tk1.MustQuery("select * from t").Check(testkit.Rows())
-
-	// The above rollback will not make the session in transaction.
-	tk.MustExec("insert into t values (1)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows("1"))
-	tk.MustExec("delete from t")
-
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (5)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("insert into t values (6)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("insert into t values (7)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
-
-	tk.MustExec("delete from t")
-	tk.MustExec("commit")
-	tk.MustExec("begin")
-	tk.MustExec("explain analyze insert into t values (5)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("explain analyze insert into t values (6)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("explain analyze insert into t values (7)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
-
-	// The session is still in transaction.
-	tk.MustExec("insert into t values (8)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
-	tk.MustExec("insert into t values (9)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
-	tk.MustExec("insert into t values (10)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
-	tk.MustExec("commit")
-	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10"))
-
-	// The above commit will not make the session in transaction.
-	tk.MustExec("insert into t values (11)")
-	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10", "11"))
-
-	tk.MustExec("delete from t")
-	tk.MustExec("SET SESSION autocommit = 0")
-	tk.MustExec("insert into t values (1)")
-	tk.MustExec("insert into t values (2)")
-	tk.MustExec("insert into t values (3)")
-	tk.MustExec("rollback")
-	tk1.MustExec("insert into t values (4)")
-	tk1.MustExec("insert into t values (5)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("4", "5"))
 }
 
 func TestTxnRetryErrMsg(t *testing.T) {
@@ -410,97 +343,6 @@ func TestTxnRetryErrMsg(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), kv.TxnRetryableMark), "error: %s", err)
 }
 
-func TestSetTxnScope(t *testing.T) {
-	// Check the default value of @@tidb_enable_local_txn and @@txn_scope whitout configuring the zone label.
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Check the default value of @@tidb_enable_local_txn and @@txn_scope with configuring the zone label.
-	require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`))
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-
-	// @@tidb_enable_local_txn is off without configuring the zone label.
-	tk = testkit.NewTestKit(t, store)
-	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to local.
-	err := tk.ExecToErr("set @@txn_scope = 'local';")
-	require.Error(t, err)
-	require.Regexp(t, `.*txn_scope can not be set to local when tidb_enable_local_txn is off.*`, err)
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to global.
-	tk.MustExec("set @@txn_scope = 'global';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-
-	// @@tidb_enable_local_txn is off with configuring the zone label.
-	require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`))
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to local.
-	err = tk.ExecToErr("set @@txn_scope = 'local';")
-	require.Error(t, err)
-	require.Regexp(t, `.*txn_scope can not be set to local when tidb_enable_local_txn is off.*`, err)
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to global.
-	tk.MustExec("set @@txn_scope = 'global';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-
-	// @@tidb_enable_local_txn is on without configuring the zone label.
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_local_txn = on;")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to local.
-	err = tk.ExecToErr("set @@txn_scope = 'local';")
-	require.Error(t, err)
-	require.Regexp(t, `.*txn_scope can not be set to local when zone label is empty or "global".*`, err)
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to global.
-	tk.MustExec("set @@txn_scope = 'global';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-
-	// @@tidb_enable_local_txn is on with configuring the zone label.
-	require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`))
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_local_txn = on;")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
-	require.Equal(t, "bj", tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to global.
-	tk.MustExec("set @@txn_scope = 'global';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to local.
-	tk.MustExec("set @@txn_scope = 'local';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
-	require.Equal(t, "bj", tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Try to set @@txn_scope to an invalid value.
-	err = tk.ExecToErr("set @@txn_scope='foo'")
-	require.Error(t, err)
-	require.Regexp(t, `.*txn_scope value should be global or local.*`, err)
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-}
-
 func TestErrorRollback(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -515,13 +357,13 @@ func TestErrorRollback(t *testing.T) {
 	wg.Add(cnt)
 	num := 20
 
-	for i := 0; i < cnt; i++ {
+	for range cnt {
 		go func() {
 			defer wg.Done()
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
 			tk.MustExec("set @@session.tidb_retry_limit = 100")
-			for j := 0; j < num; j++ {
+			for range num {
 				_, _ = tk.Exec("insert into t_rollback values (1, 1)")
 				tk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
 			}
@@ -577,4 +419,111 @@ func TestInTrans(t *testing.T) {
 	require.True(t, txn.Valid())
 	tk.MustExec("rollback")
 	require.False(t, txn.Valid())
+}
+
+func TestCommitTSOrderCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	currentTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoError(t, err)
+	ts := oracle.GoTimeToTS(oracle.GetTimeFromTS(currentTS).Add(time.Minute))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockFutureCommitTS", fmt.Sprintf("return(%d)", ts)))
+	tk.MustExec("insert into t values(123)")
+	_, err = tk.Exec("select * from t")
+	require.Regexp(t, fmt.Sprintf(`start_ts:\d+ is before session last_commit_ts:%d`, ts), err.Error())
+}
+
+func TestMemBufferSnapshotRead(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b int, index i(b));")
+
+	tk.MustExec("set session tidb_distsql_scan_concurrency = 1;")
+	tk.MustExec("set session tidb_index_lookup_join_concurrency = 1;")
+	tk.MustExec("set session tidb_projection_concurrency=1;")
+	tk.MustExec("set session tidb_init_chunk_size=1;")
+	tk.MustExec("set session tidb_max_chunk_size=40;")
+	tk.MustExec("set session tidb_index_join_batch_size = 10")
+
+	tk.MustExec("begin;")
+	// write (0, 0), (1, 1), ... ,(100, 100) into membuffer
+	var sb strings.Builder
+	sb.WriteString("insert into t values ")
+	for i := 0; i <= 100; i++ {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(fmt.Sprintf("(%d, %d)", i, i))
+	}
+	tk.MustExec(sb.String())
+
+	// insert on duplicate key statement should update the table to (0, 100), (1, 99), ... (100, 0)
+	// This statement will create UnionScan dynamically during execution, and some UnionScan will see staging data(should be bypassed),
+	// so it relies on correct snapshot read to get the expected result.
+	tk.MustExec("insert into t (select /*+ INL_JOIN(t1) */ 100 - t1.a as a, t1.b from t t1, (select a, b from t) t2 where t1.b = t2.b) on duplicate key update b = values(b)")
+
+	require.Empty(t, tk.MustQuery("select a, b from t where a + b != 100;").Rows())
+	tk.MustExec("commit;")
+	require.Empty(t, tk.MustQuery("select a, b from t where a + b != 100;").Rows())
+
+	tk.MustExec("set session tidb_distsql_scan_concurrency = default;")
+	tk.MustExec("set session tidb_index_lookup_join_concurrency = default;")
+	tk.MustExec("set session tidb_projection_concurrency=default;")
+	tk.MustExec("set session tidb_init_chunk_size=default;")
+	tk.MustExec("set session tidb_max_chunk_size=default;")
+	tk.MustExec("set session tidb_index_join_batch_size = default")
+}
+
+func TestMemBufferCleanupMemoryLeak(t *testing.T) {
+	// Test if cleanup memory will cause a memory leak.
+	// When an in-txn statement fails, TiDB cleans up the mutations from this statement.
+	// If there's a memory leak, the memory usage could increase uncontrollably with retries.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(255) primary key)")
+	key1 := strings.Repeat("a", 255)
+	key2 := strings.Repeat("b", 255)
+	tk.MustExec(`set global tidb_mem_oom_action='cancel'`)
+	tk.MustExec("set session tidb_mem_quota_query=10240")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(?)", key2)
+	for range 100 {
+		// The insert statement will fail because of the duplicate key error.
+		err := tk.ExecToErr("insert into t values(?), (?)", key1, key2)
+		require.Error(t, err)
+		if strings.Contains(err.Error(), "Duplicate") {
+			continue
+		}
+		require.NoError(t, err)
+	}
+	tk.MustExec("commit")
+}
+
+func TestPanicOnRollbackKilledTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	mockTracker := memory.NewTracker(-1, -1)
+	mockTracker.IsRootTrackerOfSess = true
+	mockTracker.Killer = &sqlkiller.SQLKiller{}
+	tk.Session().GetSessionVars().MemTracker.AttachTo(mockTracker)
+	mockTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	tk.Session().Close()
 }

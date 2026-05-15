@@ -17,8 +17,9 @@ package core
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -35,16 +36,16 @@ func TestColumnToProto(t *testing.T) {
 	col := &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc := util.ColumnToProto(col, false)
-	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: 11, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
+	pc := util.ColumnToProto(col, false, false)
+	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: 11, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false}
 	require.Equal(t, expect, pc)
 
 	cols := []*model.ColumnInfo{col, col}
-	pcs := util.ColumnsToProto(cols, false, false)
+	pcs := util.ColumnsToProto(cols, false, false, false)
 	for _, v := range pcs {
 		require.Equal(t, int32(10), v.GetFlag())
 	}
-	pcs = util.ColumnsToProto(cols, true, false)
+	pcs = util.ColumnsToProto(cols, true, false, false)
 	for _, v := range pcs {
 		require.Equal(t, int32(10), v.GetFlag())
 	}
@@ -56,19 +57,19 @@ func TestColumnToProto(t *testing.T) {
 	col1 := &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc = util.ColumnToProto(col1, false)
+	pc = util.ColumnToProto(col1, false, false)
 	require.Equal(t, int32(8), pc.Collation)
 
 	collate.SetNewCollationEnabledForTest(true)
 
-	pc = util.ColumnToProto(col, false)
-	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: -83, ColumnLen: 11, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
+	pc = util.ColumnToProto(col, false, false)
+	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: -83, ColumnLen: 11, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false}
 	require.Equal(t, expect, pc)
-	pcs = util.ColumnsToProto(cols, true, false)
+	pcs = util.ColumnsToProto(cols, true, false, false)
 	for _, v := range pcs {
 		require.Equal(t, int32(-83), v.Collation)
 	}
-	pc = util.ColumnToProto(col1, false)
+	pc = util.ColumnToProto(col1, false, false)
 	require.Equal(t, int32(-8), pc.Collation)
 
 	tp = types.NewFieldType(mysql.TypeEnum)
@@ -77,7 +78,7 @@ func TestColumnToProto(t *testing.T) {
 	col2 := &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc = util.ColumnToProto(col2, false)
+	pc = util.ColumnToProto(col2, false, false)
 	require.Len(t, pc.Elems, 2)
 
 	tp = types.NewFieldTypeBuilder().
@@ -91,7 +92,59 @@ func TestColumnToProto(t *testing.T) {
 	col3 := &model.ColumnInfo{
 		FieldType: *tp,
 	}
-	pc = util.ColumnToProto(col3, true)
-	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 0xfe, Collation: 63, ColumnLen: 100, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
+	pc = util.ColumnToProto(col3, true, false)
+	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 0xfe, Collation: 63, ColumnLen: 100, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false}
 	require.Equal(t, expect, pc)
+}
+
+// TestGeneratedColumnFlagForTiFlash is a regression test for https://github.com/pingcap/tidb/issues/59831.
+func TestGeneratedColumnFlagForTiFlash(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tp := types.NewFieldType(mysql.TypeVarchar)
+	tp.SetCollate("utf8_bin")
+
+	genCol := &model.ColumnInfo{
+		ID:                  1,
+		FieldType:           *tp,
+		GeneratedExprString: "lower(c1)",
+		GeneratedStored:     false,
+	}
+	require.True(t, genCol.IsVirtualGenerated())
+
+	normalCol := &model.ColumnInfo{
+		ID:        2,
+		FieldType: *tp,
+	}
+
+	genFlag := int32(mysql.GeneratedColumnFlag)
+
+	// When isTiFlashStore=true, GeneratedColumnFlag should be set on virtual generated columns.
+	pc := util.ColumnToProto(genCol, false, true)
+	require.NotZero(t, pc.Flag&genFlag)
+
+	pc = util.ColumnToProto(genCol, false, false)
+	require.Zero(t, pc.Flag&genFlag)
+
+	pc = util.ColumnToProto(normalCol, false, true)
+	require.Zero(t, pc.Flag&genFlag)
+
+	// Test via ColumnsToProto with isTiFlashStore=true.
+	cols := []*model.ColumnInfo{genCol, normalCol}
+	pcs := util.ColumnsToProto(cols, false, false, true)
+	require.NotZero(t, pcs[0].Flag&genFlag)
+	require.Zero(t, pcs[1].Flag&genFlag)
+
+	// Test BuildPartitionTableScanFromInfos sets GeneratedColumnFlag correctly.
+	// This is the specific regression from https://github.com/pingcap/tidb/issues/59831:
+	// BuildPartitionTableScanFromInfos is only called for TiFlash partition table scans,
+	// but PR #55463 incorrectly passed isTiFlashStore=false.
+	tableInfo := &model.TableInfo{
+		ID:      1,
+		Columns: cols,
+	}
+	ptsExec := tables.BuildPartitionTableScanFromInfos(tableInfo, cols, false)
+	require.NotZero(t, ptsExec.Columns[0].Flag&genFlag)
+	require.Zero(t, ptsExec.Columns[1].Flag&genFlag)
 }

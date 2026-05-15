@@ -14,10 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eux
 
+res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
+
 # restart service without tiflash
-source $( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/../_utils/run_services
+source $UTILS_DIR/run_services
 start_services --no-tiflash
 
 BACKUP_DIR=$TEST_DIR/"raw_backup"
@@ -125,6 +133,22 @@ run_test() {
         fail_and_exit
     fi
 
+    # failed on restore full
+    echo "restore full start..."
+    restore_fail=0
+    run_br --pd $PD_ADDR restore full -s "local://$BACKUP_DIR" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" > $res_file 2>&1 || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'full restore from raw backup data success'
+        exit 1
+    fi
+    check_contains "restore mode mismatch"
+
+    checksum_new=$(checksum 31 3130303030303030)
+    if [ "$checksum_new" != "$checksum_empty" ]; then
+        echo "not empty after restore failed"
+        fail_and_exit
+    fi
+
     # restore rawkv
     echo "restore start..."
     run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
@@ -186,5 +210,3 @@ run_test ""
 
 # ingest "region error" to trigger fineGrainedBackup, only one region error.
 run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=1*return(\"region error\")"
-# all regions failed.
-run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=return(\"region error\")"

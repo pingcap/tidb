@@ -39,6 +39,12 @@ func TestString(t *testing.T) {
 	err = tx.Set(key, value)
 	require.NoError(t, err)
 
+	tx.Iterate([]byte("a"), []byte("b"), func(k, v []byte) error {
+		require.Equal(t, k, key)
+		require.Equal(t, v, value)
+		return nil
+	})
+
 	v, err := tx.Get(key)
 	require.NoError(t, err)
 	require.Equal(t, value, v)
@@ -348,4 +354,26 @@ func TestError(t *testing.T) {
 		require.NotEqual(t, mysql.ErrUnknown, code)
 		require.Equal(t, uint16(err.Code()), code, "err: %v", err)
 	}
+}
+
+func TestIterateHashWithBoundedKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	tx := structure.NewStructure(txn, txn, nil)
+	require.NoError(t, tx.Set(tx.EncodeHashMetaKey([]byte("aa")), []byte("meta")))
+	require.NoError(t, tx.HSet([]byte("b"), []byte(""), []byte("value1")))
+	require.NoError(t, tx.Set(tx.EncodeHashMetaKey([]byte("c")), []byte("meta")))
+	require.NoError(t, tx.HSet([]byte("d"), []byte(""), []byte("value2")))
+	require.NoError(t, tx.Set(tx.EncodeHashMetaKey([]byte("dd")), []byte("meta")))
+
+	cnt := 0
+	require.NoError(t, tx.IterateHashWithBoundedKey([]byte("a"), []byte("e"), func(key, field, value []byte) error {
+		cnt++
+		return nil
+	}))
+
+	require.Equal(t, 2, cnt)
 }

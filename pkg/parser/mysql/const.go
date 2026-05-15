@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
 )
@@ -25,14 +26,83 @@ func newInvalidModeErr(s string) error {
 	return NewErr(ErrWrongValueForVar, "sql_mode", s)
 }
 
+const (
+	mysqlCompatibilityVersion = "8.0.11"
+	// VersionSeparator NOTE: DON'T MODIFY THIS VALUE.
+	// We don't store TiDB server version directly inside PD, but stores a concatenated
+	// one with MySQL compatibility version, with this fixed then we can parse TiDB
+	// version from ServerVersion.
+	VersionSeparator = "-TiDB-"
+
+	// tidbXReleaseVersionPrefix is used in `select tidb_version()` output of nextgen.
+	tidbXReleaseVersionPrefix = "CLOUD."
+
+	legacyTiDBReleaseVersionPlaceholder = "v8.4.0-this-is-a-placeholder"
+	// tidbXPlaceholderReleaseVersion is the default release version for nextgen when no
+	// release version is injected during build, such as when running in IDE.
+	tidbXPlaceholderReleaseVersion = "v26.3.0-this-is-a-placeholder"
+	// TiDBXVerMinYear is set to 2025 just for sanity check.
+	// our first release of next-gen since 2025
+	TiDBXVerMinYear = 2025
+	// TiDBXVerMaxYear is set to 2099 just for sanity check, we don't expect the
+	// year part of release version to be larger than this.
+	// enough for now.
+	TiDBXVerMaxYear = 2099
+)
+
 // Version information.
 var (
 	// TiDBReleaseVersion is initialized by (git describe --tags) in Makefile.
-	TiDBReleaseVersion = "None"
+	TiDBReleaseVersion = legacyTiDBReleaseVersionPlaceholder
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
-	ServerVersion = fmt.Sprintf("8.0.11-TiDB-%s", TiDBReleaseVersion)
+	ServerVersion = fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, TiDBReleaseVersion)
 )
+
+// NormalizeTiDBReleaseVersionForNextGen rewrites the legacy placeholder into a nextgen
+// placeholder that follows `v[2-digit-year].[month].[fix-version]`.
+// pkg/parser is Golang project, it cannot use kerneltype pkg to conditionally
+// compile different code for next-gen and classic, so we have to rewrite the
+// placeholder value in this function.
+func NormalizeTiDBReleaseVersionForNextGen(releaseVersion string) string {
+	// the version is not set if we run next-gen tidb from IDE.
+	if releaseVersion == legacyTiDBReleaseVersionPlaceholder {
+		return tidbXPlaceholderReleaseVersion
+	}
+	return releaseVersion
+}
+
+// BuildTiDBXReleaseVersion converts mysql.TiDBReleaseVersion into the nextgen visible
+// version format `CLOUD.<4-digit-year-2-digit-month>.<fix-version><optional-pre-release>`.
+func BuildTiDBXReleaseVersion(releaseVersion string) (string, error) {
+	if !strings.HasPrefix(releaseVersion, "v") {
+		return "", errors.Errorf("invalid TiDB release version %q, should start with 'v'", releaseVersion)
+	}
+	rawVer := strings.TrimPrefix(releaseVersion, "v")
+	ver, err := semver.NewVersion(rawVer)
+	if err != nil {
+		return "", errors.Errorf("invalid TiDB release version %q, expect a semantic version", releaseVersion)
+	}
+	year := 2000 + ver.Major
+	if year < TiDBXVerMinYear || year > TiDBXVerMaxYear || ver.Minor < 1 || ver.Minor > 12 {
+		return "", errors.Errorf("invalid TiDB release version %q, the semantic version part should be in [2-digit-year].[month].[fix-version]-[xxx] format", releaseVersion)
+	}
+	preRelease := string(ver.PreRelease)
+	if preRelease != "" {
+		preRelease = "-" + preRelease
+	}
+	return fmt.Sprintf("%s%d%02d.%d%s", tidbXReleaseVersionPrefix, year, ver.Minor, ver.Patch, preRelease), nil
+}
+
+// BuildTiDBXServerVersion converts mysql.TiDBReleaseVersion into MySQL server version
+// format `8.0.11-TiDB-CLOUD.<4-digit-year-2-digit-month>.<fix-version>`.
+func BuildTiDBXServerVersion(releaseVersion string) (string, error) {
+	tidbXReleaseVersion, err := BuildTiDBXReleaseVersion(releaseVersion)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s%s%s", mysqlCompatibilityVersion, VersionSeparator, tidbXReleaseVersion), nil
+}
 
 // Header information.
 const (
@@ -187,10 +257,13 @@ const (
 	AuthLDAPSASL            = "authentication_ldap_sasl"
 )
 
-// MySQL database and tables.
+// System database and tables that mostly inherited from MySQL.
 const (
 	// SystemDB is the name of system database.
 	SystemDB = "mysql"
+	// SysDB is the name of `sys` schema, which is a set of objects to help users to interpret data collected
+	// in `information_schema`.
+	SysDB = "sys"
 	// GlobalPrivTable is the table in system db contains global scope privilege info.
 	GlobalPrivTable = "global_priv"
 	// UserTable is the table in system db contains user info.
@@ -213,6 +286,8 @@ const (
 	DefaultRoleTable = "default_roles"
 	// PasswordHistoryTable is the table in system db contains password history.
 	PasswordHistoryTable = "password_history"
+	// WorkloadSchema is the name of workload repository database.
+	WorkloadSchema = "workload_schema"
 )
 
 // MySQL type maximum length.
@@ -333,9 +408,22 @@ var DefaultLengthOfTimeFraction = map[int]int{
 	6: 3,
 }
 
+// DefaultAuthPlugins are the supported default authentication plugins.
+var DefaultAuthPlugins = []string{
+	AuthNativePassword,
+	AuthCachingSha2Password,
+	AuthTiDBSM3Password,
+	AuthLDAPSASL,
+	AuthLDAPSimple,
+	AuthSocket,
+	AuthTiDBSessionToken,
+	AuthTiDBAuthToken,
+	AuthMySQLClearPassword,
+}
+
 // SQLMode is the type for MySQL sql_mode.
 // See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html
-type SQLMode int
+type SQLMode int64
 
 // HasNoZeroDateMode detects if 'NO_ZERO_DATE' mode is set in SQLMode
 func (m SQLMode) HasNoZeroDateMode() bool {
@@ -551,24 +639,6 @@ var CombinationSQLMode = map[string][]string{
 	"ORACLE":      {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
 	"POSTGRESQL":  {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
 	"TRADITIONAL": {"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_IN_DATE", "NO_ZERO_DATE", "ERROR_FOR_DIVISION_BY_ZERO", "NO_AUTO_CREATE_USER", "NO_ENGINE_SUBSTITUTION"},
-}
-
-// FormatFunc is the locale format function signature.
-type FormatFunc func(string, string) (string, error)
-
-// GetLocaleFormatFunction get the format function for sepcific locale.
-func GetLocaleFormatFunction(loc string) FormatFunc {
-	locale, exist := locale2FormatFunction[loc]
-	if !exist {
-		return formatNotSupport
-	}
-	return locale
-}
-
-// locale2FormatFunction is the string represent of locale format function.
-var locale2FormatFunction = map[string]FormatFunc{
-	"en_US": formatENUS,
-	"zh_CN": formatZHCN,
 }
 
 // PriorityEnum is defined for Priority const values.

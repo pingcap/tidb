@@ -26,8 +26,8 @@ import (
 
 func TestCompare(t *testing.T) {
 	cmpTbl := []struct {
-		lhs interface{}
-		rhs interface{}
+		lhs any
+		rhs any
 		ret int // 0, 1, -1
 	}{
 		{float64(1), float64(1), 0},
@@ -144,7 +144,7 @@ func TestCompare(t *testing.T) {
 	}
 }
 
-func compareForTest(a, b interface{}) (int, error) {
+func compareForTest(a, b any) (int, error) {
 	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)

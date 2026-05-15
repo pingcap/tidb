@@ -94,14 +94,13 @@ new_collations_enabled_on_first_bootstrap = true
 # *If you want to start a TiDB service, NEVER enable this.*
 skip-register-to-dashboard = false
 
-# When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
-# If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
-# See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
+# When enabled, usage data (for example, instance versions) will be reported to log periodically for user experience analytics.
+# If this config is set to `false`, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
 enable-telemetry = false
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
-deprecate-integer-display-length = false
+deprecate-integer-display-length = true
 
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
@@ -154,6 +153,10 @@ format = "text"
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
+# Stores general log into separated files.
+# If it equals to empty, the general log will be written to the server log.
+general-log-file = ""
+
 # Make tidb panic if the write log operation hang for 15s
 # timeout = 15
 
@@ -170,6 +173,10 @@ max-days = 0
 
 # Maximum number of old log files to retain. No clean up by default.
 max-backups = 0
+
+# Compression function for rotated files.
+# It can be empty or "gzip", empty means compression disabled.
+compression = ""
 
 [security]
 # Path of file that contains list of trusted SSL CAs for connection with mysql client.
@@ -404,25 +411,6 @@ resolve-lock-lite-threshold = 16
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
 
-[binlog]
-# enable to write binlog.
-# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
-# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
-enable = false
-
-# WriteTimeout specifies how long it will wait for writing binlog to pump.
-write-timeout = "15s"
-
-# If IgnoreError is true, when writing binlog meets error, TiDB would stop writing binlog,
-# but still provide service.
-ignore-error = false
-
-# use socket file to write binlog, for compatible with kafka version tidb-binlog.
-binlog-socket = ""
-
-# the strategy for sending binlog to pump, value can be "range" or "hash" now.
-strategy = "range"
-
 [pessimistic-txn]
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
@@ -446,6 +434,51 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
+
+# RU v2 TiDB-side weights for RU value calculation and statement metrics logging.
+[ru-v2]
+# ru-scale is the scale factor used to convert RU v2 float values into scaled integer values.
+# It is intentionally chosen to match legacy RU values for compatibility.
+ru-scale = 2.01
+
+# result-chunk-cells is the weight for cells materialized into result chunks.
+result-chunk-cells = 0.00010000
+# executor-l1 covers fast-path executors that scale by cells:
+# BatchPointGet, PointGet, and Limit.
+executor-l1 = 0.00013278
+# executor-l2 covers general executors:
+# HashAgg, HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
+# MemTableReaderExec, SelectionExec, TableDualExec, TableReaderExecutor,
+# UnionScanExec, and SelectLockExec.
+executor-l2 = 0.00000383
+# executor-l3 covers heavier operators: Sort and StreamAgg.
+executor-l3 = 0.00141739
+# executor-l5-insert-rows is the per-row insert weight. Level 4 is
+# intentionally unused today because only L1/L2/L3 executor groups and this
+# insert-specific tier are currently modeled.
+executor-l5-insert-rows = 0.00472572
+plan-cnt = 0.15392217
+plan-derive-stats-paths = 0.24968182
+resource-manager-read-cnt = 0.02072003
+resource-manager-write-cnt = 0.07179779
+session-parser-total = 0.19230499
+txn-cnt = 0.03013709
+
+# RU v2 TiKV-side weights for TiKV RU value calculation (handled in client-go).
+[tikv-client.ru-v2]
+# ru-scale is the scale factor used to convert RU v2 float values into scaled integer values.
+# It is configured independently from [ru-v2].ru-scale.
+# Keep both values aligned manually if you want TiDB and TiKV RU v2 to use the same scaling.
+ru-scale = 2.10
+
+tikv-kv-engine-cache-miss = 0.45975389
+resource-manager-write-cnt-tikv = 0.09642181
+executor-inputs = 0.00003150
+tikv-coprocessor-executor-iterations = 0.05775369
+tikv-coprocessor-response-bytes = 0.00000087
+tikv-raftstore-store-write-trigger-wb-bytes = 0.00006100
+tikv-storage-processed-keys-batch-get = 0.00266791
+tikv-storage-processed-keys-get = 0.01416829
 
 # instance scope variables
 # These options are also available as a system variable for online configuration

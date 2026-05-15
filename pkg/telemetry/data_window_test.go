@@ -15,12 +15,14 @@
 package telemetry_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/telemetry"
@@ -79,14 +81,11 @@ func TestTiflashUsage(t *testing.T) {
 
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, _ := is.SchemaByName(model.NewCIStr("test"))
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	telemetry.CurrentTiFlashPushDownCount.Swap(0)

@@ -45,6 +45,8 @@ const (
 	TypeVarString  byte = 0xfd
 	TypeString     byte = 0xfe /* TypeString is char type */
 	TypeGeometry   byte = 0xff
+
+	TypeTiDBVectorFloat32 byte = 0xe1
 )
 
 // Flag information.
@@ -163,4 +165,9 @@ func HasPreventNullInsertFlag(flag uint) bool {
 // HasEnumSetAsIntFlag checks if EnumSetAsIntFlag is set.
 func HasEnumSetAsIntFlag(flag uint) bool {
 	return (flag & EnumSetAsIntFlag) > 0
+}
+
+// HasFlag checks if a flag is set.
+func HasFlag(flag uint, flagItem uint) bool {
+	return (flag & flagItem) > 0
 }

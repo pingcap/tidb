@@ -2,21 +2,21 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "flashbacktest_test",
-    timeout = "short",
+    timeout = "long",
     srcs = [
         "flashback_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
+    shard_count = 12,
     deps = [
-        "//pkg/ddl",
         "//pkg/ddl/util",
-        "//pkg/domain",
         "//pkg/errno",
         "//pkg/meta",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//tests/realtikvtest",

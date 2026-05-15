@@ -53,7 +53,7 @@ func withRetry[T any](fn func() (T, error), timeout time.Duration) (resp T, err 
 func checkPDHealth(host string) error {
 	url := util.ComposeURL(host, "/health")
 
-	request := func() (interface{}, error) {
+	request := func() (any, error) {
 		resp, err := util.InternalHTTPClient().Get(url)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -86,13 +86,13 @@ func checkPDHealth(host string) error {
 func checkTiKVStatus() error {
 	url := util.ComposeURL("127.0.0.1:20180", "/status")
 
-	request := func() (interface{}, error) {
+	request := func() (any, error) {
 		resp, err := util.InternalHTTPClient().Get(url)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		log.Info("TiKV status", zap.Any("status", resp.StatusCode))
+		log.Info("TiKV status", zap.Int("status", resp.StatusCode))
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("TiKV status code %d", resp.StatusCode)
 		}
@@ -108,7 +108,7 @@ func checkTiDBStatus(statusPort int) error {
 	host := fmt.Sprintf("127.0.0.1:%d", statusPort)
 	url := util.ComposeURL(host, "/status")
 
-	request := func() (interface{}, error) {
+	request := func() (any, error) {
 		resp, err := util.InternalHTTPClient().Get(url)
 		if err != nil {
 			return nil, errors.Trace(err)

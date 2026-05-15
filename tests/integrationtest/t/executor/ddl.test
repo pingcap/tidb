@@ -258,10 +258,10 @@ create view v6 (c,d) as select * from t1;
 -- error 1353
 create view v7 (c,d,e) as select * from t1;
 drop view v1,v2,v3,v4,v5,v6;
+-- error 1351
 create view v1 (c,d) as select a,b+@@global.max_user_connections from t1;
--- error 1050
+-- error 1351
 create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections;
-drop view v1;
 -- error 1353
 create view v1 (c,d,e) as select a,b from t1 ;
 -- error 1353
@@ -313,8 +313,9 @@ create or replace definer='root'@'localhost' view v_nested as select * from v_ne
 drop table test_v_nested;
 drop view v_nested, v_nested2;
 ## Refer https://github.com/pingcap/tidb/issues/25876
+select sleep(1);
 -- error 1356
-create view v_stale as select * from source_table as of timestamp current_timestamp(3);
+create view v_stale as select * from source_table as of timestamp date_sub(current_timestamp(3), interval 1 second);
 ## Refer https://github.com/pingcap/tidb/issues/32682
 drop view if exists v1,v2;
 drop table if exists t1;
@@ -360,7 +361,7 @@ create table if not exists drop_test (a int);
 drop table if exists drop_test;
 create table drop_test (a int);
 drop table drop_test;
--- error 1105
+-- error 8267
 drop table mysql.gc_delete_range;
 
 # TestCreateDropView
@@ -370,7 +371,7 @@ create or replace view drop_test as select 1,2;
 -- error 1051
 drop table drop_test;
 drop view if exists drop_test;
--- error 1105
+-- error 8267
 drop view mysql.gc_delete_range;
 -- error 1051
 drop view drop_test;
@@ -533,3 +534,13 @@ select c_int from t where c_str is not null for update;
 alter table t add index idx_4 (c_str);
 rollback;
 
+# TestIssue64948
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;
+CREATE TABLE ttl_src (created_at TIMESTAMP) TTL = `created_at` + INTERVAL 1 HOUR;
+CREATE TEMPORARY TABLE temp_local LIKE ttl_src;
+SHOW CREATE TABLE temp_local;
+CREATE GLOBAL TEMPORARY TABLE temp_global LIKE ttl_src ON COMMIT DELETE ROWS;
+SHOW CREATE TABLE temp_global;
+CREATE TABLE normal_copy LIKE ttl_src;
+SHOW CREATE TABLE normal_copy;
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;

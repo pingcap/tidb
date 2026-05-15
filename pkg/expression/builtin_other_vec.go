@@ -99,7 +99,7 @@ func (b *builtinBitCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		if types.ErrOverflow.Equal(err) {
 			result.ResizeInt64(n, false)
 			i64s := result.Int64s()
-			for i := 0; i < n; i++ {
+			for i := range n {
 				res, isNull, err := b.evalInt(ctx, input.GetRow(i))
 				if err != nil {
 					return err
@@ -112,7 +112,7 @@ func (b *builtinBitCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		return err
 	}
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -126,7 +126,6 @@ func (b *builtinGetParamStringSig) vectorized() bool {
 }
 
 func (b *builtinGetParamStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sessionVars := ctx.GetSessionVars()
 	n := input.NumRows()
 	idx, err := b.bufAllocator.get()
 	if err != nil {
@@ -138,13 +137,17 @@ func (b *builtinGetParamStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 	}
 	idxIs := idx.Int64s()
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if idx.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		idxI := idxIs[i]
-		v := sessionVars.PlanCacheParams.GetParamValue(int(idxI))
+		v, err := ctx.GetParamValue(int(idxI))
+		if err != nil {
+			return err
+		}
+
 		str, err := v.ToString()
 		if err != nil {
 			result.AppendNull()
@@ -178,9 +181,12 @@ func (b *builtinSetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	_, collation := sessionVars.GetCharsetInfo()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -217,8 +223,11 @@ func (b *builtinSetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	sessionVars := ctx.GetSessionVars()
-	for i := 0; i < n; i++ {
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -255,8 +264,11 @@ func (b *builtinSetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	}
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
-	sessionVars := ctx.GetSessionVars()
-	for i := 0; i < n; i++ {
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -293,8 +305,11 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	}
 	result.ResizeDecimal(n, false)
 	decs := result.Decimals()
-	sessionVars := ctx.GetSessionVars()
-	for i := 0; i < n; i++ {
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range n {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -330,14 +345,14 @@ func (b *builtinGetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := ctx.GetSessionVars()
-	for i := 0; i < n; i++ {
+	userVars := ctx.GetUserVarsReader()
+	for i := range n {
 		if buf0.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.GetUserVarVal(varName); ok {
+		if v, ok := userVars.GetUserVarVal(varName); ok {
 			res, err := v.ToString()
 			if err != nil {
 				return err
@@ -367,13 +382,13 @@ func (b *builtinGetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0)
 	i64s := result.Int64s()
-	sessionVars := ctx.GetSessionVars()
-	for i := 0; i < n; i++ {
+	userVars := ctx.GetUserVarsReader()
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.GetUserVarVal(varName); ok {
+		if v, ok := userVars.GetUserVarVal(varName); ok {
 			i64s[i] = v.GetInt64()
 			continue
 		}
@@ -386,6 +401,8 @@ func (b *builtinGetRealVarSig) vectorized() bool {
 	return true
 }
 
+// NOTE: get/set variable vectorized eval was disabled. See more in
+// https://github.com/pingcap/tidb/pull/8412
 func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
@@ -399,14 +416,18 @@ func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(buf0)
 	f64s := result.Float64s()
-	sessionVars := ctx.GetSessionVars()
-	for i := 0; i < n; i++ {
+	userVars := ctx.GetUserVarsReader()
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			f64s[i] = v.GetFloat64()
+		if v, ok := userVars.GetUserVarVal(varName); ok {
+			d, err := v.ToFloat64(typeCtx(ctx))
+			if err != nil {
+				return err
+			}
+			f64s[i] = d
 			continue
 		}
 		result.SetNull(i, true)
@@ -418,6 +439,8 @@ func (b *builtinGetDecimalVarSig) vectorized() bool {
 	return true
 }
 
+// NOTE: get/set variable vectorized eval was disabled. See more in
+// https://github.com/pingcap/tidb/pull/8412
 func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
@@ -431,14 +454,18 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf0)
 	decs := result.Decimals()
-	sessionVars := ctx.GetSessionVars()
-	for i := 0; i < n; i++ {
+	userVars := ctx.GetUserVarsReader()
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			decs[i] = *v.GetMysqlDecimal()
+		if v, ok := userVars.GetUserVarVal(varName); ok {
+			d, err := v.ToDecimal(typeCtx(ctx))
+			if err != nil {
+				return err
+			}
+			decs[i] = *d
 			continue
 		}
 		result.SetNull(i, true)

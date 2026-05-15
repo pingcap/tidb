@@ -46,7 +46,7 @@ func (Glue) Open(path string, option pd.SecurityOption) (kv.Storage, error) {
 		conf.Security.ClusterSSLKey = option.KeyPath
 		config.StoreGlobalConfig(conf)
 	}
-	return driver.TiKVDriver{}.Open(path)
+	return (&driver.TiKVDriver{}).Open(path)
 }
 
 // OwnsStorage implements glue.Glue.
@@ -72,4 +72,8 @@ func (Glue) GetVersion() string {
 // UseOneShotSession implements glue.Glue.
 func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
 	return nil
+}
+
+func (Glue) GetClient() glue.GlueClient {
+	return glue.ClientCLP
 }

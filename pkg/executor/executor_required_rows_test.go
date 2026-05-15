@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"slices"
 	"testing"
 	"time"
 
@@ -30,10 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -51,11 +53,11 @@ type requiredRowsDataSource struct {
 	expectedRowsRet []int
 	numNextCalled   int
 
-	generator func(valType *types.FieldType) interface{}
+	generator func(valType *types.FieldType) any
 }
 
 func newRequiredRowsDataSourceWithGenerator(ctx sessionctx.Context, totalRows int, expectedRowsRet []int,
-	gen func(valType *types.FieldType) interface{}) *requiredRowsDataSource {
+	gen func(valType *types.FieldType) any) *requiredRowsDataSource {
 	ds := newRequiredRowsDataSource(ctx, totalRows, expectedRowsRet)
 	ds.generator = gen
 	return ds
@@ -92,7 +94,7 @@ func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.Chunk) err
 		return nil
 	}
 	required := min(req.RequiredRows(), r.totalRows-r.count)
-	for i := 0; i < required; i++ {
+	for range required {
 		req.AppendRow(r.genOneRow())
 	}
 	r.count += required
@@ -107,7 +109,7 @@ func (r *requiredRowsDataSource) genOneRow() chunk.Row {
 	return row.ToRow()
 }
 
-func defaultGenerator(valType *types.FieldType) interface{} {
+func defaultGenerator(valType *types.FieldType) any {
 	switch valType.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -209,12 +211,12 @@ func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int
 
 func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	domain.BindDomain(ctx, domain.NewMockDomain())
+	ctx.BindDomainAndSchValidator(domain.NewMockDomain(), nil)
 	return ctx
 }
 
@@ -315,7 +317,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0},
 			requiredRows:   []int{1, 1, 1, 1, 10},
 			expectedRows:   []int{1, 1, 1, 1, 7},
-			expectedRowsDS: []int{26, 100 - 26, 0},
+			expectedRowsDS: []int{100, 0},
 		},
 		{
 			totalRows:      100,
@@ -333,7 +335,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 3, 7, 10},
 			expectedRows:   []int{1, 3, 1, 0},
-			expectedRowsDS: []int{6, maxChunkSize, 14, 0},
+			expectedRowsDS: []int{maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize + maxChunkSize + 20,
@@ -342,7 +344,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 2, 3, 5, 7},
 			expectedRows:   []int{1, 2, 3, 2, 0},
-			expectedRowsDS: []int{maxChunkSize, 18, maxChunkSize, 2, 0},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize*5 + 10,
@@ -393,15 +395,16 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 		ExecSchema:   src.Schema(),
 	}
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		SortExec:    sortExec,
+		Limit:       &physicalop.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Concurrency: 5,
 	}
 }
 
 func TestSelectionRequiredRows(t *testing.T) {
-	gen01 := func() func(valType *types.FieldType) interface{} {
+	gen01 := func() func(valType *types.FieldType) any {
 		closureCount := 0
-		return func(valType *types.FieldType) interface{} {
+		return func(valType *types.FieldType) any {
 			switch valType.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				ret := int64(closureCount % 2)
@@ -422,7 +425,7 @@ func TestSelectionRequiredRows(t *testing.T) {
 		requiredRows   []int
 		expectedRows   []int
 		expectedRowsDS []int
-		gen            func(valType *types.FieldType) interface{}
+		gen            func(valType *types.FieldType) any
 	}{
 		{
 			totalRows:      20,
@@ -459,7 +462,7 @@ func TestSelectionRequiredRows(t *testing.T) {
 		} else {
 			ds = newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
 			f, err := expression.NewFunction(
-				sctx, ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
+				sctx.GetExprCtx(), ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
 					Value:   types.NewDatum(testCase.filtersOfCol1),
 					RetType: types.NewFieldType(mysql.TypeTiny),
 				})
@@ -481,8 +484,9 @@ func TestSelectionRequiredRows(t *testing.T) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src exec.Executor) exec.Executor {
 	return &SelectionExec{
-		BaseExecutor: exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		filters:      filters,
+		selectionExecutorContext: newSelectionExecutorContext(ctx),
+		BaseExecutorV2:           exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		filters:                  filters,
 	}
 }
 
@@ -599,16 +603,17 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src exec.Executor, numWorkers int) exec.Executor {
 	return &ProjectionExec{
-		BaseExecutor:  exec.NewBaseExecutor(ctx, src.Schema(), 0, src),
-		numWorkers:    int64(numWorkers),
-		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		projectionExecutorContext: newProjectionExecutorContext(ctx),
+		BaseExecutorV2:            exec.NewBaseExecutorV2(ctx.GetSessionVars(), src.Schema(), 0, src),
+		numWorkers:                int64(numWorkers),
+		evaluatorSuit:             expression.NewEvaluatorSuite(exprs, false),
 	}
 }
 
-func divGenerator(factor int) func(valType *types.FieldType) interface{} {
+func divGenerator(factor int) func(valType *types.FieldType) any {
 	closureCountInt := 0
 	closureCountDouble := 0
-	return func(valType *types.FieldType) interface{} {
+	return func(valType *types.FieldType) any {
 		switch valType.GetType() {
 		case mysql.TypeLong, mysql.TypeLonglong:
 			ret := int64(closureCountInt / factor)
@@ -632,7 +637,7 @@ func TestStreamAggRequiredRows(t *testing.T) {
 		requiredRows   []int
 		expectedRows   []int
 		expectedRowsDS []int
-		gen            func(valType *types.FieldType) interface{}
+		gen            func(valType *types.FieldType) any
 	}{
 		{
 			totalRows:      1000000,
@@ -667,7 +672,7 @@ func TestStreamAggRequiredRows(t *testing.T) {
 		childCols := ds.Schema().Columns
 		schema := expression.NewSchema(childCols...)
 		groupBy := []expression.Expression{childCols[1]}
-		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
+		aggFunc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), testCase.aggFunc, []expression.Expression{childCols[0]}, true)
 		require.NoError(t, err)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 		executor := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)
@@ -684,7 +689,7 @@ func TestStreamAggRequiredRows(t *testing.T) {
 }
 
 func TestMergeJoinRequiredRows(t *testing.T) {
-	justReturn1 := func(valType *types.FieldType) interface{} {
+	justReturn1 := func(valType *types.FieldType) any {
 		switch valType.GetType() {
 		case mysql.TypeLong, mysql.TypeLonglong:
 			return int64(1)
@@ -694,8 +699,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 			panic("not support")
 		}
 	}
-	joinTypes := []plannercore.JoinType{plannercore.RightOuterJoin, plannercore.LeftOuterJoin,
-		plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin}
+	joinTypes := []base.JoinType{base.RightOuterJoin, base.LeftOuterJoin,
+		base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin}
 	for _, joinType := range joinTypes {
 		ctx := defaultCtx()
 		required := make([]int, 100)
@@ -717,26 +722,26 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
-	if joinType == plannercore.RightOuterJoin {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType base.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
+	if joinType == base.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
 
 	innerCols := innerSrc.Schema().Columns
 	outerCols := outerSrc.Schema().Columns
-	j := plannercore.BuildMergeJoinPlan(ctx, joinType, outerCols, innerCols)
+	j := physicalop.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
-	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
+	cols := slices.Concat(outerCols, innerCols)
 	schema := expression.NewSchema(cols...)
 	j.SetSchema(schema)
 
 	j.CompareFuncs = make([]expression.CompareFunc, 0, len(j.LeftJoinKeys))
 	for i := range j.LeftJoinKeys {
-		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
+		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(context.Background(), ctx, nil, nil)
 	return b.build(j)
 }
 

@@ -11,3 +11,11 @@ Error 1450 (HY000): Changing schema from 'ddl__ddl_error' to 'ddl__ddl_error2' i
 rename table ddl__ddl_error.view_1 to ddl__ddl_error2.view_1;
 Error 1450 (HY000): Changing schema from 'ddl__ddl_error' to 'ddl__ddl_error2' is not allowed.
 rename table ddl__ddl_error.view_1 to ddl__ddl_error.view_1000;
+create view sql_mode_view as select @@sql_mode;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
+create view sql_mode_view as select @@global.sql_mode;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
+create view sql_mode_view as select @a;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
+create view sql_mode_view as select 1 where @a = 4;
+Error 1351 (HY000): View's SELECT contains a variable or parameter

@@ -10,9 +10,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/internal/column",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
-        "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
+        "//pkg/planner/core/resolve",
         "//pkg/server/err",
         "//pkg/server/internal/dump",
         "//pkg/server/internal/util",

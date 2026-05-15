@@ -30,13 +30,16 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -60,13 +63,13 @@ type Storage interface {
 	SupportDeleteRange() (supported bool)
 	Name() string
 	Describe() string
-	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	ShowStatus(ctx context.Context, key string) (any, error)
 	GetMemCache() kv.MemManager
 	GetRegionCache() *tikv.RegionCache
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
-	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+	UpdateTxnSafePointCache(txnSafePoint uint64, now time.Time)
 	SetOracle(oracle oracle.Oracle)
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
@@ -75,6 +78,10 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	GetCodec() tikv.Codec
 	GetPDHTTPClient() pd.Client
+	GetOption(any) (any, bool)
+	SetOption(any, any)
+	GetClusterID() uint64
+	GetKeyspace() string
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -106,6 +113,17 @@ func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
 	}
 	h.pdHTTPCli = cli.WithCallerID("tidb-store-helper")
 	return h.pdHTTPCli, nil
+}
+
+// GetRegions fetches regions for the current store. In keyspace-aware mode, it
+// restricts the scan to the current keyspace to avoid mixing regions from other keyspaces.
+func (h *Helper) GetRegions(ctx context.Context) (*pd.RegionsInfo, error) {
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	startKey, endKey := h.Store.GetCodec().EncodeRegionRange(nil, nil)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), -1)
 }
 
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
@@ -302,12 +320,12 @@ const (
 )
 
 // ScrapeHotInfo gets the needed hot region information by the url given.
-func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
+func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	regionMetrics, err := h.FetchHotRegion(ctx, rw)
 	if err != nil {
 		return nil, err
 	}
-	return h.FetchRegionTableIndex(regionMetrics, allSchemas)
+	return h.FetchRegionTableIndex(regionMetrics, is, filter)
 }
 
 // FetchHotRegion fetches the hot region information from PD's http api.
@@ -379,10 +397,9 @@ type HotTableIndex struct {
 }
 
 // FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot RegionMetric metrics.
-func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
+func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
-		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
@@ -394,7 +411,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 		if err != nil {
 			return nil, err
 		}
-		f := h.FindTableIndexOfRegion(allSchemas, hotRange)
+		f := h.FindTableIndexOfRegion(is, hotRange)
 		if f != nil {
 			t.DbName = f.DBName
 			t.TableName = f.TableName
@@ -409,10 +426,11 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 }
 
 // FindTableIndexOfRegion finds what table is involved in this hot region. And constructs the new frame item for future use.
-func (*Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
-	for _, db := range allSchemas {
-		for _, tbl := range db.Tables {
-			if f := findRangeInTable(hotRange, db, tbl); f != nil {
+func (*Helper) FindTableIndexOfRegion(is infoschema.SchemaAndTable, hotRange *RegionFrameRange) *FrameItem {
+	for _, dbInfo := range is.AllSchemas() {
+		tblInfos, _ := is.SchemaTableInfos(context.Background(), dbInfo.Name)
+		for _, tbl := range tblInfos {
+			if f := findRangeInTable(hotRange, dbInfo, tbl); f != nil {
 				return f
 			}
 		}
@@ -517,7 +535,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
-		logutil.BgLogger().Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
+		logutil.BgLogger().Warn("decode region key failed", zap.String("key", redact.Key(key)), zap.Error(err))
 		// Ignore decode errors.
 		err = nil
 		return
@@ -640,7 +658,7 @@ func isBehindKeyRange(x withKeyRange, _, endKey string) bool {
 	return endKey != "" && x.GetStartKey() >= endKey
 }
 
-// TableInfoWithKeyRange stores table or index informations with its key range.
+// TableInfoWithKeyRange stores table or index information with its key range.
 type TableInfoWithKeyRange struct {
 	*TableInfo
 	StartKey string
@@ -653,20 +671,22 @@ func (t TableInfoWithKeyRange) GetStartKey() string { return t.StartKey }
 // GetEndKey implements `withKeyRange` interface.
 func (t TableInfoWithKeyRange) GetEndKey() string { return t.EndKey }
 
-// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
-func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
-	return newTableInfoWithKeyRange(db, table, nil, nil)
+// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table with the specified codec.
+// It is exported only for test.
+func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
+	return newTableInfoWithKeyRange(db, table, nil, nil, regionKeyCodec)
 }
 
-// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
-func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
-	return newTableInfoWithKeyRange(db, table, nil, index)
+// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index with the specified codec.
+// It is exported only for test.
+func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
+	return newTableInfoWithKeyRange(db, table, nil, index, regionKeyCodec)
 }
 
 // FilterMemDBs filters memory databases in the input schemas.
 func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
-		if util.IsMemDB(dbInfo.Name.L) {
+		if metadef.IsMemDB(dbInfo.Name.L) {
 			continue
 		}
 		schemas = append(schemas, dbInfo)
@@ -677,11 +697,11 @@ func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
-func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
-	tables := h.GetTablesInfoWithKeyRange(schemas)
+func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) map[int64][]TableInfo {
+	tables := h.GetTablesInfoWithKeyRange(is, filter)
 
 	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
-	for i := 0; i < len(regionsInfo.Regions); i++ {
+	for i := range regionsInfo.Regions {
 		regions = append(regions, &regionsInfo.Regions[i])
 	}
 
@@ -689,7 +709,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, schemas []*mod
 	return tableInfos
 }
 
-func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo) TableInfoWithKeyRange {
+func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
 	var sk, ek []byte
 	if partition == nil && index == nil {
 		sk, ek = tablecodec.GetTableHandleKeyRange(table.ID)
@@ -700,8 +720,9 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 	} else {
 		sk, ek = tablecodec.GetTableIndexKeyRange(partition.ID, index.ID)
 	}
-	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
-	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
+	encodedSk, encodedEk := regionKeyCodec.EncodeRegionRange(sk, ek)
+	startKey := bytesKeyToHex(encodedSk)
+	endKey := bytesKeyToHex(encodedEk)
 	return TableInfoWithKeyRange{
 		&TableInfo{
 			DB:          db,
@@ -717,24 +738,33 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 }
 
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
-func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
+func (h *Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
-	for _, db := range schemas {
-		for _, table := range db.Tables {
+	dbInfos := is.AllSchemas()
+	if filter != nil {
+		dbInfos = filter(dbInfos)
+	}
+	regionKeyCodec := tikv.NewCodecV1(tikv.ModeTxn)
+	if h.Store != nil {
+		regionKeyCodec = h.Store.GetCodec()
+	}
+	for _, db := range dbInfos {
+		tableInfos, _ := is.SchemaTableInfos(context.Background(), db.Name)
+		for _, table := range tableInfos {
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil, regionKeyCodec))
 				}
 			} else {
-				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil))
+				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil, regionKeyCodec))
 			}
 			for _, index := range table.Indices {
 				if table.Partition == nil || index.Global {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index, regionKeyCodec))
 					continue
 				}
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index, regionKeyCodec))
 				}
 			}
 		}
@@ -811,8 +841,7 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey = kv.Key(startKey).PrefixNext()
 	}
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
+	startKey, endKey = h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
 
 	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }
@@ -897,6 +926,29 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 	reader := bufio.NewReader(resp.Body)
 	if err = ComputeTiFlashStatus(reader, regionReplica); err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+// SyncTableSchemaToTiFlash query sync schema of one table to TiFlash store.
+func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64) error {
+	// The new query schema is like: http://<host>/tiflash/sync-schema/keyspace/<keyspaceID>/table/<tableID>.
+	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
+	// The query URL is like: http://<host>/sync-schema/keyspace/<NullspaceID>/table/<tableID>
+	statURL := fmt.Sprintf("%s://%s/tiflash/sync-schema/keyspace/%d/table/%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = resp.Body.Close()
+	if err != nil {
+		logutil.BgLogger().Error("close body failed", zap.Error(err))
 	}
 	return nil
 }

@@ -17,8 +17,9 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -29,6 +30,8 @@ const (
 	EventAdd EventType = iota
 	EventDel
 	EventErr
+	EventPause
+	EventResume
 )
 
 func (t EventType) String() string {
@@ -39,6 +42,10 @@ func (t EventType) String() string {
 		return "Del"
 	case EventErr:
 		return "Err"
+	case EventPause:
+		return "Pause"
+	case EventResume:
+		return "Resume"
 	}
 	return "Unknown"
 }
@@ -70,29 +77,48 @@ func errorEvent(err error) TaskEvent {
 }
 
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
-	if !bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument,
-			"the path isn't a task path (%s)", string(event.Kv.Key))
+	te := TaskEvent{}
+	var prefix string
+
+	if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
+		prefix = PrefixOfTask()
+		te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
+	} else if bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfPause())) {
+		prefix = PrefixOfPause()
+		te.Name = strings.TrimPrefix(string(event.Kv.Key), prefix)
+	} else {
+		return TaskEvent{},
+			errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task/pause path (%s)",
+				string(event.Kv.Key))
 	}
 
-	te := TaskEvent{}
-	te.Name = strings.TrimPrefix(string(event.Kv.Key), PrefixOfTask())
-	if event.Type == clientv3.EventTypeDelete {
-		te.Type = EventDel
-	} else if event.Type == clientv3.EventTypePut {
+	switch {
+	case event.Type == clientv3.EventTypePut && prefix == PrefixOfTask():
 		te.Type = EventAdd
-	} else {
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "event type is wrong (%s)", event.Type)
+	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfTask():
+		te.Type = EventDel
+	case event.Type == clientv3.EventTypePut && prefix == PrefixOfPause():
+		te.Type = EventPause
+	case event.Type == clientv3.EventTypeDelete && prefix == PrefixOfPause():
+		te.Type = EventResume
+	default:
+		return TaskEvent{},
+			errors.Annotatef(berrors.ErrInvalidArgument,
+				"invalid event type or prefix: type=%s, prefix=%s", event.Type, prefix)
 	}
-	te.Info = new(backuppb.StreamBackupTaskInfo)
-	if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
-		return TaskEvent{}, err
+
+	if prefix == PrefixOfTask() {
+		te.Info = new(backuppb.StreamBackupTaskInfo)
+		if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
+			return TaskEvent{}, errors.Trace(err)
+		}
+		var err error
+		te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
+		if err != nil {
+			return TaskEvent{}, errors.Trace(err)
+		}
 	}
-	var err error
-	te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
-	if err != nil {
-		return TaskEvent{}, err
-	}
+
 	return te, nil
 }
 
@@ -113,7 +139,10 @@ func (t AdvancerExt) eventFromWatch(ctx context.Context, resp clientv3.WatchResp
 }
 
 func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskEvent) {
-	c := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	taskCh := t.Client.Watcher.Watch(ctx, PrefixOfTask(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+	pauseCh := t.Client.Watcher.Watch(ctx, PrefixOfPause(), clientv3.WithPrefix(), clientv3.WithRev(rev))
+
+	// inner function def
 	handleResponse := func(resp clientv3.WatchResponse) bool {
 		events, err := t.eventFromWatch(ctx, resp)
 		if err != nil {
@@ -127,21 +156,26 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		}
 		return true
 	}
+
+	// inner function def
 	collectRemaining := func() {
 		log.Info("Start collecting remaining events in the channel.", zap.String("category", "log backup advancer"),
-			zap.Int("remained", len(c)))
+			zap.Int("remained", len(taskCh)))
 		defer log.Info("Finish collecting remaining events in the channel.", zap.String("category", "log backup advancer"))
 		for {
-			select {
-			case resp, ok := <-c:
-				if !ok {
-					return
-				}
-				if !handleResponse(resp) {
-					return
-				}
-			default:
+			if taskCh == nil && pauseCh == nil {
 				return
+			}
+
+			select {
+			case resp, ok := <-taskCh:
+				if !ok || !handleResponse(resp) {
+					taskCh = nil
+				}
+			case resp, ok := <-pauseCh:
+				if !ok || !handleResponse(resp) {
+					pauseCh = nil
+				}
 			}
 		}
 	}
@@ -150,8 +184,20 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		defer close(ch)
 		for {
 			select {
-			case resp, ok := <-c:
+			case resp, ok := <-taskCh:
 				failpoint.Inject("advancer_close_channel", func() {
+					// We cannot really close the channel, just simulating it.
+					ok = false
+				})
+				if !ok {
+					ch <- errorEvent(io.EOF)
+					return
+				}
+				if !handleResponse(resp) {
+					return
+				}
+			case resp, ok := <-pauseCh:
+				failpoint.Inject("advancer_close_pause_channel", func() {
 					// We cannot really close the channel, just simulating it.
 					ok = false
 				})
@@ -207,25 +253,95 @@ func (t AdvancerExt) Begin(ctx context.Context, ch chan<- TaskEvent) error {
 }
 
 func (t AdvancerExt) GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error) {
+	checkpoint, _, err := t.getGlobalCheckpointWithRevision(ctx, taskName)
+	return checkpoint, err
+}
+
+func (t MetaDataClient) WaitGlobalCheckpointAdvance(ctx context.Context, taskName string, current uint64) error {
+	key := GlobalCheckpointOf(taskName)
+	for {
+		checkpoint, rev, err := t.getGlobalCheckpointWithRevision(ctx, taskName)
+		if err != nil {
+			return err
+		}
+		if checkpoint > current {
+			return nil
+		}
+
+		err = t.waitCheckpointEvent(ctx, key, current, rev+1)
+		if err == nil {
+			return nil
+		}
+		if berrors.Is(err, berrors.ErrPiTRCheckpointWatchRestart) {
+			continue
+		}
+		return err
+	}
+}
+
+func (t MetaDataClient) getGlobalCheckpointWithRevision(ctx context.Context, taskName string) (uint64, int64, error) {
 	key := GlobalCheckpointOf(taskName)
 	resp, err := t.KV.Get(ctx, key)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	if len(resp.Kvs) == 0 {
-		return 0, nil
+		return 0, resp.Header.Revision, nil
 	}
 
 	firstKV := resp.Kvs[0]
-	value := firstKV.Value
+	checkpoint, err := parseGlobalCheckpointValue(firstKV.Value)
+	if err != nil {
+		return 0, 0, err
+	}
+	return checkpoint, firstKV.ModRevision, nil
+}
+
+func (t MetaDataClient) waitCheckpointEvent(
+	ctx context.Context,
+	key string,
+	current uint64,
+	rev int64,
+) error {
+	watchCh := t.Watcher.Watch(ctx, key, clientv3.WithRev(rev))
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case resp, ok := <-watchCh:
+			if !ok {
+				return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
+			}
+			if err := resp.Err(); err != nil {
+				if resp.CompactRevision != 0 {
+					return berrors.ErrPiTRCheckpointWatchRestart.GenWithStackByArgs()
+				}
+				return err
+			}
+			for _, event := range resp.Events {
+				if event.Type != clientv3.EventTypePut {
+					continue
+				}
+				checkpoint, err := parseGlobalCheckpointValue(event.Kv.Value)
+				if err != nil {
+					return err
+				}
+				if checkpoint > current {
+					return nil
+				}
+			}
+		}
+	}
+}
+
+func parseGlobalCheckpointValue(value []byte) (uint64, error) {
 	if len(value) != 8 {
 		return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
 			"the global checkpoint isn't 64bits (it is %d bytes, value = %s)",
 			len(value),
 			redact.Key(value))
 	}
-
 	return binary.BigEndian.Uint64(value), nil
 }
 
@@ -247,6 +363,7 @@ func (t AdvancerExt) UploadV3GlobalCheckpointForTask(ctx context.Context, taskNa
 	if err != nil {
 		return err
 	}
+	metrics.LastCheckpoint.WithLabelValues(taskName).Set(float64(checkpoint))
 	return nil
 }
 

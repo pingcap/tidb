@@ -16,6 +16,7 @@ package collector
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func TestPProfCPUProfile(t *testing.T) {
 	dataChLen := len(mc.dataCh)
 	deltaLen := 0
 	topsqlstate.EnableTopSQL()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		t1 := time.Now()
 		data = <-mc.dataCh
 		require.True(t, time.Since(t1) < interval*4)
@@ -85,6 +86,90 @@ func TestPProfCPUProfile(t *testing.T) {
 	require.True(t, len(data) > 0)
 	require.True(t, deltaLen > dataChLen)
 	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
+}
+
+func TestProcessProfCPUProfile(t *testing.T) {
+	// short the interval to speed up the test.
+	interval := time.Millisecond * 400
+	defCollectTickerInterval = interval
+	cpuprofile.DefProfileDuration = interval
+
+	err := cpuprofile.StartCPUProfiler()
+	require.NoError(t, err)
+	defer cpuprofile.StopCPUProfiler()
+
+	topsqlstate.EnableTopSQL()
+	updater := &mockUpdater{}
+	updater.dataCh = make(chan bool, 10)
+	updater.resetConnIDSet()
+	mc := &mockCollector{
+		dataCh: make(chan []SQLCPUTimeRecord, 10),
+	}
+	sqlCPUCollector := NewSQLCPUCollector(mc)
+	sqlCPUCollector.SetProcessCPUUpdater(updater)
+	sqlCPUCollector.Start()
+	defer sqlCPUCollector.Stop()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	testutil.MockCPULoadV2(ctx, "0_0", "1_0", "2_1")
+	<-updater.dataCh
+	updater.rwlock.RLock()
+	require.Len(t, updater.connIDSet, 3)
+	require.Equal(t, updater.connIDSet[0], uint64(0))
+	require.Equal(t, updater.connIDSet[1], uint64(0))
+	require.Equal(t, updater.connIDSet[2], uint64(1))
+	updater.rwlock.RUnlock()
+
+	// Test disable then re-enable.
+	topsqlstate.DisableTopSQL()
+	time.Sleep(interval * 2)
+	for len(updater.dataCh) > 0 {
+		<-updater.dataCh
+	}
+	updater.resetConnIDSet()
+	time.Sleep(interval * 2)
+	require.Equal(t, 0, len(updater.dataCh))
+	updater.rwlock.RLock()
+	require.Equal(t, 0, len(updater.connIDSet))
+	updater.rwlock.RUnlock()
+
+	topsqlstate.EnableTopSQL()
+	ticker := time.NewTicker(interval * 8)
+	select {
+	case <-ticker.C:
+	case <-updater.dataCh:
+	}
+	updater.rwlock.RLock()
+	require.Len(t, updater.connIDSet, 3)
+	require.Equal(t, updater.connIDSet[0], uint64(0))
+	require.Equal(t, updater.connIDSet[1], uint64(0))
+	require.Equal(t, updater.connIDSet[2], uint64(1))
+	updater.rwlock.RUnlock()
+}
+
+type mockUpdater struct {
+	dataCh    chan bool
+	rwlock    sync.RWMutex
+	connIDSet map[uint64]uint64
+}
+
+func (s *mockUpdater) resetConnIDSet() {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+
+	s.connIDSet = make(map[uint64]uint64)
+}
+
+// UpdateProcessCPUTime implements ProcessCPUTimeUpdater interface
+func (s *mockUpdater) UpdateProcessCPUTime(connID uint64, sqlID uint64, _ time.Duration) {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+
+	s.connIDSet[connID] = sqlID
+	if len(s.connIDSet) == 3 {
+		s.dataCh <- true
+	}
 }
 
 func TestSQLStatsTune(t *testing.T) {

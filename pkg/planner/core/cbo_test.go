@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -28,7 +29,7 @@ import (
 
 func constructInsertSQL(i, n int) string {
 	sql := "insert into t (a,b,c,e)values "
-	for j := 0; j < n; j++ {
+	for j := range n {
 		sql += fmt.Sprintf("(%d, %d, '%d', %d)", i*n+j, i, i+j, i*n+j)
 		if j != n-1 {
 			sql += ", "
@@ -49,7 +50,7 @@ func BenchmarkOptimize(b *testing.B) {
 	testKit.MustExec("create index e on t (e)")
 	testKit.MustExec("create index b_c on t (b,c)")
 	testKit.MustExec("create index ts on t (ts)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		testKit.MustExec(constructInsertSQL(i, 100))
 	}
 	testKit.MustExec("analyze table t")
@@ -140,13 +141,14 @@ func BenchmarkOptimize(b *testing.B) {
 		require.Len(b, stmts, 1)
 		stmt := stmts[0]
 		ret := &core.PreprocessorReturn{}
-		err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(ret))
 		require.NoError(b, err)
 
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+				_, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 				require.NoError(b, err)
 			}
 			b.ReportAllocs()

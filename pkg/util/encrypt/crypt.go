@@ -29,7 +29,7 @@ func (rs *randStruct) randomInit(password []byte, length int) {
 	add = 7
 	nr2 = 0x12345671
 
-	for i := 0; i < length; i++ {
+	for i := range length {
 		pswChar := password[i]
 		if pswChar == ' ' || pswChar == '\t' {
 			continue
@@ -70,18 +70,18 @@ type sqlCrypt struct {
 func (sc *sqlCrypt) init(password []byte, length int) {
 	sc.rand.randomInit(password, length)
 
-	for i := 0; i <= 255; i++ {
+	for i := range 256 {
 		sc.decodeBuff[i] = byte(i)
 	}
 
-	for i := 0; i <= 255; i++ {
+	for i := range 256 {
 		idx := uint32(sc.rand.myRand() * 255.0)
 		a := sc.decodeBuff[idx]
 		sc.decodeBuff[idx] = sc.decodeBuff[i]
 		sc.decodeBuff[i] = a
 	}
 
-	for i := 0; i <= 255; i++ {
+	for i := range 256 {
 		sc.encodeBuff[sc.decodeBuff[i]] = byte(i)
 	}
 
@@ -90,7 +90,7 @@ func (sc *sqlCrypt) init(password []byte, length int) {
 }
 
 func (sc *sqlCrypt) encode(str []byte, length int) {
-	for i := 0; i < length; i++ {
+	for i := range length {
 		sc.shift ^= uint32(sc.rand.myRand() * 255.0)
 		idx := uint32(str[i])
 		str[i] = sc.encodeBuff[idx] ^ byte(sc.shift)
@@ -99,7 +99,7 @@ func (sc *sqlCrypt) encode(str []byte, length int) {
 }
 
 func (sc *sqlCrypt) decode(str []byte, length int) {
-	for i := 0; i < length; i++ {
+	for i := range length {
 		sc.shift ^= uint32(sc.rand.myRand() * 255.0)
 		idx := uint32(str[i] ^ byte(sc.shift))
 		str[i] = sc.decodeBuff[idx]

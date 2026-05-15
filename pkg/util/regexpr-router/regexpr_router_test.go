@@ -330,7 +330,7 @@ func TestAllRule(t *testing.T) {
 	require.Equal(t, 1, len(schemaRules))
 	require.Equal(t, 3, len(tableRules))
 	require.Equal(t, rules[0].SchemaPattern, schemaRules[0].SchemaPattern)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		require.Equal(t, rules[i+1].SchemaPattern, tableRules[i].SchemaPattern)
 		require.Equal(t, rules[i+1].TablePattern, tableRules[i].TablePattern)
 	}

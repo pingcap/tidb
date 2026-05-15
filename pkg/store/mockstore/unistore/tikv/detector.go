@@ -92,7 +92,7 @@ func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnos
 	} else {
 		// Reverse the wait chain so that the order will be each one waiting for the next one, and append the current
 		// entry that finally caused the deadlock.
-		for i := 0; i < len(err.WaitChain)/2; i++ {
+		for i := range len(err.WaitChain) / 2 {
 			j := len(err.WaitChain) - i - 1
 			err.WaitChain[i], err.WaitChain[j] = err.WaitChain[j], err.WaitChain[i]
 		}

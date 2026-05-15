@@ -24,7 +24,7 @@ import (
 
 func TestStrLenOfUint64Fast(t *testing.T) {
 	t.Run("RandomInput", func(t *testing.T) {
-		for i := 0; i < 1000000; i++ {
+		for range 1000000 {
 			num := rand.Uint64()
 			expected := len(strconv.FormatUint(num, 10))
 			actual := StrLenOfUint64Fast(num)
@@ -49,29 +49,6 @@ func TestStrLenOfUint64Fast(t *testing.T) {
 	})
 }
 
-func TestMaxMin(t *testing.T) {
-	require.Equal(t, 1, Min(1, 2))
-	require.Equal(t, 1, Min(2, 1))
-	require.Equal(t, 1, Min(4, 2, 1, 3))
-	require.Equal(t, 1, Min(1, 1))
-
-	require.Equal(t, 2, Max(1, 2))
-	require.Equal(t, 2, Max(2, 1))
-	require.Equal(t, 4, Max(4, 2, 1, 3))
-	require.Equal(t, 1, Max(1, 1))
-
-	require.Equal(t, int64(1), Min(int64(1), int64(2)))
-	require.Equal(t, int64(2), Max(int64(2), int64(1)))
-	require.Equal(t, int64(1), Min(int64(4), int64(2), int64(1), int64(3)))
-	require.Equal(t, int64(1), Max(int64(1), int64(1)))
-	require.Equal(t, 1.0, Min(4.0, 2.0, 1.0, 3.0))
-	require.Equal(t, 4.0, Max(4.0, 2.0, 1.0, 3.0))
-
-	require.Equal(t, "ab", Min("ab", "xy"))
-	require.Equal(t, "xy", Max("ab", "xy"))
-	require.Equal(t, "ab", Max("ab", "ab"))
-}
-
 func TestClamp(t *testing.T) {
 	require.Equal(t, 3, Clamp(100, 1, 3))
 	require.Equal(t, 2.0, Clamp(float64(2), 1.0, 3.0))
@@ -81,4 +58,25 @@ func TestClamp(t *testing.T) {
 	require.Equal(t, "ab", Clamp("aa", "ab", "xy"))
 	require.Equal(t, "xy", Clamp("yy", "ab", "xy"))
 	require.Equal(t, "ab", Clamp("ab", "ab", "ab"))
+}
+
+func TestNextPowerOfTwo(t *testing.T) {
+	require.Equal(t, int64(1), NextPowerOfTwo(1))
+	require.Equal(t, int64(4), NextPowerOfTwo(3))
+	require.Equal(t, int64(256), NextPowerOfTwo(255))
+	require.Equal(t, int64(1024), NextPowerOfTwo(1024))
+	require.Equal(t, int64(0x100000000), NextPowerOfTwo(0xabcd1234))
+}
+
+func TestDivide2Batches(t *testing.T) {
+	require.EqualValues(t, []int{}, Divide2Batches(0, 1))
+	require.EqualValues(t, []int{1}, Divide2Batches(1, 1))
+	require.EqualValues(t, []int{1}, Divide2Batches(1, 3))
+	require.EqualValues(t, []int{1, 1}, Divide2Batches(2, 2))
+	require.EqualValues(t, []int{1, 1}, Divide2Batches(2, 10))
+	require.EqualValues(t, []int{10}, Divide2Batches(10, 1))
+	require.EqualValues(t, []int{5, 5}, Divide2Batches(10, 2))
+	require.EqualValues(t, []int{4, 3, 3}, Divide2Batches(10, 3))
+	require.EqualValues(t, []int{3, 3, 2, 2}, Divide2Batches(10, 4))
+	require.EqualValues(t, []int{2, 2, 2, 2, 2}, Divide2Batches(10, 5))
 }

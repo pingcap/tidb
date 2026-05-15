@@ -15,8 +15,10 @@
 package mathutil
 
 import (
+	"cmp"
 	"math"
 
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"golang.org/x/exp/constraints"
 )
 
@@ -67,34 +69,45 @@ func IsFinite(f float64) bool {
 	return !math.IsNaN(f - f)
 }
 
-// Max returns the largest one from its arguments.
-func Max[T constraints.Ordered](x T, xs ...T) T {
-	max := x
-	for _, n := range xs {
-		if n > max {
-			max = n
-		}
-	}
-	return max
-}
-
-// Min returns the smallest one from its arguments.
-func Min[T constraints.Ordered](x T, xs ...T) T {
-	min := x
-	for _, n := range xs {
-		if n < min {
-			min = n
-		}
-	}
-	return min
-}
-
 // Clamp restrict a value to a certain interval.
-func Clamp[T constraints.Ordered](n, min, max T) T {
-	if n >= max {
-		return max
-	} else if n <= min {
-		return min
+func Clamp[T cmp.Ordered](n, minv, maxv T) T {
+	if n >= maxv {
+		return maxv
+	} else if n <= minv {
+		return minv
 	}
 	return n
+}
+
+// NextPowerOfTwo returns the smallest power of two greater than or equal to `i`
+// Caller should guarantee that i > 0 and the return value is not overflow.
+func NextPowerOfTwo(i int64) int64 {
+	if i&(i-1) == 0 {
+		return i
+	}
+	i *= 2
+	for i&(i-1) != 0 {
+		i &= i - 1
+	}
+	return i
+}
+
+// Divide2Batches divides 'total' into 'batches'. It returns a slice of sizes
+// whose sum equals total. If total < batches, it returns total parts of size 1.
+// If total equals 0, it returns an empty slice. Batches must be > 0.
+func Divide2Batches[T constraints.Integer](total, batches T) []T {
+	result := make([]T, 0, batches)
+	quotient := total / batches
+	remainder := total % batches
+	for total > 0 {
+		size := quotient
+		if remainder > 0 {
+			size++
+			remainder--
+		}
+		intest.Assert(size > 0, "size should be positive")
+		result = append(result, size)
+		total -= size
+	}
+	return result
 }

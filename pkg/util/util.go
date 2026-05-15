@@ -17,25 +17,37 @@ package util
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
+	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/protoadapt"
 )
+
+// ByteNumOneGiB shows how many bytes one GiB contains
+const ByteNumOneGiB int64 = 1024 * 1024 * 1024
+
+// ByteToGiB converts Byte to GiB
+func ByteToGiB(bytes float64) float64 {
+	return bytes / float64(ByteNumOneGiB)
+}
 
 // SliceToMap converts slice to map
 // nolint:unused
-func SliceToMap(slice []string) map[string]interface{} {
-	sMap := make(map[string]interface{})
+func SliceToMap(slice []string) map[string]any {
+	sMap := make(map[string]any)
 	for _, str := range slice {
 		sMap[str] = struct{}{}
 	}
@@ -43,60 +55,13 @@ func SliceToMap(slice []string) map[string]interface{} {
 }
 
 // StringsToInterfaces converts string slice to interface slice
-func StringsToInterfaces(strs []string) []interface{} {
-	is := make([]interface{}, 0, len(strs))
+func StringsToInterfaces(strs []string) []any {
+	is := make([]any, 0, len(strs))
 	for _, str := range strs {
 		is = append(is, str)
 	}
 
 	return is
-}
-
-// GetJSON fetches a page and parses it as JSON. The parsed result will be
-// stored into the `v`. The variable `v` must be a pointer to a type that can be
-// unmarshalled from JSON.
-//
-// Example:
-//
-//	client := &http.Client{}
-//	var resp struct { IP string }
-//	if err := util.GetJSON(client, "http://api.ipify.org/?format=json", &resp); err != nil {
-//		return errors.Trace(err)
-//	}
-//	fmt.Println(resp.IP)
-//
-// nolint:unused
-func GetJSON(client *http.Client, url string, v interface{}) error {
-	resp, err := client.Get(url)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Errorf("get %s http status code != 200, message %s", url, string(body))
-	}
-
-	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
-}
-
-// ChanMap creates a channel which applies the function over the input Channel.
-// Hint of Resource Leakage:
-// In golang, channel isn't an interface so we must create a goroutine for handling the inputs.
-// Hence the input channel must be closed properly or this function may leak a goroutine.
-func ChanMap[T, R any](c <-chan T, f func(T) R) <-chan R {
-	outCh := make(chan R)
-	go func() {
-		defer close(outCh)
-		for item := range c {
-			outCh <- f(item)
-		}
-	}()
-	return outCh
 }
 
 // Str2Int64Map converts a string to a map[int64]struct{}.
@@ -111,7 +76,7 @@ func Str2Int64Map(str string) map[int64]struct{} {
 }
 
 // GenLogFields generate log fields.
-func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL bool) []zap.Field {
+func GenLogFields(costTime time.Duration, info *sessmgr.ProcessInfo, needTruncateSQL bool) []zap.Field {
 	if info.RefCountOfStmtCtx != nil && !info.RefCountOfStmtCtx.TryIncrease() {
 		return nil
 	}
@@ -121,9 +86,8 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
 	logFields = append(logFields, execDetail.ToZapFields()...)
-	if copTaskInfo := info.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
-		logFields = append(logFields, copTaskInfo.ToZapFields()...)
-	}
+	copTaskInfo := info.StmtCtx.CopTasksDetails()
+	logFields = append(logFields, copTaskInfo.ToZapFields()...)
 	if statsInfo := info.StatsInfo(info.Plan); len(statsInfo) > 0 {
 		var buf strings.Builder
 		firstComma := false
@@ -165,27 +129,42 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	if memTracker := info.MemTracker; memTracker != nil {
 		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
 	}
+	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
+		s := ""
+		if dur := memTracker.MemArbitration(); dur > 0 {
+			s += fmt.Sprintf("cost_time %ss", strconv.FormatFloat(dur.Seconds(), 'f', -1, 64)) // mem quota arbitration time of current SQL
+		}
+		if ts, sz := memTracker.WaitArbitrate(); sz > 0 {
+			if s != "" {
+				s += ", "
+			}
+			s += fmt.Sprintf("wait_start %s, wait_bytes %d Bytes (%v)", ts.In(time.UTC).Format("2006-01-02 15:04:05.999 MST"), sz, memTracker.FormatBytes(sz)) // mem quota wait arbitrate time of current SQL
+		}
+		if s != "" {
+			logFields = append(logFields, zap.String("mem_arbitration", s))
+		}
+	}
 
 	const logSQLLen = 1024 * 8
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
-		if info.RedactSQL {
-			sql = parser.Normalize(sql)
-		}
+		sql = parser.Normalize(sql, info.RedactSQL)
 	}
 	if len(sql) > logSQLLen && needTruncateSQL {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 	logFields = append(logFields, zap.String("session_alias", info.SessionAlias))
+	logFields = append(logFields, zap.Uint64("affected rows", info.StmtCtx.AffectedRows()))
 	return logFields
 }
 
 // PrintableASCII detects if b is a printable ASCII character.
 // Ref to:http://facweb.cs.depaul.edu/sjost/it212/documents/ascii-pr.htm
 func PrintableASCII(b byte) bool {
-	if b < 32 || b > 127 {
+	// MySQL think 127(0x7f) is not printalbe.
+	if b < 32 || b >= 127 {
 		return false
 	}
 
@@ -193,18 +172,29 @@ func PrintableASCII(b byte) bool {
 }
 
 // FmtNonASCIIPrintableCharToHex turns non-printable-ASCII characters into Hex
-func FmtNonASCIIPrintableCharToHex(str string) string {
+func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int, displayDeleteCharater bool) string {
 	var b bytes.Buffer
-	b.Grow(len(str) * 2)
-	for i := 0; i < len(str); i++ {
+	b.Grow(maxBytesToShow * 2)
+	for i := range len(str) {
+		if i >= maxBytesToShow {
+			b.WriteString("...")
+			break
+		}
+
 		if PrintableASCII(str[i]) {
 			b.WriteByte(str[i])
 			continue
 		}
 
+		// In MySQL, 0x7f will not display in `Cannot convert string` error msg.
+		// But it will displayed in `duplicate entry` error msg.
+		if str[i] == 0x7f && !displayDeleteCharater {
+			continue
+		}
+
 		b.WriteString(`\x`)
 		// turns non-printable-ASCII character into hex-string
-		b.WriteString(fmt.Sprintf("%02X", str[i]))
+		fmt.Fprintf(&b, "%02X", str[i])
 	}
 	return b.String()
 }
@@ -272,7 +262,7 @@ func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
 // maxLineSize specifies the maximum size of a single line.
 func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
 	lines := make([][]byte, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		line, err := ReadLine(reader, maxLineSize)
 		if err == io.EOF && len(lines) > 0 {
 			return lines, nil
@@ -298,9 +288,84 @@ func IsInCorrectIdentifierName(name string) bool {
 }
 
 // GetRecoverError gets the error from recover.
-func GetRecoverError(r interface{}) error {
+func GetRecoverError(r any) error {
+	traceevent.DumpFlightRecorderToLogger("GetRecoverError")
 	if err, ok := r.(error); ok {
-		return err
+		// Runtime panic also implements error interface.
+		// So do not forget to add stack info for it.
+		return errors.Trace(err)
 	}
 	return errors.Errorf("%v", r)
+}
+
+// ProtoV1Clone clones a V1 proto message.
+func ProtoV1Clone[T protoadapt.MessageV1](p T) T {
+	return protoadapt.MessageV1Of(proto.Clone(protoadapt.MessageV2Of(p))).(T)
+}
+
+// CheckIfSameCluster reads PD addresses registered in etcd from two sources, to
+// check if there are common addresses in both sources. If there are common
+// addresses, the first return value is true which means we have confidence that
+// the two sources are in the same cluster. If there are no common addresses, the
+// first return value is false, which means 1) the two sources are in different
+// clusters, or 2) the two sources may be in the same cluster but the getter
+// function does not return the common addresses.
+//
+// The getters should keep the same format of the returned addresses, like both
+// have URL scheme or not.
+//
+// The second and third return values are the PD addresses from the first and
+// second getters respectively. The fourth return value is the error occurred.
+func CheckIfSameCluster(
+	ctx context.Context,
+	pdAddrsGetter, pdAddrsGetter2 func(context.Context) ([]string, error),
+) (_ bool, addrs, addrs2 []string, err error) {
+	addrs, err = pdAddrsGetter(ctx)
+	if err != nil {
+		return false, nil, nil, errors.Trace(err)
+	}
+	addrsMap := make(map[string]struct{}, len(addrs))
+	for _, a := range addrs {
+		addrsMap[a] = struct{}{}
+	}
+
+	addrs2, err = pdAddrsGetter2(ctx)
+	if err != nil {
+		return false, nil, nil, errors.Trace(err)
+	}
+	for _, a := range addrs2 {
+		if _, ok := addrsMap[a]; ok {
+			return true, addrs, addrs2, nil
+		}
+	}
+	return false, addrs, addrs2, nil
+}
+
+// GetPDsAddrWithoutScheme returns a function that read all PD nodes' first etcd
+// client URL by SQL query. This is done by query INFORMATION_SCHEMA.CLUSTER_INFO
+// table and its executor memtableRetriever.dataForTiDBClusterInfo.
+func GetPDsAddrWithoutScheme(db *sql.DB) func(context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		rows, err := db.QueryContext(ctx, "SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO WHERE TYPE = 'pd'")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		defer rows.Close()
+		var ret []string
+		for rows.Next() {
+			var addr string
+			err = rows.Scan(&addr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			// if intersection is not empty, we can say URLs from TiDB and PD are from the
+			// same cluster. See comments above pdTiDBFromSameClusterCheckItem struct.
+			ret = append(ret, addr)
+		}
+		if err = rows.Err(); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return ret, nil
+	}
 }

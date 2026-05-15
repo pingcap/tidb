@@ -22,14 +22,22 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/size"
+)
+
+var (
+	_ base.HashEquals = &Column{}
+	_ base.HashEquals = &CorrelatedColumn{}
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -37,6 +45,12 @@ type CorrelatedColumn struct {
 	Column
 
 	Data *types.Datum
+}
+
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (col *CorrelatedColumn) SafeToShareAcrossSession() bool {
+	// TODO: optimize this to make it's safe.
+	return false // due to col.Data
 }
 
 // Clone implements Expression interface.
@@ -82,6 +96,11 @@ func (col *CorrelatedColumn) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, re
 	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETVectorFloat32, input, result)
+}
+
 // Traverse implements the TraverseDown interface.
 func (col *CorrelatedColumn) Traverse(action TraverseAction) Expression {
 	return action.Transform(col)
@@ -97,8 +116,8 @@ func (col *CorrelatedColumn) EvalInt(ctx EvalContext, row chunk.Row) (int64, boo
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
-	if col.GetType().Hybrid() {
-		res, err := col.Data.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
+	if col.GetType(ctx).Hybrid() {
+		res, err := col.Data.ToInt64(typeCtx(ctx))
 		return res, err != nil, err
 	}
 	return col.Data.GetInt64(), false, nil
@@ -153,12 +172,20 @@ func (col *CorrelatedColumn) EvalJSON(ctx EvalContext, row chunk.Row) (types.Bin
 	return col.Data.GetMysqlJSON(), false, nil
 }
 
+// EvalVectorFloat32 returns VectorFloat32 representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	if col.Data.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return col.Data.GetVectorFloat32(), false, nil
+}
+
 // Equal implements Expression interface.
 func (col *CorrelatedColumn) Equal(_ EvalContext, expr Expression) bool {
 	return col.EqualColumn(expr)
 }
 
-// EqualColumn returns whether two colum is equal
+// EqualColumn returns whether two column is equal
 func (col *CorrelatedColumn) EqualColumn(expr Expression) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
 		return col.Column.EqualColumn(&cc.Column)
@@ -227,9 +254,32 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 	}, nil
 }
 
+// Hash64 implements HashEquals.<0th> interface.
+func (col *CorrelatedColumn) Hash64(h base.Hasher) {
+	// correlatedColumn flag here is used to distinguish correlatedColumn and Column.
+	h.HashByte(correlatedColumn)
+	col.Column.Hash64(h)
+	// since col.Datum is filled in the runtime, we can't use it to calculate hash now, correlatedColumn flag + column is enough.
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (col *CorrelatedColumn) Equals(other any) bool {
+	col2, ok := other.(*CorrelatedColumn)
+	if !ok {
+		return false
+	}
+	if col == nil {
+		return col2 == nil
+	}
+	if col2 == nil {
+		return false
+	}
+	return col.Column.Equals(&col2.Column)
+}
+
 // Column represents a column.
 type Column struct {
-	RetType *types.FieldType
+	RetType *types.FieldType `plan-cache-clone:"shallow"`
 	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
@@ -263,12 +313,17 @@ type Column struct {
 	CorrelatedColUniqueID int64
 }
 
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (col *Column) SafeToShareAcrossSession() bool {
+	return col.VirtualExpr == nil // for safety
+}
+
 // Equal implements Expression interface.
 func (col *Column) Equal(_ EvalContext, expr Expression) bool {
 	return col.EqualColumn(expr)
 }
 
-// EqualColumn returns whether two colum is equal
+// EqualColumn returns whether two column is equal
 func (col *Column) EqualColumn(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.UniqueID == col.UniqueID
@@ -276,7 +331,7 @@ func (col *Column) EqualColumn(expr Expression) bool {
 	return false
 }
 
-// EqualByExprAndID extends Equal by comparing virual expression
+// EqualByExprAndID extends Equal by comparing virtual expression
 func (col *Column) EqualByExprAndID(ctx EvalContext, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		expr, isOk := col.VirtualExpr.(*ScalarFunction)
@@ -312,7 +367,7 @@ func (col *Column) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk
 func (col *Column) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	src := input.Column(col.Index)
-	if col.GetType().GetType() == mysql.TypeFloat {
+	if col.GetType(ctx).GetType() == mysql.TypeFloat {
 		result.ResizeFloat64(n, false)
 		f32s := src.Float32s()
 		f64s := result.Float64s()
@@ -386,30 +441,132 @@ func (col *Column) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return nil
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
 const columnPrefix = "Column#"
+
+// shouldRemoveColumnNumbers checks if column numbers should be removed based on the explain format.
+// This is used for plan_tree format to show "Column" instead of "Column#<number>".
+// Note: ExplainFormat is normalized to lowercase when set, but we use strings.ToLower as a defensive measure
+// in case the format wasn't normalized in some code path.
+func shouldRemoveColumnNumbers(ctx ParamValues) bool {
+	if evalCtx, ok := ctx.(EvalContext); ok {
+		if sessionCtx, ok := evalCtx.(*sessionexpr.EvalContext); ok {
+			stmtCtx := sessionCtx.Sctx().GetSessionVars().StmtCtx
+			// Only check format if we're actually in an explain statement
+			if !stmtCtx.InExplainStmt {
+				return false
+			}
+			format := stmtCtx.ExplainFormat
+			// Use ToLower defensively in case format wasn't normalized in some code path
+			formatLower := strings.ToLower(strings.TrimSpace(format))
+			if formatLower == types.ExplainFormatPlanTree {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// StringWithCtx implements Expression interface.
+func (col *Column) StringWithCtx(ctx ParamValues, redact string) string {
+	return col.string(redact, shouldRemoveColumnNumbers(ctx))
+}
+
+// StringWithCtxForExplain implements Expression interface with option to remove column numbers for plan_tree format.
+func (col *Column) StringWithCtxForExplain(_ ParamValues, redact string, removeColumnNumbers bool) string {
+	return col.string(redact, removeColumnNumbers)
+}
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	if col.IsHidden {
-		// A hidden column must be a virtual generated column, we should output its expression.
-		return col.VirtualExpr.String()
+	return col.string(errors.RedactLogDisable, false)
+}
+
+func (col *Column) string(redact string, removeColumnNumbers bool) string {
+	if col.IsHidden && col.VirtualExpr != nil {
+		// A hidden column without virtual expression indicates it's a stored type.
+		// a virtual column should be able to be stringified without context.
+		return col.VirtualExpr.StringWithCtx(exprctx.EmptyParamValues, redact)
 	}
 	if col.OrigName != "" {
 		return col.OrigName
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	if removeColumnNumbers {
+		// For plan_tree format, return "Column" instead of "Column#<number>"
+		builder.WriteString("Column")
+	} else {
+		fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	}
 	return builder.String()
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", col)), nil
+// GetType implements Expression interface.
+func (col *Column) GetType(_ EvalContext) *types.FieldType {
+	return col.GetStaticType()
 }
 
-// GetType implements Expression interface.
-func (col *Column) GetType() *types.FieldType {
+// GetStaticType returns the type without considering the context.
+func (col *Column) GetStaticType() *types.FieldType {
 	return col.RetType
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (col *Column) Hash64(h base.Hasher) {
+	if col.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		col.RetType.Hash64(h)
+	}
+	h.HashInt64(col.ID)
+	h.HashInt64(col.UniqueID)
+	h.HashInt(col.Index)
+	if col.VirtualExpr == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		col.VirtualExpr.Hash64(h)
+	}
+	h.HashString(col.OrigName)
+	h.HashBool(col.IsHidden)
+	h.HashBool(col.IsPrefix)
+	h.HashBool(col.InOperand)
+	col.collationInfo.Hash64(h)
+	h.HashInt64(col.CorrelatedColUniqueID)
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (col *Column) Equals(other any) bool {
+	col2, ok := other.(*Column)
+	if !ok {
+		return false
+	}
+	if col == nil {
+		return col2 == nil
+	}
+	if col2 == nil {
+		return false
+	}
+	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
+	// and we should ensure col1.RetType and col2.RetType is not nil ourselves.
+	ok = col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
+	ok = ok && (col.VirtualExpr == nil && col2.VirtualExpr == nil || col.VirtualExpr != nil && col2.VirtualExpr != nil && col.VirtualExpr.Equals(col2.VirtualExpr))
+	return ok &&
+		col.ID == col2.ID &&
+		col.UniqueID == col2.UniqueID &&
+		col.Index == col2.Index &&
+		col.OrigName == col2.OrigName &&
+		col.IsHidden == col2.IsHidden &&
+		col.IsPrefix == col2.IsPrefix &&
+		col.InOperand == col2.InOperand &&
+		col.collationInfo.Equals(&col2.collationInfo) &&
+		col.CorrelatedColUniqueID == col2.CorrelatedColUniqueID
 }
 
 // Traverse implements the TraverseDown interface.
@@ -424,16 +581,16 @@ func (col *Column) Eval(_ EvalContext, row chunk.Row) (types.Datum, error) {
 
 // EvalInt returns int representation of Column.
 func (col *Column) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	if col.GetType().Hybrid() {
+	if col.GetType(ctx).Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
 			return 0, true, nil
 		}
 		if val.Kind() == types.KindMysqlBit {
-			val, err := val.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+			val, err := val.GetBinaryLiteral().ToInt(typeCtx(ctx))
 			return int64(val), err != nil, err
 		}
-		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		res, err := val.ToInt64(typeCtx(ctx))
 		return res, err != nil, err
 	}
 	if row.IsNull(col.Index) {
@@ -447,7 +604,7 @@ func (col *Column) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, erro
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
-	if col.GetType().GetType() == mysql.TypeFloat {
+	if col.GetType(ctx).GetType() == mysql.TypeFloat {
 		return float64(row.GetFloat32(col.Index)), false, nil
 	}
 	return row.GetFloat64(col.Index), false, nil
@@ -460,7 +617,7 @@ func (col *Column) EvalString(ctx EvalContext, row chunk.Row) (string, bool, err
 	}
 
 	// Specially handle the ENUM/SET/BIT input value.
-	if col.GetType().Hybrid() {
+	if col.GetType(ctx).Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		res, err := val.ToString()
 		return res, err != nil, err
@@ -503,9 +660,20 @@ func (col *Column) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 	return row.GetJSON(col.Index), false, nil
 }
 
+// EvalVectorFloat32 returns VectorFloat32 representation of Column.
+func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	if row.IsNull(col.Index) {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return row.GetVectorFloat32(col.Index), false, nil
+}
+
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
+	if col.hashcode != nil {
+		newCol.hashcode = slices.Clone(col.hashcode)
+	}
 	return &newCol
 }
 
@@ -568,11 +736,22 @@ func (col *Column) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) 
 }
 
 func (col *Column) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
+	fallbackIdx := -1
 	for i, c := range schema.Columns {
-		if c.EqualByExprAndID(ctx, col) {
+		if c.EqualColumn(col) {
 			col.Index = i
 			return true
 		}
+		// Different expression indexes may create hidden generated columns with the same
+		// virtual expression. Prefer the exact column ID when it exists; only fall back
+		// to expression equality when the selected schema has no exact column match.
+		if fallbackIdx == -1 && c.EqualByExprAndID(ctx, col) {
+			fallbackIdx = i
+		}
+	}
+	if fallbackIdx != -1 {
+		col.Index = fallbackIdx
+		return true
 	}
 	return false
 }
@@ -619,86 +798,6 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	return nil
 }
 
-// IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
-	for i, info := range colInfos {
-		if info.Name.L == col.Name.L {
-			if col.Length > 0 && info.FieldType.GetFlen() > col.Length {
-				c := *cols[i]
-				c.IsPrefix = true
-				return &c
-			}
-			return cols[i]
-		}
-	}
-	return nil
-}
-
-// IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be only the 1st corresponding *Column and its length.
-// TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
-func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lengths := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			return retCols, lengths
-		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lengths = append(lengths, types.UnspecifiedLength)
-		} else {
-			lengths = append(lengths, c.Length)
-		}
-	}
-	return retCols, lengths
-}
-
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be [col1, nil, col2].
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lens := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			retCols = append(retCols, col)
-			lens = append(lens, types.UnspecifiedLength)
-			continue
-		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lens = append(lens, types.UnspecifiedLength)
-		} else {
-			lens = append(lens, c.Length)
-		}
-	}
-	return retCols, lens
-}
-
-// FindPrefixOfIndex will find columns in index by checking the unique id.
-// So it will return at once no matching column is found.
-func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {
-	retCols := make([]*Column, 0, len(idxColIDs))
-idLoop:
-	for _, id := range idxColIDs {
-		for _, col := range cols {
-			if col.UniqueID == id {
-				retCols = append(retCols, col)
-				continue idLoop
-			}
-		}
-		// If no matching column is found, just return.
-		return retCols
-	}
-	return retCols
-}
-
 // EvalVirtualColumn evals the virtual column
 func (col *Column) EvalVirtualColumn(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(ctx, row)
@@ -732,8 +831,7 @@ func (col *Column) Repertoire() Repertoire {
 
 // SortColumns sort columns based on UniqueID.
 func SortColumns(cols []*Column) []*Column {
-	sorted := make([]*Column, len(cols))
-	copy(sorted, cols)
+	sorted := slices.Clone(cols)
 	slices.SortFunc(sorted, func(i, j *Column) int {
 		return cmp.Compare(i.UniqueID, j.UniqueID)
 	})
@@ -742,12 +840,9 @@ func SortColumns(cols []*Column) []*Column {
 
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
-	for _, c := range cols {
-		if col.EqualColumn(c) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(cols, func(c *Column) bool {
+		return col.EqualColumn(c)
+	})
 }
 
 // GcColumnExprIsTidbShard check whether the expression is tidb_shard()

@@ -18,10 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -29,23 +28,21 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // SessionBindingHandle is used to handle all session sql bind operations.
 type SessionBindingHandle interface {
 	// CreateSessionBinding creates a binding to the cache.
-	CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error)
+	CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
 
 	// DropSessionBinding drops a binding by the sql digest.
-	DropSessionBinding(sqlDigest string) error
+	DropSessionBinding(sqlDigests []string) error
 
 	// MatchSessionBinding returns the matched binding for this statement.
-	MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error)
+	MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool)
 
 	// GetAllSessionBindings return all bindings.
-	GetAllSessionBindings() (bindRecords []*BindRecord)
+	GetAllSessionBindings() (bindings []*Binding)
 
 	// Close closes the SessionBindingHandle.
 	Close()
@@ -55,112 +52,89 @@ type SessionBindingHandle interface {
 
 // sessionBindingHandle is used to handle all session sql bind operations.
 type sessionBindingHandle struct {
-	ch *bindCache
+	mu       sync.RWMutex
+	bindings map[string]*Binding // sqlDigest --> Binding
 }
 
 // NewSessionBindingHandle creates a new SessionBindingHandle.
 func NewSessionBindingHandle() SessionBindingHandle {
-	sessionHandle := &sessionBindingHandle{}
-	sessionHandle.ch = newBindCache()
-	return sessionHandle
+	return &sessionBindingHandle{bindings: make(map[string]*Binding)}
 }
 
-// appendSessionBinding adds the BindRecord to the cache, all the stale bindMetas are
-// removed from the cache after this operation.
-func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *BindRecord) {
-	oldRecord := h.ch.GetBinding(sqlDigest)
-	err := h.ch.SetBinding(sqlDigest, meta)
-	if err != nil {
-		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
-	}
-	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
-}
-
-// CreateSessionBinding creates a BindRecord to the cache.
+// CreateSessionBinding creates a Bindings to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx)
-	if err != nil {
-		return err
+func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, binding := range bindings {
+		if err := prepareHints(sctx, binding); err != nil {
+			return err
+		}
 	}
-	record.Db = strings.ToLower(record.Db)
-	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
-	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = now
-		record.Bindings[i].UpdateTime = now
-	}
+	for _, binding := range bindings {
+		binding.Db = strings.ToLower(binding.Db)
+		now := types.NewTime(
+			types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())),
+			mysql.TypeTimestamp,
+			3,
+		)
+		binding.CreateTime = now
+		binding.UpdateTime = now
 
-	// update the BindMeta to the cache.
-	h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
+		// update the BindMeta to the cache.
+		h.bindings[parser.DigestNormalized(binding.OriginalSQL).String()] = binding
+	}
 	return nil
 }
 
-// dropSessionBinding drops a BindRecord in the cache.
-func (h *sessionBindingHandle) dropSessionBinding(originalSQL, db string, binding *Binding) error {
-	db = strings.ToLower(db)
-	sqlDigest := parser.DigestNormalized(originalSQL).String()
-	oldRecord := h.GetSessionBinding(sqlDigest)
-	var newRecord *BindRecord
-	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
-	if binding != nil {
-		record.Bindings = append(record.Bindings, *binding)
+// DropSessionBinding drop Bindings in the cache.
+func (h *sessionBindingHandle) DropSessionBinding(sqlDigests []string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, sqlDigest := range sqlDigests {
+		delete(h.bindings, sqlDigest)
 	}
-	if oldRecord != nil {
-		newRecord = oldRecord.remove(record)
-	} else {
-		newRecord = record
-	}
-	err := h.ch.SetBinding(sqlDigest, newRecord)
-	if err != nil {
-		// Should never reach here, just return an error for safety
-		return err
-	}
-	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 	return nil
-}
-
-// DropSessionBinding drop BindRecord in the cache.
-func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
-	if sqlDigest == "" {
-		return errors.New("sql digest is empty")
-	}
-	oldRecord := h.GetSessionBinding(sqlDigest)
-	if oldRecord == nil {
-		return errors.Errorf("can't find any binding for '%s'", sqlDigest)
-	}
-	return h.dropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
-}
-
-// GetSessionBinding return all BindMeta corresponding to sqlDigest.
-func (h *sessionBindingHandle) GetSessionBinding(sqlDigest string) *BindRecord {
-	return h.ch.GetBinding(sqlDigest)
 }
 
 // MatchSessionBinding returns the matched binding for this statement.
-func (h *sessionBindingHandle) MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error) {
-	if h.ch.Size() == 0 {
-		return nil, nil
+func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	// session bindings in most cases is only used for test, so there should be many session bindings, so match
+	// them one by one is acceptable.
+	possibleBindings := make([]*Binding, 0, 2)
+	for _, binding := range h.bindings {
+		bindingNoDBDigest, err := noDBDigestFromBinding(binding)
+		if err != nil {
+			continue
+		}
+		if noDBDigest != bindingNoDBDigest {
+			continue
+		}
+		possibleBindings = append(possibleBindings, binding)
 	}
-	// TODO: support fuzzy matching.
-	_, _, sqlDigest, err := normalizeStmt(stmt, currentDB)
-	if err != nil {
-		return nil, err
-	}
-	return h.ch.GetBinding(sqlDigest), nil
+	matchedBinding, isMatched = crossDBMatchBindings(sctx, tableNames, possibleBindings)
+	return
 }
 
 // GetAllSessionBindings return all session bind info.
-func (h *sessionBindingHandle) GetAllSessionBindings() (bindRecords []*BindRecord) {
-	return h.ch.GetAllBindings()
+func (h *sessionBindingHandle) GetAllSessionBindings() (bindings []*Binding) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, binding := range h.bindings {
+		bindings = append(bindings, binding)
+	}
+	return
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
 func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
-	bindRecords := h.ch.GetAllBindings()
-	if len(bindRecords) == 0 {
+	bindings := h.GetAllSessionBindings()
+	if len(bindings) == 0 {
 		return nil
 	}
-	bytes, err := json.Marshal(bindRecords)
+	bytes, err := json.Marshal(bindings)
 	if err != nil {
 		return err
 	}
@@ -173,26 +147,63 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 	if len(sessionStates.Bindings) == 0 {
 		return nil
 	}
-	var records []*BindRecord
-	if err := json.Unmarshal(hack.Slice(sessionStates.Bindings), &records); err != nil {
+
+	var m []map[string]any
+	var err error
+	bindingBytes := hack.Slice(sessionStates.Bindings)
+	if err = json.Unmarshal(bindingBytes, &m); err != nil {
 		return err
 	}
+	if len(m) == 0 {
+		return nil
+	}
+
+	var records []*Binding
+	// Key "Bindings" only exists in old versions.
+	if _, ok := m[0]["Bindings"]; ok {
+		err = h.decodeOldStyleSessionStates(bindingBytes, &records)
+	} else {
+		err = json.Unmarshal(bindingBytes, &records)
+	}
+	if err != nil {
+		return err
+	}
+
 	for _, record := range records {
 		// Restore hints and ID because hints are hard to encode.
-		if err := record.prepareHints(sctx); err != nil {
+		if err = prepareHints(sctx, record); err != nil {
 			return err
 		}
-		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
+		h.bindings[parser.DigestNormalized(record.OriginalSQL).String()] = record
+	}
+	return nil
+}
+
+// Before v8.0.0, the data structure is different. We need to adapt to the old structure so that the sessions
+// can be migrated from an old version to a new version.
+func (*sessionBindingHandle) decodeOldStyleSessionStates(bindingBytes []byte, bindings *[]*Binding) error {
+	type bindRecord struct {
+		OriginalSQL string
+		Db          string
+		Bindings    []*Binding
+	}
+	var records []bindRecord
+	if err := json.Unmarshal(bindingBytes, &records); err != nil {
+		return err
+	}
+	*bindings = make([]*Binding, 0, len(records))
+	for _, record := range records {
+		for _, binding := range record.Bindings {
+			binding.OriginalSQL = record.OriginalSQL
+			binding.Db = record.Db
+			*bindings = append(*bindings, binding)
+		}
 	}
 	return nil
 }
 
 // Close closes the session handle.
-func (h *sessionBindingHandle) Close() {
-	for _, bindRecord := range h.ch.GetAllBindings() {
-		updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
-	}
-}
+func (*sessionBindingHandle) Close() {}
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.
 type sessionBindInfoKeyType int

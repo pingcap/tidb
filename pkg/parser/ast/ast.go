@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
@@ -45,6 +44,7 @@ type Node interface {
 	// SetText sets original text to the Node.
 	SetText(enc charset.Encoding, text string)
 	// SetOriginTextPosition set the start offset of this node in the origin text.
+	// Only be called when `parser.lexer.skipPositionRecording` equals to false.
 	SetOriginTextPosition(offset int)
 	// OriginTextPosition get the start offset of this node in the origin text.
 	OriginTextPosition() int
@@ -90,6 +90,11 @@ type OptBinary struct {
 	Charset  string
 }
 
+// OptVectorType represents the element type of the vector.
+type VectorElementType struct {
+	Tp byte // Only FLOAT and DOUBLE is accepted.
+}
+
 // FuncNode represents function call expression node.
 type FuncNode interface {
 	ExprNode
@@ -101,6 +106,12 @@ type FuncNode interface {
 type StmtNode interface {
 	Node
 	statement()
+	// SEMCommand generates a string that represents the command type of the statement.
+	// It's only used for Security Enforcement Mode (SEM) for now. If it's going to be
+	// re-used for other purposes, we may need to rename and give it a clearer definition.
+	//
+	// The function of this method is similar to `GetStmtLabel`, but it returns more detail.
+	SEMCommand() string
 }
 
 // DDLNode represents DDL statement node.
@@ -113,26 +124,6 @@ type DDLNode interface {
 type DMLNode interface {
 	StmtNode
 	dmlStatement()
-}
-
-// ResultField represents a result field which can be a column from a table,
-// or an expression in select field. It is a generated property during
-// binding process. ResultField is the key element to evaluate a ColumnNameExpr.
-// After resolving process, every ColumnNameExpr will be resolved to a ResultField.
-// During execution, every row retrieved from table will set the row value to
-// ResultFields of that table, so ColumnNameExpr resolved to that ResultField can be
-// easily evaluated.
-type ResultField struct {
-	Column       *model.ColumnInfo
-	ColumnAsName model.CIStr
-	// EmptyOrgName indicates whether this field has an empty org_name. A field has an empty org name, if it's an
-	// expression. It's not sure whether it's safe to use empty string in `.Column.Name`, so a new field is added to
-	// indicate whether it's empty.
-	EmptyOrgName bool
-
-	Table       *model.TableInfo
-	TableAsName model.CIStr
-	DBName      model.CIStr
 }
 
 // ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
@@ -173,8 +164,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "AnalyzeTable"
 	case *BeginStmt:
 		return "Begin"
-	case *ChangeStmt:
-		return "Change"
 	case *CommitStmt:
 		return "Commit"
 	case *CompactTableStmt:
@@ -243,8 +232,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Use"
 	case *CreateBindingStmt:
 		return "CreateBinding"
-	case *IndexAdviseStmt:
-		return "IndexAdvise"
 	case *DropBindingStmt:
 		return "DropBinding"
 	case *TraceStmt:

@@ -24,12 +24,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -42,6 +43,7 @@ import (
 
 const (
 	tableNameGlobalStatus                    = "global_status"
+	tableNameGlobalVariables                 = "global_variables"
 	tableNameSessionStatus                   = "session_status"
 	tableNameSetupActors                     = "setup_actors"
 	tableNameSetupObjects                    = "setup_objects"
@@ -74,6 +76,7 @@ const (
 	tableNameSessionAccountConnectAttrs      = "session_account_connect_attrs"
 	tableNameSessionConnectAttrs             = "session_connect_attrs"
 	tableNameSessionVariables                = "session_variables"
+	tableNameStatusByConnection              = "status_by_connection"
 )
 
 var tableIDMap = map[string]int64{
@@ -110,6 +113,8 @@ var tableIDMap = map[string]int64{
 	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
 	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 	tableNameSessionAccountConnectAttrs:      autoid.PerformanceSchemaDBID + 33,
+	tableNameGlobalVariables:                 autoid.PerformanceSchemaDBID + 34,
+	tableNameStatusByConnection:              autoid.PerformanceSchemaDBID + 35,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -129,7 +134,7 @@ func IsPredefinedTable(tableName string) bool {
 	return ok
 }
 
-func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(allocs autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
 	if f, ok := pluginTable[meta.Name.L]; ok {
 		ret, err := f(allocs, meta)
 		return ret, err
@@ -206,6 +211,11 @@ func (vt *perfSchemaTable) Indices() []table.Index {
 	return vt.indices
 }
 
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *perfSchemaTable) DeletableIndices() []table.Index {
+	return nil
+}
+
 // GetPartitionedTable implements table.Table GetPartitionedTable interface.
 func (vt *perfSchemaTable) GetPartitionedTable() table.PartitionedTable {
 	return nil
@@ -218,7 +228,10 @@ func initTableIndices(t *perfSchemaTable) error {
 		if idxInfo.State == model.StateNone {
 			return table.ErrIndexStateCantNone.GenWithStackByArgs(idxInfo.Name)
 		}
-		idx := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
+		idx, err := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
+		if err != nil {
+			return err
+		}
 		t.indices = append(t.indices, idx)
 	}
 	return nil
@@ -259,6 +272,8 @@ func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context,
 		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx, false)
 	case tableNameSessionAccountConnectAttrs:
 		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx, true)
+	case tableNameStatusByConnection:
+		fullRows, err = infoschema.GetDataFromStatusByConn(sctx)
 	}
 	if err != nil {
 		return
@@ -302,7 +317,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	)
 	switch nodeType {
 	case "tikv":
-		servers, err = infoschema.GetStoreServerInfo(ctx)
+		servers, err = infoschema.GetStoreServerInfo(ctx.GetStore())
 	case "pd":
 		servers, err = infoschema.GetPDServerInfo(ctx)
 	default:

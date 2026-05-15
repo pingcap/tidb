@@ -39,7 +39,6 @@ const (
 	fieldTypeTupleIndexFlagNull
 	fieldTypeTupleIndexFlagAntiKeys
 	fieldTypeTupleIndexFlagDefVal
-	fieldTypeTupleIndexCharset
 	fieldTypeTupleIndexCollate
 	fieldTypeTupleIndexElems
 
@@ -86,14 +85,13 @@ func encodeFieldTypeToLattice(ft *types.FieldType) Tuple {
 		Byte(encodeAntiKeys(ft.GetFlag())),
 		defVal,
 
-		Singleton(ft.GetCharset()),
-		Singleton(ft.GetCollate()),
+		Collation(ft.GetCollate()),
 		StringList(ft.GetElems()),
 	}
 }
 
 func decodeFieldTypeFromLattice(tup Tuple) *types.FieldType {
-	lst := tup.Unwrap().([]interface{})
+	lst := tup.Unwrap().([]any)
 
 	flags := lst[fieldTypeTupleIndexFlagSingleton].(uint)
 	flags |= decodeAntiKeys(lst[fieldTypeTupleIndexFlagAntiKeys].(byte))
@@ -106,7 +104,14 @@ func decodeFieldTypeFromLattice(tup Tuple) *types.FieldType {
 		flags |= mysql.NoDefaultValueFlag
 	}
 
-	return types.NewFieldTypeBuilder().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(lst[fieldTypeTupleIndexCharset].(string)).SetCollate(lst[fieldTypeTupleIndexCollate].(string)).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
+	collate := lst[fieldTypeTupleIndexCollate].(string)
+	charsetName, _, _ := strings.Cut(collate, "_")
+	if charsetName == "" {
+		charsetName = collate
+	}
+	charsetName = Charset(charsetName).Unwrap().(string)
+
+	return types.NewFieldTypeBuilder().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(charsetName).SetCollate(collate).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
 }
 
 type typ struct{ Tuple }
@@ -147,7 +152,7 @@ func (a typ) setAntiKeyFlags(flag uint) {
 	a.Tuple[fieldTypeTupleIndexFlagAntiKeys] = Byte(encodeAntiKeys(flag))
 }
 
-func (a typ) getStandardDefaultValue() interface{} {
+func (a typ) getStandardDefaultValue() any {
 	var tail string
 	if dec := a.Tuple[fieldTypeTupleIndexDec].Unwrap().(int); dec > 0 {
 		tail = "." + strings.Repeat("0", dec)
@@ -166,6 +171,8 @@ func (a typ) getStandardDefaultValue() interface{} {
 		return "0000"
 	case mysql.TypeJSON:
 		return "null"
+	case mysql.TypeTiDBVectorFloat32:
+		return "[]"
 	case mysql.TypeEnum:
 		return a.Tuple[fieldTypeTupleIndexElems].(StringList)[0]
 	case mysql.TypeString:
@@ -183,7 +190,7 @@ func (a typ) clone() typ {
 	return typ{Tuple: append(make(Tuple, 0, len(a.Tuple)), a.Tuple...)}
 }
 
-func (a typ) Unwrap() interface{} {
+func (a typ) Unwrap() any {
 	return decodeFieldTypeFromLattice(a.Tuple)
 }
 

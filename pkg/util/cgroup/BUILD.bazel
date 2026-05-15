@@ -8,11 +8,11 @@ go_library(
         "cgroup_cpu_linux.go",
         "cgroup_cpu_unsupport.go",
         "cgroup_memory.go",
+        "cgroup_memory_unsupport.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/cgroup",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_cockroachdb_errors//:errors",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
@@ -50,7 +50,13 @@ go_library(
         "@io_bazel_rules_go//go/platform:openbsd": [
             "@com_github_pingcap_failpoint//:failpoint",
         ],
+        "@io_bazel_rules_go//go/platform:osx": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
         "@io_bazel_rules_go//go/platform:plan9": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:qnx": [
             "@com_github_pingcap_failpoint//:failpoint",
         ],
         "@io_bazel_rules_go//go/platform:solaris": [

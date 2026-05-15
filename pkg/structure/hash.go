@@ -17,6 +17,7 @@ package structure
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -42,7 +43,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 // HGet gets the value of a hash field.
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
-	value, err := t.reader.Get(context.TODO(), dataKey)
+	value, err := kv.GetValue(context.TODO(), t.reader, dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -143,8 +144,8 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 // HKeys gets all the fields in a hash.
 func (t *TxStructure) HKeys(key []byte) ([][]byte, error) {
 	var keys [][]byte
-	err := t.iterateHash(key, func(field []byte, value []byte) error {
-		keys = append(keys, append([]byte{}, field...))
+	err := t.IterateHash(key, func(field []byte, _ []byte) error {
+		keys = append(keys, slices.Clone(field))
 		return nil
 	})
 
@@ -154,10 +155,10 @@ func (t *TxStructure) HKeys(key []byte) ([][]byte, error) {
 // HGetAll gets all the fields and values in a hash.
 func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	var res []HashPair
-	err := t.iterateHash(key, func(field []byte, value []byte) error {
+	err := t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 		res = append(res, pair)
 		return nil
@@ -168,10 +169,10 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 
 // HGetIter iterates all the fields and values in hash.
 func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
-	return t.iterateHash(key, func(field []byte, value []byte) error {
+	return t.IterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 
 		return fn(pair)
@@ -181,7 +182,7 @@ func (t *TxStructure) HGetIter(key []byte, fn func(pair HashPair) error) error {
 // HGetLen gets the length of hash.
 func (t *TxStructure) HGetLen(key []byte) (uint64, error) {
 	hashLen := 0
-	err := t.iterateHash(key, func(field []byte, value []byte) error {
+	err := t.IterateHash(key, func(_ []byte, _ []byte) error {
 		hashLen++
 		return nil
 	})
@@ -194,8 +195,8 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 	res := make([]HashPair, 0, num)
 	err := t.iterReverseHash(key, func(field []byte, value []byte) (bool, error) {
 		pair := HashPair{
-			Field: append([]byte{}, field...),
-			Value: append([]byte{}, value...),
+			Field: slices.Clone(field),
+			Value: slices.Clone(value),
 		}
 		res = append(res, pair)
 		if len(res) >= num {
@@ -208,19 +209,27 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 
 // HClear removes the hash value of the key.
 func (t *TxStructure) HClear(key []byte) error {
-	err := t.iterateHash(key, func(field []byte, value []byte) error {
+	var keys []kv.Key
+	err := t.IterateHash(key, func(field []byte, _ []byte) error {
 		k := t.encodeHashDataKey(key, field)
-		return errors.Trace(t.readWriter.Delete(k))
+		keys = append(keys, k)
+		return nil
 	})
-
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	for _, k := range keys {
+		if err := t.readWriter.Delete(k); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
 }
 
-func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
+// IterateHash iterates all the fields and values in hash.
+func (t *TxStructure) IterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.Iter(dataPrefix, dataPrefix.PrefixNext())
 	if err != nil {
@@ -243,6 +252,38 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 			return errors.Trace(err)
 		}
 
+		err = it.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+// IterateHashWithBoundedKey iterates all the fields and values in hash with a bounded key.
+func (t *TxStructure) IterateHashWithBoundedKey(hashStartKey []byte, hashEndKey []byte, fn func(k []byte, f []byte, v []byte) error) error {
+	hashStartKey = t.hashDataKeyPrefix(hashStartKey)
+	hashEndKey = t.hashDataKeyPrefix(hashEndKey)
+	it, err := t.reader.Iter(hashStartKey, hashEndKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var field []byte
+	var key []byte
+	for it.Valid() {
+		key, field, err = t.decodeHashDataKey(it.Key())
+		if err != nil {
+			err = it.Next()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+		if err = fn(key, field, it.Value()); err != nil {
+			return errors.Trace(err)
+		}
 		err = it.Next()
 		if err != nil {
 			return errors.Trace(err)
@@ -360,7 +401,7 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 }
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
-	v, err := t.reader.Get(context.TODO(), dataKey)
+	v, err := kv.GetValue(context.TODO(), t.reader, dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 		v = nil

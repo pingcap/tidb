@@ -179,7 +179,7 @@ SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 5 DAY */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 5 DAY */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
 DROP TABLE t;
 CREATE TABLE t (id int) TTL = `id` + INTERVAL 5 DAY;
 Error 8148 (HY000): Field 'id' is of a not supported type for TTL config, expect DATETIME, DATE or TIMESTAMP
@@ -199,7 +199,7 @@ SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
 DROP TABLE t;
 drop table if exists t;
 CREATE TABLE t (created_at datetime, updated_at datetime, wrong_type int) TTL = `created_at` + INTERVAL 5 DAY;
@@ -209,23 +209,23 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+  `wrong_type` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
 ALTER TABLE t TTL_ENABLE = 'OFF';
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+  `wrong_type` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
 ALTER TABLE t TTL_JOB_INTERVAL = '1d';
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
 ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR;
 Error 1054 (42S22): Unknown column 'not_exist' in 'TTL config'
@@ -241,7 +241,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at_2` datetime DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_2` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
 ALTER TABLE t CHANGE `updated_at_2` `updated_at_3` date;
 SHOW CREATE TABLE t;
@@ -249,7 +249,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at_3` date DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 2 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
 ALTER TABLE t TTL = `updated_at_3` + INTERVAL 3 YEAR;
 SHOW CREATE TABLE t;
@@ -257,7 +257,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at_3` date DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`updated_at_3` + INTERVAL 3 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
 ALTER TABLE t TTL_ENABLE = 'OFF' REMOVE TTL;
 Error 8200 (HY000): Unsupported multi schema change for alter table ttl
@@ -267,7 +267,7 @@ Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL,
   `updated_at_3` date DEFAULT NULL,
-  `wrong_type` int(11) DEFAULT NULL
+  `wrong_type` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 ALTER TABLE t TTL_ENABLE = 'OFF';
 Error 8150 (HY000): Cannot set TTL_ENABLE on a table without TTL config
@@ -314,9 +314,9 @@ create view v7 (c,d,e) as select * from t1;
 Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 drop view v1,v2,v3,v4,v5,v6;
 create view v1 (c,d) as select a,b+@@global.max_user_connections from t1;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
 create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections;
-Error 1050 (42S01): Table 'executor__ddl.v1' already exists
-drop view v1;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
 create view v1 (c,d,e) as select a,b from t1 ;
 Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 create view v1 (c) as select a,b from t1 ;
@@ -379,7 +379,10 @@ create or replace definer='root'@'localhost' view v_nested as select * from v_ne
 Error 1146 (42S02): Table 'executor__ddl.v_nested' doesn't exist
 drop table test_v_nested;
 drop view v_nested, v_nested2;
-create view v_stale as select * from source_table as of timestamp current_timestamp(3);
+select sleep(1);
+sleep(1)
+0
+create view v_stale as select * from source_table as of timestamp date_sub(current_timestamp(3), interval 1 second);
 Error 1356 (HY000): View 'executor__ddl.v_stale' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 drop view if exists v1,v2;
 drop table if exists t1;
@@ -438,7 +441,7 @@ drop table if exists drop_test;
 create table drop_test (a int);
 drop table drop_test;
 drop table mysql.gc_delete_range;
-Error 1105 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
+Error 8267 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
 drop table if exists t_v, t_v1, t_v2;
 drop view if exists v;
 create or replace view drop_test as select 1,2;
@@ -446,7 +449,7 @@ drop table drop_test;
 Error 1051 (42S02): Unknown table 'executor__ddl.drop_test'
 drop view if exists drop_test;
 drop view mysql.gc_delete_range;
-Error 1105 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
+Error 8267 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
 drop view drop_test;
 Error 1051 (42S02): Unknown table 'executor__ddl.drop_test'
 create table t_v(a int);
@@ -585,3 +588,24 @@ c_int
 1
 alter table t add index idx_4 (c_str);
 rollback;
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;
+CREATE TABLE ttl_src (created_at TIMESTAMP) TTL = `created_at` + INTERVAL 1 HOUR;
+CREATE TEMPORARY TABLE temp_local LIKE ttl_src;
+SHOW CREATE TABLE temp_local;
+Table	Create Table
+temp_local	CREATE TEMPORARY TABLE `temp_local` (
+  `created_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE GLOBAL TEMPORARY TABLE temp_global LIKE ttl_src ON COMMIT DELETE ROWS;
+SHOW CREATE TABLE temp_global;
+Table	Create Table
+temp_global	CREATE GLOBAL TEMPORARY TABLE `temp_global` (
+  `created_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
+CREATE TABLE normal_copy LIKE ttl_src;
+SHOW CREATE TABLE normal_copy;
+Table	Create Table
+normal_copy	CREATE TABLE `normal_copy` (
+  `created_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 1 HOUR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
+DROP TABLE IF EXISTS ttl_src, temp_local, temp_global, normal_copy;

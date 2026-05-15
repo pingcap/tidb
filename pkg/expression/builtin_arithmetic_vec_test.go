@@ -229,9 +229,10 @@ func TestVectorizedDecimalErrOverflow(t *testing.T) {
 		input.AppendMyDecimal(1, dec2)
 		cols := []Expression{&Column{Index: 0, RetType: fts[0]}, &Column{Index: 1, RetType: fts[1]}}
 		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cols)
+		require.True(t, baseFunc.vectorized() && baseFunc.isChildrenVectorized())
 		require.NoError(t, err)
 		result := chunk.NewColumn(eType2FieldType(types.ETDecimal), 1)
-		err = baseFunc.vecEvalDecimal(ctx, input, result)
+		err = vecEvalType(ctx, baseFunc, types.ETDecimal, input, result)
 		require.EqualError(t, err, tt.errStr)
 	}
 }

@@ -11,14 +11,14 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
 type Config struct {
 	Storage    string
-	BackendCfg storage.BackendOptions
+	BackendCfg objstore.BackendOptions
 	Cipher     backuppb.CipherInfo
 }
 
@@ -93,7 +93,7 @@ func (exec *CmdExecutor) Read(ctx context.Context) (ShowResult, error) {
 		out := make(chan *metautil.Table, 16)
 		errc := make(chan error, 1)
 		go func() {
-			errc <- exec.meta.ReadSchemasFiles(ctx, out, metautil.SkipFiles)
+			errc <- exec.meta.ReadSchemasFiles(ctx, out, metautil.SkipFiles, metautil.SkipStats)
 			close(out)
 		}()
 		ts, err := collectResult(ctx, out, errc, convertTable)

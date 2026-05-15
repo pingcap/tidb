@@ -15,113 +15,52 @@
 package core
 
 import (
+	"context"
 	math2 "math"
-	"sort"
-	"strconv"
-	"strings"
+	"slices"
 	"sync"
-	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
 
 // GlobalWithoutColumnPos marks the index has no partition column.
 const GlobalWithoutColumnPos = -1
-
-// PointGetPlan is a fast plan for simple point get.
-// When we detect that the statement has a unique equal access condition, this plan is used.
-// This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
-type PointGetPlan struct {
-	base.Plan
-	dbName             string
-	schema             *expression.Schema
-	TblInfo            *model.TableInfo
-	IndexInfo          *model.IndexInfo
-	PartitionInfo      *model.PartitionDefinition
-	Handle             kv.Handle
-	HandleConstant     *expression.Constant
-	handleFieldType    *types.FieldType
-	IndexValues        []types.Datum
-	IndexConstants     []*expression.Constant
-	ColsFieldType      []*types.FieldType
-	IdxCols            []*expression.Column
-	IdxColLens         []int
-	AccessConditions   []expression.Expression
-	ctx                sessionctx.Context
-	UnsignedHandle     bool
-	IsTableDual        bool
-	Lock               bool
-	outputNames        []*types.FieldName
-	LockWaitTime       int64
-	partitionColumnPos int
-	Columns            []*model.ColumnInfo
-	cost               float64
-
-	// required by cost model
-	planCostInit bool
-	planCost     float64
-	planCostVer2 costVer2
-	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
-	accessCols []*expression.Column
-
-	// probeParents records the IndexJoins and Applys with this operator in their inner children.
-	// Please see comments in PhysicalPlan for details.
-	probeParents []PhysicalPlan
-	// stmtHints should restore in executing context.
-	stmtHints *stmtctx.StmtHints
-}
-
-func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
-	if p == nil {
-		return 0
-	}
-	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
-}
-
-func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
-	if p == nil {
-		return 1
-	}
-	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
-}
-
-func (p *PointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
-	p.probeParents = probeParents
-}
 
 type nameValuePair struct {
 	colName      string
@@ -130,458 +69,60 @@ type nameValuePair struct {
 	con          *expression.Constant
 }
 
-// Schema implements the Plan interface.
-func (p *PointGetPlan) Schema() *expression.Schema {
-	return p.schema
-}
-
-// Cost implements PhysicalPlan interface
-func (p *PointGetPlan) Cost() float64 {
-	return p.cost
-}
-
-// SetCost implements PhysicalPlan interface
-func (p *PointGetPlan) SetCost(cost float64) {
-	p.cost = cost
-}
-
-// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
-// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (*PointGetPlan) attach2Task(...task) task {
-	return nil
-}
-
-// ToPB converts physical plan to tipb executor.
-func (*PointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
-	return nil, nil
-}
-
-// Clone implements PhysicalPlan interface.
-func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
-	return nil, errors.Errorf("%T doesn't support cloning", p)
-}
-
-// ExplainInfo implements Plan interface.
-func (p *PointGetPlan) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
-	if len(operatorInfo) == 0 {
-		return accessObject
-	}
-	return accessObject + ", " + operatorInfo
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	accessObject, operatorInfo := p.AccessObject().NormalizedString(), p.OperatorInfo(true)
-	if len(operatorInfo) == 0 {
-		return accessObject
-	}
-	return accessObject + ", " + operatorInfo
-}
-
-// OperatorInfo implements dataAccesser interface.
-func (p *PointGetPlan) OperatorInfo(normalized bool) string {
-	if p.Handle == nil && !p.Lock {
-		return ""
-	}
-	var buffer strings.Builder
-	if p.Handle != nil {
-		if normalized {
-			buffer.WriteString("handle:?")
-		} else {
-			buffer.WriteString("handle:")
-			if p.UnsignedHandle {
-				buffer.WriteString(strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
-			} else {
-				buffer.WriteString(p.Handle.String())
-			}
-		}
-	}
-	if p.Lock {
-		if p.Handle != nil {
-			buffer.WriteString(", lock")
-		} else {
-			buffer.WriteString("lock")
-		}
-	}
-	return buffer.String()
-}
-
-// ExtractCorrelatedCols implements PhysicalPlan interface.
-func (*PointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	return nil
-}
-
-// GetChildReqProps gets the required property by child index.
-func (*PointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
-	return nil
-}
-
-// StatsCount will return the the RowCount of property.StatsInfo for this plan.
-func (*PointGetPlan) StatsCount() float64 {
-	return 1
-}
-
-// StatsInfo will return the the RowCount of property.StatsInfo for this plan.
-func (p *PointGetPlan) StatsInfo() *property.StatsInfo {
-	if p.Plan.StatsInfo() == nil {
-		p.Plan.SetStats(&property.StatsInfo{})
-	}
-	p.Plan.StatsInfo().RowCount = 1
-	return p.Plan.StatsInfo()
-}
-
-// Children gets all the children.
-func (*PointGetPlan) Children() []PhysicalPlan {
-	return nil
-}
-
-// SetChildren sets the children for the plan.
-func (*PointGetPlan) SetChildren(...PhysicalPlan) {}
-
-// SetChild sets a specific child for the plan.
-func (*PointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
-
-// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-func (p *PointGetPlan) ResolveIndices() error {
-	return resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
-}
-
-// OutputNames returns the outputting names of each column.
-func (p *PointGetPlan) OutputNames() types.NameSlice {
-	return p.outputNames
-}
-
-// SetOutputNames sets the outputting name by the given slice.
-func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
-	p.outputNames = names
-}
-
-func (*PointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
-
-const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
-
-// MemoryUsage return the memory usage of PointGetPlan
-func (p *PointGetPlan) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = emptyPointGetPlanSize + p.Plan.MemoryUsage() + int64(len(p.dbName)) + int64(cap(p.IdxColLens))*size.SizeOfInt +
-		int64(cap(p.IndexConstants)+cap(p.ColsFieldType)+cap(p.IdxCols)+cap(p.outputNames)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
-	if p.schema != nil {
-		sum += p.schema.MemoryUsage()
-	}
-	if p.PartitionInfo != nil {
-		sum += p.PartitionInfo.MemoryUsage()
-	}
-	if p.HandleConstant != nil {
-		sum += p.HandleConstant.MemoryUsage()
-	}
-	if p.handleFieldType != nil {
-		sum += p.handleFieldType.MemoryUsage()
-	}
-
-	for _, datum := range p.IndexValues {
-		sum += datum.MemUsage()
-	}
-	for _, idxConst := range p.IndexConstants {
-		sum += idxConst.MemoryUsage()
-	}
-	for _, ft := range p.ColsFieldType {
-		sum += ft.MemoryUsage()
-	}
-	for _, col := range p.IdxCols {
-		sum += col.MemoryUsage()
-	}
-	for _, cond := range p.AccessConditions {
-		sum += cond.MemoryUsage()
-	}
-	for _, name := range p.outputNames {
-		sum += name.MemoryUsage()
-	}
-	for _, col := range p.accessCols {
-		sum += col.MemoryUsage()
-	}
-	return
-}
-
-// BatchPointGetPlan represents a physical plan which contains a bunch of
-// keys reference the same table and use the same `unique key`
-type BatchPointGetPlan struct {
-	baseSchemaProducer
-
-	ctx              sessionctx.Context
-	dbName           string
-	TblInfo          *model.TableInfo
-	IndexInfo        *model.IndexInfo
-	PartitionInfos   []*model.PartitionDefinition
-	Handles          []kv.Handle
-	HandleType       *types.FieldType
-	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
-	IndexValues      [][]types.Datum
-	IndexValueParams [][]*expression.Constant // record all Parameters for Plan-Cache
-	IndexColTypes    []*types.FieldType
-	AccessConditions []expression.Expression
-	IdxCols          []*expression.Column
-	IdxColLens       []int
-	PartitionColPos  int
-	PartitionExpr    *tables.PartitionExpr
-	PartitionIDs     []int64 // pre-calculated partition IDs for Handles or IndexValues
-	KeepOrder        bool
-	Desc             bool
-	Lock             bool
-	LockWaitTime     int64
-	Columns          []*model.ColumnInfo
-	cost             float64
-
-	// SinglePart indicates whether this BatchPointGetPlan is just for a single partition, instead of the whole partition table.
-	// If the BatchPointGetPlan is built in fast path, this value is false; if the plan is generated in physical optimization for a partition,
-	// this value would be true. This value would decide the behavior of BatchPointGetExec, i.e, whether to compute the table ID of the partition
-	// on the fly.
-	SinglePart bool
-	// PartTblID is the table ID for the specific table partition.
-	PartTblID int64
-
-	// required by cost model
-	planCostInit bool
-	planCost     float64
-	planCostVer2 costVer2
-	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
-	accessCols []*expression.Column
-
-	// probeParents records the IndexJoins and Applys with this operator in their inner children.
-	// Please see comments in PhysicalPlan for details.
-	probeParents []PhysicalPlan
-}
-
-func (p *BatchPointGetPlan) getEstRowCountForDisplay() float64 {
-	if p == nil {
-		return 0
-	}
-	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
-}
-
-func (p *BatchPointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
-	if p == nil {
-		return 1
-	}
-	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
-}
-func (p *BatchPointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
-	p.probeParents = probeParents
-}
-
-// Cost implements PhysicalPlan interface
-func (p *BatchPointGetPlan) Cost() float64 {
-	return p.cost
-}
-
-// SetCost implements PhysicalPlan interface
-func (p *BatchPointGetPlan) SetCost(cost float64) {
-	p.cost = cost
-}
-
-// Clone implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
-	return nil, errors.Errorf("%T doesn't support cloning", p)
-}
-
-// ExtractCorrelatedCols implements PhysicalPlan interface.
-func (*BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	return nil
-}
-
-// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
-// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (*BatchPointGetPlan) attach2Task(...task) task {
-	return nil
-}
-
-// ToPB converts physical plan to tipb executor.
-func (*BatchPointGetPlan) ToPB(_ sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
-	return nil, nil
-}
-
-// ExplainInfo implements Plan interface.
-func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
-}
-
-// OperatorInfo implements dataAccesser interface.
-func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
-	var buffer strings.Builder
-	if p.IndexInfo == nil {
-		if normalized {
-			buffer.WriteString("handle:?, ")
-		} else {
-			buffer.WriteString("handle:[")
-			for i, handle := range p.Handles {
-				if i != 0 {
-					buffer.WriteString(" ")
-				}
-				buffer.WriteString(handle.String())
-			}
-			buffer.WriteString("], ")
-		}
-	}
-	buffer.WriteString("keep order:")
-	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
-	buffer.WriteString(", desc:")
-	buffer.WriteString(strconv.FormatBool(p.Desc))
-	if p.Lock {
-		buffer.WriteString(", lock")
-	}
-	return buffer.String()
-}
-
-// GetChildReqProps gets the required property by child index.
-func (*BatchPointGetPlan) GetChildReqProps(_ int) *property.PhysicalProperty {
-	return nil
-}
-
-// StatsCount will return the the RowCount of property.StatsInfo for this plan.
-func (p *BatchPointGetPlan) StatsCount() float64 {
-	return p.Plan.StatsInfo().RowCount
-}
-
-// StatsInfo will return the the RowCount of property.StatsInfo for this plan.
-func (p *BatchPointGetPlan) StatsInfo() *property.StatsInfo {
-	return p.Plan.StatsInfo()
-}
-
-// Children gets all the children.
-func (*BatchPointGetPlan) Children() []PhysicalPlan {
-	return nil
-}
-
-// SetChildren sets the children for the plan.
-func (*BatchPointGetPlan) SetChildren(...PhysicalPlan) {}
-
-// SetChild sets a specific child for the plan.
-func (*BatchPointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
-
-// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-func (p *BatchPointGetPlan) ResolveIndices() error {
-	return resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
-}
-
-// OutputNames returns the outputting names of each column.
-func (p *BatchPointGetPlan) OutputNames() types.NameSlice {
-	return p.names
-}
-
-// SetOutputNames sets the outputting name by the given slice.
-func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
-	p.names = names
-}
-
-func (*BatchPointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
-
-const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
-
-// MemoryUsage return the memory usage of BatchPointGetPlan
-func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
-		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
-		int64(cap(p.PartitionInfos)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
-	if p.HandleType != nil {
-		sum += p.HandleType.MemoryUsage()
-	}
-
-	for _, constant := range p.HandleParams {
-		sum += constant.MemoryUsage()
-	}
-	for _, values := range p.IndexValues {
-		for _, value := range values {
-			sum += value.MemUsage()
-		}
-	}
-	for _, params := range p.IndexValueParams {
-		for _, param := range params {
-			sum += param.MemoryUsage()
-		}
-	}
-	for _, idxType := range p.IndexColTypes {
-		sum += idxType.MemoryUsage()
-	}
-	for _, cond := range p.AccessConditions {
-		sum += cond.MemoryUsage()
-	}
-	for _, col := range p.IdxCols {
-		sum += col.MemoryUsage()
-	}
-	for _, col := range p.accessCols {
-		sum += col.MemoryUsage()
-	}
-	return
-}
-
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
 const PointPlanKey = stringutil.StringerStr("pointPlanKey")
 
 // PointPlanVal is used to store point plan that is pre-built for multi-statement query.
 // Save the plan in a struct so even if the point plan is nil, we don't need to try again.
 type PointPlanVal struct {
-	Plan Plan
+	Plan base.Plan
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
-func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
-	if checkStableResultMode(ctx) {
+func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
+	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
+		// or Fix52592 is turn on to disable fast path for select, update and delete
 		return nil
 	}
 
 	ctx.GetSessionVars().PlanID.Store(0)
 	ctx.GetSessionVars().PlanColumnID.Store(0)
-	switch x := node.(type) {
+	switch x := node.Node.(type) {
 	case *ast.SelectStmt:
+		if x.SelectIntoOpt != nil {
+			return nil
+		}
 		defer func() {
 			vars := ctx.GetSessionVars()
 			if vars.SelectLimit != math2.MaxUint64 && p != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
 				p = nil
 			}
-			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
-				if vars.StmtCtx.OptimizeTracer == nil {
-					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-				}
-				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
-			}
 		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
-		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+		if fp := tryWhereIn2BatchPointGet(ctx, x, node.GetResolveContext()); fp != nil {
+			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
 			}
-			if tidbutil.IsMemDB(fp.dbName) {
+			if metadef.IsMemDB(fp.DBName) {
 				return nil
 			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return
 		}
-		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
+			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
-			if tidbutil.IsMemDB(fp.dbName) {
+			if metadef.IsMemDB(fp.DBName) {
 				return nil
 			}
 			if fp.IsTableDual {
-				tableDual := PhysicalTableDual{}
-				tableDual.names = fp.outputNames
+				tableDual := physicalop.PhysicalTableDual{}
+				tableDual.SetOutputNames(fp.OutputNames())
 				tableDual.SetSchema(fp.Schema())
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
@@ -591,38 +132,27 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			return
 		}
 	case *ast.UpdateStmt:
-		return tryUpdatePointPlan(ctx, x)
+		return tryUpdatePointPlan(ctx, x, node.GetResolveContext())
 	case *ast.DeleteStmt:
-		return tryDeletePointPlan(ctx, x)
+		return tryDeletePointPlan(ctx, x, node.GetResolveContext())
 	}
 	return nil
 }
 
-// IsSelectForUpdateLockType checks if the select lock type is for update type.
-func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
-	if lockType == ast.SelectLockForUpdate ||
-		lockType == ast.SelectLockForShare ||
-		lockType == ast.SelectLockForUpdateNoWait ||
-		lockType == ast.SelectLockForUpdateWaitN {
-		return true
-	}
-	return false
-}
-
-func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
+func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
 	if lockInfo != nil {
-		if IsSelectForUpdateLockType(lockInfo.LockType) {
+		if logicalop.IsSupportedSelectLockType(lockInfo.LockType) {
 			// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 			// is disabled (either by beginning transaction with START TRANSACTION or by setting
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 			sessVars := ctx.GetSessionVars()
-			if !sessVars.IsAutocommit() || sessVars.InTxn() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+			if sessVars.PessimisticLockEligible() {
 				lock = true
 				waitTime = sessVars.LockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
 					waitTime = int64(lockInfo.WaitSec * 1000)
-				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait {
+				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait || lockInfo.LockType == ast.SelectLockForShareNoWait {
 					waitTime = tikvstore.LockNoWait
 				}
 			}
@@ -632,23 +162,34 @@ func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock
 }
 
 func newBatchPointGetPlan(
-	ctx sessionctx.Context, patternInExpr *ast.PatternInExpr,
+	ctx base.PlanContext, patternInExpr *ast.PatternInExpr,
 	handleCol *model.ColumnInfo, tbl *model.TableInfo, schema *expression.Schema,
 	names []*types.FieldName, whereColNames []string, indexHints []*ast.IndexHint,
-) *BatchPointGetPlan {
+	dbName string, tblAlias string, tblHints []*ast.TableOptimizerHint,
+) *physicalop.BatchPointGetPlan {
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
-	var partitionExpr *tables.PartitionExpr
 	if tbl.GetPartitionInfo() != nil {
-		partitionExpr = getPartitionExpr(ctx, tbl)
-		if partitionExpr == nil {
+		// TODO: remove this limitation
+		// Only keeping it for now to limit impact of
+		// enable plan cache for partitioned tables PR.
+		is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+		table, ok := is.TableByID(context.Background(), tbl.ID)
+		if !ok {
 			return nil
 		}
 
-		if partitionExpr.Expr == nil {
+		partTable, ok := table.(base.PartitionTable)
+		if !ok {
 			return nil
 		}
-		if _, ok := partitionExpr.Expr.(*expression.Column); !ok {
+
+		// PartitionExpr don't need columns and names for hash partition.
+		partExpr := partTable.PartitionExpr()
+		if partExpr == nil || partExpr.Expr == nil {
+			return nil
+		}
+		if _, ok := partExpr.Expr.(*expression.Column); !ok {
 			return nil
 		}
 	}
@@ -657,8 +198,6 @@ func newBatchPointGetPlan(
 		// condition key of where is primary key
 		var handles = make([]kv.Handle, len(patternInExpr.List))
 		var handleParams = make([]*expression.Constant, len(patternInExpr.List))
-		var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
-		partitionInfos := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
 			// SELECT * FROM t WHERE (key) in ((1), (2))
 			if p, ok := item.(*ast.ParenthesesExpr); ok {
@@ -671,11 +210,11 @@ func newBatchPointGetPlan(
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
 				var err error
-				con, err = expression.ParamMarkerExpression(ctx, x, true)
+				con, err = expression.ParamMarkerExpression(ctx.GetExprCtx(), x, true)
 				if err != nil {
 					return nil
 				}
-				d, err = con.Eval(ctx, chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil
 				}
@@ -691,38 +230,14 @@ func newBatchPointGetPlan(
 			}
 			handles[i] = kv.IntHandle(intDatum.GetInt64())
 			handleParams[i] = con
-			pairs := []nameValuePair{{colName: handleCol.Name.L, colFieldType: item.GetType(), value: *intDatum, con: con}}
-			if tbl.GetPartitionInfo() != nil {
-				tmpPartitionDefinition, _, pos, isTableDual := getPartitionInfo(ctx, tbl, pairs)
-				if isTableDual {
-					return nil
-				}
-				if tmpPartitionDefinition != nil {
-					pos2PartitionDefinition[pos] = tmpPartitionDefinition
-				}
-			}
 		}
 
-		posArr := make([]int, len(pos2PartitionDefinition))
-		i := 0
-		for pos := range pos2PartitionDefinition {
-			posArr[i] = pos
-			i++
-		}
-		sort.Ints(posArr)
-		for _, pos := range posArr {
-			partitionInfos = append(partitionInfos, pos2PartitionDefinition[pos])
-		}
-		if len(partitionInfos) == 0 {
-			partitionInfos = nil
-		}
-		p := &BatchPointGetPlan{
-			TblInfo:        tbl,
-			Handles:        handles,
-			HandleParams:   handleParams,
-			HandleType:     &handleCol.FieldType,
-			PartitionExpr:  partitionExpr,
-			PartitionInfos: partitionInfos,
+		p := &physicalop.BatchPointGetPlan{
+			TblInfo:         tbl,
+			Handles:         handles,
+			HandleParams:    handleParams,
+			HandleType:      &handleCol.FieldType,
+			HandleColOffset: handleCol.Offset,
 		}
 
 		return p.Init(ctx, statsInfo, schema, names, 0)
@@ -740,8 +255,15 @@ func newBatchPointGetPlan(
 		}
 	}
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(idxInfo, indexHints) {
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			indexHints,
+		) {
 			continue
 		}
 		if len(idxInfo.Columns) != len(whereColNames) || idxInfo.HasPrefixIndex() {
@@ -772,15 +294,8 @@ func newBatchPointGetPlan(
 		return nil
 	}
 
-	pos, err := getPartitionColumnPos(matchIdxInfo, partitionExpr, tbl)
-	if err != nil {
-		return nil
-	}
-
 	indexValues := make([][]types.Datum, len(patternInExpr.List))
 	indexValueParams := make([][]*expression.Constant, len(patternInExpr.List))
-	partitionInfos := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
-	var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
 
 	var indexTypes []*types.FieldType
 	for i, item := range patternInExpr.List {
@@ -790,7 +305,6 @@ func newBatchPointGetPlan(
 		}
 		var values []types.Datum
 		var valuesParams []*expression.Constant
-		var pairs []nameValuePair
 		switch x := item.(type) {
 		case *ast.RowExpr:
 			// The `len(values) == len(valuesParams)` should be satisfied in this mode
@@ -798,7 +312,6 @@ func newBatchPointGetPlan(
 				return nil
 			}
 			values = make([]types.Datum, len(x.Values))
-			pairs = make([]nameValuePair, 0, len(x.Values))
 			valuesParams = make([]*expression.Constant, len(x.Values))
 			initTypes := false
 			if indexTypes == nil { // only init once
@@ -814,14 +327,13 @@ func newBatchPointGetPlan(
 					if dval == nil {
 						return nil
 					}
-					values[permIndex] = innerX.Datum
-					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
+					values[permIndex] = *dval
 				case *driver.ParamMarkerExpr:
-					con, err := expression.ParamMarkerExpression(ctx, innerX, true)
+					con, err := expression.ParamMarkerExpression(ctx.GetExprCtx(), innerX, true)
 					if err != nil {
 						return nil
 					}
-					d, err := con.Eval(ctx, chunk.Row{})
+					d, err := con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 					if err != nil {
 						return nil
 					}
@@ -829,12 +341,11 @@ func newBatchPointGetPlan(
 					if dval == nil {
 						return nil
 					}
-					values[permIndex] = innerX.Datum
+					values[permIndex] = *dval
 					valuesParams[permIndex] = con
 					if initTypes {
 						indexTypes[permIndex] = &colInfos[index].FieldType
 					}
-					pairs = append(pairs, nameValuePair{colName: whereColNames[index], value: innerX.Datum})
 				default:
 					return nil
 				}
@@ -851,16 +362,15 @@ func newBatchPointGetPlan(
 			}
 			values = []types.Datum{*dval}
 			valuesParams = []*expression.Constant{nil}
-			pairs = append(pairs, nameValuePair{colName: whereColNames[0], value: *dval})
 		case *driver.ParamMarkerExpr:
 			if len(whereColNames) != 1 {
 				return nil
 			}
-			con, err := expression.ParamMarkerExpression(ctx, x, true)
+			con, err := expression.ParamMarkerExpression(ctx.GetExprCtx(), x, true)
 			if err != nil {
 				return nil
 			}
-			d, err := con.Eval(ctx, chunk.Row{})
+			d, err := con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return nil
 			}
@@ -873,52 +383,26 @@ func newBatchPointGetPlan(
 			if indexTypes == nil { // only init once
 				indexTypes = []*types.FieldType{&colInfos[0].FieldType}
 			}
-			pairs = append(pairs, nameValuePair{colName: whereColNames[0], value: *dval})
 
 		default:
 			return nil
 		}
 		indexValues[i] = values
 		indexValueParams[i] = valuesParams
-		if tbl.GetPartitionInfo() != nil {
-			tmpPartitionDefinition, _, pos, isTableDual := getPartitionInfo(ctx, tbl, pairs)
-			if isTableDual {
-				return nil
-			}
-			if tmpPartitionDefinition != nil {
-				pos2PartitionDefinition[pos] = tmpPartitionDefinition
-			}
-		}
 	}
 
-	posArr := make([]int, len(pos2PartitionDefinition))
-	i := 0
-	for pos := range pos2PartitionDefinition {
-		posArr[i] = pos
-		i++
-	}
-	sort.Ints(posArr)
-	for _, pos := range posArr {
-		partitionInfos = append(partitionInfos, pos2PartitionDefinition[pos])
-	}
-	if len(partitionInfos) == 0 {
-		partitionInfos = nil
-	}
-	p := &BatchPointGetPlan{
+	p := &physicalop.BatchPointGetPlan{
 		TblInfo:          tbl,
 		IndexInfo:        matchIdxInfo,
 		IndexValues:      indexValues,
 		IndexValueParams: indexValueParams,
 		IndexColTypes:    indexTypes,
-		PartitionColPos:  pos,
-		PartitionExpr:    partitionExpr,
-		PartitionInfos:   partitionInfos,
 	}
 
 	return p.Init(ctx, statsInfo, schema, names, 0)
 }
 
-func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *BatchPointGetPlan {
+func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context) *physicalop.BatchPointGetPlan {
 	if selStmt.OrderBy != nil || selStmt.GroupBy != nil ||
 		selStmt.Limit != nil || selStmt.Having != nil || selStmt.Distinct ||
 		len(selStmt.WindowSpecs) > 0 {
@@ -935,11 +419,14 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 	if tblName == nil {
 		return nil
 	}
-	tbl := tblName.TableInfo
-	if tbl == nil {
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
 		return nil
 	}
+	tbl := tnW.TableInfo
 	// Skip the optimization with partition selection.
+	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
 		return nil
 	}
@@ -1000,14 +487,25 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 		return nil
 	}
 
-	p := newBatchPointGetPlan(ctx, in, handleCol, tbl, schema, names, whereColNames, tblName.IndexHints)
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
+	p := newBatchPointGetPlan(
+		ctx,
+		in,
+		handleCol,
+		tbl,
+		schema,
+		names,
+		whereColNames,
+		tblName.IndexHints,
+		dbName,
+		tblAlias.L,
+		selStmt.TableHints,
+	)
 	if p == nil {
 		return nil
 	}
-	p.dbName = tblName.Schema.L
-	if p.dbName == "" {
-		p.dbName = ctx.GetSessionVars().CurrentDB
-	}
+	p.DBName = dbName
+
 	return p
 }
 
@@ -1018,11 +516,11 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // 2. It must be a single table select.
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
-func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
-	if selStmt.Having != nil {
+func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context, check bool) *physicalop.PointGetPlan {
+	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
-		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
+		count, offset, err := extractLimitCountOffset(ctx.GetExprCtx(), selStmt.Limit)
 		if err != nil || count == 0 || offset > 0 {
 			return nil
 		}
@@ -1031,13 +529,15 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	if tblName == nil {
 		return nil
 	}
-	tbl := tblName.TableInfo
-	if tbl == nil {
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
 		return nil
 	}
-	pi := tbl.GetPartitionInfo()
+	tbl := tnW.TableInfo
 
-	for _, col := range tbl.Columns {
+	var pkColOffset int
+	for i, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {
 			return nil
@@ -1046,48 +546,34 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		if col.State != model.StatePublic {
 			return nil
 		}
+		if mysql.HasPriKeyFlag(col.GetFlag()) {
+			pkColOffset = i
+		}
 	}
 	schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
 	if schema == nil {
 		return nil
 	}
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
 
 	pairs := make([]nameValuePair, 0, 4)
-	pairs, isTableDual := getNameValuePairs(ctx, tbl, tblAlias, pairs, selStmt.Where)
+	pairs, isTableDual := getNameValuePairs(ctx.GetExprCtx(), tbl, tblAlias, pairs, selStmt.Where)
 	if pairs == nil && !isTableDual {
 		return nil
 	}
 
-	var partitionInfo *model.PartitionDefinition
-	var pos int
-	if pi != nil {
-		partitionInfo, pos, _, isTableDual = getPartitionInfo(ctx, tbl, pairs)
-		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
-			p.IsTableDual = true
-			return p
-		}
-		if partitionInfo == nil {
-			return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, nil, pos, true, isTableDual, check)
-		}
-		// Take partition selection into consideration.
-		if len(tblName.PartitionNames) > 0 {
-			if !partitionNameInSet(partitionInfo.Name, tblName.PartitionNames) {
-				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
-				p.IsTableDual = true
-				return p
-			}
-		}
-	}
-
 	handlePair, fieldType := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
+	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
+		indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias.L,
+			nil,
+			selStmt.TableHints,
+			tblName.IndexHints,
+		) {
 		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -1095,56 +581,51 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
-		p.handleFieldType = fieldType
+		p.HandleFieldType = fieldType
 		p.HandleConstant = handlePair.con
-		p.PartitionInfo = partitionInfo
+		p.HandleColOffset = pkColOffset
+		p.PartitionNames = tblName.PartitionNames
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, partitionInfo, pos, false, isTableDual, check)
+	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check)
 }
 
-func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, schema *expression.Schema,
-	names []*types.FieldName, pairs []nameValuePair, partitionInfo *model.PartitionDefinition,
-	pos int, globalIndexCheck, isTableDual, check bool) *PointGetPlan {
-	if globalIndexCheck {
-		// when partitions are specified or some partition is in ddl, not use point get plan for global index.
-		// TODO: Add partition ID filter for Global Index Point Get.
-		// partitions are specified in select stmt.
-		if len(tblName.PartitionNames) > 0 {
-			return nil
-		}
-		tbl := tblName.TableInfo
-		// some partition is in ddl.
-		if tbl == nil ||
-			len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
-			len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
-			return nil
-		}
-	}
+func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW, schema *expression.Schema,
+	tblAlias string, tblHints []*ast.TableOptimizerHint,
+	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool) *physicalop.PointGetPlan {
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
 
 	tbl := tblName.TableInfo
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			tblName.IndexHints,
+		) {
 			continue
 		}
-		if globalIndexCheck && !idxInfo.Global {
-			continue
+		if idxInfo.Global {
+			if tblName.TableInfo == nil ||
+				len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
+				len(tbl.GetPartitionInfo().NewPartitionIDs) > 0 ||
+				len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
+				continue
+			}
 		}
 		if isTableDual {
 			if check && latestIndexes == nil {
-				latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+				latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
 				if err != nil {
 					logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 					return nil
@@ -1155,7 +636,7 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 					continue
 				}
 			}
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -1164,7 +645,7 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 			continue
 		}
 		if check && latestIndexes == nil {
-			latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
+			latestIndexes, check, err = domainmisc.GetLatestIndexInfo(ctx, tbl.ID, 0)
 			if err != nil {
 				logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
 				return nil
@@ -1180,10 +661,7 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
-		p.PartitionInfo = partitionInfo
-		if p.PartitionInfo != nil {
-			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
-		}
+		p.PartitionNames = tblName.PartitionNames
 		return p
 	}
 	return nil
@@ -1191,11 +669,61 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 
 // indexIsAvailableByHints checks whether this index is filtered by these specified index hints.
 // idxInfo is PK if it's nil
-func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint) bool {
-	if len(idxHints) == 0 {
+func indexIsAvailableByHints(
+	currentDB string,
+	dbName string,
+	tblAlias string,
+	idxInfo *model.IndexInfo,
+	tblHints []*ast.TableOptimizerHint,
+	idxHints []*ast.IndexHint,
+) bool {
+	combinedHints := idxHints
+
+	// Handle *ast.TableOptimizerHint, which is from the comment style hint in the SQL.
+	// In normal planner code path, it's processed by ParsePlanHints() + getPossibleAccessPaths().
+	// ParsePlanHints() converts the use/force/ignore index hints in []*ast.TableOptimizerHint into *ast.IndexHint, and
+	// put it into *hint.PlanHints.
+	// getPossibleAccessPaths() receives the *hint.PlanHints, matches the table names, and combines the hints with the
+	// USE/IGNORE/FORCE INDEX () syntax hint.
+	// Here we try to remove the logic that is not needed in the fast path, and implement a faster and simpler version
+	// to fit the fast path.
+	for _, h := range tblHints {
+		var hintType ast.IndexHintType
+		// The parsing logic from ParsePlanHints()
+		switch h.HintName.L {
+		case hint.HintUseIndex:
+			hintType = ast.HintUse
+		case hint.HintIgnoreIndex:
+			hintType = ast.HintIgnore
+		case hint.HintForceIndex:
+			hintType = ast.HintForce
+		default:
+			continue
+		}
+		if len(h.Tables) != 1 {
+			// This should not happen. See HintIndexList in hintparser.y.
+			intest.Assert(false)
+			continue
+		}
+		hintDBName := h.Tables[0].DBName
+		if hintDBName.L == "" {
+			hintDBName = ast.NewCIStr(currentDB)
+		}
+		// The table name matching logic from getPossibleAccessPaths()
+		if h.Tables[0].TableName.L == tblAlias &&
+			(hintDBName.L == dbName || hintDBName.L == "*") {
+			combinedHints = append(combinedHints, &ast.IndexHint{
+				IndexNames: h.Indexes,
+				HintType:   hintType,
+				HintScope:  ast.HintForScan,
+			})
+		}
+	}
+
+	if len(combinedHints) == 0 {
 		return true
 	}
-	match := func(name model.CIStr) bool {
+	match := func(name ast.CIStr) bool {
 		if idxInfo == nil {
 			return name.L == "primary"
 		}
@@ -1204,58 +732,46 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 	// NOTICE: it's supposed that ignore hints and use/force hints will not be applied together since the effect of
 	// the former will be eliminated by the latter.
 	isIgnore := false
-	for _, hint := range idxHints {
+	for _, hint := range combinedHints {
 		if hint.HintScope != ast.HintForScan {
 			continue
 		}
 		if hint.HintType == ast.HintIgnore && hint.IndexNames != nil {
 			isIgnore = true
-			for _, name := range hint.IndexNames {
-				if match(name) {
-					return false
-				}
+			if slices.ContainsFunc(hint.IndexNames, match) {
+				return false
 			}
 		}
 		if (hint.HintType == ast.HintForce || hint.HintType == ast.HintUse) && hint.IndexNames != nil {
-			for _, name := range hint.IndexNames {
-				if match(name) {
-					return true
-				}
+			if slices.ContainsFunc(hint.IndexNames, match) {
+				return true
 			}
 		}
 	}
 	return isIgnore
 }
 
-func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
-	for _, pname := range pnames {
-		// Case insensitive, create table partition p0, query using P0 is OK.
-		if name.L == pname.L {
-			return true
-		}
-	}
-	return false
-}
-
-func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
-	p := &PointGetPlan{
-		Plan:         base.NewBasePlan(ctx, plancodec.TypePointGet, 0),
-		dbName:       dbName,
-		schema:       schema,
+func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *physicalop.PointGetPlan {
+	p := &physicalop.PointGetPlan{
+		Plan:         baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, 0),
+		DBName:       dbName,
 		TblInfo:      tbl,
-		outputNames:  names,
 		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
 	}
+	p.SetSchema(schema)
+	p.SetOutputNames(names)
+
+	p.Plan.SetStats(&property.StatsInfo{RowCount: 1})
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 	return p
 }
 
-func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
+func checkFastPlanPrivilege(ctx base.PlanContext, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
 	visitInfos := make([]visitInfo, 0, len(checkTypes))
 	for _, checkType := range checkTypes {
 		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
-			return ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
+			return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
 		}
 		// This visitInfo is only for table lock check, so we do not need column field,
 		// just fill it empty string.
@@ -1273,9 +789,9 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, ch
 }
 
 func buildSchemaFromFields(
-	dbName model.CIStr,
+	dbName ast.CIStr,
 	tbl *model.TableInfo,
-	tblName model.CIStr,
+	tblName ast.CIStr,
 	fields []*ast.SelectField,
 ) (
 	*expression.Schema,
@@ -1381,7 +897,7 @@ func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldN
 // getSingleTableNameAndAlias return the ast node of queried table name and the alias string.
 // `tblName` is `nil` if there are multiple tables in the query.
 // `tblAlias` will be the real table name if there is no table alias in the query.
-func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.TableName, tblAlias model.CIStr) {
+func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.TableName, tblAlias ast.CIStr) {
 	if tableRefs == nil || tableRefs.TableRefs == nil || tableRefs.TableRefs.Right != nil {
 		return nil, tblAlias
 	}
@@ -1401,14 +917,15 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 }
 
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
-func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName model.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
+func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblName ast.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
 	pairs []nameValuePair, isTableDual bool) {
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	evalCtx := ctx.GetEvalCtx()
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok {
 		return nil, false
 	}
-	if binOp.Op == opcode.LogicAnd {
+	switch binOp.Op {
+	case opcode.LogicAnd:
 		nvPairs, isTableDual = getNameValuePairs(ctx, tbl, tblName, nvPairs, binOp.L)
 		if nvPairs == nil || isTableDual {
 			return nil, isTableDual
@@ -1418,7 +935,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			return nil, isTableDual
 		}
 		return nvPairs, isTableDual
-	} else if binOp.Op == opcode.EQ {
+	case opcode.EQ:
 		var (
 			d       types.Datum
 			colName *ast.ColumnNameExpr
@@ -1435,7 +952,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx, chunk.Row{})
+				d, err = con.Eval(evalCtx, chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1449,7 +966,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx, chunk.Row{})
+				d, err = con.Eval(evalCtx, chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1468,7 +985,11 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			return nil, false
 		}
 		col := model.FindColumnInfo(tbl.Cols(), colName.Name.Name.L)
-		if col == nil { // Handling the case when the column is _tidb_rowid.
+		if col == nil {
+			// Partition table can't use `_tidb_rowid` to generate PointGet Plan.
+			if tbl.GetPartitionInfo() != nil && colName.Name.Name.L == model.ExtraHandleName.L {
+				return nil, false
+			}
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: types.NewFieldType(mysql.TypeLonglong), value: d, con: con}), false
 		}
 
@@ -1478,13 +999,13 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			d.SetString(d.GetString(), col.FieldType.GetCollate())
 		}
 
-		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
-		}
 		if !checkCanConvertInPointGet(col, d) {
 			return nil, false
 		}
-		dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
+		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
+		}
+		dVal, err := d.ConvertTo(evalCtx.TypeCtx(), &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
 				return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), true
@@ -1495,7 +1016,7 @@ func getNameValuePairs(ctx sessionctx.Context, tbl *model.TableInfo, tblName mod
 			}
 		}
 		// The converted result must be same as original datum.
-		cmp, err := dVal.Compare(stmtCtx.TypeCtx(), &d, collate.GetCollator(col.GetCollate()))
+		cmp, err := dVal.Compare(evalCtx.TypeCtx(), &d, collate.GetCollator(col.GetCollate()))
 		if err != nil || cmp != 0 {
 			return nil, false
 		}
@@ -1635,50 +1156,48 @@ func isExprHasSubQuery(expr ast.Node) bool {
 }
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
-	for _, a := range list {
-		if isExprHasSubQuery(a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(list, func(assignment *ast.Assignment) bool {
+		return isExprHasSubQuery(assignment.Expr)
+	})
 }
 
-func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
+func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {
 	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
 	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
 		return nil
 	}
 
 	selStmt := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    updateStmt.TableRefs,
-		Where:   updateStmt.Where,
-		OrderBy: updateStmt.Order,
-		Limit:   updateStmt.Limit,
+		TableHints: updateStmt.TableHints,
+		Fields:     &ast.FieldList{},
+		From:       updateStmt.TableRefs,
+		Where:      updateStmt.Where,
+		OrderBy:    updateStmt.Order,
+		Limit:      updateStmt.Limit,
 	}
-	pointGet := tryPointGetPlan(ctx, selStmt, true)
+	pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true)
 	if pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
-				names: pointGet.outputNames,
-			}.Init(ctx, &property.StatsInfo{}, 0)
+			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
+			dual.SetOutputNames(pointGet.OutputNames())
+			return dual
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointUpdatePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo, updateStmt)
+		return buildPointUpdatePlan(ctx, pointGet, pointGet.DBName, pointGet.TblInfo, updateStmt, resolveCtx)
 	}
-	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt)
+	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx)
 	if batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointUpdatePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo, updateStmt)
+		return buildPointUpdatePlan(ctx, batchPointGet, batchPointGet.DBName, batchPointGet.TblInfo, updateStmt, resolveCtx)
 	}
 	return nil
 }
 
-func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt) Plan {
+func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.UpdatePriv) != nil {
 		return nil
 	}
@@ -1686,12 +1205,12 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	if orderedList == nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
-	updatePlan := Update{
+	handleCols := buildHandleCols(dbName, tbl, pointPlan)
+	updatePlan := physicalop.Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
-		TblColPosInfos: TblColPosInfoSlice{
-			TblColPosInfo{
+		TblColPosInfos: physicalop.TblColPosInfoSlice{
+			physicalop.TblColPosInfo{
 				TblID:      tbl.ID,
 				Start:      0,
 				End:        pointPlan.Schema().Len(),
@@ -1700,17 +1219,18 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		},
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 		VirtualAssignmentsOffset:  len(orderedList),
+		IgnoreError:               updateStmt.IgnoreErr,
 	}.Init(ctx)
-	updatePlan.names = pointPlan.OutputNames()
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	t, _ := is.TableByID(tbl.ID)
-	updatePlan.tblID2Table = map[int64]table.Table{
+	updatePlan.SetOutputNames(pointPlan.OutputNames())
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	t, _ := is.TableByID(context.Background(), tbl.ID)
+	updatePlan.TblID2Table = map[int64]table.Table{
 		tbl.ID: t,
 	}
 	if tbl.GetPartitionInfo() != nil {
 		pt := t.(table.PartitionedTable)
-		var updateTableList []*ast.TableName
-		updateTableList = extractTableList(updateStmt.TableRefs.TableRefs, updateTableList, true)
+		nodeW := resolve.NewNodeWWithCtx(updateStmt.TableRefs.TableRefs, resolveCtx)
+		updateTableList := ExtractTableList(nodeW, true)
 		updatePlan.PartitionedTable = make([]table.PartitionedTable, 0, len(updateTableList))
 		for _, updateTable := range updateTableList {
 			if len(updateTable.PartitionNames) > 0 {
@@ -1727,14 +1247,14 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
 	}
-	err := updatePlan.buildOnUpdateFKTriggers(ctx, is, updatePlan.tblID2Table)
+	err := updatePlan.BuildOnUpdateFKTriggers(ctx, is, updatePlan.TblID2Table)
 	if err != nil {
 		return nil
 	}
 	return updatePlan
 }
 
-func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
+func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignment,
 ) (orderedList []*expression.Assignment, allAssignmentsAreConstant bool) {
 	orderedList = make([]*expression.Assignment, 0, len(list))
 	allAssignmentsAreConstant = true
@@ -1748,15 +1268,36 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 			Col:     col,
 			ColName: plan.OutputNames()[idx].ColName,
 		}
-		defaultExpr := extractDefaultExpr(assign.Expr)
+		defaultExpr := physicalop.ExtractDefaultExpr(assign.Expr)
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
-		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, plan.Schema(), plan.OutputNames())
+		expr, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, plan.Schema(), plan.OutputNames(), false)
 		if err != nil {
 			return nil, true
 		}
-		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
+		castToTP := col.GetStaticType()
+		if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
+			assign.Expr.GetType().EvalType() == types.ETInt {
+			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
+		}
+		// Point-update builds assignment expressions directly in the planner.
+		// Keep the implicit CAST for most target column types so the fast path stays
+		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
+		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+		// must be decided by executor-side table.CastValue under the current statement
+		// context and sql_mode.
+		//
+		// This applies to more than integer columns. Unsigned decimal/real also uses the
+		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
+		// diverging from assignment semantics.
+		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
+			(castToTP.EvalType() == types.ETInt ||
+				castToTP.EvalType() == types.ETDecimal ||
+				castToTP.EvalType() == types.ETReal)
+		if !isUnsignedNumericTarget {
+			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		}
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
@@ -1771,62 +1312,64 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 	return orderedList, allAssignmentsAreConstant
 }
 
-func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
+func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCtx *resolve.Context) base.Plan {
 	if delStmt.IsMultiTable {
 		return nil
 	}
 	selStmt := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    delStmt.TableRefs,
-		Where:   delStmt.Where,
-		OrderBy: delStmt.Order,
-		Limit:   delStmt.Limit,
+		TableHints: delStmt.TableHints,
+		Fields:     &ast.FieldList{},
+		From:       delStmt.TableRefs,
+		Where:      delStmt.Where,
+		OrderBy:    delStmt.Order,
+		Limit:      delStmt.Limit,
 	}
-	if pointGet := tryPointGetPlan(ctx, selStmt, true); pointGet != nil {
+	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
-				names: pointGet.outputNames,
-			}.Init(ctx, &property.StatsInfo{}, 0)
+			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
+			dual.SetOutputNames(pointGet.OutputNames())
+			return dual
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo)
+		return buildPointDeletePlan(ctx, pointGet, pointGet.DBName, pointGet.TblInfo, delStmt.IgnoreErr)
 	}
-	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt); batchPointGet != nil {
+	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo)
+		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.DBName, batchPointGet.TblInfo, delStmt.IgnoreErr)
 	}
 	return nil
 }
 
-func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo) Plan {
+func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbName string, tbl *model.TableInfo, ignoreErr bool) base.Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
-	delPlan := Delete{
-		SelectPlan: pointPlan,
-		TblColPosInfos: TblColPosInfoSlice{
-			TblColPosInfo{
-				TblID:      tbl.ID,
-				Start:      0,
-				End:        pointPlan.Schema().Len(),
-				HandleCols: handleCols,
-			},
-		},
-	}.Init(ctx)
+	handleCols := buildHandleCols(dbName, tbl, pointPlan)
 	var err error
-	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	t, _ := is.TableByID(tbl.ID)
-	if t != nil {
-		tblID2Table := map[int64]table.Table{tbl.ID: t}
-		err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
-		if err != nil {
-			return nil
-		}
+	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	t, _ := is.TableByID(context.Background(), tbl.ID)
+	intest.Assert(t != nil, "The point get executor is accessing a table without meta info.")
+	colPosInfo, err := initColPosInfo(tbl.ID, pointPlan.OutputNames(), handleCols)
+	if err != nil {
+		return nil
+	}
+	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo, 0)
+	if err != nil {
+		return nil
+	}
+	delPlan := physicalop.Delete{
+		SelectPlan:     pointPlan,
+		TblColPosInfos: []physicalop.TblColPosInfo{colPosInfo},
+		IgnoreErr:      ignoreErr,
+	}.Init(ctx)
+	tblID2Table := map[int64]table.Table{tbl.ID: t}
+	err = delPlan.BuildOnDeleteFKTriggers(ctx, is, tblID2Table)
+	if err != nil {
+		return nil
 	}
 	return delPlan
 }
@@ -1855,219 +1398,57 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
+func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.PhysicalPlan) util.HandleCols {
+	schema := pointget.Schema()
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				return &IntHandleCols{col: schema.Columns[i]}
+				return util.NewIntHandleCols(schema.Columns[i])
 			}
 		}
 	}
 
 	if tbl.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tbl)
-		return NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
+		return util.NewCommonHandleCols(tbl, pkIdx, schema.Columns)
 	}
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
-	return &IntHandleCols{col: handleCol}
+	newOutputNames := pointget.OutputNames().Shallow()
+	tableAliasName := tbl.Name
+	if schema.Len() > 0 {
+		tableAliasName = pointget.OutputNames()[0].TblName
+	}
+	newOutputNames = append(newOutputNames, &types.FieldName{
+		DBName:      ast.NewCIStr(dbName),
+		TblName:     tableAliasName,
+		OrigTblName: tbl.Name,
+		ColName:     model.ExtraHandleName,
+	})
+	pointget.SetOutputNames(newOutputNames)
+	return util.NewIntHandleCols(handleCol)
 }
 
-func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
-	partitionExpr := getPartitionExpr(ctx, tbl)
-	if partitionExpr == nil {
-		return nil, 0, 0, false
-	}
-
-	pi := tbl.GetPartitionInfo()
-	if pi == nil {
-		return nil, 0, 0, false
-	}
-
-	switch pi.Type {
-	case model.PartitionTypeHash:
-		expr := partitionExpr.OrigExpr
-		col, ok := expr.(*ast.ColumnNameExpr)
-		if !ok {
-			return nil, 0, 0, false
-		}
-
-		partitionColName := col.Name
-		if partitionColName == nil {
-			return nil, 0, 0, false
-		}
-
-		for i, pair := range pairs {
-			if partitionColName.Name.L == pair.colName {
-				val := pair.value.GetInt64()
-				pos := mathutil.Abs(val % int64(pi.Num))
-				return &pi.Definitions[pos], i, int(pos), false
-			}
-		}
-	case model.PartitionTypeKey:
-		// The key partition table supports FastPlan when it contains only one partition column
-		if len(pi.Columns) == 1 {
-			for i, pair := range pairs {
-				if pi.Columns[0].L == pair.colName {
-					pos, err := partitionExpr.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
-					if err != nil {
-						return nil, 0, 0, false
-					}
-					return &pi.Definitions[pos], i, pos, false
-				}
-			}
-		}
-	case model.PartitionTypeRange:
-		// left range columns partition for future development
-		if len(pi.Columns) == 0 {
-			if col, ok := partitionExpr.Expr.(*expression.Column); ok {
-				colInfo := findColNameByColID(tbl.Columns, col)
-				for i, pair := range pairs {
-					if colInfo.Name.L == pair.colName {
-						val := pair.value.GetInt64() // val cannot be Null, we've check this in func getNameValuePairs
-						unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
-						ranges := partitionExpr.ForRangePruning
-						length := len(ranges.LessThan)
-						pos := sort.Search(length, func(i int) bool {
-							return ranges.Compare(i, val, unsigned) > 0
-						})
-						if pos >= 0 && pos < length {
-							return &pi.Definitions[pos], i, pos, false
-						}
-						return nil, 0, 0, true
-					}
-				}
-			}
-		}
-	case model.PartitionTypeList:
-		// left list columns partition for future development
-		if partitionExpr.ForListPruning.ColPrunes == nil {
-			locateExpr := partitionExpr.ForListPruning.LocateExpr
-			if locateExpr, ok := locateExpr.(*expression.Column); ok {
-				colInfo := findColNameByColID(tbl.Columns, locateExpr)
-				for i, pair := range pairs {
-					if colInfo.Name.L == pair.colName {
-						val := pair.value.GetInt64() // val cannot be Null, we've check this in func getNameValuePairs
-						isNull := false
-						pos := partitionExpr.ForListPruning.LocatePartition(val, isNull)
-						if pos >= 0 {
-							return &pi.Definitions[pos], i, pos, false
-						}
-						return nil, 0, 0, true
-					}
-				}
-			}
-		}
-	}
-	return nil, 0, 0, false
-}
-
-func findPartitionIdx(idxInfo *model.IndexInfo, pos int, pairs []nameValuePair) int {
-	for i, idxCol := range idxInfo.Columns {
-		if idxCol.Name.L == pairs[pos].colName {
-			return i
-		}
-	}
-	return 0
-}
-
-// getPartitionColumnPos gets the partition column's position in the unique index.
-func getPartitionColumnPos(idx *model.IndexInfo, partitionExpr *tables.PartitionExpr, tbl *model.TableInfo) (int, error) {
-	// regular table
-	if partitionExpr == nil {
-		return 0, nil
-	}
-	pi := tbl.GetPartitionInfo()
-	if pi == nil {
-		return 0, nil
-	}
-
-	var partitionColName model.CIStr
-	switch pi.Type {
-	case model.PartitionTypeHash:
-		col, ok := partitionExpr.OrigExpr.(*ast.ColumnNameExpr)
-		if !ok {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		partitionColName = col.Name.Name
-	case model.PartitionTypeKey:
-		if len(partitionExpr.KeyPartCols) != 1 {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		colInfo := findColNameByColID(tbl.Columns, partitionExpr.KeyPartCols[0])
-		partitionColName = colInfo.Name
-	case model.PartitionTypeRange:
-		// left range columns partition for future development
-		col, ok := partitionExpr.Expr.(*expression.Column)
-		if !(ok && len(pi.Columns) == 0) {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		colInfo := findColNameByColID(tbl.Columns, col)
-		partitionColName = colInfo.Name
-	case model.PartitionTypeList:
-		// left list columns partition for future development
-		locateExpr, ok := partitionExpr.ForListPruning.LocateExpr.(*expression.Column)
-		if !(ok && partitionExpr.ForListPruning.ColPrunes == nil) {
-			return 0, errors.Errorf("unsupported partition type in BatchGet")
-		}
-		colInfo := findColNameByColID(tbl.Columns, locateExpr)
-		partitionColName = colInfo.Name
-	}
-
-	return getColumnPosInIndex(idx, &partitionColName), nil
-}
-
-// getColumnPosInIndex gets the column's position in the index.
-// It is only used to get partition columns postition in unique index so far.
-func getColumnPosInIndex(idx *model.IndexInfo, colName *model.CIStr) int {
-	if colName == nil {
-		return 0
-	}
-	for i, idxCol := range idx.Columns {
-		if colName.L == idxCol.Name.L {
-			return i
-		}
-	}
-	if idx.Global {
-		return GlobalWithoutColumnPos
-	}
-	panic("unique index must include all partition columns")
-}
-
-func getPartitionExpr(ctx sessionctx.Context, tbl *model.TableInfo) *tables.PartitionExpr {
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(tbl.ID)
-	if !ok {
-		return nil
-	}
-
-	partTable, ok := table.(partitionTable)
-	if !ok {
-		return nil
-	}
-
-	// PartitionExpr don't need columns and names for hash partition.
-	return partTable.PartitionExpr()
-}
-
-func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInfo) *model.CIStr {
+// TODO: Remove this, by enabling all types of partitioning
+// and update/add tests
+func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *ast.CIStr {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
-	if pi.Type != model.PartitionTypeHash && pi.Type != model.PartitionTypeKey {
+	if pi.Type != ast.PartitionTypeHash && pi.Type != ast.PartitionTypeKey {
 		return nil
 	}
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(tbl.ID)
+	table, ok := is.TableByID(context.Background(), tbl.ID)
 	if !ok {
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(partitionTable).PartitionExpr()
-	if pi.Type == model.PartitionTypeKey {
+	partitionExpr := table.(base.PartitionTable).PartitionExpr()
+	if pi.Type == ast.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {
 			return nil
@@ -2080,13 +1461,4 @@ func getHashOrKeyPartitionColumnName(ctx sessionctx.Context, tbl *model.TableInf
 		return nil
 	}
 	return &col.Name.Name
-}
-
-func findColNameByColID(cols []*model.ColumnInfo, col *expression.Column) *model.ColumnInfo {
-	for _, c := range cols {
-		if c.ID == col.ID {
-			return c
-		}
-	}
-	return nil
 }

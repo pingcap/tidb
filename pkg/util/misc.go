@@ -39,12 +39,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
@@ -61,7 +65,7 @@ const (
 // RunWithRetry will run the f with backoff and retry.
 // retryCnt: Max retry count
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
-// Function f should have two return value. The first one is an bool which indicate if the err if retryable.
+// Function f should have two return value. The first one is an bool which indicate if the err is retryable.
 // The second is if the f meet any error.
 func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
 	for i := 1; i <= retryCnt; i++ {
@@ -70,6 +74,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		if err == nil || !retryAble {
 			return errors.Trace(err)
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
 		time.Sleep(sleepTime)
 	}
@@ -81,7 +86,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 //
 //	exec:      execute logic function.
 //	recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
-func WithRecovery(exec func(), recoverFn func(r interface{})) {
+func WithRecovery(exec func(), recoverFn func(r any)) {
 	defer func() {
 		r := recover()
 		if recoverFn != nil {
@@ -110,15 +115,21 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		return
 	}
 
-	if recoverFn != nil {
-		recoverFn()
-	}
 	logutil.BgLogger().Error("panic in the recoverable goroutine",
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+	if intest.InTest {
+		if strings.Contains(fmt.Sprintf("%v", r), "assert failed") {
+			panic(r)
+		}
+	}
+
+	if recoverFn != nil {
+		recoverFn()
+	}
 	if quit {
 		// Wait for metrics to be pushed.
 		time.Sleep(time.Second * 15)
@@ -137,8 +148,8 @@ func HasCancelled(ctx context.Context) (cancel bool) {
 }
 
 const (
-	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
-	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+	// SyntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	SyntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
 )
 
 // SyntaxError converts parser error to TiDB's syntax error.
@@ -156,7 +167,7 @@ func SyntaxError(err error) error {
 		}
 	}
 
-	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+	return parser.ErrParse.GenWithStackByArgs(SyntaxErrorPrefix, err.Error())
 }
 
 // SyntaxWarn converts parser warn to TiDB's syntax warn.
@@ -166,58 +177,13 @@ func SyntaxWarn(err error) error {
 	}
 	logutil.BgLogger().Debug("syntax error", zap.Error(err))
 
-	// If the warn is already a terror with stack, pass it through.
-	if errors.HasStack(err) {
-		cause := errors.Cause(err)
-		if _, ok := cause.(*terror.Error); ok {
-			return err
-		}
+	// If the "err" is already a terror, pass it through.
+	cause := errors.Cause(err)
+	if _, ok := cause.(*terror.Error); ok {
+		return err
 	}
 
-	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())
-}
-
-var (
-	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = model.NewCIStr("INFORMATION_SCHEMA")
-	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
-	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
-	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
-	ClusterTableInstanceColumnName = "INSTANCE"
-)
-
-// IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
-func IsMemOrSysDB(dbLowerName string) bool {
-	return IsMemDB(dbLowerName) || IsSysDB(dbLowerName)
-}
-
-// IsMemDB checks whether dbLowerName is memory database.
-func IsMemDB(dbLowerName string) bool {
-	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
-		return true
-	}
-	return false
-}
-
-// IsSysDB checks whether dbLowerName is system database.
-func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB
-}
-
-// IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
-func IsSystemView(dbLowerName string) bool {
-	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
-		return true
-	}
-	return false
+	return parser.ErrParse.FastGenByArgs(SyntaxErrorPrefix, err.Error())
 }
 
 // X509NameOnline prints pkix.Name into old X509_NAME_oneline format.
@@ -351,53 +317,11 @@ func CheckSupportX509NameOneline(oneline string) (err error) {
 	return
 }
 
-var tlsCipherString = map[uint16]string{
-	tls.TLS_RSA_WITH_RC4_128_SHA:                "RC4-SHA",
-	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:           "DES-CBC3-SHA",
-	tls.TLS_RSA_WITH_AES_128_CBC_SHA:            "AES128-SHA",
-	tls.TLS_RSA_WITH_AES_256_CBC_SHA:            "AES256-SHA",
-	tls.TLS_RSA_WITH_AES_128_CBC_SHA256:         "AES128-SHA256",
-	tls.TLS_RSA_WITH_AES_128_GCM_SHA256:         "AES128-GCM-SHA256",
-	tls.TLS_RSA_WITH_AES_256_GCM_SHA384:         "AES256-GCM-SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA:        "ECDHE-ECDSA-RC4-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:    "ECDHE-ECDSA-AES128-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:    "ECDHE-ECDSA-AES256-SHA",
-	tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA:          "ECDHE-RSA-RC4-SHA",
-	tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:     "ECDHE-RSA-DES-CBC3-SHA",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:      "ECDHE-RSA-AES128-SHA",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:      "ECDHE-RSA-AES256-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256: "ECDHE-ECDSA-AES128-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:   "ECDHE-RSA-AES128-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:   "ECDHE-RSA-AES128-GCM-SHA256",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: "ECDHE-ECDSA-AES128-GCM-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:   "ECDHE-RSA-AES256-GCM-SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: "ECDHE-ECDSA-AES256-GCM-SHA384",
-	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:    "ECDHE-RSA-CHACHA20-POLY1305",
-	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:  "ECDHE-ECDSA-CHACHA20-POLY1305",
-	// TLS 1.3 cipher suites, compatible with mysql using '_'.
-	tls.TLS_AES_128_GCM_SHA256:       "TLS_AES_128_GCM_SHA256",
-	tls.TLS_AES_256_GCM_SHA384:       "TLS_AES_256_GCM_SHA384",
-	tls.TLS_CHACHA20_POLY1305_SHA256: "TLS_CHACHA20_POLY1305_SHA256",
-}
-
-// SupportCipher maintains cipher supported by TiDB.
-var SupportCipher = make(map[string]struct{}, len(tlsCipherString))
-
-// TLSCipher2String convert tls num to string.
-// Taken from https://testssl.sh/openssl-rfc.mapping.html .
-func TLSCipher2String(n uint16) string {
-	s, ok := tlsCipherString[n]
-	if !ok {
-		return ""
-	}
-	return s
-}
-
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
-func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool) []*tipb.ColumnInfo {
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
 	for _, c := range columns {
-		col := ColumnToProto(c, forIndex)
+		col := ColumnToProto(c, forIndex, isTiFlashStore)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
 		if (pkIsHandle && mysql.HasPriKeyFlag(c.GetFlag())) || c.ID == model.ExtraHandleID {
@@ -411,7 +335,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool)
 }
 
 // ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
-func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
+func ColumnToProto(c *model.ColumnInfo, forIndex bool, isTiFlashStore bool) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
 		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.GetCollate()])),
@@ -419,6 +343,9 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 		Decimal:   int32(c.GetDecimal()),
 		Flag:      int32(c.GetFlag()),
 		Elems:     c.GetElems(),
+	}
+	if isTiFlashStore && c.IsVirtualGenerated() {
+		pc.Flag |= int32(mysql.GeneratedColumnFlag)
 	}
 	if forIndex {
 		// Use array type for read the multi-valued index.
@@ -436,24 +363,21 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 }
 
 func init() {
-	for _, value := range tlsCipherString {
-		SupportCipher[value] = struct{}{}
-	}
 	for key, value := range pkixAttributeTypeNames {
 		pkixTypeNameAttributes[value] = key
 	}
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence ast.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
-	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
-	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
+	GetSequenceNextVal(ctx any, dbName, seqName string) (int64, error)
+	SetSequenceVal(ctx any, newVal int64, dbName, seqName string) (int64, bool, error)
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
@@ -485,12 +409,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	requireTLS := tlsutil.RequireSecureTransport.Load()
 
-	var minTLSVersion uint16 = tls.VersionTLS11
+	var minTLSVersion uint16 = tls.VersionTLS12
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
-	case "TLSv1.0":
-		minTLSVersion = tls.VersionTLS10
-	case "TLSv1.1":
-		minTLSVersion = tls.VersionTLS11
 	case "TLSv1.2":
 		minTLSVersion = tls.VersionTLS12
 	case "TLSv1.3":
@@ -503,9 +423,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		)
 	}
 	if minTLSVersion < tls.VersionTLS12 {
-		logutil.BgLogger().Warn(
-			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
-		)
+		err = errors.New("Minimum TLS version pre-TLSv1.2 protocols are not allowed")
+		return
 	}
 
 	// Try loading CA cert.
@@ -583,11 +502,14 @@ func initInternalClient() {
 	}
 	if tlsCfg == nil {
 		internalHTTPSchema = "http"
-		internalHTTPClient = http.DefaultClient
+		internalHTTPClient = &http.Client{
+			Timeout: 5 * time.Minute,
+		}
 		return
 	}
 	internalHTTPSchema = "https"
 	internalHTTPClient = &http.Client{
+		Timeout:   5 * time.Minute,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 }
@@ -693,4 +615,23 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
 	// use RSA and unspecified signature algorithm
 	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
+}
+
+// GetTypeFlagsForInsert gets the type flags for insert statement.
+func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreErr bool) types.Flags {
+	strictSQLMode := sqlMode.HasStrictMode()
+	// see comments in ResetContextOfStmt for WithAllowNegativeToUnsigned part.
+	return baseFlags.
+		WithTruncateAsWarning(!strictSQLMode || ignoreErr).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasNoZeroInDateMode() ||
+			!sqlMode.HasNoZeroDateMode() || !strictSQLMode || ignoreErr ||
+			sqlMode.HasAllowInvalidDatesMode()).
+		WithAllowNegativeToUnsigned(false)
+}
+
+// GetTypeFlagsForImportInto gets the type flags for import into statement which
+// has the same flags as normal `INSERT INTO xxx`.
+func GetTypeFlagsForImportInto(baseFlags types.Flags, sqlMode mysql.SQLMode) types.Flags {
+	return GetTypeFlagsForInsert(baseFlags, sqlMode, false)
 }

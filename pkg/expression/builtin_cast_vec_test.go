@@ -112,7 +112,7 @@ type dateTimeGenerWithFsp struct {
 	fsp int
 }
 
-func (g *dateTimeGenerWithFsp) gen() interface{} {
+func (g *dateTimeGenerWithFsp) gen() any {
 	result := g.defaultGener.gen()
 	if t, ok := result.(types.Time); ok {
 		t.SetFsp(g.fsp)
@@ -123,7 +123,7 @@ func (g *dateTimeGenerWithFsp) gen() interface{} {
 
 type randJSONDuration struct{}
 
-func (g *randJSONDuration) gen() interface{} {
+func (g *randJSONDuration) gen() any {
 	d := types.Duration{
 		Duration: time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond,
 		Fsp:      3}
@@ -132,7 +132,7 @@ func (g *randJSONDuration) gen() interface{} {
 
 type datetimeJSONGener struct{}
 
-func (g *datetimeJSONGener) gen() interface{} {
+func (g *datetimeJSONGener) gen() any {
 	year := rand.Intn(2200)
 	month := rand.Intn(10) + 1
 	day := rand.Intn(20) + 1
@@ -158,12 +158,13 @@ func TestVectorizedBuiltinCastFunc(t *testing.T) {
 
 func TestVectorizedCastRealAsTime(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
-	ctx := mock.NewContext()
+	ctx := createContext(t)
 	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeDatetime))
 	if err != nil {
 		panic(err)
 	}
 	cast := &builtinCastRealAsTimeSig{baseFunc}
+	require.True(t, cast.vectorized() && cast.isChildrenVectorized())
 
 	inputChunk, expect := genCastRealAsTime()
 	inputs := []*chunk.Chunk{
@@ -173,7 +174,7 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 	for _, input := range inputs {
 		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), input.NumRows())
 		require.NoError(t, cast.vecEvalTime(ctx, input, result))
-		for i := 0; i < input.NumRows(); i++ {
+		for i := range input.NumRows() {
 			res, isNull, err := cast.evalTime(ctx, input.GetRow(i))
 			require.NoError(t, err)
 			if expect[i] == nil {
@@ -256,6 +257,7 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	// set the `UnsignedFlag` bit
 	baseCast.tp.AddFlag(mysql.UnsignedFlag)
 	cast := &builtinCastStringAsDecimalSig{baseCast}
+	require.True(t, cast.vectorized() && cast.isChildrenVectorized())
 
 	inputs := []*chunk.Chunk{
 		genCastStringAsDecimal(false),
@@ -265,7 +267,7 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	for _, input := range inputs {
 		result := chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), input.NumRows())
 		require.NoError(t, cast.vecEvalDecimal(ctx, input, result))
-		for i := 0; i < input.NumRows(); i++ {
+		for i := range input.NumRows() {
 			res, isNull, err := cast.evalDecimal(ctx, input.GetRow(i))
 			require.False(t, isNull)
 			require.NoError(t, err)
@@ -283,7 +285,7 @@ func genCastStringAsDecimal(isNegative bool) *chunk.Chunk {
 	}
 
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1024)
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		d := new(types.MyDecimal)
 		f := sign * rand.Float64() * 100000
 		if err := d.FromFloat64(f); err != nil {

@@ -18,14 +18,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-)
-
-var (
-	// ErrInternal is an error for spill
-	ErrInternal = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 )
 
 // These types are used for serializing or deserializing interface type
@@ -55,4 +48,5 @@ const (
 	Float64Len           = int64(unsafe.Sizeof(float64(0)))
 	TimeLen              = int64(unsafe.Sizeof(types.Time{}))
 	TimeDurationLen      = int64(unsafe.Sizeof(time.Duration(0)))
+	UnsafePointerLen     = int64(unsafe.Sizeof(unsafe.Pointer(nil)))
 )

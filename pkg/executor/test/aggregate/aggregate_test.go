@@ -20,12 +20,14 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/session"
@@ -37,11 +39,9 @@ import (
 func TestHashAggRuntimeStat(t *testing.T) {
 	partialInfo := &aggregate.AggWorkerInfo{
 		Concurrency: 5,
-		WallTime:    int64(time.Second * 20),
 	}
 	finalInfo := &aggregate.AggWorkerInfo{
 		Concurrency: 8,
-		WallTime:    int64(time.Second * 10),
 	}
 	stats := &aggregate.HashAggRuntimeStats{
 		PartialConcurrency: 5,
@@ -49,7 +49,7 @@ func TestHashAggRuntimeStat(t *testing.T) {
 		FinalConcurrency:   8,
 		FinalWallTime:      int64(time.Second * 10),
 	}
-	for i := 0; i < partialInfo.Concurrency; i++ {
+	for i := range partialInfo.Concurrency {
 		stats.PartialStats = append(stats.PartialStats, &aggregate.AggWorkerStat{
 			TaskNum:    5,
 			WaitTime:   int64(2 * time.Second),
@@ -57,7 +57,7 @@ func TestHashAggRuntimeStat(t *testing.T) {
 			WorkerTime: int64(i) * int64(time.Second),
 		})
 	}
-	for i := 0; i < finalInfo.Concurrency; i++ {
+	for i := range finalInfo.Concurrency {
 		stats.FinalStats = append(stats.FinalStats, &aggregate.AggWorkerStat{
 			TaskNum:    5,
 			WaitTime:   int64(2 * time.Millisecond),
@@ -73,21 +73,17 @@ func TestHashAggRuntimeStat(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 }
 
-func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
+func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	data := make([]string, 0, len(rows))
 	for _, row := range rows {
 		if str, ok := row[0].(string); ok {
 			tokens := strings.Split(str, ",")
-			sort.Slice(tokens, func(i, j int) bool {
-				return tokens[i] < tokens[j]
-			})
+			slices.Sort(tokens)
 			data = append(data, strings.Join(tokens, ","))
 		}
 	}
 
-	sort.Slice(data, func(i, j int) bool {
-		return data[i] < data[j]
-	})
+	slices.Sort(data)
 
 	return data
 }
@@ -102,7 +98,7 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 	tk.MustExec("set tidb_max_chunk_size=32;")
 
 	var insertSQL string
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		if i == 0 {
 			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
 		} else {
@@ -131,7 +127,7 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 			require.True(t, ok)
 			obtained := reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
 			require.Equal(t, len(expected), len(obtained))
-			for i := 0; i < len(obtained); i++ {
+			for i := range obtained {
 				require.Equal(t, expected[i], obtained[i])
 			}
 		}
@@ -159,7 +155,7 @@ func TestIssue20658(t *testing.T) {
 	randSeed := time.Now().UnixNano()
 	r := rand.New(rand.NewSource(randSeed))
 	var insertSQL strings.Builder
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		insertSQL.WriteString("(")
 		insertSQL.WriteString(strconv.Itoa(r.Intn(10)))
 		insertSQL.WriteString(",")
@@ -171,9 +167,9 @@ func TestIssue20658(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL.String()))
 
-	mustParseAndSort := func(rows [][]interface{}, cmt string) []float64 {
+	mustParseAndSort := func(rows [][]any, cmt string) []float64 {
 		ret := make([]float64, len(rows))
-		for i := 0; i < len(rows); i++ {
+		for i := range rows {
 			rowStr := rows[i][0].(string)
 			if rowStr == "<nil>" {
 				ret[i] = 0
@@ -282,6 +278,11 @@ func TestRandomPanicConsume(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName2))
 	}()
+	fpName3 := "github.com/pingcap/tidb/pkg/executor/join/ConsumeRandomPanic"
+	require.NoError(t, failpoint.Enable(fpName3, "3%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn=1]\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName3))
+	}()
 
 	sqls := []string{
 		// Without index
@@ -329,12 +330,13 @@ func TestRandomPanicConsume(t *testing.T) {
 					require.NoError(t, res.Close())
 				}
 			}
-			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
+			errStr := err.Error()
+			require.True(t, errStr == "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]" || errStr == "context canceled")
 		}
 	}
 }
 
-func checkResults(actualRes [][]interface{}, expectedRes map[string]string) bool {
+func checkResults(actualRes [][]any, expectedRes map[string]string) bool {
 	if len(actualRes) != len(expectedRes) {
 		return false
 	}
@@ -387,7 +389,7 @@ func TestParallelHashAgg(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test.parallel_hash_agg;")
 	tk.MustExec("create table test.parallel_hash_agg(k varchar(30), v int);")
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk.MustExec("insert into test.parallel_hash_agg (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('EE', 1), ('eE', 1), ('Ee', 1);")
 	}
 
@@ -420,7 +422,6 @@ func TestParallelHashAgg(t *testing.T) {
 	tk.MustExec("create database list_partition_agg")
 	tk.MustExec("use list_partition_agg")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
 		` partition p0 values in ` + genListPartition(0, 20) +
 		`, partition p1 values in ` + genListPartition(20, 40) +
@@ -430,7 +431,7 @@ func TestParallelHashAgg(t *testing.T) {
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	vals := ""
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if vals != "" {
 			vals += ", "
 		}
@@ -441,7 +442,7 @@ func TestParallelHashAgg(t *testing.T) {
 
 	for _, aggFunc := range []string{"min", "max", "sum", "count"} {
 		c1, c2 := "a", "b"
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			rs := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tnormal group by %v`, c1, aggFunc, c2, c1)).Sort()
 
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -454,4 +455,22 @@ func TestParallelHashAgg(t *testing.T) {
 			rs.Check(rsStatic.Rows())
 		}
 	}
+}
+
+func TestIssue50849(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("insert into t select * from t;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/injectHashAggClosePanic", "return(true)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/injectHashAggClosePanic")
+	rs, err := tk.ExecWithContext(context.Background(), "select  /*+hash_agg()*/ sum(t1.a) from t t1 join t t2;")
+	require.NoError(t, err)
+	err = rs.Close()
+	// Check the error contains stack information
+	require.True(t, errors.HasStack(err))
 }

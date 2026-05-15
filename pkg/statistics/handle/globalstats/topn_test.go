@@ -36,7 +36,7 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		// Construct TopN, should be key(1, 1) -> 2, key(1, 2) -> 2, key(1, 3) -> 3.
 		topN := statistics.NewTopN(3)
 		{
@@ -69,7 +69,7 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
 		topN := statistics.NewTopN(3)
 		{
@@ -90,7 +90,7 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 
 	// Prepare Hists.
 	hists := make([]*statistics.Histogram, 0, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		// Construct Hist
 		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
 		h.Bounds.AppendInt64(0, 1)

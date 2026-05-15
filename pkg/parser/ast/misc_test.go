@@ -19,10 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,21 +133,6 @@ import into t from '/file.csv'`
 	}
 }
 
-// test Change Pump or drainer status sql parser
-func TestChangeStmt(t *testing.T) {
-	sql := `change pump to node_state='paused' for node_id '127.0.0.1:8249';
-change drainer to node_state='paused' for node_id '127.0.0.1:8249';
-shutdown;`
-
-	p := parser.New()
-	stmts, _, err := p.Parse(sql, "", "")
-	require.NoError(t, err)
-	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
-	}
-}
-
 func TestSensitiveStatement(t *testing.T) {
 	positive := []ast.StmtNode{
 		&ast.SetPwdStmt{},
@@ -180,37 +162,6 @@ func TestSensitiveStatement(t *testing.T) {
 		_, ok := stmt.(ast.SensitiveStmtNode)
 		require.False(t, ok)
 	}
-}
-
-func TestUserSpec(t *testing.T) {
-	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
-	u := ast.UserSpec{
-		User: &auth.UserIdentity{
-			Username: "test",
-		},
-		AuthOpt: &ast.AuthOption{
-			ByAuthString: false,
-			AuthString:   "xxx",
-			HashString:   hashString,
-		},
-	}
-	pwd, ok := u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, u.AuthOpt.HashString, pwd)
-
-	u.AuthOpt.HashString = "not-good-password-format"
-	_, ok = u.EncodedPassword()
-	require.False(t, ok)
-
-	u.AuthOpt.ByAuthString = true
-	pwd, ok = u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, hashString, pwd)
-
-	u.AuthOpt.AuthString = ""
-	pwd, ok = u.EncodedPassword()
-	require.True(t, ok)
-	require.Equal(t, "", pwd)
 }
 
 func TestTableOptimizerHintRestore(t *testing.T) {
@@ -243,6 +194,12 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"NO_ORDER_INDEX(t1@sel_1 c1)", "NO_ORDER_INDEX(`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(@sel_1 t1 c1)", "INDEX_LOOKUP_PUSHDOWN(@`sel_1` `t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1`@`sel_1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 partition(p0) c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
@@ -264,13 +221,23 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"HASH_JOIN_PROBE(t1)", "HASH_JOIN_PROBE(`t1`)"},
 		{"LEADING(t1)", "LEADING(`t1`)"},
 		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
+		{"LEADING((t1, c1), t2)", "LEADING((`t1`, `c1`), `t2`)"},
+		{"LEADING(t1, (c1, t2))", "LEADING(`t1`, (`c1`, `t2`))"},
+		{"LEADING(((t1, c1), t2), t3)", "LEADING(((`t1`, `c1`), `t2`), `t3`)"},
+		{"LEADING(t1, (c1, (t2, t3)))", "LEADING(`t1`, (`c1`, (`t2`, `t3`)))"},
 		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
 		{"LEADING(@sel1 t1, c1)", "LEADING(@`sel1` `t1`, `c1`)"},
 		{"LEADING(@sel1 t1)", "LEADING(@`sel1` `t1`)"},
 		{"LEADING(@sel1 t1, c1, t2)", "LEADING(@`sel1` `t1`, `c1`, `t2`)"},
+		{"LEADING(@sel1 t1, (c1, t2))", "LEADING(@`sel1` `t1`, (`c1`, `t2`))"},
+		{"LEADING(@sel1 t1, (c1, t2), d3)", "LEADING(@`sel1` `t1`, (`c1`, `t2`), `d3`)"},
 		{"LEADING(t1@sel1)", "LEADING(`t1`@`sel1`)"},
 		{"LEADING(t1@sel1, c1)", "LEADING(`t1`@`sel1`, `c1`)"},
 		{"LEADING(t1@sel1, c1, t2)", "LEADING(`t1`@`sel1`, `c1`, `t2`)"},
+		{"LEADING((t1@sel1, c1), t2)", "LEADING((`t1`@`sel1`, `c1`), `t2`)"},
+		{"LEADING(t1@sel1, (c1, t2))", "LEADING(`t1`@`sel1`, (`c1`, `t2`))"},
+		{"LEADING(t1@sel1, c1, t2, d3)", "LEADING(`t1`@`sel1`, `c1`, `t2`, `d3`)"},
+		{"LEADING(t1@sel1, (c1, t2), d3)", "LEADING(`t1`@`sel1`, (`c1`, `t2`), `d3`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
 		{"MAX_EXECUTION_TIME(@sel1 3000)", "MAX_EXECUTION_TIME(@`sel1` 3000)"},
 		{"USE_INDEX_MERGE(t1 c1)", "USE_INDEX_MERGE(`t1` `c1`)"},
@@ -313,17 +280,6 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		return node.(*ast.SelectStmt).TableHints[0]
 	}
 	runNodeRestoreTest(t, testCases, "select /*+ %s */ * from t1 join t2", extractNodeFunc)
-}
-
-func TestChangeStmtRestore(t *testing.T) {
-	testCases := []NodeRestoreTestCase{
-		{"CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
-		{"CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
-	}
-	extractNodeFunc := func(node ast.Node) ast.Node {
-		return node.(*ast.ChangeStmt)
-	}
-	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
 }
 
 func TestBRIESecureText(t *testing.T) {
@@ -387,6 +343,10 @@ func TestPlanReplayerStmtRestore(t *testing.T) {
 			"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'test'"},
 		{"plan replayer dump with stats as of timestamp '12345' explain analyze 'test2'",
 			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'12345' EXPLAIN ANALYZE 'test2'"},
+		{"plan replayer dump explain ('SELECT * FROM t1', 'SELECT * FROM t2')",
+			"PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')"},
+		{"plan replayer dump explain analyze ('SELECT * FROM t1')",
+			"PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.PlanReplayerStmt)
@@ -413,9 +373,19 @@ func TestRedactURL(t *testing.T) {
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
+		{args{"ks3://bucket/file?access-key=123"}, "ks3://bucket/file?access-key=xxxxxx"},
+		{args{"ks3://bucket/file?secret-access-key=123"}, "ks3://bucket/file?secret-access-key=xxxxxx"},
+		{args{"oss://bucket/file?access-key=123"}, "oss://bucket/file?access-key=xxxxxx"},
+		{args{"oss://bucket/file?secret-access-key=123"}, "oss://bucket/file?secret-access-key=xxxxxx"},
 		// underline
 		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
 		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
+		{args{"azure://bucket/file?sas-token=123"}, "azure://bucket/file?sas-token=xxxxxx"},
+		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
+		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
+		{args{"azure://container/file?account-name=test&account-key=123"}, "azure://container/file?account-key=xxxxxx&account-name=test"},
+		{args{"azblob://container/file?encryption-key=123"}, "azblob://container/file?encryption-key=xxxxxx"},
+		{args{"azure://container/file?account_key=123&encryption_key=456"}, "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {
@@ -427,371 +397,52 @@ func TestRedactURL(t *testing.T) {
 	}
 }
 
-func TestDeniedByBDR(t *testing.T) {
+func TestAddQueryWatchStmtRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{
+			"QUERY WATCH ADD ACTION KILL SQL TEXT EXACT TO 'select * from test.t2'",
+			"QUERY WATCH ADD ACTION = KILL SQL TEXT EXACT TO _UTF8MB4'select * from test.t2'",
+		},
+		{
+			"QUERY WATCH ADD RESOURCE GROUP rg1 SQL TEXT SIMILAR TO 'select * from test.t2'",
+			"QUERY WATCH ADD RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select * from test.t2'",
+		},
+		{
+			"QUERY WATCH ADD RESOURCE GROUP rg1 ACTION COOLDOWN PLAN DIGEST 'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'",
+			"QUERY WATCH ADD RESOURCE GROUP `rg1` ACTION = COOLDOWN PLAN DIGEST _UTF8MB4'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'",
+		},
+		{
+			"QUERY WATCH ADD ACTION SWITCH_GROUP(rg1) SQL TEXT EXACT TO 'select * from test.t1'",
+			"QUERY WATCH ADD ACTION = SWITCH_GROUP(`rg1`) SQL TEXT EXACT TO _UTF8MB4'select * from test.t1'",
+		},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.AddQueryWatchStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
+func TestRedactTrafficStmt(t *testing.T) {
 	testCases := []struct {
-		role     ast.BDRRole
-		action   model.ActionType
-		expected bool
-	}{
-		// Roles for ActionCreateSchema
-		{ast.BDRRolePrimary, model.ActionCreateSchema, false},
-		{ast.BDRRoleSecondary, model.ActionCreateSchema, true},
-		{ast.BDRRoleLocalOnly, model.ActionCreateSchema, false},
-
-		// Roles for ActionDropSchema
-		{ast.BDRRolePrimary, model.ActionDropSchema, true},
-		{ast.BDRRoleSecondary, model.ActionDropSchema, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropSchema, false},
-
-		// Roles for ActionCreateTable
-		{ast.BDRRolePrimary, model.ActionCreateTable, false},
-		{ast.BDRRoleSecondary, model.ActionCreateTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionCreateTable, false},
-
-		// Roles for ActionDropTable
-		{ast.BDRRolePrimary, model.ActionDropTable, true},
-		{ast.BDRRoleSecondary, model.ActionDropTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropTable, false},
-
-		// Roles for ActionAddColumn
-		{ast.BDRRolePrimary, model.ActionAddColumn, false},
-		{ast.BDRRoleSecondary, model.ActionAddColumn, true},
-		{ast.BDRRoleLocalOnly, model.ActionAddColumn, false},
-
-		// Roles for ActionDropColumn
-		{ast.BDRRolePrimary, model.ActionDropColumn, true},
-		{ast.BDRRoleSecondary, model.ActionDropColumn, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropColumn, false},
-
-		// Roles for ActionAddIndex
-		{ast.BDRRolePrimary, model.ActionAddIndex, false},
-		{ast.BDRRoleSecondary, model.ActionAddIndex, true},
-		{ast.BDRRoleLocalOnly, model.ActionAddIndex, false},
-
-		// Roles for ActionDropIndex
-		{ast.BDRRolePrimary, model.ActionDropIndex, false},
-		{ast.BDRRoleSecondary, model.ActionDropIndex, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropIndex, false},
-
-		// Roles for ActionAddForeignKey
-		{ast.BDRRolePrimary, model.ActionAddForeignKey, true},
-		{ast.BDRRoleSecondary, model.ActionAddForeignKey, true},
-		{ast.BDRRoleLocalOnly, model.ActionAddForeignKey, false},
-
-		// Roles for ActionDropForeignKey
-		{ast.BDRRolePrimary, model.ActionDropForeignKey, true},
-		{ast.BDRRoleSecondary, model.ActionDropForeignKey, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropForeignKey, false},
-
-		// Roles for ActionTruncateTable
-		{ast.BDRRolePrimary, model.ActionTruncateTable, true},
-		{ast.BDRRoleSecondary, model.ActionTruncateTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionTruncateTable, false},
-
-		// Roles for ActionModifyColumn
-		{ast.BDRRolePrimary, model.ActionModifyColumn, false},
-		{ast.BDRRoleSecondary, model.ActionModifyColumn, true},
-		{ast.BDRRoleLocalOnly, model.ActionModifyColumn, false},
-
-		// Roles for ActionRebaseAutoID
-		{ast.BDRRolePrimary, model.ActionRebaseAutoID, true},
-		{ast.BDRRoleSecondary, model.ActionRebaseAutoID, true},
-		{ast.BDRRoleLocalOnly, model.ActionRebaseAutoID, false},
-
-		// Roles for ActionRenameTable
-		{ast.BDRRolePrimary, model.ActionRenameTable, true},
-		{ast.BDRRoleSecondary, model.ActionRenameTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionRenameTable, false},
-
-		// Roles for ActionSetDefaultValue
-		{ast.BDRRolePrimary, model.ActionSetDefaultValue, false},
-		{ast.BDRRoleSecondary, model.ActionSetDefaultValue, true},
-		{ast.BDRRoleLocalOnly, model.ActionSetDefaultValue, false},
-
-		// Roles for ActionShardRowID
-		{ast.BDRRolePrimary, model.ActionShardRowID, true},
-		{ast.BDRRoleSecondary, model.ActionShardRowID, true},
-		{ast.BDRRoleLocalOnly, model.ActionShardRowID, false},
-
-		// Roles for ActionModifyTableComment
-		{ast.BDRRolePrimary, model.ActionModifyTableComment, false},
-		{ast.BDRRoleSecondary, model.ActionModifyTableComment, true},
-		{ast.BDRRoleLocalOnly, model.ActionModifyTableComment, false},
-
-		// Roles for ActionRenameIndex
-		{ast.BDRRolePrimary, model.ActionRenameIndex, false},
-		{ast.BDRRoleSecondary, model.ActionRenameIndex, true},
-		{ast.BDRRoleLocalOnly, model.ActionRenameIndex, false},
-
-		// Roles for ActionAddTablePartition
-		{ast.BDRRolePrimary, model.ActionAddTablePartition, false},
-		{ast.BDRRoleSecondary, model.ActionAddTablePartition, true},
-		{ast.BDRRoleLocalOnly, model.ActionAddTablePartition, false},
-
-		// Roles for ActionDropTablePartition
-		{ast.BDRRolePrimary, model.ActionDropTablePartition, true},
-		{ast.BDRRoleSecondary, model.ActionDropTablePartition, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropTablePartition, false},
-
-		// Roles for ActionCreateView
-		{ast.BDRRolePrimary, model.ActionCreateView, false},
-		{ast.BDRRoleSecondary, model.ActionCreateView, false},
-		{ast.BDRRoleLocalOnly, model.ActionCreateView, false},
-
-		// Roles for ActionModifyTableCharsetAndCollate
-		{ast.BDRRolePrimary, model.ActionModifyTableCharsetAndCollate, true},
-		{ast.BDRRoleSecondary, model.ActionModifyTableCharsetAndCollate, true},
-		{ast.BDRRoleLocalOnly, model.ActionModifyTableCharsetAndCollate, false},
-
-		// Roles for ActionTruncateTablePartition
-		{ast.BDRRolePrimary, model.ActionTruncateTablePartition, true},
-		{ast.BDRRoleSecondary, model.ActionTruncateTablePartition, true},
-		{ast.BDRRoleLocalOnly, model.ActionTruncateTablePartition, false},
-
-		// Roles for ActionDropView
-		{ast.BDRRolePrimary, model.ActionDropView, false},
-		{ast.BDRRoleSecondary, model.ActionDropView, false},
-		{ast.BDRRoleLocalOnly, model.ActionDropView, false},
-
-		// Roles for ActionRecoverTable
-		{ast.BDRRolePrimary, model.ActionRecoverTable, true},
-		{ast.BDRRoleSecondary, model.ActionRecoverTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionRecoverTable, false},
-
-		// Roles for ActionModifySchemaCharsetAndCollate
-		{ast.BDRRolePrimary, model.ActionModifySchemaCharsetAndCollate, true},
-		{ast.BDRRoleSecondary, model.ActionModifySchemaCharsetAndCollate, true},
-		{ast.BDRRoleLocalOnly, model.ActionModifySchemaCharsetAndCollate, false},
-
-		// Roles for ActionLockTable
-		{ast.BDRRolePrimary, model.ActionLockTable, true},
-		{ast.BDRRoleSecondary, model.ActionLockTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionLockTable, false},
-
-		// Roles for ActionUnlockTable
-		{ast.BDRRolePrimary, model.ActionUnlockTable, true},
-		{ast.BDRRoleSecondary, model.ActionUnlockTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionUnlockTable, false},
-
-		// Roles for ActionRepairTable
-		{ast.BDRRolePrimary, model.ActionRepairTable, true},
-		{ast.BDRRoleSecondary, model.ActionRepairTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionRepairTable, false},
-
-		// Roles for ActionSetTiFlashReplica
-		{ast.BDRRolePrimary, model.ActionSetTiFlashReplica, true},
-		{ast.BDRRoleSecondary, model.ActionSetTiFlashReplica, true},
-		{ast.BDRRoleLocalOnly, model.ActionSetTiFlashReplica, false},
-
-		// Roles for ActionUpdateTiFlashReplicaStatus
-		{ast.BDRRolePrimary, model.ActionUpdateTiFlashReplicaStatus, true},
-		{ast.BDRRoleSecondary, model.ActionUpdateTiFlashReplicaStatus, true},
-		{ast.BDRRoleLocalOnly, model.ActionUpdateTiFlashReplicaStatus, false},
-
-		// Roles for ActionAddPrimaryKey
-		{ast.BDRRolePrimary, model.ActionAddPrimaryKey, true},
-		{ast.BDRRoleSecondary, model.ActionAddPrimaryKey, true},
-		{ast.BDRRoleLocalOnly, model.ActionAddPrimaryKey, false},
-
-		// Roles for ActionDropPrimaryKey
-		{ast.BDRRolePrimary, model.ActionDropPrimaryKey, false},
-		{ast.BDRRoleSecondary, model.ActionDropPrimaryKey, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropPrimaryKey, false},
-
-		// Roles for ActionCreateSequence
-		{ast.BDRRolePrimary, model.ActionCreateSequence, true},
-		{ast.BDRRoleSecondary, model.ActionCreateSequence, true},
-		{ast.BDRRoleLocalOnly, model.ActionCreateSequence, false},
-
-		// Roles for ActionAlterSequence
-		{ast.BDRRolePrimary, model.ActionAlterSequence, true},
-		{ast.BDRRoleSecondary, model.ActionAlterSequence, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterSequence, false},
-
-		// Roles for ActionDropSequence
-		{ast.BDRRolePrimary, model.ActionDropSequence, true},
-		{ast.BDRRoleSecondary, model.ActionDropSequence, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropSequence, false},
-
-		// Roles for ActionModifyTableAutoIdCache
-		{ast.BDRRolePrimary, model.ActionModifyTableAutoIdCache, true},
-		{ast.BDRRoleSecondary, model.ActionModifyTableAutoIdCache, true},
-		{ast.BDRRoleLocalOnly, model.ActionModifyTableAutoIdCache, false},
-
-		// Roles for ActionRebaseAutoRandomBase
-		{ast.BDRRolePrimary, model.ActionRebaseAutoRandomBase, true},
-		{ast.BDRRoleSecondary, model.ActionRebaseAutoRandomBase, true},
-		{ast.BDRRoleLocalOnly, model.ActionRebaseAutoRandomBase, false},
-
-		// Roles for ActionAlterIndexVisibility
-		{ast.BDRRolePrimary, model.ActionAlterIndexVisibility, false},
-		{ast.BDRRoleSecondary, model.ActionAlterIndexVisibility, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterIndexVisibility, false},
-
-		// Roles for ActionExchangeTablePartition
-		{ast.BDRRolePrimary, model.ActionExchangeTablePartition, true},
-		{ast.BDRRoleSecondary, model.ActionExchangeTablePartition, true},
-		{ast.BDRRoleLocalOnly, model.ActionExchangeTablePartition, false},
-
-		// Roles for ActionAddCheckConstraint
-		{ast.BDRRolePrimary, model.ActionAddCheckConstraint, true},
-		{ast.BDRRoleSecondary, model.ActionAddCheckConstraint, true},
-		{ast.BDRRoleLocalOnly, model.ActionAddCheckConstraint, false},
-
-		// Roles for ActionDropCheckConstraint
-		{ast.BDRRolePrimary, model.ActionDropCheckConstraint, true},
-		{ast.BDRRoleSecondary, model.ActionDropCheckConstraint, true},
-		{ast.BDRRoleLocalOnly, model.ActionDropCheckConstraint, false},
-
-		// Roles for ActionAlterCheckConstraint
-		{ast.BDRRolePrimary, model.ActionAlterCheckConstraint, true},
-		{ast.BDRRoleSecondary, model.ActionAlterCheckConstraint, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterCheckConstraint, false},
-
-		// Roles for ActionRenameTables
-		{ast.BDRRolePrimary, model.ActionRenameTables, true},
-		{ast.BDRRoleSecondary, model.ActionRenameTables, true},
-		{ast.BDRRoleLocalOnly, model.ActionRenameTables, false},
-
-		// Roles for ActionAlterTableAttributes
-		{ast.BDRRolePrimary, model.ActionAlterTableAttributes, true},
-		{ast.BDRRoleSecondary, model.ActionAlterTableAttributes, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterTableAttributes, false},
-
-		// Roles for ActionAlterTablePartitionAttributes
-		{ast.BDRRolePrimary, model.ActionAlterTablePartitionAttributes, true},
-		{ast.BDRRoleSecondary, model.ActionAlterTablePartitionAttributes, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterTablePartitionAttributes, false},
-
-		// Roles for ActionCreatePlacementPolicy
-		{ast.BDRRolePrimary, model.ActionCreatePlacementPolicy, false},
-		{ast.BDRRoleSecondary, model.ActionCreatePlacementPolicy, false},
-		{ast.BDRRoleLocalOnly, model.ActionCreatePlacementPolicy, false},
-
-		// Roles for ActionAlterPlacementPolicy
-		{ast.BDRRolePrimary, model.ActionAlterPlacementPolicy, false},
-		{ast.BDRRoleSecondary, model.ActionAlterPlacementPolicy, false},
-		{ast.BDRRoleLocalOnly, model.ActionAlterPlacementPolicy, false},
-
-		// Roles for ActionDropPlacementPolicy
-		{ast.BDRRolePrimary, model.ActionDropPlacementPolicy, false},
-		{ast.BDRRoleSecondary, model.ActionDropPlacementPolicy, false},
-		{ast.BDRRoleLocalOnly, model.ActionDropPlacementPolicy, false},
-
-		// Roles for ActionAlterTablePartitionPlacement
-		{ast.BDRRolePrimary, model.ActionAlterTablePartitionPlacement, true},
-		{ast.BDRRoleSecondary, model.ActionAlterTablePartitionPlacement, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterTablePartitionPlacement, false},
-
-		// Roles for ActionModifySchemaDefaultPlacement
-		{ast.BDRRolePrimary, model.ActionModifySchemaDefaultPlacement, true},
-		{ast.BDRRoleSecondary, model.ActionModifySchemaDefaultPlacement, true},
-		{ast.BDRRoleLocalOnly, model.ActionModifySchemaDefaultPlacement, false},
-
-		// Roles for ActionAlterTablePlacement
-		{ast.BDRRolePrimary, model.ActionAlterTablePlacement, true},
-		{ast.BDRRoleSecondary, model.ActionAlterTablePlacement, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterTablePlacement, false},
-
-		// Roles for ActionAlterCacheTable
-		{ast.BDRRolePrimary, model.ActionAlterCacheTable, true},
-		{ast.BDRRoleSecondary, model.ActionAlterCacheTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterCacheTable, false},
-
-		// Roles for ActionAlterTableStatsOptions
-		{ast.BDRRolePrimary, model.ActionAlterTableStatsOptions, true},
-		{ast.BDRRoleSecondary, model.ActionAlterTableStatsOptions, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterTableStatsOptions, false},
-
-		// Roles for ActionAlterNoCacheTable
-		{ast.BDRRolePrimary, model.ActionAlterNoCacheTable, true},
-		{ast.BDRRoleSecondary, model.ActionAlterNoCacheTable, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterNoCacheTable, false},
-
-		// Roles for ActionCreateTables
-		{ast.BDRRolePrimary, model.ActionCreateTables, false},
-		{ast.BDRRoleSecondary, model.ActionCreateTables, true},
-		{ast.BDRRoleLocalOnly, model.ActionCreateTables, false},
-
-		// Roles for ActionMultiSchemaChange
-		{ast.BDRRolePrimary, model.ActionMultiSchemaChange, true},
-		{ast.BDRRoleSecondary, model.ActionMultiSchemaChange, true},
-		{ast.BDRRoleLocalOnly, model.ActionMultiSchemaChange, false},
-
-		// Roles for ActionFlashbackCluster
-		{ast.BDRRolePrimary, model.ActionFlashbackCluster, true},
-		{ast.BDRRoleSecondary, model.ActionFlashbackCluster, true},
-		{ast.BDRRoleLocalOnly, model.ActionFlashbackCluster, false},
-
-		// Roles for ActionRecoverSchema
-		{ast.BDRRolePrimary, model.ActionRecoverSchema, true},
-		{ast.BDRRoleSecondary, model.ActionRecoverSchema, true},
-		{ast.BDRRoleLocalOnly, model.ActionRecoverSchema, false},
-
-		// Roles for ActionReorganizePartition
-		{ast.BDRRolePrimary, model.ActionReorganizePartition, true},
-		{ast.BDRRoleSecondary, model.ActionReorganizePartition, true},
-		{ast.BDRRoleLocalOnly, model.ActionReorganizePartition, false},
-
-		// Roles for ActionAlterTTLInfo
-		{ast.BDRRolePrimary, model.ActionAlterTTLInfo, false},
-		{ast.BDRRoleSecondary, model.ActionAlterTTLInfo, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterTTLInfo, false},
-
-		// Roles for ActionAlterTTLRemove
-		{ast.BDRRolePrimary, model.ActionAlterTTLRemove, false},
-		{ast.BDRRoleSecondary, model.ActionAlterTTLRemove, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterTTLRemove, false},
-
-		// Roles for ActionCreateResourceGroup
-		{ast.BDRRolePrimary, model.ActionCreateResourceGroup, false},
-		{ast.BDRRoleSecondary, model.ActionCreateResourceGroup, false},
-		{ast.BDRRoleLocalOnly, model.ActionCreateResourceGroup, false},
-
-		// Roles for ActionAlterResourceGroup
-		{ast.BDRRolePrimary, model.ActionAlterResourceGroup, false},
-		{ast.BDRRoleSecondary, model.ActionAlterResourceGroup, false},
-		{ast.BDRRoleLocalOnly, model.ActionAlterResourceGroup, false},
-
-		// Roles for ActionDropResourceGroup
-		{ast.BDRRolePrimary, model.ActionDropResourceGroup, false},
-		{ast.BDRRoleSecondary, model.ActionDropResourceGroup, false},
-		{ast.BDRRoleLocalOnly, model.ActionDropResourceGroup, false},
-
-		// Roles for ActionAlterTablePartitioning
-		{ast.BDRRolePrimary, model.ActionAlterTablePartitioning, true},
-		{ast.BDRRoleSecondary, model.ActionAlterTablePartitioning, true},
-		{ast.BDRRoleLocalOnly, model.ActionAlterTablePartitioning, false},
-
-		// Roles for ActionRemovePartitioning
-		{ast.BDRRolePrimary, model.ActionRemovePartitioning, true},
-		{ast.BDRRoleSecondary, model.ActionRemovePartitioning, true},
-		{ast.BDRRoleLocalOnly, model.ActionRemovePartitioning, false},
-	}
-
-	for _, tc := range testCases {
-		assert.Equal(t, tc.expected, ast.DeniedByBDR(tc.role, tc.action, nil), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
-	}
-
-	// test special cases
-	testCases2 := []struct {
-		role     ast.BDRRole
-		action   model.ActionType
-		job      *model.Job
-		expected bool
+		input   string
+		secured string
 	}{
 		{
-			role:   ast.BDRRolePrimary,
-			action: model.ActionAddPrimaryKey,
-			job: &model.Job{
-				Type: model.ActionAddPrimaryKey,
-				Args: []interface{}{true},
-			},
-			expected: true,
+			input:   "traffic capture to 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' duration='1m'",
+			secured: "TRAFFIC CAPTURE TO 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx' DURATION = '1m'",
+		},
+		{
+			input:   "traffic replay from 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' user='root' password='123456'",
+			secured: "TRAFFIC REPLAY FROM 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx' USER = 'root' PASSWORD = 'xxxxxx'",
 		},
 	}
 
-	for _, tc := range testCases2 {
-		assert.Equal(t, tc.expected, ast.DeniedByBDR(tc.role, tc.action, tc.job), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+	p := parser.New()
+	for _, tc := range testCases {
+		node, err := p.ParseOneStmt(tc.input, "", "")
+		require.NoError(t, err, tc.input)
+		n, ok := node.(ast.SensitiveStmtNode)
+		require.True(t, ok, tc.input)
+		require.Equal(t, tc.secured, n.SecureText(), tc.input)
 	}
 }

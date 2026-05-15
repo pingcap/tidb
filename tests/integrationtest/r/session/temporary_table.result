@@ -141,6 +141,8 @@ insert into tl values (1, repeat('x', 512*1024));
 insert into tl values (1, repeat('x', 512*1024));
 Error 1114 (HY000): The table 'tl' is full
 rollback;
+set @@global.tidb_tmp_table_max_size = default;
+set @@session.tidb_tmp_table_max_size = default;
 drop table if exists g_tmp;
 create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows;
 begin;
@@ -650,7 +652,7 @@ create table t1 (a int);
 show create table t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `a` int(11) DEFAULT NULL
+  `a` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create view v1 as select 1;
 show create view v1;
@@ -670,7 +672,7 @@ create temporary table t1 (ct1 int);
 show create table t1;
 Table	Create Table
 t1	CREATE TEMPORARY TABLE `t1` (
-  `ct1` int(11) DEFAULT NULL
+  `ct1` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create temporary table v1 (cv1 int);
 show create view v1;
@@ -679,7 +681,7 @@ v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` 
 show create table v1;
 Table	Create Table
 v1	CREATE TEMPORARY TABLE `v1` (
-  `cv1` int(11) DEFAULT NULL
+  `cv1` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create temporary table s1 (cs1 int);
 show create sequence s1;
@@ -688,7 +690,7 @@ s1	CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 inc
 show create table s1;
 Table	Create Table
 s1	CREATE TEMPORARY TABLE `s1` (
-  `cs1` int(11) DEFAULT NULL
+  `cs1` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop view v1;
 show create view v1;
@@ -696,7 +698,7 @@ Error 1146 (42S02): Table 'session__temporary_table.v1' doesn't exist
 show create table v1;
 Table	Create Table
 v1	CREATE TEMPORARY TABLE `v1` (
-  `cv1` int(11) DEFAULT NULL
+  `cv1` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop sequence s1;
 show create sequence s1;
@@ -704,7 +706,7 @@ Error 1146 (42S02): Table 'session__temporary_table.s1' doesn't exist
 show create table s1;
 Table	Create Table
 s1	CREATE TEMPORARY TABLE `s1` (
-  `cs1` int(11) DEFAULT NULL
+  `cs1` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop sequence if exists s1;
 drop view if exists v1;

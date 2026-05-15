@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"math"
 	"strconv"
 
 	"github.com/gogo/protobuf/proto"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -38,7 +40,26 @@ func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) 
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
+		}
+		pbExpr = append(pbExpr, v)
+	}
+	return
+}
+
+// ProjectionExpressionsToPBList converts PhysicalProjection's expressions to tipb.Expr list for new plan.
+// It doesn't check type for top level column expression, since top level column expression doesn't imply any calculations
+func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+	pc := PbConverter{client: client, ctx: ctx}
+	for _, expr := range exprs {
+		var v *tipb.Expr
+		if column, ok := expr.(*Column); ok {
+			v = pc.columnToPBExpr(column, false)
+		} else {
+			v = pc.ExprToPB(expr)
+		}
+		if v == nil {
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -68,7 +89,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
-		return pc.columnToPBExpr(x)
+		return pc.columnToPBExpr(x, true)
 	case *ScalarFunction:
 		return pc.scalarFuncToPBExpr(x)
 	}
@@ -76,7 +97,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 }
 
 func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
-	ft := expr.GetType()
+	ft := expr.GetType(pc.ctx)
 	d, err := expr.Eval(pc.ctx, chunk.Row{})
 	if err != nil {
 		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo(pc.ctx)), zap.Error(err))
@@ -117,9 +138,19 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 		tp = tipb.ExprType_Bytes
 		val = d.GetBytes()
 	case types.KindFloat32:
+		if d.GetFloat64() == 0 && math.Signbit(d.GetFloat64()) {
+			// PB float constants reuse mem-comparable encoding, which normalizes -0 to +0.
+			// Keep negative-zero constants at root to avoid semantic drift after pushdown.
+			return tp, nil, false
+		}
 		tp = tipb.ExprType_Float32
 		val = codec.EncodeFloat(nil, d.GetFloat64())
 	case types.KindFloat64:
+		if d.GetFloat64() == 0 && math.Signbit(d.GetFloat64()) {
+			// PB float constants reuse mem-comparable encoding, which normalizes -0 to +0.
+			// Keep negative-zero constants at root to avoid semantic drift after pushdown.
+			return tp, nil, false
+		}
 		tp = tipb.ExprType_Float64
 		val = codec.EncodeFloat(nil, d.GetFloat64())
 	case types.KindMysqlDuration:
@@ -142,9 +173,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			sc := pc.ctx.GetSessionVars().StmtCtx
-			val, err := codec.EncodeMySQLTime(sc.TimeZone(), d.GetMysqlTime(), ft.GetType(), nil)
-			err = sc.HandleError(err)
+			tc, ec := typeCtx(pc.ctx), errCtx(pc.ctx)
+			val, err := codec.EncodeMySQLTime(tc.Location(), d.GetMysqlTime(), ft.GetType(), nil)
+			err = ec.HandleError(err)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
@@ -155,6 +186,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlEnum:
 		tp = tipb.ExprType_MysqlEnum
 		val = codec.EncodeUint(nil, d.GetUint64())
+	case types.KindVectorFloat32:
+		tp = tipb.ExprType_TiDBVectorFloat32
+		val = d.GetVectorFloat32().ZeroCopySerialize()
 	default:
 		return tp, nil, false
 	}
@@ -189,20 +223,22 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 	return ft1
 }
 
-func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
+func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-	switch column.GetType().GetType() {
-	case mysql.TypeBit:
-		if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
+	if checkType {
+		switch column.GetType(pc.ctx).GetType() {
+		case mysql.TypeBit:
+			if !IsPushDownEnabled(ast.TypeStr(mysql.TypeBit), kv.TiKV) {
+				return nil
+			}
+		case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			return nil
-		}
-	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-		return nil
-	case mysql.TypeEnum:
-		if !IsPushDownEnabled("enum", kv.UnSpecified) {
-			return nil
+		case mysql.TypeEnum:
+			if !IsPushDownEnabled("enum", kv.UnSpecified) {
+				return nil
+			}
 		}
 	}
 
@@ -235,7 +271,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 
 	// Check whether this function can be pushed.
-	if !canFuncBePushed(expr, kv.UnSpecified) {
+	if !canFuncBePushed(pc.ctx, expr, kv.UnSpecified) {
 		return nil
 	}
 

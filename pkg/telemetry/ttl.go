@@ -20,11 +20,10 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -43,7 +42,7 @@ const (
 		GROUP BY parent_table_id;`
 	// selectDelaySQL selects the deletion delay in minute for each table at the end of last day
 	selectDelaySQL = `SELECT
-    		parent_table_id, TIMESTAMPDIFF(MINUTE, MIN(tm), CURDATE()) AS ttl_minutes
+		parent_table_id, TIMESTAMPDIFF(MINUTE, MIN(tm), CURDATE()) AS ttl_minutes
 		FROM
 			(
 				SELECT
@@ -108,7 +107,7 @@ func (c *ttlUsageCounter) UpdateTableHistWithDelayTime(tblCnt int, hours int64) 
 
 func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttlUsageCounter) {
 	counter = &ttlUsageCounter{
-		TTLJobEnabled: variable.EnableTTLJob.Load(),
+		TTLJobEnabled: vardef.EnableTTLJob.Load(),
 		TTLHistDate:   time.Now().Add(-24 * time.Hour).Format(time.DateOnly),
 		TableHistWithDeleteRows: []*ttlHistItem{
 			{
@@ -146,17 +145,14 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 		},
 	}
 
-	is, ok := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	if !ok {
-		// it should never happen
-		logutil.BgLogger().Error(fmt.Sprintf("GetDomainInfoSchema returns a invalid type: %T", is))
-		return
-	}
-
+	is := sctx.GetLatestInfoSchema()
 	ttlTables := make(map[int64]*model.TableInfo)
 	for _, db := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(db.Name) {
-			tblInfo := tbl.Meta()
+		tblInfos, err := is.SchemaTableInfos(ctx, db.Name)
+		if err != nil {
+			return
+		}
+		for _, tblInfo := range tblInfos {
 			if tblInfo.State != model.StatePublic || tblInfo.TTLInfo == nil {
 				continue
 			}
@@ -172,7 +168,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, selectDeletedRowsOneDaySQL)
 	if err != nil {
-		logutil.BgLogger().Error("exec sql error", zap.String("SQL", selectDeletedRowsOneDaySQL), zap.Error(err))
+		logutil.BgLogger().Warn("exec sql error", zap.String("SQL", selectDeletedRowsOneDaySQL), zap.Error(err))
 	} else {
 		for _, row := range rows {
 			counter.UpdateTableHistWithDeleteRows(row.GetInt64(1))
@@ -181,7 +177,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, selectDelaySQL)
 	if err != nil {
-		logutil.BgLogger().Error("exec sql error", zap.String("SQL", selectDelaySQL), zap.Error(err))
+		logutil.BgLogger().Warn("exec sql error", zap.String("SQL", selectDelaySQL), zap.Error(err))
 	} else {
 		noHistoryTables := len(ttlTables)
 		for _, row := range rows {
@@ -200,7 +196,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 
 			innerRows, _, err := exec.ExecRestrictedSQL(ctx, nil, evalIntervalSQL)
 			if err != nil || len(innerRows) == 0 {
-				logutil.BgLogger().Error("exec sql error or empty rows returned", zap.String("SQL", evalIntervalSQL), zap.Error(err))
+				logutil.BgLogger().Warn("exec sql error or empty rows returned", zap.String("SQL", evalIntervalSQL), zap.Error(err))
 				continue
 			}
 

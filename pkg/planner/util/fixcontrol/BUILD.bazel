@@ -20,6 +20,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+    shard_count = 2,
     deps = [
         ":fixcontrol",
         "//pkg/testkit",
@@ -27,7 +28,6 @@ go_test(
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
-        "@org_golang_x_exp//maps",
         "@org_uber_go_goleak//:goleak",
     ],
 )

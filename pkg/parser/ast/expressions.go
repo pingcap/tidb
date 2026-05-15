@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 )
 
@@ -57,8 +56,8 @@ var (
 // ValueExpr define a interface for ValueExpr.
 type ValueExpr interface {
 	ExprNode
-	SetValue(val interface{})
-	GetValue() interface{}
+	SetValue(val any)
+	GetValue() any
 	GetDatumString() string
 	GetString() string
 	GetProjectionOffset() int
@@ -66,7 +65,7 @@ type ValueExpr interface {
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
-var NewValueExpr func(value interface{}, charset string, collate string) ValueExpr
+var NewValueExpr func(value any, charset string, collate string) ValueExpr
 
 // NewParamMarkerExpr creates a ParamMarkerExpr.
 var NewParamMarkerExpr func(offset int) ParamMarkerExpr
@@ -86,6 +85,9 @@ type BetweenExpr struct {
 
 // Restore implements Node interface.
 func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
+		ctx.WritePlain("(")
+	}
 	if err := n.Expr.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Expr")
 	}
@@ -100,6 +102,9 @@ func (n *BetweenExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(" AND ")
 	if err := n.Right.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Right ")
+	}
+	if ctx.Flags.HasRestoreBracketAroundBetweenExpr() {
+		ctx.WritePlain(")")
 	}
 	return nil
 }
@@ -173,8 +178,10 @@ func restoreBinaryOpWithSpacesAround(ctx *format.RestoreCtx, op opcode.Op) error
 
 // Restore implements Node interface.
 func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
+	originalFlags := ctx.Flags
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain("(")
+		ctx.Flags |= format.RestoreBracketAroundBetweenExpr
 	}
 	if err := n.L.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
@@ -187,6 +194,7 @@ func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 	}
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain(")")
+		ctx.Flags = originalFlags
 	}
 	return nil
 }
@@ -505,9 +513,9 @@ func (n *TableNameExpr) Accept(v Visitor) (Node, bool) {
 // ColumnName represents column name.
 type ColumnName struct {
 	node
-	Schema model.CIStr
-	Table  model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Table  CIStr
+	Name   CIStr
 }
 
 // Restore implements Node interface.
@@ -560,16 +568,23 @@ func (n *ColumnName) OrigColName() (ret string) {
 	return
 }
 
+// Match means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
+// Because column a want column from database test exactly.
+func (n *ColumnName) Match(b *ColumnName) bool {
+	if n.Schema.L == "" || n.Schema.L == b.Schema.L {
+		if n.Table.L == "" || n.Table.L == b.Table.L {
+			return n.Name.L == b.Name.L
+		}
+	}
+	return false
+}
+
 // ColumnNameExpr represents a column name expression.
 type ColumnNameExpr struct {
 	exprNode
 
 	// Name is the referenced column name.
 	Name *ColumnName
-
-	// Refer is the result field the column name refers to.
-	// The value of Refer.Expr is used as the value of the expression.
-	Refer *ResultField
 }
 
 // Restore implements Node interface.
@@ -889,6 +904,8 @@ type PatternLikeOrIlikeExpr struct {
 	IsLike bool
 
 	Escape byte
+	// EscapeExplicit indicates whether ESCAPE clause is specified explicitly.
+	EscapeExplicit bool
 
 	PatChars []byte
 	PatTypes []byte
@@ -918,10 +935,14 @@ func (n *PatternLikeOrIlikeExpr) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while restore PatternLikeOrIlikeExpr.Pattern")
 	}
 
-	escape := string(n.Escape)
-	if escape != "\\" {
+	if n.EscapeExplicit && n.Escape != '\\' {
 		ctx.WriteKeyWord(" ESCAPE ")
-		ctx.WriteString(escape)
+		if n.Escape == 0 {
+			// ESCAPE '' means no escape character
+			ctx.WriteString("")
+		} else {
+			ctx.WriteString(string(n.Escape))
+		}
 	}
 	return nil
 }
@@ -944,7 +965,7 @@ func (n *PatternLikeOrIlikeExpr) Format(w io.Writer) {
 	}
 
 	n.Pattern.Format(w)
-	if n.Escape != '\\' {
+	if n.EscapeExplicit && n.Escape != '\\' {
 		fmt.Fprint(w, " ESCAPE ")
 		fmt.Fprintf(w, "'%c'", n.Escape)
 	}
@@ -1031,8 +1052,6 @@ type PositionExpr struct {
 	N int
 	// P is the parameterized position.
 	P ExprNode
-	// Refer is the result field the position refers to.
-	Refer *ResultField
 }
 
 // Restore implements Node interface.
@@ -1264,6 +1283,8 @@ type VariableExpr struct {
 	Name string
 	// IsGlobal indicates whether this variable is global.
 	IsGlobal bool
+	// IsInstance indicates whether this variable is instance.
+	IsInstance bool
 	// IsSystem indicates whether this variable is a system variable in current session.
 	IsSystem bool
 	// ExplicitScope indicates whether this variable scope is set explicitly.
@@ -1279,6 +1300,8 @@ func (n *VariableExpr) Restore(ctx *format.RestoreCtx) error {
 		if n.ExplicitScope {
 			if n.IsGlobal {
 				ctx.WriteKeyWord("GLOBAL")
+			} else if n.IsInstance {
+				ctx.WriteKeyWord("INSTANCE")
 			} else {
 				ctx.WriteKeyWord("SESSION")
 			}
@@ -1468,34 +1491,45 @@ func (n *SetCollationExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type exprTextPositionCleaner struct {
+type exprCleaner struct {
+	// for Text Position clean.
 	oldTextPos []int
 	restore    bool
+	// for Name.O clean, ast.FuncCallExpr should be case-insensitive.
+	oldOriginFuncName []string
 }
 
-func (e *exprTextPositionCleaner) BeginRestore() {
+func (e *exprCleaner) BeginRestore() {
 	e.restore = true
 }
 
-func (e *exprTextPositionCleaner) Enter(n Node) (node Node, skipChildren bool) {
+func (e *exprCleaner) Enter(n Node) (node Node, skipChildren bool) {
 	if e.restore {
 		n.SetOriginTextPosition(e.oldTextPos[0])
 		e.oldTextPos = e.oldTextPos[1:]
+		if f, ok := n.(*FuncCallExpr); ok {
+			f.FnName.O = e.oldOriginFuncName[0]
+			e.oldOriginFuncName = e.oldOriginFuncName[1:]
+		}
 		return n, false
 	}
 	e.oldTextPos = append(e.oldTextPos, n.OriginTextPosition())
 	n.SetOriginTextPosition(0)
+	if f, ok := n.(*FuncCallExpr); ok {
+		e.oldOriginFuncName = append(e.oldOriginFuncName, f.FnName.O)
+		f.FnName.O = f.FnName.L
+	}
 	return n, false
 }
 
-func (e *exprTextPositionCleaner) Leave(n Node) (node Node, ok bool) {
+func (e *exprCleaner) Leave(n Node) (node Node, ok bool) {
 	return n, true
 }
 
 // ExpressionDeepEqual compares the equivalence of two expressions.
 func ExpressionDeepEqual(a ExprNode, b ExprNode) bool {
-	cleanerA := &exprTextPositionCleaner{}
-	cleanerB := &exprTextPositionCleaner{}
+	cleanerA := &exprCleaner{}
+	cleanerB := &exprCleaner{}
 	a.Accept(cleanerA)
 	b.Accept(cleanerB)
 	result := reflect.DeepEqual(a, b)

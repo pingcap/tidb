@@ -1,5 +1,0 @@
-[checkpoint]
-driver = "mysql"
-
-[tikv-importer]
-on-duplicate = "error"

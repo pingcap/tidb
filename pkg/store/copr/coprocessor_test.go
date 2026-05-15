@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -35,6 +36,26 @@ func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req
 		eventCb:  eventCb,
 		respChan: true,
 	})
+}
+
+func TestEnsureMonotonicKeyRanges(t *testing.T) {
+	ctx := context.Background()
+	ranges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("b"), EndKey: []byte("d")},
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+	})
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
+	require.True(t, reordered)
+	require.Equal(t, "a", string(ranges.At(0).StartKey))
+	require.Equal(t, "b", string(ranges.At(0).EndKey))
+	require.Equal(t, "b", string(ranges.At(1).StartKey))
+
+	sortedRanges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+		{StartKey: []byte("b"), EndKey: []byte("c")},
+	})
+	reordered = ensureMonotonicKeyRanges(ctx, sortedRanges)
+	require.False(t, reordered)
 }
 
 func TestBuildTasksWithoutBuckets(t *testing.T) {
@@ -226,7 +247,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 		}
 	}
 
-	// serveral ranges per bucket
+	// several ranges per bucket
 	// region:  nil---------------------------n-----------x-----------nil
 	// buckets: nil-----c-------g-------k-----n----t------x-----------nil
 	// ranges:  nil-a b-c d-e f-g h-i j-k-l m-n
@@ -361,7 +382,93 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	}
 }
 
-func TestSplitRegionRanges(t *testing.T) {
+func TestSplitKeyRangesByLocationsWithoutBuckets(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	locRanges, err := cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "c")), UnspecifiedLimit, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 1)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "a", "c")
+
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "c")), 0, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 0)
+
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("h", "y")), UnspecifiedLimit, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 3)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "h", "n")
+	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "n", "t")
+	rangeEqual(t, locRanges[2].Ranges.ToRanges(), "t", "y")
+
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("h", "n")), UnspecifiedLimit, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 1)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "h", "n")
+
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("s", "s")), UnspecifiedLimit, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 1)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "s", "s")
+
+	// min --> max
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "z")), UnspecifiedLimit, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 4)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "a", "g")
+	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "g", "n")
+	rangeEqual(t, locRanges[2].Ranges.ToRanges(), "n", "t")
+	rangeEqual(t, locRanges[3].Ranges.ToRanges(), "t", "z")
+
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "z")), 3, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 3)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "a", "g")
+	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "g", "n")
+	rangeEqual(t, locRanges[2].Ranges.ToRanges(), "n", "t")
+
+	// many range
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z")), UnspecifiedLimit, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 4)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "a", "b", "c", "d", "e", "f", "f", "g")
+	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "g", "h", "i", "j", "k", "l", "m", "n")
+	rangeEqual(t, locRanges[2].Ranges.ToRanges(), "o", "p", "q", "r", "s", "t")
+	rangeEqual(t, locRanges[3].Ranges.ToRanges(), "u", "v", "w", "x", "y", "z")
+
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "b", "b", "h", "h", "m", "n", "t", "v", "w")), UnspecifiedLimit, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 4)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "a", "b", "b", "g")
+	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "g", "h", "h", "m", "n")
+	rangeEqual(t, locRanges[2].Ranges.ToRanges(), "n", "t")
+	rangeEqual(t, locRanges[3].Ranges.ToRanges(), "v", "w")
+
+	locRanges, err = cache.SplitKeyRangesByLocations(bo, NewKeyRanges(BuildKeyRanges("a", "b", "v", "w")), UnspecifiedLimit, false, false)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 2)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "a", "b")
+	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "v", "w")
+}
+
+func TestSplitKeyRanges(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -385,6 +492,10 @@ func TestSplitRegionRanges(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	rangeEqual(t, ranges, "a", "c")
+
+	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("a", "c"), 0)
+	require.NoError(t, err)
+	require.Len(t, ranges, 0)
 
 	ranges, err = cache.SplitRegionRanges(bo, BuildKeyRanges("h", "y"), UnspecifiedLimit)
 	require.NoError(t, err)
@@ -476,7 +587,7 @@ func buildCopRanges(keys ...string) *KeyRanges {
 func taskEqual(t *testing.T, task *copTask, regionID, bucketsVer uint64, keys ...string) {
 	require.Equal(t, task.region.GetID(), regionID)
 	require.Equal(t, task.bucketsVer, bucketsVer)
-	for i := 0; i < task.ranges.Len(); i++ {
+	for i := range task.ranges.Len() {
 		r := task.ranges.At(i)
 		require.Equal(t, string(r.StartKey), keys[2*i])
 		require.Equal(t, string(r.EndKey), keys[2*i+1])
@@ -484,7 +595,7 @@ func taskEqual(t *testing.T, task *copTask, regionID, bucketsVer uint64, keys ..
 }
 
 func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
-	for i := 0; i < len(ranges); i++ {
+	for i := range ranges {
 		r := ranges[i]
 		require.Equal(t, string(r.StartKey), keys[2*i])
 		require.Equal(t, string(r.EndKey), keys[2*i+1])
@@ -521,6 +632,41 @@ func TestBuildPagingTasks(t *testing.T) {
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
 	require.True(t, tasks[0].paging)
 	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
+}
+
+func TestBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{}
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
+	req.MaxExecutionTime = 10000
+	_, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	require.NoError(t, err)
+	contextDone := false
+	select {
+	case <-bo.GetCtx().Done():
+		contextDone = true
+	default:
+	}
+	require.False(t, contextDone, "buildCopTasks should not cancel bo context")
 }
 
 func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
@@ -778,7 +924,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 func TestSmallTaskConcurrencyLimit(t *testing.T) {
 	smallTaskCount := 1000
 	tasks := make([]*copTask, 0, smallTaskCount)
-	for i := 0; i < smallTaskCount; i++ {
+	for range smallTaskCount {
 		tasks = append(tasks, &copTask{
 			RowCountHint: 1,
 		})
@@ -790,4 +936,54 @@ func TestSmallTaskConcurrencyLimit(t *testing.T) {
 	count, conc = smallTaskConcurrency(tasks, 0)
 	require.Equal(t, smallConcPerCore, conc)
 	require.Equal(t, smallTaskCount, count)
+}
+
+func TestBatchStoreCoprOnlySendToLeader(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, _, _ = testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{
+		StoreBatchSize:     3,
+		StoreBusyThreshold: time.Second,
+	}
+	ranges := buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	tasks, err := buildCopTasks(bo, ranges, &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 3, 3},
+	})
+	require.Len(t, tasks, 1)
+	require.Zero(t, tasks[0].busyThreshold)
+	batched := tasks[0].batchTaskList
+	require.Len(t, batched, 3)
+	for _, task := range batched {
+		require.Zero(t, task.task.busyThreshold)
+	}
+
+	req = &kv.Request{
+		StoreBatchSize:     0,
+		StoreBusyThreshold: time.Second,
+	}
+	tasks, err = buildCopTasks(bo, ranges, &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 3, 3},
+	})
+	require.Len(t, tasks, 4)
+	for _, task := range tasks {
+		require.Equal(t, task.busyThreshold, time.Second)
+	}
 }

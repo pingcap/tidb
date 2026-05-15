@@ -21,10 +21,9 @@ update tidb_background_subtask set summary = json_set(summary, "$.row_count", 9)
 update tidb_background_subtask set summary = json_set(summary, "$.row_count", 10) where id = 10;
 select sum(json_extract(summary, '$.row_count')) from tidb_background_subtask;
 truncate table tidb_background_subtask;
-
+truncate table tidb_background_subtask_history;
 # TestDDLBackgroundSubtaskHistoryTable
 use mysql;
-show create table mysql.tidb_background_subtask_history;
 insert into tidb_background_subtask(id, state, checkpoint) values (1, 0, "");
 insert into tidb_background_subtask_history select * from tidb_background_subtask;
 select * from tidb_background_subtask_history;

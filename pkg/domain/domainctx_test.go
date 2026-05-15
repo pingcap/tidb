@@ -19,17 +19,22 @@ import (
 
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func TestDomainCtx(t *testing.T) {
 	ctx := mock.NewContext()
-	require.NotEqual(t, "", domainKey.String())
-
-	BindDomain(ctx, nil)
+	ctx.BindDomainAndSchValidator(nil, nil)
 	v := GetDomain(ctx)
 	require.Nil(t, v)
 
-	ctx.ClearValue(domainKey)
+	ctx.BindDomainAndSchValidator(&Domain{}, nil)
 	v = GetDomain(ctx)
-	require.Nil(t, v)
+	require.NotNil(t, v)
+}
+
+func TestGetRUVersionWithoutController(t *testing.T) {
+	do := NewMockDomain()
+	// Without a ResourceGroupsController, should return DefaultRUVersion
+	require.Equal(t, rmclient.DefaultRUVersion, do.GetRUVersion())
 }

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -28,17 +29,19 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -80,7 +83,7 @@ func (h coprHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	}
 
 	var execDetails []*execDetail
-	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+	if dagReq.GetCollectExecutionSummaries() {
 		execDetails = e.ExecDetails()
 	}
 
@@ -111,6 +114,11 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
+	if dagReq.DivPrecisionIncrement != nil {
+		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
+	} else {
+		sctx.GetSessionVars().DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
+	}
 
 	ctx := &dagContext{
 		dagReq:    dagReq,
@@ -179,7 +187,7 @@ func (h coprHandler) buildDAGForTiFlash(ctx *dagContext, farther *tipb.Executor)
 
 func (h coprHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
 	var src executor
-	for i := 0; i < len(executors); i++ {
+	for i := range executors {
 		curr, _, err := h.buildExec(ctx, executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -325,7 +333,7 @@ func (h coprHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]agg
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
 		var aggExpr aggregation.Aggregation
-		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sctx)
+		aggExpr, _, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sctx.GetExprCtx())
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
@@ -374,11 +382,11 @@ func (h coprHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	aggCtxs := make([]*aggregation.AggEvaluateContext, 0, len(aggs))
 	for _, agg := range aggs {
-		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sctx))
+		aggCtxs = append(aggCtxs, agg.CreateContext(ctx.evalCtx.sctx.GetExprCtx().GetEvalCtx()))
 	}
 	groupByCollators := make([]collate.Collator, 0, len(groupBys))
 	for _, expr := range groupBys {
-		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType().GetCollate()))
+		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType(ctx.evalCtx.sctx.GetExprCtx().GetEvalCtx()).GetCollate()))
 	}
 
 	return &streamAggExec{
@@ -437,8 +445,7 @@ type evalContext struct {
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
-	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
-	copy(e.columnInfos, cols)
+	e.columnInfos = slices.Clone(cols)
 
 	e.colIDs = make(map[int64]int, len(e.columnInfos))
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
@@ -463,10 +470,11 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 
 // flagsAndTzToSessionContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
-	sctx := mock.NewContext()
+	sctx := mock.NewContextDeprecated()
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx.GetSessionVars().StmtCtx = sc
+	sctx.GetSessionVars().TimeZone = tz
 	return sctx
 }
 
@@ -491,10 +499,10 @@ func (mockClientStream) CloseSend() error { return nil }
 func (mockClientStream) Context() context.Context { return nil }
 
 // SendMsg implements grpc.ClientStream interface
-func (mockClientStream) SendMsg(m interface{}) error { return nil }
+func (mockClientStream) SendMsg(m any) error { return nil }
 
 // RecvMsg implements grpc.ClientStream interface
-func (mockClientStream) RecvMsg(m interface{}) error { return nil }
+func (mockClientStream) RecvMsg(m any) error { return nil }
 
 type mockBathCopErrClient struct {
 	mockClientStream
@@ -532,7 +540,7 @@ func (mock *mockBatchCopDataClient) Recv() (*coprocessor.BatchResponse, error) {
 	return nil, io.EOF
 }
 
-func (h coprHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, counts []int64) *tipb.SelectResponse {
+func (h coprHandler) initSelectResponse(err error, warnings []contextutil.SQLWarn, counts []int64) *tipb.SelectResponse {
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		OutputCounts: counts,
@@ -721,7 +729,7 @@ func (h coprHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan
 }
 
 func reverseKVRanges(kvRanges []kv.KeyRange) {
-	for i := 0; i < len(kvRanges)/2; i++ {
+	for i := range len(kvRanges) / 2 {
 		j := len(kvRanges) - i - 1
 		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
 	}
@@ -753,12 +761,7 @@ func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
 }
 
 func isDuplicated(offsets []int, offset int) bool {
-	for _, idx := range offsets {
-		if idx == offset {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(offsets, offset)
 }
 
 func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector []int) ([]int, error) {

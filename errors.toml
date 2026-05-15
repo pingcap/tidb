@@ -51,6 +51,21 @@ error = '''
 invalid metafile: %s
 '''
 
+["BR:Common:ErrInvalidRange"]
+error = '''
+invalid restore range
+'''
+
+["BR:Common:ErrMigrationNotFound"]
+error = '''
+no migration found
+'''
+
+["BR:Common:ErrMigrationVersionNotSupported"]
+error = '''
+the migration version isn't supported
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -104,6 +119,11 @@ unknown external storage error
 ["BR:KV:ErrKVClusterIDMismatch"]
 error = '''
 tikv cluster ID mismatch
+'''
+
+["BR:KV:ErrKVDiskFull"]
+error = '''
+disk is full
 '''
 
 ["BR:KV:ErrKVDownloadFailed"]
@@ -176,14 +196,29 @@ error = '''
 PD leader not found
 '''
 
+["BR:PD:ErrPDNotFullyScatter"]
+error = '''
+pd not fully scattered
+'''
+
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
-failed to wait region splitted
+failed to wait region split
 '''
 
 ["BR:PD:ErrPDUpdateFailed"]
 error = '''
 failed to update PD
+'''
+
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
 '''
 
 ["BR:PiTR:ErrInvalidTaskInfo"]
@@ -211,6 +246,11 @@ error = '''
 databases already existed in restored cluster
 '''
 
+["BR:Restore:ErrRestoreCheckpointMismatch"]
+error = '''
+restore checkpoint mismatch
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
@@ -224,11 +264,6 @@ incompatible system table
 ["BR:Restore:ErrRestoreInvalidBackup"]
 error = '''
 invalid backup
-'''
-
-["BR:Restore:ErrRestoreInvalidRange"]
-error = '''
-invalid restore range
 '''
 
 ["BR:Restore:ErrRestoreInvalidRewrite"]
@@ -286,6 +321,11 @@ error = '''
 failed to write and ingest
 '''
 
+["BR:Restore:ErrTablesAlreadyExisted"]
+error = '''
+tables already existed in restored cluster
+'''
+
 ["BR:Restore:ErrUnsupportedSysTable"]
 error = '''
 the system table isn't supported for restoring yet
@@ -296,6 +336,61 @@ error = '''
 stream task already exists
 '''
 
+["BR:Stream:ErrStreamLogTaskHasNoStorage"]
+error = '''
+stream task has no storage
+'''
+
+["Import:ErrCastValue"]
+error = '''
+Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
+'''
+
+["Ingest:EpochNotMatch"]
+error = '''
+epoch not match
+'''
+
+["Ingest:ErrKVIngestFailed"]
+error = '''
+ingest tikv failed
+'''
+
+["Ingest:ErrKVRaftProposalDropped"]
+error = '''
+raft proposal dropped
+'''
+
+["Ingest:NotLeader"]
+error = '''
+not leader
+'''
+
+["Ingest:ReadIndexNotReady"]
+error = '''
+read index not ready
+'''
+
+["Ingest:RegionNotFound"]
+error = '''
+region not found
+'''
+
+["Ingest:ServerIsBusy"]
+error = '''
+server is busy
+'''
+
+["Ingest:StoreDiskFull"]
+error = '''
+store disk full
+'''
+
+["KV:ErrNoLeader"]
+error = '''
+region has no leader, region '%d'
+'''
+
 ["Lighting:Restore:ErrChecksumMismatch"]
 error = '''
 checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)
@@ -304,6 +399,11 @@ checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d
 ["Lightning:Checkpoint:ErrCheckpointNotFound"]
 error = '''
 checkpoint not found
+'''
+
+["Lightning:Checkpoint:ErrCheckpointTableNotFound"]
+error = '''
+checkpoint for table %s not found
 '''
 
 ["Lightning:Checkpoint:ErrCleanCheckpoint"]
@@ -396,11 +496,6 @@ error = '''
 init meta manager error
 '''
 
-["Lightning:KV:EpochNotMatch"]
-error = '''
-epoch not match
-'''
-
 ["Lightning:KV:ErrCheckKVVersion"]
 error = '''
 check tikv version error
@@ -414,41 +509,6 @@ check multi-ingest support error
 ["Lightning:KV:ErrCreateKVClient"]
 error = '''
 create kv client error
-'''
-
-["Lightning:KV:ErrKVIngestFailed"]
-error = '''
-ingest tikv failed
-'''
-
-["Lightning:KV:ErrKVRaftProposalDropped"]
-error = '''
-raft proposal dropped
-'''
-
-["Lightning:KV:ErrNoLeader"]
-error = '''
-write to tikv with no leader returned, region '%d', leader: %d
-'''
-
-["Lightning:KV:NotLeader"]
-error = '''
-not leader
-'''
-
-["Lightning:KV:ReadIndexNotReady"]
-error = '''
-read index not ready
-'''
-
-["Lightning:KV:RegionNotFound"]
-error = '''
-region not found
-'''
-
-["Lightning:KV:ServerIsBusy"]
-error = '''
-server is busy
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -511,6 +571,11 @@ error = '''
 check local storage resource error
 '''
 
+["Lightning:PreCheck:ErrCheckPDTiDBSameCluster"]
+error = '''
+check PD and TiDB in the same cluster error
+'''
+
 ["Lightning:PreCheck:ErrCheckTableEmpty"]
 error = '''
 check table empty error
@@ -566,9 +631,19 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDataConflictRecords"]
+error = '''
+found data conflict records in table %s, primary key is '%s', row data is '%s'
+'''
+
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
 found duplicate key '%s', value '%s'
+'''
+
+["Lightning:Restore:ErrFoundIndexConflictRecords"]
+error = '''
+found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'
 '''
 
 ["Lightning:Restore:ErrInvalidMetaStatus"]
@@ -881,6 +956,11 @@ error = '''
 View's SELECT contains a '%s' clause
 '''
 
+["ddl:1351"]
+error = '''
+View's SELECT contains a variable or parameter
+'''
+
 ["ddl:1353"]
 error = '''
 In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
@@ -989,6 +1069,11 @@ Partition constant is out of partition function domain
 ["ddl:1564"]
 error = '''
 This partition function is not allowed
+'''
+
+["ddl:1566"]
+error = '''
+Not allowed to use NULL value in VALUES LESS THAN
 '''
 
 ["ddl:1567"]
@@ -1296,6 +1381,11 @@ error = '''
 Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.
 '''
 
+["ddl:3981"]
+error = '''
+Storage engine does not support ENGINE_ATTRIBUTE.
+'''
+
 ["ddl:4135"]
 error = '''
 Sequence '%-.64s.%-.64s' has run out
@@ -1388,7 +1478,7 @@ Invalid storage current version: %d
 
 ["ddl:8210"]
 error = '''
-Invalid %!s(MISSING) state: %!v(MISSING)
+Invalid %s state: %v
 '''
 
 ["ddl:8211"]
@@ -1529,6 +1619,46 @@ Job [%v] has already been paused
 ["ddl:8263"]
 error = '''
 The operation is not allowed while the bdr role of this cluster is set to %s.
+'''
+
+["ddl:8264"]
+error = '''
+Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
+'''
+
+["ddl:8265"]
+error = '''
+Auto analyze is not effective for index '%-.192s', need analyze manually
+'''
+
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
+["ddl:8267"]
+error = '''
+%s is forbidden
+'''
+
+["ddl:8270"]
+error = '''
+Invalid engine attribute format: %s
+'''
+
+["ddl:8271"]
+error = '''
+Invalid storage class: %s
+'''
+
+["ddl:8272"]
+error = '''
+Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
+'''
+
+["ddl:9014"]
+error = '''
+TiFlash backfill index failed: %s
 '''
 
 ["domain:8027"]
@@ -1871,6 +2001,11 @@ error = '''
 Unsupported option %s for %s
 '''
 
+["executor:8167"]
+error = '''
+Duplicate key conflict found. Please resolve conflicts in the input dataset, or set on_duplicate_key to a strategy that can handle conflicts, for example 'capture'
+'''
+
 ["executor:8170"]
 error = '''
 Job ID %d doesn't exist
@@ -1906,6 +2041,21 @@ error = '''
 Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]
 '''
 
+["executor:8177"]
+error = '''
+Delete can not find column %s for table %s
+'''
+
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
+'''
+
+["executor:8180"]
+error = '''
+Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -1913,7 +2063,7 @@ Failed to split region ranges: %s
 
 ["executor:8253"]
 error = '''
-Query execution was interrupted, identified as runaway query
+Query execution was interrupted, identified as runaway query [%s]
 '''
 
 ["executor:8254"]
@@ -1924,6 +2074,11 @@ Quarantined and interrupted because of being in runaway watch list
 ["executor:8255"]
 error = '''
 Unknown background task name '%-.192s'
+'''
+
+["executor:8274"]
+error = '''
+tidb_max_keys_read limit exceeded
 '''
 
 ["expression:1139"]
@@ -1969,6 +2124,11 @@ error = '''
 ["expression:1365"]
 error = '''
 Division by 0
+'''
+
+["expression:1426"]
+error = '''
+Too-big precision %d specified for '%-.192s'. Maximum is %d.
 '''
 
 ["expression:1582"]
@@ -2021,6 +2181,11 @@ error = '''
 Invalid JSON text: %-.192s
 '''
 
+["json:3141"]
+error = '''
+Invalid JSON text in argument %d to function %s: "%s" at position %d.
+'''
+
 ["json:3143"]
 error = '''
 Invalid JSON path expression. The error is around character position %d.
@@ -2033,7 +2198,7 @@ Cannot create a JSON value from a string with CHARACTER SET '%s'.
 
 ["json:3149"]
 error = '''
-In this situation, path expressions may not contain the * and ** tokens or range selection.
+In this situation, path expressions may not contain the * and ** tokens or an array range.
 '''
 
 ["json:3150"]
@@ -2054,6 +2219,11 @@ JSON documents may not contain NULL member names.
 ["json:3165"]
 error = '''
 A path expression is not a path to a cell in an array.
+'''
+
+["json:3853"]
+error = '''
+Invalid JSON type in argument %d to function %s; an %s is required.
 '''
 
 ["json:8067"]
@@ -2104,6 +2274,11 @@ entry too large, the max entry size is %d, the size of data is %d
 ["kv:8026"]
 error = '''
 not implemented
+'''
+
+["kv:8178"]
+error = '''
+key is too large, the size of given key is %d
 '''
 
 ["kv:9007"]
@@ -2159,6 +2334,16 @@ Resource group '%-.192s' already exists
 ["meta:8249"]
 error = '''
 Unknown resource group '%-.192s'
+'''
+
+["meta:8268"]
+error = '''
+masking policy already exists
+'''
+
+["meta:8269"]
+error = '''
+masking policy doesn't exist
 '''
 
 ["planner:1044"]
@@ -2304,6 +2489,11 @@ Table '%s' from one of the %ss cannot be used in %s
 ["planner:1288"]
 error = '''
 The target table %-.100s of the %s is not updatable
+'''
+
+["planner:1305"]
+error = '''
+%s %s does not exist
 '''
 
 ["planner:1345"]
@@ -2531,6 +2721,11 @@ error = '''
 Variable '%s' might not be affected by SET_VAR hint.
 '''
 
+["planner:3809"]
+error = '''
+Invalid use of LATERAL: %s
+'''
+
 ["planner:8006"]
 error = '''
 `%s` is unsupported on temporary tables.
@@ -2604,6 +2799,11 @@ Column '%s' in ANALYZE column option does not exist in table '%s'
 ["planner:8145"]
 error = '''
 variable %s has no effect in TiDB
+'''
+
+["planner:8177"]
+error = '''
+Delete can not find column %s for table %s
 '''
 
 ["planner:8242"]
@@ -2836,6 +3036,21 @@ error = '''
 Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
 '''
 
+["schema:8257"]
+error = '''
+Cannot set resource group for a role
+'''
+
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
+'''
+
 ["server:1040"]
 error = '''
 Too many connections
@@ -2844,6 +3059,11 @@ Too many connections
 ["server:1045"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
+["server:1053"]
+error = '''
+Server shutdown in progress
 '''
 
 ["server:1148"]
@@ -2859,6 +3079,11 @@ Got a packet bigger than 'max_allowed_packet' bytes
 ["server:1184"]
 error = '''
 Aborted connection %d to db: '%-.192s' user: '%-.48s' host: '%-.255s' (%-.64s)
+'''
+
+["server:1203"]
+error = '''
+User %-.64s has exceeded the 'max_user_connections' resource
 '''
 
 ["server:1251"]
@@ -2879,6 +3104,11 @@ You must reset your password using ALTER USER statement before executing this st
 ["server:3159"]
 error = '''
 Connections using insecure transport are prohibited while --require_secure_transport=ON.
+'''
+
+["server:8051"]
+error = '''
+unknown field type
 '''
 
 ["server:8052"]
@@ -3118,7 +3348,7 @@ Region is unavailable
 
 ["tikv:9006"]
 error = '''
-GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v
+GC life time is shorter than transaction duration, transaction start ts is %v (%v), txn safe point is %v (%v)
 '''
 
 ["tikv:9008"]
@@ -3213,7 +3443,7 @@ Too big scale %d specified for column '%-.192s'. Maximum is %d.
 
 ["types:1426"]
 error = '''
-Too big precision %d specified for column '%-.192s'. Maximum is %d.
+Too-big precision %d specified for '%-.192s'. Maximum is %d.
 '''
 
 ["types:1427"]
@@ -3244,6 +3474,16 @@ error = '''
 ["types:3013"]
 error = '''
 Invalid size for column '%s'.
+'''
+
+["types:3153"]
+error = '''
+The path expression '$' is not allowed in this context.
+'''
+
+["types:3154"]
+error = '''
+The oneOrAll argument to %s may take these values: 'one' or 'all'.
 '''
 
 ["types:8029"]

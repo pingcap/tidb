@@ -137,6 +137,11 @@ select * from t1 where a in (select * from t2);
 select * from t1 where a in (select * from t2 where false);
 --sorted_result
 select * from t1 where a not in (select * from t2 where false);
+drop table if exists t0;
+create table t0 (c1 blob);
+insert into t0 values ('gO'), ('W');
+select hex(t0.c1) from t0 where 0 in (select t0.c1 from t0) order by hex(t0.c1);
+drop table if exists t0;
 drop table if exists t1, t2;
 create table t1 (a int, key b (a));
 create table t2 (a int, key b (a));
@@ -181,7 +186,7 @@ create table t1(a bigint primary key, b bigint);
 create table t2(a bigint primary key, b bigint);
 insert into t1 values(1, 100), (2, 100), (3, 100), (4, 100), (5, 100);
 insert into t2 select a*100, b*100 from t1;
-explain format = 'brief' select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
+explain format = 'plan_tree' select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
 set @@tidb_init_chunk_size=1;
 select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
 drop table if exists t;
@@ -513,16 +518,16 @@ create table t1 (a int, b int);
 create table t2 (a int, c int);
 insert t1 values (1,2), (10,20), (0,0);
 insert t2 values (1,3), (100,200), (0,0);
-explain format = 'brief' select * from t1 natural join t2;
+explain format = 'plan_tree' select * from t1 natural join t2;
 --sorted_result
 select * from t1 natural join t2;
-explain format = 'brief' select * from t1 natural left join t2 order by a;
+explain format = 'plan_tree' select * from t1 natural left join t2 order by a;
 --sorted_result
 select * from t1 natural left join t2 order by a;
-explain format = 'brief' select * from t1 natural right join t2 order by a;
+explain format = 'plan_tree' select * from t1 natural right join t2 order by a;
 --sorted_result
 select * from t1 natural right join t2 order by a;
-explain format = 'brief' SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
+explain format = 'plan_tree' SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
 --sorted_result
 SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
 
@@ -638,6 +643,7 @@ insert into t values (1, 2), (1, NULL);
 insert into t1 values (1, 2), (1, NULL);
 select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);
 
+
 ## Issue 11895
 drop table if exists t;
 drop table if exists t1;
@@ -645,7 +651,7 @@ create table t(c1 bigint unsigned);
 create table t1(c1 bit(64));
 insert into t value(18446744073709551615);
 insert into t1 value(-1);
-select * from t, t1 where t.c1 = t1.c1;
+select hex(t1.c1), t.c1 from t, t1 where t.c1 = t1.c1;
 
 ## Issues 11896
 drop table if exists t;
@@ -654,7 +660,7 @@ create table t(c1 bigint);
 create table t1(c1 bit(64));
 insert into t value(1);
 insert into t1 value(1);
-select * from t, t1 where t.c1 = t1.c1;
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
 drop table if exists t;
 drop table if exists t1;
 create table t(c1 bigint);
@@ -663,6 +669,7 @@ insert into t value(-1);
 insert into t1 value(18446744073709551615);
 ## TODO: MySQL will return one row, because c1 in t1 is 0xffffffff, which equals to -1.
 select * from t, t1 where t.c1 = t1.c1;
+
 
 drop table if exists t;
 drop table if exists t1;
@@ -951,7 +958,7 @@ create table t(id int primary key);
 create table s(id int);
 insert into t values(1), (2);
 insert into s values(2), (2);
-select *, (select count(id) from s where id = t.id) from t;
+select *, (select count(id) from s where id = t.id) from t order by id;
 select *, 0 < any (select count(id) from s where id = t.id) from t;
 select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1;
 
@@ -1071,7 +1078,7 @@ insert into t select * from t;
 insert into t select * from t;
 insert into t select * from t;
 insert into t select * from t;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
 
@@ -1079,13 +1086,17 @@ set tidb_mem_quota_query = default;
 set global tidb_mem_oom_action = default;
 set global tidb_enable_tmp_storage_on_oom = default;
 
-# TestJoinInDisk
-SET GLOBAL tidb_mem_oom_action='LOG';
-## TODO(fengliyuan): how to ensure that it is using disk really?
-set @@tidb_mem_quota_query=1;
-drop table if exists t, t1;
-create table t(c1 int, c2 int);
-create table t1(c1 int, c2 int);
-insert into t values(1,1),(2,2);
-insert into t1 values(2,3),(4,4);
-select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
+# TestIssue30244
+drop table if exists t1,t2,t3,t4;
+create table t1 (c int, b int);
+create table t2 (a int, b int);
+create table t3 (b int, c int);
+create table t4 (y int, c int);
+--error 1052
+select * from t1 natural join (t3 cross join t4);
+--error 1052
+select * from (t3 cross join t4) natural join t1;
+--error 1052
+select * from (t1 join t2 on t1.b=t2.b) natural join (t3 natural join t4);
+--error 1052
+select * from (t3 natural join t4) natural join (t1 join t2 on t1.b=t2.b);

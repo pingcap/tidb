@@ -21,7 +21,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 // IndexInfo contains information of table index.
@@ -152,7 +152,7 @@ func FindAllIndex(tableInfo *model.TableInfo) []*model.IndexInfo {
 
 // FindAllColumnWithIndex returns columns with index, order is pk, uk and normal index.
 func FindAllColumnWithIndex(tableInfo *model.TableInfo) []*model.ColumnInfo {
-	colsMap := make(map[string]interface{})
+	colsMap := make(map[string]any)
 	cols := make([]*model.ColumnInfo, 0, 2)
 
 	for _, index := range FindAllIndex(tableInfo) {

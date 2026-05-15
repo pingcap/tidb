@@ -15,7 +15,6 @@
 package aggfuncs
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -37,14 +36,14 @@ func (*percentRank) ResetPartialResult(partial PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (*percentRank) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) (memDelta int64, err error) {
+func (*percentRank) UpdatePartialResult(_ AggFuncUpdateContext, rowsInGroup []chunk.Row, partial PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(partial)
 	p.rows = append(p.rows, rowsInGroup...)
 	memDelta += int64(len(rowsInGroup)) * DefRowSize
 	return memDelta, nil
 }
 
-func (pr *percentRank) AppendFinalResult2Chunk(_ sessionctx.Context, partial PartialResult, chk *chunk.Chunk) error {
+func (pr *percentRank) AppendFinalResult2Chunk(_ AggFuncUpdateContext, partial PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Rank)(partial)
 	numRows := int64(len(p.rows))
 	p.curIdx++

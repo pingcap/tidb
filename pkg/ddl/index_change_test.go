@@ -16,21 +16,22 @@ package ddl_test
 
 import (
 	"context"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -43,8 +44,6 @@ func TestIndexChange(t *testing.T) {
 	tk.MustExec("create table t (c1 int primary key, c2 int)")
 	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3);")
 
-	d := dom.DDL()
-	tc := &callback.TestDDLCallback{Do: dom}
 	// set up hook
 	prevState := model.StateNone
 	addIndexDone := false
@@ -54,15 +53,18 @@ func TestIndexChange(t *testing.T) {
 		writeOnlyTable  table.Table
 		publicTable     table.Table
 	)
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.TableName != "t" {
+			return
+		}
 		if job.SchemaState == prevState {
 			return
 		}
 		jobID.Store(job.ID)
-		ctx1 := testNewContext(store)
+		ctx1 := testkit.NewSession(t, store)
 		prevState = job.SchemaState
 		require.NoError(t, dom.Reload())
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
@@ -80,25 +82,22 @@ func TestIndexChange(t *testing.T) {
 				addIndexDone = true
 			}
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(tc)
+	})
 	tk.MustExec("alter table t add index c2(c2)")
 	// We need to make sure onJobUpdated is called in the first hook.
 	// After testCreateIndex(), onJobUpdated() may not be called when job.state is Sync.
 	// If we skip this check, prevState may wrongly set to StatePublic.
-	for i := 0; i <= 10; i++ {
+	for i := 0; i <= 100; i++ {
 		if addIndexDone {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
-	v := getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: publicTable.Meta()})
+	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, publicTable.Meta())
 
 	prevState = model.StateNone
 	var noneTable table.Table
-	onJobUpdatedExportedFunc2 := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID.Store(job.ID)
 		if job.SchemaState == prevState {
 			return
@@ -106,9 +105,9 @@ func TestIndexChange(t *testing.T) {
 		prevState = job.SchemaState
 		var err error
 		require.NoError(t, dom.Reload())
-		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
+		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
-		ctx1 := testNewContext(store)
+		ctx1 := testkit.NewSession(t, store)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl
@@ -122,20 +121,19 @@ func TestIndexChange(t *testing.T) {
 			noneTable = tbl
 			require.Equalf(t, 0, len(noneTable.Indices()), "index should have been dropped")
 		}
-	}
-	tc.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc2)
+	})
 	tk.MustExec("alter table t drop index c2")
-	v = getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: noneTable.Meta()})
+	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, noneTable.Meta())
 }
 
-func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
+func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {
 	idx := tbl.Indices()[0]
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(indexValue), kv.IntHandle(handle))
+	sc := ctx.GetSessionVars().StmtCtx
+	doesExist, _, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, types.MakeDatums(indexValue), kv.IntHandle(handle))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -150,11 +148,11 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 
 func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = delOnlyTbl.AddRecord(ctx, types.MakeDatums(4, 4))
+	_, err = delOnlyTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(4, 4))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -164,7 +162,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// WriteOnlyTable: insert t values (5, 5);
-	_, err = writeOnlyTbl.AddRecord(ctx, types.MakeDatums(5, 5))
+	_, err = writeOnlyTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(5, 5))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -174,7 +172,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// WriteOnlyTable: update t set c2 = 1 where c1 = 4 and c2 = 4
-	err = writeOnlyTbl.UpdateRecord(context.Background(), ctx, kv.IntHandle(4), types.MakeDatums(4, 4), types.MakeDatums(4, 1), touchedSlice(writeOnlyTbl))
+	err = writeOnlyTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(4), types.MakeDatums(4, 4), types.MakeDatums(4, 1), touchedSlice(writeOnlyTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -184,7 +182,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// DeleteOnlyTable: update t set c2 = 3 where c1 = 4 and c2 = 1
-	err = delOnlyTbl.UpdateRecord(context.Background(), ctx, kv.IntHandle(4), types.MakeDatums(4, 1), types.MakeDatums(4, 3), touchedSlice(writeOnlyTbl))
+	err = delOnlyTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(4), types.MakeDatums(4, 1), types.MakeDatums(4, 3), touchedSlice(writeOnlyTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -200,7 +198,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// WriteOnlyTable: delete t where c1 = 4 and c2 = 3
-	err = writeOnlyTbl.RemoveRecord(ctx, kv.IntHandle(4), types.MakeDatums(4, 3))
+	err = writeOnlyTbl.RemoveRecord(ctx.GetTableCtx(), txn, kv.IntHandle(4), types.MakeDatums(4, 3))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -210,7 +208,7 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 	}
 
 	// DeleteOnlyTable: delete t where c1 = 5
-	err = delOnlyTbl.RemoveRecord(ctx, kv.IntHandle(5), types.MakeDatums(5, 5))
+	err = delOnlyTbl.RemoveRecord(ctx.GetTableCtx(), txn, kv.IntHandle(5), types.MakeDatums(5, 5))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -224,16 +222,16 @@ func checkAddWriteOnlyForAddIndex(ctx sessionctx.Context, delOnlyTbl, writeOnlyT
 func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
 	var err1 error
 	// WriteOnlyTable: insert t values (6, 6)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(6, 6))
+	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(6, 6))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 6, 6, true)
-	if variable.EnableFastReorg.Load() {
+	if vardef.EnableFastReorg.Load() {
 		// Need check temp index also.
 		err1 = checkIndexExists(ctx, writeTbl, 6, 6, true)
 	}
@@ -241,7 +239,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	// PublicTable: insert t values (7, 7)
-	_, err = publicTbl.AddRecord(ctx, types.MakeDatums(7, 7))
+	_, err = publicTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(7, 7))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -251,19 +249,19 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 	}
 
 	// WriteOnlyTable: update t set c2 = 5 where c1 = 7 and c2 = 7
-	err = writeTbl.UpdateRecord(context.Background(), ctx, kv.IntHandle(7), types.MakeDatums(7, 7), types.MakeDatums(7, 5), touchedSlice(writeTbl))
+	err = writeTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(7), types.MakeDatums(7, 7), types.MakeDatums(7, 5), touchedSlice(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	err = checkIndexExists(ctx, publicTbl, 5, 7, true)
-	if variable.EnableFastReorg.Load() {
+	if vardef.EnableFastReorg.Load() {
 		// Need check temp index also.
 		err1 = checkIndexExists(ctx, writeTbl, 5, 7, true)
 	}
 	if err != nil && err1 != nil {
 		return errors.Trace(err)
 	}
-	if variable.EnableFastReorg.Load() {
+	if vardef.EnableFastReorg.Load() {
 		err = checkIndexExists(ctx, writeTbl, 7, 7, false)
 	} else {
 		err = checkIndexExists(ctx, publicTbl, 7, 7, false)
@@ -272,7 +270,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		return errors.Trace(err)
 	}
 	// WriteOnlyTable: delete t where c1 = 6
-	err = writeTbl.RemoveRecord(ctx, kv.IntHandle(6), types.MakeDatums(6, 6))
+	err = writeTbl.RemoveRecord(ctx.GetTableCtx(), txn, kv.IntHandle(6), types.MakeDatums(6, 6))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -297,7 +295,7 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 		idxVal := row[1].GetInt64()
 		handle := row[0].GetInt64()
 		err = checkIndexExists(ctx, publicTbl, idxVal, handle, true)
-		if variable.EnableFastReorg.Load() {
+		if vardef.EnableFastReorg.Load() {
 			// Need check temp index also.
 			err1 = checkIndexExists(ctx, writeTbl, idxVal, handle, true)
 		}
@@ -305,20 +303,16 @@ func checkAddPublicForAddIndex(ctx sessionctx.Context, writeTbl, publicTbl table
 			return errors.Trace(err)
 		}
 	}
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	return txn.Commit(context.Background())
 }
 
 func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(8, 8))
+	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(8, 8))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -329,7 +323,7 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	}
 
 	// WriteOnlyTable update t set c2 = 7 where c1 = 8 and c2 = 8
-	err = writeTbl.UpdateRecord(context.Background(), ctx, kv.IntHandle(8), types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedSlice(writeTbl))
+	err = writeTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(8), types.MakeDatums(8, 8), types.MakeDatums(8, 7), touchedSlice(writeTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -340,7 +334,7 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	}
 
 	// WriteOnlyTable delete t where c1 = 8
-	err = writeTbl.RemoveRecord(ctx, kv.IntHandle(8), types.MakeDatums(8, 7))
+	err = writeTbl.RemoveRecord(ctx.GetTableCtx(), txn, kv.IntHandle(8), types.MakeDatums(8, 7))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -349,20 +343,16 @@ func checkDropWriteOnly(ctx sessionctx.Context, publicTbl, writeTbl table.Table)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	return txn.Commit(context.Background())
 }
 
 func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
-	err := sessiontxn.NewTxn(context.Background(), ctx)
+	txn, err := newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeTbl.AddRecord(ctx, types.MakeDatums(9, 9))
+	_, err = writeTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(9, 9))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -373,7 +363,7 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 	}
 
 	// DeleteOnlyTable insert t values (10, 10)
-	_, err = delTbl.AddRecord(ctx, types.MakeDatums(10, 10))
+	_, err = delTbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(10, 10))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -384,7 +374,7 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 	}
 
 	// DeleteOnlyTable update t set c2 = 10 where c1 = 9
-	err = delTbl.UpdateRecord(context.Background(), ctx, kv.IntHandle(9), types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedSlice(delTbl))
+	err = delTbl.UpdateRecord(ctx.GetTableCtx(), txn, kv.IntHandle(9), types.MakeDatums(9, 9), types.MakeDatums(9, 10), touchedSlice(delTbl))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -398,9 +388,74 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	return txn.Commit(context.Background())
+}
+
+func TestAddIndexRowCountUpdate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int primary key, c2 int)")
+	tk.MustExec("insert t values (1, 1), (2, 2), (3, 3);")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	var jobID int64
+	rowCntUpdated := make(chan struct{})
+	backfillDone := make(chan struct{})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateProgressIntervalInMs", "return(50)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterHandleBackfillTask", func(id int64) {
+		jobID = id
+		backfillDone <- struct{}{}
+		<-rowCntUpdated
+	})
+	go func() {
+		defer func() {
+			rowCntUpdated <- struct{}{}
+		}()
+		<-backfillDone
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		require.Eventually(t, func() bool {
+			rs := tk2.MustQuery("admin show ddl jobs 1;").Rows()
+			idStr := rs[0][0].(string)
+			id, err := strconv.Atoi(idStr)
+			require.NoError(t, err)
+			require.Equal(t, int64(id), jobID)
+			rcStr := rs[0][7].(string)
+			rc, err := strconv.Atoi(rcStr)
+			require.NoError(t, err)
+			return rc > 0
+		}, 2*time.Minute, 60*time.Millisecond)
+	}()
+	tk.MustExec("alter table t add index idx(c2);")
+}
+
+func TestFastReOrgAlwaysEnabledOnNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Equal(testkit.Rows("1"))
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_enable_fast_reorg=0"),
+		"setting tidb_ddl_enable_fast_reorg is not supported in the next generation of TiDB")
+}
+
+func TestReadOnlyVarsInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_max_dist_task_nodes=5"),
+		"setting tidb_max_dist_task_nodes is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_reorg_max_write_speed=5"),
+		"setting tidb_ddl_reorg_max_write_speed is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_disk_quota=5"),
+		"setting tidb_ddl_disk_quota is not supported in the next generation of TiDB")
 }

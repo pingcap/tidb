@@ -38,13 +38,13 @@ alter table t modify column a tinyint;
 drop table if exists t;
 create table t (a bigint);
 insert into t(a) values (9223372036854775807);
--- error 1690
+-- error 1265
 alter table t modify column a int;
--- error 1690
+-- error 1265
 alter table t modify column a mediumint;
--- error 1690
+-- error 1265
 alter table t modify column a smallint;
--- error 1690
+-- error 1265
 alter table t modify column a tinyint;
 admin check table t;
 
@@ -2209,3 +2209,27 @@ alter table t modify column a tinyint;
 show warnings;
 set @@sql_mode=default;
 
+# issue #52748, alter table should respect SQL_MODE and result a valid timestamp value
+drop table if exists t;
+create table t (a date);
+insert into t values('9999-01-01');
+set @@sql_mode='ALLOW_INVALID_DATES';
+alter table t modify a timestamp;
+select * from t;
+
+drop table if exists t;
+create table t (a date);
+insert into t values('9999-01-01');
+set @@sql_mode='ALLOW_INVALID_DATES,STRICT_TRANS_TABLES';
+--error 1292
+alter table t modify a timestamp;
+select * from t;
+set @@sql_mode=default;
+
+# issue #52509, generated column should also return a valid timestamp value.
+drop table t;
+CREATE TABLE t (a date, b timestamp AS (a));
+set @@sql_mode='';
+insert into t (a) values('9999-01-01');
+select * from t;
+set @@sql_mode=default;

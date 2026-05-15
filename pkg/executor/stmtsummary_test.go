@@ -16,24 +16,29 @@ package executor
 
 import (
 	"context"
+	"math"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
 )
 
 func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	data := infoschema.NewData()
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	infoSchemaBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
+	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
-	infoSchema := infoSchemaBuilder.Build()
-	table, err := infoSchema.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummary))
+	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
+	table, err := infoSchema.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.TableStatementsSummary))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
 
@@ -57,7 +62,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 
 	ctx := context.Background()
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone, _ = time.LoadLocation("Asia/Shanghai")
+	tz, _ := time.LoadLocation("Asia/Shanghai")
+	sctx.ResetSessionAndStmtTimeZone(tz)
 
 	var results [][]types.Datum
 	for {
@@ -72,10 +78,13 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 }
 
 func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	data := infoschema.NewData()
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	infoSchemaBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
+	err := infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
-	infoSchema := infoSchemaBuilder.Build()
-	table, err := infoSchema.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummaryEvicted))
+	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
+	table, err := infoSchema.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.TableStatementsSummaryEvicted))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
 
@@ -99,7 +108,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
 
 	ctx := context.Background()
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone, _ = time.LoadLocation("Asia/Shanghai")
+	tz, _ := time.LoadLocation("Asia/Shanghai")
+	sctx.ResetSessionAndStmtTimeZone(tz)
 
 	var results [][]types.Datum
 	for {
@@ -149,10 +159,13 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 
-	infoSchemaBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	data := infoschema.NewData()
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	infoSchemaBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
+	err = infoSchemaBuilder.InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
-	infoSchema := infoSchemaBuilder.Build()
-	table, err := infoSchema.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableStatementsSummaryHistory))
+	infoSchema := infoSchemaBuilder.Build(math.MaxUint64)
+	table, err := infoSchema.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.TableStatementsSummaryHistory))
 	require.NoError(t, err)
 	columns := table.Meta().Columns
 
@@ -167,7 +180,8 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 
 	ctx := context.Background()
 	sctx := mock.NewContext()
-	sctx.GetSessionVars().TimeZone, _ = time.LoadLocation("Asia/Shanghai")
+	tz, _ := time.LoadLocation("Asia/Shanghai")
+	sctx.ResetSessionAndStmtTimeZone(tz)
 
 	var results [][]types.Datum
 	for {

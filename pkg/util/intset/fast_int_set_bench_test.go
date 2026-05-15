@@ -22,7 +22,7 @@ import (
 
 func BenchmarkMapIntSet_Difference(b *testing.B) {
 	intSetA := NewIntSet()
-	for i := 0; i < 200000; i++ {
+	for i := range 200000 {
 		intSetA[i] = struct{}{}
 	}
 	intSetB := NewIntSet()
@@ -30,7 +30,7 @@ func BenchmarkMapIntSet_Difference(b *testing.B) {
 		intSetB[i] = struct{}{}
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		tmp := NewIntSet()
 		tmp.Difference2(intSetA, intSetB)
 		//intSetA.SubsetOf(intSetB)
@@ -39,7 +39,7 @@ func BenchmarkMapIntSet_Difference(b *testing.B) {
 
 func BenchmarkIntSet_Difference(b *testing.B) {
 	intSetA := &intsets.Sparse{}
-	for i := 0; i < 200000; i++ {
+	for i := range 200000 {
 		intSetA.Insert(i)
 	}
 	intSetB := &intsets.Sparse{}
@@ -47,7 +47,7 @@ func BenchmarkIntSet_Difference(b *testing.B) {
 		intSetA.Insert(i)
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		tmp := &intsets.Sparse{}
 		tmp.Difference(intSetA, intSetB)
 		//intSetA.SubsetOf(intSetB)
@@ -56,7 +56,7 @@ func BenchmarkIntSet_Difference(b *testing.B) {
 
 func BenchmarkFastIntSet_Difference(b *testing.B) {
 	intSetA := NewFastIntSet()
-	for i := 0; i < 200000; i++ {
+	for i := range 200000 {
 		intSetA.Insert(i)
 	}
 	intSetB := NewFastIntSet()
@@ -64,7 +64,7 @@ func BenchmarkFastIntSet_Difference(b *testing.B) {
 		intSetA.Insert(i)
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		intSetA.Difference(intSetB)
 		//intSetA.SubsetOf(intSetB)
 	}
@@ -72,9 +72,9 @@ func BenchmarkFastIntSet_Difference(b *testing.B) {
 
 func BenchmarkIntSet_Insert(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		intSet := NewIntSet()
-		for j := 0; j < 64; j++ {
+		for j := range 64 {
 			intSet.Insert(j)
 		}
 	}
@@ -82,9 +82,9 @@ func BenchmarkIntSet_Insert(b *testing.B) {
 
 func BenchmarkSparse_Insert(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		intSet := &intsets.Sparse{}
-		for j := 0; j < 64; j++ {
+		for j := range 64 {
 			intSet.Insert(j)
 		}
 	}
@@ -92,9 +92,9 @@ func BenchmarkSparse_Insert(b *testing.B) {
 
 func BenchmarkFastIntSet_Insert(b *testing.B) {
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		intSet := NewFastIntSet()
-		for j := 0; j < 64; j++ {
+		for j := range 64 {
 			intSet.Insert(j)
 		}
 	}

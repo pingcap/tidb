@@ -16,7 +16,6 @@ package executor
 
 import (
 	"bytes"
-	"encoding/binary"
 	"math"
 	"math/rand"
 	"sort"
@@ -26,70 +25,26 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	"github.com/stretchr/testify/require"
 )
 
-func TestLongestCommonPrefixLen(t *testing.T) {
-	cases := []struct {
-		s1 string
-		s2 string
-		l  int
-	}{
-		{"", "", 0},
-		{"", "a", 0},
-		{"a", "", 0},
-		{"a", "a", 1},
-		{"ab", "a", 1},
-		{"a", "ab", 1},
-		{"b", "ab", 0},
-		{"ba", "ab", 0},
-	}
-
-	for _, ca := range cases {
-		re := longestCommonPrefixLen([]byte(ca.s1), []byte(ca.s2))
-		require.Equal(t, ca.l, re)
-	}
-}
-
-func TestGetStepValue(t *testing.T) {
-	cases := []struct {
-		lower []byte
-		upper []byte
-		l     int
-		v     uint64
-	}{
-		{[]byte{}, []byte{}, 0, math.MaxUint64},
-		{[]byte{0}, []byte{128}, 0, binary.BigEndian.Uint64([]byte{128, 255, 255, 255, 255, 255, 255, 255})},
-		{[]byte{'a'}, []byte{'z'}, 0, binary.BigEndian.Uint64([]byte{'z' - 'a', 255, 255, 255, 255, 255, 255, 255})},
-		{[]byte("abc"), []byte{'z'}, 0, binary.BigEndian.Uint64([]byte{'z' - 'a', 255 - 'b', 255 - 'c', 255, 255, 255, 255, 255})},
-		{[]byte("abc"), []byte("xyz"), 0, binary.BigEndian.Uint64([]byte{'x' - 'a', 'y' - 'b', 'z' - 'c', 255, 255, 255, 255, 255})},
-		{[]byte("abc"), []byte("axyz"), 1, binary.BigEndian.Uint64([]byte{'x' - 'b', 'y' - 'c', 'z', 255, 255, 255, 255, 255})},
-		{[]byte("abc0123456"), []byte("xyz01234"), 0, binary.BigEndian.Uint64([]byte{'x' - 'a', 'y' - 'b', 'z' - 'c', 0, 0, 0, 0, 0})},
-	}
-
-	for _, ca := range cases {
-		l := longestCommonPrefixLen(ca.lower, ca.upper)
-		require.Equal(t, ca.l, l)
-		v0 := getStepValue(ca.lower[l:], ca.upper[l:], 1)
-		require.Equal(t, v0, ca.v)
-	}
-}
-
 func TestSplitIndex(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name: model.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         model.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -101,14 +56,14 @@ func TestSplitIndex(t *testing.T) {
 	idxCols := []*model.IndexColumn{{Name: tbInfo.Columns[0].Name, Offset: 0, Length: types.UnspecifiedLength}}
 	idxInfo := &model.IndexInfo{
 		ID:      2,
-		Name:    model.NewCIStr("idx1"),
-		Table:   model.NewCIStr("t1"),
+		Name:    ast.NewCIStr("idx1"),
+		Table:   ast.NewCIStr("t1"),
 		Columns: idxCols,
 		State:   model.StatePublic,
 	}
 	firstIdxInfo0 := idxInfo.Clone()
 	firstIdxInfo0.ID = 1
-	firstIdxInfo0.Name = model.NewCIStr("idx")
+	firstIdxInfo0.Name = ast.NewCIStr("idx")
 	tbInfo.Indices = []*model.IndexInfo{firstIdxInfo0, idxInfo}
 
 	// Test for int index.
@@ -160,16 +115,18 @@ func TestSplitIndex(t *testing.T) {
 		{1000, 9},
 	}
 
-	index := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
+	index, err := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
+	require.NoError(t, err)
 	for _, ca := range cases {
 		// test for minInt64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
+		sc := ctx.GetSessionVars().StmtCtx
+		idxValue, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
+		idxValue, _, err = index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
@@ -211,13 +168,14 @@ func TestSplitIndex(t *testing.T) {
 
 	for _, ca := range cases2 {
 		// test for minInt64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
+		sc := ctx.GetSessionVars().StmtCtx
+		idxValue, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
+		idxValue, _, err = index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
@@ -269,13 +227,14 @@ func TestSplitIndex(t *testing.T) {
 	for _, ca := range cases3 {
 		value := types.NewTime(ca.value, mysql.TypeTimestamp, types.DefaultFsp)
 		// test for min int64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
+		sc := ctx.GetSessionVars().StmtCtx
+		idxValue, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
+		idxValue, _, err = index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
@@ -284,11 +243,11 @@ func TestSplitIndex(t *testing.T) {
 
 func TestSplitTable(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name: model.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         model.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -298,9 +257,9 @@ func TestSplitTable(t *testing.T) {
 		},
 	}
 	defer func(originValue int64) {
-		minRegionStepValue = originValue
-	}(minRegionStepValue)
-	minRegionStepValue = 10
+		regionsplit.MinRegionStepValue = originValue
+	}(regionsplit.MinRegionStepValue)
+	regionsplit.MinRegionStepValue = 10
 	// range is 0 ~ 100, and split into 10 region.
 	// So 10 regions range is like below:
 	// region1: [-inf ~ 10)
@@ -317,7 +276,7 @@ func TestSplitTable(t *testing.T) {
 	e := &SplitTableRegionExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
-		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
+		handleCols:   util.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
 		lower:        []types.Datum{types.NewDatum(0)},
 		upper:        []types.Datum{types.NewDatum(100)},
 		num:          10,
@@ -361,11 +320,11 @@ func TestSplitTable(t *testing.T) {
 func TestStepShouldLargeThanMinStep(t *testing.T) {
 	ctx := mock.NewContext()
 	tbInfo := &model.TableInfo{
-		Name: model.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         model.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -377,7 +336,7 @@ func TestStepShouldLargeThanMinStep(t *testing.T) {
 	e1 := &SplitTableRegionExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
-		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
+		handleCols:   util.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
 		lower:        []types.Datum{types.NewDatum(0)},
 		upper:        []types.Datum{types.NewDatum(1000)},
 		num:          10,
@@ -388,7 +347,7 @@ func TestStepShouldLargeThanMinStep(t *testing.T) {
 
 func TestClusterIndexSplitTable(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name:                model.NewCIStr("t"),
+		Name:                ast.NewCIStr("t"),
 		ID:                  1,
 		IsCommonHandle:      true,
 		CommonHandleVersion: 1,
@@ -405,21 +364,21 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		},
 		Columns: []*model.ColumnInfo{
 			{
-				Name:      model.NewCIStr("c0"),
+				Name:      ast.NewCIStr("c0"),
 				ID:        1,
 				Offset:    0,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeDouble),
 			},
 			{
-				Name:      model.NewCIStr("c1"),
+				Name:      ast.NewCIStr("c1"),
 				ID:        2,
 				Offset:    1,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 			{
-				Name:      model.NewCIStr("c2"),
+				Name:      ast.NewCIStr("c2"),
 				ID:        3,
 				Offset:    2,
 				State:     model.StatePublic,
@@ -428,15 +387,14 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		},
 	}
 	defer func(originValue int64) {
-		minRegionStepValue = originValue
-	}(minRegionStepValue)
-	minRegionStepValue = 3
+		regionsplit.MinRegionStepValue = originValue
+	}(regionsplit.MinRegionStepValue)
+	regionsplit.MinRegionStepValue = 3
 	ctx := mock.NewContext()
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	e := &SplitTableRegionExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
-		handleCols:   buildHandleColsForSplit(sc, tbInfo),
+		handleCols:   buildHandleColsForSplit(tbInfo),
 		lower:        types.MakeDatums(1, 0),
 		upper:        types.MakeDatums(1, 100),
 		num:          10,
@@ -470,8 +428,9 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	}
 
 	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, ca := range cases {
-		h, err := e.handleCols.BuildHandleByDatums(ca.value)
+		h, err := e.handleCols.BuildHandleByDatums(sc, ca.value)
 		require.NoError(t, err)
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
 		require.NoError(t, err)

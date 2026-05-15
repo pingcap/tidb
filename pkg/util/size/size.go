@@ -47,7 +47,7 @@ const (
 	SizeOfPointer = int64(unsafe.Sizeof(new(int)))
 
 	// SizeOfInterface is the memory each interface occupied, exclude the real type memory usage
-	SizeOfInterface = int64(unsafe.Sizeof(*new(interface{})))
+	SizeOfInterface = int64(unsafe.Sizeof(*new(any)))
 
 	// SizeOfFloat64 is the memory each float64 occupied
 	SizeOfFloat64 = int64(unsafe.Sizeof(*new(float64)))

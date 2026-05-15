@@ -26,6 +26,8 @@ DB=$DB TABLE=$TABLE TABLE_COUNT=$TABLE_COUNT prepare.sh
 
 declare -A row_count_ori
 declare -A row_count_new
+declare -A row_count_new_global_index
+declare -A row_count_new_non_unique_global_index
 
 for i in $(seq $TABLE_COUNT) _Hash _List; do
     row_count_ori[$i]=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE${i};" | awk '/COUNT/{print $2}')
@@ -44,15 +46,19 @@ run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 for i in $(seq $TABLE_COUNT) _Hash _List; do
     run_sql "SHOW CREATE TABLE $DB.$TABLE${i};" | grep 'PARTITION'
     row_count_new[$i]=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE${i};" | awk '/COUNT/{print $2}')
+    row_count_new_global_index[$i]=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE${i} use index(idx);" | awk '/COUNT/{print $2}')
+    row_count_new_non_unique_global_index[$i]=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE${i} use index(idx1);" | awk '/COUNT/{print $2}')
 done
 
 fail=false
 for i in $(seq $TABLE_COUNT) _Hash _List; do
-    if [ "${row_count_ori[$i]}" != "${row_count_new[$i]}" ];then
+    if [ "${row_count_ori[$i]}" != "${row_count_new[$i]}" ] || \
+       [ "${row_count_ori[$i]}" != "${row_count_new_global_index[$i]}" ] || \
+       [ "${row_count_ori[$i]}" != "${row_count_new_non_unique_global_index[$i]}" ]; then
         fail=true
         echo "TEST: [$TEST_NAME] fail on table $DB.$TABLE${i}"
     fi
-    echo "table $DB.$TABLE${i} [original] row count: ${row_count_ori[$i]}, [after br] row count: ${row_count_new[$i]}"
+    echo "table $DB.$TABLE${i} [original] row count: ${row_count_ori[$i]}, [after br] row count: ${row_count_new[$i]}, global index row count: ${row_count_new_global_index[$i]}, non-unique global index row count: ${row_count_new_non_unique_global_index[$i]}"
 done
 
 if $fail; then

@@ -5,7 +5,7 @@ package iter
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 )
 
 // TransformConfig is the config for the combinator "transform".
@@ -13,7 +13,7 @@ type TransformConfig func(*chunkMappingCfg)
 
 func WithConcurrency(n uint) TransformConfig {
 	return func(c *chunkMappingCfg) {
-		c.quota = utils.NewWorkerPool(n, "transforming")
+		c.quota = util.NewWorkerPool(n, "transforming")
 	}
 }
 
@@ -39,7 +39,7 @@ func Transform[T, R any](it TryNextor[T], with func(context.Context, T) (R, erro
 		c(&r.chunkMappingCfg)
 	}
 	if r.quota == nil {
-		r.quota = utils.NewWorkerPool(r.chunkSize, "max-concurrency")
+		r.quota = util.NewWorkerPool(r.chunkSize, "max-concurrency")
 	}
 	if r.quota.Limit() > int(r.chunkSize) {
 		r.chunkSize = uint(r.quota.Limit())
@@ -79,6 +79,20 @@ func FlatMap[T, R any](it TryNextor[T], mapper func(T) TryNextor[R]) TryNextor[R
 // Map applies the mapper over every elements the origin iterator yields.
 func Map[T, R any](it TryNextor[T], mapper func(T) R) TryNextor[R] {
 	return pureMap[T, R]{
+		inner:  it,
+		mapper: mapper,
+	}
+}
+
+func MapFilter[T, R any](it TryNextor[T], mapper func(T) (R, bool)) TryNextor[R] {
+	return filterMap[T, R]{
+		inner:  it,
+		mapper: mapper,
+	}
+}
+
+func TryMap[T, R any](it TryNextor[T], mapper func(T) (R, error)) TryNextor[R] {
+	return tryMap[T, R]{
 		inner:  it,
 		mapper: mapper,
 	}

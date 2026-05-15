@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -52,9 +52,9 @@ func NewServerMemoryLimitHandle(exitCh chan struct{}) *Handle {
 	return &Handle{exitCh: exitCh}
 }
 
-// SetSessionManager sets the SessionManager which is used to fetching the info
+// SetSessionManager sets the Manager which is used to fetching the info
 // of all active sessions.
-func (smqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
+func (smqh *Handle) SetSessionManager(sm sessmgr.Manager) *Handle {
 	smqh.sm.Store(sm)
 	return smqh
 }
@@ -68,11 +68,12 @@ func (smqh *Handle) Run() {
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
-	sm := smqh.sm.Load().(util.SessionManager)
+	sm := smqh.sm.Load().(sessmgr.Manager)
 	sessionToBeKilled := &sessionToBeKilled{}
 	for {
 		select {
 		case <-ticker.C:
+			memory.HandleGlobalMemArbitratorRuntime()
 			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryLimit.Load(), sm)
 		case <-smqh.exitCh:
 			return
@@ -99,10 +100,10 @@ func (s *sessionToBeKilled) reset() {
 	s.lastLogTime = time.Time{}
 }
 
-func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
+func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm sessmgr.Manager) {
 	if s.isKilling {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
-			if info.Time == s.sqlStartTime {
+			if info.Time.Equal(s.sqlStartTime) {
 				if time.Since(s.lastLogTime) > 5*time.Second {
 					logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
 						time.Since(s.killStartTime)/time.Second),
@@ -111,10 +112,20 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 						zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
 						zap.Int64("sql memory usage", info.MemTracker.BytesConsumed()))
 					s.lastLogTime = time.Now()
+
+					if seconds := time.Since(s.killStartTime) / time.Second; seconds >= 60 {
+						// If the SQL cannot be terminated after 60 seconds, it may be stuck in the network stack while writing packets to the client,
+						// encountering some bugs that cause it to hang, or failing to detect the kill signal.
+						// In this case, the resources can be reclaimed by calling the `Finish` method, and then we can start looking for the next SQL with the largest memory usage.
+						logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %d seconds. Attempting to force close the executors.", seconds))
+						s.sessionTracker.Killer.FinishResultSet()
+						goto Succ
+					}
 				}
 				return
 			}
 		}
+	Succ:
 		s.reset()
 		IsKilling.Store(false)
 		memory.MemUsageTop1Tracker.CompareAndSwap(s.sessionTracker, nil)
@@ -126,6 +137,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	if bt == 0 {
 		return
 	}
+
 	failpoint.Inject("issue42662_2", func(val failpoint.Value) {
 		if val.(bool) {
 			bt = 1
@@ -135,6 +147,11 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	if instanceStats.HeapInuse > MemoryMaxUsed.Load() {
 		MemoryMaxUsed.Store(instanceStats.HeapInuse)
 	}
+
+	if memory.UsingGlobalMemArbitration() {
+		return
+	}
+
 	limitSessMinSize := memory.ServerMemoryLimitSessMinSize.Load()
 	if instanceStats.HeapInuse > bt {
 		t := memory.MemUsageTop1Tracker.Load()
@@ -201,7 +218,7 @@ func (m *memoryOpsHistoryManager) init() {
 	m.offsets = 0
 }
 
-func (m *memoryOpsHistoryManager) recordOne(info *util.ProcessInfo, killTime time.Time, memoryLimit uint64, memoryCurrent uint64) {
+func (m *memoryOpsHistoryManager) recordOne(info *sessmgr.ProcessInfo, killTime time.Time, memoryLimit uint64, memoryCurrent uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(info.ToRow(time.UTC)...)}
@@ -229,7 +246,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 			types.NewDatum(info.memoryCurrent), // MEMORY_CURRENT
 			info.processInfoDatum[0],           // PROCESSID
 			info.processInfoDatum[9],           // MEM
-			info.processInfoDatum[10],          // DISK
+			info.processInfoDatum[13],          // DISK
 			info.processInfoDatum[2],           // CLIENT
 			info.processInfoDatum[3],           // DB
 			info.processInfoDatum[1],           // USER
@@ -238,7 +255,7 @@ func (m *memoryOpsHistoryManager) GetRows() [][]types.Datum {
 		})
 	}
 	var zeroTime = time.Time{}
-	for i := 0; i < len(m.infos); i++ {
+	for i := range m.infos {
 		pos := (m.offsets + i) % len(m.infos)
 		info := m.infos[pos]
 		if info.killTime.Equal(zeroTime) {

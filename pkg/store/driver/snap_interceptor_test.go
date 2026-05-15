@@ -32,7 +32,7 @@ func TestSnapshotWithoutInterceptor(t *testing.T) {
 	}()
 	clearStoreData(t, store)
 
-	snap := prepareSnapshot(t, store, [][]interface{}{
+	snap := prepareSnapshot(t, store, [][]any{
 		{"k1", "v1"},
 		{"k2", "v2"},
 		{"k3", "v3"},
@@ -42,98 +42,102 @@ func TestSnapshotWithoutInterceptor(t *testing.T) {
 	// Test for Get
 	val, err := snap.Get(ctx, kv.Key("k1"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
 
 	val, err = snap.Get(ctx, kv.Key("k2"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("v2"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v2"), 0), val)
 
 	val, err = snap.Get(ctx, kv.Key("kn"))
 	require.True(t, kv.ErrNotExist.Equal(err))
-	require.Nil(t, val)
+	require.Equal(t, kv.NewValueEntry(nil, 0), val)
 
 	// Test for BatchGet
-	result, err := snap.BatchGet(ctx, []kv.Key{kv.Key("k1"), kv.Key("k3")})
+	result, err := kv.BatchGetValue(ctx, snap, []kv.Key{kv.Key("k1"), kv.Key("k3")})
 	require.NoError(t, err)
 	require.Equal(t, map[string][]byte{"k1": []byte("v1"), "k3": []byte("v3")}, result)
 
-	result, err = snap.BatchGet(ctx, []kv.Key{kv.Key("k3"), kv.Key("kn")})
+	result, err = kv.BatchGetValue(ctx, snap, []kv.Key{kv.Key("k3"), kv.Key("kn")})
 	require.NoError(t, err)
 	require.Equal(t, map[string][]byte{"k3": []byte("v3")}, result)
 
-	result, err = snap.BatchGet(ctx, []kv.Key{kv.Key("kn"), kv.Key("kn2")})
+	result, err = kv.BatchGetValue(ctx, snap, []kv.Key{kv.Key("kn"), kv.Key("kn2")})
 	require.NoError(t, err)
 	require.Equal(t, map[string][]byte{}, result)
 
-	result, err = snap.BatchGet(ctx, []kv.Key{})
+	result, err = kv.BatchGetValue(ctx, snap, []kv.Key{})
 	require.NoError(t, err)
 	require.Equal(t, map[string][]byte{}, result)
 
 	// Test for Iter
 	iter, err := snap.Iter(nil, nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}})
+	checkIter(t, iter, [][]any{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}})
 
 	iter, err = snap.Iter(nil, kv.Key("k3"))
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}})
+	checkIter(t, iter, [][]any{{"k1", "v1"}, {"k2", "v2"}})
 
 	iter, err = snap.Iter(kv.Key("k2"), kv.Key("k3"))
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k2", "v2"}})
+	checkIter(t, iter, [][]any{{"k2", "v2"}})
 
 	iter, err = snap.Iter(kv.Key("k2"), nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k2", "v2"}, {"k3", "v3"}})
+	checkIter(t, iter, [][]any{{"k2", "v2"}, {"k3", "v3"}})
 
 	iter, err = snap.Iter(kv.Key("k4"), nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{})
+	checkIter(t, iter, [][]any{})
 
 	// Test for IterReverse
 	iter, err = snap.IterReverse(kv.Key("k5"), nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k3", "v3"}, {"k2", "v2"}, {"k1", "v1"}})
+	checkIter(t, iter, [][]any{{"k3", "v3"}, {"k2", "v2"}, {"k1", "v1"}})
 
 	iter, err = snap.IterReverse(kv.Key("k3"), nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k2", "v2"}, {"k1", "v1"}})
+	checkIter(t, iter, [][]any{{"k2", "v2"}, {"k1", "v1"}})
 
 	iter, err = snap.IterReverse(kv.Key("k4"), kv.Key("k2"))
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k3", "v3"}, {"k2", "v2"}})
+	checkIter(t, iter, [][]any{{"k3", "v3"}, {"k2", "v2"}})
 
 	iter, err = snap.IterReverse(kv.Key("k1"), nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{})
+	checkIter(t, iter, [][]any{})
 
 	iter, err = snap.IterReverse(kv.Key("k0"), nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{})
+	checkIter(t, iter, [][]any{})
 }
 
 type mockSnapshotInterceptor struct {
-	spy []interface{}
+	spy []any
 }
 
-func (m *mockSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k kv.Key) ([]byte, error) {
-	m.spy = []interface{}{"OnGet", ctx, k}
+func (m *mockSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+	var opt kv.GetOptions
+	opt.Apply(options)
+	m.spy = []any{"OnGet", ctx, k, opt.ReturnCommitTS()}
 	if len(k) == 0 {
-		return nil, fmt.Errorf("MockErr%s", m.spy[0])
+		return kv.ValueEntry{}, fmt.Errorf("MockErr%s", m.spy[0])
 	}
-	return snap.Get(ctx, k)
+	return snap.Get(ctx, k, options...)
 }
 
-func (m *mockSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key) (map[string][]byte, error) {
-	m.spy = []interface{}{"OnBatchGet", ctx, keys}
+func (m *mockSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+	var opt kv.BatchGetOptions
+	opt.Apply(options)
+	m.spy = []any{"OnBatchGet", ctx, keys, opt.ReturnCommitTS()}
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
-	return snap.BatchGet(ctx, keys)
+	return snap.BatchGet(ctx, keys, options...)
 }
 
 func (m *mockSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	m.spy = []interface{}{"OnIter", k, upperBound}
+	m.spy = []any{"OnIter", k, upperBound}
 	if len(k) == 0 {
 		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
@@ -141,7 +145,7 @@ func (m *mockSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, upperBound 
 }
 
 func (m *mockSnapshotInterceptor) OnIterReverse(snap kv.Snapshot, k kv.Key, lowerBound kv.Key) (kv.Iterator, error) {
-	m.spy = []interface{}{"OnIterReverse", k, lowerBound}
+	m.spy = []any{"OnIterReverse", k, lowerBound}
 	if len(k) == 0 {
 		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
@@ -156,7 +160,7 @@ func TestSnapshotWitInterceptor(t *testing.T) {
 	}()
 	clearStoreData(t, store)
 
-	snap := prepareSnapshot(t, store, [][]interface{}{
+	snap := prepareSnapshot(t, store, [][]any{
 		{"k1", "v1"},
 		{"k2", "v2"},
 		{"k3", "v3"},
@@ -168,62 +172,84 @@ func TestSnapshotWitInterceptor(t *testing.T) {
 
 	// Test for Get
 	k := kv.Key("k1")
-	v, err := snap.Get(ctx, k)
+	entry, err := snap.Get(ctx, k)
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), v)
-	require.Equal(t, []interface{}{"OnGet", ctx, k}, mockInterceptor.spy)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), entry)
+	require.Equal(t, []any{"OnGet", ctx, k, false}, mockInterceptor.spy)
 
-	v, err = snap.Get(ctx, kv.Key{})
+	// Test for Get with option
+	entry, err = snap.Get(ctx, k, kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	validCommitTS(t, entry.CommitTS)
+	commitTS := entry.CommitTS
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), commitTS), entry)
+	require.Equal(t, []any{"OnGet", ctx, k, true}, mockInterceptor.spy)
+
+	// Test for Get error
+	entry, err = snap.Get(ctx, kv.Key{})
 	require.Equal(t, "MockErrOnGet", err.Error())
-	require.Nil(t, v)
-	require.Equal(t, []interface{}{"OnGet", ctx, kv.Key{}}, mockInterceptor.spy)
+	require.Equal(t, kv.ValueEntry{}, entry)
+	require.Equal(t, []any{"OnGet", ctx, kv.Key{}, false}, mockInterceptor.spy)
 
 	// Test for BatchGet
 	keys := []kv.Key{kv.Key("k2"), kv.Key("k3")}
 	result, err := snap.BatchGet(ctx, keys)
 	require.NoError(t, err)
-	require.Equal(t, map[string][]byte{"k2": []byte("v2"), "k3": []byte("v3")}, result)
-	require.Equal(t, []interface{}{"OnBatchGet", ctx, keys}, mockInterceptor.spy)
+	require.Equal(t, map[string]kv.ValueEntry{
+		"k2": kv.NewValueEntry([]byte("v2"), 0),
+		"k3": kv.NewValueEntry([]byte("v3"), 0),
+	}, result)
+	require.Equal(t, []any{"OnBatchGet", ctx, keys, false}, mockInterceptor.spy)
 
+	// Test for BatchGet with option
+	result, err = snap.BatchGet(ctx, keys, kv.WithReturnCommitTS())
+	require.NoError(t, err)
+	require.Equal(t, map[string]kv.ValueEntry{
+		"k2": kv.NewValueEntry([]byte("v2"), commitTS),
+		"k3": kv.NewValueEntry([]byte("v3"), commitTS),
+	}, result)
+	require.Equal(t, []any{"OnBatchGet", ctx, keys, true}, mockInterceptor.spy)
+
+	// Test for BatchGet error
 	result, err = snap.BatchGet(ctx, []kv.Key{})
 	require.Equal(t, "MockErrOnBatchGet", err.Error())
 	require.Nil(t, result)
-	require.Equal(t, []interface{}{"OnBatchGet", ctx, []kv.Key{}}, mockInterceptor.spy)
+	require.Equal(t, []any{"OnBatchGet", ctx, []kv.Key{}, false}, mockInterceptor.spy)
 
 	// Test for Iter
 	k1 := kv.Key("k1")
 	k2 := kv.Key("k3")
 	iter, err := snap.Iter(k1, k2)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}})
-	require.Equal(t, []interface{}{"OnIter", k1, k2}, mockInterceptor.spy)
+	checkIter(t, iter, [][]any{{"k1", "v1"}, {"k2", "v2"}})
+	require.Equal(t, []any{"OnIter", k1, k2}, mockInterceptor.spy)
 
 	iter, err = snap.Iter(kv.Key{}, k2)
 	require.Equal(t, "MockErrOnIter", err.Error())
 	require.Nil(t, iter)
-	require.Equal(t, []interface{}{"OnIter", kv.Key{}, k2}, mockInterceptor.spy)
+	require.Equal(t, []any{"OnIter", kv.Key{}, k2}, mockInterceptor.spy)
 
 	// Test for IterReverse
 	k = kv.Key("k3")
 	iter, err = snap.IterReverse(k, nil)
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k2", "v2"}, {"k1", "v1"}})
-	require.Equal(t, []interface{}{"OnIterReverse", k, kv.Key(nil)}, mockInterceptor.spy)
+	checkIter(t, iter, [][]any{{"k2", "v2"}, {"k1", "v1"}})
+	require.Equal(t, []any{"OnIterReverse", k, kv.Key(nil)}, mockInterceptor.spy)
 
 	iter, err = snap.IterReverse(k, kv.Key("k2"))
 	require.NoError(t, err)
-	checkIter(t, iter, [][]interface{}{{"k2", "v2"}})
-	require.Equal(t, []interface{}{"OnIterReverse", k, kv.Key("k2")}, mockInterceptor.spy)
+	checkIter(t, iter, [][]any{{"k2", "v2"}})
+	require.Equal(t, []any{"OnIterReverse", k, kv.Key("k2")}, mockInterceptor.spy)
 
 	iter, err = snap.IterReverse(kv.Key{}, nil)
 	require.Equal(t, "MockErrOnIterReverse", err.Error())
 	require.Nil(t, iter)
-	require.Equal(t, []interface{}{"OnIterReverse", kv.Key{}, kv.Key(nil)}, mockInterceptor.spy)
+	require.Equal(t, []any{"OnIterReverse", kv.Key{}, kv.Key(nil)}, mockInterceptor.spy)
 
 	snap.SetOption(kv.TiKVClientReadTimeout, uint64(10))
 }
 
-func checkIter(t *testing.T, iter kv.Iterator, expected [][]interface{}) {
+func checkIter(t *testing.T, iter kv.Iterator, expected [][]any) {
 	for i, item := range expected {
 		require.True(t, iter.Valid(), "%dst loop: invalid iter", i)
 		key := item[0]

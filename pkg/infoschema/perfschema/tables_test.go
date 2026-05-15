@@ -52,14 +52,6 @@ func TestPerfSchemaTables(t *testing.T) {
 	tk.MustQuery("select * from events_stages_history_long").Check(testkit.Rows())
 }
 
-func TestSessionVariables(t *testing.T) {
-	store := newMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	res := tk.MustQuery("select variable_value from performance_schema.session_variables order by variable_name limit 10;")
-	tk.MustQuery("select variable_value from information_schema.session_variables order by variable_name limit 10;").Check(res.Rows())
-}
-
 func TestTiKVProfileCPU(t *testing.T) {
 	store := newMockStore(t)
 

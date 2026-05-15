@@ -1,10 +1,5 @@
 # See the OWNERS docs at https://go.k8s.io/owners
 options:
   no_parent_owners: true
-filters:
-  "(tidb-lightning\\.toml)$":
-    approvers:
-      - sig-critical-approvers-tidb-lightning
-  ".*":
-    approvers:
-      - sig-approvers-br
+approvers:
+  - sig-approvers-br

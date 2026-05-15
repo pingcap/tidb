@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -63,6 +63,9 @@ type UnionScanExec struct {
 	// used with dynamic prune mode
 	// < 0 if not used.
 	physTblIDIdx int
+
+	// partitionIDMap are only required by union scan with global index.
+	partitionIDMap map[int64]struct{}
 
 	keepOrder bool
 	compareExec
@@ -155,7 +158,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx, mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -172,7 +175,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.Ctx(), us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
@@ -188,6 +191,9 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
+	if us.addedRowsIter != nil {
+		us.addedRowsIter.Close()
+	}
 	return exec.Close(us.Children(0))
 }
 
@@ -252,7 +258,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
-			snapshotHandle, err = us.handleCols.BuildHandle(row)
+			snapshotHandle, err = us.handleCols.BuildHandle(us.Ctx().GetSessionVars().StmtCtx, row)
 			if err != nil {
 				return nil, err
 			}
@@ -290,8 +296,15 @@ type compareExec struct {
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex []int
 	desc      bool
+	// needExtraSorting means if an extra sorting is needed to satisfy the keepOrder requirement.
+	// In the simplest case, we only need to return data in the order of the original kv ranges to satisfy it.
+	// However, in some new and more complex cases, the required order is not the same as the order of the kv ranges.
+	// For example, when we require keepOrder on a partitioned table, or in the PropMatchedNeedMergeSort case decided by
+	// the planner, the corresponding executor use an extra merge sort to satisfy the order requirement. In such cases,
+	// for UnionScan, we need to do an extra sorting to satisfy the order requirement.
+	needExtraSorting bool
 	// handleCols is the handle's position of the below scan plan.
-	handleCols plannercore.HandleCols
+	handleCols plannerutil.HandleCols
 }
 
 func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {
@@ -311,7 +324,7 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 		}
 		return cmp, nil
 	}
-	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
+	cmp, err = ce.handleCols.Compare(a, b, ce.collators, sctx.TypeCtx())
 	if ce.desc {
 		return -cmp, err
 	}

@@ -16,6 +16,7 @@ package testutil
 
 import (
 	"context"
+	"encoding/hex"
 	"runtime/pprof"
 )
 
@@ -24,9 +25,24 @@ func MockCPULoad(ctx context.Context, labels ...string) {
 	lvs := []string{}
 	for _, label := range labels {
 		lvs = append(lvs, label)
-		lvs = append(lvs, label+" value")
+		val := hex.EncodeToString([]byte(label + " value"))
+		lvs = append(lvs, val)
 		// start goroutine with only 1 label.
 		go mockCPULoadByGoroutineWithLabel(ctx, label, label+" value")
+	}
+	// start goroutine with all labels.
+	go mockCPULoadByGoroutineWithLabel(ctx, lvs...)
+}
+
+// MockCPULoadV2 exports for testing of label "sql_global_uid"
+func MockCPULoadV2(ctx context.Context, labelValues ...string) {
+	lvs := []string{}
+	label := "sql_global_uid"
+	for _, labelValue := range labelValues {
+		lvs = append(lvs, label)
+		lvs = append(lvs, labelValue)
+		// start goroutine with only 1 label.
+		go mockCPULoadByGoroutineWithLabel(ctx, label, labelValue)
 	}
 	// start goroutine with all labels.
 	go mockCPULoadByGoroutineWithLabel(ctx, lvs...)
@@ -42,7 +58,7 @@ func mockCPULoadByGoroutineWithLabel(ctx context.Context, labels ...string) {
 		default:
 		}
 		sum := 0
-		for i := 0; i < 1000000; i++ {
+		for i := range 1000000 {
 			sum = sum + i*2
 		}
 	}

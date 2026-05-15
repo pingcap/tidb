@@ -206,7 +206,7 @@ func DeserializeBytesBuffer(posAndBuf *PosAndBuf) *bytes.Buffer {
 }
 
 // DeserializeInterface deserializes interface type
-func DeserializeInterface(posAndBuf *PosAndBuf) interface{} {
+func DeserializeInterface(posAndBuf *PosAndBuf) any {
 	// Get type
 	dataType := int(posAndBuf.Buf[posAndBuf.Pos])
 	posAndBuf.Pos += InterfaceTypeCodeLen

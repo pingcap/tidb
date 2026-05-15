@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 )
 
 const (
@@ -58,6 +60,19 @@ func (t *mockDetectClient) SendRequest(
 	return &tikvrpc.Response{Resp: &mpp.IsAliveResponse{Available: true}}, nil
 }
 
+func (t *mockDetectClient) SendRequestAsync(
+	ctx context.Context,
+	addr string,
+	req *tikvrpc.Request,
+	cb async.Callback[*tikvrpc.Response],
+) {
+	go func() {
+		cb.Schedule(t.SendRequest(ctx, addr, req, tikv.ReadTimeoutMedium))
+	}()
+}
+
+func (t *mockDetectClient) SetEventListener(_ tikv.ClientEventListener) {}
+
 type ProbeTest map[string]*mockDetectClient
 
 func (t ProbeTest) add(ctx context.Context) {
@@ -87,7 +102,7 @@ func failedStoreSizeJudge(ctx context.Context, test *testing.T, need int) {
 	var l int
 	GlobalMPPFailedStoreProber.scan(ctx)
 	time.Sleep(time.Second / 10)
-	GlobalMPPFailedStoreProber.failedMPPStores.Range(func(k, v interface{}) bool {
+	GlobalMPPFailedStoreProber.failedMPPStores.Range(func(k, v any) bool {
 		l++
 		return true
 	})

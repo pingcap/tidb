@@ -415,6 +415,10 @@ func TestWindowSpecRestore(t *testing.T) {
 func TestLoadDataRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
+			sourceSQL: "load data low_priority infile '/a.csv' into table `t`",
+			expectSQL: "LOAD DATA LOW_PRIORITY INFILE '/a.csv' INTO TABLE `t`",
+		},
+		{
 			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
 			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
 		},
@@ -524,8 +528,28 @@ func TestImportActions(t *testing.T) {
 			expectSQL: "SHOW IMPORT JOB 123",
 		},
 		{
+			sourceSQL: "show raw import jobs",
+			expectSQL: "SHOW RAW IMPORT JOBS",
+		},
+		{
+			sourceSQL: "show raw import job 123",
+			expectSQL: "SHOW RAW IMPORT JOB 123",
+		},
+		{
+			sourceSQL: "show raw import jobs where group_key = 'g'",
+			expectSQL: "SHOW RAW IMPORT JOBS WHERE `group_key`=_UTF8MB4'g'",
+		},
+		{
 			sourceSQL: "show import jobs where aa > 1",
 			expectSQL: "SHOW IMPORT JOBS WHERE `aa`>1",
+		},
+		{
+			sourceSQL: "show import groups",
+			expectSQL: "SHOW IMPORT GROUPS",
+		},
+		{
+			sourceSQL: "show import group '123'",
+			expectSQL: "SHOW IMPORT GROUP '123'",
 		},
 	}
 	extractNodeFunc := func(node Node) Node {
@@ -573,6 +597,31 @@ func TestImportIntoRestore(t *testing.T) {
 			sourceSQL: "IMPORT INTO `t` from '/file.csv' with fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
 			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
 		},
+		{
+			// SelectStmt
+			sourceSQL: "IMPORT INTO `t` from select * from xx",
+			expectSQL: "IMPORT INTO `t` FROM SELECT * FROM `xx`",
+		},
+		{
+			// SelectStmtWithClause
+			sourceSQL: "IMPORT INTO `t` from with `c` as (select * from `xx`) select * from `c` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM WITH `c` AS (SELECT * FROM `xx`) SELECT * FROM `c` WITH thread=1",
+		},
+		{
+			// SetOprStmt
+			sourceSQL: "IMPORT INTO `t` from select * from `xx` union select * from `yy` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM SELECT * FROM `xx` UNION SELECT * FROM `yy` WITH thread=1",
+		},
+		{
+			// SetOprStmt
+			sourceSQL: "IMPORT INTO `t` from with `c` as (select * from `xx`) select * from `c` union select * from `c` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM WITH `c` AS (SELECT * FROM `xx`) SELECT * FROM `c` UNION SELECT * FROM `c` WITH thread=1",
+		},
+		{
+			// SubSelect
+			sourceSQL: "IMPORT INTO `t` from (select * from xx)",
+			expectSQL: "IMPORT INTO `t` FROM (SELECT * FROM `xx`)",
+		},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*ImportIntoStmt)
@@ -599,6 +648,10 @@ func TestImportIntoSecureText(t *testing.T) {
 			input:   "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
 			secured: "\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'\\E",
 		},
+		{
+			input:   "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb' with CLOUD_STORAGE_uri='s3://bucket/prefix?access-key=cccccc&secret-access-key=dddddd'",
+			secured: `^IMPORT INTO .t. FROM \Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|')){2} WITH cloud_storage_uri=\Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|')){2}`,
+		},
 	}
 
 	p := parser.New()
@@ -610,4 +663,14 @@ func TestImportIntoSecureText(t *testing.T) {
 		require.True(t, ok, comment)
 		require.Regexp(t, tc.secured, n.SecureText(), comment)
 	}
+}
+
+func TestImportIntoFromSelectInvalidStmt(t *testing.T) {
+	p := parser.New()
+	_, err := p.ParseOneStmt("IMPORT INTO t1(a, @1) FROM select * from t2;", "", "")
+	require.ErrorContains(t, err, "Cannot use user variable(1) in IMPORT INTO FROM SELECT statement")
+	_, err = p.ParseOneStmt("IMPORT INTO t1(a, @b) FROM select * from t2;", "", "")
+	require.ErrorContains(t, err, "Cannot use user variable(b) in IMPORT INTO FROM SELECT statement")
+	_, err = p.ParseOneStmt("IMPORT INTO t1(a) set a=1 FROM select a from t2;", "", "")
+	require.ErrorContains(t, err, "Cannot use SET clause in IMPORT INTO FROM SELECT statement.")
 }

@@ -31,14 +31,14 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
 	for _, argType := range typeList {
-		entries1 := make([]interface{}, 0)
-		entries2 := make([]interface{}, 0)
-		entries3 := make([]interface{}, 0)
+		entries1 := make([]any, 0)
+		entries2 := make([]any, 0)
+		entries3 := make([]any, 0)
 
 		argFieldType := types.NewFieldType(argType)
 		genFunc := getDataGenFunc(argFieldType)
 
-		for m := 0; m < numRows; m++ {
+		for m := range numRows {
 			arg := genFunc(m)
 			entries1 = append(entries1, getJSONValue(arg, argFieldType))
 		}
@@ -70,12 +70,12 @@ func TestJsonArrayagg(t *testing.T) {
 	numRows := 5
 
 	for _, argType := range typeList {
-		entries := make([]interface{}, 0)
+		entries := make([]any, 0)
 
 		argFieldType := types.NewFieldType(argType)
 		genFunc := getDataGenFunc(argFieldType)
 
-		for m := 0; m < numRows; m++ {
+		for m := range numRows {
 			arg := genFunc(m)
 			entries = append(entries, getJSONValue(arg, argFieldType))
 		}
@@ -92,7 +92,7 @@ func TestJsonArrayagg(t *testing.T) {
 
 func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, aggfuncs.DefInterfaceSize)

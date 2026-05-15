@@ -17,9 +17,9 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -28,49 +28,74 @@ import (
 
 type analyzeSaveStatsWorker struct {
 	resultsCh <-chan *statistics.AnalyzeResults
-	sctx      sessionctx.Context
 	errCh     chan<- error
 	killer    *sqlkiller.SQLKiller
 }
 
 func newAnalyzeSaveStatsWorker(
 	resultsCh <-chan *statistics.AnalyzeResults,
-	sctx sessionctx.Context,
 	errCh chan<- error,
 	killer *sqlkiller.SQLKiller) *analyzeSaveStatsWorker {
 	worker := &analyzeSaveStatsWorker{
 		resultsCh: resultsCh,
-		sctx:      sctx,
 		errCh:     errCh,
 		killer:    killer,
 	}
 	return worker
 }
 
-func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot bool) {
+// run consumes analyze results and persists them. After a kill signal, it
+// enters "drain mode": do not save more stats, just keep consuming resultsCh
+// and finish jobs with the same error so upstream analyze workers are not
+// blocked on sending.
+func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *handle.Handle, analyzeSnapshot bool) {
+	// Report at most one error per save worker. errCh is drained only after all
+	// save workers exit, so sending every per-partition failure can fill errCh
+	// and block this worker, which may deadlock the analyze pipeline.
+	errReported := false
+	// drainErr is only used for kill-signal handling. Save failures should not
+	// switch to drain mode, so we can still try to persist stats for later
+	// partitions. ANALYZE may already end up with partially persisted stats.
+	var drainErr error
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
-			worker.errCh <- getAnalyzePanicErr(r)
+			if !errReported {
+				worker.errCh <- getAnalyzePanicErr(r)
+				errReported = true
+			}
 		}
 	}()
 	for results := range worker.resultsCh {
-		if err := worker.killer.HandleSignal(); err != nil {
-			worker.errCh <- err
-			return
+		if drainErr != nil {
+			// Drain mode: consume the remaining results only to unblock producers.
+			finishJobWithLog(statsHandle, results.Job, drainErr)
+			results.DestroyAndPutToPool()
+			continue
 		}
-		statsHandle := domain.GetDomain(worker.sctx).StatsHandle()
-		err := statsHandle.SaveTableStatsToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+		failpoint.InjectCall("analyzeSaveWorkerBeforeHandleSignal")
+		if err := worker.killer.HandleSignal(); err != nil {
+			drainErr = err
+			finishJobWithLog(statsHandle, results.Job, drainErr)
+			results.DestroyAndPutToPool()
+			if !errReported {
+				worker.errCh <- drainErr
+				errReported = true
+			}
+			continue
+		}
+		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
 		if err != nil {
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
-			finishJobWithLog(worker.sctx, results.Job, err)
-			worker.errCh <- err
+			logutil.Logger(ctx).Warn("save table stats to storage failed", zap.Error(err))
+			finishJobWithLog(statsHandle, results.Job, err)
+			if !errReported {
+				worker.errCh <- err
+				errReported = true
+			}
+			// Keep draining results to avoid blocking analyze workers after a save failure.
 		} else {
-			finishJobWithLog(worker.sctx, results.Job, nil)
+			finishJobWithLog(statsHandle, results.Job, nil)
 		}
 		results.DestroyAndPutToPool()
-		if err != nil {
-			return
-		}
 	}
 }

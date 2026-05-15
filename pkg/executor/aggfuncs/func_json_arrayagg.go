@@ -18,7 +18,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -33,12 +32,12 @@ type jsonArrayagg struct {
 }
 
 type partialResult4JsonArrayagg struct {
-	entries []interface{}
+	entries []any
 }
 
 func (*jsonArrayagg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonArrayagg{}
-	p.entries = make([]interface{}, 0)
+	p.entries = make([]any, 0)
 	return PartialResult(&p), DefPartialResult4JsonArrayagg + DefSliceSize
 }
 
@@ -47,7 +46,7 @@ func (*jsonArrayagg) ResetPartialResult(pr PartialResult) {
 	p.entries = p.entries[:0]
 }
 
-func (e *jsonArrayagg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonArrayagg) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonArrayagg)(pr)
 	if len(p.entries) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -62,7 +61,7 @@ func (e *jsonArrayagg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialR
 	return nil
 }
 
-func (e *jsonArrayagg) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonArrayagg) UpdatePartialResult(ctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonArrayagg)(pr)
 	for _, row := range rowsInGroup {
 		item, err := e.args[0].Eval(ctx, row)
@@ -70,7 +69,7 @@ func (e *jsonArrayagg) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup [
 			return 0, errors.Trace(err)
 		}
 
-		realItem, err := getRealJSONValue(item, e.args[0].GetType())
+		realItem, err := getRealJSONValue(item, e.args[0].GetType(ctx))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -86,7 +85,7 @@ func (e *jsonArrayagg) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup [
 	return memDelta, nil
 }
 
-func (*jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*jsonArrayagg) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonArrayagg)(src), (*partialResult4JsonArrayagg)(dst)
 	p2.entries = append(p2.entries, p1.entries...)
 	return 0, nil

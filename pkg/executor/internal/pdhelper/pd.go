@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // GlobalPDHelper is the global variable for PDHelper.
@@ -117,7 +116,7 @@ func getApproximateTableCountFromStorage(
 		sqlescape.MustFormatSQL(sql, " partition(%n)", partitionName)
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql.String())
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return 0, false
 	}

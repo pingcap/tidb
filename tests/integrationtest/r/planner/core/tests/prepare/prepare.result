@@ -506,6 +506,12 @@ id
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+execute stmt2 using @doma;
+id
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
 execute stmt using @doma;
 id
 1
@@ -750,6 +756,7 @@ prepare stmt2 from "select sum(b) from t group by ?, ?";
 execute stmt2 using @v1, @v2;
 sum(b)
 10
+set sql_mode=default;
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists ta, tb;
 CREATE TABLE ta(k varchar(32) NOT NULL DEFAULT ' ');
@@ -874,7 +881,7 @@ create table t (a int, b int);
 prepare p2 from "show columns from t where field = 'a'";
 execute p2;
 Field	Type	Null	Key	Default	Extra
-a	int(11)	YES		NULL	
+a	int	YES		NULL	
 create table t1 (a int, b int);
 prepare p3 from "show tables where tables_in_planner__core__tests__prepare__prepare = 't1'";
 execute p3;

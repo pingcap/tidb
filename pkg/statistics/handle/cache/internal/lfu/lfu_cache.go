@@ -15,42 +15,34 @@
 package lfu
 
 import (
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
-	"golang.org/x/exp/rand"
 )
 
-// LFU is a LFU based on the ristretto.Cache
+// LFU is a LFU based on the ristretto.Cache.
+//
+// NOTE: In Ristretto, updates to keys already resident in the primary store become visible
+// immediately, but keys not currently resident go through a buffered admission path and are
+// applied by a background worker. So a successful Set does not guarantee immediate Get
+// visibility for a non-resident key.
 type LFU struct {
-	cache        *ristretto.Cache
+	cache *ristretto.Cache
+	// This is a secondary cache layer used to store all tables,
+	// including those that have been evicted from the primary cache.
 	resultKeySet *keySetShard
 	cost         atomic.Int64
 	closed       atomic.Bool
 	closeOnce    sync.Once
-}
-
-var testMode = false
-
-// adjustMemCost adjusts the memory cost according to the total memory cost.
-// When the total memory cost is 0, the memory cost is set to half of the total memory.
-func adjustMemCost(totalMemCost int64) (result int64, err error) {
-	if totalMemCost == 0 {
-		memTotal, err := memory.MemTotal()
-		if err != nil {
-			return 0, err
-		}
-		return int64(memTotal / 2), nil
-	}
-	return totalMemCost, nil
 }
 
 // NewLFU creates a new LFU cache.
@@ -67,16 +59,18 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	result := &LFU{}
 	bufferItems := int64(64)
 
-	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        max(min(cost/128, 1_000_000), 10), // assume the cost per table stats is 128
-		MaxCost:            cost,
-		BufferItems:        bufferItems,
-		OnEvict:            result.onEvict,
-		OnExit:             result.onExit,
-		OnReject:           result.onReject,
-		IgnoreInternalCost: testMode,
-		Metrics:            testMode,
-	})
+	cache, err := ristretto.NewCache(
+		&ristretto.Config{
+			NumCounters:        max(min(cost/128, 1_000_000), 10), // assume the cost per table stats is 128
+			MaxCost:            cost,
+			BufferItems:        bufferItems,
+			OnEvict:            result.onEvict,
+			OnExit:             result.onExit,
+			OnReject:           result.onReject,
+			IgnoreInternalCost: intest.InTest,
+			Metrics:            intest.InTest,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +79,40 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	return result, err
 }
 
-// Get implements statsCacheInner
+// adjustMemCost adjusts the memory cost according to the total memory cost.
+// When the total memory cost is 0, the memory cost is set to 20% of the total memory.
+func adjustMemCost(totalMemCost int64) (result int64, err error) {
+	if totalMemCost == 0 {
+		memTotal, err := memory.MemTotal()
+		if err != nil {
+			return 0, err
+		}
+		return int64(memTotal * 20 / 100), nil
+	}
+	return totalMemCost, nil
+}
+
+// Get reads the primary Ristretto cache first and falls back to resultKeySet.
+//
+// NOTE: We keep this order to preserve Ristretto's admission/frequency behavior.
+// That means a resident primary-cache entry wins even if resultKeySet has already been updated to
+// a newer table snapshot; until the buffered Ristretto write catches up, Get can still observe
+// that older snapshot. We are aware of this stale-read window, but it is very rare in practice, so
+// we currently document it instead of changing the read order and taking on different concurrency
+// trade-offs.
+//
+// Extreme example (the old flaky pattern from TestNonLiteInitStatsWithTableIDs):
+//  1. InitStats(tbl1) publishes tbl1 to resultKeySet, but the new primary-cache entry is still in
+//     Ristretto's buffered admission path.
+//  2. A later targeted InitStats call that includes tbl1 again reads tbl1 from resultKeySet,
+//     fills in more index state, and republishes a newer tbl1 snapshot there.
+//  3. The older tbl1 can still reach Ristretto first, so topn/buckets sees that resident older
+//     snapshot, misses the index entry, and Put() can write that stale tbl1 back into the main
+//     cache.
+//
+// For phase-by-phase or chunk-by-chunk cache construction, callers that read after writes should
+// call WaitForAsyncUpdates before the next dependent read. InitStats does this between load phases
+// and chunks so a temporary LFU cache cannot carry an older table snapshot into later loading.
 func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
@@ -94,7 +121,10 @@ func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	return result.(*statistics.Table), ok
 }
 
-// Put implements statsCacheInner
+// Put publishes to resultKeySet first, then hands the item to Ristretto.
+//
+// Resident-key updates become visible there immediately; non-resident keys still go through the
+// buffered admission path.
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
 	s.resultKeySet.AddKeyValue(tblID, tbl)
@@ -122,15 +152,6 @@ func (s *LFU) Values() []*statistics.Table {
 		}
 	}
 	return result
-}
-
-// DropEvicted drop stats for table column/index
-func DropEvicted(item statistics.TableCacheItem) {
-	if !item.IsStatsInitialized() ||
-		item.GetEvictedStatus() == statistics.AllEvicted {
-		return
-	}
-	item.DropUnnecessaryData()
 }
 
 func (s *LFU) onReject(item *ristretto.Item) {
@@ -166,13 +187,8 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
-	table := item.Value.(*statistics.Table).Copy()
-	for _, column := range table.Columns {
-		DropEvicted(column)
-	}
-	for _, indix := range table.Indices {
-		DropEvicted(indix)
-	}
+	table := item.Value.(*statistics.Table).CopyAs(statistics.AllDataWritable)
+	table.DropEvicted()
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
@@ -205,8 +221,9 @@ func (s *LFU) onExit(val any) {
 	if s.closed.Load() {
 		return
 	}
-	s.addCost(
-		-1 * val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
+	s.triggerEvict()
+	// Subtract the memory usage of the table from the total memory usage.
+	s.addCost(-val.(*statistics.Table).MemoryUsage().TotalTrackingMemUsage())
 }
 
 // Len implements statsCacheInner
@@ -232,9 +249,9 @@ func (s *LFU) SetCapacity(maxCost int64) {
 	metrics.CostGauge.Set(float64(s.Cost()))
 }
 
-// wait blocks until all buffered writes have been applied. This ensures a call to Set()
-// will be visible to future calls to Get(). it is only used for test.
-func (s *LFU) wait() {
+// WaitForAsyncUpdates blocks until all buffered writes have been applied. This ensures a call to
+// Put is visible to future calls to Get.
+func (s *LFU) WaitForAsyncUpdates() {
 	s.cache.Wait()
 }
 
@@ -261,4 +278,9 @@ func (s *LFU) Clear() {
 func (s *LFU) addCost(v int64) {
 	newv := s.cost.Add(v)
 	metrics.CostGauge.Set(float64(newv))
+}
+
+// TriggerEvict implements statsCacheInner
+func (s *LFU) TriggerEvict() {
+	s.triggerEvict()
 }

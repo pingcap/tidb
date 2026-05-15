@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 type avgFunction struct {
@@ -51,7 +50,7 @@ func (af *avgFunction) updateAvg(ctx types.Context, evalCtx *AggEvaluateContext,
 
 func (af *avgFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	evalCtx.Ctx = ctx
 	evalCtx.Value.SetNull()
@@ -82,13 +81,13 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		x := evalCtx.Value.GetMysqlDecimal()
 		y := types.NewDecFromInt(evalCtx.Count)
 		to := new(types.MyDecimal)
-		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
+		err := types.DecimalDiv(x, y, to, evalCtx.Ctx.GetDivPrecisionIncrement())
 		terror.Log(err)
 		frac := af.RetTp.GetDecimal()
 		if frac == -1 {
 			frac = mysql.MaxDecimalScale
 		}
-		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfUp)
+		err = to.Round(to, min(frac, mysql.MaxDecimalScale), types.ModeHalfUp)
 		terror.Log(err)
 		d.SetMysqlDecimal(to)
 	}

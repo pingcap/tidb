@@ -23,37 +23,21 @@ import (
 )
 
 type telemetryData struct {
-	Hardware           []*clusterHardwareItem  `json:"hardware"`
-	Instances          []*clusterInfoItem      `json:"instances"`
-	TelemetryHostExtra *telemetryHostExtraInfo `json:"hostExtra"`
-	ReportTimestamp    int64                   `json:"reportTimestamp"`
-	TrackingID         string                  `json:"trackingId"`
-	FeatureUsage       *featureUsage           `json:"featureUsage"`
-	WindowedStats      []*windowData           `json:"windowedStats"`
-	SlowQueryStats     *slowQueryStats         `json:"slowQueryStats"`
+	ReportTimestamp int64         `json:"reportTimestamp"`
+	FeatureUsage    *featureUsage `json:"featureUsage"`
+	WindowedStats   []*windowData `json:"windowedStats"`
 }
 
-func generateTelemetryData(sctx sessionctx.Context, trackingID string) telemetryData {
+func generateTelemetryData(sctx sessionctx.Context) telemetryData {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry)
 	r := telemetryData{
 		ReportTimestamp: time.Now().Unix(),
-		TrackingID:      trackingID,
-	}
-	if h, err := getClusterHardware(ctx, sctx); err == nil {
-		r.Hardware = h
-	}
-	if i, err := getClusterInfo(ctx, sctx); err == nil {
-		r.Instances = i
 	}
 	if f, err := getFeatureUsage(ctx, sctx); err == nil {
 		r.FeatureUsage = f
 	}
-	if s, err := getSlowQueryStats(); err == nil {
-		r.SlowQueryStats = s
-	}
 
 	r.WindowedStats = getWindowData()
-	r.TelemetryHostExtra = getTelemetryHostExtraInfo()
 	return r
 }
 
@@ -64,7 +48,6 @@ func postReportTelemetryData() {
 	postReportMultiSchemaChangeUsage()
 	postReportExchangePartitionUsage()
 	postReportTablePartitionUsage()
-	postReportSlowQueryStats()
 	postReportNonTransactionalCounter()
 	PostSavepointCount()
 	postReportLazyPessimisticUniqueCheckSetCount()
