@@ -269,7 +269,18 @@ func TestRebaseAutoID(t *testing.T) {
 	tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1", "16000 1"))
 
 	tk.MustExec("create table tidb.test2 (a int);")
-	tk.MustGetErrCode("alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("insert tidb.test2 values (1);")
+	tk.MustExec("alter table tidb.test2 add column b int auto_increment key, auto_increment=10;")
+	tk.MustQuery("select count(*), count(distinct b), sum(b is null), sum(b=0) from tidb.test2").
+		Check(testkit.Rows("1 1 0 0"))
+	tk.MustQuery("select TIDB_PK_TYPE from information_schema.tables where table_schema='tidb' and table_name='test2'").
+		Check(testkit.Rows("NONCLUSTERED"))
+	tk.MustQuery("select EXTRA from information_schema.columns where table_schema='tidb' and table_name='test2' and column_name='b'").
+		Check(testkit.Rows("auto_increment"))
+	tk.MustExec("insert tidb.test2(a) values (2);")
+	tk.MustQuery("select b >= 10 from tidb.test2 where a = 2").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*), count(distinct b), sum(b is null), sum(b=0) from tidb.test2").
+		Check(testkit.Rows("2 2 0 0"))
 }
 
 func TestProcessColumnFlags(t *testing.T) {

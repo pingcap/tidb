@@ -723,7 +723,15 @@ func checkAndBuildIndexInfo(
 		return nil, errors.Trace(err)
 	}
 	if isPK {
-		if _, err = CheckPKOnGeneratedColumn(tblInfo, args.IndexPartSpecifications); err != nil {
+		// In multi-schema change, the referenced column may be non-public at this moment
+		// (e.g. the column is added earlier in the same statement), so allow non-public
+		// columns for this specific generated-column check.
+		if job.MultiSchemaInfo != nil {
+			_, err = checkPKOnGeneratedColumnAllowNonPublic(tblInfo, args.IndexPartSpecifications)
+		} else {
+			_, err = CheckPKOnGeneratedColumn(tblInfo, args.IndexPartSpecifications)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}

@@ -287,9 +287,15 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	modifyIdx := make(map[string]struct{})
 
 	checkColumns := func(colNames []pmodel.CIStr, addToModifyCols bool) error {
+	allowedRelativeDupCols := pkdbAllowedRelativeDupColsForAutoIncrementPK(info)
 		for _, colName := range colNames {
 			name := colName.L
 			if _, ok := modifyCols[name]; ok {
+				if !addToModifyCols {
+					if _, ok := allowedRelativeDupCols[name]; ok {
+						continue
+					}
+				}
 				return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
 			}
 			if addToModifyCols {
@@ -436,6 +442,10 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 	err := checkOperateSameColAndIdx(info)
 	if err != nil {
+		return err
+	}
+
+	if err := pkdbCheckMultiSchemaAutoIncrementWithNonclusteredPK(info, t); err != nil {
 		return err
 	}
 

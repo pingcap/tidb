@@ -789,6 +789,8 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) autoid.Allocators {
 	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
+		// Keep the allocator routing logic in sync with the current TableInfo.
+		allocs.SepAutoInc = tblInfo.SepAutoInc()
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIDCache:
 			idCacheOpt := autoid.CustomAutoIncCacheOption(tblInfo.AutoIDCache)
@@ -812,6 +814,9 @@ func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.D
 				newAlloc := autoid.NewAllocator(b.Requirement, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 				allocs = allocs.Append(newAlloc)
 			}
+			allocs = pkdbMaybeAdjustAllocsAfterAutoIncrementEnabled(b.Requirement, dbInfo, tblInfo, allocs, tblVer)
+		case model.ActionMultiSchemaChange:
+			allocs = pkdbMaybeAdjustAllocsAfterAutoIncrementEnabled(b.Requirement, dbInfo, tblInfo, allocs, tblVer)
 		}
 		return allocs
 	}

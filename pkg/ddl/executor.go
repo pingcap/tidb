@@ -1862,6 +1862,12 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		// TODO: Only allow REMOVE PARTITIONING as a single ALTER TABLE statement?
 	}
 
+	var err error
+	validSpecs, err = resolveAlterTableInlinePrimaryKey(validSpecs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// Verify whether the algorithm is supported.
 	for _, spec := range validSpecs {
 		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
@@ -1879,6 +1885,124 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 
 	// Only handle valid specs.
 	return validSpecs, nil
+}
+
+// resolveAlterTableInlinePrimaryKey rewrites inline column-level PRIMARY KEY options into
+// separate "ADD PRIMARY KEY(...)" specs so that they can be executed as a multi-schema change.
+//
+// MySQL allows statements like:
+//   ALTER TABLE t ADD COLUMN id INT AUTO_INCREMENT PRIMARY KEY;
+// which is equivalent to:
+//   ALTER TABLE t ADD COLUMN id INT AUTO_INCREMENT, ADD PRIMARY KEY (id);
+//
+// TiDB's add/modify column paths don't apply index/PK constraints embedded in column definition,
+// so we expand them here to reuse the existing multi-schema implementation.
+func resolveAlterTableInlinePrimaryKey(specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
+	hasExplicitAddPK := false
+	for _, spec := range specs {
+		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint != nil && spec.Constraint.Tp == ast.ConstraintPrimaryKey {
+			hasExplicitAddPK = true
+			break
+		}
+	}
+
+	var (
+		inlinePKFound bool
+		inlinePKCol   *ast.ColumnName
+		inlinePKOpt   *ast.ColumnOption
+		inlinePKSpec  *ast.AlterTableSpec
+	)
+
+	// Find at most one inline PRIMARY KEY definition.
+	for _, spec := range specs {
+		var colDef *ast.ColumnDef
+		switch spec.Tp {
+		case ast.AlterTableAddColumns, ast.AlterTableModifyColumn, ast.AlterTableChangeColumn:
+			if len(spec.NewColumns) == 1 {
+				colDef = spec.NewColumns[0]
+			}
+		}
+		if colDef == nil || len(colDef.Options) == 0 {
+			continue
+		}
+
+		// Only rewrite the syntax variants we explicitly support today:
+		// inline PRIMARY KEY paired with AUTO_INCREMENT (e.g. "AUTO_INCREMENT PRIMARY KEY").
+		// This avoids changing the historical behavior of unsupported statements like
+		// "MODIFY COLUMN c INT PRIMARY KEY ...", which previously returned error 8200.
+		hasAutoIncrement := false
+		for _, opt := range colDef.Options {
+			if opt.Tp == ast.ColumnOptionAutoIncrement {
+				hasAutoIncrement = true
+				break
+			}
+		}
+		if !hasAutoIncrement {
+			continue
+		}
+
+		// Extract the PRIMARY KEY option from the column definition.
+		foundInlinePKInThisCol := false
+		newOpts := colDef.Options[:0]
+		for _, opt := range colDef.Options {
+			if opt.Tp == ast.ColumnOptionPrimaryKey {
+				if inlinePKFound {
+					return nil, infoschema.ErrMultiplePriKey
+				}
+				foundInlinePKInThisCol = true
+				inlinePKFound = true
+				inlinePKCol = colDef.Name
+				inlinePKOpt = opt
+				inlinePKSpec = spec
+				continue
+			}
+			newOpts = append(newOpts, opt)
+		}
+		if foundInlinePKInThisCol {
+			colDef.Options = newOpts
+			// PRIMARY KEY implies NOT NULL. Keep the semantic after removing the option.
+			if !containsColumnOption(colDef, ast.ColumnOptionNotNull) && !containsColumnOption(colDef, ast.ColumnOptionNull) {
+				colDef.Options = append(colDef.Options, &ast.ColumnOption{Tp: ast.ColumnOptionNotNull})
+			}
+		}
+	}
+
+	if !inlinePKFound {
+		return specs, nil
+	}
+	if hasExplicitAddPK {
+		return nil, infoschema.ErrMultiplePriKey
+	}
+
+	// Insert an ADD PRIMARY KEY spec right after the column spec that defined it inline,
+	// so the target column is available for later processing.
+	newSpecs := make([]*ast.AlterTableSpec, 0, len(specs)+1)
+	for _, spec := range specs {
+		newSpecs = append(newSpecs, spec)
+		if spec != inlinePKSpec {
+			continue
+		}
+
+		keys := []*ast.IndexPartSpecification{
+			{
+				Column: inlinePKCol,
+				Length: types.UnspecifiedLength,
+			},
+		}
+		idxOpt := &ast.IndexOption{PrimaryKeyTp: inlinePKOpt.PrimaryKeyTp}
+		if inlinePKOpt.StrValue == "Global" {
+			idxOpt.Global = true
+		}
+		addPKSpec := &ast.AlterTableSpec{
+			Tp:        ast.AlterTableAddConstraint,
+			Constraint: &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Name: mysql.PrimaryKeyName, Keys: keys, Option: idxOpt},
+			Algorithm: spec.Algorithm,
+			LockType:  spec.LockType,
+		}
+		newSpecs = append(newSpecs, addPKSpec)
+	}
+
+	return newSpecs, nil
 }
 
 func isMultiSchemaChanges(specs []*ast.AlterTableSpec) bool {
@@ -1926,13 +2050,28 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		}
 	}
 
-	if len(validSpecs) > 1 {
+	// In multi-schema change, later specs may depend on earlier specs (e.g. add column then add index/PK on it).
+	// Maintain a temporary TableInfo to perform prechecks/job construction.
+	var (
+		multiSchemaTmpSchema *model.DBInfo
+		multiSchemaTmpTbl    *model.TableInfo
+	)
+	if isMultiSchemaChanges(validSpecs) {
 		// after MultiSchemaInfo is set, DoDDLJob will collect all jobs into
 		// MultiSchemaInfo and skip running them. Then we will run them in
 		// d.multiSchemaChange all at once.
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
+		if schema, ok := is.SchemaByName(ident.Schema); ok {
+			multiSchemaTmpSchema = schema
+			multiSchemaTmpTbl = tb.Meta().Clone()
+		}
 	}
 	for _, spec := range validSpecs {
+		prevSubJobCnt := 0
+		if mci := sctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
+			prevSubJobCnt = len(mci.SubJobs)
+		}
+
 		var handledCharsetOrCollate bool
 		var ttlOptionsHandled bool
 		switch spec.Tp {
@@ -2004,7 +2143,11 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				// so we just also ignore the `if not exists` check.
 				err = e.CreateForeignKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
-				err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				if multiSchemaTmpSchema != nil && multiSchemaTmpTbl != nil {
+					err = e.createPrimaryKeyWithTableInfo(sctx, multiSchemaTmpSchema, multiSchemaTmpTbl, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				} else {
+					err = e.CreatePrimaryKey(sctx, ident, pmodel.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				}
 			case ast.ConstraintFulltext:
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
@@ -2155,6 +2298,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// If a sub-job is appended, update the temporary schema so that following specs can reference it.
+		pkdbUpdateMultiSchemaTmpTableInfo(sctx, multiSchemaTmpTbl, prevSubJobCnt)
 	}
 
 	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
