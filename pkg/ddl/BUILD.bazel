@@ -295,6 +295,7 @@ go_test(
         "schema_test.go",
         "schema_version_test.go",
         "sequence_test.go",
+        "split_region_test.go",
         "stat_test.go",
         "table_mode_test.go",
         "table_modify_test.go",
