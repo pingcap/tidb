@@ -9,6 +9,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
@@ -57,14 +58,24 @@ func TestGetConfTables(t *testing.T) {
 
 func TestParseParquetDefaultFlags(t *testing.T) {
 	defaultConf := DefaultConfig()
-	require.Equal(t, compressedio.Snappy, defaultConf.ParquetCompressType)
+	require.Equal(t, parquetfile.DefaultCompressionType, defaultConf.ParquetCompressType)
 	require.EqualValues(t, units.MiB, defaultConf.ParquetPageSize)
 	require.EqualValues(t, 120*units.MiB, defaultConf.ParquetRowGroupSize)
 
 	conf := parseConfigFromArgsForTest(t)
 	require.EqualValues(t, units.MiB, conf.ParquetPageSize)
 	require.EqualValues(t, 120*units.MiB, conf.ParquetRowGroupSize)
-	require.Equal(t, compressedio.Snappy, conf.ParquetCompressType)
+	require.Equal(t, parquetfile.DefaultCompressionType, conf.ParquetCompressType)
+
+	t.Run("ParseParquetCompressType uses parquetfile policy", func(t *testing.T) {
+		tp, err := ParseParquetCompressType("")
+		require.NoError(t, err)
+		require.Equal(t, parquetfile.DefaultCompressionType, tp)
+
+		tp, err = ParseParquetCompressType("zstd")
+		require.NoError(t, err)
+		require.Equal(t, compressedio.Zstd, tp)
+	})
 }
 
 func TestParseParquetSizeFlags(t *testing.T) {

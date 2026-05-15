@@ -213,8 +213,12 @@ type Config struct {
 	ClusterSSLCert string
 	ClusterSSLKey  string
 
+	// ParquetCompressType is the parquet row-group compression type.
 	ParquetCompressType compressedio.CompressType
-	ParquetPageSize     int64
+	// ParquetPageSize is the parquet data page size in bytes.
+	ParquetPageSize int64
+	// ParquetRowGroupSize is the parquet row-group flush threshold by accounted
+	// in-memory bytes.
 	ParquetRowGroupSize int64
 }
 
@@ -273,7 +277,7 @@ func DefaultConfig() *Config {
 		ClusterSSLCA:             "",
 		ClusterSSLCert:           "",
 		ClusterSSLKey:            "",
-		ParquetCompressType:      compressedio.Snappy,
+		ParquetCompressType:      parquetfile.DefaultCompressionType,
 		ParquetPageSize:          units.MiB,
 		ParquetRowGroupSize:      parquetfile.DefaultRowGroupMemoryLimitBytes,
 	}
@@ -400,7 +404,11 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
 	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
 	flags.String(flagParquetPageSize, units.BytesSize(float64(units.MiB)), "Parquet page size in bytes, accepts human-readable units")
-	flags.String(flagParquetRowGroupSize, units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)), "Parquet row group size in bytes, accepts human-readable units")
+	flags.String(
+		flagParquetRowGroupSize,
+		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
+		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
+	)
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -782,12 +790,9 @@ func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
 }
 
 // ParseParquetCompressType parses the parquet compression flag value.
-// Empty means the flag is not configured, so Dumpling uses Snappy by default.
+// Empty means the flag is not configured, so Dumpling uses the parquet default.
 func ParseParquetCompressType(compressType string) (compressedio.CompressType, error) {
-	if compressType == "" {
-		return compressedio.Snappy, nil
-	}
-	return compressedio.ParseCompressType(compressType)
+	return parquetfile.ParseCompressionType(compressType)
 }
 
 func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {

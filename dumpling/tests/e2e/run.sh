@@ -44,6 +44,9 @@ PARQUET_TABLE_NAME="t_types"
 run_dumpling_parquet() {
     parquet_dump_log="$DUMPLING_OUTPUT_DIR/dumpling_parquet.log"
     if ! run_dumpling "$@" > "$parquet_dump_log" 2>&1; then
+        # Compatibility fallback: in some test setups Dumpling cannot infer PD and
+        # fails with "requires --pd". Retry once with PD discovered from TiDB /settings.
+        # Remove this branch when the test environment always exposes PD to Dumpling.
         if grep -q "requires --pd" "$parquet_dump_log"; then
             pd_addr=$(curl -sf "http://127.0.0.1:10080/settings" | sed -n 's/.*"path": "\([^"]*\)".*/\1/p' | head -n1)
             [ -n "$pd_addr" ]

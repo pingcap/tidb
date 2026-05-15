@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -616,7 +615,7 @@ func WriteInsertInParquet(
 
 	// parquet need to get more information from tableMeta
 	opts := []parquetfile.WriterOption{
-		parquetfile.WithCompression(getParquetCompress(cfg.ParquetCompressType)),
+		parquetfile.WithCompression(parquetfile.CompressionCodec(cfg.ParquetCompressType)),
 		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
 		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
 	}
@@ -654,7 +653,8 @@ func WriteInsertInParquet(
 		}
 	}()
 
-	// add row to parquet writer, it will flush to buffer when reach row group size
+	// Add rows to parquet writer; it flushes when accounted in-memory bytes reach
+	// the configured row-group memory limit.
 	for fileRowIter.HasNext() {
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
@@ -690,24 +690,7 @@ func WriteInsertInParquet(
 	return counter, nil
 }
 
-func getParquetCompress(tp compressedio.CompressType) compress.Compression {
-	// Keep default as snappy for forward compatibility: ParseParquetCompressType validates
-	// known values at config parse time, and snappy is the documented default.
-	switch tp {
-	case compressedio.NoCompression:
-		return compress.Codecs.Uncompressed
-	case compressedio.Gzip:
-		return compress.Codecs.Gzip
-	case compressedio.Snappy:
-		return compress.Codecs.Snappy
-	case compressedio.Zstd:
-		return compress.Codecs.Zstd
-	default:
-		return compress.Codecs.Snappy
-	}
-}
-
-// FileFormat is the format that output to file. Currently we support SQL text and CSV file format.
+// FileFormat is the format that output to file, including SQL text, CSV, and parquet.
 type FileFormat int32
 
 const (
@@ -748,6 +731,7 @@ func (f FileFormat) String() string {
 //
 //	text -> "sql"
 //	csv  -> "csv"
+//	parquet -> "parquet"
 func (f FileFormat) Extension() string {
 	switch f {
 	case FileFormatSQLText:
@@ -761,7 +745,7 @@ func (f FileFormat) Extension() string {
 	}
 }
 
-// WriteInsert writes TableDataIR to a objectio.Writer in sql/csv type
+// WriteInsert writes TableDataIR to objectio.Writer in SQL/CSV/parquet type.
 func (f FileFormat) WriteInsert(
 	pCtx *tcontext.Context,
 	cfg *Config,

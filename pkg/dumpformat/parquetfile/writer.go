@@ -25,10 +25,11 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 )
 
-// defaultCompressionType is the default Parquet compression codec.
-var defaultCompressionType = compress.Codecs.Snappy
+// DefaultCompressionType is the default parquet compression type.
+const DefaultCompressionType = compressedio.Snappy
 
 const (
 	// DefaultRowGroupMemoryLimitBytes is the default row-group flush threshold
@@ -125,9 +126,37 @@ type WriterOption func(writerOptions) writerOptions
 func defaultWriterOptions() writerOptions {
 	return writerOptions{
 		writerProperties: []parquet.WriterProperty{
-			parquet.WithCompression(defaultCompressionType),
+			parquet.WithCompression(CompressionCodec(DefaultCompressionType)),
 		},
 		rowGroupMemoryLimitBytes: DefaultRowGroupMemoryLimitBytes,
+	}
+}
+
+// ParseCompressionType parses the parquet compression flag value.
+// Empty means the flag is not configured, so Dumpling uses the default.
+func ParseCompressionType(compressType string) (compressedio.CompressType, error) {
+	if compressType == "" {
+		return DefaultCompressionType, nil
+	}
+	return compressedio.ParseCompressType(compressType)
+}
+
+// CompressionCodec converts dumpling compression type to parquet codec.
+func CompressionCodec(compressType compressedio.CompressType) compress.Compression {
+	switch compressType {
+	case compressedio.NoCompression:
+		return compress.Codecs.Uncompressed
+	case compressedio.Gzip:
+		return compress.Codecs.Gzip
+	case compressedio.Snappy:
+		return compress.Codecs.Snappy
+	case compressedio.Zstd:
+		return compress.Codecs.Zstd
+	default:
+		if compressType != DefaultCompressionType {
+			return CompressionCodec(DefaultCompressionType)
+		}
+		return compress.Codecs.Snappy
 	}
 }
 
