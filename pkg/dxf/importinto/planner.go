@@ -552,7 +552,7 @@ func triggerTiCIPreSplitForImportInto(
 	timeoutCtx, cancel := context.WithTimeout(ctx, ticiPreSplitRequestTimeout)
 	defer cancel()
 
-	req, err := buildTiCIPreSplitImportShardsRequestForImportInto(timeoutCtx, planCtx, p, store, kvMetaGroups)
+	req, err := buildTiCIPreSplitImportShardsRequestForImportInto(timeoutCtx, p, store, kvMetaGroups)
 	if err != nil {
 		return err
 	}
@@ -607,7 +607,6 @@ func collectTiCIPreSplitImportKVMetaGroups(
 
 func buildTiCIPreSplitImportShardsRequestForImportInto(
 	ctx context.Context,
-	planCtx planner.PlanCtx,
 	p *LogicalPlan,
 	store storeapi.Storage,
 	kvMetaGroups []ticiPreSplitImportKVMetaGroup,
@@ -628,7 +627,7 @@ func buildTiCIPreSplitImportShardsRequestForImportInto(
 	}
 	dataFileCount, statFileCount := countUniqueFilesForTiCIPreSplitImportRequest(kvMetas)
 	req := &tici.PreSplitImportShardsRequest{
-		TidbTaskId:    strconv.FormatInt(planCtx.TaskID, 10),
+		TidbTaskId:    ticiTaskIDForImportInto(p.JobID),
 		TableId:       p.Plan.TableInfo.ID,
 		IndexIds:      indexIDs,
 		DataFileCount: dataFileCount,
