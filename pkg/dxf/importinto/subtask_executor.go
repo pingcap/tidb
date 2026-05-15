@@ -62,7 +62,7 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 	}
 }
 
-const importIntoTiCIIndexReadyPollInterval = 2 * time.Second
+const importIntoTiCIIndexReadyPollInterval = 15 * time.Second
 
 var (
 	finishTiCIIndexUpload       = tici.FinishIndexUpload
