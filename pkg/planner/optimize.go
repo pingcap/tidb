@@ -652,17 +652,6 @@ type alternativeRound struct {
 	cleanup    func(*variable.SessionVars)
 }
 
-// savedEnableCorrelateSubquery holds the pre-round value of
-// EnableCorrelateSubquery so setup/cleanup can share it without a closure
-// wrapper. Safe because optimize is single-threaded per session.
-var savedEnableCorrelateSubquery bool
-
-// savedFTSLikeFallback holds the pre-round value of
-// AlternativeLogicalPlanFTSLikeFallback so the fts-like-fallback round's
-// setup/cleanup can restore it after running with the flag forced on. Safe
-// because optimize is single-threaded per session.
-var savedFTSLikeFallback bool
-
 var alternativeRounds = [...]alternativeRound{
 	{
 		name:       "non-decorrelate",
@@ -679,11 +668,7 @@ var alternativeRounds = [...]alternativeRound{
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
 		enabled:    shouldTryCorrelateRound,
 		setup: func(sv *variable.SessionVars) {
-			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
 			sv.EnableCorrelateSubquery = true
-		},
-		cleanup: func(sv *variable.SessionVars) {
-			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
 		},
 	},
 	{
@@ -707,11 +692,7 @@ var alternativeRounds = [...]alternativeRound{
 				sv.StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch
 		},
 		setup: func(sv *variable.SessionVars) {
-			savedFTSLikeFallback = sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
 			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
-		},
-		cleanup: func(sv *variable.SessionVars) {
-			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = savedFTSLikeFallback
 		},
 	},
 }
@@ -819,12 +800,21 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		})
 
 		// Use a closure so that defer-based cleanup runs at the end of each
-		// iteration, not at function exit. This ensures session state (e.g.
-		// EnableCorrelateSubquery) is restored even if the round panics.
+		// iteration, not at function exit. Keep per-round session snapshots on
+		// the closure stack instead of package globals so concurrent optimize
+		// calls do not race on restore values.
 		func() {
 			if round.setup != nil {
+				prevEnableCorrelateSubquery := sessVars.EnableCorrelateSubquery
+				prevFTSLikeFallback := sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+				defer func() {
+					if round.cleanup != nil {
+						round.cleanup(sessVars)
+					}
+					sessVars.EnableCorrelateSubquery = prevEnableCorrelateSubquery
+					sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = prevFTSLikeFallback
+				}()
 				round.setup(sessVars)
-				defer round.cleanup(sessVars)
 			}
 			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
 				ctx,
