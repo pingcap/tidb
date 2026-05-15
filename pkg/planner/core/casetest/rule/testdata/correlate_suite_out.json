@@ -108,7 +108,7 @@
       {
         "SQL": "select * from t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t2 where t2.a = t1.a)",
         "Plan": [
-          "Apply 8000.00 root  CARTESIAN semi join, left side:TableReader",
+          "Apply 10000.00 root  CARTESIAN semi join, left side:TableReader",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─Limit(Probe) 10000.00 root  offset:0, count:1",
@@ -275,12 +275,12 @@
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexHashJoin 1.00 root  semi join, inner:IndexReader, left side:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "  ├─TableReader(Build) 1.25 root  data:Selection",
-          "  │ └─Selection 1.25 cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
-          "  │   └─TableFullScan 1251.25 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) 1.56 root  index:Selection",
-          "    └─Selection 1.56 cop[tikv]  not(isnull(test.t2.a))",
-          "      └─IndexRangeScan 1.56 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+          "  ├─TableReader(Build) 1.27 root  data:Selection",
+          "  │ └─Selection 1.27 cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
+          "  │   └─TableFullScan 1271.25 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─IndexReader(Probe) 1.59 root  index:Selection",
+          "    └─Selection 1.59 cop[tikv]  not(isnull(test.t2.a))",
+          "      └─IndexRangeScan 1.59 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
