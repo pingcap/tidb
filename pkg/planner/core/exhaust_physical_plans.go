@@ -1497,6 +1497,10 @@ func applyLogicalTopNAndLimitHint(lp base.LogicalPlan, pp base.PhysicalPlan, chi
 }
 
 func hasNormalPreferTask(lp base.LogicalPlan, state *enumerateState, pp base.PhysicalPlan, childTasks []base.Task) (preferred bool) {
+	if ua, ok := pp.(*physicalop.PhysicalUnionAll); ok && ua.Mpp && ua.SCtx().GetSessionVars().IsMPPEnforced() {
+		// Keep a valid MPP UnionAll when MPP is enforced instead of letting a cheaper root candidate win.
+		return true
+	}
 	_, meetThreshold := pushLimitOrTopNForcibly(lp, pp)
 	if meetThreshold {
 		// previously, we set meetThreshold for pruning root task type but mpp task type. so:
