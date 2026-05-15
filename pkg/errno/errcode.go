@@ -945,11 +945,6 @@ const (
 	ErrEngineAttributeNotSupported                           = 3981
 	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
-	// Dual-password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) — match MySQL 8.0
-	// error numbers from mysql/mysql-server share/messages_to_clients.txt.
-	ErrSecondPasswordCannotBeEmpty            = 3878
-	ErrPasswordCannotBeRetainedOnPluginChange = 3894
-	ErrCurrentPasswordCannotBeRetained        = 3895
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113

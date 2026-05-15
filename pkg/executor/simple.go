@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
@@ -125,8 +124,6 @@ type passwordOrLockOptionsInfo struct {
 	passwordLockTime            int64
 	failedLoginAttemptsChange   bool
 	passwordLockTimeChange      bool
-	retainCurrentPassword       bool
-	discardOldPassword          bool
 }
 
 type passwordReuseInfo struct {
@@ -920,18 +917,7 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 		case ast.PasswordReuseDefault:
 			info.passwordReuseInterval = notSpecified
 			info.passwordReuseIntervalChange = true
-		case ast.RetainCurrentPassword:
-			info.retainCurrentPassword = true
-		case ast.DiscardOldPassword:
-			info.discardOldPassword = true
 		}
-	}
-	if info.retainCurrentPassword && info.discardOldPassword {
-		// MySQL does not define a dedicated error code for this combination — its
-		// grammar places RETAIN / DISCARD per user-spec where the pair is not
-		// expressible. TiDB currently attaches them at statement level, so we
-		// reject the combination with a plain error here.
-		return errors.Errorf("RETAIN CURRENT PASSWORD and DISCARD OLD PASSWORD can not be used together")
 	}
 	return nil
 }
@@ -1103,23 +1089,6 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	err = plOptions.loadOptions(s.PasswordOrLockOptions)
 	if err != nil {
 		return err
-	}
-	// MySQL rejects RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD in CREATE USER;
-	// a new user always starts with a single primary password.
-	for _, spec := range s.Specs {
-		retainCurrentPassword, discardOldPassword := dualPasswordOption(spec)
-		if retainCurrentPassword {
-			return errors.Errorf("RETAIN CURRENT PASSWORD clause is not supported in CREATE USER statement")
-		}
-		if discardOldPassword {
-			return errors.Errorf("DISCARD OLD PASSWORD clause is not supported in CREATE USER statement")
-		}
-	}
-	if plOptions.retainCurrentPassword {
-		return errors.Errorf("RETAIN CURRENT PASSWORD clause is not supported in CREATE USER statement")
-	}
-	if plOptions.discardOldPassword {
-		return errors.Errorf("DISCARD OLD PASSWORD clause is not supported in CREATE USER statement")
 	}
 	passwordLocking := createUserFailedLoginJSON(plOptions)
 	if s.IsCreateRole {
@@ -1679,30 +1648,6 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	return nil
 }
 
-func dualPasswordOption(spec *ast.UserSpec) (retainCurrentPassword bool, discardOldPassword bool) {
-	if spec == nil || spec.DualPasswordOption == nil {
-		return false, false
-	}
-	switch spec.DualPasswordOption.Type {
-	case ast.RetainCurrentPassword:
-		return true, false
-	case ast.DiscardOldPassword:
-		return false, true
-	default:
-		return false, false
-	}
-}
-
-func dualPasswordRequested(specs []*ast.UserSpec) bool {
-	for _, spec := range specs {
-		retainCurrentPassword, discardOldPassword := dualPasswordOption(spec)
-		if retainCurrentPassword || discardOldPassword {
-			return true
-		}
-	}
-	return false
-}
-
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
 	disableSandBoxMode := false
 	var err error
@@ -1774,16 +1719,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
 	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
-	// Defer the APPLICATION_PASSWORD_ADMIN lookup until we know the statement
-	// actually carries RETAIN CURRENT PASSWORD or DISCARD OLD PASSWORD. This
-	// keeps the privilege-call count unchanged for the common ALTER USER path
-	// (and for the mock-based pkg/extension auth tests).
-	stmtDualPwdRequested := plOptions.retainCurrentPassword || plOptions.discardOldPassword
-	dualPwdRequested := stmtDualPwdRequested || dualPasswordRequested(s.Specs)
-	hasApplicationPasswordAdminPriv := false
-	if dualPwdRequested {
-		hasApplicationPasswordAdminPriv = checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
-	}
 
 	var authTokenOptions []*ast.AuthTokenOrTLSOption
 	for _, authTokenOrTLSOption := range s.AuthTokenOrTLSOptions {
@@ -1811,13 +1746,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	for _, spec := range s.Specs {
-		specRetainCurrentPassword, specDiscardOldPassword := dualPasswordOption(spec)
-		if stmtDualPwdRequested {
-			specRetainCurrentPassword = specRetainCurrentPassword || plOptions.retainCurrentPassword
-			specDiscardOldPassword = specDiscardOldPassword || plOptions.discardOldPassword
-		}
-		specDualPwdRequested := specRetainCurrentPassword || specDiscardOldPassword
-
 		user := e.Ctx().GetSessionVars().User
 		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
 		alterPassword := false
@@ -1826,7 +1754,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				alterPassword = true
 			}
 		}
-		if alterCurrentUser && (alterPassword || specDualPwdRequested) {
+		if alterCurrentUser && alterPassword {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
@@ -1865,38 +1793,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
 			continue
-		}
-
-		// MySQL-compatible dual password: RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD validation.
-		// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-management-dual-password
-		if specDualPwdRequested {
-			// MySQL requires APPLICATION_PASSWORD_ADMIN or CREATE USER for a
-			// user manipulating their own secondary password. Manipulating
-			// other accounts' secondary passwords is covered by CREATE USER.
-			if alterCurrentUser {
-				if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
-					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or APPLICATION_PASSWORD_ADMIN")
-				}
-			} else if !hasCreateUserPriv {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			}
-			// Only password-based auth plugins can hold a secondary password.
-			if !isDualPasswordCapablePlugin(currentAuthPlugin) {
-				return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", currentAuthPlugin)
-			}
-		}
-		if specRetainCurrentPassword {
-			// RETAIN requires a new password to be set, with the same plugin, and the new password must be non-empty.
-			if spec.AuthOpt == nil || !(spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString) {
-				return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
-			}
-			if spec.AuthOpt.AuthPlugin != "" && spec.AuthOpt.AuthPlugin != currentAuthPlugin {
-				return exeerrors.ErrPasswordCannotBeRetainedOnPluginChange.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
-			}
-			if (spec.AuthOpt.ByAuthString && spec.AuthOpt.AuthString == "") ||
-				(spec.AuthOpt.ByHashString && spec.AuthOpt.HashString == "") {
-				return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
-			}
 		}
 
 		type AuthTokenOptionHandler int
@@ -2069,43 +1965,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if passwordLockingStr != "" {
 			newAttributes = append(newAttributes, passwordLockingStr)
 		}
-		// MySQL-compatible dual password: if RETAIN CURRENT PASSWORD is requested,
-		// capture the current authentication_string as the secondary password before
-		// overwriting it in this UPDATE.
-		if specRetainCurrentPassword {
-			entry, err := buildAdditionalPasswordEntry(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
-			if err != nil {
-				return err
-			}
-			newAttributes = append(newAttributes, entry)
-		}
-		// DISCARD OLD PASSWORD removes the secondary password.
-		// MySQL also silently drops the secondary when the auth plugin is changed.
-		dropSecondary := specDiscardOldPassword ||
-			(spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" && spec.AuthOpt.AuthPlugin != currentAuthPlugin)
-		// RETAIN always writes a fresh secondary, so any pending drop is moot.
-		if specRetainCurrentPassword {
-			dropSecondary = false
-		}
-
-		// Emit a single user_attributes assignment so the merge-then-remove
-		// pipeline is expressed in one SQL expression rather than relying on
-		// MySQL's left-to-right evaluation of same-row SET assignments.
-		hasNewAttributes := len(newAttributes) > 0
-		if hasNewAttributes {
-			if len(newAttributes) > 1 || passwordLockingStr == "" {
+		if length := len(newAttributes); length > 0 {
+			if length > 1 || passwordLockingStr == "" {
 				passwordLockingInfo.containsNoOthers = false
 			}
-		}
-		switch {
-		case hasNewAttributes && dropSecondary:
-			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
-			fields = append(fields, alterField{"user_attributes=json_remove(json_merge_patch(coalesce(user_attributes, '{}'), %?), '$.additional_password')", newAttributesStr})
-		case hasNewAttributes:
 			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
-		case dropSecondary:
-			fields = append(fields, alterField{"user_attributes=json_remove(coalesce(user_attributes, '{}'), '$.additional_password')", nil})
 		}
 
 		switch authTokenOptionHandler {
@@ -2591,69 +2456,6 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 }
 
 // use the same internal executor to read within the same transaction, otherwise same as userExists
-// isDualPasswordCapablePlugin reports whether a user whose plugin is `plugin` is
-// eligible to hold a secondary ("additional") password. Dual passwords are only
-// meaningful for password-based plugins. LDAP / socket / token plugins are excluded,
-// matching MySQL 8.0 behavior.
-func isDualPasswordCapablePlugin(plugin string) bool {
-	switch plugin {
-	// Empty plugin is treated as mysql_native_password elsewhere in this file
-	// (see executeAlterUser's AuthPlugin defaulting), so legacy rows with an
-	// empty `plugin` column must also be eligible for RETAIN / DISCARD.
-	case "", mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-		return true
-	}
-	return false
-}
-
-// readAuthenticationString returns the current authentication_string for the
-// given user, using the supplied system session's executor. The second return
-// value is true when a row was found, false otherwise — callers must check it
-// before treating an empty string as a legitimate empty password vs. a missing
-// user. Used when RETAIN CURRENT PASSWORD needs to capture the pre-change hash
-// as the secondary password.
-func readAuthenticationString(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (string, bool, error) {
-	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, `SELECT authentication_string FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
-	rs, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return "", false, err
-	}
-	defer terror.Call(rs.Close)
-	req := rs.NewChunk(nil)
-	if err := rs.Next(ctx, req); err != nil {
-		return "", false, err
-	}
-	if req.NumRows() == 0 {
-		return "", false, nil
-	}
-	return req.GetRow(0).GetString(0), true, nil
-}
-
-// buildAdditionalPasswordEntry reads the user's current authentication_string
-// and returns a JSON key/value fragment `"additional_password": "<hash>"`
-// suitable for embedding inside a user_attributes JSON object (e.g. via
-// JSON_MERGE_PATCH). The caller composes the surrounding object.
-// It fails when the user doesn't exist or when the current primary password is
-// empty — MySQL rejects RETAIN CURRENT PASSWORD in both situations.
-func buildAdditionalPasswordEntry(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (string, error) {
-	oldPwd, found, err := readAuthenticationString(ctx, sqlExecutor, name, host)
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		return "", exeerrors.ErrPasswordNoMatch
-	}
-	if oldPwd == "" {
-		return "", exeerrors.ErrSecondPasswordCannotBeEmpty.GenWithStackByArgs(name, host)
-	}
-	encoded, err := json.Marshal(oldPwd)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf(`"additional_password": %s`, encoded), nil
-}
-
 func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, string, error) {
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
@@ -2713,41 +2515,22 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 
 	var u, h string
 	disableSandboxMode := false
-	sessUser := e.Ctx().GetSessionVars().User
-	checker := privilege.GetPrivilegeManager(e.Ctx())
-	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	hasCreateUserPriv := false
-	hasApplicationPasswordAdminPriv := false
-	if checker != nil && s.RetainCurrentPassword {
-		hasCreateUserPriv = checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
-		hasApplicationPasswordAdminPriv = checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
-	}
-	// setPwdForSelf matches executeAlterUser's alterCurrentUser idiom: treat an
-	// explicit `FOR 'self'@'host'` that names the caller as self-service.
-	setPwdForSelf := s.User == nil || s.User.CurrentUser ||
-		(sessUser != nil && sessUser.Username == s.User.Username && sessUser.AuthHostname == s.User.Hostname)
-	if setPwdForSelf {
-		if sessUser == nil {
+	if s.User == nil || s.User.CurrentUser {
+		if e.Ctx().GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
 		}
-		u = sessUser.AuthUsername
-		h = sessUser.AuthHostname
+		u = e.Ctx().GetSessionVars().User.AuthUsername
+		h = e.Ctx().GetSessionVars().User.AuthHostname
 	} else {
 		u = s.User.Username
 		h = s.User.Hostname
 
-		if checker != nil && s.RetainCurrentPassword {
-			if !hasCreateUserPriv {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			}
-		} else if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-			currUser := sessUser
+		checker := privilege.GetPrivilegeManager(e.Ctx())
+		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+			currUser := e.Ctx().GetSessionVars().User
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
-	}
-	if s.RetainCurrentPassword && setPwdForSelf && checker != nil &&
-		!(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
-		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or APPLICATION_PASSWORD_ADMIN")
 	}
 	exists, authplugin, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
@@ -2755,14 +2538,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	if !exists {
 		return errors.Trace(exeerrors.ErrPasswordNoMatch)
-	}
-	if s.RetainCurrentPassword {
-		if !isDualPasswordCapablePlugin(authplugin) {
-			return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", authplugin)
-		}
-		if s.Password == "" {
-			return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(u, h)
-		}
 	}
 	if e.Ctx().InSandBoxMode() {
 		if !(s.User == nil || s.User.CurrentUser ||
@@ -2824,18 +2599,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	// update mysql.user
 	sql := new(strings.Builder)
-	if s.RetainCurrentPassword {
-		// If RETAIN CURRENT PASSWORD is specified, promote the current authentication_string
-		// to user_attributes.$.additional_password as part of this UPDATE.
-		entry, err := buildAdditionalPasswordEntry(ctx, sqlExecutor, u, h)
-		if err != nil {
-			return err
-		}
-		attr := "{" + entry + "}"
-		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp(),user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?) WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, attr, u, strings.ToLower(h))
-	} else {
-		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
-	}
+	sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	_, err = sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err

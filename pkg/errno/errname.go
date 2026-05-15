@@ -946,12 +946,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDependentByCheckConstraint:                            mysql.Message("Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.", nil),
 	ErrEngineAttributeNotSupported:                           mysql.Message("Storage engine does not support ENGINE_ATTRIBUTE.", nil),
 	ErrJSONInBooleanContext:                                  mysql.Message("Evaluating a JSON value in SQL boolean context does an implicit comparison against JSON integer 0; if this is not what you want, consider converting JSON to a SQL numeric type with JSON_VALUE RETURNING", nil),
-	// Dual-password errors — text matches MySQL 8.0
-	// share/messages_to_clients.txt (length-bounded %-.64s is a TiDB convention
-	// for user/host identifiers).
-	ErrSecondPasswordCannotBeEmpty:            mysql.Message("Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.", nil),
-	ErrPasswordCannotBeRetainedOnPluginChange: mysql.Message("Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.", nil),
-	ErrCurrentPasswordCannotBeRetained:        mysql.Message("Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.", nil),
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),

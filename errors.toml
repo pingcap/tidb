@@ -1841,21 +1841,6 @@ error = '''
 Cannot use these credentials for '%s@%s' because they contradict the password history policy.
 '''
 
-["executor:3878"]
-error = '''
-Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.
-'''
-
-["executor:3894"]
-error = '''
-Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.
-'''
-
-["executor:3895"]
-error = '''
-Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.
-'''
-
 ["executor:3929"]
 error = '''
 Dynamic privilege '%s' is not registered with the server.
