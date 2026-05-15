@@ -683,16 +683,9 @@ type candidatePath struct {
 	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
 	matchPropResult   property.PhysicalPropMatchResult
-<<<<<<< HEAD
-	indexJoinCols     int // how many index columns are used in access conditions in this IndexJoin.
-=======
-	// partialOrderMatch records the partial order match result for TopN optimization.
-	// When the matched is true, it means this path can provide partial order using prefix index.
-	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
-	indexJoinCols           int                              // how many index columns are used in access conditions in this IndexJoin.
-	isFullRange             bool                             // cached result of whether this path covers the full scan range.
-	eqOrInCount             int                              // cached result of equalPredicateCount().
->>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
+	indexJoinCols     int  // how many index columns are used in access conditions in this IndexJoin.
+	isFullRange       bool // cached result of whether this path covers the full scan range.
+	eqOrInCount       int  // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
@@ -1396,23 +1389,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
-			var unsignedIntHandle bool
-			if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
-				if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
-					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-				}
-			}
-
 			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-<<<<<<< HEAD
-			indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
-				if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
-=======
 			indexFilters := c.eqOrInCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
 				if !c.isFullRange {
->>>>>>> 9b9281fa8d6 (planner: optimize for full range (#66304))
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}

@@ -303,7 +303,7 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key idx(a))")
 	is := dom.InfoSchema()
-	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tb, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
 
@@ -328,9 +328,10 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 		idxValues[i].SetBytes(enc)
 	}
 	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
-		Histogram: *mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
-		Info:      tblInfo.Indices[0],
-		StatsVer:  2,
+		Histogram:         *mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
+		Info:              tblInfo.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
 	})
 	generateMapsForMockStatsTbl(statsTbl)
 
@@ -340,24 +341,24 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	// Full range including NULLs [NULL, +inf) triggers canSkipIndexEstimation fast path.
 	// Result should equal RealtimeCount exactly (no histogram estimation).
 	fullRanges := ranger.FullRange()
-	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges, nil)
+	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges)
 	require.NoError(t, err)
-	require.Equal(t, float64(realtimeCount), countResult.Est,
+	require.Equal(t, float64(realtimeCount), countResult,
 		"full range [NULL,+inf) should use fast path and return RealtimeCount")
 
 	// Full range excluding NULLs [MinNotNull, +inf) should NOT use fast path.
 	// It goes through histogram estimation.
 	fullNotNullRanges := ranger.FullNotNullRange()
-	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges, nil)
+	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges)
 	require.NoError(t, err)
-	require.LessOrEqual(t, countResult2.Est, float64(realtimeCount),
+	require.LessOrEqual(t, countResult2, float64(realtimeCount),
 		"full not-null range excludes NULLs, estimate should be <= RealtimeCount")
 
 	// Bounded range should NOT use fast path.
 	boundedRanges := getRange(1, 10)
-	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges, nil)
+	countResult3, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, boundedRanges)
 	require.NoError(t, err)
-	require.Less(t, countResult3.Est, float64(realtimeCount),
+	require.Less(t, countResult3, float64(realtimeCount),
 		"bounded range should use histogram estimation, not fast path")
 }
 
