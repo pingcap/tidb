@@ -3323,8 +3323,6 @@ set @a=NULL, @b=-2;
 execute stmt using @a,@b;
 COL1	COL3	COL1	COL3
 -2	2295421130981788987	-2	2295421130981788987
-<<<<<<< HEAD
-=======
 drop table if exists t_aes;
 drop view if exists v_aes;
 create table t_aes (myid int(11), myname varchar(10));
@@ -3463,4 +3461,3 @@ from t_gc;
 concat_collation	group_concat_collation
 utf8mb4_0900_ai_ci	utf8mb4_0900_ai_ci
 drop table if exists t_gc;
->>>>>>> 2b285ed389e (expression: fix group_concat collation inference for non-binary inputs (#68362))
