@@ -2656,6 +2656,13 @@ func TestBuildResolvedMVRefreshAlertSQL(t *testing.T) {
 		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATED_AT = '"+now.Format("2006-01-02 15:04:05")+"' WHERE MVIEW_ID IN (103,104) AND REFRESH_FAILED IS NOT NULL AND ALERT_LEVEL IS NOT NULL",
 		buildClearResolvedMVRefreshAlertLevelSQL(now, ids),
 	)
+	require.Equal(t,
+		`UPDATE mysql.tidb_mview_refresh_alert AS a
+JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
+SET a.ALERT_LEVEL = NULL, a.UPDATED_AT = NOW(6)
+WHERE i.NEXT_TIME IS NULL AND a.ALERT_LEVEL IS NOT NULL`,
+		buildClearDisabledMVRefreshAlertLevelSQL(),
+	)
 }
 
 func TestServerHelperCleanupStaleMVRefreshAlerts(t *testing.T) {
@@ -2664,9 +2671,10 @@ func TestServerHelperCleanupStaleMVRefreshAlerts(t *testing.T) {
 
 	err := (&serviceHelper{}).CleanupStaleMVRefreshAlerts(context.Background(), pool)
 	require.NoError(t, err)
-	require.Equal(t, []string{buildCleanupStaleMVRefreshAlertSQL()}, se.executedRestrictedSQL)
-	require.Len(t, se.executedRestrictedArg, 1)
+	require.Equal(t, []string{buildClearDisabledMVRefreshAlertLevelSQL(), buildCleanupStaleMVRefreshAlertSQL()}, se.executedRestrictedSQL)
+	require.Len(t, se.executedRestrictedArg, 2)
 	require.Empty(t, se.executedRestrictedArg[0])
+	require.Empty(t, se.executedRestrictedArg[1])
 }
 
 func TestServerHelperTryBackoffPurgeManualCancel(t *testing.T) {

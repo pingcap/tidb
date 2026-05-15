@@ -180,6 +180,13 @@ LEFT JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
 WHERE i.MVIEW_ID IS NULL OR (a.ALERT_LEVEL IS NULL AND a.REFRESH_FAILED IS NULL)`
 }
 
+func buildClearDisabledMVRefreshAlertLevelSQL() string {
+	return `UPDATE mysql.tidb_mview_refresh_alert AS a
+JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
+SET a.ALERT_LEVEL = NULL, a.UPDATED_AT = NOW(6)
+WHERE i.NEXT_TIME IS NULL AND a.ALERT_LEVEL IS NOT NULL`
+}
+
 func (*serviceHelper) SyncMVRefreshAlertStates(
 	ctx context.Context,
 	sysSessionPool basic.SessionPool,
@@ -238,6 +245,9 @@ func (*serviceHelper) CleanupStaleMVRefreshAlerts(
 	sysSessionPool basic.SessionPool,
 ) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	if _, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, buildClearDisabledMVRefreshAlertLevelSQL(), nil); err != nil {
+		return err
+	}
 	_, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, buildCleanupStaleMVRefreshAlertSQL(), nil)
 	return err
 }

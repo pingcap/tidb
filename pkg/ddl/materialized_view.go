@@ -956,13 +956,23 @@ func (e *executor) deleteMaterializedViewRefreshAlert(ctx sessionctx.Context, mv
 	}
 	defer releaseInternalSession()
 
-	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?", mviewID)
-	_, err = ddlSess.Execute(kctx, deleteSQL, "alter-materialized-view-refresh-delete-alert")
+	clearSQL := sqlescape.MustEscapeSQL(
+		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATED_AT = NOW(6) WHERE MVIEW_ID = %? AND ALERT_LEVEL IS NOT NULL",
+		mviewID,
+	)
+	_, err = ddlSess.Execute(kctx, clearSQL, "alter-materialized-view-refresh-clear-alert-level")
 	failpoint.Inject("mockDeleteMaterializedViewRefreshAlertTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
 			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_alert")
 		}
 	})
+	if err == nil {
+		deleteSQL := sqlescape.MustEscapeSQL(
+			"DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %? AND REFRESH_FAILED IS NULL",
+			mviewID,
+		)
+		_, err = ddlSess.Execute(kctx, deleteSQL, "alter-materialized-view-refresh-delete-alert")
+	}
 	if err != nil {
 		return errors.Trace(convertAlterMaterializedViewRefreshAlertTableNotExistsErr(err))
 	}
