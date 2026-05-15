@@ -2454,6 +2454,9 @@ func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 		if info.Summary.ConflictedRows > 0 {
 			msg = fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictedRows)
 		}
+		if ticiMsg := formatTiCIIndexResultMessage(info.Summary.TiCIIndexSummary); ticiMsg != "" {
+			msg = strings.TrimSpace(msg + " " + ticiMsg)
+		}
 		result.AppendString(8, msg)
 	} else {
 		result.AppendString(8, info.ErrorMessage)
@@ -2470,6 +2473,40 @@ func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 		result.AppendTime(11, info.EndTime)
 	}
 	result.AppendString(12, info.CreatedBy)
+}
+
+func formatTiCIIndexResultMessage(summary *importer.TiCIIndexSummary) string {
+	if summary == nil || !summary.Incomplete {
+		return ""
+	}
+	msgItems := []string{
+		"TiKV import completed, but TiCI full-text index is incomplete; rebuild the full-text index and clean TiCI metadata if needed.",
+	}
+	if summary.Reason != "" {
+		msgItems = append(msgItems, fmt.Sprintf("reason: %s.", summary.Reason))
+	}
+	if summary.TableID != 0 {
+		msgItems = append(msgItems, fmt.Sprintf("table ID: %d.", summary.TableID))
+	}
+	if len(summary.IndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("index IDs: %v.", summary.IndexIDs))
+	}
+	if len(summary.ReadyIndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("ready index IDs: %v.", summary.ReadyIndexIDs))
+	}
+	if len(summary.PendingIndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("pending index IDs: %v.", summary.PendingIndexIDs))
+	}
+	if len(summary.FailedIndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("failed index IDs: %v.", summary.FailedIndexIDs))
+	}
+	if len(summary.ErrorIndexIDs) > 0 {
+		msgItems = append(msgItems, fmt.Sprintf("error index IDs: %v.", summary.ErrorIndexIDs))
+	}
+	if summary.ErrorMessage != "" {
+		msgItems = append(msgItems, fmt.Sprintf("error: %s.", summary.ErrorMessage))
+	}
+	return strings.Join(msgItems, " ")
 }
 
 func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {

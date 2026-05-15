@@ -16,6 +16,9 @@ package importinto
 
 import (
 	"context"
+	goerrors "errors"
+	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -53,7 +56,13 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 	}
 }
 
-var finishTiCIIndexUpload = tici.FinishIndexUpload
+const importIntoTiCIIndexReadyPollInterval = 15 * time.Second
+
+var (
+	finishTiCIIndexUpload       = tici.FinishIndexUpload
+	checkTiCIAddIndexProgress   = tici.CheckAddIndexProgress
+	waitTiCIIndexProgressPollFn = waitTiCIIndexProgressPoll
+)
 
 func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
@@ -123,7 +132,24 @@ func postProcess(ctx context.Context, taskID int64, store kv.Storage, taskMeta *
 	// 	err = multierr.Append(err, err2)
 	// }()
 
-	finishTiCIIndexUploadForPostProcess(ctx, store, taskID, taskMeta.JobID, &taskMeta.Plan, logger)
+	ticiIndexIDs, shouldWaitTiCIIndexReady, ticiSummary := finishTiCIIndexUploadForPostProcess(
+		ctx, store, taskID, taskMeta.JobID, &taskMeta.Plan, logger)
+	if ticiSummary != nil {
+		subtaskMeta.TiCIIndexSummary = ticiSummary
+	}
+	waitTiCIIndexReady := func() error {
+		if !shouldWaitTiCIIndexReady {
+			return nil
+		}
+		ticiSummary, err := waitTiCIIndexesReadyForPostProcess(ctx, store, taskID, taskMeta.Plan.TableInfo.ID, ticiIndexIDs, logger)
+		if err != nil {
+			return err
+		}
+		if ticiSummary != nil {
+			subtaskMeta.TiCIIndexSummary = ticiSummary
+		}
+		return nil
+	}
 
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	for id, cksum := range subtaskMeta.Checksum {
@@ -145,7 +171,7 @@ func postProcess(ctx context.Context, taskID int64, store kv.Storage, taskMeta *
 		zap.Stringer("final", &finalChecksum))
 	if subtaskMeta.TooManyConflictsFromIndex {
 		callLog.Info("too many conflicts from index, skip verify checksum, as the checksum of deleted rows may be inaccurate")
-		return nil
+		return waitTiCIIndexReady()
 	}
 
 	taskManager, err := storage.GetTaskManager()
@@ -153,9 +179,12 @@ func postProcess(ctx context.Context, taskID int64, store kv.Storage, taskMeta *
 	if err != nil {
 		return err
 	}
-	return taskManager.WithNewSession(func(se sessionctx.Context) error {
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		return importer.VerifyChecksum(ctx, &taskMeta.Plan, finalChecksum, se, logger)
-	})
+	}); err != nil {
+		return err
+	}
+	return waitTiCIIndexReady()
 }
 
 func finishTiCIIndexUploadForPostProcess(
@@ -165,14 +194,14 @@ func finishTiCIIndexUploadForPostProcess(
 	jobID int64,
 	plan *importer.Plan,
 	logger *zap.Logger,
-) {
+) ([]int64, bool, *importer.TiCIIndexSummary) {
 	if plan == nil || plan.TableInfo == nil {
-		return
+		return nil, false, nil
 	}
 
 	ticiIndexIDs := tici.GetTiCIIndexIDs(plan.TableInfo)
 	if len(ticiIndexIDs) == 0 {
-		return
+		return nil, false, nil
 	}
 
 	tidbTaskID := ticiTaskIDForImportInto(jobID)
@@ -183,7 +212,14 @@ func finishTiCIIndexUploadForPostProcess(
 			zap.Int64s("tici-index-ids", ticiIndexIDs),
 			zap.Error(err),
 		)
-		return
+		return ticiIndexIDs, false, &importer.TiCIIndexSummary{
+			Incomplete:      true,
+			TableID:         plan.TableInfo.ID,
+			IndexIDs:        cloneSortedInt64s(ticiIndexIDs),
+			PendingIndexIDs: cloneSortedInt64s(ticiIndexIDs),
+			Reason:          "finish-index-upload-failed",
+			ErrorMessage:    err.Error(),
+		}
 	}
 
 	logger.Info(
@@ -191,4 +227,129 @@ func finishTiCIIndexUploadForPostProcess(
 		zap.Int64("task-id", taskID),
 		zap.Int64s("tici-index-ids", ticiIndexIDs),
 	)
+	return ticiIndexIDs, true, nil
+}
+
+func waitTiCIIndexesReadyForPostProcess(
+	ctx context.Context,
+	store kv.Storage,
+	taskID int64,
+	tableID int64,
+	ticiIndexIDs []int64,
+	logger *zap.Logger,
+) (*importer.TiCIIndexSummary, error) {
+	if len(ticiIndexIDs) == 0 {
+		return nil, nil
+	}
+
+	allIndexIDs := cloneSortedInt64s(ticiIndexIDs)
+	pending := make(map[int64]struct{}, len(allIndexIDs))
+	for _, indexID := range allIndexIDs {
+		pending[indexID] = struct{}{}
+	}
+	readyIndexIDs := make([]int64, 0, len(allIndexIDs))
+
+	logger.Info(
+		"start checking TiCI indexes readiness for post process",
+		zap.Int64("task-id", taskID),
+		zap.Int64("table-id", tableID),
+		zap.Int64s("tici-index-ids", allIndexIDs),
+	)
+
+	for len(pending) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		for _, indexID := range sortedPendingTiCIIndexIDs(pending) {
+			ready, err := checkTiCIAddIndexProgress(ctx, store, tableID, indexID)
+			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return nil, ctxErr
+				}
+				if goerrors.Is(err, context.Canceled) || goerrors.Is(err, context.DeadlineExceeded) {
+					return nil, err
+				}
+				logger.Warn(
+					"failed to check TiCI index progress for post process",
+					zap.Int64("task-id", taskID),
+					zap.Int64("table-id", tableID),
+					zap.Int64("tici-index-id", indexID),
+					zap.Int64s("all-tici-index-ids", allIndexIDs),
+					zap.Error(err),
+				)
+				return &importer.TiCIIndexSummary{
+					Incomplete:      true,
+					TableID:         tableID,
+					IndexIDs:        allIndexIDs,
+					ReadyIndexIDs:   cloneSortedInt64s(readyIndexIDs),
+					PendingIndexIDs: sortedPendingTiCIIndexIDs(pending),
+					ErrorIndexIDs:   []int64{indexID},
+					Reason:          "check-add-index-progress-failed",
+					ErrorMessage:    err.Error(),
+				}, nil
+			}
+			if ready {
+				delete(pending, indexID)
+				readyIndexIDs = append(readyIndexIDs, indexID)
+				logger.Info(
+					"TiCI index is ready for post process",
+					zap.Int64("task-id", taskID),
+					zap.Int64("table-id", tableID),
+					zap.Int64("tici-index-id", indexID),
+				)
+			}
+		}
+		if len(pending) == 0 {
+			logger.Info(
+				"all TiCI indexes are ready for post process",
+				zap.Int64("task-id", taskID),
+				zap.Int64("table-id", tableID),
+				zap.Int64s("tici-index-ids", allIndexIDs),
+			)
+			return nil, nil
+		}
+		logger.Debug(
+			"waiting for TiCI indexes to be ready for post process",
+			zap.Int64("task-id", taskID),
+			zap.Int64("table-id", tableID),
+			zap.Int64s("pending-tici-index-ids", sortedPendingTiCIIndexIDs(pending)),
+		)
+		if err := waitTiCIIndexProgressPollFn(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+func waitTiCIIndexProgressPoll(ctx context.Context) error {
+	timer := time.NewTimer(importIntoTiCIIndexReadyPollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func cloneSortedInt64s(input []int64) []int64 {
+	if len(input) == 0 {
+		return nil
+	}
+	output := append([]int64(nil), input...)
+	sort.Slice(output, func(i, j int) bool {
+		return output[i] < output[j]
+	})
+	return output
+}
+
+func sortedPendingTiCIIndexIDs(pending map[int64]struct{}) []int64 {
+	indexIDs := make([]int64, 0, len(pending))
+	for indexID := range pending {
+		indexIDs = append(indexIDs, indexID)
+	}
+	sort.Slice(indexIDs, func(i, j int) bool {
+		return indexIDs[i] < indexIDs[j]
+	})
+	return indexIDs
 }

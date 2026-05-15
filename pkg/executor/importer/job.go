@@ -109,6 +109,8 @@ type JobSummary struct {
 	// ConflictedRows is the number of rows that are conflicted during import with
 	// global-sort.
 	ConflictedRows uint64 `json:"conflicted-rows,omitempty"`
+	// TiCIIndexSummary records readiness warnings when TiKV import completed but TiCI indexes are incomplete.
+	TiCIIndexSummary *TiCIIndexSummary `json:"tici-index-summary,omitempty"`
 }
 
 // JobInfo is the information of import into job.

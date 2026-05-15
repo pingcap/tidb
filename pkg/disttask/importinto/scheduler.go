@@ -405,12 +405,40 @@ func (sch *importScheduler) OnDone(ctx context.Context, handle storage.TaskHandl
 		return errors.Trace(err)
 	}
 	if task.Error == nil {
+		if err := mergeTiCIIndexSummaryFromPostProcess(ctx, handle, task, taskMeta); err != nil {
+			return err
+		}
 		return sch.finishJob(ctx, logger, handle, task, taskMeta)
 	}
 	if scheduler.IsCancelledErr(task.Error) {
 		return sch.cancelJob(ctx, handle, task, taskMeta, logger)
 	}
 	return sch.failJob(ctx, handle, task, taskMeta, logger, task.Error.Error())
+}
+
+func mergeTiCIIndexSummaryFromPostProcess(
+	_ context.Context,
+	taskHandle storage.TaskHandle,
+	task *proto.Task,
+	taskMeta *TaskMeta,
+) error {
+	if taskHandle == nil {
+		return nil
+	}
+	metas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepPostProcess)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, bs := range metas {
+		var subtaskMeta PostProcessStepMeta
+		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return errors.Trace(err)
+		}
+		if subtaskMeta.TiCIIndexSummary != nil {
+			taskMeta.TiCIIndexSummary = subtaskMeta.TiCIIndexSummary
+		}
+	}
+	return nil
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
@@ -702,8 +730,9 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	summary := &importer.JobSummary{
-		ImportedRows:   taskMeta.Result.LoadedRowCnt,
-		ConflictedRows: taskMeta.Result.ConflictedRowCnt,
+		ImportedRows:     taskMeta.Result.LoadedRowCnt,
+		ConflictedRows:   taskMeta.Result.ConflictedRowCnt,
+		TiCIIndexSummary: taskMeta.TiCIIndexSummary,
 	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)

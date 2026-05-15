@@ -296,6 +296,22 @@ type ASTArgs struct {
 	LinesInfo          *ast.LinesClause
 }
 
+// TiCIIndexSummary records TiCI full-text index readiness status for IMPORT INTO.
+type TiCIIndexSummary struct {
+	Incomplete bool `json:"incomplete,omitempty"`
+
+	TableID  int64   `json:"table-id,omitempty"`
+	IndexIDs []int64 `json:"index-ids,omitempty"`
+
+	ReadyIndexIDs   []int64 `json:"ready-index-ids,omitempty"`
+	PendingIndexIDs []int64 `json:"pending-index-ids,omitempty"`
+	FailedIndexIDs  []int64 `json:"failed-index-ids,omitempty"`
+	ErrorIndexIDs   []int64 `json:"error-index-ids,omitempty"`
+
+	Reason       string `json:"reason,omitempty"`
+	ErrorMessage string `json:"error-message,omitempty"`
+}
+
 // LoadDataController load data controller.
 // todo: need a better name
 type LoadDataController struct {

@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,46 @@ func Test_fillOneImportJobInfo(t *testing.T) {
 	require.Equal(t, uint64(123), c.GetRow(2).GetUint64(7))
 	require.False(t, c.GetRow(2).IsNull(10))
 	require.False(t, c.GetRow(2).IsNull(11))
+
+	jobInfo.Status = "finished"
+	jobInfo.Summary = &importer.JobSummary{
+		ImportedRows: 123,
+		TiCIIndexSummary: &importer.TiCIIndexSummary{
+			Incomplete:      true,
+			TableID:         42,
+			IndexIDs:        []int64{101, 102},
+			ReadyIndexIDs:   []int64{101},
+			PendingIndexIDs: []int64{102},
+			ErrorIndexIDs:   []int64{102},
+			Reason:          "check-add-index-progress-failed",
+			ErrorMessage:    "tici unavailable",
+		},
+	}
+	executor.FillOneImportJobInfo(jobInfo, c, 0)
+	resultMsg := c.GetRow(3).GetString(8)
+	for _, expected := range []string{
+		"TiKV import completed, but TiCI full-text index is incomplete",
+		"reason: check-add-index-progress-failed.",
+		"table ID: 42.",
+		"index IDs: [101 102].",
+		"ready index IDs: [101].",
+		"pending index IDs: [102].",
+		"error index IDs: [102].",
+		"error: tici unavailable.",
+	} {
+		require.True(t, strings.Contains(resultMsg, expected), resultMsg)
+	}
+
+	jobInfo.Summary.ConflictedRows = 2
+	executor.FillOneImportJobInfo(jobInfo, c, 0)
+	resultMsg = c.GetRow(4).GetString(8)
+	for _, expected := range []string{
+		"2 conflicted rows.",
+		"TiKV import completed, but TiCI full-text index is incomplete",
+	} {
+		require.True(t, strings.Contains(resultMsg, expected), resultMsg)
+	}
+
 }
 
 func TestShow(t *testing.T) {
