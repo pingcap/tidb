@@ -116,7 +116,6 @@ type MinMaxRecomputeExec struct {
 	// KeyInputColIDs are group-key columns in child schema.
 	KeyInputColIDs []int
 	// KeyResultColIdxes are group-key columns in batch recompute result schema, in the same order as KeyInputColIDs.
-	// When empty, [0..len(KeyInputColIDs)) is used.
 	KeyResultColIdxes []int
 	// BatchBuilder creates one batch recompute executor.
 	// Build must be safe for concurrent calls across MV merge workers.
@@ -643,20 +642,6 @@ func isMinMaxAgg(aggName string) bool {
 	return aggName == ast.AggFuncMin || aggName == ast.AggFuncMax
 }
 
-func resolveMinMaxKeyResultColIdxes(meta *MinMaxRecomputeExec) []int {
-	if meta == nil || len(meta.KeyInputColIDs) == 0 {
-		return nil
-	}
-	if len(meta.KeyResultColIdxes) == 0 {
-		idxes := make([]int, len(meta.KeyInputColIDs))
-		for i := range idxes {
-			idxes[i] = i
-		}
-		return idxes
-	}
-	return meta.KeyResultColIdxes
-}
-
 func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 	if e.MinMaxRecompute == nil {
 		for mappingIdx, agg := range e.AggMappings {
@@ -680,7 +665,7 @@ func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 		}
 		seenKey[keyColID] = struct{}{}
 	}
-	keyResultColIdxes := resolveMinMaxKeyResultColIdxes(meta)
+	keyResultColIdxes := meta.KeyResultColIdxes
 	if len(keyResultColIdxes) != len(meta.KeyInputColIDs) {
 		return errors.Errorf(
 			"MinMaxRecompute key result column count mismatch: expect %d, got %d",
@@ -1397,7 +1382,7 @@ func (e *Exec) recomputeMinMaxBatch(
 	}()
 
 	batchTypes := exec.RetTypes(batchExec)
-	resultKeyColIdxes := resolveMinMaxKeyResultColIdxes(e.MinMaxRecompute)
+	resultKeyColIdxes := e.MinMaxRecompute.KeyResultColIdxes
 	if err := e.validateMinMaxBatchSchemaTypes(
 		childTypes,
 		keyTypes,

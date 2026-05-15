@@ -607,8 +607,9 @@ func TestRejectMinMaxDeltaDependencyFromComputed(t *testing.T) {
 			},
 			DeltaAggColCount: 6,
 			MinMaxRecompute: &MinMaxRecomputeExec{
-				KeyInputColIDs: []int{5},
-				BatchBuilder:   &mockBatchRecomputeBuilder{},
+				KeyInputColIDs:    []int{5},
+				KeyResultColIdxes: []int{0},
+				BatchBuilder:      &mockBatchRecomputeBuilder{},
 			},
 		}
 		err = mergeExec.Open(context.Background())
@@ -863,7 +864,8 @@ func TestMaxFastPathAndSingleRowRecompute(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
 		},
 	}
 	writer := &collectWriter{}
@@ -960,7 +962,8 @@ func TestRejectMaxSingleRowRecomputeMultipleRows(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
 		},
 	}
 	writer := &collectWriter{}
@@ -1039,8 +1042,9 @@ func TestMaxBatchRecompute(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
-			BatchBuilder:   batchBuilder,
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
+			BatchBuilder:      batchBuilder,
 		},
 	}
 	writer := &collectWriter{}
@@ -1131,8 +1135,9 @@ func TestMaxBatchRecomputeWithOutOfOrderResultRows(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
-			BatchBuilder:   batchBuilder,
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
+			BatchBuilder:      batchBuilder,
 		},
 	}
 	writer := &collectWriter{}
@@ -1206,8 +1211,9 @@ func TestRejectMaxBatchRecomputeUnexpectedKey(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
-			BatchBuilder:   batchBuilder,
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
+			BatchBuilder:      batchBuilder,
 		},
 	}
 	writer := &collectWriter{}
@@ -1277,8 +1283,9 @@ func TestRejectMaxBatchRecomputeKeyTypeMismatch(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
-			BatchBuilder:   batchBuilder,
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
+			BatchBuilder:      batchBuilder,
 		},
 	}
 	writer := &collectWriter{}
@@ -1348,8 +1355,9 @@ func TestRejectMaxBatchRecomputeResultTypeMismatch(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
-			BatchBuilder:   batchBuilder,
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
+			BatchBuilder:      batchBuilder,
 		},
 	}
 	writer := &collectWriter{}
@@ -1435,7 +1443,8 @@ func TestMinMaxFallbackToCountStarWithoutFinalCountDependency(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
 		},
 	}
 	writer := &collectWriter{}
@@ -1496,8 +1505,9 @@ func TestAllowMinMaxFallbackToCountStarForNullableExpr(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
-			BatchBuilder:   &mockBatchRecomputeBuilder{},
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
+			BatchBuilder:      &mockBatchRecomputeBuilder{},
 		},
 	}
 	err = mergeExec.Open(context.Background())
@@ -1550,8 +1560,9 @@ func TestRejectMinMaxFinalCountForNonNullableExpr(t *testing.T) {
 		DeltaAggColCount: 6,
 		WorkerCnt:        1,
 		MinMaxRecompute: &MinMaxRecomputeExec{
-			KeyInputColIDs: []int{5},
-			BatchBuilder:   &mockBatchRecomputeBuilder{},
+			KeyInputColIDs:    []int{5},
+			KeyResultColIdxes: []int{0},
+			BatchBuilder:      &mockBatchRecomputeBuilder{},
 		},
 	}
 	err = mergeExec.Open(context.Background())
@@ -1590,8 +1601,9 @@ func TestRejectMinMaxRecomputeValidation(t *testing.T) {
 				},
 			},
 			minMax: &MinMaxRecomputeExec{
-				KeyInputColIDs: []int{0},
-				BatchBuilder:   &mockBatchRecomputeBuilder{},
+				KeyInputColIDs:    []int{0},
+				KeyResultColIdxes: []int{0},
+				BatchBuilder:      &mockBatchRecomputeBuilder{},
 			},
 			expectedError: "set for non-MIN/MAX",
 		},
@@ -1611,7 +1623,8 @@ func TestRejectMinMaxRecomputeValidation(t *testing.T) {
 				},
 			},
 			minMax: &MinMaxRecomputeExec{
-				KeyInputColIDs: []int{0},
+				KeyInputColIDs:    []int{0},
+				KeyResultColIdxes: []int{0},
 			},
 			expectedError: "batch strategy requires BatchBuilder",
 		},
@@ -1631,8 +1644,9 @@ func TestRejectMinMaxRecomputeValidation(t *testing.T) {
 				},
 			},
 			minMax: &MinMaxRecomputeExec{
-				KeyInputColIDs: []int{0},
-				BatchBuilder:   &mockBatchRecomputeBuilder{},
+				KeyInputColIDs:    []int{0},
+				KeyResultColIdxes: []int{0},
+				BatchBuilder:      &mockBatchRecomputeBuilder{},
 			},
 			expectedError: "conflicts with key prefix",
 		},
