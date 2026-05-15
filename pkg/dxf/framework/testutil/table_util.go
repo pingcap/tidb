@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -251,4 +252,14 @@ func PrintSubtaskInfo(ctx context.Context, mgr *storage.TaskManager, taskID int6
 	for _, r := range rs {
 		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", storage.Row2SubTask(r)))
 	}
+}
+
+// MockNodeResource mock node resource.
+func MockNodeResource(t *testing.T, cpu int) {
+	t.Helper()
+	originNodeResource := storage.GetNodeResource()
+	t.Cleanup(func() {
+		storage.SetNodeResource(originNodeResource)
+	})
+	storage.SetNodeResource(proto.NewNodeResource(cpu, int64(cpu)*2*units.GiB, 100*units.GiB))
 }

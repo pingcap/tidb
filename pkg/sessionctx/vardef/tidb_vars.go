@@ -421,6 +421,7 @@ const (
 	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
 	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
 	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
+	TiDBOptIndexJoinMaxScanRowsRatio  = "tidb_opt_index_join_max_scan_rows_ratio"
 
 	// The following selectivity factors represent a multiplier for the selectivity of each predicate.
 	// These factors are used to determine the selectivity of predicates in the optimizer's cost model.
@@ -1480,6 +1481,7 @@ const (
 	DefOptMergeJoinCostFactor               = 1.0
 	DefOptHashJoinCostFactor                = 1.0
 	DefOptIndexJoinCostFactor               = 1.0
+	DefOptIndexJoinMaxScanRowsRatio         = 0.0
 	DefOptSelectivityFactor                 = 0.8
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true

@@ -1052,12 +1052,20 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 func TestDeployModeConfig(t *testing.T) {
 	conf := NewConfig()
 	require.Equal(t, deploymode.Premium, conf.DeployMode)
+	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
 	require.NoError(t, conf.Valid())
+	conf.DeployMode = deploymode.Mode(100)
+	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
+	conf.DeployMode = deploymode.Premium
 
 	storeDir := t.TempDir()
 	configFile := filepath.Join(storeDir, "config.toml")
 
 	if kerneltype.IsClassic() {
+		require.NoError(t, os.WriteFile(configFile, []byte(`dxf-resource-limit = 30`), 0644))
+		conf = NewConfig()
+		require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+
 		require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"`), 0644))
 		conf = NewConfig()
 		require.ErrorContains(t, conf.Load(configFile), "deploy-mode can only be configured for nextgen TiDB")
@@ -1073,12 +1081,50 @@ func TestDeployModeConfig(t *testing.T) {
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
 	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 30`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.Equal(t, 30, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"
+dxf-resource-limit = 100`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 9`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 101`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.True(t, conf.Standby.EnableZeroBackend)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+deploy-mode = "starter"
+[standby]
+enable-zero-backend = false
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.False(t, conf.Standby.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))

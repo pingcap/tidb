@@ -835,6 +835,9 @@ func (m *dupeDetector) buildIndexDupTasks() ([]dupTask, error) {
 				})
 			}
 		})
+		for i := range tasks {
+			tasks[i].StartKey, tasks[i].EndKey = m.tikvCodec.EncodeRange(tasks[i].StartKey, tasks[i].EndKey)
+		}
 		return tasks, nil
 	}
 	return nil, nil
@@ -923,9 +926,7 @@ func (m *dupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 func (m *dupeDetector) splitKeyRangeByRegions(
 	ctx context.Context, keyRange tidbkv.KeyRange,
 ) ([]*split.RegionInfo, []tidbkv.KeyRange, error) {
-	rawStartKey := codec.EncodeBytes(nil, keyRange.StartKey)
-	rawEndKey := codec.EncodeBytes(nil, keyRange.EndKey)
-	allRegions, err := split.PaginateScanRegion(ctx, m.splitCli, rawStartKey, rawEndKey, 1024)
+	allRegions, err := split.PaginateScanRegionWithCodecAware(ctx, m.splitCli, keyRange.StartKey, keyRange.EndKey, 1024)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

@@ -63,6 +63,31 @@ func BenchmarkInsertWideTableWithGC(b *testing.B) {
 	}
 }
 
+// BenchmarkInsertYCSBLike benchmarks INSERT into an 11-column table with no generated columns,
+// modeling the YCSB usertable schema (1 VARCHAR PK + 10 VARCHAR value fields).
+// This is the regression scenario from issue #68129: MutRowFromDatums is called
+// unconditionally even when gCols is empty, adding unnecessary allocation per row.
+func BenchmarkInsertYCSBLike(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+
+	defs := []string{"YCSB_KEY VARCHAR(255) PRIMARY KEY"}
+	vals := []string{"'user1000'"}
+	for i := 0; i < 10; i++ {
+		defs = append(defs, fmt.Sprintf("FIELD%d VARCHAR(100)", i))
+		vals = append(vals, fmt.Sprintf("'value%d'", i))
+	}
+	tk.MustExec("CREATE TABLE usertable (" + strings.Join(defs, ", ") + ")")
+
+	// Use INSERT IGNORE so repeated runs don't fail on the duplicate PK.
+	insertSQL := "INSERT IGNORE INTO usertable VALUES (" + strings.Join(vals, ", ") + ")"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustExec(insertSQL)
+	}
+}
+
 // BenchmarkInsertWideTableWithNonLiteralGC benchmarks INSERT into a table with 150 virtual
 // generated columns that reference a real column (GENERATED ALWAYS AS (LOWER(name)) VIRTUAL).
 // This exercises the non-constant GC path where each GC must read the base column value.

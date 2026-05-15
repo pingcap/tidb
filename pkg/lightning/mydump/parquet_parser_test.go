@@ -35,8 +35,10 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1258,6 +1260,85 @@ func TestParquetParserWrapper(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("k%07d", i), gotFixedInMemory[i])
 		require.Equal(t, int64(i), gotIntInMemory[i])
 	}
+}
+
+// ctxAwareReader returns the context error from Read/Seek when ctx is canceled.
+type ctxAwareReader struct {
+	objectio.Reader
+	ctx context.Context
+}
+
+func (r *ctxAwareReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Read(p)
+}
+
+func (r *ctxAwareReader) Seek(offset int64, whence int) (int64, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Seek(offset, whence)
+}
+
+func TestEstimateParquetReaderMemoryCtxLifetime(t *testing.T) {
+	// Force the non-in-memory path; only that branch was affected.
+	origThreshold := rowGroupInMemoryThreshold
+	rowGroupInMemoryThreshold = 1
+	t.Cleanup(func() { rowGroupInMemoryThreshold = origThreshold })
+
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/lightning/mydump/interceptParquetReader",
+		func(r *objectio.Reader, ctx context.Context) {
+			*r = &ctxAwareReader{Reader: *r, ctx: ctx}
+		},
+	)
+
+	pc := []ParquetColumn{
+		{
+			Name:      "k",
+			Type:      parquet.Types.FixedLenByteArray,
+			Converted: schema.ConvertedTypes.None,
+			TypeLen:   8,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]parquet.FixedLenByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					vals[i] = parquet.FixedLenByteArray(fmt.Sprintf("k%07d", i))
+					defLevels[i] = 1
+				}
+				return vals, defLevels
+			},
+		},
+		{
+			Name:      "v",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					vals[i] = int64(i)
+					defLevels[i] = 1
+				}
+				return vals, defLevels
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	fileName := "ctx-lifetime.parquet"
+	require.NoError(t, WriteParquetFile(dir, fileName, pc, 50,
+		parquet.WithMaxRowGroupLength(10),
+	))
+
+	store, err := objstore.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	peak, err := EstimateParquetReaderMemory(context.Background(), store, fileName)
+	require.NoError(t, err)
+	require.Greater(t, peak, int64(0))
 }
 
 // getStringFromParquetByteOld is the previous implementation used to convert

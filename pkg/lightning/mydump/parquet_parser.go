@@ -352,13 +352,13 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 }
 
 func (pp *ParquetParser) buildRowGroupParser() (err error) {
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
-	eg.SetLimit(8)
-
-	builder, err := pp.getBuilder(egCtx)
+	builder, err := pp.getBuilder()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
+	eg.SetLimit(8)
 
 	readers := make([]*file.Reader, pp.fileMeta.NumColumns())
 	defer func() {
@@ -373,6 +373,12 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 
 	for i := range pp.fileMeta.NumColumns() {
 		eg.Go(func() error {
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			default:
+			}
+
 			wrapper, err := builder(i)
 			if err != nil {
 				return errors.Trace(err)
@@ -407,14 +413,14 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSeekerCloser, error), error) {
+func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
-		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
+		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -429,7 +435,7 @@ func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSee
 	}
 
 	return func(c int) (readerAtSeekerCloser, error) {
-		return newParquetWrapper(ctx, pp.store, pp.path,
+		return newParquetWrapper(pp.ctx, pp.store, pp.path,
 			&storeapi.ReaderOption{
 				StartOffset: &ranges.columnStarts[c],
 				EndOffset:   &ranges.columnEnds[c],

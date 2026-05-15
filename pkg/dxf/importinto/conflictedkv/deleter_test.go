@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/table"
@@ -60,8 +60,8 @@ func TestDeleter(t *testing.T) {
 		return tbl
 	}
 
-	gatherTargetKVFn := func(t *testing.T, tbl table.Table, kvGroup string, endID int) []external.KVPair {
-		targetKVs := make([]external.KVPair, 0, endID)
+	gatherTargetKVFn := func(t *testing.T, tbl table.Table, kvGroup string, endID int) []globalsort.KVPair {
+		targetKVs := make([]globalsort.KVPair, 0, endID)
 		localEncoder := getEncoder(t, tbl)
 		for i := range endID {
 			dupID := i + 1
@@ -69,18 +69,18 @@ func TestDeleter(t *testing.T) {
 			dupPairs, err2 := localEncoder.Encode(row, int64(dupID))
 			require.NoError(t, err2)
 			for _, pair := range dupPairs.Pairs {
-				if kvGroup == external.DataKVGroup {
+				if kvGroup == globalsort.DataKVGroup {
 					if tablecodec.IsRecordKey(pair.Key) {
-						targetKVs = append(targetKVs, external.KVPair{Key: bytes.Clone(pair.Key), Value: bytes.Clone(pair.Val)})
+						targetKVs = append(targetKVs, globalsort.KVPair{Key: bytes.Clone(pair.Key), Value: bytes.Clone(pair.Val)})
 					}
 				} else {
-					indexID, err2 := external.KVGroup2IndexID(kvGroup)
+					indexID, err2 := globalsort.KVGroup2IndexID(kvGroup)
 					require.NoError(t, err2)
 					if !tablecodec.IsRecordKey(pair.Key) {
 						gotID, err2 := tablecodec.DecodeIndexID(pair.Key)
 						require.NoError(t, err2)
 						if gotID == indexID {
-							targetKVs = append(targetKVs, external.KVPair{Key: bytes.Clone(pair.Key), Value: bytes.Clone(pair.Val)})
+							targetKVs = append(targetKVs, globalsort.KVPair{Key: bytes.Clone(pair.Key), Value: bytes.Clone(pair.Val)})
 						}
 					}
 				}
@@ -112,7 +112,7 @@ func TestDeleter(t *testing.T) {
 		trafficRec := &mockTrafficRecorder{}
 		deleter := conflictedkv.NewDeleter(tbl, logger, store, kvGroup, encoder, nil, trafficRec)
 		eg := util.NewErrorGroupWithRecover()
-		ch := make(chan *external.KVPair)
+		ch := make(chan *globalsort.KVPair)
 		eg.Go(func() error {
 			return deleter.Run(ctx, ch)
 		})
@@ -123,7 +123,7 @@ func TestDeleter(t *testing.T) {
 			})
 			for _, kv := range conflictedKVs {
 				encodedKey := store.GetCodec().EncodeKey(kv.Key)
-				encodedKV := external.KVPair{Key: encodedKey, Value: kv.Value}
+				encodedKV := globalsort.KVPair{Key: encodedKey, Value: kv.Value}
 				// sending the conflicted KV twice
 				for range 2 {
 					kvCopy := encodedKV
@@ -145,7 +145,7 @@ func TestDeleter(t *testing.T) {
 	conflictedkv.BufferedKeyCountLimit = 2
 
 	t.Run("data kv conflicts", func(t *testing.T) {
-		runDeleterFn(t, external.DataKVGroup, 7)
+		runDeleterFn(t, globalsort.DataKVGroup, 7)
 		tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
 			"8 8 8", "9 9 9", "10 10 10",
 		))
@@ -154,7 +154,7 @@ func TestDeleter(t *testing.T) {
 
 	t.Run("index kv conflicts", func(t *testing.T) {
 		// 2 is the unique index ID for index c
-		kvGroup := external.IndexID2KVGroup(2)
+		kvGroup := globalsort.IndexID2KVGroup(2)
 		runDeleterFn(t, kvGroup, 5)
 		tk.MustQuery("select * from tc").Sort().Equal(testkit.Rows(
 			"6 6 6", "7 7 7", "8 8 8", "9 9 9", "10 10 10",
