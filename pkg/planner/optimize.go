@@ -611,19 +611,14 @@ func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
 // alternativeRound describes one alternative logical-plan round.
 // adjustFlag adjusts the optimization flags for the round.
 // enabled returns true when the round should be attempted.
-// setup/cleanup optionally modify session state before/after plan building.
+// setup optionally modifies session state and returns a per-invocation cleanup.
+// The cleanup captures only this round's state, including for future FTS alternatives.
 type alternativeRound struct {
 	name       string
 	adjustFlag func(uint64) uint64
 	enabled    func(*variable.SessionVars) bool
-	setup      func(*variable.SessionVars)
-	cleanup    func(*variable.SessionVars)
+	setup      func(*variable.SessionVars) func()
 }
-
-// savedEnableCorrelateSubquery holds the pre-round value of
-// EnableCorrelateSubquery so setup/cleanup can share it without a closure
-// wrapper. Safe because optimize is single-threaded per session.
-var savedEnableCorrelateSubquery bool
 
 var alternativeRounds = [...]alternativeRound{
 	{
@@ -635,12 +630,10 @@ var alternativeRounds = [...]alternativeRound{
 		name:       "correlate",
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
 		enabled:    shouldTryCorrelateRound,
-		setup: func(sv *variable.SessionVars) {
-			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+		setup: func(sv *variable.SessionVars) func() {
+			previous := sv.EnableCorrelateSubquery
 			sv.EnableCorrelateSubquery = true
-		},
-		cleanup: func(sv *variable.SessionVars) {
-			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+			return func() { sv.EnableCorrelateSubquery = previous }
 		},
 	},
 }
@@ -743,8 +736,9 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		// EnableCorrelateSubquery) is restored even if the round panics.
 		func() {
 			if round.setup != nil {
-				round.setup(sessVars)
-				defer round.cleanup(sessVars)
+				if cleanup := round.setup(sessVars); cleanup != nil {
+					defer cleanup()
+				}
 			}
 			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
 				ctx,
