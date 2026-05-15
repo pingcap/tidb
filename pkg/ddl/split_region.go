@@ -158,9 +158,9 @@ func waitTiFlashPlacementBeforeScatterWithCheck(
 	}
 }
 
-func tablePlacementRange(physicalID int64) ([]byte, []byte) {
-	startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID))
-	endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID+1))
+func tablePlacementRange(physicalID int64) (startKey, endKey []byte) {
+	startKey = codec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID))
+	endKey = codec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID+1))
 	return startKey, endKey
 }
 
