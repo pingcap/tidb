@@ -88,10 +88,6 @@ func waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
 	waitTiFlashPlacementBeforeScatterWithCheck(waitCtx, tbInfo, tiflashCheckTiDBHTTPAPIHalfInterval, getReplicationState, physicalIDs...)
 }
 
-func waitTiFlashPlacementBeforeScatter(ctx context.Context, tbInfo *model.TableInfo, physicalIDs ...int64) {
-	waitTiFlashPlacementBeforeScatterWithCheck(ctx, tbInfo, tiflashCheckTiDBHTTPAPIHalfInterval, infosync.GetReplicationState, physicalIDs...)
-}
-
 func waitTiFlashPlacementBeforeScatterWithCheck(
 	ctx context.Context,
 	tbInfo *model.TableInfo,

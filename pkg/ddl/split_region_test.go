@@ -64,6 +64,28 @@ func TestWaitTiFlashPlacementBeforeScatterIfNeededSkipsWhenReplicationStateUnava
 	require.Equal(t, int32(0), calls.Load())
 }
 
+func TestWaitTiFlashPlacementBeforeScatterIfNeededSkipsWhenReplicationStateAvailabilityCheckFails(t *testing.T) {
+	tbInfo := &model.TableInfo{
+		Name:           ast.NewCIStr("t"),
+		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+	}
+	var calls atomic.Int32
+	waitTiFlashPlacementBeforeScatterIfNeededWithCheck(
+		mock.NewContext(),
+		tbInfo,
+		vardef.ScatterTable,
+		func() (bool, error) {
+			return false, errors.New("replication state unavailable")
+		},
+		func(context.Context, []byte, []byte) (infosync.PlacementScheduleState, error) {
+			calls.Add(1)
+			return infosync.PlacementScheduleStateScheduled, nil
+		},
+		123,
+	)
+	require.Equal(t, int32(0), calls.Load())
+}
+
 func TestWaitTiFlashPlacementBeforeScatterWaitsUntilScheduled(t *testing.T) {
 	tbInfo := &model.TableInfo{Name: ast.NewCIStr("t")}
 	physicalID := int64(123)
