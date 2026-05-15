@@ -101,7 +101,7 @@ func InitLogger(cfg *Config, _ string) error {
 				core,
 				"github.com/pingcap/tidb/br/",
 				"/lightning/",
-				"/ingestor/ingestctrl/",
+				"/ingestor/ingestctrl",
 				"main.main",
 				"github.com/tikv/pd/client",
 			)
