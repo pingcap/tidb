@@ -16,6 +16,25 @@
 
 set -euE
 
+run_sql "SELECT IF(@@global.sql_require_primary_key, 'SET GLOBAL sql_require_primary_key=ON;', 'SET GLOBAL sql_require_primary_key=OFF;') cmd;"
+UNDO_CMD=$(read_result)
+restore_sql_require_primary_key() {
+  run_sql "$UNDO_CMD"
+}
+trap restore_sql_require_primary_key EXIT
+
+# Dumpling emits placeholder CREATE TABLE files for views without primary keys.
+# Lightning should still restore the real views when downstream requires PKs.
+run_sql 'SET GLOBAL sql_require_primary_key=ON'
+for _ in $(seq 3); do
+  sleep 1
+  run_sql "SELECT IF(@@global.sql_require_primary_key, 'ON', 'OFF') value"
+  if [ "$(read_result)" = 'ON' ]; then
+    break
+  fi
+done
+[ "$(read_result)" = 'ON' ]
+
 for BACKEND in local tidb; do
   if [ "$BACKEND" = 'local' ]; then
     check_cluster_version 4 0 0 'local backend' || continue
