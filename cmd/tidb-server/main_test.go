@@ -18,6 +18,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -153,4 +154,60 @@ func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
 	require.NoError(t, initVersions(config.GetGlobalConfig()))
 	require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
 	require.Equal(t, "8.0.11-TiDB-CLOUD.202603.0", mysql.ServerVersion)
+}
+
+func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				MetricLabel:  "label_a",
+				SlowLogField: "Slow_meta_a",
+				StmtLogField: "stmt_meta_a",
+				Required:     true,
+			}},
+		}
+	})
+
+	err := prepareKeyspaceObservabilityWithKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+		Id:     42,
+		Config: map[string]string{"meta_a": "value_a"},
+	}, "ks", true)
+	require.NoError(t, err)
+
+	cfg := config.GetGlobalConfig()
+	require.Equal(t, map[string]string{"keyspace_id": "42", "keyspace_name": "ks", "label_a": "value_a"}, cfg.GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, []config.KeyspaceObservabilityFieldPair{{Key: "Slow_meta_a", Value: "value_a"}}, cfg.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, []config.KeyspaceObservabilityFieldPair{{Key: "stmt_meta_a", Value: "value_a"}}, cfg.GetKeyspaceObservabilityStmtLogFields())
+}
+
+func TestSetupKeyspaceObservabilityForNonStarter(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+
+	err := prepareKeyspaceObservabilityWithKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+		Id:     42,
+		Config: map[string]string{"meta_a": "value_a"},
+	}, "ks", false)
+	require.NoError(t, err)
+
+	cfg := config.GetGlobalConfig()
+	require.Equal(t, map[string]string{"keyspace_id": "42", "keyspace_name": "ks"}, cfg.GetKeyspaceObservabilityMetricLabels())
+	require.Empty(t, cfg.GetKeyspaceObservabilitySlowLogFields())
+	require.Empty(t, cfg.GetKeyspaceObservabilityStmtLogFields())
+}
+
+func TestSetupKeyspaceObservabilityForStartSkipsClassic(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeTiKV
+		conf.Path = "invalid-pd-path"
+		conf.KeyspaceName = "test_keyspace"
+	})
+
+	require.NoError(t, prepareKeyspaceObservability())
+	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }

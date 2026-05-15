@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"runtime"
 	"strconv"
@@ -30,6 +31,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -44,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
@@ -90,8 +93,12 @@ import (
 	repository "github.com/pingcap/tidb/pkg/util/workloadrepo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
@@ -334,6 +341,8 @@ func main() {
 
 	signal.SetupUSR1Handler()
 	err = registerStores()
+	terror.MustNil(err)
+	err = prepareKeyspaceObservability()
 	terror.MustNil(err)
 	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
@@ -1144,6 +1153,86 @@ func closeStmtSummary() {
 	if instanceCfg.StmtSummaryEnablePersistent {
 		stmtsummaryv2.Close()
 	}
+}
+
+var keyspaceMetaComponentName = caller.Component("tidb-keyspace-meta")
+
+const (
+	keyspaceIDMetricLabel   = "keyspace_id"
+	keyspaceNameMetricLabel = "keyspace_name"
+)
+
+func prepareKeyspaceObservability() error {
+	cfg := config.GetGlobalConfig()
+	if !kerneltype.IsNextGen() {
+		return nil
+	}
+	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || cfg.Store != config.StoreTypeTiKV {
+		return nil
+	}
+	metricscommon.SetConstLabels(keyspaceNameMetricLabel, cfg.KeyspaceName)
+	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
+	if err != nil {
+		return err
+	}
+	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
+	pdCli, err := pd.NewClient(keyspaceMetaComponentName, pdAddrs, pd.SecurityOption{
+		CAPath:   cfg.Security.ClusterSSLCA,
+		CertPath: cfg.Security.ClusterSSLCert,
+		KeyPath:  cfg.Security.ClusterSSLKey,
+	}, opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()))
+	if err != nil {
+		return err
+	}
+	defer pdCli.Close()
+
+	keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
+	if err != nil {
+		return err
+	}
+	return prepareKeyspaceObservabilityWithKeyspaceMeta(keyspaceMeta, cfg.KeyspaceName, deploymode.IsStarter())
+}
+
+func getKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {
+	var keyspaceMeta *keyspacepb.KeyspaceMeta
+	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+		var errInner error
+		keyspaceMeta, errInner = pdCli.LoadKeyspace(context.TODO(), keyspaceName)
+		if kvstore.IsNotBootstrappedError(errInner) || kvstore.IsKeyspaceNotExistError(errInner) {
+			return true, errInner
+		}
+		return false, errInner
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keyspaceMeta, nil
+}
+
+func prepareKeyspaceObservabilityWithKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta, keyspaceName string, includeConfiguredFields bool) error {
+	if keyspaceMeta == nil {
+		return nil
+	}
+	resolvedValues := config.KeyspaceObservabilityValues{
+		MetricLabels: map[string]string{
+			keyspaceIDMetricLabel:   fmt.Sprint(keyspaceMeta.GetId()),
+			keyspaceNameMetricLabel: keyspaceName,
+		},
+	}
+	if includeConfiguredFields {
+		copiedConfig := *config.GetGlobalConfig()
+		if err := copiedConfig.ResolveKeyspaceObservability(keyspaceMeta.GetConfig()); err != nil {
+			return err
+		}
+		configuredValues := copiedConfig.KeyspaceObservabilityValues.Clone()
+		maps.Copy(resolvedValues.MetricLabels, configuredValues.MetricLabels)
+		resolvedValues.SlowLogFields = configuredValues.SlowLogFields
+		resolvedValues.StmtLogFields = configuredValues.StmtLogFields
+	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservabilityValues = resolvedValues
+	})
+	return nil
 }
 
 func enablePyroscope() {

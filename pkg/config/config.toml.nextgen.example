@@ -446,6 +446,14 @@ allow-expression-index = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
+# Map selected keyspace metadata entries to observability outputs.
+# [[keyspace-observability.fields]]
+# source = "meta_key"
+# metric-label = "metric_label"
+# slow-log-field = "Slow_log_field"
+# stmt-log-field = "stmt_log_field"
+# required = false
+
 # instance scope variables
 # These options are also available as a system variable for online configuration
 # changes to the system variable do not persist to the cluster. You must make changes

@@ -170,6 +170,120 @@ disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
 }
 
+func TestKeyspaceObservability(t *testing.T) {
+	conf := NewConfig()
+	content := `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "label_a"
+slow-log-field = "Slow_meta_a"
+stmt-log-field = "stmt_meta_a"
+required = true
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+metric-label = "label_b"
+`
+	_, err := toml.Decode(content, conf)
+	require.NoError(t, err)
+	require.NoError(t, conf.Valid())
+	require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{
+		"meta_a": "value_a",
+		"meta_b": "value_b",
+	}))
+	require.Equal(t, map[string]string{"label_a": "value_a", "label_b": "value_b"}, conf.GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, []KeyspaceObservabilityFieldPair{{Key: "Slow_meta_a", Value: "value_a"}}, conf.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, []KeyspaceObservabilityFieldPair{{Key: "stmt_meta_a", Value: "value_a"}}, conf.GetKeyspaceObservabilityStmtLogFields())
+
+	metricLabels := conf.GetKeyspaceObservabilityMetricLabels()
+	metricLabels["label_a"] = "changed"
+	require.Equal(t, "value_a", conf.GetKeyspaceObservabilityMetricLabels()["label_a"])
+
+	require.ErrorContains(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_b": "value_b"}), `missing required keyspace metadata entry "meta_a"`)
+}
+
+func TestKeyspaceObservabilityInvalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		err     string
+	}{
+		{
+			name: "empty source",
+			content: `
+[[keyspace-observability.fields]]
+source = ""
+metric-label = "label_a"
+`,
+			err: "source cannot be empty",
+		},
+		{
+			name: "empty output",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+`,
+			err: "at least one output must be set",
+		},
+		{
+			name: "invalid label",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "1_label"
+`,
+			err: `invalid metric-label "1_label"`,
+		},
+		{
+			name: "duplicate label",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "label_a"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+metric-label = "LABEL_A"
+`,
+			err: `duplicated metric-label "LABEL_A"`,
+		},
+		{
+			name: "duplicate slow log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "Slow_meta"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+slow-log-field = "Slow_meta"
+`,
+			err: `duplicated slow-log-field "Slow_meta"`,
+		},
+		{
+			name: "duplicate stmt log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+stmt-log-field = "stmt_meta"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+stmt-log-field = "stmt_meta"
+`,
+			err: `duplicated stmt-log-field "stmt_meta"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := NewConfig()
+			_, err := toml.Decode(tt.content, conf)
+			require.NoError(t, err)
+			require.ErrorContains(t, conf.Valid(), tt.err)
+		})
+	}
+}
+
 func TestRemovedVariableCheck(t *testing.T) {
 	configTest := []struct {
 		options string

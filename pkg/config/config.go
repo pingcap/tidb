@@ -262,6 +262,9 @@ type Config struct {
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
 
+	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
+	KeyspaceObservabilityValues KeyspaceObservabilityValues `toml:"-" json:"-"`
+
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 
@@ -431,6 +434,143 @@ func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, stat
 		osUID = currentUser.Uid
 	}
 	return filepath.Join(tempDir, osUID+"_tidb", dirName, "tmp-storage")
+}
+
+// KeyspaceObservability maps metadata entries to observability outputs.
+type KeyspaceObservability struct {
+	Fields []KeyspaceObservabilityField `toml:"fields" json:"fields"`
+}
+
+// KeyspaceObservabilityField describes one metadata entry mapping.
+type KeyspaceObservabilityField struct {
+	Source       string `toml:"source" json:"source"`
+	MetricLabel  string `toml:"metric-label" json:"metric-label,omitempty"`
+	SlowLogField string `toml:"slow-log-field" json:"slow-log-field,omitempty"`
+	StmtLogField string `toml:"stmt-log-field" json:"stmt-log-field,omitempty"`
+	Required     bool   `toml:"required" json:"required"`
+}
+
+// KeyspaceObservabilityValues stores resolved metadata values.
+type KeyspaceObservabilityValues struct {
+	MetricLabels  map[string]string                `toml:"-" json:"-"`
+	SlowLogFields []KeyspaceObservabilityFieldPair `toml:"-" json:"-"`
+	StmtLogFields []KeyspaceObservabilityFieldPair `toml:"-" json:"-"`
+}
+
+// KeyspaceObservabilityFieldPair stores one resolved output field.
+type KeyspaceObservabilityFieldPair struct {
+	Key   string
+	Value string
+}
+
+// Valid validates metadata observability mappings.
+func (o KeyspaceObservability) Valid() error {
+	metricLabels := make(map[string]struct{}, len(o.Fields))
+	slowLogFields := make(map[string]struct{}, len(o.Fields))
+	stmtLogFields := make(map[string]struct{}, len(o.Fields))
+	for i, field := range o.Fields {
+		if field.Source == "" {
+			return fmt.Errorf("[keyspace-observability.fields.%d] source cannot be empty", i)
+		}
+		if field.MetricLabel == "" && field.SlowLogField == "" && field.StmtLogField == "" {
+			return fmt.Errorf("[keyspace-observability.fields.%d] at least one output must be set", i)
+		}
+		if field.MetricLabel != "" {
+			if !validPrometheusLabelName(field.MetricLabel) {
+				return fmt.Errorf("[keyspace-observability.fields.%d] invalid metric-label %q", i, field.MetricLabel)
+			}
+			key := strings.ToLower(field.MetricLabel)
+			if _, ok := metricLabels[key]; ok {
+				return fmt.Errorf("[keyspace-observability.fields.%d] duplicated metric-label %q", i, field.MetricLabel)
+			}
+			metricLabels[key] = struct{}{}
+		}
+		if field.SlowLogField != "" {
+			if _, ok := slowLogFields[field.SlowLogField]; ok {
+				return fmt.Errorf("[keyspace-observability.fields.%d] duplicated slow-log-field %q", i, field.SlowLogField)
+			}
+			slowLogFields[field.SlowLogField] = struct{}{}
+		}
+		if field.StmtLogField != "" {
+			if _, ok := stmtLogFields[field.StmtLogField]; ok {
+				return fmt.Errorf("[keyspace-observability.fields.%d] duplicated stmt-log-field %q", i, field.StmtLogField)
+			}
+			stmtLogFields[field.StmtLogField] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func validPrometheusLabelName(label string) bool {
+	for i, r := range label {
+		if i == 0 {
+			if r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' {
+				continue
+			}
+			return false
+		}
+		if r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return label != ""
+}
+
+// ResolveKeyspaceObservability resolves configured output values from metadata.
+func (c *Config) ResolveKeyspaceObservability(values map[string]string) error {
+	resolved := KeyspaceObservabilityValues{
+		MetricLabels: make(map[string]string),
+	}
+	for _, field := range c.KeyspaceObservability.Fields {
+		value, ok := values[field.Source]
+		if !ok {
+			if field.Required {
+				return fmt.Errorf("missing required keyspace metadata entry %q", field.Source)
+			}
+			continue
+		}
+		if field.MetricLabel != "" {
+			resolved.MetricLabels[field.MetricLabel] = value
+		}
+		if field.SlowLogField != "" {
+			resolved.SlowLogFields = append(resolved.SlowLogFields, KeyspaceObservabilityFieldPair{Key: field.SlowLogField, Value: value})
+		}
+		if field.StmtLogField != "" {
+			resolved.StmtLogFields = append(resolved.StmtLogFields, KeyspaceObservabilityFieldPair{Key: field.StmtLogField, Value: value})
+		}
+	}
+	c.KeyspaceObservabilityValues = resolved.Clone()
+	return nil
+}
+
+// Clone returns a deep copy of resolved metadata observability values.
+func (v KeyspaceObservabilityValues) Clone() KeyspaceObservabilityValues {
+	res := KeyspaceObservabilityValues{}
+	if len(v.MetricLabels) > 0 {
+		res.MetricLabels = make(map[string]string, len(v.MetricLabels))
+		for k, value := range v.MetricLabels {
+			res.MetricLabels[k] = value
+		}
+	}
+	res.SlowLogFields = append([]KeyspaceObservabilityFieldPair(nil), v.SlowLogFields...)
+	res.StmtLogFields = append([]KeyspaceObservabilityFieldPair(nil), v.StmtLogFields...)
+	return res
+}
+
+// GetKeyspaceObservabilityMetricLabels returns resolved metric labels.
+func (c *Config) GetKeyspaceObservabilityMetricLabels() map[string]string {
+	return c.KeyspaceObservabilityValues.Clone().MetricLabels
+}
+
+// GetKeyspaceObservabilitySlowLogFields returns resolved slow log fields.
+func (c *Config) GetKeyspaceObservabilitySlowLogFields() []KeyspaceObservabilityFieldPair {
+	return c.KeyspaceObservabilityValues.Clone().SlowLogFields
+}
+
+// GetKeyspaceObservabilityStmtLogFields returns resolved statement log fields.
+func (c *Config) GetKeyspaceObservabilityStmtLogFields() []KeyspaceObservabilityFieldPair {
+	return c.KeyspaceObservabilityValues.Clone().StmtLogFields
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -1478,6 +1618,9 @@ func (c *Config) Valid() error {
 	}
 	if c.DXFResourceLimit != DefDXFResourceLimit && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+	}
+	if err := c.KeyspaceObservability.Valid(); err != nil {
+		return err
 	}
 	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")

@@ -53,6 +53,14 @@ func SetConstLabels(kv ...string) {
 	}
 }
 
+// SetConstLabelsFromMap sets constant labels for metrics from a map.
+func SetConstLabelsFromMap(labels map[string]string) {
+	constLabels = make(prometheus.Labels, len(labels))
+	for k, v := range labels {
+		constLabels[strings.ToLower(k)] = v
+	}
+}
+
 // NewCounter wraps a prometheus.NewCounter.
 func NewCounter(opts prometheus.CounterOpts) prometheus.Counter {
 	opts.ConstLabels = constLabels

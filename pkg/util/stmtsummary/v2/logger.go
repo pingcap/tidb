@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
@@ -71,12 +72,38 @@ func (s *stmtLogStorage) sync() error {
 }
 
 func (s *stmtLogStorage) log(r *StmtRecord) {
-	b, err := json.Marshal(r)
+	b, err := marshalStmtRecord(r)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to marshal statement summary", zap.Error(err))
 		return
 	}
 	s.logger.Info(string(b))
+}
+
+func marshalStmtRecord(r *StmtRecord) ([]byte, error) {
+	fields := config.GetGlobalConfig().GetKeyspaceObservabilityStmtLogFields()
+	if len(fields) == 0 {
+		return json.Marshal(r)
+	}
+	b, err := json.Marshal(r)
+	if err != nil {
+		return nil, err
+	}
+	if !json.Valid(b) || len(b) < 2 || b[0] != '{' || b[len(b)-1] != '}' {
+		return b, nil
+	}
+	items := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(b, &items); err != nil {
+		return nil, err
+	}
+	for _, field := range fields {
+		value, err := json.Marshal(field.Value)
+		if err != nil {
+			return nil, err
+		}
+		items[field.Key] = value
+	}
+	return json.Marshal(items)
 }
 
 type stmtLogEncoder struct{}
