@@ -362,8 +362,7 @@ func TestBuildTiCIPreSplitImportShardsRequestForImportInto(t *testing.T) {
 
 	req, err := buildTiCIPreSplitImportShardsRequestForImportInto(
 		context.Background(),
-		planner.PlanCtx{TaskID: 123},
-		&LogicalPlan{Plan: importer.Plan{
+		&LogicalPlan{JobID: 123, Plan: importer.Plan{
 			TableInfo: &model.TableInfo{ID: 456},
 		}},
 		nil,
@@ -386,7 +385,7 @@ func TestBuildTiCIPreSplitImportShardsRequestForImportInto(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	require.Equal(t, "123", req.TidbTaskId)
+	require.Equal(t, TaskKey(123), req.TidbTaskId)
 	require.Equal(t, int64(456), req.TableId)
 	require.Equal(t, []int64{10, 20}, req.IndexIds)
 	require.Zero(t, req.ScanSnapshotTs)
@@ -414,7 +413,7 @@ func TestTriggerTiCIPreSplitForImportInto(t *testing.T) {
 	err := triggerTiCIPreSplitForImportInto(
 		context.Background(),
 		planner.PlanCtx{TaskID: 101},
-		&LogicalPlan{Plan: importer.Plan{
+		&LogicalPlan{JobID: 101, Plan: importer.Plan{
 			DBName: "test",
 			TableInfo: &model.TableInfo{
 				ID:   202,
@@ -438,7 +437,7 @@ func TestTriggerTiCIPreSplitForImportInto(t *testing.T) {
 	require.NotEmpty(t, raw)
 	var req tici.PreSplitImportShardsRequest
 	require.NoError(t, json.Unmarshal(raw, &req))
-	require.Equal(t, "101", req.TidbTaskId)
+	require.Equal(t, TaskKey(101), req.TidbTaskId)
 	require.Equal(t, int64(202), req.TableId)
 	require.Equal(t, []int64{2}, req.IndexIds)
 	require.Zero(t, req.ScanSnapshotTs)
@@ -529,7 +528,7 @@ func TestGenerateWriteIngestSpecsTiCIPreSplitBestEffort(t *testing.T) {
 		},
 		ThreadCnt: 1,
 		Store:     taskStore.(kv.StorageWithPD),
-	}, &LogicalPlan{Stmt: "IMPORT INTO test.tb FROM '/tmp/input.csv'", Plan: importer.Plan{
+	}, &LogicalPlan{JobID: 909, Stmt: "IMPORT INTO test.tb FROM '/tmp/input.csv'", Plan: importer.Plan{
 		Path:            filepath.Join(sortDir, "input.csv"),
 		InImportInto:    true,
 		Format:          importer.DataFormatCSV,
@@ -551,7 +550,7 @@ func TestGenerateWriteIngestSpecsTiCIPreSplitBestEffort(t *testing.T) {
 	require.NotEmpty(t, raw)
 	var req tici.PreSplitImportShardsRequest
 	require.NoError(t, json.Unmarshal(raw, &req))
-	require.Equal(t, "909", req.TidbTaskId)
+	require.Equal(t, TaskKey(909), req.TidbTaskId)
 	require.Equal(t, int64(808), req.TableId)
 	require.Equal(t, []int64{2}, req.IndexIds)
 	require.Zero(t, req.ScanSnapshotTs)
@@ -610,7 +609,7 @@ func TestGenerateWriteIngestSpecsTiCIPreSplitUsesMergedMeta(t *testing.T) {
 		},
 		ThreadCnt: 1,
 		Store:     taskStore.(kv.StorageWithPD),
-	}, &LogicalPlan{Stmt: "IMPORT INTO test.tb FROM '/tmp/input.csv'", Plan: importer.Plan{
+	}, &LogicalPlan{JobID: 910, Stmt: "IMPORT INTO test.tb FROM '/tmp/input.csv'", Plan: importer.Plan{
 		Path:            filepath.Join(sortDir, "input.csv"),
 		InImportInto:    true,
 		Format:          importer.DataFormatCSV,
@@ -632,7 +631,7 @@ func TestGenerateWriteIngestSpecsTiCIPreSplitUsesMergedMeta(t *testing.T) {
 	require.NotEmpty(t, raw)
 	var req tici.PreSplitImportShardsRequest
 	require.NoError(t, json.Unmarshal(raw, &req))
-	require.Equal(t, "910", req.TidbTaskId)
+	require.Equal(t, TaskKey(910), req.TidbTaskId)
 	require.Equal(t, []int64{2}, req.IndexIds)
 	require.Equal(t, mergedIndexMeta.StartKey, req.StartKey)
 	require.Equal(t, mergedIndexMeta.EndKey, req.EndKey)
