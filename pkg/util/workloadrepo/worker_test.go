@@ -32,8 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -634,34 +632,20 @@ func buildPartitionString(partitions []time.Time) string {
 	return sb.String()
 }
 
-func createTableWithPartsByExec(ctx context.Context, t *testing.T, tbl *repositoryTable,
-	sess sessionctx.Context, partitions []time.Time, exec func(string)) {
+func createTableWithParts(ctx context.Context, t *testing.T, tk *testkit.TestKit, tbl *repositoryTable,
+	sess sessionctx.Context, partitions []time.Time) {
 	createSQL, err := buildCreateQuery(ctx, sess, tbl)
 	require.NoError(t, err)
 	createSQL += buildPartitionString(partitions)
-	exec(createSQL)
+	tk.MustExec(createSQL)
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
 }
 
-func createTableWithParts(ctx context.Context, t *testing.T, tk *testkit.TestKit, tbl *repositoryTable,
-	sess sessionctx.Context, partitions []time.Time) {
-	createTableWithPartsByExec(ctx, t, tbl, sess, partitions, func(createSQL string) {
-		tk.MustExec(createSQL)
-	})
-}
-
-func createTableWithPartsForSession(ctx context.Context, t *testing.T, se sessionapi.Session, tbl *repositoryTable,
-	sess sessionctx.Context, partitions []time.Time) {
-	createTableWithPartsByExec(ctx, t, tbl, sess, partitions, func(createSQL string) {
-		session.MustExec(t, se, createSQL)
-	})
-}
-
 func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
-	sess sessionctx.Context, se sessionapi.Session, wrk *worker,
+	sess sessionctx.Context, tk *testkit.TestKit, wrk *worker,
 	firstTestFails bool, tableName string, partitions []time.Time, expectedParts []time.Time) {
 	tbl := getTable(t, tableName, wrk)
-	createTableWithPartsForSession(ctx, t, se, tbl, sess, partitions)
+	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
 
 	is := sess.GetLatestInfoSchema().(infoschema.InfoSchema)
 	require.False(t, firstTestFails == checkTableExistsByIS(ctx, is, tbl.destTable, now))
@@ -678,12 +662,10 @@ func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
 func TestCreatePartition(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	t.Cleanup(se.Close)
+	tk := testkit.NewTestKit(t, store)
 
-	session.MustExec(t, se, "create database WORKLOAD_SCHEMA")
-	session.MustExec(t, se, "use WORKLOAD_SCHEMA")
+	tk.MustExec("create database WORKLOAD_SCHEMA")
+	tk.MustExec("use WORKLOAD_SCHEMA")
 
 	_sessctx := wrk.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
@@ -700,36 +682,36 @@ func TestCreatePartition(t *testing.T) {
 	// Should create one partition for today and tomorrow on a table with only old partitions before today.
 	partitions := []time.Time{now.AddDate(0, 0, -1)}
 	expectedParts := []time.Time{now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
-	validatePartitionCreation(ctx, now, t, sess, se, wrk, true, "PROCESSLIST", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, true, "PROCESSLIST", partitions, expectedParts)
 
 	// Should create one partition for tomorrow on a table with only a partition for today.
 	partitions = []time.Time{now}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 1)}
-	validatePartitionCreation(ctx, now, t, sess, se, wrk, true, "DATA_LOCK_WAITS", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, true, "DATA_LOCK_WAITS", partitions, expectedParts)
 
 	// Should not create any partitions on a table with only a partition for tomorrow.
 	partitions = []time.Time{now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, 1)}
-	validatePartitionCreation(ctx, now, t, sess, se, wrk, false, "TIDB_TRX", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "TIDB_TRX", partitions, expectedParts)
 
 	// Should not create any partitions on a table with only partitions for both today and tomorrow.
 	partitions = []time.Time{now, now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 1)}
-	validatePartitionCreation(ctx, now, t, sess, se, wrk, false, "MEMORY_USAGE", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "MEMORY_USAGE", partitions, expectedParts)
 
 	// Should not create any partitions on a table with a partition for the day after tomorrow.
 	partitions = []time.Time{now.AddDate(0, 0, 2)}
 	expectedParts = []time.Time{now.AddDate(0, 0, 2)}
-	validatePartitionCreation(ctx, now, t, sess, se, wrk, false, "DEADLOCKS", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "DEADLOCKS", partitions, expectedParts)
 
 	// Should not fill in missing partitions on a table with a partition for dates beyond tomorrow.
 	partitions = []time.Time{now, now.AddDate(0, 0, 3)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 3)}
-	validatePartitionCreation(ctx, now, t, sess, se, wrk, false, "TIDB_INDEX_USAGE", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "TIDB_INDEX_USAGE", partitions, expectedParts)
 
 	// this table should be updated when the repository is enabled
 	partitions = []time.Time{now}
-	createTableWithPartsForSession(ctx, t, se, getTable(t, "TIDB_STATEMENTS_STATS", wrk), sess, partitions)
+	createTableWithParts(ctx, t, tk, getTable(t, "TIDB_STATEMENTS_STATS", wrk), sess, partitions)
 
 	// turn on the repository and see if it creates the remaining tables
 	wrk.setRepositoryDest(ctx, "table")
