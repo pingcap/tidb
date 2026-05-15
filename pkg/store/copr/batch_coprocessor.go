@@ -964,7 +964,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		var needRetry bool
 		minReplicaNum := uint64(math.MaxUint64)
 		for _, task := range tasks {
-			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
+			rpcCtx, _, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
