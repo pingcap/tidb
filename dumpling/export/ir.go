@@ -62,6 +62,9 @@ type RowReceiverStringer interface {
 type Stringer interface {
 	WriteToBuffer(*bytes.Buffer, bool)
 	WriteToBufferInCsv(*bytes.Buffer, bool, *csvOption)
+	// GetRawBytes returns raw bytes for parquet writes.
+	// The returned slice may be reused by the receiver and is only valid until
+	// the next call on the same receiver.
 	GetRawBytes() []sql.RawBytes
 }
 

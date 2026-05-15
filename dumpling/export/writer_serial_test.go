@@ -10,8 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	arrowfile "github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/pingcap/errors"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
@@ -50,6 +52,41 @@ func (u *BytesWriter) Reset() {
 // NewBufferWriter creates a Writer that simply writes to a buffer (useful for testing).
 func NewBufferWriter() *BytesWriter {
 	return &BytesWriter{buf: &bytes.Buffer{}}
+}
+
+type decodeErrorRowIter struct {
+	SQLRowIter
+	failAtDecode int
+	decodeCalls  int
+	err          error
+}
+
+func (iter *decodeErrorRowIter) Decode(row RowReceiver) error {
+	iter.decodeCalls++
+	if iter.decodeCalls == iter.failAtDecode {
+		return iter.err
+	}
+	return iter.SQLRowIter.Decode(row)
+}
+
+type writeFailingObjectWriter struct {
+	allowedWrites int
+	writeCalls    int
+	err           error
+}
+
+var _ objectio.Writer = &writeFailingObjectWriter{}
+
+func (w *writeFailingObjectWriter) Write(_ context.Context, p []byte) (int, error) {
+	w.writeCalls++
+	if w.writeCalls <= w.allowedWrites {
+		return len(p), nil
+	}
+	return 0, w.err
+}
+
+func (*writeFailingObjectWriter) Close(_ context.Context) error {
+	return nil
 }
 
 func TestWriteMeta(t *testing.T) {
@@ -176,6 +213,66 @@ func TestWriteInsertReturnsError(t *testing.T) {
 		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
 		require.ErrorIs(t, err, parquetRowErr)
 		require.Equal(t, uint64(len(parquetData)-1), n)
+		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedRowsGauge))
+		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedSizeGauge))
+	})
+
+	t.Run("parquet finalizes buffered rows on decode error", func(t *testing.T) {
+		parquetData := [][]driver.Value{
+			{"1"},
+			{"2"},
+		}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
+		baseIter := parquetTableIR.Rows()
+		parquetTableIR.SQLRowIter = &decodeErrorRowIter{
+			SQLRowIter:   baseIter,
+			failAtDecode: 2,
+			err:          errors.New("mock decode error"),
+		}
+		parquetWriter := NewBufferWriter()
+		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
+
+		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
+		require.Equal(t, uint64(1), n)
+		require.ErrorContains(t, err, "mock decode error")
+		require.NotEmpty(t, parquetWriter.Bytes())
+
+		reader, readErr := arrowfile.NewParquetReader(bytes.NewReader(parquetWriter.Bytes()))
+		require.NoError(t, readErr)
+		defer reader.Close()
+		require.EqualValues(t, 1, reader.NumRows())
+		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedRowsGauge))
+		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedSizeGauge))
+	})
+
+	t.Run("parquet appends close error when decode fails", func(t *testing.T) {
+		parquetData := [][]driver.Value{
+			{"1"},
+			{"2"},
+		}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
+		baseIter := parquetTableIR.Rows()
+		parquetTableIR.SQLRowIter = &decodeErrorRowIter{
+			SQLRowIter:   baseIter,
+			failAtDecode: 2,
+			err:          errors.New("mock decode error"),
+		}
+		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
+		injectedWriteErr := errors.New("injected sink write failure")
+
+		n, err := WriteInsertInParquet(
+			tcontext.Background(),
+			cfg,
+			parquetTableIR,
+			parquetTableIR,
+			&writeFailingObjectWriter{allowedWrites: 1, err: injectedWriteErr},
+			parquetMetrics,
+		)
+		require.Equal(t, uint64(1), n)
+		require.ErrorContains(t, err, "mock decode error")
+		require.ErrorContains(t, err, injectedWriteErr.Error())
 		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedRowsGauge))
 		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedSizeGauge))
 	})

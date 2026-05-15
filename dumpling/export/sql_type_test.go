@@ -4,6 +4,7 @@ package export
 
 import (
 	"bytes"
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,4 +53,45 @@ func TestEscape(t *testing.T) {
 	bf.Reset()
 	escapeCSV(str, &bf, false, opt)
 	require.Equal(t, expectedStrWithoutDelimiter, bf.String())
+
+	t.Run("GetRawBytes reuses row buffer", func(t *testing.T) {
+		row := MakeRowReceiver([]string{"INT", "VARCHAR", "BLOB"})
+
+		row.receivers[0].(*SQLTypeNumber).RawBytes = sql.RawBytes("1")
+		row.receivers[1].(*SQLTypeString).RawBytes = sql.RawBytes("alpha")
+		row.receivers[2].(*SQLTypeBytes).RawBytes = sql.RawBytes{0x01, 0x02}
+
+		first := row.GetRawBytes()
+		require.Len(t, first, 3)
+		require.Equal(t, []sql.RawBytes{
+			sql.RawBytes("1"),
+			sql.RawBytes("alpha"),
+			sql.RawBytes{0x01, 0x02},
+		}, first)
+
+		row.receivers[0].(*SQLTypeNumber).RawBytes = sql.RawBytes("2")
+		row.receivers[1].(*SQLTypeString).RawBytes = sql.RawBytes("beta")
+		row.receivers[2].(*SQLTypeBytes).RawBytes = sql.RawBytes{0x03}
+		second := row.GetRawBytes()
+
+		// GetRawBytes returns a reusable row buffer for parquet writer hot path.
+		require.Same(t, &first[0], &second[0])
+		require.Equal(t, []sql.RawBytes{
+			sql.RawBytes("2"),
+			sql.RawBytes("beta"),
+			sql.RawBytes{0x03},
+		}, second)
+	})
+
+	t.Run("GetRawBytes hot path stays allocation-free", func(t *testing.T) {
+		row := MakeRowReceiver([]string{"INT", "VARCHAR", "BLOB"})
+		row.receivers[0].(*SQLTypeNumber).RawBytes = sql.RawBytes("1")
+		row.receivers[1].(*SQLTypeString).RawBytes = sql.RawBytes("alpha")
+		row.receivers[2].(*SQLTypeBytes).RawBytes = sql.RawBytes{0x01, 0x02}
+
+		allocs := testing.AllocsPerRun(1000, func() {
+			_ = row.GetRawBytes()
+		})
+		require.Zero(t, allocs)
+	})
 }

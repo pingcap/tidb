@@ -623,6 +623,7 @@ func WriteInsertInParquet(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	writerClosed := false
 
 	var (
 		row            = MakeRowReceiver(meta.ColumnTypes())
@@ -651,6 +652,21 @@ func WriteInsertInParquet(
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
 			summary.CollectSuccessUnit("total rows", 1, counter)
 		}
+	}()
+	defer func() {
+		if writerClosed {
+			return
+		}
+		closeErr := writer.Close()
+		if closeErr == nil {
+			return
+		}
+		closeErr = errors.Trace(closeErr)
+		if err == nil {
+			err = closeErr
+			return
+		}
+		err = errors.Join(err, closeErr)
 	}()
 
 	// Add rows to parquet writer; it flushes when accounted in-memory bytes reach
@@ -682,6 +698,7 @@ func WriteInsertInParquet(
 	if err = writer.Close(); err != nil {
 		return counter, errors.Trace(err)
 	}
+	writerClosed = true
 	finishedSize = writer.EstimateFileSize()
 	AddGauge(metrics.finishedSizeGauge, float64(finishedSize))
 	if err = fileRowIter.Error(); err != nil {

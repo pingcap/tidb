@@ -188,6 +188,7 @@ func MakeRowReceiver(colTypes []string) *RowReceiverArr {
 	return &RowReceiverArr{
 		bound:     false,
 		receivers: rowReceiverArr,
+		rawBytes:  make([]sql.RawBytes, len(rowReceiverArr)),
 	}
 }
 
@@ -195,6 +196,7 @@ func MakeRowReceiver(colTypes []string) *RowReceiverArr {
 type RowReceiverArr struct {
 	bound     bool
 	receivers []RowReceiverStringer
+	rawBytes  []sql.RawBytes
 }
 
 // BindAddress implements RowReceiver.BindAddress
@@ -231,13 +233,12 @@ func (r *RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bo
 }
 
 // GetRawBytes implements Stringer.GetRawBytes.
-func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
-	rawBytes := make([]sql.RawBytes, len(r.receivers))
+func (r *RowReceiverArr) GetRawBytes() []sql.RawBytes {
 	for i, receiver := range r.receivers {
 		raw := receiver.GetRawBytes()
-		rawBytes[i] = raw[0]
+		r.rawBytes[i] = raw[0]
 	}
-	return rawBytes
+	return r.rawBytes
 }
 
 // SQLTypeNumber implements RowReceiverStringer which represents numeric type columns in database
@@ -265,12 +266,13 @@ func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool, opt *csvOpti
 
 // GetRawBytes implements Stringer.GetRawBytes.
 func (s *SQLTypeNumber) GetRawBytes() []sql.RawBytes {
-	return []sql.RawBytes{s.RawBytes}
+	return s.SQLTypeString.GetRawBytes()
 }
 
 // SQLTypeString implements RowReceiverStringer which represents string type columns in database
 type SQLTypeString struct {
 	sql.RawBytes
+	rawBytes [1]sql.RawBytes
 }
 
 // BindAddress implements RowReceiver.BindAddress
@@ -302,12 +304,14 @@ func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash boo
 
 // GetRawBytes implements Stringer.GetRawBytes.
 func (s *SQLTypeString) GetRawBytes() []sql.RawBytes {
-	return []sql.RawBytes{s.RawBytes}
+	s.rawBytes[0] = s.RawBytes
+	return s.rawBytes[:]
 }
 
 // SQLTypeBytes implements RowReceiverStringer which represents bytes type columns in database
 type SQLTypeBytes struct {
 	sql.RawBytes
+	rawBytes [1]sql.RawBytes
 }
 
 // BindAddress implements RowReceiver.BindAddress
@@ -344,5 +348,6 @@ func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool
 
 // GetRawBytes implements Stringer.GetRawBytes.
 func (s *SQLTypeBytes) GetRawBytes() []sql.RawBytes {
-	return []sql.RawBytes{s.RawBytes}
+	s.rawBytes[0] = s.RawBytes
+	return s.rawBytes[:]
 }
