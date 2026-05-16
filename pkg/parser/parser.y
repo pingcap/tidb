@@ -8204,7 +8204,9 @@ ByItem:
 		valueExpr, ok := expr.(ast.ValueExpr)
 		if ok {
 			position, isPosition := valueExpr.GetValue().(int64)
-			if isPosition {
+			if isPosition && !mysql.HasIsBooleanFlag(valueExpr.GetType().GetFlag()) {
+				// TRUE/FALSE are stored as int64 internally, but MySQL treats them
+				// as constants in BY items rather than ordinal references.
 				expr = &ast.PositionExpr{N: int(position)}
 			}
 		}
@@ -8216,7 +8218,9 @@ ByItem:
 		valueExpr, ok := expr.(ast.ValueExpr)
 		if ok {
 			position, isPosition := valueExpr.GetValue().(int64)
-			if isPosition {
+			if isPosition && !mysql.HasIsBooleanFlag(valueExpr.GetType().GetFlag()) {
+				// TRUE/FALSE are stored as int64 internally, but MySQL treats them
+				// as constants in BY items rather than ordinal references.
 				expr = &ast.PositionExpr{N: int(position)}
 			}
 		}

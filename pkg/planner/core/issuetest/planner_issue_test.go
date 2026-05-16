@@ -906,6 +906,22 @@ ORDER BY t1.a, t2.a, t3.a, var`
 			"10 <nil> <nil> 6",
 		))
 	})
+
+	// issue-65939-group-by-boolean-literal-in-subquery
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("set @@sql_mode = default")
+		tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern='OFF'")
+		tk.MustExec("set @@tidb_enable_unsafe_substitute=0")
+
+		tk.MustExec("create table v0 (v1 int, v2 int, v3 int)")
+		tk.MustExec("insert into v0 values (50, 8, 0), (-1, 41, 0)")
+		tk.MustQuery("select (select -1 from v0 group by false, (v2 ^ v2) > v2), 16").
+			Check(testkit.Rows("-1 16"))
+		tk.MustQuery("select -1 from v0 group by false").Check(testkit.Rows("-1"))
+		tk.MustQuery("select -1 from v0 group by true").Check(testkit.Rows("-1"))
+		tk.MustContainErrMsg("select -1 from v0 group by 0", "Unknown column '0' in 'group statement'")
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
