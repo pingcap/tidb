@@ -15,7 +15,7 @@
 - `pkg/expression/builtin_cast_bench_test.go` - expression: Tests cast int as int row.
 - `pkg/expression/builtin_cast_test.go` - expression: Tests cast functions.
 - `pkg/expression/builtin_cast_vec_test.go` - expression: Tests vectorized builtin cast eval one vec.
-- `pkg/expression/builtin_compare_test.go` - expression: Tests compare function with refine.
+- `pkg/expression/builtin_compare_test.go` - expression: Tests compare function with refine and greatest/least boundaries.
 - `pkg/expression/builtin_compare_vec_generated_test.go` - expression: Tests vectorized generated builtin compare eval one vec.
 - `pkg/expression/builtin_compare_vec_test.go` - expression: Tests vectorized builtin compare eval one vec.
 - `pkg/expression/builtin_control_test.go` - expression: Tests case when.
@@ -97,7 +97,7 @@
 ## pkg/expression/integration_test
 
 ### Tests
-- `pkg/expression/integration_test/integration_test.go` - expression/integration_test: Tests FTS parser.
+- `pkg/expression/integration_test/integration_test.go` - expression/integration_test: Tests FTS parser and SQL-level expression behavior.
 - `pkg/expression/integration_test/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/expression/sessionexpr
