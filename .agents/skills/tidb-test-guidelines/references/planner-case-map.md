@@ -502,7 +502,7 @@
 
 ### Tests
 - `pkg/planner/core/issuetest/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/planner/core/issuetest/planner_issue_test.go` - planner/core/issuetest: Tests planner issue regressions.
+- `pkg/planner/core/issuetest/planner_issue_test.go` - planner/core/issuetest: Tests planner issue regressions, including view and predicate metadata cases.
 
 ## pkg/planner/core/operator/logicalop/logicalop_test
 

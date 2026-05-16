@@ -56,7 +56,7 @@
 - `pkg/expression/distsql_builtin_test.go` - expression: Tests PB to expr.
 - `pkg/expression/evaluator_test.go` - expression: Tests sleep.
 - `pkg/expression/expr_to_pb_test.go` - expression: Tests constant to PB.
-- `pkg/expression/expression_test.go` - expression: Tests new values func.
+- `pkg/expression/expression_test.go` - expression: Tests new values func, constant metadata propagation, and expression utilities.
 - `pkg/expression/function_traits_test.go` - expression: Tests unfoldable funcs.
 - `pkg/expression/grouping_sets_test.go` - expression: Tests group sets target one.
 - `pkg/expression/helper_test.go` - expression: Tests get time value.

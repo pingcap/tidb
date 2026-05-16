@@ -671,6 +671,21 @@ SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t8
 		tk.MustQuery("SELECT /* issue:58999 */ 1 FROM t0, v0 WHERE t0.c2=(-(-1|v0.c0))").Check(testkit.Rows())
 	}
 
+	// issue-66706-decimal-scale-leak-through-sign-view-predicate
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("CREATE TABLE t0(c0 NUMERIC)")
+		tk.MustExec("CREATE TABLE t1 LIKE t0")
+		tk.MustExec("REPLACE INTO t0 VALUES (-1780864408)")
+		tk.MustExec("INSERT INTO t1 VALUES (1448472626)")
+		tk.MustExec("CREATE OR REPLACE VIEW v0(c0) AS SELECT 0.99 FROM t1, t0")
+
+		tk.MustQuery("SELECT /* issue:66706 */ v0.c0 FROM v0 WHERE SIGN(v0.c0)").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+	})
+
 	// Regression test for https://github.com/pingcap/tidb/issues/66339
 	// Read-only user variables with uppercase names should be converted to constant
 	// and use IndexRangeScan, same as lowercase names.
