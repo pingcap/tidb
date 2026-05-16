@@ -7584,6 +7584,16 @@ func TestRestoreBinOpWithBrackets(t *testing.T) {
 				require.False(t, right.Not)
 			},
 		},
+		{
+			src: "select c0 between 1 and c1 <=> 1",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.BinaryOperationExpr)
+				require.True(t, ok)
+				require.Equal(t, opcode.NullEQ, right.Op)
+			},
+		},
 	} {
 		stmt, err := p.ParseOneStmt(tbl.src, "", "")
 		require.NoError(t, err, tbl.src)
