@@ -908,6 +908,24 @@ ORDER BY t1.a, t2.a, t3.a, var`
 	})
 }
 
+func TestPreparedGroupByOrdinalWithParamSelectItem(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 decimal)")
+	tk.MustExec("insert ignore into t0 values (1)")
+
+	tk.MustQuery("select /* issue:63640 */ 2 from t0 where t0.c0 group by 1").Check(testkit.Rows("2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("set @a = 2")
+	tk.MustExec("prepare prepare_query from 'select /* issue:63640 */ ? from t0 where t0.c0 group by 1'")
+	tk.MustQuery("execute prepare_query using @a").Check(testkit.Rows("2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("deallocate prepare prepare_query")
+}
+
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")

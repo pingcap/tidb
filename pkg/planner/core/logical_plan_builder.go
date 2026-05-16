@@ -3441,6 +3441,13 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		ret := g.fields[pos-1].Expr
+		if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
+			// GROUP BY ordinals can resolve to a select-list parameter marker; keep
+			// the original ordinal so EXECUTE will not treat the parameter value as
+			// another column position.
+			isParam.UseAsValueInGbyByClause = true
+			g.isParam = true
+		}
 		ret.Accept(extractor)
 		if len(extractor.AggFuncs) != 0 || ast.HasWindowFlag(ret) {
 			fieldName := g.fields[pos-1].AsName.String()
