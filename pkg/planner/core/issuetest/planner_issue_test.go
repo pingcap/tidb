@@ -885,6 +885,7 @@ ORDER BY field1`).Check(testkit.Rows())
 
 		tk.MustExec("set @c = -81775")
 		tk.MustExec("prepare stmt65717 from 'select t29.c0 from t29 where date_format(422123206, (binary (?)))'")
+		defer tk.MustExec("deallocate prepare stmt65717")
 		tk.MustQuery("execute stmt65717 using @c").Check(testkit.Rows("1"))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tk.MustQuery("show warnings").Check(testkit.Rows())
