@@ -359,7 +359,7 @@ func TestDateFunc2Pb(t *testing.T) {
 	require.NotNil(t, pbExprs[0])
 	js, err := json.Marshal(pbExprs[0])
 	require.NoError(t, err)
-	require.Equal(t, "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false}],\"sig\":6001,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":0,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false}", string(js))
+	require.Equal(t, "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":12,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false}],\"sig\":6001,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\",\"array\":false},\"has_distinct\":false}", string(js))
 }
 
 func TestLogicalFunc2Pb(t *testing.T) {
