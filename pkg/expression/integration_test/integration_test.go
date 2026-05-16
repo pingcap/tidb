@@ -1592,6 +1592,18 @@ func TestInfoBuiltin(t *testing.T) {
 	result = tk.MustQuery("select last_insert_id();")
 	result.Check(testkit.Rows("5"))
 
+	// for format_bytes
+	tk.MustQuery("select /* issue:59455 */ format_bytes(1023.999999999)").Check([][]any{{"1023 bytes"}})
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select /* issue:59455 */ format_bytes(b'11111111')").Check([][]any{{" 255 bytes"}})
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select /* issue:59455 */ format_bytes('')").Check([][]any{{"   0 bytes"}})
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select /* issue:59455 */ format_bytes(char(52))").Check([][]any{{"   4 bytes"}})
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select /* issue:59455 */ format_bytes(json_extract('{\"x\": 512}', '$.x'))").Check([][]any{{" 512 bytes"}})
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
 	// for found_rows
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
