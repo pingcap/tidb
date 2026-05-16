@@ -5802,14 +5802,21 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
-		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
-		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
-			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
-		} else {
-			targetPlan, _, err = OptimizeAstNodeNoCache(ctx, sctx, nodeW, b.is)
-		}
-		if err != nil {
-			return nil, err
+		paramChecker := &expression.ParamMarkerInPrepareChecker{}
+		explain.Stmt.Accept(paramChecker)
+		// Prepare-time EXPLAIN only needs the fixed EXPLAIN result schema. The
+		// target plan must be optimized at EXECUTE time after parameter values
+		// are available.
+		if !paramChecker.InPrepareStmt {
+			nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
+			if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+				targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
+			} else {
+				targetPlan, _, err = OptimizeAstNodeNoCache(ctx, sctx, nodeW, b.is)
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 

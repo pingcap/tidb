@@ -671,6 +671,21 @@ SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t8
 		tk.MustQuery("SELECT /* issue:58999 */ 1 FROM t0, v0 WHERE t0.c2=(-(-1|v0.c0))").Check(testkit.Rows())
 	}
 
+	// issue-63898-prepared-explain-view-parameter-marker
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("CREATE TABLE t0(c0 CHAR)")
+		tk.MustExec("CREATE VIEW v0(c0) AS SELECT ((FIELD(t0.c0, 1)) != (false)) FROM t0")
+		tk.MustExec("SET @a='a', @b='b'")
+		tk.MustExec("PREPARE stmt63898 FROM 'EXPLAIN SELECT /* issue:63898 */ t0.c0 FROM v0, t0 WHERE ((t0.c0)=(REPLACE(?, v0.c0, ?)))'")
+		tk.MustQuery("EXECUTE stmt63898 USING @a, @b").MultiCheckContain([]string{
+			"HashJoin",
+			"replace(a",
+			"table:t0",
+		})
+		tk.MustExec("DEALLOCATE PREPARE stmt63898")
+	}
+
 	// Regression test for https://github.com/pingcap/tidb/issues/66339
 	// Read-only user variables with uppercase names should be converted to constant
 	// and use IndexRangeScan, same as lowercase names.
