@@ -930,6 +930,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		}
 	} else if joinNode.On != nil {
 		b.curClause = onClause
+		b.skipPlanCacheForJoinOnSubquery(joinNode.On.Expr)
 		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, joinPlan, nil, false)
 		if err != nil {
 			return nil, err
@@ -948,6 +949,20 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		joinPlan.AttachOnConds(onCondition)
 	}
 	return joinPlan, nil
+}
+
+func (b *PlanBuilder) skipPlanCacheForJoinOnSubquery(expr ast.ExprNode) {
+	if !b.ctx.GetSessionVars().StmtCtx.UseCache() {
+		return
+	}
+	extractor := &subqueryExprExtractor{}
+	expr.Accept(extractor)
+	if len(extractor.exprs) == 0 {
+		return
+	}
+	// ON subqueries may need build-time evaluation. Keep EXECUTE parameters as
+	// concrete constants so the rewriter does not build an unsupported Apply.
+	b.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache("query has sub-queries in ON condition is un-cacheable")
 }
 
 // buildLateralJoin builds a LogicalApply for LATERAL derived tables.
