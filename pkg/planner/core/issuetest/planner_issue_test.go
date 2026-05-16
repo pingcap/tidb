@@ -48,7 +48,8 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		return sharedTK
 	}
 
-	// issue-66045
+	// issue-66045: the implicit query verifies BETWEEN upper-bound parsing when comparison and
+	// bitwise operators are present; it should be equivalent to the explicit parenthesized form.
 	{
 		tk := prepareSharedTestKit(t)
 		tk.MustExec("create table t0 (id int auto_increment primary key, c0 double, index idx_c0 (c0))")

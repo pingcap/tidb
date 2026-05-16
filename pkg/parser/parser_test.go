@@ -7536,6 +7536,62 @@ func TestRestoreBinOpWithBrackets(t *testing.T) {
 			require.Equal(t, tbl.restore, restoreSQLs, comment)
 		}
 	}
+
+	for _, tbl := range []struct {
+		src        string
+		assertType func(t *testing.T, expr ast.ExprNode)
+	}{
+		{
+			src: "select c0 between 1 and c1 is true",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.IsTruthExpr)
+				require.True(t, ok)
+				require.False(t, right.Not)
+				require.Equal(t, int64(1), right.True)
+			},
+		},
+		{
+			src: "select c0 between 1 and c1 is false",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.IsTruthExpr)
+				require.True(t, ok)
+				require.False(t, right.Not)
+				require.Equal(t, int64(0), right.True)
+			},
+		},
+		{
+			src: "select c0 between 1 and c1 is not true",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.IsTruthExpr)
+				require.True(t, ok)
+				require.True(t, right.Not)
+				require.Equal(t, int64(1), right.True)
+			},
+		},
+		{
+			src: "select c0 between 1 and c1 is unknown",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.IsNullExpr)
+				require.True(t, ok)
+				require.False(t, right.Not)
+			},
+		},
+	} {
+		stmt, err := p.ParseOneStmt(tbl.src, "", "")
+		require.NoError(t, err, tbl.src)
+		sel, ok := stmt.(*ast.SelectStmt)
+		require.True(t, ok, tbl.src)
+		require.Len(t, sel.Fields.Fields, 1, tbl.src)
+		tbl.assertType(t, sel.Fields.Fields[0].Expr)
+	}
 }
 
 // For CTE bindings.

@@ -975,6 +975,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	MaxValueOrExpression            "maxvalue or expression"
 	DefaultOrExpression             "default or expression"
 	BoolPri                         "boolean primary expression"
+	BetweenUpperBound               "between upper bound expression"
 	ExprOrDefault                   "expression or default"
 	PredicateExpr                   "Predicate expression factor"
 	SetExpr                         "Set variable statement value's expression"
@@ -6715,6 +6716,22 @@ CompareOp:
 		$$ = opcode.NullEQ
 	}
 
+BetweenUpperBound:
+	BoolPri %prec between
+|	BoolPri IsOrNotOp trueKwd %prec is
+	{
+		$$ = &ast.IsTruthExpr{Expr: $1, Not: !$2.(bool), True: int64(1)}
+	}
+|	BoolPri IsOrNotOp falseKwd %prec is
+	{
+		$$ = &ast.IsTruthExpr{Expr: $1, Not: !$2.(bool), True: int64(0)}
+	}
+|	BoolPri IsOrNotOp "UNKNOWN" %prec is
+	{
+		/* https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#operator_is */
+		$$ = &ast.IsNullExpr{Expr: $1, Not: !$2.(bool)}
+	}
+
 BetweenOrNotOp:
 	"BETWEEN"
 	{
@@ -6800,7 +6817,7 @@ PredicateExpr:
 		sq.MultiRows = true
 		$$ = &ast.PatternInExpr{Expr: $1, Not: !$2.(bool), Sel: sq}
 	}
-|	BitExpr BetweenOrNotOp BitExpr "AND" BoolPri
+|	BitExpr BetweenOrNotOp BitExpr "AND" BetweenUpperBound
 	{
 		// The upper bound must include comparison-level expressions before the BETWEEN predicate is reduced.
 		$$ = &ast.BetweenExpr{
