@@ -712,6 +712,8 @@ WHERE CONVERT_TZ('2025-12-31 14:30:00', 'Europe/Amsterdam', '-04:30')`
 		tk.MustExec("analyze table t0 index i0")
 		tk.MustQuery(query).Check(testkit.Rows("42:42:42.000000"))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
+		indexedPlan := fmt.Sprint(tk.MustQuery("explain format='brief' " + query).Rows())
+		require.NotContains(t, indexedPlan, `cop[tikv]  funcs:sum("0x2a")`)
 
 		tk.MustExec("drop table t0")
 		tk.MustExec("create table t0(c0 char)")
@@ -721,6 +723,9 @@ WHERE CONVERT_TZ('2025-12-31 14:30:00', 'Europe/Amsterdam', '-04:30')`
 
 		noIndexPlan := fmt.Sprint(tk.MustQuery("explain format='brief' " + query).Rows())
 		require.NotContains(t, noIndexPlan, `cop[tikv]  funcs:sum("0x2a")`)
+
+		normalSumPlan := fmt.Sprint(tk.MustQuery("explain format='brief' select sum(42) from t0").Rows())
+		require.Contains(t, normalSumPlan, `cop[tikv]  funcs:sum(42)`)
 	}
 
 	// issue-66610-normal-vs-prepared-hashagg

@@ -590,6 +590,8 @@ func CheckAggCanPushCop(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDe
 	return ret
 }
 
+// aggFuncHasBinaryLiteralNumericArg reports SUM/AVG arguments that are numeric
+// in SQL but unsafe for TiKV pushdown because they originate from binary literals.
 func aggFuncHasBinaryLiteralNumericArg(aggFunc *aggregation.AggFuncDesc) bool {
 	switch aggFunc.Name {
 	case ast.AggFuncAvg, ast.AggFuncSum:
