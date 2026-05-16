@@ -147,18 +147,11 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	b.optFlag |= rule.FlagResolveExpand
 
 	// Rollup syntax require expand OP to do the data expansion, different data replica supply the different grouping layout.
-	expandGbyExprs := gbyItems
-	expandGbySourceFieldIndices := gbyItemSourceFieldIndices
-	gbyExprsRefPos := make([]int, 0, len(gbyItems))
-	keepGbyItemPositions := needPreserveRollupGbyItemPositions(gbyItems, gbyItemSourceFieldIndices)
-	if !keepGbyItemPositions {
-		expandGbyExprs, gbyExprsRefPos = expression.DeduplicateGbyExpression(gbyItems)
-		expandGbySourceFieldIndices = deriveDeduplicatedGbySourceFieldIndices(gbyExprsRefPos, gbyItemSourceFieldIndices, len(expandGbyExprs))
-	}
+	expandGbyExprs, expandGbySourceFieldIndices, rollupGbyExprsRefPos := deduplicateRollupGbyItems(gbyItems, gbyItemSourceFieldIndices)
 
 	// Build another projection below. When a repeated GROUP BY item is introduced by a SELECT
-	// alias or ordinal, keep every original GROUP BY item position visible to Expand because
-	// those positions can have different ROLLUP output nullability.
+	// alias or ordinal, keep that alias/ordinal-backed position visible to Expand because
+	// its ROLLUP output nullability can differ from ordinary repeated items.
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, p.Schema().Len()+len(expandGbyExprs))}.Init(b.ctx, b.getSelectOffset())
 	// project: child's output and GbyExprs in advance. (make every group-by item to be a column)
 	projSchema := p.Schema().Clone()
@@ -195,15 +188,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	proj.SetSchema(projSchema)
 	proj.SetChildren(p)
 	proj.Proj4Expand = true
-	var newGbyItems []expression.Expression
-	if keepGbyItemPositions {
-		newGbyItems = make([]expression.Expression, 0, len(distinctGbyCols))
-		for _, col := range distinctGbyCols {
-			newGbyItems = append(newGbyItems, col.Clone())
-		}
-	} else {
-		newGbyItems = expression.RestoreGbyExpression(distinctGbyCols, gbyExprsRefPos)
-	}
+	newGbyItems := expression.RestoreGbyExpression(distinctGbyCols, rollupGbyExprsRefPos)
 
 	// build expand.
 	rollupGroupingSets := expression.RollupGroupingSets(newGbyItems)
@@ -272,9 +257,46 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	return expand, newGbyItems, nil
 }
 
-func needPreserveRollupGbyItemPositions(gbyItems []expression.Expression, sourceFieldIndices []int) bool {
-	for i, sourceFieldIndex := range sourceFieldIndices {
-		if sourceFieldIndex < 0 {
+func deduplicateRollupGbyItems(gbyItems []expression.Expression, sourceFieldIndices []int) ([]expression.Expression, []int, []int) {
+	preservePositions := collectPreservedRollupGbyItemPositions(gbyItems, sourceFieldIndices)
+	if !slices.Contains(preservePositions, true) {
+		expandGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(gbyItems)
+		expandSourceFieldIndices := deriveDeduplicatedGbySourceFieldIndices(gbyExprsRefPos, sourceFieldIndices, len(expandGbyExprs))
+		return expandGbyExprs, expandSourceFieldIndices, gbyExprsRefPos
+	}
+
+	expandGbyExprs := make([]expression.Expression, 0, len(gbyItems))
+	expandSourceFieldIndices := make([]int, 0, len(gbyItems))
+	rollupRefPos := make([]int, 0, len(gbyItems))
+	ordinaryRefPos := make(map[string]int, len(gbyItems))
+
+	for i, item := range gbyItems {
+		sourceFieldIndex := sourceFieldIndexAt(sourceFieldIndices, i)
+		if preservePositions[i] {
+			refPos := len(expandGbyExprs)
+			expandGbyExprs = append(expandGbyExprs, item)
+			expandSourceFieldIndices = append(expandSourceFieldIndices, sourceFieldIndex)
+			rollupRefPos = append(rollupRefPos, refPos)
+			continue
+		}
+
+		key := string(item.CanonicalHashCode())
+		if _, ok := ordinaryRefPos[key]; ok {
+			continue
+		}
+		refPos := len(expandGbyExprs)
+		ordinaryRefPos[key] = refPos
+		expandGbyExprs = append(expandGbyExprs, item)
+		expandSourceFieldIndices = append(expandSourceFieldIndices, sourceFieldIndex)
+		rollupRefPos = append(rollupRefPos, refPos)
+	}
+	return expandGbyExprs, expandSourceFieldIndices, rollupRefPos
+}
+
+func collectPreservedRollupGbyItemPositions(gbyItems []expression.Expression, sourceFieldIndices []int) []bool {
+	preservePositions := make([]bool, len(gbyItems))
+	for i := range gbyItems {
+		if sourceFieldIndexAt(sourceFieldIndices, i) < 0 {
 			continue
 		}
 		for j := range gbyItems {
@@ -282,11 +304,12 @@ func needPreserveRollupGbyItemPositions(gbyItems []expression.Expression, source
 				continue
 			}
 			if bytes.Equal(gbyItems[i].CanonicalHashCode(), gbyItems[j].CanonicalHashCode()) {
-				return true
+				preservePositions[i] = true
+				break
 			}
 		}
 	}
-	return false
+	return preservePositions
 }
 
 func deriveDeduplicatedGbySourceFieldIndices(gbyExprsRefPos []int, sourceFieldIndices []int, distinctLen int) []int {
@@ -296,10 +319,17 @@ func deriveDeduplicatedGbySourceFieldIndices(gbyExprsRefPos []int, sourceFieldIn
 	}
 	for idx, refPos := range gbyExprsRefPos {
 		if res[refPos] == -1 {
-			res[refPos] = sourceFieldIndices[idx]
+			res[refPos] = sourceFieldIndexAt(sourceFieldIndices, idx)
 		}
 	}
 	return res
+}
+
+func sourceFieldIndexAt(sourceFieldIndices []int, idx int) int {
+	if idx < len(sourceFieldIndices) {
+		return sourceFieldIndices[idx]
+	}
+	return -1
 }
 
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,

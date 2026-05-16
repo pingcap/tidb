@@ -895,6 +895,18 @@ ORDER BY field1`).Check(testkit.Rows())
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 		tk.MustQuery("select /* issue:65965 */ a, b, a as d, sum(c) from t1 group by 1, 2, 3 with rollup").Sort().Check(expected)
 		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		mixedExpected := testkit.Rows(
+			"1 1 3",
+			"1 <nil> 3",
+			"4 4 6",
+			"4 <nil> 6",
+			"7 7 9",
+			"7 <nil> 9",
+			"<nil> <nil> 18",
+		)
+		tk.MustQuery("select /* issue:65965 */ a, a as d, sum(c) from t1 group by a, d, a with rollup").Sort().Check(mixedExpected)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
 	})
 
 	// issue-67802-mutable-user-var-join-cond-should-not-become-inner-side-filter
