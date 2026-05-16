@@ -21,9 +21,10 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/table"
@@ -72,6 +73,7 @@ func NewDeleter(
 	store tidbkv.Storage,
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
+	progressCollector execute.Collector,
 	trafficRec TrafficRecorder,
 ) *Deleter {
 	deleter := &Deleter{
@@ -81,9 +83,9 @@ func NewDeleter(
 		snapshot:   NewLazyRefreshedSnapshot(store, trafficRec),
 		trafficRec: trafficRec,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, progressCollector, logger)
 	var h Handler
-	if kvGroup == external.DataKVGroup {
+	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
 		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), nil)
@@ -93,7 +95,7 @@ func NewDeleter(
 }
 
 // Run starts the deleter.
-func (d *Deleter) Run(ctx context.Context, ch chan *external.KVPair) error {
+func (d *Deleter) Run(ctx context.Context, ch chan *globalsort.KVPair) error {
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	eg.Go(func() error {

@@ -216,6 +216,11 @@ error = '''
 failed to update PD
 '''
 
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
+'''
+
 ["BR:PiTR:ErrInvalidTaskInfo"]
 error = '''
 task info is invalid
@@ -394,6 +399,11 @@ checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d
 ["Lightning:Checkpoint:ErrCheckpointNotFound"]
 error = '''
 checkpoint not found
+'''
+
+["Lightning:Checkpoint:ErrCheckpointTableNotFound"]
+error = '''
+checkpoint for table %s not found
 '''
 
 ["Lightning:Checkpoint:ErrCleanCheckpoint"]
@@ -2066,6 +2076,11 @@ error = '''
 Unknown background task name '%-.192s'
 '''
 
+["executor:8274"]
+error = '''
+tidb_max_keys_read limit exceeded
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
@@ -2704,6 +2719,11 @@ Argument %s of GROUPING function is not in GROUP BY
 ["planner:3637"]
 error = '''
 Variable '%s' might not be affected by SET_VAR hint.
+'''
+
+["planner:3809"]
+error = '''
+Invalid use of LATERAL: %s
 '''
 
 ["planner:8006"]

@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -340,11 +341,49 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.CurrentDBChanged = false
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
+	require.NotContains(t, logString, variable.SlowLogSessionConnectAttrs)
 
 	seVar.CurrentDBChanged = true
 	logString = seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
+
+	// Verify SessionConnectAttrs serialization.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_client_name": "libmysql",
+		"_os":          "Linux",
+		"app_name":     "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	// json.Encoder sorts map keys, so the output is deterministic.
+	expectedAttrsLine := `# Session_connect_attrs: {"_client_name":"libmysql","_os":"Linux","app_name":"test_svc"}`
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = vardef.On
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = vardef.Off
+	// Session_connect_attrs should appear after Storage_from_mpp, before Prev_stmt, and before the SQL.
+	attrsIdx := strings.Index(logString, "Session_connect_attrs")
+	mppIdx := strings.Index(logString, variable.SlowLogStorageFromMPP)
+	prevStmtIdx := strings.Index(logString, variable.SlowLogPrevStmt)
+	sqlIdx := strings.Index(logString, sql)
+	require.Greater(t, attrsIdx, 0)
+	require.Greater(t, mppIdx, 0)
+	require.Greater(t, attrsIdx, mppIdx, "Session_connect_attrs should appear after Storage_from_mpp")
+	if prevStmtIdx > 0 {
+		require.Less(t, attrsIdx, prevStmtIdx, "Session_connect_attrs should appear before Prev_stmt")
+	}
+	require.Less(t, attrsIdx, sqlIdx, "Session_connect_attrs should appear before the SQL statement")
+
+	// Verify reserved truncation metadata key is serialized as expected.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_truncated": "4",
+		"app_name":   "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, `# Session_connect_attrs: {"_truncated":"4","app_name":"test_svc"}`)
+	// Restore for subsequent assertions.
+	logItems.SessionConnectAttrs = nil
 
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
@@ -364,6 +403,9 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.ResourceGroupName = logItems.ResourceGroupName
 	ctx := context.WithValue(context.Background(), execdetails.StmtExecDetailKey,
 		&execdetails.StmtExecDetails{WriteSQLRespDuration: logItems.WriteSQLRespTotal})
+	seVar.RUV2Metrics = execdetails.NewRUV2Metrics()
+	seVar.RUV2Metrics.AddResultChunkCells(11)
+	seVar.RUV2Metrics.AddPlanCnt(2)
 	actual := executor.PrepareSlowLogItemsForRules(ctx, vardef.GlobalSlowLogRules.Load(), seVar)
 	childCtx := context.WithValue(ctx, util.ExecDetailsKey, &tikvExecDetail)
 	executor.CompleteSlowLogItemsForRules(childCtx, seVar, actual)
@@ -393,7 +435,56 @@ func TestSlowLogFormat(t *testing.T) {
 	require.NoError(t, err)
 
 	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
+	logItems.RUV2Metrics = seVar.RUV2Metrics.Clone()
 	compareSlowLogItems(t, logItems, actual)
+}
+
+func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
+	seVar := variable.NewSessionVars(nil)
+	logItems := &variable.SlowQueryLogItems{
+		SQL:         "select 1",
+		Digest:      "digest",
+		TimeTotal:   time.Second,
+		Succ:        true,
+		ExecDetail:  &execdetails.ExecDetails{},
+		UsedStats:   &stmtctx.UsedStatsInfo{},
+		RUDetails:   util.NewRUDetailsWith(0, 0, 0),
+		RUV2Metrics: execdetails.NewRUV2Metrics(),
+	}
+	logItems.RUDetails.AddTiKVRUV2(100)
+	logItems.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30})
+
+	logString := seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, "# Request_unit_v2: 150.00")
+	require.Contains(t, logString, "# Request_unit_v2_detail: total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00")
+
+	t.Run("default session weights come from config defaults", func(t *testing.T) {
+		original := config.GetGlobalConfig()
+		t.Cleanup(func() {
+			if original != nil {
+				config.StoreGlobalConfig(original)
+			}
+		})
+
+		cfg := config.NewConfig()
+		cfg.RUV2 = config.DefaultRUV2Config()
+		config.StoreGlobalConfig(cfg)
+
+		require.Equal(t, execdetails.RUV2Weights{
+			RUScale:                 cfg.RUV2.RUScale,
+			ResultChunkCells:        cfg.RUV2.ResultChunkCells,
+			ExecutorL1:              cfg.RUV2.ExecutorL1,
+			ExecutorL2:              cfg.RUV2.ExecutorL2,
+			ExecutorL3:              cfg.RUV2.ExecutorL3,
+			ExecutorL5InsertRows:    cfg.RUV2.ExecutorL5InsertRows,
+			PlanCnt:                 cfg.RUV2.PlanCnt,
+			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
+			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
+			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
+			TxnCnt:                  cfg.RUV2.TxnCnt,
+		}, variable.NewSessionVars(nil).RUV2Weights())
+	})
 }
 
 func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogItems) {
@@ -406,7 +497,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "RUV2Metrics", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {
@@ -831,7 +922,6 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	_, err = sv.Validate(vars, "1", vardef.ScopeSession)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "can't be set to the value of")
-
 	_, err = sv.Validate(vars, "0", vardef.ScopeSession)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "can't be set to the value of")
@@ -870,11 +960,45 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
 }
 
+func TestPerformanceSchemaSessionConnectAttrsSizeGlobalSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originSize := vardef.ConnectAttrsSize.Load()
+	defer func() {
+		vardef.ConnectAttrsSize.Store(originSize)
+		tk.MustExec("set global performance_schema_session_connect_attrs_size = " + strconv.FormatInt(originSize, 10))
+	}()
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 0")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("0"))
+	require.Equal(t, int64(0), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 65536")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -1")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), vardef.ConnectAttrsSize.Load())
+
+	// Out-of-range values are normalized by int sysvar min/max.
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 70000")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), vardef.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -2")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), vardef.ConnectAttrsSize.Load())
+}
+
 func TestSetTiDBCloudStorageURI(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	mock := variable.NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
+	// Prevent AWS SDK IMDS probing from creating background HTTP goroutines.
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	cloudStorageURI := variable.GetSysVar(vardef.TiDBCloudStorageURI)
 	require.Len(t, vardef.CloudStorageURI.Load(), 0)
 	defer func() {

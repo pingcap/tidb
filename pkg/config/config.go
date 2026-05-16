@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -96,6 +97,14 @@ const (
 	DefExpensiveTxnTimeThreshold = 600
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
+	// DefDXFResourceLimit is the default resource percentage available for DXF.
+	DefDXFResourceLimit = 100
+	// MinDXFResourceLimit is the minimum resource percentage available for DXF.
+	// Keep it at 10 while mysql.dist_framework_meta.cpu_count changes from total
+	// node CPU to usable DXF CPU, so the stored value stays non-zero.
+	MinDXFResourceLimit = 10
+	// MaxDXFResourceLimit is the maximum resource percentage available for DXF.
+	MaxDXFResourceLimit = 100
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
 	// DefPluginAuditLogBufferSize is the default buffer size for plugin audit log.
@@ -109,7 +118,13 @@ const (
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
-	UnavailableIP  = "<nil>"
+	// max_allowed_packet must be in [1024, 1073741824] and a multiple of 1024.
+	maxAllowedPacketUnit  = 1024
+	minMaxAllowedPacket   = maxAllowedPacketUnit
+	maxOfMaxAllowedPacket = 1 << 30
+	// DefMaxAllowedPacket is the default value of max_allowed_packet.
+	DefMaxAllowedPacket = 64 << 20
+	UnavailableIP       = "<nil>"
 )
 
 // Valid config maps
@@ -189,8 +204,10 @@ type Config struct {
 	Lease            string    `toml:"lease" json:"lease"`
 	SplitTable       bool      `toml:"split-table" json:"split-table"`
 	TokenLimit       uint      `toml:"token-limit" json:"token-limit"`
-	TempDir          string    `toml:"temp-dir" json:"temp-dir"`
-	TempStoragePath  string    `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	// MaxAllowedPacket is the configured default for max_allowed_packet in starter deployment mode.
+	MaxAllowedPacket uint64 `toml:"max-allowed-packet" json:"max-allowed-packet"`
+	TempDir          string `toml:"temp-dir" json:"temp-dir"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -199,6 +216,8 @@ type Config struct {
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
+	DeployMode                 deploymode.Mode         `toml:"deploy-mode" json:"deploy-mode"`
+	DXFResourceLimit           int                     `toml:"dxf-resource-limit" json:"dxf-resource-limit"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
 	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
@@ -211,6 +230,7 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
+	RUV2                       RUV2Config              `toml:"ru-v2" json:"ru-v2"`
 	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
@@ -328,6 +348,57 @@ type Config struct {
 
 	// MeteringConfigURI is the URI for metering configuration.
 	MeteringStorageURI string `toml:"metering-storage-uri" json:"metering-storage-uri"`
+}
+
+// RUV2Config is the configuration for RU v2 weight calculation.
+// The default values are experimentally fitted so they stay stable under the
+// same workload while remaining numerically aligned with RU v1.
+type RUV2Config struct {
+	// RUScale is the scale factor used to convert RU v2 float values into scaled integer values.
+	// It is intentionally chosen to match legacy RU values for compatibility.
+	RUScale float64 `toml:"ru-scale" json:"ru-scale"`
+
+	// ResultChunkCells is the weight for cells materialized into result chunks.
+	ResultChunkCells float64 `toml:"result-chunk-cells" json:"result-chunk-cells"`
+	// ExecutorL1 is the weight for fast-path executors that scale by cells:
+	// BatchPointGet, PointGet, and Limit.
+	ExecutorL1 float64 `toml:"executor-l1" json:"executor-l1"`
+	// ExecutorL2 is the weight for general executors, including HashAgg,
+	// HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
+	// MemTableReaderExec, SelectionExec, TableDualExec, TableReaderExecutor,
+	// UnionScanExec, and SelectLockExec.
+	ExecutorL2 float64 `toml:"executor-l2" json:"executor-l2"`
+	// ExecutorL3 is the weight for heavier operators: Sort and StreamAgg.
+	ExecutorL3 float64 `toml:"executor-l3" json:"executor-l3"`
+	// ExecutorL5InsertRows is the per-row weight for insert work. Level 4 is
+	// intentionally unused today because only L1/L2/L3 executor groups and this
+	// insert-specific tier are currently modeled.
+	ExecutorL5InsertRows    float64 `toml:"executor-l5-insert-rows" json:"executor-l5-insert-rows"`
+	PlanCnt                 float64 `toml:"plan-cnt" json:"plan-cnt"`
+	PlanDeriveStatsPaths    float64 `toml:"plan-derive-stats-paths" json:"plan-derive-stats-paths"`
+	ResourceManagerReadCnt  float64 `toml:"resource-manager-read-cnt" json:"resource-manager-read-cnt"`
+	ResourceManagerWriteCnt float64 `toml:"resource-manager-write-cnt" json:"resource-manager-write-cnt"`
+	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
+	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
+}
+
+// DefaultRUV2Config returns the default RU v2 configuration.
+func DefaultRUV2Config() RUV2Config {
+	return RUV2Config{
+		RUScale: 2.01,
+
+		ResultChunkCells:        0.00010000,
+		ExecutorL1:              0.00013278,
+		ExecutorL2:              0.00000383,
+		ExecutorL3:              0.00141739,
+		ExecutorL5InsertRows:    0.00472572,
+		PlanCnt:                 0.15392217,
+		PlanDeriveStatsPaths:    0.24968182,
+		ResourceManagerReadCnt:  0.02072003,
+		ResourceManagerWriteCnt: 0.07179779,
+		SessionParserTotal:      0.19230499,
+		TxnCnt:                  0.03013709,
+	}
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -961,6 +1032,7 @@ var defaultConf = Config{
 	SplitTable:                   true,
 	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
+	MaxAllowedPacket:             DefMaxAllowedPacket,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
@@ -986,6 +1058,9 @@ var defaultConf = Config{
 	TiDBEdition:                  "",
 	VersionComment:               "",
 	TiDBReleaseVersion:           "",
+	DeployMode:                   deploymode.Premium,
+	DXFResourceLimit:             DefDXFResourceLimit,
+	RUV2:                         DefaultRUV2Config(),
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -1326,6 +1401,19 @@ func (c *Config) Load(confFile string) error {
 	if err != nil {
 		return err
 	}
+	if !kerneltype.IsNextGen() && metaData.IsDefined("deploy-mode") {
+		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	dxfResourceLimitDefined := metaData.IsDefined("dxf-resource-limit")
+	if !dxfResourceLimitDefined && c.DXFResourceLimit == 0 {
+		c.DXFResourceLimit = DefDXFResourceLimit
+	}
+	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
+		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+	}
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
+		c.Standby.EnableZeroBackend = true
+	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	} else if c.TokenLimit > MaxTokenLimit {
@@ -1390,6 +1478,21 @@ func (c *Config) Valid() error {
 	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
+	}
+	if !c.DeployMode.Valid() {
+		return fmt.Errorf("invalid deploy-mode=%s, valid deploy modes=%v", c.DeployMode, deploymode.ModeList())
+	}
+	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
+		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
+		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)
+	}
+	if c.DXFResourceLimit != DefDXFResourceLimit && c.DeployMode != deploymode.PremiumReserved {
+		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+	}
+	if c.DeployMode == deploymode.Starter && !validMaxAllowedPacket(c.MaxAllowedPacket) {
+		return fmt.Errorf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
 	}
 	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
@@ -1635,4 +1738,19 @@ func ContainHiddenConfig(s string) bool {
 // from config file or command line.
 func GetGlobalKeyspaceName() string {
 	return GetGlobalConfig().KeyspaceName
+}
+
+// GetMaxAllowedPacket returns the max_allowed_packet value used to initialize sessions.
+// The config value is honored only for starter deployment mode.
+func GetMaxAllowedPacket() uint64 {
+	if deploymode.IsStarter() {
+		if v := GetGlobalConfig().MaxAllowedPacket; validMaxAllowedPacket(v) {
+			return v
+		}
+	}
+	return DefMaxAllowedPacket
+}
+
+func validMaxAllowedPacket(v uint64) bool {
+	return v >= minMaxAllowedPacket && v <= maxOfMaxAllowedPacket && v%maxAllowedPacketUnit == 0
 }

@@ -206,7 +206,7 @@ func (i *IngestRecorder) UpdateIndexInfo(ctx context.Context, infoSchema infosch
 					columnListBuilder.WriteString("%n")
 					columnListArgs = append(columnListArgs, column.Name.O)
 					if column.Length != types.UnspecifiedLength {
-						columnListBuilder.WriteString(fmt.Sprintf("(%d)", column.Length))
+						fmt.Fprintf(&columnListBuilder, "(%d)", column.Length)
 					}
 				}
 			}

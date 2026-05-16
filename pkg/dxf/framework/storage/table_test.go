@@ -333,8 +333,8 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
 
 	summary := &execute.SubtaskSummary{
-		RowCnt: *atomic.NewInt64(100),
-		Bytes:  *atomic.NewInt64(200),
+		RowCnt:    *atomic.NewInt64(100),
+		Processed: *atomic.NewInt64(200),
 	}
 	bytes, err := json.Marshal(summary)
 	require.NoError(t, err)
@@ -345,7 +345,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	require.Len(t, summaries, len(subtasks))
 	for _, summary := range summaries {
 		require.EqualValues(t, 100, summary.RowCnt.Load())
-		require.EqualValues(t, 200, summary.Bytes.Load())
+		require.EqualValues(t, 200, summary.Processed.Load())
 	}
 
 	// If the JSON value is wrong, we still get an empty summary.
@@ -356,7 +356,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	require.NoError(t, err)
 	for _, summary := range summaries {
 		require.EqualValues(t, 0, summary.RowCnt.Load())
-		require.EqualValues(t, 0, summary.Bytes.Load())
+		require.EqualValues(t, 0, summary.Processed.Load())
 	}
 }
 
@@ -800,18 +800,22 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 
 func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
+	originNodeResource := storage.GetNodeResource()
+	t.Cleanup(func() {
+		storage.SetNodeResource(originNodeResource)
+	})
 
 	// when no node
 	_, err := sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
+	storage.SetNodeResource(proto.NewNodeResource(0, 0, 0))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	_, err = sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed node have enough resource")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	storage.SetNodeResource(proto.NewNodeResource(8, 8, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4001", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 	nodes, err := sm.GetAllNodes(ctx)
@@ -822,7 +826,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", "background"))
 
@@ -883,10 +887,10 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
+	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	require.NoError(t, sm.InitMeta(ctx, ":4001", "background"))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	storage.SetNodeResource(proto.NewNodeResource(8, 8, 100))
 	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
 	require.NoError(t, sm.InitMeta(ctx, ":4003", ""))
 	cpuCount, err = sm.GetCPUCountOfNode(ctx)
@@ -898,6 +902,31 @@ func TestDistFrameworkMeta(t *testing.T) {
 	cpuCount, err = sm.GetCPUCountOfNodeByRole(ctx, "background")
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
+
+	storage.SetNodeResource(proto.NewNodeResource(5, 5, 100))
+	require.NoError(t, sm.InitMeta(ctx, ":4004", "background"))
+	nodes, err = sm.GetAllNodes(ctx)
+	require.NoError(t, err)
+	var limitedNode proto.ManagedNode
+	for _, n := range nodes {
+		if n.ID == ":4004" {
+			limitedNode = n
+			break
+		}
+	}
+	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 5}, limitedNode)
+
+	storage.SetNodeResource(proto.NewNodeResource(1, 1, 100))
+	require.NoError(t, sm.RecoverMeta(ctx, ":4004", ""))
+	nodes, err = sm.GetAllNodes(ctx)
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.ID == ":4004" {
+			limitedNode = n
+			break
+		}
+	}
+	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 1}, limitedNode)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
@@ -1012,6 +1041,97 @@ func TestTaskHistoryTable(t *testing.T) {
 	num, err = testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 3, num)
+
+	t.Run("list history tasks with pagination and keyspace", func(t *testing.T) {
+		for _, sql := range []string{
+			"delete from mysql.tidb_background_subtask",
+			"delete from mysql.tidb_background_subtask_history",
+			"delete from mysql.tidb_global_task",
+			"delete from mysql.tidb_global_task_history",
+		} {
+			_, err = gm.ExecuteSQLWithNewSession(ctx, sql)
+			require.NoError(t, err)
+		}
+
+		taskSpecs := []struct {
+			key      string
+			keyspace string
+		}{
+			{key: "history-task-1", keyspace: "ks1"},
+			{key: "history-task-2", keyspace: "ks2"},
+			{key: "history-task-3", keyspace: "ks1"},
+			{key: "history-task-4", keyspace: "ks3"},
+			{key: "history-task-5", keyspace: "ks1"},
+		}
+		allIDs := make([]int64, 0, len(taskSpecs))
+		tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
+		for _, spec := range taskSpecs {
+			id, err2 := gm.CreateTask(ctx, spec.key, proto.ImportInto, spec.keyspace, 8, "", 0, proto.ExtraParams{}, []byte("meta"))
+			require.NoError(t, err2)
+			task, err2 := gm.GetTaskByID(ctx, id)
+			require.NoError(t, err2)
+			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+			require.NoError(t, gm.SucceedTask(ctx, id))
+			task, err2 = gm.GetTaskByID(ctx, id)
+			require.NoError(t, err2)
+			allIDs = append(allIDs, id)
+			tasksToTransfer = append(tasksToTransfer, task)
+		}
+		require.NoError(t, gm.TransferTasks2History(ctx, tasksToTransfer))
+
+		slices.Reverse(allIDs)
+		firstPage, err2 := gm.ListHistoryTasks(ctx, 2, 0, "")
+		require.NoError(t, err2)
+		require.Len(t, firstPage.Items, 2)
+		require.EqualValues(t, 5, firstPage.ApproxTotalCount)
+		require.True(t, firstPage.HasMore)
+		require.Equal(t, allIDs[0], firstPage.Items[0].ID)
+		require.Equal(t, allIDs[1], firstPage.Items[1].ID)
+		require.Equal(t, allIDs[1], firstPage.NextPageToken)
+		require.Equal(t, "history-task-5", firstPage.Items[0].Key)
+		require.Equal(t, "ks1", firstPage.Items[0].Keyspace)
+		require.NotZero(t, firstPage.Items[0].CreateTime)
+		require.NotZero(t, firstPage.Items[0].StartTime)
+		require.NotZero(t, firstPage.Items[0].StateUpdateTime)
+		require.NotZero(t, firstPage.Items[0].EndTime)
+
+		secondPage, err2 := gm.ListHistoryTasks(ctx, 2, firstPage.Items[1].ID, "")
+		require.NoError(t, err2)
+		require.Len(t, secondPage.Items, 2)
+		require.EqualValues(t, 5, secondPage.ApproxTotalCount)
+		require.True(t, secondPage.HasMore)
+		require.Equal(t, allIDs[2], secondPage.Items[0].ID)
+		require.Equal(t, allIDs[3], secondPage.Items[1].ID)
+		require.Equal(t, allIDs[3], secondPage.NextPageToken)
+
+		lastPage, err2 := gm.ListHistoryTasks(ctx, 2, secondPage.Items[1].ID, "")
+		require.NoError(t, err2)
+		require.Len(t, lastPage.Items, 1)
+		require.EqualValues(t, 5, lastPage.ApproxTotalCount)
+		require.False(t, lastPage.HasMore)
+		require.Equal(t, allIDs[4], lastPage.Items[0].ID)
+		require.Zero(t, lastPage.NextPageToken)
+
+		filteredPage, err2 := gm.ListHistoryTasks(ctx, 1, 0, "ks1")
+		require.NoError(t, err2)
+		require.Len(t, filteredPage.Items, 1)
+		require.EqualValues(t, 3, filteredPage.ApproxTotalCount)
+		require.True(t, filteredPage.HasMore)
+		require.Equal(t, "ks1", filteredPage.Items[0].Keyspace)
+		require.Greater(t, filteredPage.NextPageToken, int64(0))
+
+		filteredPageWithToken, err2 := gm.ListHistoryTasks(ctx, 1, filteredPage.Items[0].ID, "ks1")
+		require.NoError(t, err2)
+		require.Len(t, filteredPageWithToken.Items, 1)
+		require.EqualValues(t, 3, filteredPageWithToken.ApproxTotalCount)
+		require.True(t, filteredPageWithToken.HasMore)
+		require.Equal(t, "ks1", filteredPageWithToken.Items[0].Keyspace)
+
+		_, err2 = gm.ListHistoryTasks(ctx, 0, 0, "")
+		require.ErrorContains(t, err2, "page size should be within")
+		_, err2 = gm.ListHistoryTasks(ctx, 201, 0, "")
+		require.ErrorContains(t, err2, "page size should be within")
+	})
 }
 
 func TestPauseAndResume(t *testing.T) {

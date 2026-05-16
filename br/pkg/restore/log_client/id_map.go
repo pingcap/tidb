@@ -106,7 +106,10 @@ func (rc *LogClient) saveIDMap2Storage(
 }
 
 func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.PitrDBMap) error {
-	backupmeta := &backuppb.BackupMeta{DbMaps: dbMaps}
+	backupmeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: backuppb.BackupSchemaVersion,
+		DbMaps:              dbMaps,
+	}
 	data, err := proto.Marshal(backupmeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -172,6 +175,20 @@ func (rc *LogClient) loadSchemasMap(
 	return dbMaps, errors.Trace(err)
 }
 
+func (rc *LogClient) loadPITRIDMapBackupMeta(metaData []byte) (*backuppb.BackupMeta, error) {
+	backupMeta := &backuppb.BackupMeta{}
+	if err := backupMeta.Unmarshal(metaData); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := metautil.CheckBackupMetaCompatibilityFromBytes(metaData, backupMeta); err != nil {
+		if rc.checkRequirements {
+			return nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
+	}
+	return backupMeta, nil
+}
+
 func (rc *LogClient) loadSchemasMapFromStorage(
 	ctx context.Context,
 	storage storeapi.Storage,
@@ -192,9 +209,9 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err := backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
+	backupMeta, err := rc.loadPITRIDMapBackupMeta(metaData)
+	if err != nil {
+		return nil, err
 	}
 	return backupMeta.GetDbMaps(), nil
 }
@@ -245,9 +262,9 @@ func (rc *LogClient) loadSchemasMapFromTable(
 		}
 		metaData = append(metaData, d...)
 	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err := backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
+	backupMeta, err := rc.loadPITRIDMapBackupMeta(metaData)
+	if err != nil {
+		return nil, err
 	}
 
 	return backupMeta.GetDbMaps(), nil

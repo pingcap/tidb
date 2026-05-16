@@ -551,11 +551,18 @@ func (*TableSource) resultSet() {}
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 	// Validate AST invariants before emitting any SQL.
-	_, isTableName := n.Source.(*TableName)
-	if n.Lateral && isTableName {
+	// Source can be TableName, SelectStmt, SetOprStmt, or JoinNode (parenthesized join).
+	// LATERAL and ColumnNames are only valid on derived tables (SelectStmt, SetOprStmt);
+	// TableName and JoinNode are both excluded.
+	isDerived := false
+	switch n.Source.(type) {
+	case *SelectStmt, *SetOprStmt:
+		isDerived = true
+	}
+	if n.Lateral && !isDerived {
 		return errors.New("LATERAL cannot be applied to a table name, only to derived tables")
 	}
-	if len(n.ColumnNames) > 0 && isTableName {
+	if len(n.ColumnNames) > 0 && !isDerived {
 		return errors.New("column alias list cannot be applied to a table name")
 	}
 	if len(n.ColumnNames) > 0 && n.AsName.String() == "" {
@@ -3198,7 +3205,8 @@ type ShowStmt struct {
 
 	ShowGroupKey string // Used for `SHOW IMPORT GROUP <GROUP_KEY>` syntax
 
-	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+	ImportJobID  *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+	ImportJobRaw bool   // Used for `SHOW RAW IMPORT JOB(S)` syntax
 
 	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
@@ -3423,6 +3431,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
 	case ShowImportJobs:
+		if n.ImportJobRaw {
+			ctx.WriteKeyWord("RAW ")
+		}
 		if n.ImportJobID != nil {
 			ctx.WriteKeyWord("IMPORT JOB ")
 			ctx.WritePlainf("%d", *n.ImportJobID)

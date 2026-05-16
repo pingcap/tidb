@@ -213,8 +213,19 @@ type convertedType struct {
 	converted   schema.ConvertedType
 	decimalMeta schema.DecimalMetadata
 
-	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types
+	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types.
+	//
+	// true  => epoch value has instant semantics (normalized to UTC), so convert to parser location first.
+	// false => epoch value has local semantics, so keep the "as-if UTC" wall clock unchanged.
+	//
+	// NOTE: types.FromGoTime stores only wall-clock fields and drops location metadata.
 	IsAdjustedToUTC bool
+
+	// sparkRebaseMicros is non-empty when the file footer says the column was
+	// written by a Spark release that used the legacy hybrid Julian/Gregorian
+	// calendar for ancient DATE/TIMESTAMP values. It also caches the generated
+	// Spark timezone rebase table for TIMESTAMP and INT96 value conversion.
+	sparkRebaseMicros sparkRebaseMicrosLookup
 }
 
 // rowGroupParser parses rows from one parquet row group.
@@ -341,13 +352,13 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 }
 
 func (pp *ParquetParser) buildRowGroupParser() (err error) {
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
-	eg.SetLimit(8)
-
-	builder, err := pp.getBuilder(egCtx)
+	builder, err := pp.getBuilder()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
+	eg.SetLimit(8)
 
 	readers := make([]*file.Reader, pp.fileMeta.NumColumns())
 	defer func() {
@@ -362,6 +373,12 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 
 	for i := range pp.fileMeta.NumColumns() {
 		eg.Go(func() error {
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			default:
+			}
+
 			wrapper, err := builder(i)
 			if err != nil {
 				return errors.Trace(err)
@@ -396,14 +413,14 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSeekerCloser, error), error) {
+func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
-		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
+		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -418,7 +435,7 @@ func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSee
 	}
 
 	return func(c int) (readerAtSeekerCloser, error) {
-		return newParquetWrapper(ctx, pp.store, pp.path,
+		return newParquetWrapper(pp.ctx, pp.store, pp.path,
 			&storeapi.ReaderOption{
 				StartOffset: &ranges.columnStarts[c],
 				EndOffset:   &ranges.columnEnds[c],
@@ -615,18 +632,44 @@ func NewParquetParser(
 		return nil, errors.Trace(err)
 	}
 
-	fileSchema := reader.MetaData().Schema
+	fileMeta := reader.MetaData()
+	fileSchema := fileMeta.Schema
 	colTypes := make([]convertedType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
+	effectiveLoc := meta.Loc
+	if effectiveLoc == nil {
+		effectiveLoc = timeutil.SystemLocation()
+	}
 
 	for i := range colTypes {
-		desc := reader.MetaData().Schema.Column(i)
+		desc := fileSchema.Column(i)
 		colNames = append(colNames, strings.ToLower(desc.Name()))
 
 		logicalType := desc.LogicalType()
 		if logicalType.IsValid() {
 			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
-			if t, ok := logicalType.(*schema.TimeLogicalType); ok {
+			if t, ok := logicalType.(schema.TimestampLogicalType); ok {
+				// TimestampLogicalType.ToConvertedType() might return none when
+				// IsAdjustedToUTC=false, and not from force convert, so we have
+				// to check again here.
+				switch t.TimeUnit() {
+				case schema.TimeUnitMillis:
+					colTypes[i].converted = schema.ConvertedTypes.TimestampMillis
+				case schema.TimeUnitMicros:
+					colTypes[i].converted = schema.ConvertedTypes.TimestampMicros
+				default:
+					return nil, errors.Errorf("unsupported timestamp time unit %d", t.TimeUnit())
+				}
+				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
+			} else if t, ok := logicalType.(schema.TimeLogicalType); ok {
+				// TimeLogicalType.ToConvertedType() returns none when
+				// IsAdjustedToUTC=false, so preserve the logical time unit here.
+				switch t.TimeUnit() {
+				case schema.TimeUnitMillis:
+					colTypes[i].converted = schema.ConvertedTypes.TimeMillis
+				case schema.TimeUnitMicros:
+					colTypes[i].converted = schema.ConvertedTypes.TimeMicros
+				}
 				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
 			} else {
 				colTypes[i].IsAdjustedToUTC = true
@@ -641,6 +684,32 @@ func NewParquetParser(
 		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
 			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
 		}
+
+		switch desc.PhysicalType() {
+		case parquet.Types.Int32:
+			if colTypes[i].converted == schema.ConvertedTypes.Date {
+				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
+					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		case parquet.Types.Int64:
+			if colTypes[i].converted == schema.ConvertedTypes.TimestampMillis ||
+				colTypes[i].converted == schema.ConvertedTypes.TimestampMicros {
+				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
+					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		case parquet.Types.Int96:
+			colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
+				fileMeta, sparkINT96RebaseCutoff, sparkLegacyINT96MetadataKey, effectiveLoc)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 	}
 
 	numColumns := len(colTypes)
@@ -649,7 +718,7 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		fileMeta: reader.MetaData(),
+		fileMeta: fileMeta,
 		colTypes: colTypes,
 		colNames: colNames,
 		ctx:      ctx,
@@ -660,7 +729,7 @@ func NewParquetParser(
 		logger:   logger,
 		rowPool:  &pool,
 	}
-	if err := parser.Init(meta.Loc); err != nil {
+	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
 	}
 

@@ -161,6 +161,10 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 	if apply.JoinType != base.LeftOuterJoin && apply.JoinType != base.LeftOuterSemiJoin {
 		return nil, false
 	}
+	// LATERAL joins may return multiple rows per outer row; see LogicalApply.IsLateral.
+	if apply.IsLateral {
+		return nil, false
+	}
 	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
 	// But this problem has affected tiflash CI.
 	// Simplify predicates from the LogicalSelection
@@ -227,12 +231,27 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 	if apply, ok := p.(*logicalop.LogicalApply); ok {
 		outerPlan := apply.Children()[0]
 		innerPlan := apply.Children()[1]
-		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
+		// Use FullSchema when outer plan is a USING/NATURAL join, so we capture
+		// correlated columns that reference the redundant (merged) join columns.
+		// Walk through wrapper operators (e.g., LogicalSelection from ON clauses)
+		// to find the underlying LogicalJoin, matching the schema used for name
+		// resolution in LATERAL subqueries (see logical_plan_builder.go buildJoin).
+		outerSchema := outerPlan.Schema()
+		if apply.IsLateral {
+			if fullSchema, _ := findJoinFullSchema(outerPlan); fullSchema != nil {
+				outerSchema = fullSchema
+			}
+		}
+		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlan, outerSchema)
 		if len(apply.CorCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
 			join.SetSelf(join)
 			join.SetTP(plancodec.TypeJoin)
+			if p.SCtx().GetSessionVars().EnableAlternativeLogicalPlans {
+				p.SCtx().GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanDecorrelatedApply()
+				join.FromDecorrelatedApply = true
+			}
 			p = join
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
@@ -241,7 +260,7 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
 			for _, cond := range sel.Conditions {
-				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
+				newConds = append(newConds, cond.Decorrelate(outerSchema))
 			}
 			apply.AttachOnConds(newConds)
 			innerPlan = sel.Children()[0]
@@ -279,9 +298,9 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			}
 			// step2: when it can be substituted all, we then just do the de-correlation (apply conditions included).
 			for i, expr := range proj.Exprs {
-				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
+				proj.Exprs[i] = expr.Decorrelate(outerSchema)
 			}
-			apply.Decorrelate(outerPlan.Schema())
+			apply.Decorrelate(outerSchema)
 
 			innerPlan = proj.Children()[0]
 			apply.SetChildren(outerPlan, innerPlan)

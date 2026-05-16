@@ -32,6 +32,8 @@ type SDKConfig struct {
 	routes           config.Routes
 	filter           []string
 	charset          string
+	csvConfig        config.CSVConfig
+	dataCharacterSet string
 	maxScanFiles     *int
 	skipInvalidFiles bool
 	estimateRealSize bool
@@ -41,11 +43,14 @@ type SDKConfig struct {
 }
 
 func defaultSDKConfig() *SDKConfig {
+	defaultCfg := config.NewConfig()
 	return &SDKConfig{
-		concurrency: 4,
-		filter:      config.GetDefaultFilter(),
-		logger:      log.L(),
-		charset:     "auto",
+		concurrency:      4,
+		filter:           config.GetDefaultFilter(),
+		logger:           log.L(),
+		charset:          "auto",
+		csvConfig:        defaultCfg.Mydumper.CSV,
+		dataCharacterSet: defaultCfg.Mydumper.DataCharacterSet,
 		// Estimate the real size (uncompressed / row-oriented) for compressed/parquet data files by default.
 		estimateRealSize: true,
 	}
@@ -100,6 +105,22 @@ func WithCharset(cs string) SDKOption {
 	return func(cfg *SDKConfig) {
 		if cs != "" {
 			cfg.charset = cs
+		}
+	}
+}
+
+// WithCSVConfig specifies the CSV parsing configuration used for size estimation.
+func WithCSVConfig(csvCfg config.CSVConfig) SDKOption {
+	return func(cfg *SDKConfig) {
+		cfg.csvConfig = csvCfg
+	}
+}
+
+// WithDataCharacterSet specifies the source data character set used for CSV parsing.
+func WithDataCharacterSet(charset string) SDKOption {
+	return func(cfg *SDKConfig) {
+		if charset != "" {
+			cfg.dataCharacterSet = charset
 		}
 	}
 }

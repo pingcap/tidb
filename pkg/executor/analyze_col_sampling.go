@@ -431,7 +431,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(ctx context.Context, ind
 			}
 		}
 	}()
-	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
+	tasks := e.buildSubIndexJobForSpecialIndex(ctx, indexInfos)
 	taskCh := make(chan *analyzeTask, len(tasks))
 	pendingJobs := make(map[uint64]*statistics.AnalyzeJob, len(tasks))
 	for _, task := range tasks {
@@ -533,11 +533,11 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(ctx context.Context, taskCh ch
 
 // buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
 // This is because we cannot push the calculation of the virtual column down to the tikv side.
-func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
+func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(ctx context.Context, indexInfos []*model.IndexInfo) []*analyzeTask {
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
-	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), e.ctx)
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(ctx, e.ctx)
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,
@@ -762,9 +762,9 @@ workLoop:
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
 				// 8 means the pointer size of sampleItems slice.
-				// types.EmptyDatumSize means the empty datum size we shallow copied from row.Columns to SampleItem.Value.
+				// statistics.EmptySampleItemSize already accounts for the embedded types.Datum in SampleItem.Value.
 				// The real underlying byte slice of Datum in row.Columns has already be accounted FromProto().
-				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + types.EmptyDatumSize)
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
 				e.memTracker.Consume(collectorMemSize)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
@@ -789,7 +789,7 @@ workLoop:
 						consumeBuffered(deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value:   &val,
+						Value:   val,
 						Ordinal: j,
 					})
 				}
@@ -810,8 +810,8 @@ workLoop:
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
-				// types.EmptyDatumSize: same meaning as above branch.
-				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8 + types.EmptyDatumSize)
+				// statistics.EmptySampleItemSize already accounts for the embedded types.Datum in SampleItem.Value.
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
 				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
 			indexSampleCollectLoop:
@@ -848,9 +848,8 @@ workLoop:
 						// here we need to account the remaining bytes.
 						consumeBuffered(int64(cap(b) - 8))
 					}
-					tmp := types.NewBytesDatum(b)
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value: &tmp,
+						Value: types.NewBytesDatum(b),
 					})
 				}
 				flushBuffered(&collectorMemSize)

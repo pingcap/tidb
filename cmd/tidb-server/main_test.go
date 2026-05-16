@@ -16,9 +16,11 @@ package main
 
 import (
 	"os"
+	"syscall"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -48,6 +50,26 @@ func TestMain(m *testing.M) {
 func TestRunMain(t *testing.T) {
 	if isCoverageServer == "1" {
 		main()
+	}
+}
+
+func TestExitCodeForSignal(t *testing.T) {
+	tests := []struct {
+		name string
+		sig  os.Signal
+		want int
+	}{
+		{name: "SIGINT", sig: syscall.SIGINT, want: exitCodeInt},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: exitCodeOK},
+		{name: "SIGHUP", sig: syscall.SIGHUP, want: exitCodeOK},
+		{name: "SIGQUIT", sig: syscall.SIGQUIT, want: exitCodeOK},
+		{name: "nil", sig: nil, want: exitCodeOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, exitCodeForSignal(tt.sig))
+		})
 	}
 }
 
@@ -91,6 +113,25 @@ func TestSetGlobalVars(t *testing.T) {
 	if hostname, err := os.Hostname(); err == nil {
 		require.Equal(t, variable.GetSysVar(vardef.Hostname).Value, hostname)
 	}
+}
+
+func TestInitDeployMode(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	original := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(original))
+	})
+
+	cfg := config.NewConfig()
+	cfg.DeployMode = deploymode.PremiumReserved
+	require.NoError(t, initDeployMode(cfg))
+	require.Equal(t, deploymode.PremiumReserved, deploymode.Get())
+
+	cfg.DeployMode = deploymode.Mode(100)
+	require.ErrorContains(t, initDeployMode(cfg), "invalid deploy mode")
 }
 
 func TestSetVersionByConfigInNextGen(t *testing.T) {

@@ -21,6 +21,7 @@ import (
 type MockFileScanner struct {
 	ctrl     *gomock.Controller
 	recorder *MockFileScannerMockRecorder
+	isgomock struct{}
 }
 
 // MockFileScannerMockRecorder is the mock recorder for MockFileScanner.
@@ -40,11 +41,6 @@ func (m *MockFileScanner) EXPECT() *MockFileScannerMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockFileScanner) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // Close mocks base method.
 func (m *MockFileScanner) Close() error {
 	m.ctrl.T.Helper()
@@ -60,81 +56,97 @@ func (mr *MockFileScannerMockRecorder) Close() *gomock.Call {
 }
 
 // CreateSchemaAndTableByName mocks base method.
-func (m *MockFileScanner) CreateSchemaAndTableByName(arg0 context.Context, arg1, arg2 string) error {
+func (m *MockFileScanner) CreateSchemaAndTableByName(ctx context.Context, schema, table string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateSchemaAndTableByName", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "CreateSchemaAndTableByName", ctx, schema, table)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateSchemaAndTableByName indicates an expected call of CreateSchemaAndTableByName.
-func (mr *MockFileScannerMockRecorder) CreateSchemaAndTableByName(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockFileScannerMockRecorder) CreateSchemaAndTableByName(ctx, schema, table any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemaAndTableByName", reflect.TypeOf((*MockFileScanner)(nil).CreateSchemaAndTableByName), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemaAndTableByName", reflect.TypeOf((*MockFileScanner)(nil).CreateSchemaAndTableByName), ctx, schema, table)
 }
 
 // CreateSchemasAndTables mocks base method.
-func (m *MockFileScanner) CreateSchemasAndTables(arg0 context.Context) error {
+func (m *MockFileScanner) CreateSchemasAndTables(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateSchemasAndTables", arg0)
+	ret := m.ctrl.Call(m, "CreateSchemasAndTables", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateSchemasAndTables indicates an expected call of CreateSchemasAndTables.
-func (mr *MockFileScannerMockRecorder) CreateSchemasAndTables(arg0 any) *gomock.Call {
+func (mr *MockFileScannerMockRecorder) CreateSchemasAndTables(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemasAndTables", reflect.TypeOf((*MockFileScanner)(nil).CreateSchemasAndTables), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemasAndTables", reflect.TypeOf((*MockFileScanner)(nil).CreateSchemasAndTables), ctx)
+}
+
+// EstimateImportDataSize mocks base method.
+func (m *MockFileScanner) EstimateImportDataSize(ctx context.Context) (*importsdk.ImportDataSizeEstimate, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EstimateImportDataSize", ctx)
+	ret0, _ := ret[0].(*importsdk.ImportDataSizeEstimate)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// EstimateImportDataSize indicates an expected call of EstimateImportDataSize.
+func (mr *MockFileScannerMockRecorder) EstimateImportDataSize(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EstimateImportDataSize", reflect.TypeOf((*MockFileScanner)(nil).EstimateImportDataSize), ctx)
 }
 
 // GetTableMetaByName mocks base method.
-func (m *MockFileScanner) GetTableMetaByName(arg0 context.Context, arg1, arg2 string) (*importsdk.TableMeta, error) {
+func (m *MockFileScanner) GetTableMetaByName(ctx context.Context, db, table string) (*importsdk.TableMeta, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTableMetaByName", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "GetTableMetaByName", ctx, db, table)
 	ret0, _ := ret[0].(*importsdk.TableMeta)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTableMetaByName indicates an expected call of GetTableMetaByName.
-func (mr *MockFileScannerMockRecorder) GetTableMetaByName(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockFileScannerMockRecorder) GetTableMetaByName(ctx, db, table any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetaByName", reflect.TypeOf((*MockFileScanner)(nil).GetTableMetaByName), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetaByName", reflect.TypeOf((*MockFileScanner)(nil).GetTableMetaByName), ctx, db, table)
 }
 
 // GetTableMetas mocks base method.
-func (m *MockFileScanner) GetTableMetas(arg0 context.Context) ([]*importsdk.TableMeta, error) {
+func (m *MockFileScanner) GetTableMetas(ctx context.Context) ([]*importsdk.TableMeta, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTableMetas", arg0)
+	ret := m.ctrl.Call(m, "GetTableMetas", ctx)
 	ret0, _ := ret[0].([]*importsdk.TableMeta)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTableMetas indicates an expected call of GetTableMetas.
-func (mr *MockFileScannerMockRecorder) GetTableMetas(arg0 any) *gomock.Call {
+func (mr *MockFileScannerMockRecorder) GetTableMetas(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetas", reflect.TypeOf((*MockFileScanner)(nil).GetTableMetas), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetas", reflect.TypeOf((*MockFileScanner)(nil).GetTableMetas), ctx)
 }
 
 // GetTotalSize mocks base method.
-func (m *MockFileScanner) GetTotalSize(arg0 context.Context) int64 {
+func (m *MockFileScanner) GetTotalSize(ctx context.Context) int64 {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTotalSize", arg0)
+	ret := m.ctrl.Call(m, "GetTotalSize", ctx)
 	ret0, _ := ret[0].(int64)
 	return ret0
 }
 
 // GetTotalSize indicates an expected call of GetTotalSize.
-func (mr *MockFileScannerMockRecorder) GetTotalSize(arg0 any) *gomock.Call {
+func (mr *MockFileScannerMockRecorder) GetTotalSize(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTotalSize", reflect.TypeOf((*MockFileScanner)(nil).GetTotalSize), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTotalSize", reflect.TypeOf((*MockFileScanner)(nil).GetTotalSize), ctx)
 }
 
 // MockJobManager is a mock of JobManager interface.
 type MockJobManager struct {
 	ctrl     *gomock.Controller
 	recorder *MockJobManagerMockRecorder
+	isgomock struct{}
 }
 
 // MockJobManagerMockRecorder is the mock recorder for MockJobManager.
@@ -154,89 +166,85 @@ func (m *MockJobManager) EXPECT() *MockJobManagerMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockJobManager) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // CancelJob mocks base method.
-func (m *MockJobManager) CancelJob(arg0 context.Context, arg1 int64) error {
+func (m *MockJobManager) CancelJob(ctx context.Context, jobID int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CancelJob", arg0, arg1)
+	ret := m.ctrl.Call(m, "CancelJob", ctx, jobID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CancelJob indicates an expected call of CancelJob.
-func (mr *MockJobManagerMockRecorder) CancelJob(arg0, arg1 any) *gomock.Call {
+func (mr *MockJobManagerMockRecorder) CancelJob(ctx, jobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelJob", reflect.TypeOf((*MockJobManager)(nil).CancelJob), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelJob", reflect.TypeOf((*MockJobManager)(nil).CancelJob), ctx, jobID)
 }
 
 // GetGroupSummary mocks base method.
-func (m *MockJobManager) GetGroupSummary(arg0 context.Context, arg1 string) (*importsdk.GroupStatus, error) {
+func (m *MockJobManager) GetGroupSummary(ctx context.Context, groupKey string) (*importsdk.GroupStatus, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetGroupSummary", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetGroupSummary", ctx, groupKey)
 	ret0, _ := ret[0].(*importsdk.GroupStatus)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetGroupSummary indicates an expected call of GetGroupSummary.
-func (mr *MockJobManagerMockRecorder) GetGroupSummary(arg0, arg1 any) *gomock.Call {
+func (mr *MockJobManagerMockRecorder) GetGroupSummary(ctx, groupKey any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupSummary", reflect.TypeOf((*MockJobManager)(nil).GetGroupSummary), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupSummary", reflect.TypeOf((*MockJobManager)(nil).GetGroupSummary), ctx, groupKey)
 }
 
 // GetJobStatus mocks base method.
-func (m *MockJobManager) GetJobStatus(arg0 context.Context, arg1 int64) (*importsdk.JobStatus, error) {
+func (m *MockJobManager) GetJobStatus(ctx context.Context, jobID int64) (*importsdk.JobStatus, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetJobStatus", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetJobStatus", ctx, jobID)
 	ret0, _ := ret[0].(*importsdk.JobStatus)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetJobStatus indicates an expected call of GetJobStatus.
-func (mr *MockJobManagerMockRecorder) GetJobStatus(arg0, arg1 any) *gomock.Call {
+func (mr *MockJobManagerMockRecorder) GetJobStatus(ctx, jobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobStatus", reflect.TypeOf((*MockJobManager)(nil).GetJobStatus), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobStatus", reflect.TypeOf((*MockJobManager)(nil).GetJobStatus), ctx, jobID)
 }
 
 // GetJobsByGroup mocks base method.
-func (m *MockJobManager) GetJobsByGroup(arg0 context.Context, arg1 string) ([]*importsdk.JobStatus, error) {
+func (m *MockJobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*importsdk.JobStatus, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetJobsByGroup", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetJobsByGroup", ctx, groupKey)
 	ret0, _ := ret[0].([]*importsdk.JobStatus)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetJobsByGroup indicates an expected call of GetJobsByGroup.
-func (mr *MockJobManagerMockRecorder) GetJobsByGroup(arg0, arg1 any) *gomock.Call {
+func (mr *MockJobManagerMockRecorder) GetJobsByGroup(ctx, groupKey any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobsByGroup", reflect.TypeOf((*MockJobManager)(nil).GetJobsByGroup), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobsByGroup", reflect.TypeOf((*MockJobManager)(nil).GetJobsByGroup), ctx, groupKey)
 }
 
 // SubmitJob mocks base method.
-func (m *MockJobManager) SubmitJob(arg0 context.Context, arg1 string) (int64, error) {
+func (m *MockJobManager) SubmitJob(ctx context.Context, query string) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SubmitJob", arg0, arg1)
+	ret := m.ctrl.Call(m, "SubmitJob", ctx, query)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SubmitJob indicates an expected call of SubmitJob.
-func (mr *MockJobManagerMockRecorder) SubmitJob(arg0, arg1 any) *gomock.Call {
+func (mr *MockJobManagerMockRecorder) SubmitJob(ctx, query any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubmitJob", reflect.TypeOf((*MockJobManager)(nil).SubmitJob), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubmitJob", reflect.TypeOf((*MockJobManager)(nil).SubmitJob), ctx, query)
 }
 
 // MockSQLGenerator is a mock of SQLGenerator interface.
 type MockSQLGenerator struct {
 	ctrl     *gomock.Controller
 	recorder *MockSQLGeneratorMockRecorder
+	isgomock struct{}
 }
 
 // MockSQLGeneratorMockRecorder is the mock recorder for MockSQLGenerator.
@@ -256,30 +264,26 @@ func (m *MockSQLGenerator) EXPECT() *MockSQLGeneratorMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockSQLGenerator) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // GenerateImportSQL mocks base method.
-func (m *MockSQLGenerator) GenerateImportSQL(arg0 *importsdk.TableMeta, arg1 *importsdk.ImportOptions) (string, error) {
+func (m *MockSQLGenerator) GenerateImportSQL(tableMeta *importsdk.TableMeta, options *importsdk.ImportOptions) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GenerateImportSQL", arg0, arg1)
+	ret := m.ctrl.Call(m, "GenerateImportSQL", tableMeta, options)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GenerateImportSQL indicates an expected call of GenerateImportSQL.
-func (mr *MockSQLGeneratorMockRecorder) GenerateImportSQL(arg0, arg1 any) *gomock.Call {
+func (mr *MockSQLGeneratorMockRecorder) GenerateImportSQL(tableMeta, options any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GenerateImportSQL", reflect.TypeOf((*MockSQLGenerator)(nil).GenerateImportSQL), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GenerateImportSQL", reflect.TypeOf((*MockSQLGenerator)(nil).GenerateImportSQL), tableMeta, options)
 }
 
 // MockSDK is a mock of SDK interface.
 type MockSDK struct {
 	ctrl     *gomock.Controller
 	recorder *MockSDKMockRecorder
+	isgomock struct{}
 }
 
 // MockSDKMockRecorder is the mock recorder for MockSDK.
@@ -299,23 +303,18 @@ func (m *MockSDK) EXPECT() *MockSDKMockRecorder {
 	return m.recorder
 }
 
-// ISGOMOCK indicates that this struct is a gomock mock.
-func (m *MockSDK) ISGOMOCK() struct{} {
-	return struct{}{}
-}
-
 // CancelJob mocks base method.
-func (m *MockSDK) CancelJob(arg0 context.Context, arg1 int64) error {
+func (m *MockSDK) CancelJob(ctx context.Context, jobID int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CancelJob", arg0, arg1)
+	ret := m.ctrl.Call(m, "CancelJob", ctx, jobID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CancelJob indicates an expected call of CancelJob.
-func (mr *MockSDKMockRecorder) CancelJob(arg0, arg1 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) CancelJob(ctx, jobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelJob", reflect.TypeOf((*MockSDK)(nil).CancelJob), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelJob", reflect.TypeOf((*MockSDK)(nil).CancelJob), ctx, jobID)
 }
 
 // Close mocks base method.
@@ -333,148 +332,163 @@ func (mr *MockSDKMockRecorder) Close() *gomock.Call {
 }
 
 // CreateSchemaAndTableByName mocks base method.
-func (m *MockSDK) CreateSchemaAndTableByName(arg0 context.Context, arg1, arg2 string) error {
+func (m *MockSDK) CreateSchemaAndTableByName(ctx context.Context, schema, table string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateSchemaAndTableByName", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "CreateSchemaAndTableByName", ctx, schema, table)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateSchemaAndTableByName indicates an expected call of CreateSchemaAndTableByName.
-func (mr *MockSDKMockRecorder) CreateSchemaAndTableByName(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) CreateSchemaAndTableByName(ctx, schema, table any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemaAndTableByName", reflect.TypeOf((*MockSDK)(nil).CreateSchemaAndTableByName), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemaAndTableByName", reflect.TypeOf((*MockSDK)(nil).CreateSchemaAndTableByName), ctx, schema, table)
 }
 
 // CreateSchemasAndTables mocks base method.
-func (m *MockSDK) CreateSchemasAndTables(arg0 context.Context) error {
+func (m *MockSDK) CreateSchemasAndTables(ctx context.Context) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateSchemasAndTables", arg0)
+	ret := m.ctrl.Call(m, "CreateSchemasAndTables", ctx)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CreateSchemasAndTables indicates an expected call of CreateSchemasAndTables.
-func (mr *MockSDKMockRecorder) CreateSchemasAndTables(arg0 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) CreateSchemasAndTables(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemasAndTables", reflect.TypeOf((*MockSDK)(nil).CreateSchemasAndTables), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSchemasAndTables", reflect.TypeOf((*MockSDK)(nil).CreateSchemasAndTables), ctx)
+}
+
+// EstimateImportDataSize mocks base method.
+func (m *MockSDK) EstimateImportDataSize(ctx context.Context) (*importsdk.ImportDataSizeEstimate, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EstimateImportDataSize", ctx)
+	ret0, _ := ret[0].(*importsdk.ImportDataSizeEstimate)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// EstimateImportDataSize indicates an expected call of EstimateImportDataSize.
+func (mr *MockSDKMockRecorder) EstimateImportDataSize(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EstimateImportDataSize", reflect.TypeOf((*MockSDK)(nil).EstimateImportDataSize), ctx)
 }
 
 // GenerateImportSQL mocks base method.
-func (m *MockSDK) GenerateImportSQL(arg0 *importsdk.TableMeta, arg1 *importsdk.ImportOptions) (string, error) {
+func (m *MockSDK) GenerateImportSQL(tableMeta *importsdk.TableMeta, options *importsdk.ImportOptions) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GenerateImportSQL", arg0, arg1)
+	ret := m.ctrl.Call(m, "GenerateImportSQL", tableMeta, options)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GenerateImportSQL indicates an expected call of GenerateImportSQL.
-func (mr *MockSDKMockRecorder) GenerateImportSQL(arg0, arg1 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) GenerateImportSQL(tableMeta, options any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GenerateImportSQL", reflect.TypeOf((*MockSDK)(nil).GenerateImportSQL), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GenerateImportSQL", reflect.TypeOf((*MockSDK)(nil).GenerateImportSQL), tableMeta, options)
 }
 
 // GetGroupSummary mocks base method.
-func (m *MockSDK) GetGroupSummary(arg0 context.Context, arg1 string) (*importsdk.GroupStatus, error) {
+func (m *MockSDK) GetGroupSummary(ctx context.Context, groupKey string) (*importsdk.GroupStatus, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetGroupSummary", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetGroupSummary", ctx, groupKey)
 	ret0, _ := ret[0].(*importsdk.GroupStatus)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetGroupSummary indicates an expected call of GetGroupSummary.
-func (mr *MockSDKMockRecorder) GetGroupSummary(arg0, arg1 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) GetGroupSummary(ctx, groupKey any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupSummary", reflect.TypeOf((*MockSDK)(nil).GetGroupSummary), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupSummary", reflect.TypeOf((*MockSDK)(nil).GetGroupSummary), ctx, groupKey)
 }
 
 // GetJobStatus mocks base method.
-func (m *MockSDK) GetJobStatus(arg0 context.Context, arg1 int64) (*importsdk.JobStatus, error) {
+func (m *MockSDK) GetJobStatus(ctx context.Context, jobID int64) (*importsdk.JobStatus, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetJobStatus", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetJobStatus", ctx, jobID)
 	ret0, _ := ret[0].(*importsdk.JobStatus)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetJobStatus indicates an expected call of GetJobStatus.
-func (mr *MockSDKMockRecorder) GetJobStatus(arg0, arg1 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) GetJobStatus(ctx, jobID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobStatus", reflect.TypeOf((*MockSDK)(nil).GetJobStatus), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobStatus", reflect.TypeOf((*MockSDK)(nil).GetJobStatus), ctx, jobID)
 }
 
 // GetJobsByGroup mocks base method.
-func (m *MockSDK) GetJobsByGroup(arg0 context.Context, arg1 string) ([]*importsdk.JobStatus, error) {
+func (m *MockSDK) GetJobsByGroup(ctx context.Context, groupKey string) ([]*importsdk.JobStatus, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetJobsByGroup", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetJobsByGroup", ctx, groupKey)
 	ret0, _ := ret[0].([]*importsdk.JobStatus)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetJobsByGroup indicates an expected call of GetJobsByGroup.
-func (mr *MockSDKMockRecorder) GetJobsByGroup(arg0, arg1 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) GetJobsByGroup(ctx, groupKey any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobsByGroup", reflect.TypeOf((*MockSDK)(nil).GetJobsByGroup), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJobsByGroup", reflect.TypeOf((*MockSDK)(nil).GetJobsByGroup), ctx, groupKey)
 }
 
 // GetTableMetaByName mocks base method.
-func (m *MockSDK) GetTableMetaByName(arg0 context.Context, arg1, arg2 string) (*importsdk.TableMeta, error) {
+func (m *MockSDK) GetTableMetaByName(ctx context.Context, db, table string) (*importsdk.TableMeta, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTableMetaByName", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "GetTableMetaByName", ctx, db, table)
 	ret0, _ := ret[0].(*importsdk.TableMeta)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTableMetaByName indicates an expected call of GetTableMetaByName.
-func (mr *MockSDKMockRecorder) GetTableMetaByName(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) GetTableMetaByName(ctx, db, table any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetaByName", reflect.TypeOf((*MockSDK)(nil).GetTableMetaByName), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetaByName", reflect.TypeOf((*MockSDK)(nil).GetTableMetaByName), ctx, db, table)
 }
 
 // GetTableMetas mocks base method.
-func (m *MockSDK) GetTableMetas(arg0 context.Context) ([]*importsdk.TableMeta, error) {
+func (m *MockSDK) GetTableMetas(ctx context.Context) ([]*importsdk.TableMeta, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTableMetas", arg0)
+	ret := m.ctrl.Call(m, "GetTableMetas", ctx)
 	ret0, _ := ret[0].([]*importsdk.TableMeta)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTableMetas indicates an expected call of GetTableMetas.
-func (mr *MockSDKMockRecorder) GetTableMetas(arg0 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) GetTableMetas(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetas", reflect.TypeOf((*MockSDK)(nil).GetTableMetas), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTableMetas", reflect.TypeOf((*MockSDK)(nil).GetTableMetas), ctx)
 }
 
 // GetTotalSize mocks base method.
-func (m *MockSDK) GetTotalSize(arg0 context.Context) int64 {
+func (m *MockSDK) GetTotalSize(ctx context.Context) int64 {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTotalSize", arg0)
+	ret := m.ctrl.Call(m, "GetTotalSize", ctx)
 	ret0, _ := ret[0].(int64)
 	return ret0
 }
 
 // GetTotalSize indicates an expected call of GetTotalSize.
-func (mr *MockSDKMockRecorder) GetTotalSize(arg0 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) GetTotalSize(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTotalSize", reflect.TypeOf((*MockSDK)(nil).GetTotalSize), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTotalSize", reflect.TypeOf((*MockSDK)(nil).GetTotalSize), ctx)
 }
 
 // SubmitJob mocks base method.
-func (m *MockSDK) SubmitJob(arg0 context.Context, arg1 string) (int64, error) {
+func (m *MockSDK) SubmitJob(ctx context.Context, query string) (int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SubmitJob", arg0, arg1)
+	ret := m.ctrl.Call(m, "SubmitJob", ctx, query)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SubmitJob indicates an expected call of SubmitJob.
-func (mr *MockSDKMockRecorder) SubmitJob(arg0, arg1 any) *gomock.Call {
+func (mr *MockSDKMockRecorder) SubmitJob(ctx, query any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubmitJob", reflect.TypeOf((*MockSDK)(nil).SubmitJob), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SubmitJob", reflect.TypeOf((*MockSDK)(nil).SubmitJob), ctx, query)
 }

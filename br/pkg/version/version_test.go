@@ -332,6 +332,27 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
+		// BR v26.x and TiKV v8.x: major version difference > 2, should fail
+		build.ReleaseVersion = "v26.3.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v8.5.4"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.Error(t, err)
+		require.Regexp(t, "major version mismatch", err.Error())
+	}
+
+	{
+		// nightly-dirty (test build) skips all version checks
+		build.ReleaseVersion = build.ReleaseVersionForTest
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v8.5.4"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+	}
+
+	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.4.0"}}
 		}

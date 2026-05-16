@@ -247,6 +247,48 @@ func Selectivity(
 				case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
 					notCoveredStrMatch[i] = x
 					continue
+				case ast.FTSMysqlMatchAgainst:
+					// FTSMysqlMatchAgainst is opaque to the stats engine — its
+					// evalReal errors when called outside TiFlash, so TopN-based
+					// estimation can't run on it directly and the generic fallback
+					// would use SelectivityFactor (0.8) regardless of column stats.
+					// Substitute the equivalent ILIKE-based expression so the cost
+					// of round 1's native plan reflects the column's histogram /
+					// TopN rather than the flat default — this affects join order,
+					// index selection, etc., even though round 1's plan is the
+					// only candidate when every predicate MATCH is native-viable
+					// (the fts-like-fallback round only fires when round 1 is
+					// discarded).
+					//
+					// The substitution only fires for single-column MATCH(...);
+					// GetSelectivityByFilter declines multi-column expressions, so a
+					// multi-column substitute would just fall through to the same
+					// str-match default that the un-substituted FTS expression already
+					// receives. BuildFTSToILikeExpressionFromBuiltin returns an error
+					// for the multi-column case to keep that path explicit here.
+					if substitute, err := expression.BuildFTSToILikeExpressionFromBuiltin(ctx.GetExprCtx(), x); err == nil {
+						switch sub := substitute.(type) {
+						case *expression.ScalarFunction:
+							notCoveredStrMatch[i] = sub
+							continue
+						case *expression.Constant:
+							// AGAINST(NULL) produces Constant(NULL) (preserves SQL
+							// three-valued logic — matches the planner-side
+							// matchAgainstToLike NULL fast-path); empty-string
+							// search produces Constant(0). Route either to the
+							// constants bucket so the stats engine recognizes the
+							// substitute as constant-false (the IsNull / ToBool
+							// pass at line ~309 zeroes selectivity for both
+							// shapes) instead of applying the str-match default
+							// (0.1).
+							notCoveredConstants[i] = sub
+							continue
+						}
+					}
+					// Fall through if substitution failed; the FTS expression will
+					// use the str-match default selectivity (0.1) instead of 0.8.
+					notCoveredStrMatch[i] = x
+					continue
 				case ast.UnaryNot:
 					inner := expression.GetExprInsideIsTruth(x.GetArgs()[0])
 					innerSF, ok := inner.(*expression.ScalarFunction)

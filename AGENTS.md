@@ -17,6 +17,13 @@ This file provides guidance to agents working in this repository.
 4. Leave verifiable evidence. Run targeted checks and report exact commands.
 5. Respect generated code artifacts. Do not hand-edit generated code outputs; regenerate from source inputs.
 
+## Agent Interaction Overrides (Repo-Local)
+
+- For short non-code questions (definitions, acronyms, quick explanations), consider repository context first.
+- If a term may be repo-specific or appears in local docs/code, verify from repository files before answering.
+- If a term is clearly general and not repo-specific, answer directly without extra lookup.
+- When uncertain, prefer checking the repository.
+
 ## ExecPlans
 
 When writing complex features or significant refactors, use an ExecPlan from design to implementation.
@@ -52,7 +59,7 @@ When writing complex features or significant refactors, use an ExecPlan from des
 ## Pre-flight Checklist
 
 1. Restate the task goal and acceptance criteria.
-2. Locate the owning subsystem and the closest existing tests (`Repository Map`, `Task -> Validation Matrix`).
+2. Locate the owning subsystem and the closest existing tests (`Repository Map`, `Task -> Validation Matrix`). If the target package has `doc.go`, agents MUST read that package-level doc first before diving into implementation files.
 3. Decide prerequisites before running tests/build (`docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`; `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`).
 4. Pick the smallest valid validation set and prepare final reporting items (`Agent Output Contract`).
 5. If `AGENTS.md` or docs under `docs/agents/` changed, follow the checklist in `docs/agents/agents-review-guide.md` before finishing.

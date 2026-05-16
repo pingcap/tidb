@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -60,6 +59,13 @@ var (
 )
 
 const (
+	// DXFLogCategory is the shared log category used by DXF sampled logs.
+	DXFLogCategory = "dxf"
+	// SampleLogTick is the common sampling window used by DXF sampled logs.
+	SampleLogTick = time.Minute
+	// SampleLogFirst is the max number of logs with same level/message in each SampleLogTick.
+	SampleLogFirst = 10
+
 	// NextGenTargetScope is the target scope for new tasks in nextgen kernel.
 	// on nextgen, DXF works as a service and runs only on node with scope 'dxf_service',
 	// so all tasks must be submitted to that scope.
@@ -78,6 +84,14 @@ func NotifyTaskChange() {
 	case TaskChangedCh <- struct{}{}:
 	default:
 	}
+}
+
+// NewSampleErrVerboseLogger creates a sampled logger with DXF defaults.
+func NewSampleErrVerboseLogger(fields ...zap.Field) *zap.Logger {
+	allFields := make([]zap.Field, 0, len(fields)+1)
+	allFields = append(allFields, zap.String(logutil.LogFieldCategory, DXFLogCategory))
+	allFields = append(allFields, fields...)
+	return logutil.SampleErrVerboseLoggerFactory(SampleLogTick, SampleLogFirst, allFields...)()
 }
 
 // GetCPUCountOfNode gets the CPU count of the managed node.
@@ -145,7 +159,7 @@ func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 		logger.Error("task reverted", zap.Error(found.Error))
 		return found.Error
 	case proto.TaskStatePaused:
-		logger.Error("task paused")
+		logger.Info("task paused")
 		return nil
 	case proto.TaskStateFailed:
 		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
@@ -177,8 +191,12 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 	}
 	ticker := time.NewTicker(checkTaskFinishInterval)
 	defer ticker.Stop()
-
-	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
+	sampleLogger := logutil.SampleLoggerFactory(
+		SampleLogTick,
+		SampleLogFirst,
+		zap.String(logutil.LogFieldCategory, DXFLogCategory),
+		zap.Int64("task-id", id),
+	)()
 	for {
 		select {
 		case <-ctx.Done():
@@ -186,7 +204,7 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 		case <-ticker.C:
 			task, err := taskManager.GetTaskBaseByIDWithHistory(ctx, id)
 			if err != nil {
-				logger.Error("cannot get task during waiting", zap.Error(err))
+				sampleLogger.Error("cannot get task during waiting", zap.Error(err))
 				continue
 			}
 
@@ -271,18 +289,6 @@ func RunWithRetry(
 		}
 	}
 	return lastErr
-}
-
-var nodeResource atomic.Pointer[proto.NodeResource]
-
-// GetNodeResource gets the node resource.
-func GetNodeResource() *proto.NodeResource {
-	return nodeResource.Load()
-}
-
-// SetNodeResource gets the node resource.
-func SetNodeResource(rc *proto.NodeResource) {
-	nodeResource.Store(rc)
 }
 
 // GetDefaultRegionSplitConfig gets the default region split size and keys.
@@ -453,10 +459,4 @@ func SendRowAndSizeMeterData(ctx context.Context, task *proto.Task, rows int64,
 	}
 	failpoint.InjectCall("afterSendRowAndSizeMeterData", item)
 	return nil
-}
-
-func init() {
-	// domain will init this var at runtime, we store it here for test, as some
-	// test might not start domain.
-	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
 }

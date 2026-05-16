@@ -79,6 +79,40 @@ func TestMetadataHelperReadFile(t *testing.T) {
 	require.Equal(t, data1, get_data)
 }
 
+func TestMetadataHelperParseToMetadataPreservesExistingFileGroupsForV1(t *testing.T) {
+	helper := stream.NewMetadataHelper()
+	original := &backuppb.Metadata{
+		MetaVersion: backuppb.MetaVersion_V1,
+		FileGroups: []*backuppb.DataFileGroup{
+			{
+				Path: "v1/log/store-1/flush-00000001-region-1.log",
+				DataFilesInfo: []*backuppb.DataFileInfo{
+					{
+						Path: "v1/log/store-1/flush-00000001-region-1.log",
+					},
+				},
+			},
+		},
+	}
+
+	raw, err := original.Marshal()
+	require.NoError(t, err)
+
+	meta, err := helper.ParseToMetadata(raw)
+	require.NoError(t, err)
+	require.Len(t, meta.FileGroups, 1)
+	require.Equal(t, original.FileGroups[0].Path, meta.FileGroups[0].Path)
+	require.Len(t, meta.FileGroups[0].DataFilesInfo, 1)
+	require.Equal(t, original.FileGroups[0].DataFilesInfo[0].Path, meta.FileGroups[0].DataFilesInfo[0].Path)
+
+	hardMeta, err := helper.ParseToMetadataHard(raw)
+	require.NoError(t, err)
+	require.Len(t, hardMeta.FileGroups, 1)
+	require.Equal(t, original.FileGroups[0].Path, hardMeta.FileGroups[0].Path)
+	require.Len(t, hardMeta.FileGroups[0].DataFilesInfo, 1)
+	require.Equal(t, original.FileGroups[0].DataFilesInfo[0].Path, hardMeta.FileGroups[0].DataFilesInfo[0].Path)
+}
+
 func TestFilterPath(t *testing.T) {
 	type args struct {
 		path         string

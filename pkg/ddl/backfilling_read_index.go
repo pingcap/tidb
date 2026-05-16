@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -76,7 +76,7 @@ type readIndexStepExecutor struct {
 }
 
 type readIndexSummary struct {
-	metaGroups []*external.SortedKVMeta
+	metaGroups []*globalsort.SortedKVMeta
 	mu         sync.Mutex
 }
 
@@ -197,7 +197,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		zap.Bool("use cloud", r.isGlobalSort()))
 
 	r.summaryMap.Store(subtask.ID, &readIndexSummary{
-		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
+		metaGroups: make([]*globalsort.SortedKVMeta, len(r.indexes)),
 	})
 	r.summary.Reset()
 	var err error
@@ -309,7 +309,7 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 		sm.EleIDs = append(sm.EleIDs, index.ID)
 	}
 
-	all := external.SortedKVMeta{}
+	all := globalsort.SortedKVMeta{}
 	for _, g := range s.metaGroups {
 		all.Merge(g)
 	}
@@ -321,7 +321,7 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 
 	// write external meta to storage when using global sort
 	if r.isGlobalSort() {
-		if err := writeExternalBackfillSubTaskMeta(ctx, extStore, sm, external.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+		if err := writeExternalBackfillSubTaskMeta(ctx, extStore, sm, globalsort.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
 			return err
 		}
 	}
@@ -392,7 +392,9 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+	rowCntCollector := newDistTaskRowCntCollector(
+		r.summary, sm.PhysicalTableID, r.job.SchemaName,
+		tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
 	return NewAddIndexIngestPipeline(
 		wctx,
 		r.store,
@@ -424,13 +426,13 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		return nil, err
 	}
 
-	onWriterClose := func(summary *external.WriterSummary) {
+	onWriterClose := func(summary *globalsort.WriterSummary) {
 		sum, _ := r.summaryMap.Load(subtaskID)
 		s := sum.(*readIndexSummary)
 		s.mu.Lock()
 		kvMeta := s.metaGroups[summary.GroupOffset]
 		if kvMeta == nil {
-			kvMeta = &external.SortedKVMeta{}
+			kvMeta = &globalsort.SortedKVMeta{}
 			s.metaGroups[summary.GroupOffset] = kvMeta
 		}
 		kvMeta.MergeSummary(summary)
@@ -443,7 +445,9 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+	rowCntCollector := newDistTaskRowCntCollector(
+		r.summary, sm.PhysicalTableID, r.job.SchemaName,
+		tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
 	return NewWriteIndexToExternalStoragePipeline(
 		wctx,
 		r.store,
@@ -473,10 +477,11 @@ type distTaskRowCntCollector struct {
 
 func newDistTaskRowCntCollector(
 	summary *execute.SubtaskSummary,
+	tableID int64,
 	dbName, tblName, idxName string,
 	meterRec *metering.Recorder,
 ) *distTaskRowCntCollector {
-	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
+	counter := getBackfillTotalByTableID(tableID, metrics.LblAddIdxRate, dbName, tblName, idxName)
 	return &distTaskRowCntCollector{
 		summary:  summary,
 		counter:  counter,
@@ -490,7 +495,7 @@ func (d *distTaskRowCntCollector) Accepted(bytes int64) {
 }
 
 func (d *distTaskRowCntCollector) Processed(bytes, rowCnt int64) {
-	d.summary.Bytes.Add(bytes)
+	d.summary.Processed.Add(bytes)
 	d.summary.RowCnt.Add(rowCnt)
 	d.counter.Add(float64(rowCnt))
 }
