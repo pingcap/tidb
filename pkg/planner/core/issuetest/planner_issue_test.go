@@ -906,6 +906,29 @@ ORDER BY t1.a, t2.a, t3.a, var`
 			"10 <nil> <nil> 6",
 		))
 	})
+
+	// issue-65804-prepared-elt-where-keeps-selected-value-length
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("set @@sql_mode = default")
+
+		tk.MustExec("create table t_issue_65804(c0 bool)")
+		tk.MustExec("insert into t_issue_65804 values (true)")
+		query := "select c0 from t_issue_65804 where elt(0.6706395853005295, 758832383, '&', null)"
+		tk.MustQuery(query).Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustExec("set @c = '&'")
+		tk.MustExec("set @d = null")
+		tk.MustExec("prepare expr_issue_65804 from 'select elt(0.6706395853005295, 758832383, ?, ?)'")
+		tk.MustQuery("execute expr_issue_65804 using @c, @d").Check(testkit.Rows("758832383"))
+		// The selected integer constant must not be folded through a zero-length string type.
+		require.NotContains(t, fmt.Sprint(tk.MustQuery("show warnings").Rows()), "Data Too Long")
+
+		tk.MustExec("prepare stmt_issue_65804 from 'select c0 from t_issue_65804 where elt(0.6706395853005295, 758832383, ?, ?)'")
+		tk.MustQuery("execute stmt_issue_65804 using @c, @d").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
