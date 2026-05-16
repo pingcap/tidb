@@ -48,6 +48,17 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		return sharedTK
 	}
 
+	// issue-66045
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t0 (id int auto_increment primary key, c0 double, index idx_c0 (c0))")
+		tk.MustExec("insert into t0 (c0) values (1), (2.5), (10), (18.8), (-2.4), (-1.4134e10)")
+		implicit := `select * from t0 where c0 * -1 < 0 and c0 between 2.5 and c0 >> 1 > 1 - c0 and c0 ^ 3 << 2 < 41 order by c0`
+		explicit := `select * from t0 where ((c0 * (-1)) < 0) and (c0 between 2.5 and ((c0 >> 1) > (1 - c0))) and (((c0 ^ 3) << 2) < 41) order by c0`
+		tk.MustQuery(implicit).Check(testkit.Rows())
+		tk.MustQuery(explicit).Check(testkit.Rows())
+	}
+
 	// index-lookup-columns-mismatch
 	{
 		tk := prepareSharedTestKit(t)

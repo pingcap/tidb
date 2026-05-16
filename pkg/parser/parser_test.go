@@ -7498,6 +7498,7 @@ func TestRestoreBinOpWithBrackets(t *testing.T) {
 	cases := []testCase{
 		{"select mod(a+b, 4)+1", true, "SELECT (((`a` + `b`) % 4) + 1)"},
 		{"SELECT MOD(10, 2 BETWEEN 0 and 5)", true, "SELECT (10 % (2 BETWEEN 0 AND 5))"}, // issue #59000
+		{"SELECT c0 BETWEEN 2.5 AND c0 >> 1 > 1 - c0", true, "SELECT `c0` BETWEEN 2.5 AND ((`c0` >> 1) > (1 - `c0`))"}, // issue #66045
 		{"select mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1", true, "SELECT (((year(`a`) - abs((weekday(`a`) + dayofweek(`a`)))) % 4) + 1)"},
 	}
 

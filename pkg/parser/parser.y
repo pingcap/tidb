@@ -1740,7 +1740,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %left andand and
 %left between
 %precedence lowerThanEq
-%left eq ge le neq neqSynonym '>' '<' is like ilike in
+%left eq ge le neq neqSynonym nulleq '>' '<' is like ilike in
 %left '|'
 %left '&'
 %left rsh lsh
@@ -6800,8 +6800,9 @@ PredicateExpr:
 		sq.MultiRows = true
 		$$ = &ast.PatternInExpr{Expr: $1, Not: !$2.(bool), Sel: sq}
 	}
-|	BitExpr BetweenOrNotOp BitExpr "AND" PredicateExpr
+|	BitExpr BetweenOrNotOp BitExpr "AND" BoolPri
 	{
+		// The upper bound must include comparison-level expressions before the BETWEEN predicate is reduced.
 		$$ = &ast.BetweenExpr{
 			Expr:  $1,
 			Left:  $3,
