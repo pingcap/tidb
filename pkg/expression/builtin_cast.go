@@ -1451,11 +1451,21 @@ func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		bits = 32
 	}
 
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, typeCtx(ctx), false)
+	res, err = types.ProduceStrWithSpecifiedTp(formatRealForCastAsString(val, bits), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
 	return padZeroForBinaryType(res, b.tp, ctx)
+}
+
+func formatRealForCastAsString(val float64, bits int) string {
+	absVal := math.Abs(val)
+	format := byte('f')
+	// MySQL keeps ordinary magnitudes in fixed-point form and switches only large or tiny real values to scientific notation.
+	if absVal >= 1e15 || (absVal > 0 && absVal < 1e-7) {
+		format = 'e'
+	}
+	return strings.Replace(strconv.FormatFloat(val, format, -1, bits), "e+", "e", 1)
 }
 
 type builtinCastRealAsTimeSig struct {
