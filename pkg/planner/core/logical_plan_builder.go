@@ -4759,6 +4759,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				return p, nil
 			}
 
+			b.warnViewStyleHintsForCTE(tn, asName)
 			b.handleHelper.pushMap(nil)
 
 			hasLimit := false
@@ -4854,6 +4855,37 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 	}
 
 	return nil, nil
+}
+
+func (b *PlanBuilder) warnViewStyleHintsForCTE(tn *ast.TableName, asName *ast.CIStr) {
+	if b.hintProcessor == nil || len(b.hintProcessor.ViewQBNameToTable) == 0 {
+		return
+	}
+
+	// View-style QB_NAME hints are collected before name resolution. If they
+	// target a CTE reference, the CTE path cannot consume the forwarded hints,
+	// so report them as ignored instead of silently dropping them.
+	cteRefName := tn.Name
+	if asName != nil && asName.L != "" {
+		cteRefName = *asName
+	}
+	currentOffset := b.getSelectOffset()
+	for qbName, hintedTables := range b.hintProcessor.ViewQBNameToTable {
+		if len(hintedTables) == 0 || hintedTables[0].TableName.L != cteRefName.L {
+			continue
+		}
+		hintOffset := 1
+		if hintedTables[0].QBName.L != "" {
+			hintOffset = b.hintProcessor.GetHintOffset(hintedTables[0].QBName, currentOffset)
+		}
+		if hintOffset != currentOffset {
+			continue
+		}
+		for _, tableHint := range b.hintProcessor.ViewQBNameToHints[qbName] {
+			hintStr := h.RestoreTableOptimizerHint(tableHint)
+			b.ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("Hint %s is ignored due to unknown query block name", hintStr))
+		}
+	}
 }
 
 // computeCTEInlineFlag, Combine the declaration of CTE and the use of CTE to jointly determine **whether a CTE can be inlined**
