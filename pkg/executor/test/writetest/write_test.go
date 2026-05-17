@@ -524,6 +524,80 @@ func TestDeferConstraintCheckForInsert(t *testing.T) {
 	}
 }
 
+// TestPessimisticForUpdateLockNonExistentKey verifies that in pessimistic RR mode,
+// SELECT ... FOR UPDATE acquires a pessimistic lock even on non-existent point-get
+// keys. This prevents the anti-dependency cycle (G2 anomaly) and write skew (A5B)
+// reported in https://github.com/pingcap/tidb/issues/10444.
+//
+// Scenario from Jepsen:
+//
+//	T1: r(key_a, nil) FOR UPDATE, w(key_b, 1)
+//	T2: r(key_b, nil) FOR UPDATE, w(key_a, 1)
+//
+// Without locking non-existent keys, both transactions could commit, forming a
+// cycle. With proper locking, T2's FOR UPDATE on key_a blocks on T1's lock.
+func TestPessimisticForUpdateLockNonExistentKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	session1 := testkit.NewTestKit(t, store)
+	session1.MustExec("use test")
+	session2 := testkit.NewTestKit(t, store)
+	session2.MustExec("use test")
+
+	session1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	session2.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	session1.MustExec("drop table if exists t;")
+	session1.MustExec("create table t (id int primary key, val int);")
+
+	// T1 locks non-existent key 1 via point-get FOR UPDATE.
+	session1.MustExec("begin;")
+	session1.MustQuery("select * from t where id = 1 for update;").Check(testkit.Rows())
+
+	// T2 tries to lock the same non-existent key 1. Because T1 holds a pessimistic
+	// lock on it (even though the row doesn't exist), T2 must block until T1 commits.
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		session2.MustExec("begin;")
+		// This blocks until T1 releases its lock on key 1.
+		session2.MustQuery("select * from t where id = 1 for update;").Check(testkit.Rows("1 42"))
+		session2.MustExec("commit;")
+	})
+
+	// T1 inserts the row and commits, releasing the lock.
+	session1.MustExec("insert into t values (1, 42);")
+	session1.MustExec("commit;")
+	wg.Wait()
+
+	// Verify the row exists and was properly serialized.
+	session1.MustQuery("select * from t where id = 1;").Check(testkit.Rows("1 42"))
+
+	// Test the write skew scenario from #10444:
+	// T1 locks key 3 and key 4 (both non-existent) FOR UPDATE, writes key 4.
+	// T2 tries to lock key 3 FOR UPDATE and blocks on T1's lock.
+	session1.MustExec("drop table if exists t;")
+	session1.MustExec("create table t (id int primary key, val int);")
+
+	session1.MustExec("begin;")
+	session1.MustQuery("select * from t where id = 3 for update;").Check(testkit.Rows())
+	session1.MustQuery("select * from t where id = 4 for update;").Check(testkit.Rows())
+
+	wg.Run(func() {
+		session2.MustExec("begin;")
+		// Blocks on T1's lock on key 3.
+		session2.MustQuery("select * from t where id = 3 for update;").Check(testkit.Rows())
+		session2.MustQuery("select * from t where id = 4 for update;").Check(testkit.Rows("4 2"))
+		session2.MustExec("insert into t values (3, 1);")
+		session2.MustExec("commit;")
+	})
+
+	session1.MustExec("insert into t values (4, 2);")
+	session1.MustExec("commit;")
+	wg.Wait()
+
+	session1.MustQuery("select * from t order by id;").Check(testkit.Rows("3 1", "4 2"))
+}
+
 func TestPessimisticDeleteYourWrites(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
