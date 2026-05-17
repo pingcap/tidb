@@ -989,6 +989,35 @@ func checkAuthUser(t *testing.T, tk *testkit.TestKit, user string, failedLoginCo
 	require.Equal(t, autoAccountLocked, ua[0].PasswordLocking.AutoAccountLocked)
 }
 
+// TestDualPasswordParserOnlyStub guards the executor stub added in the
+// parser-only PR (#68028). The grammar now accepts MySQL 8.0 dual-password
+// clauses (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD), but the matching
+// executor / privilege / storage logic lands in the follow-up PR (#68393).
+// Until then the executor must fail fast with ER_NOT_SUPPORTED_YET so users
+// don't see silent success.
+//
+// When #68393 lands and removes the stubs, this test should be replaced by
+// the real dual-password coverage that lives there.
+func TestDualPasswordParserOnlyStub(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("DROP USER IF EXISTS dpstub")
+	tk.MustExec("CREATE USER dpstub IDENTIFIED BY 'old'")
+
+	// ALTER USER ... RETAIN CURRENT PASSWORD must fail with ER_NOT_SUPPORTED_YET.
+	tk.MustGetErrCode("ALTER USER dpstub IDENTIFIED BY 'new' RETAIN CURRENT PASSWORD", errno.ErrNotSupportedYet)
+	// ALTER USER ... DISCARD OLD PASSWORD must fail with ER_NOT_SUPPORTED_YET.
+	tk.MustGetErrCode("ALTER USER dpstub DISCARD OLD PASSWORD", errno.ErrNotSupportedYet)
+	// SET PASSWORD ... RETAIN CURRENT PASSWORD must fail with ER_NOT_SUPPORTED_YET.
+	tk.MustGetErrCode("SET PASSWORD FOR dpstub = 'new' RETAIN CURRENT PASSWORD", errno.ErrNotSupportedYet)
+
+	// A regular ALTER USER (no dual-password clause) must still succeed —
+	// the stub guard only triggers when DualPasswordOption is set.
+	tk.MustExec("ALTER USER dpstub IDENTIFIED BY 'plain'")
+}
+
 func selectSQL(user string) string {
 	userAttributesSQL := new(strings.Builder)
 	sqlescape.MustFormatSQL(userAttributesSQL, "SELECT user_attributes from mysql.user WHERE USER = %? AND HOST = 'localhost' for update", user)

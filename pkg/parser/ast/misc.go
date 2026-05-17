@@ -1554,7 +1554,7 @@ func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
 type UserSpec struct {
 	User               *auth.UserIdentity
 	AuthOpt            *AuthOption
-	DualPasswordOption *PasswordOrLockOption
+	DualPasswordOption *DualPasswordOption
 	IsRole             bool
 }
 
@@ -1592,9 +1592,9 @@ func (n *UserSpec) SecurityString() string {
 	dualClause := ""
 	if n.DualPasswordOption != nil {
 		switch n.DualPasswordOption.Type {
-		case RetainCurrentPassword:
+		case DualPasswordRetainCurrent:
 			dualClause = " RETAIN CURRENT PASSWORD"
-		case DiscardOldPassword:
+		case DualPasswordDiscardOld:
 			dualClause = " DISCARD OLD PASSWORD"
 		}
 	}
@@ -1725,10 +1725,41 @@ const (
 	PasswordRequireCurrentDefault
 
 	UserResourceGroupName
-
-	RetainCurrentPassword
-	DiscardOldPassword
 )
+
+// DualPasswordOptionType identifies the dual-password action attached to a
+// UserSpec by the parser. Dedicated to dual-password semantics so the AST
+// does not conflate it with PasswordOrLockOption (account lock, expiration,
+// failed-login policy, etc.) which has different per-statement scoping rules.
+type DualPasswordOptionType int
+
+const (
+	// DualPasswordRetainCurrent corresponds to RETAIN CURRENT PASSWORD.
+	DualPasswordRetainCurrent DualPasswordOptionType = iota + 1
+	// DualPasswordDiscardOld corresponds to DISCARD OLD PASSWORD.
+	DualPasswordDiscardOld
+)
+
+// DualPasswordOption represents a per-UserSpec MySQL 8.0 dual-password clause
+// (RETAIN CURRENT PASSWORD or DISCARD OLD PASSWORD). The grammar attaches it
+// to the UserSpec rather than to AlterUserStmt because MySQL allows different
+// dual-password actions per spec inside a multi-user ALTER USER statement.
+type DualPasswordOption struct {
+	Type DualPasswordOptionType
+}
+
+// Restore implements Node interface.
+func (d *DualPasswordOption) Restore(ctx *format.RestoreCtx) error {
+	switch d.Type {
+	case DualPasswordRetainCurrent:
+		ctx.WriteKeyWord("RETAIN CURRENT PASSWORD")
+	case DualPasswordDiscardOld:
+		ctx.WriteKeyWord("DISCARD OLD PASSWORD")
+	default:
+		return errors.Errorf("Unsupported DualPasswordOption.Type %d", d.Type)
+	}
+	return nil
+}
 
 type PasswordOrLockOption struct {
 	Type  int
@@ -1770,10 +1801,6 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" DAY")
 	case PasswordReuseDefault:
 		ctx.WriteKeyWord("PASSWORD REUSE INTERVAL DEFAULT")
-	case RetainCurrentPassword:
-		ctx.WriteKeyWord("RETAIN CURRENT PASSWORD")
-	case DiscardOldPassword:
-		ctx.WriteKeyWord("DISCARD OLD PASSWORD")
 	default:
 		return errors.Errorf("Unsupported PasswordOrLockOption.Type %d", p.Type)
 	}

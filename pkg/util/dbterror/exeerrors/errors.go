@@ -74,6 +74,7 @@ var (
 	ErrPluginIsNotLoaded              = dbterror.ClassExecutor.NewStd(mysql.ErrPluginIsNotLoaded)
 	ErrSetPasswordAuthPlugin          = dbterror.ClassExecutor.NewStd(mysql.ErrSetPasswordAuthPlugin)
 	ErrFuncNotEnabled                 = dbterror.ClassExecutor.NewStdErr(mysql.ErrNotSupportedYet, parser_mysql.Message("%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.", nil))
+	ErrNotSupportedYet                = dbterror.ClassExecutor.NewStd(mysql.ErrNotSupportedYet)
 	ErrSavepointNotExists             = dbterror.ClassExecutor.NewStd(mysql.ErrSpDoesNotExist)
 	ErrForeignKeyCascadeDepthExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrForeignKeyCascadeDepthExceeded)
 	ErrPasswordExpireAnonymousUser    = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordExpireAnonymousUser)

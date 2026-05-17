@@ -1339,7 +1339,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	AlterPasswordOrLockOption              "Single password or lock option for alter user statement"
 	AlterPasswordOrLockOptionList          "Password or lock options for alter user statement"
 	AlterPasswordOrLockOptions             "Optional password or lock options for alter user statement"
-	UserSpecDualPasswordOption             "Optional dual password option for user spec"
+	AuthOptionWithPassword                 "Auth option that carries a cleartext password (BY-form), used by ALTER USER ... RETAIN CURRENT PASSWORD"
 	PlanReplayerDumpOpt                    "Plan Replayer Dump option"
 	CommentOrAttributeOption               "Optional comment or attribute option for CREATE/ALTER USER statements"
 	ColumnPosition                         "Column position [First|After ColumnName]"
@@ -1462,11 +1462,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	UpdateIndexesOpt                       "UPDATE INDEXES (UpdateIndexesList) or empty"
 	Username                               "Username"
 	UsernameList                           "UsernameList"
-	UserSpec                               "Username and auth option"
+	UserSpec                               "Username and auth option (used by CREATE USER; rejects RETAIN/DISCARD by construction)"
 	UserSpecList                           "Username and auth option list"
-	CreateUserSpec                         "CREATE USER username, auth option, and unsupported dual password option"
-	CreateUserSpecList                     "CREATE USER spec list"
-	AlterUserSpec                          "ALTER USER username, auth option, and dual password option"
+	AlterUserSpec                          "ALTER USER username with optional auth-option and per-spec RETAIN/DISCARD dual-password clause"
 	AlterUserSpecList                      "ALTER USER spec list"
 	UserVariableList                       "User defined variable name list"
 	UserToUser                             "rename user to user"
@@ -14373,7 +14371,7 @@ WhereClauseOptional:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists CreateUserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
+	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
@@ -14486,33 +14484,21 @@ UserSpecList:
 		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
 	}
 
-CreateUserSpec:
-	Username AuthOption UserSpecDualPasswordOption
-	{
-		userSpec := &ast.UserSpec{
-			User: $1.(*auth.UserIdentity),
-		}
-		if $2 != nil {
-			userSpec.AuthOpt = $2.(*ast.AuthOption)
-		}
-		if $3 != nil {
-			userSpec.DualPasswordOption = $3.(*ast.PasswordOrLockOption)
-		}
-		$$ = userSpec
-	}
-
-CreateUserSpecList:
-	CreateUserSpec
-	{
-		$$ = []*ast.UserSpec{$1.(*ast.UserSpec)}
-	}
-|	CreateUserSpecList ',' CreateUserSpec
-	{
-		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
-	}
-
+/*
+ * AlterUserSpec is the per-user spec for ALTER USER. It permits MySQL 8.0
+ * dual-password clauses (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)
+ * alongside an auth-option, with grammar-level enforcement of MySQL's
+ * restrictions:
+ *   - RETAIN attaches only to BY-form auth options (IDENTIFIED BY 'plain'
+ *     or IDENTIFIED WITH plugin BY 'plain'). The hashed AS-form and the
+ *     bare-plugin form are NOT accepted with RETAIN.
+ *   - DISCARD OLD PASSWORD is a standalone clause; no auth option may
+ *     accompany it on the same spec.
+ *   - RETAIN / DISCARD are NOT exposed via UserSpec for CREATE USER, so
+ *     CREATE USER continues to reject them at parse time (matching MySQL).
+ */
 AlterUserSpec:
-	Username AuthOption UserSpecDualPasswordOption
+	Username AuthOption
 	{
 		userSpec := &ast.UserSpec{
 			User: $1.(*auth.UserIdentity),
@@ -14520,10 +14506,26 @@ AlterUserSpec:
 		if $2 != nil {
 			userSpec.AuthOpt = $2.(*ast.AuthOption)
 		}
-		if $3 != nil {
-			userSpec.DualPasswordOption = $3.(*ast.PasswordOrLockOption)
-		}
 		$$ = userSpec
+	}
+|	Username AuthOptionWithPassword "RETAIN" "CURRENT" "PASSWORD"
+	{
+		$$ = &ast.UserSpec{
+			User:    $1.(*auth.UserIdentity),
+			AuthOpt: $2.(*ast.AuthOption),
+			DualPasswordOption: &ast.DualPasswordOption{
+				Type: ast.DualPasswordRetainCurrent,
+			},
+		}
+	}
+|	Username "DISCARD" "OLD" "PASSWORD"
+	{
+		$$ = &ast.UserSpec{
+			User: $1.(*auth.UserIdentity),
+			DualPasswordOption: &ast.DualPasswordOption{
+				Type: ast.DualPasswordDiscardOld,
+			},
+		}
 	}
 
 AlterUserSpecList:
@@ -14536,20 +14538,27 @@ AlterUserSpecList:
 		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
 	}
 
-UserSpecDualPasswordOption:
+/*
+ * AuthOptionWithPassword is the subset of AuthOption that carries an explicit
+ * cleartext password, i.e. the BY forms. Used by ALTER USER and SET PASSWORD
+ * to constrain RETAIN CURRENT PASSWORD attachment per MySQL 8.0 semantics
+ * (RETAIN is not valid with the WITH plugin AS '<hash>' form, the bare
+ * IDENTIFIED WITH plugin form, or with no auth-option at all).
+ */
+AuthOptionWithPassword:
+	"IDENTIFIED" "BY" AuthString
 	{
-		$$ = nil
-	}
-|	"RETAIN" "CURRENT" "PASSWORD"
-	{
-		$$ = &ast.PasswordOrLockOption{
-			Type: ast.RetainCurrentPassword,
+		$$ = &ast.AuthOption{
+			AuthString:   $3,
+			ByAuthString: true,
 		}
 	}
-|	"DISCARD" "OLD" "PASSWORD"
+|	"IDENTIFIED" "WITH" AuthPlugin "BY" AuthString
 	{
-		$$ = &ast.PasswordOrLockOption{
-			Type: ast.DiscardOldPassword,
+		$$ = &ast.AuthOption{
+			AuthPlugin:   $3,
+			AuthString:   $5,
+			ByAuthString: true,
 		}
 	}
 
