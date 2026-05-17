@@ -454,6 +454,15 @@ func (b *builtinIntAnyValueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	return b.args[0].EvalInt(ctx, row)
 }
 
+func (b *builtinIntAnyValueSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	if b.tp.GetType() != mysql.TypeBit {
+		return b.baseBuiltinFunc.evalString(ctx, row)
+	}
+	// ANY_VALUE preserves the TypeBit return field, but its primary evaluation signature is integer.
+	// String contexts still need the underlying BIT value in its binary string form.
+	return b.args[0].EvalString(ctx, row)
+}
+
 type builtinJSONAnyValueSig struct {
 	baseBuiltinFunc
 
