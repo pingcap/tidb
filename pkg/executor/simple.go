@@ -1658,11 +1658,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	// Both the named-user form (Specs) and the current-user form
 	// (CurrentDualPasswordOption on the USER() branch) are caught here.
 	if s.CurrentDualPasswordOption != nil {
-		return exeerrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
 	}
 	for _, spec := range s.Specs {
 		if spec.DualPasswordOption != nil {
-			return exeerrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
+			return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
 		}
 	}
 	disableSandBoxMode := false
@@ -2512,7 +2512,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	// See executeAlterUser: RETAIN CURRENT PASSWORD parsing lands in this PR;
 	// execution lands in pingcap/tidb#68393. Until then, fail closed.
 	if s.RetainCurrentPassword {
-		return exeerrors.ErrNotSupportedYet.GenWithStackByArgs("SET PASSWORD ... RETAIN CURRENT PASSWORD")
+		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SET PASSWORD ... RETAIN CURRENT PASSWORD")
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.GetSysSession()
