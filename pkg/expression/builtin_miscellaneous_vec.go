@@ -382,7 +382,6 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	for i := range n {
 		if buf.IsNull(i) {
 			continue
@@ -392,7 +391,7 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		// For IPv6, it should be byte slice with 16 bytes.
 		// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
 		ipAddress := buf.GetBytes(i)
-		if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
+		if !isIPv4CompatBinary(ipAddress) {
 			// Not an IPv6 address, return false
 			i64s[i] = 0
 		} else {

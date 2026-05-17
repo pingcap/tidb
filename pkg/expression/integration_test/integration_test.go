@@ -1218,6 +1218,10 @@ func TestVectorMiscFunctions(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 
+	result := tk.MustQuery("SELECT IS_IPV4_COMPAT(X'00000000000000000000000000000000')")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+	result.Check(testkit.Rows("0"))
+
 	tk.MustExec("CREATE TABLE a(pk INT PRIMARY KEY, c VECTOR(3), time INT);")
 	tk.MustExec("INSERT INTO a VALUES (1, '[1,2,3]', 5);")
 	tk.MustQuery(`SELECT * FROM a;`).Check(testkit.Rows("1 [1,2,3] 5"))

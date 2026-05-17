@@ -1014,17 +1014,28 @@ func (b *builtinIsIPv4CompatSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 		return 0, true, nil
 	}
 
-	ipAddress := []byte(val)
-	if len(ipAddress) != net.IPv6len {
-		// Not an IPv6 address, return false
-		return 0, false, nil
-	}
-
-	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-	if !bytes.HasPrefix(ipAddress, prefixCompat) {
+	if !isIPv4CompatBinary([]byte(val)) {
 		return 0, false, nil
 	}
 	return 1, false, nil
+}
+
+func isIPv4CompatBinary(ipAddress []byte) bool {
+	if len(ipAddress) != net.IPv6len {
+		return false
+	}
+	for _, b := range ipAddress[:net.IPv6len-net.IPv4len] {
+		if b != 0 {
+			return false
+		}
+	}
+	for _, b := range ipAddress[net.IPv6len-net.IPv4len:] {
+		if b != 0 {
+			return true
+		}
+	}
+	// MySQL treats the all-zero IPv6 unspecified address as not IPv4-compatible.
+	return false
 }
 
 type isIPv4MappedFunctionClass struct {
