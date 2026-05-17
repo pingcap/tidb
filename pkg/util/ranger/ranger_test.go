@@ -2510,6 +2510,41 @@ func TestIssue40997(t *testing.T) {
 	})
 }
 
+func TestRangeExtractionForComplexORFilter(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 bigint, c14 bigint, c25 bigint, index i12(c14, c25, c1))")
+
+	sctx := tk.Session()
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	sql := `select * from t1 use index(i12) where
+		c14 >= 1747663372 and c14 <= 1748705453 and
+		(c14 < 1748015999 or
+			(c14 = 1748604343 and c25 < 216627868) or
+			(c14 = 1748604343 and c25 = 473050276 and c1 > 154835914))`
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := make([]expression.Expression, len(selection.Conditions))
+	for i, cond := range selection.Conditions {
+		conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+	}
+	tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
+	cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
+
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
+	require.NoError(t, err)
+	require.Equal(t,
+		"[ge(test.t1.c14, 1747663372) le(test.t1.c14, 1748705453) or(lt(test.t1.c14, 1748015999), or(eq(test.t1.c14, 1748604343), eq(test.t1.c14, 1748604343))) or(lt(test.t1.c14, 1748015999), or(and(eq(test.t1.c14, 1748604343), lt(test.t1.c25, 216627868)), and(eq(test.t1.c14, 1748604343), and(eq(test.t1.c25, 473050276), gt(test.t1.c1, 154835914)))))]",
+		expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
+	require.Equal(t,
+		"[]",
+		expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
+	require.Equal(t,
+		"[[1747663372,1748015999) [1748604343 -inf,1748604343 216627868) (1748604343 473050276 154835914,1748604343 473050276 +inf]]",
+		fmt.Sprintf("%v", res.Ranges))
+}
+
 func TestIssue50051(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -250,6 +250,57 @@ func compareCNFItemRangeResult(curResult, bestResult *cnfItemRangeResult) (curIs
 	return curResult.sameLenPointRanges
 }
 
+// intersectCNFItemWithBaseRange narrows the base first-column CNF range with a composite CNF item range.
+// The original CNF item can still stay in remained conditions to preserve exact filter semantics.
+func intersectCNFItemWithBaseRange(
+	sctx *rangerctx.RangerContext,
+	baseRes *DetachRangeResult,
+	bestCNFItemRes *cnfItemRangeResult,
+	newConditions []expression.Expression,
+	originalConditions []expression.Expression,
+) (bool, *DetachRangeResult) {
+	if baseRes == nil || bestCNFItemRes == nil || bestCNFItemRes.rangeResult == nil {
+		return false, nil
+	}
+	if len(baseRes.Ranges) == 0 || len(bestCNFItemRes.rangeResult.Ranges) == 0 || bestCNFItemRes.maxColNum <= 1 {
+		return false, nil
+	}
+
+	intersectedRanges := bestCNFItemRes.rangeResult.Ranges.IntersectRanges(sctx.TypeCtx, baseRes.Ranges)
+	if intersectedRanges == nil {
+		return false, nil
+	}
+	if len(intersectedRanges) == 0 {
+		return true, &DetachRangeResult{}
+	}
+
+	baseRes.Ranges = intersectedRanges
+	baseRes.AccessConds = AppendConditionsIfNotExist(
+		sctx.ExprCtx.GetEvalCtx(),
+		baseRes.AccessConds,
+		bestCNFItemRes.rangeResult.AccessConds,
+	)
+	coveredConds := bestCNFItemRes.rangeResult.AccessConds
+	if bestCNFItemRes.offset >= 0 && bestCNFItemRes.offset < len(originalConditions) {
+		coveredConds = AppendConditionsIfNotExist(
+			sctx.ExprCtx.GetEvalCtx(),
+			coveredConds,
+			[]expression.Expression{originalConditions[bestCNFItemRes.offset]},
+		)
+	}
+	// The composite CNF item is now represented by the intersected range, so do
+	// not keep an equivalent copy in RemainedConds and add a redundant filter.
+	baseRes.RemainedConds = removeConditions(
+		sctx.ExprCtx.GetEvalCtx(),
+		baseRes.RemainedConds,
+		coveredConds,
+	)
+	remainedConds := removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, coveredConds)
+	remainedConds = removeConditions(sctx.ExprCtx.GetEvalCtx(), remainedConds, baseRes.AccessConds)
+	baseRes.RemainedConds = AppendConditionsIfNotExist(sctx.ExprCtx.GetEvalCtx(), baseRes.RemainedConds, remainedConds)
+	return true, baseRes
+}
+
 // mergeTwoCNFRanges merges two ranges results rangeResult and otherRangeResult.
 // The main objective of this function is to apply intersection between these two
 // ranges when possible. The overall logic is:
@@ -553,6 +604,10 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		// of all conjuncts. Even when we add support for intersection, it could be turned off by a flag or it could be
 		// incomplete due to a long list of conjuncts.
 		if bestCNFItemRes != nil && res != nil && len(res.Ranges) != 0 {
+			if ok, intersectedRes := intersectCNFItemWithBaseRange(d.sctx, res, bestCNFItemRes, newConditions, conditions); ok {
+				intersectedRes.ColumnValues = res.ColumnValues
+				return intersectedRes, nil
+			}
 			bestCNFIsSubset := bestCNFItemRes.rangeResult.Ranges.Subset(d.sctx.TypeCtx, res.Ranges)
 			pointRangeIsSubset := res.Ranges.Subset(d.sctx.TypeCtx, bestCNFItemRes.rangeResult.Ranges)
 			// Pick bestCNFIsSubset if it is more selective than point ranges(res).
