@@ -15,12 +15,14 @@
 package expression
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -439,4 +441,75 @@ func TestRefineArgsWithNullableColumn(t *testing.T) {
 	args := f.refineArgsByUnsignedFlag(ctx, []Expression{uint64Const, int64Column})
 	require.Equal(t, uint64Const, args[0])
 	require.Equal(t, int64Column, args[1])
+}
+
+func TestRefineComparedConstantBitField(t *testing.T) {
+	ctx := createContext(t)
+
+	tests := []struct {
+		name          string
+		flen          int
+		val           uint64
+		op            opcode.Op
+		isExceptional bool
+	}{
+		{
+			name:          "BIT(64) with ULLONG_MAX EQ",
+			flen:          64,
+			val:           math.MaxUint64,
+			op:            opcode.EQ,
+			isExceptional: false,
+		},
+		{
+			name:          "BIT(64) with MaxInt64+1 EQ",
+			flen:          64,
+			val:           math.MaxInt64 + 1,
+			op:            opcode.EQ,
+			isExceptional: false,
+		},
+		{
+			name:          "BIT(64) with small value EQ",
+			flen:          64,
+			val:           42,
+			op:            opcode.EQ,
+			isExceptional: false,
+		},
+		{
+			name:          "BIT(32) with max 32-bit value EQ",
+			flen:          32,
+			val:           math.MaxUint32,
+			op:            opcode.EQ,
+			isExceptional: false,
+		},
+		{
+			name:          "BIT(64) with ULLONG_MAX NullEQ",
+			flen:          64,
+			val:           math.MaxUint64,
+			op:            opcode.NullEQ,
+			isExceptional: false,
+		},
+		{
+			name:          "BIT(64) with ULLONG_MAX LT",
+			flen:          64,
+			val:           math.MaxUint64,
+			op:            opcode.LT,
+			isExceptional: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bitField := types.NewFieldType(mysql.TypeBit)
+			bitField.SetFlen(test.flen)
+
+			lit := types.NewBinaryLiteralFromUint(test.val, 8)
+			con := &Constant{
+				Value:   types.NewBinaryLiteralDatum(lit),
+				RetType: types.NewFieldType(mysql.TypeVarString),
+			}
+
+			_, isExceptional := RefineComparedConstant(ctx, *bitField, con, test.op)
+			require.Equal(t, test.isExceptional, isExceptional, "unexpected isExceptional for %s", test.name)
+		})
+	}
 }
