@@ -1939,14 +1939,20 @@ func (n *CreateUserStmt) SecureText() string {
 type AlterUserStmt struct {
 	stmtNode
 
-	IfExists                 bool
-	CurrentAuth              *AuthOption
-	Specs                    []*UserSpec
-	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
-	ResourceOptions          []*ResourceOption
-	PasswordOrLockOptions    []*PasswordOrLockOption
-	CommentOrAttributeOption *CommentOrAttributeOption
-	ResourceGroupNameOption  *ResourceGroupNameOption
+	IfExists    bool
+	CurrentAuth *AuthOption
+	// CurrentDualPasswordOption carries the dual-password clause attached to the
+	// `ALTER USER USER() ...` (current-user) form. The named-user form stores
+	// its dual-password clause on the per-UserSpec DualPasswordOption instead.
+	// The executor must propagate this into the synthetic UserSpec it builds
+	// from CurrentAuth so downstream code paths only need to inspect Specs.
+	CurrentDualPasswordOption *DualPasswordOption
+	Specs                     []*UserSpec
+	AuthTokenOrTLSOptions     []*AuthTokenOrTLSOption
+	ResourceOptions           []*ResourceOption
+	PasswordOrLockOptions     []*PasswordOrLockOption
+	CommentOrAttributeOption  *CommentOrAttributeOption
+	ResourceGroupNameOption   *ResourceGroupNameOption
 }
 
 // Restore implements Node interface.
@@ -1960,6 +1966,19 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("() ")
 		if err := n.CurrentAuth.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentAuth")
+		}
+		if n.CurrentDualPasswordOption != nil {
+			ctx.WritePlain(" ")
+			if err := n.CurrentDualPasswordOption.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentDualPasswordOption")
+			}
+		}
+	} else if n.CurrentDualPasswordOption != nil {
+		// Standalone DISCARD OLD PASSWORD on the current-user form (no IDENTIFIED BY).
+		ctx.WriteKeyWord("USER")
+		ctx.WritePlain("() ")
+		if err := n.CurrentDualPasswordOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentDualPasswordOption")
 		}
 	}
 	for i, v := range n.Specs {

@@ -1654,6 +1654,12 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	// matching executor / privilege / storage logic lands in a follow-up
 	// (pingcap/tidb#68393). Reject explicitly with a stable error so users
 	// see "not supported yet" instead of silent success.
+	//
+	// Both the named-user form (Specs) and the current-user form
+	// (CurrentDualPasswordOption on the USER() branch) are caught here.
+	if s.CurrentDualPasswordOption != nil {
+		return exeerrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
+	}
 	for _, spec := range s.Specs {
 		if spec.DualPasswordOption != nil {
 			return exeerrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")

@@ -14432,6 +14432,36 @@ AlterUserStmt:
 			CurrentAuth: auth,
 		}
 	}
+|	"ALTER" "USER" IfExists "USER" '(' ')' "IDENTIFIED" "BY" AuthString "RETAIN" "CURRENT" "PASSWORD"
+	{
+		// MySQL 8.0 user_func_auth_option allows RETAIN CURRENT PASSWORD on
+		// the current-user form. The parser accepts it here and tags the
+		// statement with CurrentDualPasswordOption; the executor (see
+		// executeAlterUser) propagates this to the synthetic UserSpec where
+		// the stub returns ER_NOT_SUPPORTED_YET until the behavior PR lands.
+		auth := &ast.AuthOption{
+			AuthString:   $9,
+			ByAuthString: true,
+		}
+		$$ = &ast.AlterUserStmt{
+			IfExists:    $3.(bool),
+			CurrentAuth: auth,
+			CurrentDualPasswordOption: &ast.DualPasswordOption{
+				Type: ast.DualPasswordRetainCurrent,
+			},
+		}
+	}
+|	"ALTER" "USER" IfExists "USER" '(' ')' "DISCARD" "OLD" "PASSWORD"
+	{
+		// MySQL 8.0 user_func_auth_option allows DISCARD OLD PASSWORD as a
+		// standalone clause on the current-user form (no IDENTIFIED BY).
+		$$ = &ast.AlterUserStmt{
+			IfExists: $3.(bool),
+			CurrentDualPasswordOption: &ast.DualPasswordOption{
+				Type: ast.DualPasswordDiscardOld,
+			},
+		}
+	}
 
 /* See https://dev.mysql.com/doc/refman/8.0/en/alter-instance.html */
 AlterInstanceStmt:

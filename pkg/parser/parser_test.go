@@ -5331,9 +5331,12 @@ func TestPrivilege(t *testing.T) {
 		{"CREATE USER 'u1'@'%' DISCARD OLD PASSWORD", false, ""},
 		// Negative: DISCARD coexisting with an auth-option is invalid.
 		{"ALTER USER 'u1'@'%' IDENTIFIED BY 'p1' DISCARD OLD PASSWORD", false, ""},
-		// Negative: ALTER USER USER() does not route through AlterUserSpec, so
-		// dual-password clauses are rejected at parse time.
-		{"ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", false, ""},
+		// MySQL 8.0 user_func_auth_option permits dual-password clauses on the
+		// current-user form. Parser accepts them; the executor stub returns
+		// ER_NOT_SUPPORTED_YET until the behavior PR lands.
+		{"ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", true, "ALTER USER USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD"},
+		{"ALTER USER USER() DISCARD OLD PASSWORD", true, "ALTER USER USER() DISCARD OLD PASSWORD"},
+		{"ALTER USER IF EXISTS USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD", true, "ALTER USER IF EXISTS USER() IDENTIFIED BY 'p1' RETAIN CURRENT PASSWORD"},
 		{`DROP USER 'root'@'localhost', 'root1'@'localhost'`, true, "DROP USER `root`@`localhost`, `root1`@`localhost`"},
 		{`DROP USER IF EXISTS 'root'@'localhost'`, true, "DROP USER IF EXISTS `root`@`localhost`"},
 		{`RENAME USER 'root'@'localhost' TO 'root'@'%'`, true, "RENAME USER `root`@`localhost` TO `root`@`%`"},

@@ -1013,6 +1013,15 @@ func TestDualPasswordParserOnlyStub(t *testing.T) {
 	// SET PASSWORD ... RETAIN CURRENT PASSWORD must fail with ER_NOT_SUPPORTED_YET.
 	tk.MustGetErrCode("SET PASSWORD FOR dpstub = 'new' RETAIN CURRENT PASSWORD", errno.ErrNotSupportedYet)
 
+	// Current-user form: MySQL 8.0 accepts dual-password on the USER() branch.
+	// The stub propagates CurrentDualPasswordOption to the synthetic UserSpec
+	// and also fails with ER_NOT_SUPPORTED_YET. Authenticate as dpstub first
+	// so USER() resolves to dpstub@%.
+	subTK := testkit.NewTestKit(t, store)
+	require.NoError(t, subTK.Session().Auth(&auth.UserIdentity{Username: "dpstub", Hostname: "%"}, sha1Password("old"), nil, nil))
+	subTK.MustGetErrCode("ALTER USER USER() IDENTIFIED BY 'p3' RETAIN CURRENT PASSWORD", errno.ErrNotSupportedYet)
+	subTK.MustGetErrCode("ALTER USER USER() DISCARD OLD PASSWORD", errno.ErrNotSupportedYet)
+
 	// A regular ALTER USER (no dual-password clause) must still succeed —
 	// the stub guard only triggers when DualPasswordOption is set.
 	tk.MustExec("ALTER USER dpstub IDENTIFIED BY 'plain'")
