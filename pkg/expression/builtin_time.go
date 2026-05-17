@@ -834,7 +834,13 @@ func (c *dateFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		return nil, err
 	}
 	// worst case: formatMask=%r%r%r...%r, each %r takes 11 characters
-	bf.tp.SetFlen((args[1].GetType(ctx.GetEvalCtx()).GetFlen() + 1) / 2 * 11)
+	formatFlen := args[1].GetType(ctx.GetEvalCtx()).GetFlen()
+	// A mutable or unknown-width format mask may be folded later with a wider parameter value.
+	if formatFlen == types.UnspecifiedLength || containMutableConst(ctx.GetEvalCtx(), []Expression{args[1]}) {
+		bf.tp.SetFlen(types.UnspecifiedLength)
+	} else {
+		bf.tp.SetFlen((formatFlen + 1) / 2 * 11)
+	}
 	sig := &builtinDateFormatSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DateFormatSig)
 	return sig, nil

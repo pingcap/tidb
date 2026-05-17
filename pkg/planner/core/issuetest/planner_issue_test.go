@@ -872,6 +872,29 @@ ORDER BY field1`).Check(testkit.Rows())
 		tk.MustExec("rollback")
 	}
 
+	// issue-65717-date-format-format-mask-param-marker
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t29(c0 decimal)")
+		tk.MustExec("replace into t29(c0) values (1)")
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+
+		tk.MustQuery("select t29.c0 from t29 where date_format(422123206, (binary (-81775)))").
+			Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustExec("set @c = -81775")
+		tk.MustExec("prepare stmt65717 from 'select t29.c0 from t29 where date_format(422123206, (binary (?)))'")
+		defer tk.MustExec("deallocate prepare stmt65717")
+		tk.MustQuery("execute stmt65717 using @c").Check(testkit.Rows("1"))
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustQuery("execute stmt65717 using @c").Check(testkit.Rows("1"))
+		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	})
+
 	// issue-67802-mutable-user-var-join-cond-should-not-become-inner-side-filter
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		resetTestDB(t, tk)
