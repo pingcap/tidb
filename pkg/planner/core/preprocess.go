@@ -686,13 +686,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				p.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(x.FnName.L)
 			} else {
 				_, isValueExpr1 := x.Args[0].(*driver.ValueExpr)
-				isValueExpr2 := false
-				switch x.Args[1].(type) {
-				case *driver.ValueExpr, *ast.UnaryOperationExpr:
-					isValueExpr2 = true
-				}
-
-				if !isValueExpr1 || !isValueExpr2 {
+				if !isValueExpr1 || !isValidNameConstValue(x.Args[1]) {
 					p.err = plannererrors.ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 				}
 			}
@@ -749,6 +743,29 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	}
 
 	return in, p.err == nil
+}
+
+func isValidNameConstValue(arg ast.ExprNode) bool {
+	switch v := arg.(type) {
+	case *driver.ValueExpr:
+		// MySQL rejects TRUE/FALSE pseudo-literals here even though the parser represents them as value expressions.
+		return !mysql.HasIsBooleanFlag(v.Type.GetFlag())
+	case *ast.UnaryOperationExpr:
+		return isValidNameConstUnaryValue(v)
+	case *ast.FuncCallExpr:
+		return v.FnName.L == ast.PI && len(v.Args) == 0
+	default:
+		return false
+	}
+}
+
+func isValidNameConstUnaryValue(arg *ast.UnaryOperationExpr) bool {
+	switch v := arg.V.(type) {
+	case *driver.ValueExpr:
+		return !mysql.HasIsBooleanFlag(v.Type.GetFlag())
+	default:
+		return false
+	}
 }
 
 func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
