@@ -257,7 +257,14 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	return expand, newGbyItems, nil
 }
 
-func deduplicateRollupGbyItems(gbyItems []expression.Expression, sourceFieldIndices []int) ([]expression.Expression, []int, []int) {
+func deduplicateRollupGbyItems(
+	gbyItems []expression.Expression,
+	sourceFieldIndices []int,
+) (
+	deduplicatedGbyItems []expression.Expression,
+	deduplicatedSourceFieldIndices []int,
+	rollupGbyItemsRefPos []int,
+) {
 	preservePositions := collectPreservedRollupGbyItemPositions(gbyItems, sourceFieldIndices)
 	if !slices.Contains(preservePositions, true) {
 		expandGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(gbyItems)
