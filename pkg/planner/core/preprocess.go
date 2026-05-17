@@ -762,10 +762,18 @@ func isValidNameConstValue(arg ast.ExprNode) bool {
 	}
 }
 
-// Unary plus/minus wraps literal values in the AST, but NAME_CONST should not accept
-// boolean pseudo-literals or more complex unary expressions through that wrapper.
+// Unary plus/minus may wrap parenthesized literal values in the AST, but NAME_CONST
+// should not accept boolean pseudo-literals or more complex unary expressions through that wrapper.
 func isValidNameConstUnaryValue(arg *ast.UnaryOperationExpr) bool {
-	switch v := arg.V.(type) {
+	expr := arg.V
+	for {
+		parenthesized, ok := expr.(*ast.ParenthesesExpr)
+		if !ok {
+			break
+		}
+		expr = parenthesized.Expr
+	}
+	switch v := expr.(type) {
 	case *driver.ValueExpr:
 		return !mysql.HasIsBooleanFlag(v.Type.GetFlag())
 	default:

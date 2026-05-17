@@ -1579,6 +1579,7 @@ func TestNameConstBuiltin(t *testing.T) {
 	tk.MustQuery("select /* issue:59459 */ name_const('pi', pi())").Check(testkit.Rows("3.141592653589793"))
 
 	tk.MustQuery("select name_const('neg', -1), name_const('negd', -1.0), name_const('str', 'x'), name_const('nil', null)").Check(testkit.Rows("-1 -1.0 x <nil>"))
+	tk.MustQuery("select name_const('paren_neg', -(1)) or 1").Check(testkit.Rows("1"))
 	tk.MustGetErrMsg("select name_const('expr', 1+1)", "[planner:1210]Incorrect arguments to NAME_CONST")
 	tk.MustGetErrMsg("select name_const('now', now())", "[planner:1210]Incorrect arguments to NAME_CONST")
 }
