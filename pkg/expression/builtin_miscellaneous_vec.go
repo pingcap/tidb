@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -367,7 +366,7 @@ func (b *builtinIntAnyValueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 }
 
 func (b *builtinIntAnyValueSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if b.tp.GetType() != mysql.TypeBit {
+	if !b.tp.Hybrid() {
 		return b.baseBuiltinFunc.vecEvalString(ctx, input, result)
 	}
 	return b.args[0].VecEvalString(ctx, input, result)

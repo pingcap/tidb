@@ -455,11 +455,11 @@ func (b *builtinIntAnyValueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 }
 
 func (b *builtinIntAnyValueSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	if b.tp.GetType() != mysql.TypeBit {
+	if !b.tp.Hybrid() {
 		return b.baseBuiltinFunc.evalString(ctx, row)
 	}
-	// ANY_VALUE preserves the TypeBit return field, but its primary evaluation signature is integer.
-	// String contexts still need the underlying BIT value in its binary string form.
+	// ANY_VALUE can preserve a hybrid return field while using the integer signature.
+	// String contexts still need the underlying hybrid value in its string form.
 	return b.args[0].EvalString(ctx, row)
 }
 
