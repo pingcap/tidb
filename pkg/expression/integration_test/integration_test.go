@@ -1580,6 +1580,7 @@ func TestNameConstBuiltin(t *testing.T) {
 
 	tk.MustQuery("select name_const('neg', -1), name_const('negd', -1.0), name_const('str', 'x'), name_const('nil', null)").Check(testkit.Rows("-1 -1.0 x <nil>"))
 	tk.MustGetErrMsg("select name_const('expr', 1+1)", "[planner:1210]Incorrect arguments to NAME_CONST")
+	tk.MustGetErrMsg("select name_const('now', now())", "[planner:1210]Incorrect arguments to NAME_CONST")
 }
 
 func TestInfoBuiltin(t *testing.T) {

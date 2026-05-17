@@ -745,6 +745,9 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, p.err == nil
 }
 
+// NAME_CONST follows MySQL's narrow constant contract: ordinary literals are accepted,
+// TRUE/FALSE pseudo-literals are rejected, unary literals are checked separately, and
+// zero-argument PI() is the only allowed function special case.
 func isValidNameConstValue(arg ast.ExprNode) bool {
 	switch v := arg.(type) {
 	case *driver.ValueExpr:
@@ -759,6 +762,8 @@ func isValidNameConstValue(arg ast.ExprNode) bool {
 	}
 }
 
+// Unary plus/minus wraps literal values in the AST, but NAME_CONST should not accept
+// boolean pseudo-literals or more complex unary expressions through that wrapper.
 func isValidNameConstUnaryValue(arg *ast.UnaryOperationExpr) bool {
 	switch v := arg.V.(type) {
 	case *driver.ValueExpr:
