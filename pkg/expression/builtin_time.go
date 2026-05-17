@@ -1467,6 +1467,7 @@ func (b *builtinWeekWithModeSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 		return 0, isNull, err
 	}
 	if isNull {
+		// MySQL treats a NULL week mode as mode 0 for WEEK(date, mode).
 		mode = 0
 	}
 

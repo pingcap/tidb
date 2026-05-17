@@ -1029,6 +1029,7 @@ func (b *builtinWeekWithModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		}
 		mode := int(ms[i])
 		if buf2.IsNull(i) {
+			// MySQL treats a NULL week mode as mode 0 for WEEK(date, mode).
 			mode = 0
 		}
 		week := date.Week(mode)
