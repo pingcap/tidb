@@ -295,6 +295,10 @@ func intersectCNFItemWithBaseRange(
 		baseRes.RemainedConds,
 		coveredConds,
 	)
+	// baseRes.RemainedConds must keep a DNF-equivalent exact-filter contract
+	// for conditions not covered by baseRes.AccessConds. After removing the
+	// covered composite item, append only the new conditions that are neither
+	// covered by that item nor already represented by the final access range.
 	remainedConds := removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, coveredConds)
 	remainedConds = removeConditions(sctx.ExprCtx.GetEvalCtx(), remainedConds, baseRes.AccessConds)
 	baseRes.RemainedConds = AppendConditionsIfNotExist(sctx.ExprCtx.GetEvalCtx(), baseRes.RemainedConds, remainedConds)
