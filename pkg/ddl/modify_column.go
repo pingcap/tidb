@@ -1906,6 +1906,9 @@ func GetModifiableColumnJob(
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
+	if involving := buildInvolvingSchemaInfoForMaterializedViewBaseModifyColumn(is, schema, t.Meta()); len(involving) > 0 {
+		job.InvolvingSchemaInfo = involving
+	}
 	err = initJobReorgMetaFromVariables(job, sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1918,6 +1921,62 @@ func GetModifiableColumnJob(
 		NewShardBits:  newAutoRandBits,
 	}
 	return NewJobWrapperWithArgs(job, args, false), nil
+}
+
+func buildInvolvingSchemaInfoForMaterializedViewBaseModifyColumn(
+	is infoschema.InfoSchema,
+	schema *model.DBInfo,
+	baseTblInfo *model.TableInfo,
+) []model.InvolvingSchemaInfo {
+	if is == nil || baseTblInfo == nil || schema == nil {
+		return nil
+	}
+	baseInfo := baseTblInfo.MaterializedViewBase
+	if baseInfo == nil || (baseInfo.MLogID == 0 && len(baseInfo.MViewIDs) == 0) {
+		return nil
+	}
+
+	involving := make([]model.InvolvingSchemaInfo, 0, 2+len(baseInfo.MViewIDs))
+	seen := make(map[string]struct{}, 2+len(baseInfo.MViewIDs))
+	addTable := func(dbName, tableName string) {
+		if dbName == "" || tableName == "" {
+			return
+		}
+		key := dbName + "\x00" + tableName
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		involving = append(involving, model.InvolvingSchemaInfo{Database: dbName, Table: tableName})
+	}
+
+	addTable(schema.Name.L, baseTblInfo.Name.L)
+
+	if baseInfo.MLogID != 0 {
+		mlogMeta, ok := is.TableInfoByID(baseInfo.MLogID)
+		if ok {
+			mlogDB, ok := infoschema.SchemaByTable(is, mlogMeta)
+			if ok {
+				addTable(mlogDB.Name.L, mlogMeta.Name.L)
+			}
+		}
+	}
+
+	for _, mvID := range baseInfo.MViewIDs {
+		if mvID == 0 {
+			continue
+		}
+		mvMeta, ok := is.TableInfoByID(mvID)
+		if !ok {
+			continue
+		}
+		mvDB, ok := infoschema.SchemaByTable(is, mvMeta)
+		if !ok {
+			continue
+		}
+		addTable(mvDB.Name.L, mvMeta.Name.L)
+	}
+	return involving
 }
 
 func validateMaterializedViewBaseModifyColumn(

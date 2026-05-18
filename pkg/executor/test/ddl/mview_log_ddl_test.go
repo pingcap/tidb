@@ -542,6 +542,13 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	err = tk.ExecToErr("rename table t_ddl_mv to t_ddl_mv2")
 	require.ErrorContains(t, err, "RENAME TABLE on base table with materialized view dependencies")
 
+	// Restricted MODIFY/CHANGE COLUMN should be allowed at ALTER TABLE entry, but still rejected on reorg/renaming.
+	tk.MustExec("alter table t_ddl_mv modify column b bigint")
+	err = tk.ExecToErr("alter table t_ddl_mv modify column b smallint")
+	require.ErrorContains(t, err, "only supports no-reorg compatible type changes")
+	err = tk.ExecToErr("alter table t_ddl_mv change column b b2 bigint")
+	require.ErrorContains(t, err, "does not support renaming")
+
 	err = tk.ExecToErr("alter table mv_ddl_mv add column x int")
 	require.ErrorContains(t, err, "ALTER TABLE on materialized view table")
 	err = tk.ExecToErr("drop table mv_ddl_mv")

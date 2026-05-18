@@ -739,6 +739,12 @@ func TestMLogSkipUntrackedColumns(t *testing.T) {
 	// mlog tracks (a, b); c is untracked.
 	tk.MustExec("create materialized view log on t (a, b)")
 
+	// Modifying an untracked column should not affect the mlog physical table.
+	showBefore := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	tk.MustExec("alter table t modify column c bigint")
+	showAfter := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Equal(t, showBefore, showAfter)
+
 	// Updating an untracked column should not produce any mlog entry.
 	tk.MustExec("update t set c=2000 where a=1")
 	tk.MustQuery("select * from `$mlog$t`").Check(testkit.Rows())
@@ -791,6 +797,58 @@ func TestMLogPartialColumnsMapping(t *testing.T) {
 	))
 }
 
+func TestMLogTrackedReferenceTypes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, s varchar(20), j json, d decimal(10,2), b blob)")
+	tk.MustExec("create materialized view log on t (s, j, d, b)")
+
+	tk.MustExec(`insert into t values (1, 'alpha', '{"k":"v1"}', 12.34, 'payload1')`)
+	tk.MustQuery(
+		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"alpha v1 12.34 7061796C6F616431 I 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec(`update t set s='beta', j='{"k":"v2"}', d=56.78, b='payload2' where id=1`)
+	tk.MustQuery(
+		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"alpha v1 12.34 7061796C6F616431 U -1",
+		"beta v2 56.78 7061796C6F616432 U 1",
+	))
+
+	// No-reorg modify on a tracked column should also update the mlog physical column type.
+	showBefore := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Contains(t, showBefore, "`s` varchar(20)")
+	tk.MustExec("alter table t modify column s varchar(40)")
+	showAfter := tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Contains(t, showAfter, "`s` varchar(40)")
+
+	// Existing mlog rows are still readable after the type change.
+	tk.MustQuery(
+		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"alpha v1 12.34 7061796C6F616431 U -1",
+		"beta v2 56.78 7061796C6F616432 U 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec(`update t set s='gamma' where id=1`)
+	tk.MustQuery(
+		"select s, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"beta U -1",
+		"gamma U 1",
+	))
+
+	// Reorg-required modify should be rejected for tracked columns on mlog-only base tables.
+	err := tk.ExecToErr("alter table t modify column s varchar(5)")
+	require.ErrorContains(t, err, "only supports no-reorg compatible type changes for tracked columns")
+}
 func TestMLogPrunedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

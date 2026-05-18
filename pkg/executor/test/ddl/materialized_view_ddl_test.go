@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -237,6 +239,60 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	// Aliased base table in WHERE should work.
 	tk.MustExec("create materialized view mv_alias (a, c) as select x.a, count(1) from t x where x.b > 0 group by x.a")
 	tk.MustQuery("select a, c from mv_alias order by a").Check(testkit.Rows("1 2", "2 1"))
+
+	// Base table with dependent MV: allow restricted no-reorg MODIFY/CHANGE COLUMN, update dependent MV/MLog metadata.
+	err = tk.ExecToErr("alter table t change column a a2 bigint")
+	require.ErrorContains(t, err, "does not support renaming")
+
+	tk.MustExec("alter table t modify column a bigint not null")
+
+	var historyJob *model.Job
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		jobs, err := ddl.GetLastNHistoryDDLJobs(m, 32)
+		if err != nil {
+			return err
+		}
+		for _, job := range jobs {
+			if job.Type == model.ActionModifyColumn && job.TableID == baseTable.Meta().ID {
+				historyJob = job
+				return nil
+			}
+		}
+		return nil
+	}))
+	require.NotNil(t, historyJob)
+	involving := historyJob.GetInvolvingSchemaInfo()
+	wantInvolving := map[string]struct{}{
+		"test\x00t":            {},
+		"test\x00$mlog$t":      {},
+		"test\x00mv":           {},
+		"test\x00mv_count_col": {},
+		"test\x00mv_upper_agg": {},
+		"test\x00mv_alias":     {},
+	}
+	gotInvolving := make(map[string]struct{}, len(involving))
+	for _, info := range involving {
+		gotInvolving[info.Database+"\x00"+info.Table] = struct{}{}
+	}
+	for k := range wantInvolving {
+		_, ok := gotInvolving[k]
+		require.True(t, ok, "missing involving schema info: %s", k)
+	}
+
+	showCreate = tk.MustQuery("show create table t").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table `$mlog$t`").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv_alias").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`a` bigint")
+	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
+
+	// Reorg-required or MV-dependent modifying should still be rejected.
+	err = tk.ExecToErr("alter table t modify column b bigint")
+	require.ErrorContains(t, err, "does not support modifying columns used in non-direct SELECT expressions")
 
 	// MV LOG must contain all referenced columns.
 	tk.MustExec("create table t_mlog_missing (a int not null, b int not null)")
