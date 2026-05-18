@@ -16,10 +16,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// SplitFileThresholdDefault is the minimum file size considered for per-batch
+// split accumulation. Small files are excluded to avoid excessive split/scatter
+// calls and to protect BTreeMap performance.
+const SplitFileThresholdDefault = 1024 * 1024 // 1 MB
+
 type LogSplitStrategy struct {
 	*split.BaseSplitStrategy
 	checkpointSkipMap        *LogFilesSkipMap
 	checkpointFileProgressFn func(uint64, uint64)
+	splitFileThreshold       uint64
 
 	lastMemUsageUpdate time.Time
 }
@@ -32,6 +38,7 @@ func NewLogSplitStrategy(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	rules map[int64]*restoreutils.RewriteRules,
 	updateStatsFn func(uint64, uint64),
+	splitFileThreshold uint64,
 ) (*LogSplitStrategy, error) {
 	downstreamIdset := make(map[int64]struct{})
 	for _, rule := range rules {
@@ -61,10 +68,14 @@ func NewLogSplitStrategy(
 		BaseSplitStrategy:        split.NewBaseSplitStrategy(rules),
 		checkpointSkipMap:        skipMap,
 		checkpointFileProgressFn: updateStatsFn,
+		splitFileThreshold:       splitFileThreshold,
 	}, nil
 }
 
 func (ls *LogSplitStrategy) Accumulate(file *LogDataFileInfo) {
+	if file.Length <= ls.splitFileThreshold {
+		return
+	}
 	ls.AccumulateCount += 1
 	splitHelper, exist := ls.TableSplitter[file.TableId]
 	if !exist {

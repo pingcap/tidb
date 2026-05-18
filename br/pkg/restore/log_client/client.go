@@ -1522,7 +1522,7 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, SplitFileThresholdDefault)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
