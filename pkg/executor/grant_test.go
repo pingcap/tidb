@@ -227,6 +227,23 @@ func TestGrantTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
 		tkUser.MustExec(`INSERT INTO test.issue68406_grant VALUES (1, 2)`)
 		tkUser.MustQuery(`SELECT * FROM test.issue68406_grant`).Check(testkit.Rows("1 2"))
 	})
+
+	t.Run("missing-table fallback", func(t *testing.T) {
+		tk := newCollationDisabledBootstrapTestKit(t)
+
+		tk.MustExec(`DROP USER IF EXISTS 'testTblCaseMissing'@'%'`)
+		tk.MustExec(`CREATE USER 'testTblCaseMissing'@'%'`)
+		tk.MustExec(`DROP TABLE IF EXISTS test.missing_tbl`)
+
+		tk.MustExec(`GRANT CREATE ON TEST.missing_tbl TO 'testTblCaseMissing'@'%'`)
+		tk.MustQuery(`SELECT DB, Table_name, Table_priv FROM mysql.tables_priv WHERE User='testTblCaseMissing' AND Host='%'`).
+			Check(testkit.Rows("test missing_tbl Create"))
+		tk.MustQuery(`SHOW GRANTS FOR 'testTblCaseMissing'@'%'`).
+			Check(testkit.Rows(
+				"GRANT USAGE ON *.* TO 'testTblCaseMissing'@'%'",
+				"GRANT CREATE ON `test`.`missing_tbl` TO 'testTblCaseMissing'@'%'",
+			))
+	})
 }
 
 func TestGrantColumnScope(t *testing.T) {

@@ -163,6 +163,21 @@ func TestRevokeTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
 		tk.MustQuery(`SELECT Table_name FROM mysql.tables_priv WHERE User='testTblCaseSchemaRevoke' AND Host='%' AND DB='test'`).
 			Check(testkit.Rows())
 	})
+
+	t.Run("missing-table fallback", func(t *testing.T) {
+		tk := newCollationDisabledBootstrapTestKit(t)
+
+		tk.MustExec(`DROP USER IF EXISTS 'testTblCaseMissingRevoke'@'%'`)
+		tk.MustExec(`CREATE USER 'testTblCaseMissingRevoke'@'%' IDENTIFIED BY '123'`)
+		tk.MustExec(`DROP TABLE IF EXISTS test.issue68406_missing_revoke`)
+		tk.MustExec(`CREATE TABLE test.issue68406_missing_revoke(c1 int)`)
+
+		tk.MustExec(`GRANT SELECT ON test.issue68406_missing_revoke TO 'testTblCaseMissingRevoke'@'%'`)
+		tk.MustExec(`DROP TABLE test.issue68406_missing_revoke`)
+		tk.MustExec(`REVOKE SELECT ON TEST.issue68406_missing_revoke FROM 'testTblCaseMissingRevoke'@'%'`)
+		tk.MustQuery(`SELECT Table_name FROM mysql.tables_priv WHERE User='testTblCaseMissingRevoke' AND Host='%' AND DB='test'`).
+			Check(testkit.Rows())
+	})
 }
 
 func TestRevokeColumnScope(t *testing.T) {

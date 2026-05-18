@@ -568,6 +568,8 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 // grantTableLevel manipulates mysql.tables_priv table.
 func (e *GrantExec) grantTableLevel(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
+	// Earlier validation may allow GRANT on a missing table, for example CREATE/ALL.
+	// Keep that behavior here: ignore ErrTableNotExists and continue with the input table name.
 	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return err
 	}
