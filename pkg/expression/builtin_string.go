@@ -3317,8 +3317,23 @@ func (c *eltFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 			types.SetBinChsClnFlag(bf.tp)
 		}
 		flen := argType.GetFlen()
+		if flen == 0 && argType.GetType() == mysql.TypeNull {
+			// NULL-typed branches have no width and must not make ELT's deferred
+			// result a zero-length string.
+			continue
+		}
+		if flen == 0 {
+			if con, ok := arg.(*Constant); ok {
+				val, isNull, err := con.EvalString(ctx.GetEvalCtx(), chunk.Row{})
+				if err == nil && !isNull {
+					// Casted constants can expose flen=0 before folding; derive
+					// the real width so truthiness conversion does not truncate it.
+					flen = utf8.RuneCountInString(val)
+				}
+			}
+		}
 		if flen == types.UnspecifiedLength || flen > bf.tp.GetFlen() {
-			bf.tp.SetFlen(argType.GetFlen())
+			bf.tp.SetFlen(flen)
 		}
 	}
 	sig := &builtinEltSig{bf}
