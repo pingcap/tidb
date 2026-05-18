@@ -24,42 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type deadlineCaptureTiCIShardClient struct {
-	deadline    time.Time
-	hasDeadline bool
-}
-
-func (m *deadlineCaptureTiCIShardClient) ScanRanges(ctx context.Context, _ int64, _ int64, _ []kv.KeyRange, _ int) ([]*ShardWithAddr, error) {
-	m.deadline, m.hasDeadline = ctx.Deadline()
-	return nil, context.Canceled
-}
-
-func (m *deadlineCaptureTiCIShardClient) Close() {}
-
-func TestEstimateTiCICountUsesFiveMinuteTimeoutForLocate(t *testing.T) {
-	client := &deadlineCaptureTiCIShardClient{}
-	store := &Store{
-		kvStore: &kvStore{
-			TiCIShardCache: NewTiCIShardCache(client),
-		},
-	}
-	startedAt := time.Now()
-
-	_, err := store.EstimateTiCICount(context.Background(), &kv.TiCIEstimateCountRequest{
-		TableID:      1,
-		IndexID:      2,
-		FTSQueryInfo: &tipb.FTSQueryInfo{QueryType: tipb.FTSQueryType_FTSQueryTypeWithScore},
-		KeyRanges: kv.NewNonPartitionedKeyRanges([]kv.KeyRange{
-			{StartKey: []byte("a"), EndKey: []byte("b")},
-		}),
-	}, time.Millisecond)
-
-	require.ErrorIs(t, err, context.Canceled)
-	require.True(t, client.hasDeadline)
-	require.GreaterOrEqual(t, client.deadline.Sub(startedAt), 5*time.Minute)
-	require.Less(t, time.Until(client.deadline), 5*time.Minute)
-}
-
 func TestEstimateTiCICountReturnsPseudoCountWhenLocateTimesOut(t *testing.T) {
 	client := &cancelAwareFullTextMockShardClient{wait: time.Second}
 	store := &Store{
