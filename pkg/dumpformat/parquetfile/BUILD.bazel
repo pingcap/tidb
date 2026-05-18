@@ -22,6 +22,7 @@ go_library(
         "//pkg/lightning/common",
         "//pkg/lightning/log",
         "//pkg/objstore",
+        "//pkg/objstore/compressedio",
         "//pkg/objstore/storeapi",
         "//pkg/parser/mysql",
         "//pkg/types",
@@ -61,6 +62,7 @@ go_test(
     deps = [
         "//pkg/dumpformat/testutils",
         "//pkg/objstore",
+        "//pkg/objstore/compressedio",
         "//pkg/objstore/objectio",
         "//pkg/parser/mysql",
         "//pkg/table",
