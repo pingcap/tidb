@@ -2524,6 +2524,13 @@ func TestRangeExtractionForComplexORFilter(t *testing.T) {
 		(c14 < 1748015999 or
 			(c14 = 1748604343 and c25 < 216627868) or
 			(c14 = 1748604343 and c25 = 473050276 and c1 > 154835914))`
+	planRows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	planText := fmt.Sprint(planRows)
+	require.Contains(t, planText, "IndexRangeScan")
+	require.Contains(t, planText,
+		"range:[1747663372,1748015999), [1748604343 -inf,1748604343 216627868), (1748604343 473050276 154835914,1748604343 473050276 +inf]")
+	require.NotContains(t, planText, "range:[1747663372,1748015999), [1748604343,1748604343]")
+
 	selection := getSelectionFromQuery(t, sctx, sql)
 	conds := make([]expression.Expression, len(selection.Conditions))
 	for i, cond := range selection.Conditions {
