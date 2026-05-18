@@ -65,6 +65,8 @@ github.com/0xPoe/client-go/v2 v2.0.0-20261113205045-001c9cea5db5 h1:iaxiul1av7G5
 github.com/0xPoe/client-go/v2 v2.0.0-20261113205045-001c9cea5db5/go.mod h1:KesxUO7XmjgnlFDJPIv9YfMOpV0DDEcteTYwR4IVMuo=
 github.com/0xPoe/kvproto v0.0.0-20261109130652-84d3e0d6afdd h1:6GfRDPC895aftX9vI28L+8X74Si30xWZWUAAHkwxgoI=
 github.com/0xPoe/kvproto v0.0.0-20261109130652-84d3e0d6afdd/go.mod h1:2Og3FFE7u0YvJv1ghy1VtATmYBxS7gSriI1IIULKF3U=
+github.com/0xPoe/tipb v0.0.0-20261109130917-3af26b370e33 h1:H3+z7nUEvp2EzBphSNBkkOVhlq4JqBXcPr2LpCGDuLM=
+github.com/0xPoe/tipb v0.0.0-20261109130917-3af26b370e33/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0 h1:fou+2+WFTib47nS+nz/ozhEBnvU96bKHy6LjRsY4E28=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0/go.mod h1:t76Ruy8AHvUAC8GfMWJMa0ElSbuIcO03NLpynfbgsPA=
 github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1 h1:Hk5QBxZQC1jb2Fwj6mpzme37xbCDdNTxU7O9eb5+LB4=
@@ -715,8 +717,6 @@ github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9 h1:qG9BSvlWFEE5otQGa
 github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
-github.com/pingcap/tipb v0.0.0-20260605083900-f9f651ef5fbc h1:wxolKysltFSu8gxWJBdUdWuTBoSuY3MjNIIZI5S9JLY=
-github.com/pingcap/tipb v0.0.0-20260605083900-f9f651ef5fbc/go.mod h1:A7mrd7WHBl1o63LE2bIBGEJMTNWXqhgmYiOvMLxozfs=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c/go.mod h1:7rwL4CYBLnjLxUqIJNnCWiEdr3bn6IUYi15bNlnbCCU=
 github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=
