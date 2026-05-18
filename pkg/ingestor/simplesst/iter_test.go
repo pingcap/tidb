@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ingestor/testutils"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -33,37 +34,6 @@ import (
 	"go.uber.org/atomic"
 	"golang.org/x/exp/rand"
 )
-
-type trackOpenMemStorage struct {
-	*objstore.MemStorage
-	opened      atomic.Int32
-	totalOpened atomic.Int32
-}
-
-func (s *trackOpenMemStorage) Open(ctx context.Context, path string, opt *storeapi.ReaderOption) (objectio.Reader, error) {
-	s.opened.Inc()
-	s.totalOpened.Inc()
-	r, err := s.MemStorage.Open(ctx, path, opt)
-	if err != nil {
-		s.opened.Dec()
-		return nil, err
-	}
-	return &trackOpenFileReader{r, s}, nil
-}
-
-type trackOpenFileReader struct {
-	objectio.Reader
-	store *trackOpenMemStorage
-}
-
-func (r *trackOpenFileReader) Close() error {
-	err := r.Reader.Close()
-	if err != nil {
-		return err
-	}
-	r.store.opened.Dec()
-	return nil
-}
 
 func TestMergeKVIter(t *testing.T) {
 	ctx := context.Background()
@@ -92,11 +62,11 @@ func TestMergeKVIter(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	trackStore := &trackOpenMemStorage{MemStorage: memStore}
+	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
 	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
 	require.NoError(t, err)
 	// close one empty file immediately in NewMergeKVIter
-	require.EqualValues(t, 2, trackStore.opened.Load())
+	require.EqualValues(t, 2, trackStore.Opened.Load())
 
 	got := make([][2]string, 0, 3)
 	require.True(t, iter.Next())
@@ -116,7 +86,7 @@ func TestMergeKVIter(t *testing.T) {
 	require.Equal(t, expected, got)
 	err = iter.Close()
 	require.NoError(t, err)
-	require.EqualValues(t, 0, trackStore.opened.Load())
+	require.EqualValues(t, 0, trackStore.Opened.Load())
 }
 
 func TestOneUpstream(t *testing.T) {
@@ -144,10 +114,10 @@ func TestOneUpstream(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	trackStore := &trackOpenMemStorage{MemStorage: memStore}
+	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
 	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
 	require.NoError(t, err)
-	require.EqualValues(t, 1, trackStore.opened.Load())
+	require.EqualValues(t, 1, trackStore.Opened.Load())
 
 	got := make([][2]string, 0, 3)
 	require.True(t, iter.Next())
@@ -167,7 +137,7 @@ func TestOneUpstream(t *testing.T) {
 	require.Equal(t, expected, got)
 	err = iter.Close()
 	require.NoError(t, err)
-	require.EqualValues(t, 0, trackStore.opened.Load())
+	require.EqualValues(t, 0, trackStore.Opened.Load())
 }
 
 func TestAllEmpty(t *testing.T) {
@@ -181,17 +151,17 @@ func TestAllEmpty(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	trackStore := &trackOpenMemStorage{MemStorage: memStore}
+	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
 	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5, false, 1)
 	require.NoError(t, err)
-	require.EqualValues(t, 0, trackStore.opened.Load())
+	require.EqualValues(t, 0, trackStore.Opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 
 	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5, false, 1)
 	require.NoError(t, err)
-	require.EqualValues(t, 0, trackStore.opened.Load())
+	require.EqualValues(t, 0, trackStore.Opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Close())
 }
@@ -226,10 +196,10 @@ func TestCorruptContent(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	trackStore := &trackOpenMemStorage{MemStorage: memStore}
+	trackStore := &testutils.TrackOpenMemStorage{MemStorage: memStore}
 	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5, true, 1)
 	require.NoError(t, err)
-	require.EqualValues(t, 2, trackStore.opened.Load())
+	require.EqualValues(t, 2, trackStore.Opened.Load())
 
 	got := make([][2]string, 0, 3)
 	require.True(t, iter.Next())
@@ -249,7 +219,7 @@ func TestCorruptContent(t *testing.T) {
 	require.Equal(t, expected, got)
 	err = iter.Close()
 	require.NoError(t, err)
-	require.EqualValues(t, 0, trackStore.opened.Load())
+	require.EqualValues(t, 0, trackStore.Opened.Load())
 }
 
 func TestMergeIterSwitchMode(t *testing.T) {
@@ -742,7 +712,7 @@ func TestCloseLimitSizeMergeIterHalfway(t *testing.T) {
 		filenames[i] = fmt.Sprintf("/test%06d", i)
 	}
 	ctx := context.Background()
-	store := &trackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+	store := &testutils.TrackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
 
 	for i, filename := range filenames {
 		writer, err := store.Create(ctx, filename, nil)
@@ -767,7 +737,7 @@ func TestCloseLimitSizeMergeIterHalfway(t *testing.T) {
 
 	err = iter.close()
 	require.NoError(t, err)
-	require.EqualValues(t, 0, store.opened.Load())
+	require.EqualValues(t, 0, store.Opened.Load())
 }
 
 func TestMergeKVIterPassWrongParam(t *testing.T) {

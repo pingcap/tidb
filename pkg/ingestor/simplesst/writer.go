@@ -48,8 +48,11 @@ import (
 )
 
 var (
-	MultiFileStatNum           = 500
-	DefaultPropSizeDist        = 1 * size.MB
+	// MultiFileStatNum is the number of files for each MultipleFilesStat.
+	MultiFileStatNum = 500
+	// DefaultPropSizeDist is the default distance of range size for each property, which is 1MB.
+	DefaultPropSizeDist = 1 * size.MB
+	// DefaultPropKeysDist is the default distance of range keys for each property, which is 8K keys.
 	DefaultPropKeysDist uint64 = 8 * 1024
 	// Tested on GCP 16c/32c node, 32~64 workers used up all network bandwidth for
 	// part-size in range 5~20M, but not all thread will upload at same time.
@@ -597,7 +600,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		case engineapi.OnDuplicateKeyRecord:
 			// we don't have a global view, so need to keep duplicates with duplicate
 			// count <= 2, so later we can find them.
-			w.kvLocations, dupLocs, dupCnt = RemoveDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
+			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyRemove:
 			w.kvLocations, _, dupCnt = RemoveDuplicates(w.kvLocations, w.getKeyByLoc, false)
@@ -868,6 +871,7 @@ func randPartitionedPrefix(prefix string, rnd *rand.Rand) string {
 	return filepath.Join(partitionPrefix, prefix)
 }
 
+// IsValidPartition check if the partition prefix is valid.
 func IsValidPartition(in []byte) bool {
 	if len(in) != 9 || in[0] != partitionHeaderChar {
 		return false

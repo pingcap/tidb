@@ -71,6 +71,7 @@ func (s *KeyValueStore) addEncodedData(data []byte) error {
 	return nil
 }
 
+// AddRawKV add a raw key-value pair to the KeyValueStore.
 func (s *KeyValueStore) AddRawKV(key, val []byte) error {
 	length := len(key) + len(val) + LengthBytes*2
 	buf := make([]byte, length)

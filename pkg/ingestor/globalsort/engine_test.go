@@ -16,7 +16,9 @@ package globalsort
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
+	"io"
 	"slices"
 	"testing"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	"github.com/pingcap/tidb/pkg/ingestor/testutils"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -213,7 +216,7 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 	})
 
 	ctx := context.Background()
-	store := &simplesst.trackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+	store := &testutils.TrackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
 	dataFiles, statFiles := prepareKVFiles(t, store, [][]simplesst.KVPair{{
 		{Key: []byte{1}, Value: []byte("first")},
 		{Key: []byte{2}, Value: []byte("second")},
@@ -259,11 +262,11 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 	// is emitted, the next failed read only opens the data file, so three opens
 	// prove the retry path has reached object storage.
 	require.Eventually(t, func() bool {
-		return store.totalOpened.Load() >= 3
+		return store.TotalOpened.Load() >= 3
 	}, 3*time.Second, 10*time.Millisecond)
 
 	require.Eventually(t, func() bool {
-		return store.opened.Load() == 0
+		return store.Opened.Load() == 0
 	}, 3*time.Second, 10*time.Millisecond, "failed memory acquire should close readers before waiting for downstream release")
 
 	first.Data.DecRef()
@@ -283,6 +286,22 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 
 	require.Equal(t, []simplesst.KVPair{{Key: []byte{2}, Value: []byte("second")}}, getAllDataFromDataAndRanges(t, &second))
 	require.NoError(t, <-errCh)
+}
+
+func readKVFile(t *testing.T, store storeapi.Storage, filename string) []simplesst.KVPair {
+	t.Helper()
+	reader, err := simplesst.NewKVReader(context.Background(), filename, store, 0, units.KiB)
+	require.NoError(t, err)
+	kvs := make([]simplesst.KVPair, 0)
+	for {
+		key, value, err := reader.NextKV()
+		if goerrors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		kvs = append(kvs, simplesst.KVPair{Key: slices.Clone(key), Value: slices.Clone(value)})
+	}
+	return kvs
 }
 
 func TestEngineOnDup(t *testing.T) {
@@ -399,7 +418,7 @@ func TestEngineOnDup(t *testing.T) {
 				} else {
 					require.EqualValues(t, 5, info.Count)
 					require.Len(t, info.Files, 1)
-					dupPairs := simplesst.readKVFile(t, store, info.Files[0])
+					dupPairs := readKVFile(t, store, info.Files[0])
 					require.EqualValues(t, []simplesst.KVPair{
 						{Key: []byte{1}, Value: []byte("aa")},
 						{Key: []byte{1}, Value: []byte("aa")},
@@ -438,7 +457,7 @@ func TestEngineOnDup(t *testing.T) {
 			} else {
 				require.EqualValues(t, 4, info.Count)
 				require.Len(t, info.Files, 1)
-				dupPairs := simplesst.readKVFile(t, store, info.Files[0])
+				dupPairs := readKVFile(t, store, info.Files[0])
 				require.EqualValues(t, []simplesst.KVPair{
 					{Key: []byte{1}, Value: []byte("aaa")},
 					{Key: []byte{1}, Value: []byte("aaa")},

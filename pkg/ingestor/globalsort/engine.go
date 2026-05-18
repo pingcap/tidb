@@ -381,7 +381,7 @@ func (e *Engine) loadRangeBatchData(
 			if err = e.lazyInitDupWriter(ctx); err != nil {
 				return err
 			}
-			deduplicatedKVs, dups, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, simplesst.GetPairKey, true)
+			deduplicatedKVs, dups, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, getPairKey, true)
 			e.recordedDupCnt += len(dups)
 			for _, p := range dups {
 				e.recordedDupSize += int64(len(p.Key) + len(p.Value))
@@ -390,7 +390,7 @@ func (e *Engine) loadRangeBatchData(
 				}
 			}
 		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
-			deduplicatedKVs, _, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, simplesst.GetPairKey, false)
+			deduplicatedKVs, _, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, getPairKey, false)
 		}
 		deduplicateDur = time.Since(start)
 	}
@@ -928,4 +928,8 @@ func (m *MemoryIngestData) release() {
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
+}
+
+func getPairKey(p *simplesst.KVPair) []byte {
+	return p.Key
 }

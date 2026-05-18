@@ -468,10 +468,6 @@ func (p *KVPair) len() int {
 	return len(p.Key) + len(p.Value)
 }
 
-func GetPairKey(p *KVPair) []byte {
-	return p.Key
-}
-
 type kvReaderProxy struct {
 	p string
 	r *KVReader
@@ -845,10 +841,13 @@ func (i *MergePropIter) Next() bool {
 	return ok
 }
 
+// GetBaseIterCloseReaderFlag get the flag that indicates whether the base iter
+// has closed reader after last Next() call.
 func (i *MergePropIter) GetBaseIterCloseReaderFlag() bool {
 	return *i.baseCloseReaderFlag
 }
 
+// CurrProperty return the current property.
 func (i *MergePropIter) CurrProperty() *RangeProperty {
 	return i.iter.curr
 }

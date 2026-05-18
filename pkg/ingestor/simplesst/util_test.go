@@ -182,7 +182,7 @@ func TestRemoveDuplicatesMoreThan2(t *testing.T) {
 			require.Equal(t, len(c.dups), len(c.in)-len(c.out))
 			tmpIn := make([]int, len(c.in))
 			copy(tmpIn, c.in)
-			out, dups, totalDup := RemoveDuplicatesMoreThanTwo(tmpIn, valGetter)
+			out, dups, totalDup := removeDuplicatesMoreThanTwo(tmpIn, valGetter)
 			require.EqualValues(t, c.out, out)
 			require.EqualValues(t, c.dups, dups)
 			require.Equal(t, c.total, totalDup)

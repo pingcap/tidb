@@ -87,7 +87,7 @@ func RemoveDuplicates[E any](in []E, keyGetter func(*E) []byte, recordRemoved bo
 // remove all duplicates inside sorted array in place if the duplicate count is
 // more than 2, and keep the first two duplicates.
 // we also return the total number of duplicates as the third return value.
-func RemoveDuplicatesMoreThanTwo[E any](in []E, keyGetter func(*E) []byte) (out []E, removed []E, totalDup int) {
+func removeDuplicatesMoreThanTwo[E any](in []E, keyGetter func(*E) []byte) (out []E, removed []E, totalDup int) {
 	return doRemoveDuplicates(in, keyGetter, 2, true)
 }
 
