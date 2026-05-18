@@ -242,6 +242,10 @@ const (
 	RestoreForNonPrepPlanCache
 
 	RestoreBracketAroundBetweenExpr
+	// RestoreSkipRedundantParentheses lets expression Restore omit parentheses
+	// that do not affect SQL semantics under the current restore context. It is
+	// intended for canonicalization paths such as binding normalization; default
+	// SQL restore keeps user-written parentheses for stable round-tripping.
 	RestoreSkipRedundantParentheses
 )
 

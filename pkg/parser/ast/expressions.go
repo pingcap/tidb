@@ -1071,6 +1071,9 @@ const (
 // children can drop parentheses only for associative operators. Subtraction,
 // division, integer division, and modulo are intentionally excluded because
 // a - (b - c) and a / (b / c) are not equivalent to their unparenthesized forms.
+// Examples: `(a + b) * c` must keep parentheses, while `a + (b * c)` can become
+// `a + b * c`; `(a BETWEEN b AND c) = d` must keep parentheses because BETWEEN
+// binds weaker than comparison operators.
 // See https://dev.mysql.com/doc/refman/8.4/en/operator-precedence.html.
 func canRestoreWithoutParentheses(ctx *format.RestoreCtx, expr ExprNode) bool {
 	if ctx.InUnaryOperation {

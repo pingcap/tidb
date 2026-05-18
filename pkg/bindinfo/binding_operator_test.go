@@ -33,6 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var benchmarkNormalizeStmtForBindingResult string
+
 func TestBindingCache(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -915,6 +917,40 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		}
 		require.Equalf(t, normalized, n, "sql: %s", sql)
 		require.Equalf(t, digest, d, "sql: %s", sql)
+	}
+}
+
+func BenchmarkNormalizeStmtForBinding(b *testing.B) {
+	testParser := parser.New()
+	benchmarks := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "simple",
+			sql:  "select * from t where a = 1 and b = 1",
+		},
+		{
+			name: "redundant_parentheses",
+			sql:  "select * from t where ((a = 1) and ((b = 1) or (b = 2))) and abs((c + 1)) = 3",
+		},
+		{
+			name: "precedence_sensitive",
+			sql:  "select * from t where ((a + b) * c = 1) and ((a between b and c) = 1) and ((x * y) ^ z = 1)",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		stmt, err := testParser.ParseOneStmt(bm.sql, "", "")
+		require.NoError(b, err)
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+			var normalized string
+			for b.Loop() {
+				normalized, _ = bindinfo.NormalizeStmtForBinding(stmt, "test", true)
+			}
+			benchmarkNormalizeStmtForBindingResult = normalized
+		})
 	}
 }
 
