@@ -2476,7 +2476,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Rate of paging read RPCs split by whether pre-charge was triggered (PredictedReadBytes hint > 0) or skipped (hint absent or zero).",
+               "description": "Rate of coprocessor read RPCs split by whether the EMA produced a paging pre-charge hint (> 0, contributing to paging_precharge_total) or returned 0 — i.e. EMA cold-start (contributing to paging_nonprecharge_total).",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -2569,7 +2569,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Bytes rate: predicted pre-charge basis, actual bytes read on pre-charged requests, and actual bytes read on requests that skipped pre-charge.",
+               "description": "Bytes rate over coprocessor reads: predicted pre-charge basis, actual bytes read on pre-charged requests, and actual bytes read on requests where the EMA produced no hint (cold-start).",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -2669,7 +2669,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Quantiles of signed prediction residual (actual - predicted read bytes) for pre-charged paging requests. Positive = under-prediction (extra debit), negative = over-prediction (refund).",
+               "description": "Quantiles of signed prediction residual (actual - predicted read bytes) for pre-charged coprocessor RPCs. Positive = under-prediction (extra debit), negative = over-prediction (refund).",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -2783,7 +2783,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "RU rate: pre-charged RU at BeforeKVRequest (base + ReadBytesCost * predicted) vs final settlement RU (base + CPU + ReadBytesCost * actual) for pre-charged paging requests.",
+               "description": "RU rate: pre-charged RU at BeforeKVRequest (base + ReadBytesCost * predicted) vs final settlement RU (base + CPU + ReadBytesCost * actual) for pre-charged coprocessor RPCs.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -2876,7 +2876,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "Quantiles of signed per-RPC RU delta (settlement_ru - precharge_ru) = CPUMsCost * kv_cpu_ms + ReadBytesCost * (actual - predicted). Negative = refund, positive = extra debit.",
+               "description": "Quantiles of signed per-RPC RU delta (settlement_ru - precharge_ru) = CPUMsCost * kv_cpu_ms + ReadBytesCost * (actual - predicted), for pre-charged coprocessor RPCs. Negative = refund, positive = extra debit.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
