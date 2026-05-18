@@ -798,7 +798,7 @@ func TestFileRouting(t *testing.T) {
 	s.touch(t, "d1/test1.sql")
 	s.touch(t, "d1/test2.001.sql")
 	s.touch(t, "d1/v1-table.sql")
-	s.touch(t, "d1/v1-view.sql")
+	s.writeFile(t, "d1/v1-view.sql", "CREATE VIEW v1 AS SELECT 1;")
 	s.touch(t, "d1/t1-schema-create.sql")
 	s.touch(t, "d2/schema.sql")
 	s.touch(t, "d2/abc-table.sql")
