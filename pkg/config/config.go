@@ -463,39 +463,7 @@ type KeyspaceObservabilityFieldPair struct {
 	Value string
 }
 
-var reservedKeyspaceObservabilityMetricLabels = map[string]struct{}{
-	"keyspace_id":    {},
-	"keyspace_name":  {},
-	"account_lock":   {},
-	"action":         {},
-	"address":        {},
-	"cf":             {},
-	"cipher":         {},
-	"copr_type":      {},
-	"cte_type":       {},
-	"db":             {},
-	"event":          {},
-	"has_lock":       {},
-	"hash":           {},
-	"in_txn":         {},
-	"internal":       {},
-	"module":         {},
-	"name":           {},
-	"phase":          {},
-	"reason":         {},
-	"resource_group": {},
-	"result":         {},
-	"scope":          {},
-	"sql_type":       {},
-	"stage":          {},
-	"status":         {},
-	"step":           {},
-	"store":          {},
-	"task":           {},
-	"txn_mode":       {},
-	"type":           {},
-	"version":        {},
-}
+const keyspaceObservabilityMetricLabelPrefix = "keyspace_meta_"
 
 var reservedKeyspaceObservabilitySlowLogFields = map[string]struct{}{
 	"backoff_detail":                {},
@@ -762,8 +730,8 @@ func (o KeyspaceObservability) Valid() error {
 				return fmt.Errorf("[keyspace-observability.fields.%d] invalid metric-label %q", i, field.MetricLabel)
 			}
 			key := strings.ToLower(field.MetricLabel)
-			if _, ok := reservedKeyspaceObservabilityMetricLabels[key]; ok {
-				return fmt.Errorf("[keyspace-observability.fields.%d] reserved metric-label %q", i, field.MetricLabel)
+			if !strings.HasPrefix(key, keyspaceObservabilityMetricLabelPrefix) {
+				return fmt.Errorf("[keyspace-observability.fields.%d] metric-label %q must start with %q", i, field.MetricLabel, keyspaceObservabilityMetricLabelPrefix)
 			}
 			if _, ok := metricLabels[key]; ok {
 				return fmt.Errorf("[keyspace-observability.fields.%d] duplicated metric-label %q", i, field.MetricLabel)
