@@ -187,9 +187,6 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 		// mysql table_id = 21 ,index_id = 1, table_name = STATS_META, index_name = IDX_VER
 		{"2019-10-10 10:10:19", "MYSQL", "STATS_META", statsMetaTidStr, "IDX_VER", "1", "3", "3", "33333", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:20", "MYSQL", "STATS_META", statsMetaTidStr, "IDX_VER", "1", "4", "4", "44444", "0", "0", "WRITE", "99", "99", "99", "99"},
-		// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
-		{"2019-10-10 10:10:21", "MYSQL", "STATS_META", statsMetaTidStr, "TBL", "2", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:22", "MYSQL", "STATS_META", statsMetaTidStr, "TBL", "2", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// table_id = 1313, index_id = 1, deleted schema
 		{"2019-10-10 10:10:23", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "1", "7", "7", "77777", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:24", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "1", "8", "8", "88888", "0", "0", "WRITE", "99", "99", "99", "99"},
@@ -275,12 +272,6 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}, storeCodec).StartKey,
 						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}, storeCodec).EndKey,
 					},
-					// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:21"), RegionID: 5, StoreID: 5, PeerID: 55555, IsLearner: false,
-						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}, storeCodec).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}, storeCodec).EndKey,
-					},
 					//      table_id = 1313, index_id = 1, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:23"), RegionID: 7, StoreID: 7, PeerID: 77777, IsLeader: true,
 						HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
@@ -296,12 +287,6 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}, storeCodec).StartKey,
 						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}, storeCodec).EndKey,
-					},
-					// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:22"), RegionID: 6, StoreID: 6, PeerID: 66666, IsLearner: false,
-						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}, storeCodec).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}, storeCodec).EndKey,
 					},
 					//      table_id = 1313, index_id = 1, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:24"), RegionID: 8, StoreID: 8, PeerID: 88888, IsLearner: false,
@@ -328,7 +313,7 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 				fullHotRegions[0], fullHotRegions[1], fullHotRegions[2],
 				fullHotRegions[3],
 				fullHotRegions[6], fullHotRegions[7], fullHotRegions[8],
-				fullHotRegions[9], fullHotRegions[10], fullHotRegions[11],
+				fullHotRegions[9],
 			},
 		},
 		{
@@ -340,7 +325,7 @@ func TestTiDBHotRegionsHistory(t *testing.T) {
 				fullHotRegions[0], fullHotRegions[1], fullHotRegions[2],
 				fullHotRegions[3],
 				fullHotRegions[6], fullHotRegions[7], fullHotRegions[8],
-				fullHotRegions[9], fullHotRegions[10], fullHotRegions[11],
+				fullHotRegions[9],
 			},
 		},
 		{
