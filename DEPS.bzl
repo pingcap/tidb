@@ -3598,8 +3598,19 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
+<<<<<<< HEAD
         sum = "h1:wxolKysltFSu8gxWJBdUdWuTBoSuY3MjNIIZI5S9JLY=",
         version = "v0.0.0-20260605083900-f9f651ef5fbc",
+=======
+        sha256 = "a47ec816b2fa1924a4db5c2270a3bfb70f7c5bcc790b59287b5e9680b71bfbcd",
+        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20260515142222-a4d204a193b4",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260515142222-a4d204a193b4.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260515142222-a4d204a193b4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260515142222-a4d204a193b4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260515142222-a4d204a193b4.zip",
+        ],
+>>>>>>> 2b9527b9e53 (*: bump tipb and refactor analyze sampling helpers (#68414))
     )
     go_repository(
         name = "com_github_pkg_browser",

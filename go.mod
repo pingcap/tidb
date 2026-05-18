@@ -103,9 +103,14 @@ require (
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
+<<<<<<< HEAD
 	github.com/pingcap/tipb v0.0.0-20260605083900-f9f651ef5fbc
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.23.2
+=======
+	github.com/pingcap/tipb v0.0.0-20260515142222-a4d204a193b4
+	github.com/prometheus/client_golang v1.23.0
+>>>>>>> 2b9527b9e53 (*: bump tipb and refactor analyze sampling helpers (#68414))
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.67.5
 	github.com/prometheus/prometheus v0.311.3
