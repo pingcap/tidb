@@ -315,7 +315,6 @@ INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}'
 SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 explain format = 'plan_tree' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
---replace_regex /\t\t$//
 explain format = 'plan_tree' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 drop table person;
 
@@ -333,7 +332,6 @@ INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}'
 SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 explain format = 'plan_tree' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
---replace_regex /\t\t$//
 explain format = 'plan_tree' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 drop table person;
 
