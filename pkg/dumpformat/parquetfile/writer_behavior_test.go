@@ -25,6 +25,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,8 +91,16 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 
 	defaultOptions := defaultWriterOptions()
 	defaultProps := parquet.NewWriterProperties(defaultOptions.writerProperties...)
-	require.Equal(t, defaultCompressionType, defaultProps.Compression())
-	require.EqualValues(t, defaultRowGroupMemoryLimitBytes, defaultOptions.rowGroupMemoryLimitBytes)
+	require.Equal(t, CompressionCodec(DefaultCompressionType), defaultProps.Compression())
+	require.EqualValues(t, DefaultRowGroupMemoryLimitBytes, defaultOptions.rowGroupMemoryLimitBytes)
+
+	t.Run("compression policy is centralized here", func(t *testing.T) {
+		require.Equal(t, compress.Codecs.Uncompressed, CompressionCodec(storage.NoCompression))
+		require.Equal(t, compress.Codecs.Gzip, CompressionCodec(storage.Gzip))
+		require.Equal(t, compress.Codecs.Snappy, CompressionCodec(storage.Snappy))
+		require.Equal(t, compress.Codecs.Zstd, CompressionCodec(storage.Zstd))
+		require.Equal(t, CompressionCodec(DefaultCompressionType), CompressionCodec(storage.CompressType(255)))
+	})
 
 	t.Run("flushes row group by accounted memory bytes", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -149,7 +158,7 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 		var buf bytes.Buffer
 		pw, err := NewParquetWriter(&buf, []*ColumnInfo{
 			{Name: "name", DatabaseTypeName: "VARCHAR"},
-		}, WithRowGroupMemoryLimit(defaultRowGroupMemoryLimitBytes))
+		}, WithRowGroupMemoryLimit(DefaultRowGroupMemoryLimitBytes))
 		require.NoError(t, err)
 
 		require.Equal(t, uint64(pw.totalWrittenBytes()), pw.EstimateFileSize())
