@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -405,7 +406,7 @@ func makeParquetFileRegion(
 		err        error
 	)
 	if !cfg.SkipParquetRowCount {
-		if numberRows, err = ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta); err != nil {
+		if numberRows, err = parquetfile.ReadParquetFileRowCountByFile(ctx, cfg.Store, dataFile.FileMeta.Path); err != nil {
 			return nil, nil, err
 		}
 	} else {

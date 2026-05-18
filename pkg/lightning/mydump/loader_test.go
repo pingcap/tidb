@@ -31,6 +31,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -1282,7 +1283,7 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	}
 	testutils.WriteParquetFile(s.sourceDir, fileName, pc, count)
 
-	rowCount, rowSize, err := md.SampleStatisticsFromParquet(ctx, fileName, store)
+	rowCount, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, fileName, store)
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)

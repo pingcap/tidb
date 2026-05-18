@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump
+package parquetfile
 
 import (
 	"context"
@@ -49,14 +49,14 @@ type readerAtSeekerCloser interface {
 	io.Closer
 }
 
-// parquetWrapper implements parquet.ReaderAtSeeker.
-type parquetWrapper struct {
+// readerWrapper implements parquet.ReaderAtSeeker.
+type readerWrapper struct {
 	storeapi.ReadSeekCloser
 	lastOff int64
 	skipBuf []byte
 }
 
-func (p *parquetWrapper) readNBytes(buf []byte) (int, error) {
+func (p *readerWrapper) readNBytes(buf []byte) (int, error) {
 	n, err := io.ReadFull(p, buf)
 	if err != nil && err != io.EOF {
 		return 0, errors.Trace(err)
@@ -68,7 +68,7 @@ func (p *parquetWrapper) readNBytes(buf []byte) (int, error) {
 }
 
 // ReadAt implement ReaderAt interface
-func (p *parquetWrapper) ReadAt(buf []byte, off int64) (int, error) {
+func (p *readerWrapper) ReadAt(buf []byte, off int64) (int, error) {
 	// We want to minimize the number of Seek call as much as possible,
 	// since the underlying reader may require reopening the file.
 	gap := int(off - p.lastOff)
@@ -93,22 +93,22 @@ func (p *parquetWrapper) ReadAt(buf []byte, off int64) (int, error) {
 }
 
 // Seek implement Seeker interface
-func (p *parquetWrapper) Seek(offset int64, whence int) (int64, error) {
+func (p *readerWrapper) Seek(offset int64, whence int) (int64, error) {
 	newOffset, err := p.ReadSeekCloser.Seek(offset, whence)
 	p.lastOff = newOffset
 	return newOffset, err
 }
 
-func (*parquetWrapper) Write(_ []byte) (n int, err error) {
+func (*readerWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func newParquetWrapper(
+func newReaderWrapper(
 	ctx context.Context,
 	store storeapi.Storage,
 	path string,
 	opts *storeapi.ReaderOption,
-) (*parquetWrapper, error) {
+) (*readerWrapper, error) {
 	reader, err := store.Open(ctx, path, opts)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -122,7 +122,7 @@ func newParquetWrapper(
 		lastOff = *opts.StartOffset
 	}
 
-	return &parquetWrapper{
+	return &readerWrapper{
 		ReadSeekCloser: reader,
 		lastOff:        lastOff,
 		skipBuf:        make([]byte, defaultBufSize),
@@ -211,17 +211,17 @@ func (r *inMemoryReaderBase) loadRowGroup(
 	return eg.Wait()
 }
 
-type inMemoryParquetWrapper struct {
+type inMemoryReaderWrapper struct {
 	base     *inMemoryReaderBase
 	fileSize int64
 	pos      int64
 }
 
-func (w *inMemoryParquetWrapper) ReadAt(p []byte, off int64) (int, error) {
+func (w *inMemoryReaderWrapper) ReadAt(p []byte, off int64) (int, error) {
 	return w.base.ReadAt(p, off)
 }
 
-func (w *inMemoryParquetWrapper) Seek(offset int64, whence int) (int64, error) {
+func (w *inMemoryReaderWrapper) Seek(offset int64, whence int) (int64, error) {
 	var base int64
 	switch whence {
 	case io.SeekStart:
@@ -241,7 +241,7 @@ func (w *inMemoryParquetWrapper) Seek(offset int64, whence int) (int64, error) {
 	return newPos, nil
 }
 
-func (*inMemoryParquetWrapper) Close() error {
+func (*inMemoryReaderWrapper) Close() error {
 	return nil
 }
 

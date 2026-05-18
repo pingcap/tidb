@@ -156,8 +156,8 @@ func WithRowGroupMemoryLimit(limitBytes int64) WriterOption {
 	}
 }
 
-// NewParquetWriter creates a Parquet writer for SQL result rows.
-func NewParquetWriter(w io.Writer, columns []*ColumnInfo, options ...WriterOption) (*ParquetWriter, error) {
+// NewWriter creates a Parquet writer for SQL result rows.
+func NewWriter(w io.Writer, columns []*ColumnInfo, options ...WriterOption) (*ParquetWriter, error) {
 	if w == nil {
 		return nil, fmt.Errorf("parquet output buffer is nil")
 	}

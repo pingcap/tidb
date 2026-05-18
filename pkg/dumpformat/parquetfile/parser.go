@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mydump
+package parquetfile
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -65,6 +66,12 @@ var (
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
 )
+
+// FileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
+type FileMeta struct {
+	allocator memory.Allocator
+	Loc       *time.Location
+}
 
 func estimateRowSize(row []types.Datum) int {
 	length := 0
@@ -304,8 +311,8 @@ func (rgp *rowGroupParser) Close() error {
 	return onceErr.Get()
 }
 
-// ParquetParser parses a parquet file for import
-type ParquetParser struct {
+// Parser parses a parquet file for import
+type Parser struct {
 	fileMeta *metadata.FileMetaData
 	colTypes []convertedType
 	colNames []string
@@ -329,12 +336,12 @@ type ParquetParser struct {
 	totalReadRows  int64 // total rows read
 	totalReadBytes int   // total bytes read, estimated by all the read datum.
 
-	lastRow Row
+	lastRow parsedef.Row
 	logger  log.Logger
 }
 
 // Init initializes the Parquet parser and allocate necessary buffers
-func (pp *ParquetParser) Init(loc *time.Location) error {
+func (pp *Parser) Init(loc *time.Location) error {
 	meta := pp.fileMeta
 	pp.totalRowGroup = meta.NumRowGroups()
 	if pp.totalRowGroup == 0 {
@@ -351,7 +358,7 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 	return pp.buildRowGroupParser()
 }
 
-func (pp *ParquetParser) buildRowGroupParser() (err error) {
+func (pp *Parser) buildRowGroupParser() (err error) {
 	builder, err := pp.getBuilder()
 	if err != nil {
 		return errors.Trace(err)
@@ -413,7 +420,7 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
+func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -426,7 +433,7 @@ func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), 
 		}
 		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
 		return func(c int) (readerAtSeekerCloser, error) {
-			return &inMemoryParquetWrapper{
+			return &inMemoryReaderWrapper{
 				base:     base,
 				pos:      ranges.columnStarts[c],
 				fileSize: pp.fileMeta.GetSourceFileSize(),
@@ -435,7 +442,7 @@ func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), 
 	}
 
 	return func(c int) (readerAtSeekerCloser, error) {
-		return newParquetWrapper(pp.ctx, pp.store, pp.path,
+		return newReaderWrapper(pp.ctx, pp.store, pp.path,
 			&storeapi.ReaderOption{
 				StartOffset: &ranges.columnStarts[c],
 				EndOffset:   &ranges.columnEnds[c],
@@ -443,7 +450,7 @@ func (pp *ParquetParser) getBuilder() (func(int) (readerAtSeekerCloser, error), 
 	}, nil
 }
 
-func (pp *ParquetParser) moveToNextRowGroup() error {
+func (pp *Parser) moveToNextRowGroup() error {
 	if pp.rowGroup != nil {
 		err := pp.rowGroup.Close()
 		pp.rowGroup = nil
@@ -463,7 +470,7 @@ func (pp *ParquetParser) moveToNextRowGroup() error {
 // readSingleRow read one row internally and store them in the row buffer.
 // The data read is shallow copied from the internal buffer of parquet reader,
 // so copy it if you need to keep the data before the next read.
-func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
+func (pp *Parser) readSingleRow(row []types.Datum) error {
 	// Move to next row group
 	if pp.rowGroup.isDone() {
 		if err := pp.moveToNextRowGroup(); err != nil {
@@ -481,14 +488,14 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 }
 
 // Pos returns the currently row number of the parquet file
-func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
+func (pp *Parser) Pos() (pos int64, rowID int64) {
 	return pp.totalReadRows, pp.lastRow.RowID
 }
 
 // SetPos implements the Parser interface.
 // For parquet file, this interface will read and discard the first `pos` rows,
 // and set the current row ID to `rowID`
-func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
+func (pp *Parser) SetPos(pos int64, rowID int64) error {
 	row := pp.rowPool.Get()
 	defer pp.rowPool.Put(row)
 
@@ -507,13 +514,13 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 
 // ScannedPos implements the Parser interface.
 // For parquet we use the size of all read datum to estimate the scanned position.
-func (pp *ParquetParser) ScannedPos() (int64, error) {
+func (pp *Parser) ScannedPos() (int64, error) {
 	return int64(pp.totalReadBytes), nil
 }
 
 // Close closes the parquet file of the parser.
 // It implements the Parser interface.
-func (pp *ParquetParser) Close() error {
+func (pp *Parser) Close() error {
 	defer func() {
 		if a, ok := pp.alloc.(interface{ Close() }); ok {
 			a.Close()
@@ -534,7 +541,7 @@ func (pp *ParquetParser) Close() error {
 // ReadRow reads a row in the parquet file by the parser.
 // The read data is shallow copied from the internal buffer of parquet reader,
 // so it's only valid before the next ReadRow call.
-func (pp *ParquetParser) ReadRow() error {
+func (pp *Parser) ReadRow() error {
 	pp.lastRow.RowID++
 	pp.lastRow.Length = 0
 
@@ -551,35 +558,35 @@ func (pp *ParquetParser) ReadRow() error {
 
 // LastRow gets the last row parsed by the parser.
 // It implements the Parser interface.
-func (pp *ParquetParser) LastRow() Row {
+func (pp *Parser) LastRow() parsedef.Row {
 	return pp.lastRow
 }
 
 // RecycleRow implements the Parser interface.
-func (pp *ParquetParser) RecycleRow(row Row) {
+func (pp *Parser) RecycleRow(row parsedef.Row) {
 	pp.rowPool.Put(row.Row)
 }
 
 // Columns returns the _lower-case_ column names corresponding to values in
 // the LastRow.
-func (pp *ParquetParser) Columns() []string {
+func (pp *Parser) Columns() []string {
 	return pp.colNames
 }
 
 // SetColumns set restored column names to parser
-func (*ParquetParser) SetColumns(_ []string) {
+func (*Parser) SetColumns(_ []string) {
 	// just do nothing
 }
 
 // SetLogger sets the logger used in the parser.
 // It implements the Parser interface.
-func (pp *ParquetParser) SetLogger(l log.Logger) {
+func (pp *Parser) SetLogger(l log.Logger) {
 	pp.logger = l
 }
 
 // SetRowID sets the rowID in a parquet file when we start a compressed file.
 // It implements the Parser interface.
-func (pp *ParquetParser) SetRowID(rowID int64) {
+func (pp *Parser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
@@ -587,9 +594,9 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
 	store storeapi.Storage,
-	fileMeta SourceFileMeta,
+	path string,
 ) (int64, error) {
-	r, err := store.Open(ctx, fileMeta.Path, nil)
+	r, err := store.Open(ctx, path, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -597,7 +604,7 @@ func ReadParquetFileRowCountByFile(
 		_ = r.Close()
 	}()
 
-	reader, err := file.NewParquetReader(&parquetWrapper{ReadSeekCloser: r})
+	reader, err := file.NewParquetReader(&readerWrapper{ReadSeekCloser: r})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -605,16 +612,16 @@ func ReadParquetFileRowCountByFile(
 	return reader.MetaData().NumRows, nil
 }
 
-// NewParquetParser generates a parquet parser.
-func NewParquetParser(
+// NewParser generates a parquet parser.
+func NewParser(
 	ctx context.Context,
 	store storeapi.Storage,
 	r storeapi.ReadSeekCloser,
 	path string,
-	meta ParquetFileMeta,
-) (*ParquetParser, error) {
+	meta FileMeta,
+) (*Parser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
-	wrapper := &parquetWrapper{ReadSeekCloser: r}
+	wrapper := &readerWrapper{ReadSeekCloser: r}
 	defer func() {
 		_ = r.Close()
 	}()
@@ -717,7 +724,7 @@ func NewParquetParser(
 		return make([]types.Datum, numColumns)
 	})
 
-	parser := &ParquetParser{
+	parser := &Parser{
 		fileMeta: fileMeta,
 		colTypes: colTypes,
 		colNames: colNames,
@@ -751,7 +758,7 @@ func SampleStatisticsFromParquet(
 		return 0, 0, err
 	}
 
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
+	parser, err := NewParser(ctx, store, r, path, FileMeta{})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -898,7 +905,7 @@ func EstimateParquetReaderMemory(
 	}
 
 	allocator := &trackingAllocator{}
-	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
+	parser, err := NewParser(ctx, store, r, path, FileMeta{allocator: allocator})
 	if err != nil {
 		_ = r.Close()
 		return 0, err

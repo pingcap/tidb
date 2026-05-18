@@ -26,6 +26,7 @@ go_library(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
+        "//pkg/dumpformat/parquetfile",
         "//pkg/dxf/framework/dxfmetric",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/metering",

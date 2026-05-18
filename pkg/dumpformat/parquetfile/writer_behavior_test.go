@@ -49,7 +49,7 @@ func (w *writeFailingCloser) Close() error {
 
 func TestParquetWriterCopiesByteRowsBeforeClose(t *testing.T) {
 	var buf bytes.Buffer
-	pw, err := NewParquetWriter(&buf, []*ColumnInfo{
+	pw, err := NewWriter(&buf, []*ColumnInfo{
 		{Name: "name", DatabaseTypeName: "VARCHAR"},
 	})
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestParquetWriterCopiesByteRowsBeforeClose(t *testing.T) {
 
 	t.Run("Close without buffered rows is safe", func(t *testing.T) {
 		var closeBuf bytes.Buffer
-		closePW, err := NewParquetWriter(&closeBuf, []*ColumnInfo{
+		closePW, err := NewWriter(&closeBuf, []*ColumnInfo{
 			{Name: "name", DatabaseTypeName: "VARCHAR"},
 		})
 		require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 
 	t.Run("flushes row group by accounted memory bytes", func(t *testing.T) {
 		var buf bytes.Buffer
-		pw, err := NewParquetWriter(&buf, []*ColumnInfo{
+		pw, err := NewWriter(&buf, []*ColumnInfo{
 			{Name: "name", DatabaseTypeName: "VARCHAR"},
 		}, WithRowGroupMemoryLimit(4))
 		require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 
 	t.Run("estimates written bytes plus buffered bytes", func(t *testing.T) {
 		var buf bytes.Buffer
-		pw, err := NewParquetWriter(&buf, []*ColumnInfo{
+		pw, err := NewWriter(&buf, []*ColumnInfo{
 			{Name: "name", DatabaseTypeName: "VARCHAR"},
 		}, WithRowGroupMemoryLimit(defaultRowGroupMemoryLimitBytes))
 		require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 
 	t.Run("Close still closes sink when flush fails", func(t *testing.T) {
 		sink := &writeFailingCloser{}
-		pw, err := NewParquetWriter(sink, []*ColumnInfo{
+		pw, err := NewWriter(sink, []*ColumnInfo{
 			{Name: "name", DatabaseTypeName: "VARCHAR"},
 		})
 		require.NoError(t, err)
@@ -183,7 +183,7 @@ func TestParquetWriterFlushesRowGroupByMemoryLimit(t *testing.T) {
 }
 
 func BenchmarkParquetWriterParseAndAppendRow(b *testing.B) {
-	pw, err := NewParquetWriter(io.Discard, []*ColumnInfo{
+	pw, err := NewWriter(io.Discard, []*ColumnInfo{
 		{Name: "id", DatabaseTypeName: "INT"},
 	})
 	if err != nil {
@@ -207,7 +207,7 @@ func BenchmarkParquetWriterParseAndAppendRow(b *testing.B) {
 
 func TestParquetWriterRecoversAfterRowConversionError(t *testing.T) {
 	var buf bytes.Buffer
-	pw, err := NewParquetWriter(&buf, []*ColumnInfo{
+	pw, err := NewWriter(&buf, []*ColumnInfo{
 		{Name: "id", DatabaseTypeName: "INT"},
 		{Name: "flag", DatabaseTypeName: "INT"},
 	})
@@ -227,7 +227,7 @@ func TestParquetWriterRecoversAfterRowConversionError(t *testing.T) {
 
 	t.Run("Write validates row length and required NULL", func(t *testing.T) {
 		var localBuf bytes.Buffer
-		localPW, err := NewParquetWriter(&localBuf, []*ColumnInfo{
+		localPW, err := NewWriter(&localBuf, []*ColumnInfo{
 			{Name: "id", DatabaseTypeName: "INT"},
 			{Name: "name", DatabaseTypeName: "VARCHAR"},
 		})
@@ -350,7 +350,7 @@ func TestParquetWriterRecoversAfterRowConversionError(t *testing.T) {
 
 	t.Run("writeColumnBatch returns error for unsupported concrete writer type", func(t *testing.T) {
 		var out bytes.Buffer
-		pw, err := NewParquetWriter(&out, []*ColumnInfo{
+		pw, err := NewWriter(&out, []*ColumnInfo{
 			{Name: "id", DatabaseTypeName: "INT"},
 		})
 		require.NoError(t, err)
