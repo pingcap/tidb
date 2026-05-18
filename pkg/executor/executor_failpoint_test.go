@@ -640,13 +640,15 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
 
 	// Test for stale read.
-	tk.MustExec("set @a=now(6);")
-	waitUntilReadTSSafe(tk, "@a")
-	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
-	require.Len(t, rows, 3)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @a=now(6);")
+		waitUntilReadTSSafe(tk, "@a")
+		tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+		rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
+		require.Len(t, rows, 3)
+		explain = fmt.Sprintf("%v", rows[0])
+		require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	}
 
 	// Test for tikv_client_read_timeout session variable.
 	tk.MustExec("set @@tikv_client_read_timeout=1;")
@@ -669,13 +671,15 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
 
 	// Test for stale read.
-	tk.MustExec("set @a=now(6);")
-	waitUntilReadTSSafe(tk, "@a")
-	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-	rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
-	require.Len(t, rows, 3)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @a=now(6);")
+		waitUntilReadTSSafe(tk, "@a")
+		tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+		rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
+		require.Len(t, rows, 3)
+		explain = fmt.Sprintf("%v", rows[0])
+		require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	}
 }
 
 func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
