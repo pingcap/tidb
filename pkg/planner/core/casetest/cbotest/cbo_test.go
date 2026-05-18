@@ -17,6 +17,7 @@ package cbotest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -146,6 +147,58 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			tk.MustQuery(tt).Check(testkit.Rows(output61792[i].Plan...))
 			tk.MustQuery("show warnings").Check(testkit.Rows(output61792[i].Warn...))
 		}
+
+		// repro_hash_join_issue
+		tk.MustExec("create database if not exists repro_hash_join_issue")
+		tk.MustExec("use repro_hash_join_issue")
+		tk.MustExec("CREATE TABLE t_small (\n" +
+			"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+			"  id1 VARCHAR(10) NOT NULL,\n" +
+			"  id2 TINYINT NOT NULL,\n" +
+			"  id3 BIGINT NOT NULL,\n" +
+			"  id4 BIGINT NOT NULL,\n" +
+			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
+			")")
+		tk.MustExec("CREATE TABLE t_big (\n" +
+			"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+			"  id1 BIGINT NOT NULL,\n" +
+			"  id2 INT NOT NULL,\n" +
+			"  id3 TINYINT NOT NULL,\n" +
+			"  id4 INT NOT NULL,\n" +
+			"  id5 BIGINT NOT NULL,\n" +
+			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+			"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
+			")")
+		tk.MustExec("insert into t_small(id1, id2, id3, id4) values " + buildReproHashJoinIssueSmallRows(1000))
+		tk.MustExec("insert into t_big(id1, id2, id3, id4, id5) values " + buildReproHashJoinIssueBigRows(1000))
+		tk.MustExec("analyze table t_small, t_big all columns")
+		tk.MustExec("set @@session.tidb_cost_model_version = 2")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 100")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = 0.1")
+
+		var inputReproHashJoinIssue []string
+		var outputReproHashJoinIssue []struct {
+			SQL   string
+			Ratio float64
+			Plan  []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestReproHashJoinIssue", t, &inputReproHashJoinIssue, &outputReproHashJoinIssue, cascades, caller)
+		require.Len(t, inputReproHashJoinIssue, 2)
+		ratios := []float64{0, 0.5}
+		for i, tt := range inputReproHashJoinIssue {
+			ratio := ratios[i]
+			tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_index_join_max_scan_rows_ratio = %v", ratio))
+			plan := tk.MustQuery(tt)
+			testdata.OnRecord(func() {
+				outputReproHashJoinIssue[i].SQL = tt
+				outputReproHashJoinIssue[i].Ratio = ratio
+				outputReproHashJoinIssue[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(outputReproHashJoinIssue[i].Plan...))
+		}
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio = 0")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = default")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = default")
 
 		// issue:59563
 		tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
@@ -747,4 +800,22 @@ func TestIndexJoinPreferIndexCoversMoreJoinKeyCols(t *testing.T) {
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
+}
+
+func buildReproHashJoinIssueSmallRows(n int) string {
+	vals := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		// Keep predicates on t_small selective while preserving >=100 build rows.
+		vals = append(vals, fmt.Sprintf("('10001', 0, 123456789, %d)", i%10))
+	}
+	return strings.Join(vals, ",")
+}
+
+func buildReproHashJoinIssueBigRows(n int) string {
+	vals := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		// Low cardinality on id1 makes each outer-row probe hit many inner rows.
+		vals = append(vals, fmt.Sprintf("(%d, 10001, 0, 20991231, %d)", i%10, i))
+	}
+	return strings.Join(vals, ",")
 }

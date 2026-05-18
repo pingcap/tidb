@@ -421,20 +421,33 @@ func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
 }
 
 func (n *RefreshStatsStmt) Dedup() {
-	if len(n.RefreshObjects) == 0 {
-		return
+	n.RefreshObjects = dedupStatsObjects(n.RefreshObjects)
+}
+
+// DedupFlushObjects removes duplicate or shadowed scoped objects for FLUSH STATS_DELTA.
+func (n *FlushStmt) DedupFlushObjects() {
+	n.FlushObjects = dedupStatsObjects(n.FlushObjects)
+}
+
+func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
+	if len(objects) == 0 {
+		return objects
+	}
+
+	type tableKey struct {
+		dbName    string
+		tableName string
 	}
 
 	dbSeen := make(map[string]struct{})
-	tableSeen := make(map[string]struct{})
-	result := make([]*StatsObject, 0, len(n.RefreshObjects))
+	tableSeen := make(map[tableKey]struct{})
+	result := make([]*StatsObject, 0, len(objects))
 
-	for _, obj := range n.RefreshObjects {
+	for _, obj := range objects {
 		switch obj.StatsObjectScope {
 		// Global scope supersedes everything else. Keep the first global target only.
 		case StatsObjectScopeGlobal:
-			n.RefreshObjects = []*StatsObject{obj}
-			return
+			return []*StatsObject{obj}
 		case StatsObjectScopeDatabase:
 			dbKey := obj.DBName.L
 			if _, exists := dbSeen[dbKey]; exists {
@@ -448,7 +461,7 @@ func (n *RefreshStatsStmt) Dedup() {
 				if existing.StatsObjectScope == StatsObjectScopeTable {
 					existingDBKey := existing.DBName.L
 					if existingDBKey != "" && existingDBKey == dbKey {
-						tblKey := existingDBKey + "." + existing.TableName.L
+						tblKey := tableKey{dbName: existingDBKey, tableName: existing.TableName.L}
 						delete(tableSeen, tblKey)
 						continue
 					}
@@ -456,7 +469,6 @@ func (n *RefreshStatsStmt) Dedup() {
 				filtered = append(filtered, existing)
 			}
 			result = append(filtered, obj)
-
 		case StatsObjectScopeTable:
 			dbKey := obj.DBName.L
 			if dbKey != "" {
@@ -464,7 +476,7 @@ func (n *RefreshStatsStmt) Dedup() {
 					continue
 				}
 			}
-			tblKey := dbKey + "." + obj.TableName.L
+			tblKey := tableKey{dbName: dbKey, tableName: obj.TableName.L}
 			if _, exists := tableSeen[tblKey]; exists {
 				continue
 			}
@@ -473,7 +485,7 @@ func (n *RefreshStatsStmt) Dedup() {
 		}
 	}
 
-	n.RefreshObjects = result
+	return result
 }
 
 type StatsObjectScopeType int

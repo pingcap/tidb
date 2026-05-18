@@ -396,7 +396,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				groupByColsOutputCols.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x, true)
+			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -667,6 +667,18 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 	return condsToPush, ret
 }
 
+func (la *LogicalAggregation) hasOnlyConstGroupByItems() bool {
+	if len(la.GroupByItems) == 0 {
+		return true
+	}
+	for _, item := range la.GroupByItems {
+		if item.ConstLevel() < expression.ConstOnlyInContext {
+			return false
+		}
+	}
+	return true
+}
+
 // getAggFuncsColsForConstResult gets aggregate output columns whose values always match their
 // single row-independent argument for every non-empty group.
 func (la *LogicalAggregation) getAggFuncsColsForConstResult() (aggFuncsCols []*expression.Column, aggFuncsExprs []expression.Expression) {
@@ -702,6 +714,11 @@ func aggFuncResultMatchesArgForNonEmptyGroup(aggFunc *aggregation.AggFuncDesc) b
 
 // getAggFuncsColsForFirstRow gets the columns that are used by first_row agg functions.
 func (la *LogicalAggregation) getAggFuncsColsForFirstRow() (aggFuncsCols []*expression.Column) {
+	// Constant-group aggregations (for example GROUP BY NULL) choose an arbitrary input row for
+	// firstrow() outputs, so pushing HAVING predicates on those outputs back to base rows is unsound.
+	if la.hasOnlyConstGroupByItems() {
+		return nil
+	}
 	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
 	for idx, col := range la.Schema().Columns {
 		aggFunc := la.AggFuncs[idx]

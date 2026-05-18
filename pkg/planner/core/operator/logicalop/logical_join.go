@@ -98,6 +98,11 @@ type LogicalJoin struct {
 	// It is built once during join construction and then treated as immutable.
 	RedundantColsToOutputIdx map[int64]int
 
+	// PreferCorrelate is set to true when this SemiJoin originated from a non-correlated
+	// IN subquery during the correlate alternative round, indicating that the CorrelateSolver
+	// should convert it back to a correlated Apply with index lookups.
+	PreferCorrelate bool
+
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
 
@@ -319,7 +324,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		if expression.ExprFromSchema(expr, outerTable.Schema()) {
 			continue
 		}
-		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
+		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
 		if isOk {
 			canBeSimplified = true
 			break
@@ -727,7 +732,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
 		canBeSimplified := false
 		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
+			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
 			if isOk {
 				canBeSimplified = true
 				break
@@ -1471,13 +1476,13 @@ func (p *LogicalJoin) ExtractOnCondition(
 				}
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
-						if util.IsNullRejected(ctx, leftSchema, expr, true) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
+						if util.IsNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
-						if util.IsNullRejected(ctx, rightSchema, expr, true) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
+						if util.IsNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
@@ -1498,13 +1503,15 @@ func (p *LogicalJoin) ExtractOnCondition(
 			// The IsMutableEffectsExpr check is primarily designed to prevent mutable expressions
 			// like rand() > 0.5 from being pushed down; instead, such expressions should remain
 			// in other conditions.
-			// Checking len(columns) == 0 first is to let filter like rand() > tbl.col
-			// to be able pushdown as left or right condition
 			if expression.IsMutableEffectsExpr(expr) {
 				otherCond = append(otherCond, expr)
 				continue
 			}
 			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, deriveLeft || deriveRight)
+			continue
+		}
+		if expression.IsMutableEffectsExpr(expr) {
+			otherCond = append(otherCond, expr)
 			continue
 		}
 		allFromLeft, allFromRight := true, true
@@ -1797,6 +1804,7 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
+				keepAsOtherCond := expression.IsMutableEffectsExpr(lKey) || expression.IsMutableEffectsExpr(rKey)
 				lCastCol, lCasted := extractCastSourceColumn(lKey)
 				rCastCol, rCasted := extractCastSourceColumn(rKey)
 				if lCasted && rCasted {
@@ -1843,6 +1851,10 @@ func (p *LogicalJoin) updateEQCond() {
 					}
 					eqCond = expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 					eqSf = eqCond.(*expression.ScalarFunction)
+				}
+				if keepAsOtherCond {
+					p.OtherConditions = append(p.OtherConditions, eqSf)
+					continue
 				}
 				if isNA {
 					p.NAEQConditions = append(p.NAEQConditions, eqSf)
@@ -2169,6 +2181,9 @@ func DeriveOtherConditions(
 	ctx := p.SCtx()
 	exprCtx := ctx.GetExprCtx()
 	for _, expr := range p.OtherConditions {
+		if expression.IsMutableEffectsExpr(expr) {
+			continue
+		}
 		if deriveLeft {
 			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(exprCtx, expr, leftSchema)
 			if leftRelaxedCond != nil {
@@ -2219,7 +2234,7 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if util.IsNullRejected(ctx, schema, expr, true) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
+	if util.IsNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
 	}
 	return nil

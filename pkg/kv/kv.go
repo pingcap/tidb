@@ -583,6 +583,10 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
+	// CoprRequestRateLimit, if not nil, is used as the shared in-flight request
+	// limiter for all cop iterators created from this request. The token lifecycle
+	// is tied to request send/response receive instead of result consumption.
+	CoprRequestRateLimit *util.RateLimit
 	// IsolationLevel is the isolation level, default is SI.
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
@@ -648,6 +652,13 @@ type Request struct {
 	TiKVClientReadTimeout uint64
 	// MaxExecutionTime is the timeout of the whole query execution
 	MaxExecutionTime uint64
+	// MaxKeysRead is the global limit on storage engine keys examined across all
+	// coprocessor tasks for this request (0 = unlimited).
+	MaxKeysRead uint64
+	// MaxKeysReadCounter, when non-nil, is the shared atomic accumulator used by
+	// copIterator to enforce a statement-wide max_keys_read budget across
+	// multiple coprocessor iterators belonging to the same statement.
+	MaxKeysReadCounter *atomic.Uint64
 
 	RunawayChecker resourcegroup.RunawayChecker
 

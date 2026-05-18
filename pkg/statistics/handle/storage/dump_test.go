@@ -152,11 +152,16 @@ func TestDumpGlobalStats(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2)")
 	tk.MustExec("analyze table t")
 
-	// global-stats is not existed
+	// Static partition analyze should not generate global histograms. The
+	// pre-analyze stats-delta flush may still create a global stats_meta entry.
 	stats := getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
-	require.Nil(t, stats.Partitions[statsutil.TiDBGlobalStats])
+	globalStats := stats.Partitions[statsutil.TiDBGlobalStats]
+	if globalStats != nil {
+		require.Empty(t, globalStats.Columns)
+		require.Empty(t, globalStats.Indices)
+	}
 
 	// global-stats is existed
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -164,7 +169,10 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats = getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
-	require.NotNil(t, stats.Partitions[statsutil.TiDBGlobalStats])
+	globalStats = stats.Partitions[statsutil.TiDBGlobalStats]
+	require.NotNil(t, globalStats)
+	require.NotEmpty(t, globalStats.Columns)
+	require.NotEmpty(t, globalStats.Indices)
 }
 
 func TestLoadGlobalStats(t *testing.T) {

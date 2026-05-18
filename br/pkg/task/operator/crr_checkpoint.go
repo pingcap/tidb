@@ -82,7 +82,11 @@ func NewCRRCheckpointService(
 	}
 
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCli)
-	syncChecker, err := buildObjectSyncChecker(upstreamStorage, downstreamStorage)
+	syncChecker, err := buildObjectSyncChecker(
+		upstreamStorage,
+		downstreamStorage,
+		cfg.CheckSyncedFromDownstreamStorage,
+	)
 	if err != nil {
 		if downstreamStorage != nil {
 			downstreamStorage.Close()
@@ -92,7 +96,11 @@ func NewCRRCheckpointService(
 		mgr.Close()
 		return nil, nil, err
 	}
-	stateStore, err := buildResumeStateStore(upstreamStorage, cfg.CRRConfig.StateStorageSubDir)
+	resumeStateStorage := upstreamStorage
+	if downstreamStorage != nil {
+		resumeStateStorage = downstreamStorage
+	}
+	stateStore, err := buildResumeStateStore(resumeStateStorage, cfg.CRRConfig.StateStorageSubDir)
 	if err != nil {
 		if downstreamStorage != nil {
 			downstreamStorage.Close()
@@ -143,15 +151,16 @@ func NewCRRCheckpointService(
 func buildObjectSyncChecker(
 	upstreamStorage storeapi.Storage,
 	downstreamStorage storeapi.Storage,
+	checkSyncedFromDownstreamStorage bool,
 ) (service.ObjectSyncChecker, error) {
-	if downstreamStorage != nil {
+	if checkSyncedFromDownstreamStorage && downstreamStorage != nil {
 		return service.NewExistenceSyncChecker(downstreamStorage), nil
 	}
 	if upstreamChecker, ok := upstreamStorage.(service.ObjectSyncChecker); ok {
 		return upstreamChecker, nil
 	}
 	return nil, fmt.Errorf(
-		"downstream storage must not be nil when upstream storage cannot check object sync",
+		"upstream storage cannot check object sync; to confirm replication from downstream storage, provide --downstream-storage and enable --check-synced-from-downstream-storage",
 	)
 }
 
@@ -161,7 +170,7 @@ type storageResumeStateStore struct {
 }
 
 func buildResumeStateStore(
-	upstreamStorage storeapi.Storage,
+	storage storeapi.Storage,
 	subDir string,
 ) (service.ResumeStateStore, error) {
 	if subDir == "" {
@@ -172,7 +181,7 @@ func buildResumeStateStore(
 		return nil, err
 	}
 	return &storageResumeStateStore{
-		storage: upstreamStorage,
+		storage: storage,
 		path:    path,
 	}, nil
 }
