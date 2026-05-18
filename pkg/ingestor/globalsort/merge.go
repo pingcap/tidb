@@ -40,9 +40,6 @@ var (
 	// single thread. This value comes from the fact that 16 threads are ok to merge 4k
 	// files in parallel, so we set it to 250.
 	MaxMergingFilesPerThread = 250
-	// MinUploadPartSize is the minimum size of each part when uploading files to
-	// external storage, which is 5MiB for both S3 and GCS.
-	MinUploadPartSize int64 = 5 * units.MiB
 )
 
 var _ execute.Collector = &mergeCollector{}

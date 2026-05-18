@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -380,7 +381,7 @@ func (e *Engine) loadRangeBatchData(
 			if err = e.lazyInitDupWriter(ctx); err != nil {
 				return err
 			}
-			deduplicatedKVs, dups, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, true)
+			deduplicatedKVs, dups, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, getPairKey, true)
 			e.recordedDupCnt += len(dups)
 			for _, p := range dups {
 				e.recordedDupSize += int64(len(p.Key) + len(p.Value))
@@ -389,7 +390,7 @@ func (e *Engine) loadRangeBatchData(
 				}
 			}
 		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
-			deduplicatedKVs, _, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, false)
+			deduplicatedKVs, _, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, getPairKey, false)
 		}
 		deduplicateDur = time.Since(start)
 	}

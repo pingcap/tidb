@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"math/rand"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -67,6 +69,9 @@ var (
 	MaxMergeSortFileCountStep = 4000
 	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
 	MergeSortMaxSubtaskTargetFiles = 16
+	// MinUploadPartSize is the minimum size of each part when uploading files to
+	// external storage, which is 5MiB for both S3 and GCS.
+	MinUploadPartSize int64 = 5 * units.MiB
 )
 
 const (
@@ -399,28 +404,28 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 	s := &startKeysAndFiles{startKeys, m.Filenames}
 	sort.Sort(s)
 
-	points := make([]Endpoint, 0, len(startKeys)*2)
+	points := make([]simplesst.Endpoint, 0, len(startKeys)*2)
 	for _, k := range startKeys {
-		points = append(points, Endpoint{Key: k, Tp: InclusiveStart, Weight: 1})
+		points = append(points, simplesst.Endpoint{Key: k, Tp: simplesst.InclusiveStart, Weight: 1})
 	}
 	for _, k := range endKeys {
-		points = append(points, Endpoint{Key: k, Tp: InclusiveEnd, Weight: 1})
+		points = append(points, simplesst.Endpoint{Key: k, Tp: simplesst.InclusiveEnd, Weight: 1})
 	}
-	m.MaxOverlappingNum = GetMaxOverlapping(points)
+	m.MaxOverlappingNum = simplesst.GetMaxOverlapping(points)
 }
 
 // GetMaxOverlappingTotal assume the most overlapping case from given stats and
 // returns the overlapping level.
 func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
-	points := make([]Endpoint, 0, len(stats)*2)
+	points := make([]simplesst.Endpoint, 0, len(stats)*2)
 	for _, stat := range stats {
-		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: stat.MaxOverlappingNum})
+		points = append(points, simplesst.Endpoint{Key: stat.MinKey, Tp: simplesst.InclusiveStart, Weight: stat.MaxOverlappingNum})
 	}
 	for _, stat := range stats {
-		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: stat.MaxOverlappingNum})
+		points = append(points, simplesst.Endpoint{Key: stat.MaxKey, Tp: simplesst.InclusiveEnd, Weight: stat.MaxOverlappingNum})
 	}
 
-	return GetMaxOverlapping(points)
+	return simplesst.GetMaxOverlapping(points)
 }
 
 // Writer is used to write data into external storage.
@@ -593,10 +598,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		case engineapi.OnDuplicateKeyRecord:
 			// we don't have a global view, so need to keep duplicates with duplicate
 			// count <= 2, so later we can find them.
-			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
+			w.kvLocations, dupLocs, dupCnt = simplesst.RemoveDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyRemove:
-			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
+			w.kvLocations, _, dupCnt = simplesst.RemoveDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
 			dupKey := slices.Clone(w.getKeyByLoc(&dupLoc))
@@ -910,4 +915,21 @@ func (e *EngineWriter) IsSynced() bool {
 // Close implements backend.EngineWriter interface.
 func (e *EngineWriter) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	return nil, e.w.Close(ctx)
+}
+
+func getSpeed(n uint64, dur float64, isBytes bool) string {
+	if dur == 0 {
+		return "-"
+	}
+	if isBytes {
+		return units.BytesSize(float64(n) / dur)
+	}
+	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
+}
+
+func getHash(s string) int64 {
+	h := fnv.New64a()
+	// this hash function never return error
+	_, _ = h.Write([]byte(s))
+	return int64(h.Sum64())
 }

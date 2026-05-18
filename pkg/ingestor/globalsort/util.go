@@ -19,15 +19,12 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
-	"hash/fnv"
 	"io"
 	"path"
 	"reflect"
-	"slices"
 	"sort"
 	"strconv"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -36,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap/zapcore"
@@ -251,51 +247,6 @@ func MockExternalEngine(
 	return
 }
 
-// EndpointTp is the type of Endpoint.Key.
-type EndpointTp int
-
-const (
-	// ExclusiveEnd represents "..., Endpoint.Key)".
-	ExclusiveEnd EndpointTp = iota
-	// InclusiveStart represents "[Endpoint.Key, ...".
-	InclusiveStart
-	// InclusiveEnd represents "..., Endpoint.Key]".
-	InclusiveEnd
-)
-
-// Endpoint represents an endpoint of an interval which can be used by GetMaxOverlapping.
-type Endpoint struct {
-	Key    []byte
-	Tp     EndpointTp
-	Weight int64 // all EndpointTp use positive weight
-}
-
-// GetMaxOverlapping returns the maximum overlapping weight treating given
-// `points` as endpoints of intervals. `points` are not required to be sorted,
-// and will be sorted in-place in this function.
-func GetMaxOverlapping(points []Endpoint) int64 {
-	slices.SortFunc(points, func(i, j Endpoint) int {
-		if cmp := bytes.Compare(i.Key, j.Key); cmp != 0 {
-			return cmp
-		}
-		return int(i.Tp) - int(j.Tp)
-	})
-	var maxWeight int64
-	var curWeight int64
-	for _, p := range points {
-		switch p.Tp {
-		case InclusiveStart:
-			curWeight += p.Weight
-		case ExclusiveEnd, InclusiveEnd:
-			curWeight -= p.Weight
-		}
-		if curWeight > maxWeight {
-			maxWeight = curWeight
-		}
-	}
-	return maxWeight
-}
-
 // SortedKVMeta is the meta of sorted kv.
 type SortedKVMeta struct {
 	StartKey           []byte                 `json:"start-key"`
@@ -382,16 +333,6 @@ func BytesMax(a, b []byte) []byte {
 		return a
 	}
 	return b
-}
-
-func getSpeed(n uint64, dur float64, isBytes bool) string {
-	if dur == 0 {
-		return "-"
-	}
-	if isBytes {
-		return units.BytesSize(float64(n) / dur)
-	}
-	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }
 
 // marshalWithOverride marshals the provided struct with the ability to override
@@ -504,71 +445,6 @@ func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
 }
 
-// remove all duplicates inside sorted array in place, i.e. input elements will be changed.
-func removeDuplicates[E any](in []E, keyGetter func(*E) []byte, recordRemoved bool) ([]E, []E, int) {
-	return doRemoveDuplicates(in, keyGetter, 0, recordRemoved)
-}
-
-// remove all duplicates inside sorted array in place if the duplicate count is
-// more than 2, and keep the first two duplicates.
-// we also return the total number of duplicates as the third return value.
-func removeDuplicatesMoreThanTwo[E any](in []E, keyGetter func(*E) []byte) (out []E, removed []E, totalDup int) {
-	return doRemoveDuplicates(in, keyGetter, 2, true)
-}
-
-// remove duplicates inside the sorted slice 'in', if keptDupCnt=2, we keep the
-// first 2 duplicates, if keptDupCnt=0, we remove all duplicates.
-// removed duplicates are returned in 'removed' if recordRemoved=true.
-// we also return the total number of duplicates, either it's removed or not, as
-// the third return value.
-func doRemoveDuplicates[E any](
-	in []E,
-	keyGetter func(*E) []byte,
-	keptDupCnt int,
-	recordRemoved bool,
-) (out []E, removed []E, totalDup int) {
-	intest.Assert(keptDupCnt == 0 || keptDupCnt == 2, "keptDupCnt must be 0 or 2")
-	if len(in) <= 1 {
-		return in, []E{}, 0
-	}
-	pivotIdx, fillIdx := 0, 0
-	pivot := keyGetter(&in[pivotIdx])
-	if recordRemoved {
-		removed = make([]E, 0, 2)
-	}
-	for idx := 1; idx <= len(in); idx++ {
-		var key []byte
-		if idx < len(in) {
-			key = keyGetter(&in[idx])
-			if bytes.Equal(pivot, key) {
-				continue
-			}
-		}
-		dupCount := idx - pivotIdx
-		if dupCount >= 2 {
-			totalDup += dupCount
-			// keep the first keptDupCnt duplicates, and remove the rest
-			for startIdx := pivotIdx; startIdx < pivotIdx+keptDupCnt; startIdx++ {
-				if startIdx != fillIdx {
-					in[fillIdx] = in[startIdx]
-				}
-				fillIdx++
-			}
-			if recordRemoved {
-				removed = append(removed, in[pivotIdx+keptDupCnt:idx]...)
-			}
-		} else {
-			if pivotIdx != fillIdx {
-				in[fillIdx] = in[pivotIdx]
-			}
-			fillIdx++
-		}
-		pivotIdx = idx
-		pivot = key
-	}
-	return in[:fillIdx], removed, totalDup
-}
-
 // DivideMergeSortDataFiles divides the data files into multiple groups for
 // merge sort. Each group will be assigned to a node for sorting.
 // The number of files in each group is limited to MaxMergeSortFileCountStep.
@@ -609,11 +485,4 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 		dataFiles = dataFiles[s:]
 	}
 	return result, nil
-}
-
-func getHash(s string) int64 {
-	h := fnv.New64a()
-	// this hash function never return error
-	_, _ = h.Write([]byte(s))
-	return int64(h.Sum64())
 }
