@@ -397,7 +397,15 @@ func CleanUpStaleLock(ctx context.Context, storage storeapi.Storage, path string
 	meta, err := getLockMeta(ctx, storage, path)
 	if err != nil {
 		// Lock file may have been deleted between caller's observation and
-		// our read. That's not an error from this helper's perspective.
+		// our read. Confirm with FileExists so callers do not need to know
+		// backend-specific "not found" error shapes.
+		exists, existsErr := storage.FileExists(ctx, path)
+		if existsErr != nil {
+			return false, multierr.Append(err, errors.Annotatef(existsErr, "CleanUpStaleLock: FileExists %s", path))
+		}
+		if !exists {
+			return false, nil
+		}
 		return false, err
 	}
 	if meta.ExpireAt.IsZero() {

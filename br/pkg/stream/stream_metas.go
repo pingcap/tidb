@@ -704,11 +704,11 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 		SubDir: m.prefix,
 	}
 	items := objstore.UnmarshalDir(ctx, opt, m.s, func(t *OrderedMigration, name string, b []byte) error {
+		t.Path = name
 		if path.Base(name) == baseTmp {
 			return nil
 		}
 
-		t.Path = name
 		var err error
 		t.SeqNum, err = migIdOf(path.Base(name))
 		if err != nil {
@@ -736,7 +736,7 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 		return Migrations{}, collected.Err
 	}
 	collected.Item = slices.DeleteFunc(collected.Item, func(item *OrderedMigration) bool {
-		return item.Path == ""
+		return path.Base(item.Path) == baseTmp
 	})
 	if len(collected.Item) == 0 && cfg.notFoundIsErr {
 		return Migrations{}, errors.Annotatef(berrors.ErrMigrationNotFound, "in the storage %s", m.s.URI())

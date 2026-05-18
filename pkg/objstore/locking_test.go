@@ -435,6 +435,12 @@ func TestCleanUpStaleLockOverdueWithinTTL(t *testing.T) {
 	strg, pth := createMockStorage(t)
 	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
+	t.Run("missing lock is no-op", func(t *testing.T) {
+		reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "missing.lock")
+		require.NoError(t, err)
+		require.False(t, reclaimed, "missing lock means there is nothing to clean up")
+	})
+
 	// Plant a lock that expired 30ms ago. With LeaseTTL=100ms, the lock is
 	// not reclaimable until ExpireAt+LeaseTTL.
 	now := time.Now()
