@@ -67,7 +67,7 @@ var (
 	readBatchSize = 128
 )
 
-// FileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
+// FileMeta contains some analyzed metadata for a parquet file.
 type FileMeta struct {
 	allocator memory.Allocator
 	Loc       *time.Location
@@ -590,8 +590,8 @@ func (pp *Parser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
-// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
-func ReadParquetFileRowCountByFile(
+// ReadRowCount reads the parquet file row count.
+func ReadRowCount(
 	ctx context.Context,
 	store storeapi.Storage,
 	path string,
