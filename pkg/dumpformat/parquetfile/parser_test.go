@@ -1033,8 +1033,8 @@ func BenchmarkRebaseSparkJulianToGregorianMicros(b *testing.B) {
 }
 
 func TestParquetAurora(t *testing.T) {
-	fileName := "test.parquet"
-	parser := newParquetParserForTest(context.TODO(), t, "examples", fileName, FileMeta{})
+	fileName := "aurora_snapshot.parquet"
+	parser := newParquetParserForTest(context.TODO(), t, "testfiles", fileName, FileMeta{})
 
 	require.Equal(t, []string{"id", "val1", "val2", "d1", "d2", "d3", "d4", "d5", "d6"}, parser.Columns())
 
@@ -1088,8 +1088,8 @@ func TestParquetAurora(t *testing.T) {
 }
 
 func TestHiveParquetParser(t *testing.T) {
-	name := "000000_0.parquet"
-	dir := "./parquet/"
+	name := "hive_dump.parquet"
+	dir := "./testfiles"
 	reader := newParquetParserForTest(context.TODO(), t, dir, name, FileMeta{Loc: time.UTC})
 	// UTC+0:00
 	results := []time.Time{
