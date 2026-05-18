@@ -32,7 +32,6 @@ import (
 	"github.com/jfcg/sorty/v2"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -102,6 +101,43 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 		return err
 	}
 	return writer.Close(ctx)
+}
+
+func removePartitionPrefix(t *testing.T, in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		bs := []byte(s)
+		idx := bytes.IndexByte(bs, '/')
+		require.GreaterOrEqual(t, idx, 0)
+		require.True(t, IsValidPartition(bs[:idx]))
+		// we include / after partition prefix in the out, as all tests have it.
+		out = append(out, s[idx:])
+	}
+	sort.Strings(out)
+	return out
+}
+
+func getKVAndStatFilesByScan(ctx context.Context,
+	store storeapi.Storage,
+	nonPartitionedDir string,
+) ([]string, []string, error) {
+	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	var data, stats []string
+	for _, path := range names {
+		bs := []byte(path)
+		lastIdx := bytes.LastIndexByte(bs, '/')
+		secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
+		parentDir := path[secondLastIdx+1 : lastIdx]
+		if strings.HasSuffix(parentDir, "_stat") {
+			stats = append(stats, path)
+		} else {
+			data = append(data, path)
+		}
+	}
+	return data, stats, nil
 }
 
 func TestWriter(t *testing.T) {
@@ -209,13 +245,13 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	err := writer.Close(ctx)
 	require.NoError(t, err)
 
-	dataFiles, statFiles, err := globalsort.getKVAndStatFilesByScan(ctx, memStore, "test")
+	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, memStore, "test")
 	require.NoError(t, err)
 	require.NoError(t, err)
 	require.Len(t, dataFiles, 4)
 	require.Len(t, statFiles, 4)
-	dataFiles = globalsort.removePartitionPrefix(t, dataFiles)
-	statFiles = globalsort.removePartitionPrefix(t, statFiles)
+	dataFiles = removePartitionPrefix(t, dataFiles)
+	statFiles = removePartitionPrefix(t, statFiles)
 	for i := range 4 {
 		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/0/%d", i))
 		require.Equal(t, statFiles[i], fmt.Sprintf("/test/0_stat/%d", i))
@@ -277,7 +313,7 @@ func TestMultiFileStatOverlap(t *testing.T) {
 func removePartitionFromMultipleFilesStat(t *testing.T, in MultipleFilesStat) MultipleFilesStat {
 	out := in
 	for i := range out.Filenames {
-		namesWithoutPartition := globalsort.removePartitionPrefix(t, []string{out.Filenames[i][0], out.Filenames[i][1]})
+		namesWithoutPartition := removePartitionPrefix(t, []string{out.Filenames[i][0], out.Filenames[i][1]})
 		out.Filenames[i] = [2]string{namesWithoutPartition[0], namesWithoutPartition[1]}
 	}
 	return out
@@ -395,7 +431,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
 
-	allDataFiles, _, err := globalsort.getKVAndStatFilesByScan(ctx, memStore, "test")
+	allDataFiles, _, err := getKVAndStatFilesByScan(ctx, memStore, "test")
 	require.NoError(t, err)
 
 	err = mergeOverlappingFilesImpl(

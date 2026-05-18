@@ -94,7 +94,7 @@ func writePlainFile(s *writeTestSuite) {
 }
 
 func cleanOldFiles(ctx context.Context, store storeapi.Storage, subDir string) {
-	filenames, err := GetAllFileNames(ctx, store, subDir)
+	filenames, err := simplesst.GetAllFileNames(ctx, store, subDir)
 	intest.AssertNoError(err)
 	err = store.DeleteFiles(ctx, filenames)
 	intest.AssertNoError(err)
@@ -293,7 +293,7 @@ func getKVAndStatFilesByScan(ctx context.Context,
 	store storeapi.Storage,
 	nonPartitionedDir string,
 ) ([]string, []string, error) {
-	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
+	names, err := simplesst.GetAllFileNames(ctx, store, nonPartitionedDir)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -20,12 +20,14 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"sort"
 
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap/zapcore"
@@ -241,4 +243,61 @@ func GetReadRangeFromProps(
 		return nil, err
 	}
 	return readRangesPerKey, nil
+}
+
+// GetAllFileNames returns files with the same non-partitioned dir.
+//   - for intermediate KV/stat files we store them with a partitioned way to mitigate
+//     limitation on Cloud, see randPartitionedPrefix for how we partition the files.
+//   - for meta files, we store them directly under the non-partitioned dir.
+//
+// for example, if nonPartitionedDir is '30001', the files returned might be
+//   - 30001/6/meta.json
+//   - 30001/7/meta.json
+//   - 30001/plan/ingest/1/meta.json
+//   - 30001/plan/merge-sort/1/meta.json
+//   - p00110000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195_stat/one-file
+//   - p00000000/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
+func GetAllFileNames(
+	ctx context.Context,
+	store storeapi.Storage,
+	nonPartitionedDir string,
+) ([]string, error) {
+	var data []string
+
+	err := store.WalkDir(ctx,
+		&storeapi.WalkOption{},
+		func(path string, size int64) error {
+			// extract the first dir
+			bs := hack.Slice(path)
+			firstIdx := bytes.IndexByte(bs, '/')
+			if firstIdx == -1 {
+				return nil
+			}
+
+			firstDir := bs[:firstIdx]
+			if string(firstDir) == nonPartitionedDir {
+				data = append(data, path)
+				return nil
+			}
+
+			if !IsValidPartition(firstDir) {
+				return nil
+			}
+			secondIdx := bytes.IndexByte(bs[firstIdx+1:], '/')
+			if secondIdx == -1 {
+				return nil
+			}
+			secondDir := path[firstIdx+1 : firstIdx+1+secondIdx]
+
+			if secondDir == nonPartitionedDir {
+				data = append(data, path)
+			}
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	// in case the external storage does not guarantee the order of walk
+	sort.Strings(data)
+	return data, nil
 }

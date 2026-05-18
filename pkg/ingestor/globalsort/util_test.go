@@ -78,7 +78,7 @@ func TestGetAllFileNames(t *testing.T) {
 	err = w3.Close(ctx)
 	require.NoError(t, err)
 
-	filenames, err := GetAllFileNames(ctx, store, "subtask")
+	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask")
 	require.NoError(t, err)
 	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
@@ -113,7 +113,7 @@ func TestCleanUpFiles(t *testing.T) {
 	err := w.Close(ctx)
 	require.NoError(t, err)
 
-	filenames, err := GetAllFileNames(ctx, store, "subtask")
+	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask")
 	require.NoError(t, err)
 	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
@@ -123,7 +123,7 @@ func TestCleanUpFiles(t *testing.T) {
 
 	require.NoError(t, CleanUpFiles(ctx, store, "subtask"))
 
-	filenames, err = GetAllFileNames(ctx, store, "subtask")
+	filenames, err = simplesst.GetAllFileNames(ctx, store, "subtask")
 	require.NoError(t, err)
 	require.Equal(t, []string(nil), filenames)
 }
