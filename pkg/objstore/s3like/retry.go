@@ -70,7 +70,7 @@ func (tr *Retryer) IsErrorRetryable(err error) bool {
 	defer func() {
 		log.Warn("failed to request s3, checking whether we can retry", zap.Error(err), zap.Bool("retry", isRetryable))
 		if isRetryable {
-			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+			metrics.AddRetryableError(err)
 		}
 	}()
 

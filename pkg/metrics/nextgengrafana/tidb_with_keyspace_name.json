@@ -17482,7 +17482,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(increase(tidb_ddl_retryable_error_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[2m])) by (type)",
+              "expr": "sum(increase(tidb_task_retryable_error_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"}[2m])) by (type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -17493,7 +17493,7 @@
           ],
           "thresholds": [],
           "timeRegions": [],
-          "title": "Retryable Error",
+          "title": "DDL/DXF Retryable Error",
           "tooltip": {
             "shared": true,
             "sort": 0,

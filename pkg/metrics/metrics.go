@@ -108,6 +108,7 @@ func InitMetrics() {
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitStmtSummaryMetrics()
+	InitTaskMetrics()
 	dxfmetric.InitDistTaskMetrics()
 	ingestmetric.InitIngestMetrics()
 	InitResourceGroupMetrics()
