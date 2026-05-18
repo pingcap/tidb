@@ -240,6 +240,10 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("create materialized view mv_alias (a, c) as select x.a, count(1) from t x where x.b > 0 group by x.a")
 	tk.MustQuery("select a, c from mv_alias order by a").Check(testkit.Rows("1 2", "2 1"))
 
+	// Direct output column with output alias should be tracked by SELECT list offset (not by output column name).
+	tk.MustExec("create materialized view mv_out_alias (k, cnt) as select a as k, count(1) from t group by a")
+	tk.MustQuery("select k, cnt from mv_out_alias order by k").Check(testkit.Rows("1 2", "2 1"))
+
 	// Base table with dependent MV: allow restricted no-reorg MODIFY/CHANGE COLUMN, update dependent MV/MLog metadata.
 	err = tk.ExecToErr("alter table t change column a a2 bigint")
 	require.ErrorContains(t, err, "does not support renaming")
@@ -270,6 +274,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 		"test\x00mv_count_col": {},
 		"test\x00mv_upper_agg": {},
 		"test\x00mv_alias":     {},
+		"test\x00mv_out_alias": {},
 	}
 	gotInvolving := make(map[string]struct{}, len(involving))
 	for _, info := range involving {
@@ -288,6 +293,8 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.Contains(t, showCreate, "`a` bigint")
 	showCreate = tk.MustQuery("show create table mv_alias").Rows()[0][1].(string)
 	require.Contains(t, showCreate, "`a` bigint")
+	showCreate = tk.MustQuery("show create table mv_out_alias").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`k` bigint")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
 	// Reorg-required or MV-dependent modifying should still be rejected.
@@ -368,6 +375,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view mv_alert_zero")
 	tk.MustExec("drop materialized view mv_upper_agg")
 	tk.MustExec("drop materialized view mv_alias")
+	tk.MustExec("drop materialized view mv_out_alias")
 	tk.MustExec("drop materialized view mv_nullable")
 	tk.MustExec("drop materialized view mv_sum_nullable")
 	tk.MustExec("drop materialized view mv_sum_nullable_dup_cnt")
