@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
@@ -144,6 +145,14 @@ func WithOnSplit(onSplit func(key [][]byte)) ClientOptionalParameter {
 	}
 }
 
+func withCallerComponent(client pd.Client, component caller.Component) pd.Client {
+	if _, ok := client.(*tikvclient.CodecPDClient); ok {
+		// Keep codec-aware clients intact so callers can retrieve the same wrapper.
+		return client
+	}
+	return client.WithCallerComponent(component)
+}
+
 // NewClient creates a SplitClient.
 //
 // splitBatchKeyCnt controls how many keys are sent to TiKV in a batch in split
@@ -157,7 +166,7 @@ func NewClient(
 	opts ...ClientOptionalParameter,
 ) SplitClient {
 	cli := &pdClient{
-		client:           client.WithCallerComponent(caller.GetComponent(1)),
+		client:           withCallerComponent(client, caller.GetComponent(1)),
 		httpCli:          httpCli,
 		tlsConf:          tlsConf,
 		storeCache:       make(map[uint64]*metapb.Store),
