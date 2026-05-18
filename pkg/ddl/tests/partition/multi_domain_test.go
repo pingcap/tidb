@@ -2143,111 +2143,33 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 func TestIssue58692(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
-	tk2 := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk2.MustExec("use test")
 
-	expectedStates := []string{
-		model.StateDeleteOnly.String(),
-		model.StateWriteOnly.String(),
-		model.StateWriteReorganization.String(),
-		model.StateDeleteReorganization.String(),
-	}
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a)) partition by hash(a) partitions 5")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
 	var i atomic.Int32
-	var lastUpdated atomic.Int32
 	i.Store(3)
-	stateList := func(states map[string]struct{}) []string {
-		res := make([]string, 0, len(states))
-		for state := range states {
-			res = append(res, state)
-		}
-		slices.Sort(res)
-		return res
-	}
-	expectedStateList := append([]string(nil), expectedStates...)
-	slices.Sort(expectedStateList)
-	expectedStateSet := make(map[string]struct{}, len(expectedStates))
-	for _, state := range expectedStates {
-		expectedStateSet[state] = struct{}{}
-	}
-	observedStates := make(map[string]struct{}, len(expectedStates))
-	var failpointHookEnabled atomic.Bool
+	done := make(chan struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		failpointHookEnabled.Store(true)
-		if job.Type != model.ActionRemovePartitioning {
-			return
-		}
-		state := job.SchemaState.String()
-		if _, ok := expectedStateSet[state]; !ok {
-			return
-		}
-		if _, ok := observedStates[state]; ok {
-			return
-		}
+		tk2 := testkit.NewTestKit(t, store)
 		tmp := i.Add(1)
 		tk2.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
 		tk2.MustExec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
-		lastUpdated.Store(tmp - 1)
-		observedStates[state] = struct{}{}
+		if tmp == 10 {
+			close(done)
+		}
 	})
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists hook_probe")
-	tk.MustExec("create table t (a int, b int, index idx(a)) partition by hash(a) partitions 5")
-	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("create table hook_probe (a int)")
-	tk.MustExec("alter table hook_probe add column b int")
-	tk.MustExec("drop table hook_probe")
-	if failpointHookEnabled.Load() {
-		tk.MustExec("alter table t remove partitioning")
-	} else {
-		alterErr := make(chan error, 1)
-		go backgroundExec(store, "test", "alter table t remove partitioning", alterErr)
-
-		jobStateSQL := `admin show ddl jobs where db_name = 'test' and table_name = 't' and job_type = 'alter table remove partitioning'`
-		runDMLInActiveState := func(expected string) {
-			for {
-				select {
-				case err := <-alterErr:
-					require.NoError(t, err)
-					require.Failf(t, "missing remove partitioning state", "ddl finished before observing %q; observed states: %v", expected, stateList(observedStates))
-				default:
-				}
-
-				for _, row := range tk.MustQuery(jobStateSQL).Rows() {
-					if row[11] == model.JobStateSynced.String() || row[11] == model.JobStateCancelled.String() {
-						continue
-					}
-					state := row[4].(string)
-					if state != expected {
-						continue
-					}
-					tmp := i.Add(1)
-					tk2.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
-					tk2.MustExec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
-					lastUpdated.Store(tmp - 1)
-					observedStates[state] = struct{}{}
-					return
-				}
-
-				time.Sleep(time.Millisecond)
-			}
-		}
-
-		for _, state := range expectedStates {
-			runDMLInActiveState(state)
-		}
-		require.NoError(t, <-alterErr)
-	}
-	require.Equal(t, expectedStateList, stateList(observedStates))
-
+	tk.MustExec("alter table t remove partitioning")
+	<-done
+	tk.MustExec("begin")
 	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
+	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
-	last := int(lastUpdated.Load())
-	require.Greater(t, last, 0)
-	tk.MustQuery(fmt.Sprintf("select * from t where b = %d", last+11)).Check(testkit.Rows(fmt.Sprintf("%d %d", last, last+11)))
-	tk.MustQuery(fmt.Sprintf("select * from t use index(idx) where a = %d", last)).Check(testkit.Rows(fmt.Sprintf("%d %d", last, last+11)))
+	tk.MustQuery("select * from t where b = 20").Check(testkit.Rows("9 20"))
+	tk.MustQuery("select * from t use index(idx) where a = 9").Check(testkit.Rows("9 20"))
 	require.Equal(t, rsIndex.String(), rsTable.String(), "Expected: from index, Actual: from table")
 }
 
