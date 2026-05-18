@@ -1139,6 +1139,7 @@ type SessionVars struct {
 	MergeJoinCostFactor        float64
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
+	IndexJoinMaxScanRowsRatio  float64
 	SelectivityFactor          float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
@@ -1229,6 +1230,9 @@ type SessionVars struct {
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
+	// EnableStrictNotNullCheck enables strict not-null check for single-row insert in non-strict mode.
+	EnableStrictNotNullCheck bool
+
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
 
@@ -1301,6 +1305,14 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+
+	// MaxKeysRead is the maximum number of storage engine keys that a SELECT statement
+	// may examine. 0 means unlimited. Only applies to SELECT statements.
+	MaxKeysRead uint64
+
+	// KeysExamined is the cumulative number of storage engine keys examined across all
+	// statements (SELECT, UPDATE, DELETE, etc.) in this session. Reset by FLUSH STATUS.
+	KeysExamined uint64
 
 	// LoadBindingTimeout is the timeout for loading the bind info.
 	LoadBindingTimeout uint64
@@ -2402,6 +2414,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MergeJoinCostFactor:              vardef.DefOptMergeJoinCostFactor,
 		HashJoinCostFactor:               vardef.DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:              vardef.DefOptIndexJoinCostFactor,
+		IndexJoinMaxScanRowsRatio:        vardef.DefOptIndexJoinMaxScanRowsRatio,
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
@@ -3730,6 +3743,15 @@ func (s *SessionVars) GetMaxExecutionTime() uint64 {
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
 func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 	return s.TiKVClientReadTimeout
+}
+
+// GetMaxKeysRead returns the max keys read limit for SELECT statements.
+// Returns 0 (unlimited) when not in a SELECT statement.
+func (s *SessionVars) GetMaxKeysRead() uint64 {
+	if !s.StmtCtx.InSelectStmt {
+		return 0
+	}
+	return s.MaxKeysRead
 }
 
 // SetDiskFullOpt sets the session variable DiskFullOpt

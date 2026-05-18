@@ -1067,15 +1067,19 @@ func (tr *TableImporter) postProcess(
 		// if we came here, it must be a local backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
-		localBackend := rc.backend.(*local.Backend)
-		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		var dupeController *local.DupeController
 		hasDupe := false
 		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
+			localBackend := rc.backend.(*local.Backend)
+			var err error
+			dupeController, err = localBackend.GetDupeController(ctx, rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
 			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
-			var err error
 			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.Conflict.Strategy)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))

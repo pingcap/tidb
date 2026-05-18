@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -53,7 +53,7 @@ type cloudImportExecutor struct {
 	backendCtx    ingest.BackendCtx
 	backend       *local.Backend
 	metric        *lightningmetric.Common
-	engine        atomic.Pointer[external.Engine]
+	engine        atomic.Pointer[globalsort.Engine]
 	summary       *execute.SubtaskSummary
 }
 
@@ -127,7 +127,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 	_, engineUUID := backend.MakeUUID(e.ptbl.Meta().Name.L, idxID)
 
-	all := external.SortedKVMeta{}
+	all := globalsort.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
 		all.Merge(g)
 	}

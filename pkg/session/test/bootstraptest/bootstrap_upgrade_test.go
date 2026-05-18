@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -994,6 +995,99 @@ func TestUpgradeBindInfo(t *testing.T) {
 	session.MustExec(t, seLatestV, "ADMIN RELOAD BINDINGS;")
 	newVer.Close()
 	seLatestV.Close()
+}
+
+func checkTiDBMaskingPolicyTableSchema(t *testing.T, tk *testkit.TestKit) {
+	tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").Check(testkit.Rows("1"))
+	tk.MustQuery(`
+SELECT column_name, LOWER(column_type), is_nullable
+FROM information_schema.columns
+WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
+ORDER BY ordinal_position`).Check(testkit.Rows(
+		"policy_id bigint(20) NO",
+		"schema_name varchar(64) NO",
+		"table_name varchar(64) NO",
+		"table_id bigint(20) NO",
+		"column_id bigint(20) NO",
+		"column_name varchar(64) NO",
+		"policy_name varchar(64) NO",
+		"masking_type varchar(32) NO",
+		"expression text NO",
+		"restrict_on varchar(256) NO",
+		"status enum('enabled','disabled') YES",
+		"created_at timestamp YES",
+		"created_by varchar(128) YES",
+		"updated_by varchar(128) YES",
+		"updated_at timestamp YES",
+	))
+	tk.MustQuery(`
+SELECT index_name, non_unique, seq_in_index, column_name
+FROM information_schema.statistics
+WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
+ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
+		"PRIMARY 0 1 policy_id",
+		"idx_schema_table 1 1 schema_name",
+		"idx_schema_table 1 2 table_name",
+		"uk_table_column 0 1 table_id",
+		"uk_table_column 0 2 column_id",
+		"uk_table_policy 0 1 table_id",
+		"uk_table_policy 0 2 policy_name",
+	))
+}
+
+func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+	const fromVersion = 254
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV254 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(fromVersion))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV254, fromVersion)
+
+	is := dom.InfoSchema()
+	policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+	require.NoError(t, err)
+	policyDBID := policyTbl.Meta().DBID
+	policyTblID := policyTbl.Meta().ID
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	err = m.DropTableOrView(policyDBID, policyTblID)
+	require.NoError(t, err)
+	exists, err := m.CheckTableExists(policyDBID, policyTblID)
+	require.NoError(t, err)
+	require.False(t, exists)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV254)
+	require.NoError(t, err)
+	require.Equal(t, int64(fromVersion), ver)
+	dom.Close()
+
+	newVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer newVer.Close()
+
+	seLatestV := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seLatestV)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	tk := testkit.NewTestKit(t, store)
+	checkTiDBMaskingPolicyTableSchema(t, tk)
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {

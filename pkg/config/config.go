@@ -33,6 +33,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -96,6 +97,14 @@ const (
 	DefExpensiveTxnTimeThreshold = 600
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
+	// DefDXFResourceLimit is the default resource percentage available for DXF.
+	DefDXFResourceLimit = 100
+	// MinDXFResourceLimit is the minimum resource percentage available for DXF.
+	// Keep it at 10 while mysql.dist_framework_meta.cpu_count changes from total
+	// node CPU to usable DXF CPU, so the stored value stays non-zero.
+	MinDXFResourceLimit = 10
+	// MaxDXFResourceLimit is the maximum resource percentage available for DXF.
+	MaxDXFResourceLimit = 100
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
 	// DefPluginAuditLogBufferSize is the default buffer size for plugin audit log.
@@ -199,6 +208,8 @@ type Config struct {
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
+	DeployMode                 deploymode.Mode         `toml:"deploy-mode" json:"deploy-mode"`
+	DXFResourceLimit           int                     `toml:"dxf-resource-limit" json:"dxf-resource-limit"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
 	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
@@ -1038,6 +1049,8 @@ var defaultConf = Config{
 	TiDBEdition:                  "",
 	VersionComment:               "",
 	TiDBReleaseVersion:           "",
+	DeployMode:                   deploymode.Premium,
+	DXFResourceLimit:             DefDXFResourceLimit,
 	RUV2:                         DefaultRUV2Config(),
 	Log: Log{
 		Level:               "info",
@@ -1379,6 +1392,19 @@ func (c *Config) Load(confFile string) error {
 	if err != nil {
 		return err
 	}
+	if !kerneltype.IsNextGen() && metaData.IsDefined("deploy-mode") {
+		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	dxfResourceLimitDefined := metaData.IsDefined("dxf-resource-limit")
+	if !dxfResourceLimitDefined && c.DXFResourceLimit == 0 {
+		c.DXFResourceLimit = DefDXFResourceLimit
+	}
+	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
+		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+	}
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
+		c.Standby.EnableZeroBackend = true
+	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	} else if c.TokenLimit > MaxTokenLimit {
@@ -1443,6 +1469,18 @@ func (c *Config) Valid() error {
 	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
+	}
+	if !c.DeployMode.Valid() {
+		return fmt.Errorf("invalid deploy-mode=%s, valid deploy modes=%v", c.DeployMode, deploymode.ModeList())
+	}
+	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
+		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
+		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)
+	}
+	if c.DXFResourceLimit != DefDXFResourceLimit && c.DeployMode != deploymode.PremiumReserved {
+		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
 	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
