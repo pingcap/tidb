@@ -223,9 +223,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		}
 	}()
 
-	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
-	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for i := 0; i < l; i++ {
+	totalLen := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
+	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
+	for i := 0; i < totalLen; i++ {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 
@@ -257,7 +257,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for i := 0; i < samplingStatsConcurrency; i++ {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(taskCtx, taskCancel, mergeResultCh, mergeTaskCh, l, id)
+			e.subMergeWorker(taskCtx, taskCancel, mergeResultCh, mergeTaskCh, totalLen, id)
 		})
 	}
 	// Merge the result from collectors.
@@ -348,7 +348,6 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		return i.Handle.Compare(j.Handle)
 	})
 
-	totalLen := len(e.colsInfo) + len(e.indexes)
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
@@ -627,7 +626,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(
 	cancel context.CancelCauseFunc,
 	resultCh chan<- *samplingMergeResult,
 	taskCh <-chan []byte,
-	l int,
+	totalLen int,
 	index int,
 ) {
 	// Only close the resultCh in the first worker.
@@ -664,8 +663,8 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(
 			time.Sleep(100 * time.Millisecond)
 		}
 	})
-	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for i := 0; i < l; i++ {
+	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
+	for i := 0; i < totalLen; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 	// Early-return paths need to release the worker-local collector explicitly.
@@ -694,7 +693,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(
 			inflightRespSize = int64(colResp.Size())
 			e.memTracker.Consume(inflightRespSize)
 
-			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
 			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 
