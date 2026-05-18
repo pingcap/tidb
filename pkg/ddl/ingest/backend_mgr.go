@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -133,7 +134,7 @@ func (b *BackendCtxBuilder) Build(cfg *ingestctrl.BackendConfig, bd *ingestctrl.
 	})
 
 	//nolint: forcetypeassert
-	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
+	pdCli := store.(tikv.Storage).GetRegionCache().PDClient().WithCallerComponent(caller.Ddl)
 	var cpOp CheckpointOperator
 
 	// Create checkpoint manager based on the configuration
