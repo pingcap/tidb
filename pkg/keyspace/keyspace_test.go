@@ -126,6 +126,30 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 		}
 	})
 
+	t.Run("config overrides env", func(t *testing.T) {
+		const keyspaceNameInEnv = "test_keyspace_env_conflict"
+		const keyspaceNameInCfg = "test_keyspace_cfg_priority"
+
+		restoreGlobalConfigAndCache(t)
+		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = keyspaceNameInCfg
+		})
+
+		getKeyspaceName := GetKeyspaceNameBySettings()
+		require.Equal(t, keyspaceNameInCfg, getKeyspaceName)
+		require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
+		require.Equal(t, keyspaceNameInCfg, config.GetGlobalKeyspaceName())
+
+		resetKeyspaceNameCache()
+		getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+		if kerneltype.IsNextGen() {
+			require.Equal(t, []byte(keyspaceNameInCfg), getKeyspaceNameByte)
+		} else {
+			require.Nil(t, getKeyspaceNameByte)
+		}
+	})
+
 	t.Run("bytes getter falls back to env before string getter", func(t *testing.T) {
 		const keyspaceNameInEnv = "test_keyspace_env_first"
 
