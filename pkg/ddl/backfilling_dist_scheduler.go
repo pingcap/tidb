@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -763,7 +763,7 @@ func getRangeSplitter(
 		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()
 		if err == nil {
-			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+			size, keys, err := ingestctrl.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 			if err == nil {
 				regionSplitSize = max(regionSplitSize, size)
 				regionSplitKeys = max(regionSplitKeys, keys)

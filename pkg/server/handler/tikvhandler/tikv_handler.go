@@ -43,8 +43,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -2276,9 +2276,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxBatchSplitRanges(int(value))
 		}
 		updateGlobal = func(v float64) float64 {
-			old := local.CurrentMaxBatchSplitRanges.Load()
+			old := ingestctrl.CurrentMaxBatchSplitRanges.Load()
 			intV := int(v)
-			local.CurrentMaxBatchSplitRanges.Store(&intV)
+			ingestctrl.CurrentMaxBatchSplitRanges.Store(&intV)
 			return float64(*old)
 		}
 	case IngestParamMaxSplitRangesPerSec:
@@ -2289,8 +2289,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxSplitRangesPerSec(value)
 		}
 		updateGlobal = func(v float64) float64 {
-			old := local.CurrentMaxSplitRangesPerSec.Load()
-			local.CurrentMaxSplitRangesPerSec.Store(&v)
+			old := ingestctrl.CurrentMaxSplitRangesPerSec.Load()
+			ingestctrl.CurrentMaxSplitRangesPerSec.Store(&v)
 			return *old
 		}
 	case IngestParamMaxPerSecond:
@@ -2301,8 +2301,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxPerSec(value)
 		}
 		updateGlobal = func(v float64) float64 {
-			old := local.CurrentMaxIngestPerSec.Load()
-			local.CurrentMaxIngestPerSec.Store(&v)
+			old := ingestctrl.CurrentMaxIngestPerSec.Load()
+			ingestctrl.CurrentMaxIngestPerSec.Store(&v)
 			return *old
 		}
 	case IngestParamMaxInflight:
@@ -2314,9 +2314,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxInflight(int(value))
 		}
 		updateGlobal = func(v float64) float64 {
-			old := local.CurrentMaxIngestInflight.Load()
+			old := ingestctrl.CurrentMaxIngestInflight.Load()
 			intV := int(v)
-			local.CurrentMaxIngestInflight.Store(&intV)
+			ingestctrl.CurrentMaxIngestInflight.Store(&intV)
 			return float64(*old)
 		}
 	default:
