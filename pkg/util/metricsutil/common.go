@@ -89,7 +89,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 		return err
 	}
 	if !kerneltype.IsNextGen() {
-		labels := maps.Clone(metricscommon.GetConstLabels())
+		labels := cloneConstLabels()
 		labels[defaultKeyspaceLabel] = fmt.Sprint(keyspaceMeta.GetId())
 		metricscommon.SetConstLabelsFromMap(labels)
 	}
@@ -120,13 +120,21 @@ func initMetrics() {
 }
 
 func registerMetrics() error {
-	labels := maps.Clone(metricscommon.GetConstLabels())
+	labels := cloneConstLabels()
 	maps.Copy(labels, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 	if len(labels) > 0 {
 		metricscommon.SetConstLabelsFromMap(labels)
 	}
 	initMetrics()
 	return nil
+}
+
+func cloneConstLabels() map[string]string {
+	labels := maps.Clone(metricscommon.GetConstLabels())
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	return labels
 }
 
 func getKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {

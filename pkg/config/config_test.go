@@ -248,6 +248,15 @@ metric-label = "LABEL_A"
 			err: `duplicated metric-label "LABEL_A"`,
 		},
 		{
+			name: "reserved label",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "KEYSPACE_ID"
+`,
+			err: `reserved metric-label "KEYSPACE_ID"`,
+		},
+		{
 			name: "duplicate slow log field",
 			content: `
 [[keyspace-observability.fields]]

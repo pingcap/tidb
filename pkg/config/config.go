@@ -480,6 +480,9 @@ func (o KeyspaceObservability) Valid() error {
 				return fmt.Errorf("[keyspace-observability.fields.%d] invalid metric-label %q", i, field.MetricLabel)
 			}
 			key := strings.ToLower(field.MetricLabel)
+			if key == "keyspace_id" || key == "keyspace_name" {
+				return fmt.Errorf("[keyspace-observability.fields.%d] reserved metric-label %q", i, field.MetricLabel)
+			}
 			if _, ok := metricLabels[key]; ok {
 				return fmt.Errorf("[keyspace-observability.fields.%d] duplicated metric-label %q", i, field.MetricLabel)
 			}

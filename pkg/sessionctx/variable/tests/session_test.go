@@ -386,6 +386,7 @@ func TestSlowLogFormat(t *testing.T) {
 	logItems.SessionConnectAttrs = nil
 
 	restore := config.RestoreFunc()
+	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceObservability = config.KeyspaceObservability{
 			Fields: []config.KeyspaceObservabilityField{{
@@ -397,7 +398,6 @@ func TestSlowLogFormat(t *testing.T) {
 	})
 	logString = seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+"# Slow_meta_a: value_a\n"+sql, logString)
-	restore()
 
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{

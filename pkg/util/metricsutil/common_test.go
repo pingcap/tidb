@@ -29,6 +29,10 @@ func TestRegisterMetricsWithKeyspaceObservabilityValues(t *testing.T) {
 		metricscommon.SetConstLabels()
 	})
 
+	labels := cloneConstLabels()
+	labels["label_a"] = "value_a"
+	require.Equal(t, "value_a", labels["label_a"])
+
 	metricscommon.SetConstLabels("base_label", "base_value")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceObservabilityValues = config.KeyspaceObservabilityValues{
@@ -37,7 +41,7 @@ func TestRegisterMetricsWithKeyspaceObservabilityValues(t *testing.T) {
 	})
 
 	require.NoError(t, registerMetrics())
-	labels := metricscommon.GetConstLabels()
+	labels = metricscommon.GetConstLabels()
 	require.Equal(t, "base_value", labels["base_label"])
 	require.Equal(t, "value_a", labels["label_a"])
 }

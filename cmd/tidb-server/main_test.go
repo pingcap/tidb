@@ -200,6 +200,10 @@ func TestSetupKeyspaceObservabilityForNonStarter(t *testing.T) {
 }
 
 func TestSetupKeyspaceObservabilityForStartSkipsClassic(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("only verifies the classic-mode short-circuit path")
+	}
+
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
