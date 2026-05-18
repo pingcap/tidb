@@ -291,10 +291,21 @@ func TestConstantFolding(t *testing.T) {
 	lowerExpr := newFunctionWithType(ctx, ast.Lower, types.NewFieldType(mysql.TypeVarchar), col).(*ScalarFunction)
 	clonedLowerExpr := lowerExpr.Clone().(*ScalarFunction)
 	require.NotSame(t, lowerExpr.RetType, clonedLowerExpr.RetType)
-	require.Same(t, clonedLowerExpr.RetType, clonedLowerExpr.Function.getRetTp())
 	clonedLowerExpr.GetType(ctx.GetEvalCtx()).SetCharset("binary")
 	require.Equal(t, "utf8mb4", lowerExpr.GetType(ctx.GetEvalCtx()).GetCharset())
-	require.Equal(t, "binary", clonedLowerExpr.Function.getRetTp().GetCharset())
+	require.Equal(t, "utf8mb4", clonedLowerExpr.Function.getRetTp().GetCharset())
+
+	ifRetType := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "binary", 255)
+	ifExpr := newFunctionWithType(ctx, ast.If, ifRetType,
+		newLonglong(1),
+		lowerExpr,
+		newString("", "binary"),
+	)
+	foldedLowerExpr := FoldConstant(ctx, ifExpr).(*ScalarFunction)
+	require.NotSame(t, lowerExpr, foldedLowerExpr)
+	require.Same(t, foldedLowerExpr.RetType, foldedLowerExpr.Function.getRetTp())
+	require.Equal(t, "utf8mb4", lowerExpr.GetType(ctx.GetEvalCtx()).GetCharset())
+	require.Equal(t, "binary", foldedLowerExpr.Function.getRetTp().GetCharset())
 }
 
 func TestConstantFoldingCharsetConvert(t *testing.T) {

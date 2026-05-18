@@ -315,6 +315,7 @@ INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}'
 SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 explain format = 'plan_tree' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+--replace_regex /\t\t$//
 explain format = 'plan_tree' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 drop table person;
 
@@ -332,6 +333,7 @@ INSERT INTO `person` (`id`, `address_info`) VALUES('1','{\"city\": \"Beijing\"}'
 SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 explain format = 'plan_tree' SELECT id FROM person ignore index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
+--replace_regex /\t\t$//
 explain format = 'plan_tree' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 drop table person;
 
@@ -344,4 +346,3 @@ select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
 explain format = 'plan_tree' select * from t force index(bx) where concat(a, a) = 'aaaaaaaaaa';
 drop table t;
 set @@tidb_enable_unsafe_substitute=0;
-

@@ -629,15 +629,18 @@ explain format = 'plan_tree' SELECT id FROM person ignore index(`city`) WHERE ad
 id	task	access object	operator info
 TableReader	root		data:Projection
 └─Projection	cop[tikv]		explain_generate_column_substitute.person.id
-  └─Selection	cop[tikv]		eq(json_unquote(cast(json_extract(explain_generate_column_substitute.person.address_info, "$.city"), var_string(16777216))), "Beijing")
+  └─Selection	cop[tikv]		eq(json_unquote(cast(json_extract(explain_generate_column_substitute.person.address_info, "$.city"), longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)), "Beijing")
     └─TableFullScan	cop[tikv]	table:person	keep order:false, stats:pseudo
 SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id
+1
 explain format = 'plan_tree' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id	task	access object	operator info
-IndexReader	root		index:Projection
-└─Projection	cop[tikv]		explain_generate_column_substitute.person.id
-  └─IndexRangeScan	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+Projection	root	NULL	explain_generate_column_substitute.person.id
+└─IndexLookUp	root	NULL	NULL
+  ├─IndexFullScan(Build)	cop[tikv]	table:person, index:city(city)	keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]	NULL	eq(json_unquote(cast(json_extract(explain_generate_column_substitute.person.address_info, "$.city"), longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)), "Beijing")
+    └─TableRowIDScan	cop[tikv]	table:person	keep order:false, stats:pseudo
 drop table person;
 create table t(a char(5), b char(6) as (concat(a, a)), index bx(b));
 insert into t(a) values ('aaaaa');
@@ -669,16 +672,18 @@ explain format = 'plan_tree' SELECT id FROM person ignore index(`city`) WHERE ad
 id	task	access object	operator info
 TableReader	root		data:Projection
 └─Projection	cop[tikv]		explain_generate_column_substitute.person.id
-  └─Selection	cop[tikv]		eq(json_unquote(cast(json_extract(explain_generate_column_substitute.person.address_info, "$.city"), var_string(16777216))), "Beijing")
+  └─Selection	cop[tikv]		eq(json_unquote(cast(json_extract(explain_generate_column_substitute.person.address_info, "$.city"), longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)), "Beijing")
     └─TableFullScan	cop[tikv]	table:person	keep order:false, stats:pseudo
 SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id
 1
 explain format = 'plan_tree' SELECT id FROM person force index(`city`) WHERE address_info->>"$.city" = 'Beijing';
 id	task	access object	operator info
-IndexReader	root		index:Projection
-└─Projection	cop[tikv]		explain_generate_column_substitute.person.id
-  └─IndexRangeScan	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+Projection	root	NULL	explain_generate_column_substitute.person.id
+└─IndexLookUp	root	NULL	NULL
+  ├─IndexFullScan(Build)	cop[tikv]	table:person, index:city(city)	keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]	NULL	eq(json_unquote(cast(json_extract(explain_generate_column_substitute.person.address_info, "$.city"), longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)), "Beijing")
+    └─TableRowIDScan	cop[tikv]	table:person	keep order:false, stats:pseudo
 drop table person;
 create table t(a char(5), b char(10) as (concat(a, a)), index bx(b));
 insert into t(a) values ('aaaaa');

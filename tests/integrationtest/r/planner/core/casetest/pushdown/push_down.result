@@ -51,7 +51,7 @@ TableReader	root		data:Projection
 explain format = 'plan_tree' select a->>'$.key0' from t2;
 id	task	access object	operator info
 TableReader	root		data:Projection
-└─Projection	cop[tikv]		json_unquote(cast(json_extract(planner__core__casetest__pushdown__push_down.t2.a, $.key0), var_string(16777216)))->Column
+└─Projection	cop[tikv]		json_unquote(cast(json_extract(planner__core__casetest__pushdown__push_down.t2.a, $.key0), longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci))->Column
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_length(a) from t2;
 id	task	access object	operator info
@@ -105,7 +105,7 @@ Projection	root		json_search(planner__core__casetest__pushdown__push_down.t2.a, 
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_unquote(a) from t2;
 id	task	access object	operator info
-Projection	root		json_unquote(cast(planner__core__casetest__pushdown__push_down.t2.a, var_string(4294967295)))->Column
+Projection	root		json_unquote(cast(planner__core__casetest__pushdown__push_down.t2.a, longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci))->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select i * 2 from t;

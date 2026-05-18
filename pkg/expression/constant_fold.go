@@ -62,7 +62,9 @@ func cloneFoldedBranchWithRetType(expr Expression) Expression {
 		cloned.RetType = e.RetType.Clone()
 		return cloned
 	case *ScalarFunction:
-		return e.Clone()
+		cloned := e.Clone().(*ScalarFunction)
+		cloned.RetType = cloned.Function.getRetTp()
+		return cloned
 	default:
 		return expr
 	}

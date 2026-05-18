@@ -351,11 +351,9 @@ func (sf *ScalarFunction) Clone() Expression {
 	function := sf.Function.Clone()
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
-		RetType:  function.getRetTp(),
+		RetType:  sf.RetType.Clone(),
 		Function: function,
 	}
-	// Keep RetType pointing at the cloned builtin signature type so later
-	// metadata updates stay isolated and remain visible to evaluation.
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
 	}
