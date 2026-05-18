@@ -44,4 +44,10 @@ func TestRegisterMetricsWithKeyspaceObservabilityValues(t *testing.T) {
 	labels = metricscommon.GetConstLabels()
 	require.Equal(t, "base_value", labels["base_label"])
 	require.Equal(t, "value_a", labels["label_a"])
+
+	metricscommon.SetConstLabels("keyspace_name", "ks")
+	setKeyspaceIDConstLabel(42)
+	labels = metricscommon.GetConstLabels()
+	require.Equal(t, "ks", labels["keyspace_name"])
+	require.Equal(t, "42", labels["keyspace_id"])
 }
