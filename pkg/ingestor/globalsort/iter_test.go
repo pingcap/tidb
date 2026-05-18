@@ -680,8 +680,8 @@ func TestMergePropBaseIter(t *testing.T) {
 	for i, filename := range filenames {
 		writer, err := store.Create(ctx, filename, nil)
 		require.NoError(t, err)
-		prop := &rangeProperty{firstKey: []byte{byte(i)}}
-		buf := encodeMultiProps(nil, []*rangeProperty{prop})
+		prop := &RangeProperty{FirstKey: []byte{byte(i)}}
+		buf := encodeMultiProps(nil, []*RangeProperty{prop})
 		_, err = writer.Write(ctx, buf)
 		require.NoError(t, err)
 		err = writer.Close(ctx)
@@ -697,7 +697,7 @@ func TestMergePropBaseIter(t *testing.T) {
 	for i := range fileNum {
 		p, err := iter.next()
 		require.NoError(t, err)
-		require.EqualValues(t, i, p.firstKey[0])
+		require.EqualValues(t, i, p.FirstKey[0])
 	}
 
 	_, err = iter.next()
@@ -747,8 +747,8 @@ func TestCloseLimitSizeMergeIterHalfway(t *testing.T) {
 	for i, filename := range filenames {
 		writer, err := store.Create(ctx, filename, nil)
 		require.NoError(t, err)
-		prop := &rangeProperty{firstKey: []byte{byte(i)}}
-		buf := encodeMultiProps(nil, []*rangeProperty{prop})
+		prop := &RangeProperty{FirstKey: []byte{byte(i)}}
+		buf := encodeMultiProps(nil, []*RangeProperty{prop})
 		_, err = writer.Write(ctx, buf)
 		require.NoError(t, err)
 		err = writer.Close(ctx)

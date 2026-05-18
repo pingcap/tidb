@@ -93,7 +93,7 @@ func getReadRangeFromProps(
 	eg.SetLimit(getReadRangeFromPropsConcurrency)
 	for i := range paths {
 		eg.Go(func() error {
-			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)
+			r, err2 := NewStatsReader(egCtx, exStorage, paths[i], 250*1024)
 			if err2 != nil {
 				if goerrors.Is(err2, io.EOF) {
 					return nil
@@ -107,10 +107,10 @@ func getReadRangeFromProps(
 			keyIdx := 0
 			curKey := starts[keyIdx]
 
-			p, err3 := r.nextProp()
+			p, err3 := r.NextProp()
 			var firstKey kv.Key
 			if err3 == nil {
-				firstKey = kv.Key(p.firstKey)
+				firstKey = kv.Key(p.FirstKey)
 			}
 			for {
 				if err3 != nil {
@@ -132,10 +132,10 @@ func getReadRangeFromProps(
 					readRangesPerKey[keyIdx][i] = readRangesPerKey[keyIdx-1][i]
 					curKey = starts[keyIdx]
 				}
-				readRangesPerKey[keyIdx][i] = p.offset
-				p, err3 = r.nextProp()
+				readRangesPerKey[keyIdx][i] = p.Offset
+				p, err3 = r.NextProp()
 				if err3 == nil {
-					firstKey = kv.Key(p.firstKey)
+					firstKey = kv.Key(p.FirstKey)
 				}
 			}
 		})

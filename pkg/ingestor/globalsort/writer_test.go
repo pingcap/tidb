@@ -160,17 +160,17 @@ func TestWriter(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
-	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
+	statReader, err := NewStatsReader(ctx, memStore, kvAndStat[1], bufSize)
 	require.NoError(t, err)
 
 	var keyCnt uint64 = 0
 	for {
-		p, err := statReader.nextProp()
+		p, err := statReader.NextProp()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
-		keyCnt += p.keys
+		keyCnt += p.Keys
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
 	require.NoError(t, statReader.Close())
@@ -542,15 +542,15 @@ func TestFlushKVsRetry(t *testing.T) {
 
 	require.False(t, store.shouldFail)
 
-	r, err := newStatsReader(ctx, store, kvAndStat[1], 100)
+	r, err := NewStatsReader(ctx, store, kvAndStat[1], 100)
 	require.NoError(t, err)
-	p, err := r.nextProp()
+	p, err := r.NextProp()
 	lastKey := []byte{}
 	for !goerrors.Is(err, io.EOF) {
 		require.NoError(t, err)
-		require.True(t, bytes.Compare(lastKey, p.firstKey) < 0)
-		lastKey = append(lastKey[:0], p.firstKey...)
-		p, err = r.nextProp()
+		require.True(t, bytes.Compare(lastKey, p.FirstKey) < 0)
+		lastKey = append(lastKey[:0], p.FirstKey...)
+		p, err = r.NextProp()
 	}
 }
 

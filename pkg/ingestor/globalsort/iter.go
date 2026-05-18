@@ -581,31 +581,31 @@ func (i *MergeKVIter) Close() error {
 	return nil
 }
 
-func (p *rangeProperty) sortKey() []byte {
-	return p.firstKey
+func (p *RangeProperty) sortKey() []byte {
+	return p.FirstKey
 }
 
-func (p *rangeProperty) cloneInnerFields() {
-	p.firstKey = slices.Clone(p.firstKey)
-	p.lastKey = slices.Clone(p.lastKey)
+func (p *RangeProperty) cloneInnerFields() {
+	p.FirstKey = slices.Clone(p.FirstKey)
+	p.LastKey = slices.Clone(p.LastKey)
 }
 
-func (p *rangeProperty) len() int {
+func (p *RangeProperty) len() int {
 	// 24 is the length of member offset, size and keys, which are all uint64
-	return len(p.firstKey) + len(p.lastKey) + 24
+	return len(p.FirstKey) + len(p.LastKey) + 24
 }
 
 type statReaderProxy struct {
 	p string
-	r *statsReader
+	r *StatsReader
 }
 
 func (p statReaderProxy) path() string {
 	return p.p
 }
 
-func (p statReaderProxy) next() (*rangeProperty, error) {
-	return p.r.nextProp()
+func (p statReaderProxy) next() (*RangeProperty, error) {
+	return p.r.NextProp()
 }
 
 func (p statReaderProxy) switchConcurrentMode(bool) error { return nil }
@@ -615,10 +615,10 @@ func (p statReaderProxy) close() error {
 }
 
 // mergePropBaseIter handles one MultipleFilesStat and use limitSizeMergeIter to
-// run heap sort on it. Also, it's a sortedReader of *rangeProperty that can be
+// run heap sort on it. Also, it's a sortedReader of *RangeProperty that can be
 // used by MergePropIter to handle multiple MultipleFilesStat.
 type mergePropBaseIter struct {
-	iter            *limitSizeMergeIter[*rangeProperty, statReaderProxy]
+	iter            *limitSizeMergeIter[*RangeProperty, statReaderProxy]
 	closeReaderFlag *bool
 	closeCh         chan struct{}
 	wg              *sync.WaitGroup
@@ -678,7 +678,7 @@ func newMergePropBaseIter(
 			go func() {
 				defer close(asyncTask)
 				defer wg.Done()
-				rd, err := newStatsReader(ctx, exStorage, path, 250*1024)
+				rd, err := NewStatsReader(ctx, exStorage, path, 250*1024)
 				select {
 				case <-closeCh:
 					_ = rd.Close()
@@ -710,12 +710,12 @@ func newMergePropBaseIter(
 		}
 	}()
 
-	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(multiStat.Filenames))
+	readerOpeners := make([]readerOpenerFn[*RangeProperty, statReaderProxy], 0, len(multiStat.Filenames))
 	// first `limit` reader will be opened by newLimitSizeMergeIter
 	for i := range int(limit) {
 		path := multiStat.Filenames[i][1]
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
-			rd, err := newStatsReader(ctx, exStorage, path, 250*1024)
+			rd, err := NewStatsReader(ctx, exStorage, path, 250*1024)
 			if err != nil {
 				return nil, err
 			}
@@ -756,7 +756,7 @@ func (m mergePropBaseIter) path() string {
 	return "mergePropBaseIter"
 }
 
-func (m mergePropBaseIter) next() (*rangeProperty, error) {
+func (m mergePropBaseIter) next() (*RangeProperty, error) {
 	ok, closeReaderIdx := m.iter.next()
 	if m.closeReaderFlag != nil && closeReaderIdx >= 0 {
 		*m.closeReaderFlag = true
@@ -783,7 +783,7 @@ func (m mergePropBaseIter) close() error {
 
 // MergePropIter is an iterator that merges multiple range properties from different files.
 type MergePropIter struct {
-	iter                *limitSizeMergeIter[*rangeProperty, mergePropBaseIter]
+	iter                *limitSizeMergeIter[*RangeProperty, mergePropBaseIter]
 	baseCloseReaderFlag *bool
 }
 
@@ -807,7 +807,7 @@ func NewMergePropIter(
 	})
 
 	closeReaderFlag := false
-	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))
+	readerOpeners := make([]readerOpenerFn[*RangeProperty, mergePropBaseIter], 0, len(multiStat))
 	for _, m := range multiStat {
 		readerOpeners = append(readerOpeners, func() (*mergePropBaseIter, error) {
 			baseIter, err := newMergePropBaseIter(ctx, m, exStorage)
@@ -845,7 +845,7 @@ func (i *MergePropIter) Next() bool {
 	return ok
 }
 
-func (i *MergePropIter) prop() *rangeProperty {
+func (i *MergePropIter) prop() *RangeProperty {
 	return i.iter.curr
 }
 

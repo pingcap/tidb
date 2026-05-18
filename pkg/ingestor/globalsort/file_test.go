@@ -63,12 +63,12 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	err = kvStore.addEncodedData(getEncodedData(k2, v2))
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
-	expected := &rangeProperty{
-		firstKey: k1,
-		lastKey:  k2,
-		offset:   0,
-		size:     uint64(len(k1) + len(v1) + len(k2) + len(v2)),
-		keys:     2,
+	expected := &RangeProperty{
+		FirstKey: k1,
+		LastKey:  k2,
+		Offset:   0,
+		Size:     uint64(len(k1) + len(v1) + len(k2) + len(v2)),
+		Keys:     2,
 	}
 	require.Equal(t, expected, rc.props[0])
 	encoded = rc.encode()
@@ -83,12 +83,12 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	kvStore.finish()
 	err = writer.Close(ctx)
 	require.NoError(t, err)
-	expected = &rangeProperty{
-		firstKey: k3,
-		lastKey:  k3,
-		offset:   uint64(len(k1) + len(v1) + 16 + len(k2) + len(v2) + 16),
-		size:     uint64(len(k3) + len(v3)),
-		keys:     1,
+	expected = &RangeProperty{
+		FirstKey: k3,
+		LastKey:  k3,
+		Offset:   uint64(len(k1) + len(v1) + 16 + len(k2) + len(v2) + 16),
+		Size:     uint64(len(k3) + len(v3)),
+		Keys:     1,
 	}
 	require.Len(t, rc.props, 2)
 	require.Equal(t, expected, rc.props[1])
@@ -104,24 +104,24 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	err = kvStore.addEncodedData(getEncodedData(k1, v1))
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
-	expected = &rangeProperty{
-		firstKey: k1,
-		lastKey:  k1,
-		offset:   0,
-		size:     uint64(len(k1) + len(v1)),
-		keys:     1,
+	expected = &RangeProperty{
+		FirstKey: k1,
+		LastKey:  k1,
+		Offset:   0,
+		Size:     uint64(len(k1) + len(v1)),
+		Keys:     1,
 	}
 	require.Equal(t, expected, rc.props[0])
 
 	err = kvStore.addEncodedData(getEncodedData(k2, v2))
 	require.NoError(t, err)
 	require.Len(t, rc.props, 2)
-	expected = &rangeProperty{
-		firstKey: k2,
-		lastKey:  k2,
-		offset:   uint64(len(k1) + len(v1) + 16),
-		size:     uint64(len(k2) + len(v2)),
-		keys:     1,
+	expected = &RangeProperty{
+		FirstKey: k2,
+		LastKey:  k2,
+		Offset:   uint64(len(k1) + len(v1) + 16),
+		Size:     uint64(len(k2) + len(v2)),
+		Keys:     1,
 	}
 	require.Equal(t, expected, rc.props[1])
 	kvStore.finish()

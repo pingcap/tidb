@@ -485,27 +485,27 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 					}
 					w.rc.reset()
 					// the new prop should have the same offset with kvStore.
-					w.rc.currProp.offset = w.kvStore.offset
+					w.rc.currProp.Offset = w.kvStore.offset
 				}
-				if len(w.rc.currProp.firstKey) == 0 {
-					w.rc.currProp.firstKey = key
+				if len(w.rc.currProp.FirstKey) == 0 {
+					w.rc.currProp.FirstKey = key
 				}
-				w.rc.currProp.lastKey = key
+				w.rc.currProp.LastKey = key
 
 				memSize += kvSize
 				w.totalSize += kvSize
-				w.rc.currProp.size += kvSize - 2*lengthBytes
-				w.rc.currProp.keys++
+				w.rc.currProp.Size += kvSize - 2*lengthBytes
+				w.rc.currProp.Keys++
 
-				if w.rc.currProp.size >= w.rc.propSizeDist ||
-					w.rc.currProp.keys >= w.rc.propKeysDist {
+				if w.rc.currProp.Size >= w.rc.propSizeDist ||
+					w.rc.currProp.Keys >= w.rc.propKeysDist {
 					newProp := *w.rc.currProp
 					w.rc.props = append(w.rc.props, &newProp)
 					// reset currProp, and start to update this prop.
-					w.rc.currProp.firstKey = nil
-					w.rc.currProp.offset = memSize
-					w.rc.currProp.keys = 0
-					w.rc.currProp.size = 0
+					w.rc.currProp.FirstKey = nil
+					w.rc.currProp.Offset = memSize
+					w.rc.currProp.Keys = 0
+					w.rc.currProp.Size = 0
 				}
 
 				if j == int(64*size.GB/kvSize)-1 {

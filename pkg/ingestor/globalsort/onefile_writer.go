@@ -269,7 +269,7 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		}
 		w.rc.reset()
 		// the new prop should have the same offset with kvStore.
-		w.rc.currProp.offset = w.kvStore.offset
+		w.rc.currProp.Offset = w.kvStore.offset
 	}
 	encodeToBuf(buf, idxKey, idxVal)
 	w.maxKey = buf[lengthBytes*2 : lengthBytes*2+keyLen]

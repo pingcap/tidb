@@ -123,8 +123,8 @@ func GetAdjustedBlockSize(totalBufSize uint64, defBlockSize int) int {
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
 type rangePropertiesCollector struct {
-	props        []*rangeProperty
-	currProp     *rangeProperty
+	props        []*RangeProperty
+	currProp     *RangeProperty
 	propSizeDist uint64
 	propKeysDist uint64
 }
@@ -134,28 +134,28 @@ func (rc *rangePropertiesCollector) onNextEncodedData(data []byte, size uint64) 
 	keyLen := binary.BigEndian.Uint64(data)
 	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
 
-	if len(rc.currProp.firstKey) == 0 {
-		rc.currProp.firstKey = key
+	if len(rc.currProp.FirstKey) == 0 {
+		rc.currProp.FirstKey = key
 	}
-	rc.currProp.lastKey = key
+	rc.currProp.LastKey = key
 
-	rc.currProp.size += uint64(len(data) - 2*lengthBytes)
-	rc.currProp.keys++
+	rc.currProp.Size += uint64(len(data) - 2*lengthBytes)
+	rc.currProp.Keys++
 
-	if rc.currProp.size >= rc.propSizeDist ||
-		rc.currProp.keys >= rc.propKeysDist {
+	if rc.currProp.Size >= rc.propSizeDist ||
+		rc.currProp.Keys >= rc.propKeysDist {
 		newProp := *rc.currProp
 		rc.props = append(rc.props, &newProp)
 		// reset currProp, and start to update this prop.
-		rc.currProp.firstKey = nil
-		rc.currProp.offset = size
-		rc.currProp.keys = 0
-		rc.currProp.size = 0
+		rc.currProp.FirstKey = nil
+		rc.currProp.Offset = size
+		rc.currProp.Keys = 0
+		rc.currProp.Size = 0
 	}
 }
 
 func (rc *rangePropertiesCollector) onFileEnd() {
-	if rc.currProp.keys > 0 {
+	if rc.currProp.Keys > 0 {
 		newProp := *rc.currProp
 		rc.props = append(rc.props, &newProp)
 	}
@@ -163,7 +163,7 @@ func (rc *rangePropertiesCollector) onFileEnd() {
 
 func (rc *rangePropertiesCollector) reset() {
 	rc.props = rc.props[:0]
-	rc.currProp = &rangeProperty{}
+	rc.currProp = &RangeProperty{}
 }
 
 // encode encodes rc.props to a byte slice.
@@ -295,8 +295,8 @@ func (b *WriterBuilder) Build(
 	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
-			props:        make([]*rangeProperty, 0, 1024),
-			currProp:     &rangeProperty{},
+			props:        make([]*RangeProperty, 0, 1024),
+			currProp:     &RangeProperty{},
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
@@ -333,8 +333,8 @@ func (b *WriterBuilder) BuildOneFile(
 
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
-			props:        make([]*rangeProperty, 0, 1024),
-			currProp:     &rangeProperty{},
+			props:        make([]*RangeProperty, 0, 1024),
+			currProp:     &RangeProperty{},
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},

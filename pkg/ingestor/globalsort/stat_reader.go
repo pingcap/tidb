@@ -21,11 +21,13 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
-type statsReader struct {
+// StatsReader is used to read RangeProperty from the file.
+type StatsReader struct {
 	byteReader *byteReader
 }
 
-func newStatsReader(ctx context.Context, store storeapi.Storage, name string, bufSize int) (*statsReader, error) {
+// NewStatsReader creates a new StatsReader to read RangeProperty.
+func NewStatsReader(ctx context.Context, store storeapi.Storage, name string, bufSize int) (*StatsReader, error) {
 	sr, err := openStoreReaderAndSeek(ctx, store, name, 0, 250*1024)
 	if err != nil {
 		return nil, err
@@ -34,12 +36,13 @@ func newStatsReader(ctx context.Context, store storeapi.Storage, name string, bu
 	if err != nil {
 		return nil, err
 	}
-	return &statsReader{
+	return &StatsReader{
 		byteReader: br,
 	}, nil
 }
 
-func (r *statsReader) nextProp() (*rangeProperty, error) {
+// NextProp returns the next RangeProperty.
+func (r *StatsReader) NextProp() (*RangeProperty, error) {
 	lenBytes, err := r.byteReader.readNBytes(4)
 	if err != nil {
 		return nil, err
@@ -52,6 +55,7 @@ func (r *statsReader) nextProp() (*rangeProperty, error) {
 	return decodeProp(propBytes), nil
 }
 
-func (r *statsReader) Close() error {
+// Close the StatsReader.
+func (r *StatsReader) Close() error {
 	return r.byteReader.Close()
 }

@@ -104,7 +104,7 @@ type RangeSplitter struct {
 	recordRegionSplitAfterNextProp bool
 	lastDataFile                   string
 	lastStatFile                   string
-	lastRangeProperty              *rangeProperty
+	lastRangeProperty              *RangeProperty
 	willExhaustHeap                exhaustedHeap
 
 	logger *zap.Logger
@@ -199,17 +199,17 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			return nil, nil, nil, nil, nil, err
 		}
 		prop := r.propIter.prop()
-		r.curGroupSize += int64(prop.size)
-		r.curRangeJobSize += int64(prop.size)
-		r.curRegionSplitSize += int64(prop.size)
-		r.curGroupKeyCnt += int64(prop.keys)
-		r.curRangeJobKeyCnt += int64(prop.keys)
-		r.curRegionSplitKeyCnt += int64(prop.keys)
+		r.curGroupSize += int64(prop.Size)
+		r.curRangeJobSize += int64(prop.Size)
+		r.curRegionSplitSize += int64(prop.Size)
+		r.curGroupKeyCnt += int64(prop.Keys)
+		r.curRangeJobKeyCnt += int64(prop.Keys)
+		r.curRegionSplitKeyCnt += int64(prop.Keys)
 
 		// if this Next call will close the last reader
 		if *r.propIter.baseCloseReaderFlag {
 			heap.Push(&r.willExhaustHeap, exhaustedHeapElem{
-				key:      r.lastRangeProperty.lastKey,
+				key:      r.lastRangeProperty.LastKey,
 				dataFile: r.lastDataFile,
 				statFile: r.lastStatFile,
 			})
@@ -226,7 +226,7 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		r.lastRangeProperty = prop
 
 		for r.willExhaustHeap.Len() > 0 &&
-			bytes.Compare(r.willExhaustHeap[0].key, prop.firstKey) < 0 {
+			bytes.Compare(r.willExhaustHeap[0].key, prop.FirstKey) < 0 {
 			exhaustedDataFiles = append(exhaustedDataFiles, r.willExhaustHeap[0].dataFile)
 			exhaustedStatFiles = append(exhaustedStatFiles, r.willExhaustHeap[0].statFile)
 			heap.Pop(&r.willExhaustHeap)
@@ -241,14 +241,14 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 				delete(r.activeStatFiles, p)
 			}
 			exhaustedStatFiles = exhaustedStatFiles[:0]
-			return prop.firstKey, retDataFiles, retStatFiles, r.takeRangeJobKeys(), r.takeRegionSplitKeys(), nil
+			return prop.FirstKey, retDataFiles, retStatFiles, r.takeRangeJobKeys(), r.takeRegionSplitKeys(), nil
 		}
 		if r.recordRangeJobAfterNextProp {
-			r.rangeJobKeys = append(r.rangeJobKeys, slices.Clone(prop.firstKey))
+			r.rangeJobKeys = append(r.rangeJobKeys, slices.Clone(prop.FirstKey))
 			r.recordRangeJobAfterNextProp = false
 		}
 		if r.recordRegionSplitAfterNextProp {
-			r.regionSplitKeys = append(r.regionSplitKeys, slices.Clone(prop.firstKey))
+			r.regionSplitKeys = append(r.regionSplitKeys, slices.Clone(prop.FirstKey))
 			r.recordRegionSplitAfterNextProp = false
 		}
 

@@ -22,32 +22,32 @@ import (
 )
 
 func TestRangePropertyCodec(t *testing.T) {
-	prop := &rangeProperty{
-		firstKey: []byte("key"),
-		lastKey:  []byte("key2"),
-		offset:   1,
-		size:     2,
-		keys:     3,
+	prop := &RangeProperty{
+		FirstKey: []byte("key"),
+		LastKey:  []byte("key2"),
+		Offset:   1,
+		Size:     2,
+		Keys:     3,
 	}
 	buf := encodeProp(nil, prop)
 	prop2 := decodeProp(buf)
 	require.EqualValues(t, prop, prop2)
 
-	p1, p2, p3 := &rangeProperty{}, &rangeProperty{}, &rangeProperty{}
-	for i, p := range []*rangeProperty{p1, p2, p3} {
-		p.firstKey = fmt.Appendf(nil, "key%d", i)
-		p.lastKey = fmt.Appendf(nil, "key%d9", i)
-		p.offset = uint64(10 * i)
-		p.size = uint64(20 * i)
-		p.keys = uint64(30 * i)
+	p1, p2, p3 := &RangeProperty{}, &RangeProperty{}, &RangeProperty{}
+	for i, p := range []*RangeProperty{p1, p2, p3} {
+		p.FirstKey = fmt.Appendf(nil, "key%d", i)
+		p.LastKey = fmt.Appendf(nil, "key%d9", i)
+		p.Offset = uint64(10 * i)
+		p.Size = uint64(20 * i)
+		p.Keys = uint64(30 * i)
 	}
-	buf = encodeMultiProps(nil, []*rangeProperty{p1, p2, p3})
+	buf = encodeMultiProps(nil, []*RangeProperty{p1, p2, p3})
 	props := decodeMultiProps(buf)
-	require.EqualValues(t, []*rangeProperty{p1, p2, p3}, props)
+	require.EqualValues(t, []*RangeProperty{p1, p2, p3}, props)
 }
 
 func TestPropertyLengthExceptKeys(t *testing.T) {
-	zero := &rangeProperty{}
+	zero := &RangeProperty{}
 	bs := encodeProp(nil, zero)
 	require.EqualValues(t, propertyLengthExceptKeys, len(bs))
 }

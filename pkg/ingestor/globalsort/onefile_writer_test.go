@@ -88,17 +88,17 @@ func TestOnefileWriterBasic(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
-	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
+	statReader, err := NewStatsReader(ctx, memStore, kvAndStat[1], bufSize)
 	require.NoError(t, err)
 
 	var keyCnt uint64 = 0
 	for {
-		p, err := statReader.nextProp()
+		p, err := statReader.NextProp()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
-		keyCnt += p.keys
+		keyCnt += p.Keys
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
 	require.NoError(t, statReader.Close())
@@ -155,24 +155,24 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
-	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
+	statReader, err := NewStatsReader(ctx, memStore, kvAndStat[1], bufSize)
 	require.NoError(t, err)
 
 	var keyCnt uint64 = 0
 	idx := 0
 	for {
-		p, err := statReader.nextProp()
+		p, err := statReader.NextProp()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
-		keyCnt += p.keys
-		require.Equal(t, kvs[idx].Key, p.firstKey)
+		keyCnt += p.Keys
+		require.Equal(t, kvs[idx].Key, p.FirstKey)
 		lastIdx := idx + int(keysDistance) - 1
 		if lastIdx >= len(kvs) {
 			lastIdx = len(kvs) - 1
 		}
-		require.Equal(t, kvs[lastIdx].Key, p.lastKey)
+		require.Equal(t, kvs[lastIdx].Key, p.LastKey)
 		idx += int(keysDistance)
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
@@ -408,16 +408,16 @@ func TestOnefilePropOffset(t *testing.T) {
 
 	require.NoError(t, writer.Close(ctx))
 
-	rd, err := newStatsReader(ctx, memStore, kvAndStat[1], 4096)
+	rd, err := NewStatsReader(ctx, memStore, kvAndStat[1], 4096)
 	require.NoError(t, err)
 	lastOffset := uint64(0)
 	for {
-		prop, err := rd.nextProp()
+		prop, err := rd.NextProp()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
-		require.GreaterOrEqual(t, prop.offset, lastOffset)
-		lastOffset = prop.offset
+		require.GreaterOrEqual(t, prop.Offset, lastOffset)
+		lastOffset = prop.Offset
 	}
 }
 

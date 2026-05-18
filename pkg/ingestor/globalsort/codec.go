@@ -18,26 +18,22 @@ import (
 	"encoding/binary"
 )
 
-// rangeProperty stores properties of a range:
-// - key: the start key of the range.
-// - offset: the start offset of the range in the file.
-// - size: the size of the range.
-// - keys: the number of keys in the range.
-type rangeProperty struct {
-	firstKey []byte
-	lastKey  []byte
-	offset   uint64
-	size     uint64
-	keys     uint64
-}
-
-func (r *rangeProperty) totalSize() uint64 {
-	return r.size + r.keys*2*lengthBytes
+// RangeProperty stores properties of a range:
+// - Key: the start key of the range.
+// - Offset: the start offset of the range in the file.
+// - Size: the size of the range.
+// - Keys: the number of keys in the range.
+type RangeProperty struct {
+	FirstKey []byte
+	LastKey  []byte
+	Offset   uint64
+	Size     uint64
+	Keys     uint64
 }
 
 // decodeMultiProps is only used for test.
-func decodeMultiProps(data []byte) []*rangeProperty {
-	var ret []*rangeProperty
+func decodeMultiProps(data []byte) []*RangeProperty {
+	var ret []*RangeProperty
 	for len(data) > 0 {
 		propLen := int(binary.BigEndian.Uint32(data))
 		propBytes := data[4 : 4+propLen]
@@ -48,52 +44,52 @@ func decodeMultiProps(data []byte) []*rangeProperty {
 	return ret
 }
 
-func decodeProp(data []byte) *rangeProperty {
-	rp := &rangeProperty{}
+func decodeProp(data []byte) *RangeProperty {
+	rp := &RangeProperty{}
 	n := 0
 	keyLen := int(binary.BigEndian.Uint32(data[n : n+4]))
 	n += 4
-	rp.firstKey = data[n : n+keyLen]
+	rp.FirstKey = data[n : n+keyLen]
 	n += keyLen
 	keyLen = int(binary.BigEndian.Uint32(data[n : n+4]))
 	n += 4
-	rp.lastKey = data[n : n+keyLen]
+	rp.LastKey = data[n : n+keyLen]
 	n += keyLen
-	rp.size = binary.BigEndian.Uint64(data[n : n+8])
+	rp.Size = binary.BigEndian.Uint64(data[n : n+8])
 	n += 8
-	rp.keys = binary.BigEndian.Uint64(data[n : n+8])
+	rp.Keys = binary.BigEndian.Uint64(data[n : n+8])
 	n += 8
-	rp.offset = binary.BigEndian.Uint64(data[n : n+8])
+	rp.Offset = binary.BigEndian.Uint64(data[n : n+8])
 	return rp
 }
 
 // keyLen * 2 + p.size + p.keys + p.offset
 const propertyLengthExceptKeys = 4*2 + 8 + 8 + 8
 
-func encodeMultiProps(buf []byte, props []*rangeProperty) []byte {
+func encodeMultiProps(buf []byte, props []*RangeProperty) []byte {
 	var propLen [4]byte
 	for _, p := range props {
 		binary.BigEndian.PutUint32(propLen[:],
-			uint32(propertyLengthExceptKeys+len(p.firstKey)+len(p.lastKey)))
+			uint32(propertyLengthExceptKeys+len(p.FirstKey)+len(p.LastKey)))
 		buf = append(buf, propLen[:4]...)
 		buf = encodeProp(buf, p)
 	}
 	return buf
 }
 
-func encodeProp(buf []byte, r *rangeProperty) []byte {
+func encodeProp(buf []byte, r *RangeProperty) []byte {
 	var b [8]byte
-	binary.BigEndian.PutUint32(b[:], uint32(len(r.firstKey)))
+	binary.BigEndian.PutUint32(b[:], uint32(len(r.FirstKey)))
 	buf = append(buf, b[:4]...)
-	buf = append(buf, r.firstKey...)
-	binary.BigEndian.PutUint32(b[:], uint32(len(r.lastKey)))
+	buf = append(buf, r.FirstKey...)
+	binary.BigEndian.PutUint32(b[:], uint32(len(r.LastKey)))
 	buf = append(buf, b[:4]...)
-	buf = append(buf, r.lastKey...)
-	binary.BigEndian.PutUint64(b[:], r.size)
+	buf = append(buf, r.LastKey...)
+	binary.BigEndian.PutUint64(b[:], r.Size)
 	buf = append(buf, b[:]...)
-	binary.BigEndian.PutUint64(b[:], r.keys)
+	binary.BigEndian.PutUint64(b[:], r.Keys)
 	buf = append(buf, b[:]...)
-	binary.BigEndian.PutUint64(b[:], r.offset)
+	binary.BigEndian.PutUint64(b[:], r.Offset)
 	buf = append(buf, b[:]...)
 	return buf
 }

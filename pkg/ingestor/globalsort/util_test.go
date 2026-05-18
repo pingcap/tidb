@@ -70,10 +70,10 @@ func TestGetReadRangeFromProps(t *testing.T) {
 
 	// file1 has props at offsets 10, 30, 50 with keys "key1", "key3", "key5"
 	rc1 := &rangePropertiesCollector{
-		props: []*rangeProperty{
-			{firstKey: []byte("key1"), offset: 10, size: 10, keys: 1},
-			{firstKey: []byte("key3"), offset: 30, size: 10, keys: 1},
-			{firstKey: []byte("key5"), offset: 50, size: 10, keys: 1},
+		props: []*RangeProperty{
+			{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1},
+			{FirstKey: []byte("key3"), Offset: 30, Size: 10, Keys: 1},
+			{FirstKey: []byte("key5"), Offset: 50, Size: 10, Keys: 1},
 		},
 	}
 	file1 := "/test1"
@@ -86,9 +86,9 @@ func TestGetReadRangeFromProps(t *testing.T) {
 
 	// file2 has props at offsets 20, 40 with keys "key2", "key4"
 	rc2 := &rangePropertiesCollector{
-		props: []*rangeProperty{
-			{firstKey: []byte("key2"), offset: 20, size: 10, keys: 1},
-			{firstKey: []byte("key4"), offset: 40, size: 10, keys: 1},
+		props: []*RangeProperty{
+			{FirstKey: []byte("key2"), Offset: 20, Size: 10, Keys: 1},
+			{FirstKey: []byte("key4"), Offset: 40, Size: 10, Keys: 1},
 		},
 	}
 	file2 := "/test2"
@@ -173,7 +173,7 @@ func TestGetReadRangeFromPropsEmptyJobKeys(t *testing.T) {
 	writer, err := store.Create(ctx, "/test-empty-job-keys", nil)
 	require.NoError(t, err)
 	_, err = writer.Write(ctx, (&rangePropertiesCollector{
-		props: []*rangeProperty{{firstKey: []byte("key1"), offset: 10, size: 10, keys: 1}},
+		props: []*RangeProperty{{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1}},
 	}).encode())
 	require.NoError(t, err)
 	err = writer.Close(ctx)
@@ -204,7 +204,7 @@ func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
 		writer, err := store.Create(ctx, paths[i], nil)
 		require.NoError(t, err)
 		_, err = writer.Write(ctx, (&rangePropertiesCollector{
-			props: []*rangeProperty{{firstKey: []byte("key1"), offset: 10, size: 10, keys: 1}},
+			props: []*RangeProperty{{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1}},
 		}).encode())
 		require.NoError(t, err)
 		err = writer.Close(ctx)
