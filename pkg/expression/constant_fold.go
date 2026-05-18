@@ -49,9 +49,9 @@ func FoldConstant(ctx BuildContext, expr Expression) Expression {
 	return e
 }
 
-// cloneFoldedColumnWithRetType copies column branches selected by special folding
+// cloneFoldedBranchWithRetType copies branches selected by special folding
 // before FoldConstant applies the parent expression metadata to the returned expression.
-func cloneFoldedColumnWithRetType(expr Expression) Expression {
+func cloneFoldedBranchWithRetType(expr Expression) Expression {
 	switch e := expr.(type) {
 	case *Column:
 		cloned := e.Clone().(*Column)
@@ -61,6 +61,8 @@ func cloneFoldedColumnWithRetType(expr Expression) Expression {
 		cloned := e.Clone().(*CorrelatedColumn)
 		cloned.RetType = e.RetType.Clone()
 		return cloned
+	case *ScalarFunction:
+		return e.Clone()
 	default:
 		return expr
 	}
@@ -103,10 +105,10 @@ func ifFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 		}
 		if !isNull0 && arg0 != 0 {
 			foldedExpr, isDeferred := foldConstant(ctx, args[1])
-			return cloneFoldedColumnWithRetType(foldedExpr), isDeferred
+			return cloneFoldedBranchWithRetType(foldedExpr), isDeferred
 		}
 		foldedExpr, isDeferred := foldConstant(ctx, args[2])
-		return cloneFoldedColumnWithRetType(foldedExpr), isDeferred
+		return cloneFoldedBranchWithRetType(foldedExpr), isDeferred
 	}
 	// if the condition is not const, which branch is unknown to run, so directly return.
 	return expr, false
@@ -128,7 +130,7 @@ func ifNullFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool
 			expr.GetType(ctx.GetEvalCtx()).SetCharset(args[1].GetType(ctx.GetEvalCtx()).GetCharset())
 			expr.GetType(ctx.GetEvalCtx()).SetCollate(args[1].GetType(ctx.GetEvalCtx()).GetCollate())
 
-			return cloneFoldedColumnWithRetType(foldedExpr), isConstant
+			return cloneFoldedBranchWithRetType(foldedExpr), isConstant
 		}
 		return constArg, isDeferred
 	}
@@ -160,7 +162,7 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 				foldedExpr.GetType(ctx.GetEvalCtx()).SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 				return foldedExpr, isDeferredConst
 			}
-			return cloneFoldedColumnWithRetType(foldedExpr), isDeferredConst
+			return cloneFoldedBranchWithRetType(foldedExpr), isDeferredConst
 		}
 	}
 	// If the number of arguments in casewhen is odd, and the previous conditions
@@ -173,7 +175,7 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			foldedExpr.GetType(ctx.GetEvalCtx()).SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 			return foldedExpr, isDeferredConst
 		}
-		return cloneFoldedColumnWithRetType(foldedExpr), isDeferredConst
+		return cloneFoldedBranchWithRetType(foldedExpr), isDeferredConst
 	}
 	return expr, isDeferredConst
 }
