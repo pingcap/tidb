@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalsort
+package simplesst
 
 import (
 	"bytes"
@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -180,7 +181,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 }
 
 func TestMergeOverlappingFilesInternal(t *testing.T) {
-	changePropDist(t, DefaultPropSizeDist, 2)
+	globalsort.changePropDist(t, DefaultPropSizeDist, 2)
 	// 1. Write to 3 files.
 	// 2. merge 3 files into one file.
 	// 3. read one file and check result.
@@ -221,7 +222,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		dataFiles = append(dataFiles, f[0])
 	}
 	var onefile [2]string
-	require.NoError(t, mergeOverlappingFilesInternal(
+	require.NoError(t, globalsort.mergeOverlappingFilesInternal(
 		ctx,
 		dataFiles,
 		memStore,
@@ -256,7 +257,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
-	data := &MemoryIngestData{
+	data := &globalsort.MemoryIngestData{
 		kvs: kvs,
 		ts:  123,
 	}
@@ -271,7 +272,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 }
 
 func TestOnefileWriterManyRows(t *testing.T) {
-	changePropDist(t, DefaultPropSizeDist, 2)
+	globalsort.changePropDist(t, DefaultPropSizeDist, 2)
 	// 1. write into one file with sorted order.
 	// 2. merge one file.
 	// 3. read kv file and check the result.
@@ -324,7 +325,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	})
 	DefaultReadBufferSize = 100
 	DefaultOneWriterMemSizeLimit = 1000
-	require.NoError(t, mergeOverlappingFilesInternal(
+	require.NoError(t, globalsort.mergeOverlappingFilesInternal(
 		ctx,
 		[]string{kvAndStat[0]},
 		memStore,

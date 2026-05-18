@@ -22,7 +22,6 @@ import (
 	"slices"
 
 	errors2 "github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -190,7 +189,7 @@ func GetReadRangeFromProps(
 	eg.SetLimit(getReadRangeFromPropsConcurrency)
 	for i := range paths {
 		eg.Go(func() error {
-			r, err2 := globalsort.NewStatsReader(egCtx, exStorage, paths[i], 250*1024)
+			r, err2 := NewStatsReader(egCtx, exStorage, paths[i], 250*1024)
 			if err2 != nil {
 				if errors.Is(err2, io.EOF) {
 					return nil

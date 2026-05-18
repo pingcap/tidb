@@ -28,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -113,7 +114,7 @@ notExhausted:
 	require.NoError(t, splitter.Close())
 }
 
-func writeKVs(t *testing.T, writer *Writer, keys [][]byte, values [][]byte) {
+func writeKVs(t *testing.T, writer *simplesst.Writer, keys [][]byte, values [][]byte) {
 	ctx := context.Background()
 	for i := range keys {
 		err := writer.WriteRow(ctx, keys[i], values[i], nil)
@@ -122,7 +123,7 @@ func writeKVs(t *testing.T, writer *Writer, keys [][]byte, values [][]byte) {
 	require.NoError(t, writer.Close(ctx))
 }
 
-func getKVAndStatFiles(sum *WriterSummary) (dataFiles []string, statsFiles []string) {
+func getKVAndStatFiles(sum *simplesst.WriterSummary) (dataFiles []string, statsFiles []string) {
 	for _, ms := range sum.MultipleFilesStats {
 		for _, f := range ms.Filenames {
 			dataFiles = append(dataFiles, f[0])
@@ -138,7 +139,7 @@ func removePartitionPrefix(t *testing.T, in []string) []string {
 		bs := []byte(s)
 		idx := bytes.IndexByte(bs, '/')
 		require.GreaterOrEqual(t, idx, 0)
-		require.True(t, IsValidPartition(bs[:idx]))
+		require.True(t, simplesst.IsValidPartition(bs[:idx]))
 		// we include / after partition prefix in the out, as all tests have it.
 		out = append(out, s[idx:])
 	}
@@ -151,12 +152,12 @@ func TestOnlyOneGroup(t *testing.T) {
 	memStore := objstore.NewMemStorage()
 	subDir := "/mock-test"
 
-	var summary *WriterSummary
-	writer := NewWriterBuilder().
+	var summary *simplesst.WriterSummary
+	writer := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		Build(memStore, subDir, "5")
 
 	writeKVs(t, writer, [][]byte{{1}, {2}}, [][]byte{{1}, {2}})
@@ -235,13 +236,13 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	memStore := objstore.NewMemStorage()
 	subDir := "/mock-test"
 
-	var summary *WriterSummary
-	writer1 := NewWriterBuilder().
-		SetMemorySizeLimit(2*(LengthBytes*2+10)).
-		SetBlockSize(2*(LengthBytes*2+10)).
+	var summary *simplesst.WriterSummary
+	writer1 := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(2*(simplesst.LengthBytes*2+10)).
+		SetBlockSize(2*(simplesst.LengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		Build(memStore, subDir, "1")
 	keys1 := [][]byte{
 		[]byte("key01"), []byte("key11"), []byte("key21"),
@@ -255,12 +256,12 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, dataFiles1, 2)
 	require.Len(t, statFiles1, 2)
 
-	writer2 := NewWriterBuilder().
-		SetMemorySizeLimit(2*(LengthBytes*2+10)).
-		SetBlockSize(2*(LengthBytes*2+10)).
+	writer2 := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(2*(simplesst.LengthBytes*2+10)).
+		SetBlockSize(2*(simplesst.LengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		Build(memStore, subDir, "2")
 	keys2 := [][]byte{
 		[]byte("key02"), []byte("key12"), []byte("key22"),
@@ -273,12 +274,12 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, dataFiles2, 2)
 	require.Len(t, statFiles2, 2)
 
-	writer3 := NewWriterBuilder().
-		SetMemorySizeLimit(2*(LengthBytes*2+10)).
-		SetBlockSize(2*(LengthBytes*2+10)).
+	writer3 := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(2*(simplesst.LengthBytes*2+10)).
+		SetBlockSize(2*(simplesst.LengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		Build(memStore, subDir, "3")
 	keys3 := [][]byte{
 		[]byte("key03"), []byte("key13"), []byte("key23"),
@@ -305,7 +306,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	multi2 := mockOneMultiFileStat(dataFiles3, statFiles3)
 	multi2[0].MinKey = []byte("key02")
 	multi2[0].MaxKey = []byte("key22")
-	multiFileStat := []MultipleFilesStat{multi2[0], multi[0]}
+	multiFileStat := []simplesst.MultipleFilesStat{multi2[0], multi[0]}
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
 		ctx, multiFileStat, memStore, 1000, 2, 1000, 1, 1000, 1,
@@ -389,12 +390,12 @@ func TestExactlyKeyNum(t *testing.T) {
 
 	subDir := "/mock-test"
 
-	var summary *WriterSummary
-	writer := NewWriterBuilder().
+	var summary *simplesst.WriterSummary
+	writer := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(15).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		Build(memStore, subDir, "5")
 
 	writeKVs(t, writer, keys, values)
@@ -441,8 +442,8 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	// current merge step parameters, we will merge 4000 files of 256MB into 16
 	// files, so we directly write 4000*256MB/16 = 64GB data to onefile writer.
 	fileNum := 3000
-	statCh := make(chan []MultipleFilesStat, fileNum)
-	onClose := func(s *WriterSummary) {
+	statCh := make(chan []simplesst.MultipleFilesStat, fileNum)
+	onClose := func(s *simplesst.WriterSummary) {
 		statCh <- s.MultipleFilesStats
 	}
 
@@ -450,8 +451,8 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	eg.SetLimit(30)
 	for i := range fileNum {
 		eg.Go(func() error {
-			w := NewWriterBuilder().
-				SetMemorySizeLimit(DefaultMemSizeLimit).
+			w := simplesst.NewWriterBuilder().
+				SetMemorySizeLimit(simplesst.DefaultMemSizeLimit).
 				SetBlockSize(32*units.MiB). // dataKVGroupBlockSize
 				SetPropKeysDistance(8*1024).
 				SetPropSizeDistance(size.MB).
@@ -475,7 +476,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			for j := range int(64 * size.GB / kvSize) {
 				// copied from OneFileWriter.WriteRow
 
-				if memSize >= DefaultMemSizeLimit {
+				if memSize >= simplesst.DefaultMemSizeLimit {
 					memSize = 0
 					w.kvStore.Finish()
 					encodedStat := w.rc.encode()
@@ -494,7 +495,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 				memSize += kvSize
 				w.totalSize += kvSize
-				w.rc.currProp.Size += kvSize - 2*LengthBytes
+				w.rc.currProp.Size += kvSize - 2*simplesst.LengthBytes
 				w.rc.currProp.Keys++
 
 				if w.rc.currProp.Size >= w.rc.propSizeDist ||
@@ -523,18 +524,18 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			}
 
 			// copied from mergeOverlappingFilesInternal
-			var stat MultipleFilesStat
+			var stat simplesst.MultipleFilesStat
 			stat.Filenames = append(stat.Filenames,
 				[2]string{w.dataFile, w.statFile})
 			stat.build([]kv.Key{minKey}, []kv.Key{maxKey})
-			statCh <- []MultipleFilesStat{stat}
+			statCh <- []simplesst.MultipleFilesStat{stat}
 			return w.Close(ctx)
 		})
 	}
 
 	require.NoError(t, eg.Wait())
 
-	multiStat := make([]MultipleFilesStat, 0, fileNum)
+	multiStat := make([]simplesst.MultipleFilesStat, 0, fileNum)
 	for range fileNum {
 		multiStat = append(multiStat, <-statCh...)
 	}

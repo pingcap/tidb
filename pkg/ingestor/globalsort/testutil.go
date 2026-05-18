@@ -29,12 +29,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func mockOneMultiFileStat(data, stat []string) []MultipleFilesStat {
-	m := MultipleFilesStat{}
+func mockOneMultiFileStat(data, stat []string) []simplesst.MultipleFilesStat {
+	m := simplesst.MultipleFilesStat{}
 	for i := range data {
 		m.Filenames = append(m.Filenames, [2]string{data[i], stat[i]})
 	}
-	return []MultipleFilesStat{m}
+	return []simplesst.MultipleFilesStat{m}
 }
 
 func testReadAndCompare(

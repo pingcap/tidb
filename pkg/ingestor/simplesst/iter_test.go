@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalsort
+package simplesst
 
 import (
 	"context"
@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -310,7 +311,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 	err := writer.Close(context.Background())
 	require.NoError(t, err)
 
-	dataNames, _, err := getKVAndStatFilesByScan(context.Background(), st, "testprefix")
+	dataNames, _, err := globalsort.getKVAndStatFilesByScan(context.Background(), st, "testprefix")
 	require.NoError(t, err)
 
 	offsets := make([]uint64, len(dataNames))

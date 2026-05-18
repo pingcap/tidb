@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -97,7 +98,7 @@ func NewMergeOperator(
 	partSize int64,
 	newFilePrefix string,
 	blockSize int,
-	onWriterClose OnWriterCloseFunc,
+	onWriterClose simplesst.OnWriterCloseFunc,
 	collector execute.Collector,
 	concurrency int,
 	checkHotspot bool,
@@ -107,7 +108,7 @@ func NewMergeOperator(
 	// need align this too. the max additional written size per file is max-block-size.
 	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
 	// to part-size is enough.
-	partSize = max(MinUploadPartSize, partSize+units.MiB)
+	partSize = max(simplesst.MinUploadPartSize, partSize+units.MiB)
 	logutil.Logger(ctx).Info("create merge operator",
 		zap.Int64("part-size", partSize))
 	pool := workerpool.NewWorkerPool(
@@ -146,7 +147,7 @@ type mergeWorker struct {
 	partSize      int64
 	newFilePrefix string
 	blockSize     int
-	onWriterClose OnWriterCloseFunc
+	onWriterClose simplesst.OnWriterCloseFunc
 	collector     execute.Collector
 	checkHotspot  bool
 	onDup         engineapi.OnDuplicateKey
@@ -267,7 +268,7 @@ func mergeOverlappingFilesInternal(
 	newFilePrefix string,
 	writerID string,
 	blockSize int,
-	onWriterClose OnWriterCloseFunc,
+	onWriterClose simplesst.OnWriterCloseFunc,
 	collector execute.Collector,
 	checkHotspot bool,
 	onDup engineapi.OnDuplicateKey,
@@ -297,7 +298,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, DefaultReadBufferSize, checkHotspot, fileGroupNum)
+	iter, err := simplesst.NewMergeKVIter(ctx, paths, zeroOffsets, store, simplesst.DefaultReadBufferSize, checkHotspot, fileGroupNum)
 	if err != nil {
 		return err
 	}
@@ -308,8 +309,8 @@ func mergeOverlappingFilesInternal(
 		}
 	}()
 
-	writer := NewWriterBuilder().
-		SetMemorySizeLimit(DefaultOneWriterMemSizeLimit).
+	writer := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(simplesst.DefaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onWriterClose).
 		SetOnDup(onDup).

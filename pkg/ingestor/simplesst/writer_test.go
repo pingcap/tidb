@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalsort
+package simplesst
 
 import (
 	"bytes"
@@ -32,6 +32,7 @@ import (
 	"github.com/jfcg/sorty/v2"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -208,13 +209,13 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	err := writer.Close(ctx)
 	require.NoError(t, err)
 
-	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, memStore, "test")
+	dataFiles, statFiles, err := globalsort.getKVAndStatFilesByScan(ctx, memStore, "test")
 	require.NoError(t, err)
 	require.NoError(t, err)
 	require.Len(t, dataFiles, 4)
 	require.Len(t, statFiles, 4)
-	dataFiles = removePartitionPrefix(t, dataFiles)
-	statFiles = removePartitionPrefix(t, statFiles)
+	dataFiles = globalsort.removePartitionPrefix(t, dataFiles)
+	statFiles = globalsort.removePartitionPrefix(t, statFiles)
 	for i := range 4 {
 		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/0/%d", i))
 		require.Equal(t, statFiles[i], fmt.Sprintf("/test/0_stat/%d", i))
@@ -276,7 +277,7 @@ func TestMultiFileStatOverlap(t *testing.T) {
 func removePartitionFromMultipleFilesStat(t *testing.T, in MultipleFilesStat) MultipleFilesStat {
 	out := in
 	for i := range out.Filenames {
-		namesWithoutPartition := removePartitionPrefix(t, []string{out.Filenames[i][0], out.Filenames[i][1]})
+		namesWithoutPartition := globalsort.removePartitionPrefix(t, []string{out.Filenames[i][0], out.Filenames[i][1]})
 		out.Filenames[i] = [2]string{namesWithoutPartition[0], namesWithoutPartition[1]}
 	}
 	return out
@@ -394,7 +395,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
 
-	allDataFiles, _, err := getKVAndStatFilesByScan(ctx, memStore, "test")
+	allDataFiles, _, err := globalsort.getKVAndStatFilesByScan(ctx, memStore, "test")
 	require.NoError(t, err)
 
 	err = mergeOverlappingFilesImpl(

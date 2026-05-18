@@ -52,7 +52,7 @@ type writeTestSuite struct {
 	afterWriterClose   func()
 
 	optionalFilePath string
-	onClose          OnWriterCloseFunc
+	onClose          simplesst.OnWriterCloseFunc
 }
 
 func writePlainFile(s *writeTestSuite) {
@@ -107,7 +107,7 @@ func writeExternalFile(s *writeTestSuite) {
 		filePath = s.optionalFilePath
 	}
 	cleanOldFiles(ctx, s.store, filePath)
-	builder := NewWriterBuilder().
+	builder := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit)).
 		SetOnCloseFunc(s.onClose)
 
@@ -135,7 +135,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 		filePath = s.optionalFilePath
 	}
 	cleanOldFiles(ctx, s.store, filePath)
-	builder := NewWriterBuilder().
+	builder := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(uint64(s.memoryLimit))
 
 	if s.beforeCreateWriter != nil {
@@ -155,7 +155,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 		key, val, _ = s.source.next()
 	}
 	intest.AssertNoError(writer.Close(ctx))
-	s.onClose(&WriterSummary{
+	s.onClose(&simplesst.WriterSummary{
 		Min: minKey,
 		Max: maxKey,
 	})
@@ -374,13 +374,13 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 	var totalSize int
 	readBufSize := s.memoryLimit / len(files)
 	zeroOffsets := make([]uint64, len(files))
-	iter, err := NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 1)
+	iter, err := simplesst.NewMergeKVIter(ctx, files, zeroOffsets, s.store, readBufSize, s.mergeIterHotspot, 1)
 	intest.AssertNoError(err)
 
 	kvCnt := 0
 	for iter.Next() {
 		kvCnt++
-		totalSize += len(iter.Key()) + len(iter.Value()) + LengthBytes*2
+		totalSize += len(iter.Key()) + len(iter.Value()) + simplesst.LengthBytes*2
 	}
 	intest.Assert(kvCnt == s.totalKVCnt)
 	err = iter.Close()
@@ -516,7 +516,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 
 	mergeOutput := "merge_output"
 	totalSize := atomic.NewUint64(0)
-	onClose := func(s *WriterSummary) {
+	onClose := func(s *simplesst.WriterSummary) {
 		totalSize.Add(s.TotalSize)
 	}
 	if s.beforeMerge != nil {
@@ -531,7 +531,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		s.store,
 		int64(5*size.MB),
 		mergeOutput,
-		DefaultBlockSize,
+		simplesst.DefaultBlockSize,
 		onClose,
 		nil,
 		s.concurrency,
@@ -567,7 +567,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 
 	mergeOutput := "merge_output"
 	totalSize := atomic.NewUint64(0)
-	onClose := func(s *WriterSummary) {
+	onClose := func(s *simplesst.WriterSummary) {
 		totalSize.Add(s.TotalSize)
 	}
 	if s.beforeMerge != nil {
@@ -584,7 +584,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 		int64(5*size.MB),
 		mergeOutput,
 		"test",
-		DefaultBlockSize,
+		simplesst.DefaultBlockSize,
 		8*1024,
 		1*size.MB,
 		8*1024,
@@ -659,7 +659,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	// ~ 1KB * 2M = 2GB
 	source2 := newAscendingKeyAsyncSource(2*1024*1024, 10, 990, nil)
 	var minKey, maxKey kv.Key
-	recordMinMax := func(s *WriterSummary) {
+	recordMinMax := func(s *simplesst.WriterSummary) {
 		minKey = s.Min
 		maxKey = s.Max
 	}
@@ -697,7 +697,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	)
 	largeBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),
-		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 	)
 	output := &memKVsAndBuffers{}
 	now := time.Now()
@@ -741,7 +741,7 @@ func TestReadAllData(t *testing.T) {
 		fileIdx := fileIdx
 		eg.Go(func() error {
 			fileName := fmt.Sprintf("/test%d", fileIdx)
-			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			writer := simplesst.NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
 			writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 			key := fmt.Appendf(nil, "key0%d", fileIdx)
 			err := writer.WriteRow(ctx, key, val)
@@ -763,7 +763,7 @@ func TestReadAllData(t *testing.T) {
 		fileIdx := fileIdx
 		eg.Go(func() error {
 			fileName := fmt.Sprintf("/test%d", fileIdx)
-			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			writer := simplesst.NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
 			writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 			kvSize := 0
@@ -791,7 +791,7 @@ func TestReadAllData(t *testing.T) {
 		fileIdx := fileIdx
 		eg.Go(func() error {
 			fileName := fmt.Sprintf("/test%d", fileIdx)
-			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+			writer := simplesst.NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
 			writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 			kvSize := 0
@@ -817,7 +817,7 @@ func TestReadAllData(t *testing.T) {
 
 	for ; fileIdx < 2091; fileIdx++ {
 		fileName := fmt.Sprintf("/test%d", fileIdx)
-		writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
+		writer := simplesst.NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
 		writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 		kvSize := 0
@@ -853,7 +853,7 @@ finishCreateFiles:
 	)
 	largeBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),
-		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 	)
 	output := &memKVsAndBuffers{}
 	p.beforeTest()

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalsort
+package simplesst
 
 import (
 	"bytes"
@@ -32,7 +32,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -404,28 +403,28 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 	s := &startKeysAndFiles{startKeys, m.Filenames}
 	sort.Sort(s)
 
-	points := make([]simplesst.Endpoint, 0, len(startKeys)*2)
+	points := make([]Endpoint, 0, len(startKeys)*2)
 	for _, k := range startKeys {
-		points = append(points, simplesst.Endpoint{Key: k, Tp: simplesst.InclusiveStart, Weight: 1})
+		points = append(points, Endpoint{Key: k, Tp: InclusiveStart, Weight: 1})
 	}
 	for _, k := range endKeys {
-		points = append(points, simplesst.Endpoint{Key: k, Tp: simplesst.InclusiveEnd, Weight: 1})
+		points = append(points, Endpoint{Key: k, Tp: InclusiveEnd, Weight: 1})
 	}
-	m.MaxOverlappingNum = simplesst.GetMaxOverlapping(points)
+	m.MaxOverlappingNum = GetMaxOverlapping(points)
 }
 
 // GetMaxOverlappingTotal assume the most overlapping case from given stats and
 // returns the overlapping level.
 func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
-	points := make([]simplesst.Endpoint, 0, len(stats)*2)
+	points := make([]Endpoint, 0, len(stats)*2)
 	for _, stat := range stats {
-		points = append(points, simplesst.Endpoint{Key: stat.MinKey, Tp: simplesst.InclusiveStart, Weight: stat.MaxOverlappingNum})
+		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: stat.MaxOverlappingNum})
 	}
 	for _, stat := range stats {
-		points = append(points, simplesst.Endpoint{Key: stat.MaxKey, Tp: simplesst.InclusiveEnd, Weight: stat.MaxOverlappingNum})
+		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: stat.MaxOverlappingNum})
 	}
 
-	return simplesst.GetMaxOverlapping(points)
+	return GetMaxOverlapping(points)
 }
 
 // Writer is used to write data into external storage.
@@ -598,10 +597,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		case engineapi.OnDuplicateKeyRecord:
 			// we don't have a global view, so need to keep duplicates with duplicate
 			// count <= 2, so later we can find them.
-			w.kvLocations, dupLocs, dupCnt = simplesst.RemoveDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
+			w.kvLocations, dupLocs, dupCnt = RemoveDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyRemove:
-			w.kvLocations, _, dupCnt = simplesst.RemoveDuplicates(w.kvLocations, w.getKeyByLoc, false)
+			w.kvLocations, _, dupCnt = RemoveDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
 			dupKey := slices.Clone(w.getKeyByLoc(&dupLoc))

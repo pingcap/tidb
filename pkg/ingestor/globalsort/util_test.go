@@ -19,231 +19,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
-
-type blockingOpenMemStorage struct {
-	*objstore.MemStorage
-	releaseCh chan struct{}
-	startedCh chan struct{}
-	current   atomic.Int32
-	max       atomic.Int32
-}
-
-func (s *blockingOpenMemStorage) Open(
-	ctx context.Context,
-	path string,
-	o *storeapi.ReaderOption,
-) (objectio.Reader, error) {
-	cur := s.current.Add(1)
-	for {
-		oldMax := s.max.Load()
-		if cur <= oldMax || s.max.CompareAndSwap(oldMax, cur) {
-			break
-		}
-	}
-	select {
-	case s.startedCh <- struct{}{}:
-	default:
-	}
-	select {
-	case <-s.releaseCh:
-	case <-ctx.Done():
-		s.current.Add(-1)
-		return nil, ctx.Err()
-	}
-	s.current.Add(-1)
-	return s.MemStorage.Open(ctx, path, o)
-}
-
-func TestGetReadRangeFromProps(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
-
-	// file1 has props at offsets 10, 30, 50 with keys "key1", "key3", "key5"
-	rc1 := &rangePropertiesCollector{
-		props: []*RangeProperty{
-			{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1},
-			{FirstKey: []byte("key3"), Offset: 30, Size: 10, Keys: 1},
-			{FirstKey: []byte("key5"), Offset: 50, Size: 10, Keys: 1},
-		},
-	}
-	file1 := "/test1"
-	w1, err := store.Create(ctx, file1, nil)
-	require.NoError(t, err)
-	_, err = w1.Write(ctx, rc1.encode())
-	require.NoError(t, err)
-	err = w1.Close(ctx)
-	require.NoError(t, err)
-
-	// file2 has props at offsets 20, 40 with keys "key2", "key4"
-	rc2 := &rangePropertiesCollector{
-		props: []*RangeProperty{
-			{FirstKey: []byte("key2"), Offset: 20, Size: 10, Keys: 1},
-			{FirstKey: []byte("key4"), Offset: 40, Size: 10, Keys: 1},
-		},
-	}
-	file2 := "/test2"
-	w2, err := store.Create(ctx, file2, nil)
-	require.NoError(t, err)
-	_, err = w2.Write(ctx, rc2.encode())
-	require.NoError(t, err)
-	err = w2.Close(ctx)
-	require.NoError(t, err)
-
-	paths := []string{file1, file2}
-
-	// single key between props
-	got, err := simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key2.5")}, paths, store)
-	require.NoError(t, err)
-	// key2.5: file1 => prop "key1" matches (offset=10), file2 => prop "key2" matches (offset=20)
-	require.Equal(t, []uint64{10, 20}, got[0])
-
-	// two keys between props
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key2.6")}, paths, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{10, 20}, got[0])
-	require.Equal(t, []uint64{10, 20}, got[1])
-
-	// key exactly on a prop boundary
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, paths, store)
-	require.NoError(t, err)
-	// key3: file1 => prop "key3" matches (offset=30), file2 => prop "key2" matches (offset=20)
-	require.Equal(t, []uint64{30, 20}, got[0])
-
-	// two keys, second exactly on a prop boundary
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key3")}, paths, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{10, 20}, got[0])
-	require.Equal(t, []uint64{30, 20}, got[1])
-
-	// key below all props
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key0")}, paths, store)
-	require.NoError(t, err)
-	// key0: no prop <= key0, so offset stays at zero default
-	require.Equal(t, []uint64{0, 0}, got[0])
-
-	// key exactly on first prop
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
-	require.NoError(t, err)
-	// key1: file1 => prop "key1" matches (offset=10), file2 => no prop <= key1 so 0
-	require.Equal(t, []uint64{10, 0}, got[0])
-
-	// two keys: one below all, one on first prop
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key0"), []byte("key1")}, paths, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{0, 0}, got[0])
-	require.Equal(t, []uint64{10, 0}, got[1])
-
-	// key above all props
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key999")}, paths, store)
-	require.NoError(t, err)
-	// key999: file1 => last prop "key5" (offset=50), file2 => last prop "key4" (offset=40)
-	require.Equal(t, []uint64{50, 40}, got[0])
-
-	// two identical keys above all props
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key999"), []byte("key999")}, paths, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{50, 40}, got[0])
-	require.Equal(t, []uint64{50, 40}, got[1])
-
-	// empty stat file should return zero offsets
-	file3 := "/test3"
-	w3, err := store.Create(ctx, file3, nil)
-	require.NoError(t, err)
-	err = w3.Close(ctx)
-	require.NoError(t, err)
-	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, []string{file1, file2, file3}, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{30, 20, 0}, got[0])
-}
-
-func TestGetReadRangeFromPropsEmptyJobKeys(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
-
-	writer, err := store.Create(ctx, "/test-empty-job-keys", nil)
-	require.NoError(t, err)
-	_, err = writer.Write(ctx, (&rangePropertiesCollector{
-		props: []*RangeProperty{{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1}},
-	}).encode())
-	require.NoError(t, err)
-	err = writer.Close(ctx)
-	require.NoError(t, err)
-
-	got, err := simplesst.GetReadRangeFromProps(ctx, nil, []string{"/test-empty-job-keys"}, store)
-	require.NoError(t, err)
-	require.Empty(t, got)
-}
-
-func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
-	backup := simplesst.getReadRangeFromPropsConcurrency
-	simplesst.getReadRangeFromPropsConcurrency = 2
-	defer func() {
-		simplesst.getReadRangeFromPropsConcurrency = backup
-	}()
-
-	ctx := context.Background()
-	store := &blockingOpenMemStorage{
-		MemStorage: objstore.NewMemStorage(),
-		releaseCh:  make(chan struct{}),
-		startedCh:  make(chan struct{}, 16),
-	}
-
-	paths := make([]string, 5)
-	for i := range paths {
-		paths[i] = fmt.Sprintf("/test-open-limit-%d", i)
-		writer, err := store.Create(ctx, paths[i], nil)
-		require.NoError(t, err)
-		_, err = writer.Write(ctx, (&rangePropertiesCollector{
-			props: []*RangeProperty{{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1}},
-		}).encode())
-		require.NoError(t, err)
-		err = writer.Close(ctx)
-		require.NoError(t, err)
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
-		errCh <- err
-	}()
-
-	for range 2 {
-		select {
-		case <-store.startedCh:
-		case <-time.After(3 * time.Second):
-			t.Fatal("timed out waiting for limited parallel reads to start")
-		}
-	}
-
-	// The errgroup limit prevents additional goroutines from entering Open.
-	select {
-	case <-store.startedCh:
-		t.Fatal("more than 2 concurrent opens detected despite concurrency limit")
-	default:
-	}
-	require.EqualValues(t, 2, store.max.Load())
-
-	close(store.releaseCh)
-	require.NoError(t, <-errCh)
-}
 
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
-	w := NewWriterBuilder().
-		SetMemorySizeLimit(10*(LengthBytes*2+2)).
-		SetBlockSize(10*(LengthBytes*2+2)).
+	w := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")
@@ -262,9 +51,9 @@ func TestGetAllFileNames(t *testing.T) {
 	err := w.Close(ctx)
 	require.NoError(t, err)
 
-	w2 := NewWriterBuilder().
-		SetMemorySizeLimit(10*(LengthBytes*2+2)).
-		SetBlockSize(10*(LengthBytes*2+2)).
+	w2 := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "3")
@@ -276,9 +65,9 @@ func TestGetAllFileNames(t *testing.T) {
 	err = w2.Close(ctx)
 	require.NoError(t, err)
 
-	w3 := NewWriterBuilder().
-		SetMemorySizeLimit(10*(LengthBytes*2+2)).
-		SetBlockSize(10*(LengthBytes*2+2)).
+	w3 := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "12")
@@ -305,9 +94,9 @@ func TestGetAllFileNames(t *testing.T) {
 func TestCleanUpFiles(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
-	w := NewWriterBuilder().
-		SetMemorySizeLimit(10*(LengthBytes*2+2)).
-		SetBlockSize(10*(LengthBytes*2+2)).
+	w := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")
@@ -340,12 +129,12 @@ func TestCleanUpFiles(t *testing.T) {
 }
 
 func TestSortedKVMeta(t *testing.T) {
-	summary := []*WriterSummary{
+	summary := []*simplesst.WriterSummary{
 		{
 			Min:       []byte("a"),
 			Max:       []byte("b"),
 			TotalSize: 123,
-			MultipleFilesStats: []MultipleFilesStat{
+			MultipleFilesStats: []simplesst.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"f1", "stat1"},
@@ -359,7 +148,7 @@ func TestSortedKVMeta(t *testing.T) {
 			Min:       []byte("x"),
 			Max:       []byte("y"),
 			TotalSize: 177,
-			MultipleFilesStats: []MultipleFilesStat{
+			MultipleFilesStats: []simplesst.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"f3", "stat3"},
@@ -395,7 +184,7 @@ func TestSortedKVMeta(t *testing.T) {
 	meta00.Merge(meta1)
 	require.Equal(t, meta0, meta00)
 
-	meta0.MergeSummary(&WriterSummary{Min: []byte("xx"), Max: []byte("yy"), ConflictInfo: engineapi.ConflictInfo{Count: 2, Files: []string{"b.txt"}}})
+	meta0.MergeSummary(&simplesst.WriterSummary{Min: []byte("xx"), Max: []byte("yy"), ConflictInfo: engineapi.ConflictInfo{Count: 2, Files: []string{"b.txt"}}})
 	require.EqualValues(t, engineapi.ConflictInfo{Count: 3, Files: []string{"a.txt", "b.txt"}}, meta0.ConflictInfo)
 }
 

@@ -21,6 +21,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -88,8 +89,8 @@ type RangeSplitter struct {
 	regionSplitKeyCnt int64
 	regionSplitKeys   [][]byte
 
-	propIter      *MergePropIter
-	multiFileStat []MultipleFilesStat
+	propIter      *simplesst.MergePropIter
+	multiFileStat []simplesst.MultipleFilesStat
 
 	// filename -> 2 level index in dataFiles/statFiles
 	activeDataFiles                map[string][2]int
@@ -104,7 +105,7 @@ type RangeSplitter struct {
 	recordRegionSplitAfterNextProp bool
 	lastDataFile                   string
 	lastStatFile                   string
-	lastRangeProperty              *RangeProperty
+	lastRangeProperty              *simplesst.RangeProperty
 	willExhaustHeap                exhaustedHeap
 
 	logger *zap.Logger
@@ -121,7 +122,7 @@ type RangeSplitter struct {
 // region split keys are controlled by `regionSplitSize` and `regionSplitKeyCnt`.
 func NewRangeSplitter(
 	ctx context.Context,
-	multiFileStat []MultipleFilesStat,
+	multiFileStat []simplesst.MultipleFilesStat,
 	externalStorage storeapi.Storage,
 	rangesGroupSize, rangesGroupKeyCnt int64,
 	rangeJobSize, rangeJobKeyCnt int64,
@@ -136,7 +137,7 @@ func NewRangeSplitter(
 		zap.Int64("regionSplitSize", regionSplitSize),
 		zap.Int64("regionSplitKeyCnt", regionSplitKeyCnt),
 	)
-	propIter, err := NewMergePropIter(ctx, multiFileStat, externalStorage)
+	propIter, err := simplesst.NewMergePropIter(ctx, multiFileStat, externalStorage)
 	if err != nil {
 		return nil, err
 	}

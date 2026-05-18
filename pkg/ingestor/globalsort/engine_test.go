@@ -24,6 +24,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -52,14 +53,14 @@ func testNewIter(
 	t *testing.T,
 	data engineapi.IngestData,
 	lowerBound, upperBound []byte,
-	expectedKVs []KVPair,
+	expectedKVs []simplesst.KVPair,
 ) {
 	ctx := context.Background()
 	iter := data.NewIter(ctx, lowerBound, upperBound, nil)
-	var kvs []KVPair
+	var kvs []simplesst.KVPair
 	for iter.First(); iter.Valid(); iter.Next() {
 		require.NoError(t, iter.Error())
-		kvs = append(kvs, KVPair{Key: iter.Key(), Value: iter.Value()})
+		kvs = append(kvs, simplesst.KVPair{Key: iter.Key(), Value: iter.Value()})
 	}
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
@@ -67,7 +68,7 @@ func testNewIter(
 }
 
 func TestMemoryIngestData(t *testing.T) {
-	kvs := []KVPair{
+	kvs := []simplesst.KVPair{
 		{Key: []byte("key1"), Value: []byte("value1")},
 		{Key: []byte("key2"), Value: []byte("value2")},
 		{Key: []byte("key3"), Value: []byte("value3")},
@@ -99,25 +100,25 @@ func TestMemoryIngestData(t *testing.T) {
 	data = &MemoryIngestData{
 		ts: 234,
 	}
-	encodedKVs := make([]KVPair, 0, len(kvs)*2)
-	duplicatedKVs := make([]KVPair, 0, len(kvs)*2)
+	encodedKVs := make([]simplesst.KVPair, 0, len(kvs)*2)
+	duplicatedKVs := make([]simplesst.KVPair, 0, len(kvs)*2)
 
 	for i := range kvs {
 		encodedKey := slices.Clone(kvs[i].Key)
-		encodedKVs = append(encodedKVs, KVPair{Key: encodedKey, Value: kvs[i].Value})
+		encodedKVs = append(encodedKVs, simplesst.KVPair{Key: encodedKey, Value: kvs[i].Value})
 		if i%2 == 0 {
 			continue
 		}
 
 		// duplicatedKeys will be like key2_0, key2_1, key4_0, key4_1
-		duplicatedKVs = append(duplicatedKVs, KVPair{Key: encodedKey, Value: kvs[i].Value})
+		duplicatedKVs = append(duplicatedKVs, simplesst.KVPair{Key: encodedKey, Value: kvs[i].Value})
 
 		encodedKey = slices.Clone(kvs[i].Key)
 		newValues := make([]byte, len(kvs[i].Value)+1)
 		copy(newValues, kvs[i].Value)
 		newValues[len(kvs[i].Value)] = 1
-		encodedKVs = append(encodedKVs, KVPair{Key: encodedKey, Value: newValues})
-		duplicatedKVs = append(duplicatedKVs, KVPair{Key: encodedKey, Value: newValues})
+		encodedKVs = append(encodedKVs, simplesst.KVPair{Key: encodedKey, Value: newValues})
+		duplicatedKVs = append(duplicatedKVs, simplesst.KVPair{Key: encodedKey, Value: newValues})
 	}
 	data.kvs = encodedKVs
 
@@ -131,14 +132,14 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
-func prepareKVFiles(t *testing.T, store storeapi.Storage, contents [][]KVPair) (dataFiles, statFiles []string) {
+func prepareKVFiles(t *testing.T, store storeapi.Storage, contents [][]simplesst.KVPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
-		var summary *WriterSummary
+		var summary *simplesst.WriterSummary
 		// we want to create a file for each content, so make the below size larger.
-		writer := NewWriterBuilder().SetPropKeysDistance(4).
+		writer := simplesst.NewWriterBuilder().SetPropKeysDistance(4).
 			SetMemorySizeLimit(8*units.MiB).SetBlockSize(8*units.MiB).
-			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 			Build(store, "/test", fmt.Sprintf("%d", i))
 		for _, p := range c {
 			require.NoError(t, writer.WriteRow(ctx, p.Key, p.Value, nil))
@@ -154,12 +155,12 @@ func prepareKVFiles(t *testing.T, store storeapi.Storage, contents [][]KVPair) (
 	return
 }
 
-func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndRanges) []KVPair {
+func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndRanges) []simplesst.KVPair {
 	ctx := context.Background()
 	iter := dataAndRanges.Data.NewIter(ctx, nil, nil, membuf.NewPool())
-	var allKVs []KVPair
+	var allKVs []simplesst.KVPair
 	for iter.First(); iter.Valid(); iter.Next() {
-		allKVs = append(allKVs, KVPair{Key: iter.Key(), Value: iter.Value()})
+		allKVs = append(allKVs, simplesst.KVPair{Key: iter.Key(), Value: iter.Value()})
 	}
 	require.NoError(t, iter.Close())
 	return allKVs
@@ -212,8 +213,8 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 	})
 
 	ctx := context.Background()
-	store := &trackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
-	dataFiles, statFiles := prepareKVFiles(t, store, [][]KVPair{{
+	store := &simplesst.trackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+	dataFiles, statFiles := prepareKVFiles(t, store, [][]simplesst.KVPair{{
 		{Key: []byte{1}, Value: []byte("first")},
 		{Key: []byte{2}, Value: []byte("second")},
 	}})
@@ -280,13 +281,13 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 	second.Data.IncRef()
 	defer second.Data.DecRef()
 
-	require.Equal(t, []KVPair{{Key: []byte{2}, Value: []byte("second")}}, getAllDataFromDataAndRanges(t, &second))
+	require.Equal(t, []simplesst.KVPair{{Key: []byte{2}, Value: []byte("second")}}, getAllDataFromDataAndRanges(t, &second))
 	require.NoError(t, <-errCh)
 }
 
 func TestEngineOnDup(t *testing.T) {
 	ctx := context.Background()
-	contents := [][]KVPair{{
+	contents := [][]simplesst.KVPair{{
 		{Key: []byte{4}, Value: []byte("bbb")},
 		{Key: []byte{4}, Value: []byte("bbb")},
 		{Key: []byte{1}, Value: []byte("aa")},
@@ -341,7 +342,7 @@ func TestEngineOnDup(t *testing.T) {
 	t.Run("on duplicate record or remove, no duplicates", func(t *testing.T) {
 		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
 			store := objstore.NewMemStorage()
-			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
+			dfiles, sfiles := prepareKVFiles(t, store, [][]simplesst.KVPair{{
 				{Key: []byte{4}, Value: []byte("bbb")},
 				{Key: []byte{1}, Value: []byte("aa")},
 				{Key: []byte{2}, Value: []byte("vv")},
@@ -356,7 +357,7 @@ func TestEngineOnDup(t *testing.T) {
 			require.Len(t, loadDataCh, 1)
 			dataAndRanges := <-loadDataCh
 			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
-			require.EqualValues(t, []KVPair{
+			require.EqualValues(t, []simplesst.KVPair{
 				{Key: []byte{1}, Value: []byte("aa")},
 				{Key: []byte{2}, Value: []byte("vv")},
 				{Key: []byte{3}, Value: []byte("sds")},
@@ -369,12 +370,12 @@ func TestEngineOnDup(t *testing.T) {
 	})
 
 	t.Run("on duplicate record or remove, partial duplicated", func(t *testing.T) {
-		contents2 := [][]KVPair{
+		contents2 := [][]simplesst.KVPair{
 			{{Key: []byte{1}, Value: []byte("aa")}, {Key: []byte{1}, Value: []byte("aa")}},
 			{{Key: []byte{1}, Value: []byte("aa")}, {Key: []byte{2}, Value: []byte("vv")}, {Key: []byte{3}, Value: []byte("sds")}},
 			{{Key: []byte{4}, Value: []byte("bbb")}, {Key: []byte{4}, Value: []byte("bbb")}},
 		}
-		for _, cont := range [][][]KVPair{contents, contents2} {
+		for _, cont := range [][][]simplesst.KVPair{contents, contents2} {
 			for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
 				store := objstore.NewMemStorage()
 				dataFiles, statFiles := prepareKVFiles(t, store, cont)
@@ -387,7 +388,7 @@ func TestEngineOnDup(t *testing.T) {
 				require.Len(t, loadDataCh, 1)
 				dataAndRanges := <-loadDataCh
 				allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
-				require.EqualValues(t, []KVPair{
+				require.EqualValues(t, []simplesst.KVPair{
 					{Key: []byte{2}, Value: []byte("vv")},
 					{Key: []byte{3}, Value: []byte("sds")},
 				}, allKVs)
@@ -398,8 +399,8 @@ func TestEngineOnDup(t *testing.T) {
 				} else {
 					require.EqualValues(t, 5, info.Count)
 					require.Len(t, info.Files, 1)
-					dupPairs := readKVFile(t, store, info.Files[0])
-					require.EqualValues(t, []KVPair{
+					dupPairs := simplesst.readKVFile(t, store, info.Files[0])
+					require.EqualValues(t, []simplesst.KVPair{
 						{Key: []byte{1}, Value: []byte("aa")},
 						{Key: []byte{1}, Value: []byte("aa")},
 						{Key: []byte{1}, Value: []byte("aa")},
@@ -414,7 +415,7 @@ func TestEngineOnDup(t *testing.T) {
 	t.Run("on duplicate record or remove, all duplicated", func(t *testing.T) {
 		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
 			store := objstore.NewMemStorage()
-			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
+			dfiles, sfiles := prepareKVFiles(t, store, [][]simplesst.KVPair{{
 				{Key: []byte{1}, Value: []byte("aaa")},
 				{Key: []byte{1}, Value: []byte("aaa")},
 				{Key: []byte{1}, Value: []byte("aaa")},
@@ -437,8 +438,8 @@ func TestEngineOnDup(t *testing.T) {
 			} else {
 				require.EqualValues(t, 4, info.Count)
 				require.Len(t, info.Files, 1)
-				dupPairs := readKVFile(t, store, info.Files[0])
-				require.EqualValues(t, []KVPair{
+				dupPairs := simplesst.readKVFile(t, store, info.Files[0])
+				require.EqualValues(t, []simplesst.KVPair{
 					{Key: []byte{1}, Value: []byte("aaa")},
 					{Key: []byte{1}, Value: []byte("aaa")},
 					{Key: []byte{1}, Value: []byte("aaa")},
@@ -454,7 +455,7 @@ func TestLoadIngestDataMultiBatch(t *testing.T) {
 	store := objstore.NewMemStorage()
 	// Create data spread across 4 key ranges, with 2 files to exercise
 	// cross-file offset reuse in the multi-batch path (start > 0).
-	contents := [][]KVPair{
+	contents := [][]simplesst.KVPair{
 		{
 			{Key: []byte{1}, Value: []byte("v1")},
 			{Key: []byte{2}, Value: []byte("v2")},
@@ -496,12 +497,12 @@ func TestLoadIngestDataMultiBatch(t *testing.T) {
 	require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
 	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
 
-	allKVs := make([]KVPair, 0, len(contents[0])+len(contents[1]))
+	allKVs := make([]simplesst.KVPair, 0, len(contents[0])+len(contents[1]))
 	for range 2 {
 		dr := <-loadDataCh
 		allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
 	}
-	require.EqualValues(t, []KVPair{
+	require.EqualValues(t, []simplesst.KVPair{
 		{Key: []byte{1}, Value: []byte("v1")},
 		{Key: []byte{2}, Value: []byte("v2")},
 		{Key: []byte{3}, Value: []byte("v3")},

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -70,7 +71,7 @@ func GetAllFileNames(
 				return nil
 			}
 
-			if !IsValidPartition(firstDir) {
+			if !simplesst.IsValidPartition(firstDir) {
 				return nil
 			}
 			secondIdx := bytes.IndexByte(bs[firstIdx+1:], '/')
@@ -111,13 +112,13 @@ func MockExternalEngine(
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
-	var summary *WriterSummary
-	writer := NewWriterBuilder().
-		SetMemorySizeLimit(10*(LengthBytes*2+10)).
-		SetBlockSize(10*(LengthBytes*2+10)).
+	var summary *simplesst.WriterSummary
+	writer := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+10)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+10)).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
-		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) { summary = s }).
 		Build(storage, "/mock-test", "0")
 	ctx := context.Background()
 	for i := range keys {
@@ -141,17 +142,17 @@ func MockExternalEngine(
 
 // SortedKVMeta is the meta of sorted kv.
 type SortedKVMeta struct {
-	StartKey           []byte                 `json:"start-key"`
-	EndKey             []byte                 `json:"end-key"` // exclusive
-	TotalKVSize        uint64                 `json:"total-kv-size"`
-	TotalKVCnt         uint64                 `json:"total-kv-cnt"`
-	MultipleFilesStats []MultipleFilesStat    `json:"multiple-files-stats"`
-	ConflictInfo       engineapi.ConflictInfo `json:"conflict-info"`
+	StartKey           []byte                        `json:"start-key"`
+	EndKey             []byte                        `json:"end-key"` // exclusive
+	TotalKVSize        uint64                        `json:"total-kv-size"`
+	TotalKVCnt         uint64                        `json:"total-kv-cnt"`
+	MultipleFilesStats []simplesst.MultipleFilesStat `json:"multiple-files-stats"`
+	ConflictInfo       engineapi.ConflictInfo        `json:"conflict-info"`
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
 // is empty, it will return a pointer to zero SortedKVMeta.
-func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
+func NewSortedKVMeta(summary *simplesst.WriterSummary) *SortedKVMeta {
 	if summary == nil || (len(summary.Min) == 0 && len(summary.Max) == 0) {
 		return &SortedKVMeta{}
 	}
@@ -185,7 +186,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.
-func (m *SortedKVMeta) MergeSummary(summary *WriterSummary) {
+func (m *SortedKVMeta) MergeSummary(summary *simplesst.WriterSummary) {
 	m.Merge(NewSortedKVMeta(summary))
 }
 
@@ -347,7 +348,7 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 	if len(dataFiles) == 0 {
 		return [][]string{}, nil
 	}
-	adjustedMergeSortFileCountStep := GetAdjustedMergeSortFileCountStep(mergeConc)
+	adjustedMergeSortFileCountStep := simplesst.GetAdjustedMergeSortFileCountStep(mergeConc)
 	dataFilesCnt := len(dataFiles)
 	result := make([][]string, 0, nodeCnt)
 	batches := len(dataFiles) / adjustedMergeSortFileCountStep
@@ -362,8 +363,8 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 	}
 	// adjust node cnt for remainder files to avoid having too much target files.
 	adjustNodeCnt := nodeCnt
-	maxTargetFilesPerSubtask := max(MergeSortMaxSubtaskTargetFiles, mergeConc)
-	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(GetAdjustedMergeSortOverlapThreshold(mergeConc)) {
+	maxTargetFilesPerSubtask := max(simplesst.MergeSortMaxSubtaskTargetFiles, mergeConc)
+	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(simplesst.GetAdjustedMergeSortOverlapThreshold(mergeConc)) {
 		adjustNodeCnt--
 		if adjustNodeCnt == 0 {
 			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)

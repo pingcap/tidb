@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -275,7 +275,7 @@ func TestFileChunkProcess(t *testing.T) {
 }
 
 func TestNewIndexRouteWriterFactoryErr(t *testing.T) {
-	writer := importer.NewIndexRouteWriter(zap.NewNop(), func(indexID int64) (*globalsort.Writer, error) {
+	writer := importer.NewIndexRouteWriter(zap.NewNop(), func(indexID int64) (*simplesst.Writer, error) {
 		return nil, errors.New("some err")
 	})
 	require.ErrorContains(t, writer.AppendRows(context.Background(), nil, kv.GroupedPairs{1: []common.KvPair{{}}}), "some err")
