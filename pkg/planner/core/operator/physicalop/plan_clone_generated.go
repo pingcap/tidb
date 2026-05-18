@@ -153,6 +153,9 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	if op.FtsQueryInfo != nil {
 		return nil, false
 	}
+	if op.PlanPartInfo != nil {
+		return nil, false
+	}
 	return cloned, true
 }
 

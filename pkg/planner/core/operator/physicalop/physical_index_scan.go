@@ -109,6 +109,10 @@ type PhysicalIndexScan struct {
 
 	FtsQueryInfo *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"`
 
+	// PlanPartInfo carries partition-pruning metadata for TiCI MPP IndexScan.
+	// TiKV IndexScan keeps using the outer IndexReader/IndexLookUpReader's PlanPartInfo.
+	PlanPartInfo *PhysPlanPartInfo `plan-cache-clone:"must-nil"`
+
 	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
@@ -182,6 +186,9 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	if p.DataSourceSchema != nil {
 		sum += p.DataSourceSchema.MemoryUsage()
 	}
+	if p.PlanPartInfo != nil {
+		sum += p.PlanPartInfo.MemoryUsage()
+	}
 	// slice memory usage
 	for _, cond := range p.AccessCondition {
 		sum += cond.MemoryUsage()
@@ -219,6 +226,11 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 		if pi != nil {
 			partitionName := pi.GetNameByID(p.PhysicalTableID)
 			res.Partitions = []string{partitionName}
+		}
+	} else if p.PlanPartInfo != nil && p.SCtx() != nil {
+		dynamicPartitionAccess := GetDynamicAccessPartition(p.SCtx(), p.Table, p.PlanPartInfo, tblName)
+		if dynamicPartitionAccess != nil && !dynamicPartitionAccess.AllPartitions && dynamicPartitionAccess.Err == "" {
+			res.Partitions = dynamicPartitionAccess.Partitions
 		}
 	}
 	if len(p.Index.Columns) > 0 {

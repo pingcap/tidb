@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	ticipkg "github.com/pingcap/tidb/pkg/tici"
 	"github.com/stretchr/testify/require"
 )
 
@@ -578,5 +579,79 @@ func TestTiCIJoinWithNonTiCITable(t *testing.T) {
 		tk.MustQuery(sql).CheckContain("cop[tici]")
 		tk.MustQuery(sql).CheckContain("cop[tikv]")
 		tk.MustQuery(sql).CheckNotContain("mpp[tiflash]")
+	})
+}
+
+func TestTiCIMPPIndexScanPartitionPruning(t *testing.T) {
+	ticipkg.InstallMockTiCIManagerForTest(t)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishPartitionUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishPartitionUpload")
+		require.NoError(t, err)
+	}()
+
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec("set tidb_allow_mpp=on")
+		tk.MustExec("set tidb_enforce_mpp=on")
+		tk.MustExec(`create table employees(
+			id bigint primary key,
+			fname varchar(25) not null,
+			store_id bigint not null,
+			body text
+		) partition by range(id) (
+			partition p0 values less than (100),
+			partition p1 values less than (200),
+			partition p2 values less than maxvalue
+		)`)
+		tk.MustExec(`create hybrid index h_idx on employees(id, fname, store_id, body) parameter '{
+			"inverted": {
+				"columns": ["id", "fname", "store_id", "body"]
+			},
+			"sort": {
+				"columns": ["id", "fname", "store_id"],
+				"order": ["asc", "desc", "asc"]
+			},
+			"sharding_key": {
+				"columns": ["id", "fname", "store_id"]
+			}
+		}'`)
+		tk.MustExec(`create table stores(
+			id bigint primary key,
+			name varchar(25) not null
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "employees")
+		testkit.SetTiFlashReplica(t, dom, "test", "stores")
+
+		explicitPartitionSQL := `explain format='brief'
+			select e.id, e.fname, s.name
+			from employees partition(p1) e use index(h_idx)
+			join stores s on e.store_id = s.id
+			where e.id > 101`
+		explicitPartitionPlan := tk.MustQuery(explicitPartitionSQL)
+		explicitPartitionPlan.MultiCheckContain([]string{
+			"HashJoin",
+			"mpp[tiflash]",
+			"partition:p1",
+			"index:h_idx",
+		})
+		explicitPartitionPlan.CheckNotContain("batchCop")
+
+		rangePruningSQL := `explain format='brief'
+			select e.id, e.fname, s.name
+			from employees e use index(h_idx)
+			join stores s on e.store_id = s.id
+			where e.id > 101`
+		rangePruningPlan := tk.MustQuery(rangePruningSQL)
+		rangePruningPlan.MultiCheckContain([]string{
+			"HashJoin",
+			"mpp[tiflash]",
+			"partition:p1,p2",
+			"index:h_idx",
+		})
+		rangePruningPlan.CheckNotContain("batchCop")
 	})
 }
