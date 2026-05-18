@@ -264,7 +264,11 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 			sc.UserFuncCtx.Lock()
 			sc.UserFuncCtx.StoredFuncName[key] = nil
 			sc.UserFuncCtx.Unlock()
-			return nil // Don't return error here, the function not exist error will be reported during plan building.
+			// Don't return error here, the function-not-exist error will be reported during
+			// plan building. Continue preloading the remaining function names so that a
+			// missing/non-stored function earlier in the list doesn't block later stored
+			// functions in the same statement.
+			continue
 		}
 		definition := rows[0].GetString(0)
 		sqlModeStr := rows[0].GetSet(1).String()
@@ -838,7 +842,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.flag &= ^inSequenceFunction
 		}
 		// When schema is specified, it should resolve stored function first to match MySQL compatibility.
-		if isUserDefinedStoredFunction(x) {
+		if isUserDefinedStoredFunction(x) && !expression.HasLoadableFunction(x.FnName.L) {
 			p.userDefStoredFuncs = append(p.userDefStoredFuncs, [2]string{x.Schema.L, x.FnName.L})
 		}
 	case *ast.RepairTableStmt:
