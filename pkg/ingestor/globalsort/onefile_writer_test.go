@@ -180,7 +180,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 }
 
 func TestMergeOverlappingFilesInternal(t *testing.T) {
-	changePropDist(t, defaultPropSizeDist, 2)
+	changePropDist(t, DefaultPropSizeDist, 2)
 	// 1. Write to 3 files.
 	// 2. merge 3 files into one file.
 	// 3. read one file and check result.
@@ -206,13 +206,13 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	}
 	require.NoError(t, writer.Close(ctx))
 	readBufSizeBak := DefaultReadBufferSize
-	memLimitBak := defaultOneWriterMemSizeLimit
+	memLimitBak := DefaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
 		DefaultReadBufferSize = readBufSizeBak
-		defaultOneWriterMemSizeLimit = memLimitBak
+		DefaultOneWriterMemSizeLimit = memLimitBak
 	})
 	DefaultReadBufferSize = 100
-	defaultOneWriterMemSizeLimit = 1000
+	DefaultOneWriterMemSizeLimit = 1000
 
 	collector := &execute.TestCollector{}
 
@@ -271,7 +271,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 }
 
 func TestOnefileWriterManyRows(t *testing.T) {
-	changePropDist(t, defaultPropSizeDist, 2)
+	changePropDist(t, DefaultPropSizeDist, 2)
 	// 1. write into one file with sorted order.
 	// 2. merge one file.
 	// 3. read kv file and check the result.
@@ -317,13 +317,13 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		resSummary = summary
 	}
 	readBufSizeBak := DefaultReadBufferSize
-	memLimitBak := defaultOneWriterMemSizeLimit
+	memLimitBak := DefaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
 		DefaultReadBufferSize = readBufSizeBak
-		defaultOneWriterMemSizeLimit = memLimitBak
+		DefaultOneWriterMemSizeLimit = memLimitBak
 	})
 	DefaultReadBufferSize = 100
-	defaultOneWriterMemSizeLimit = 1000
+	DefaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
 		[]string{kvAndStat[0]},

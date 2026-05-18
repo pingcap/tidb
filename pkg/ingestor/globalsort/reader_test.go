@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -156,7 +157,7 @@ func TestReadLargeFile(t *testing.T) {
 	startKey := []byte("key000000")
 	maxKey := []byte("key004998")
 	endKey := []byte("key004999")
-	readRanges, err := getReadRangeFromProps(ctx, [][]byte{startKey, endKey}, stats, memStore)
+	readRanges, err := simplesst.GetReadRangeFromProps(ctx, [][]byte{startKey, endKey}, stats, memStore)
 	require.NoError(t, err)
 
 	err = readAllData(

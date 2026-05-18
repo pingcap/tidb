@@ -381,16 +381,16 @@ func (e *Engine) loadRangeBatchData(
 			if err = e.lazyInitDupWriter(ctx); err != nil {
 				return err
 			}
-			deduplicatedKVs, dups, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, getPairKey, true)
+			deduplicatedKVs, dups, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, GetPairKey, true)
 			e.recordedDupCnt += len(dups)
 			for _, p := range dups {
 				e.recordedDupSize += int64(len(p.Key) + len(p.Value))
-				if err = e.dupKVStore.addRawKV(p.Key, p.Value); err != nil {
+				if err = e.dupKVStore.AddRawKV(p.Key, p.Value); err != nil {
 					return err
 				}
 			}
 		} else if e.onDup == engineapi.OnDuplicateKeyRemove {
-			deduplicatedKVs, _, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, getPairKey, false)
+			deduplicatedKVs, _, dupCount = simplesst.RemoveDuplicates(deduplicatedKVs, GetPairKey, false)
 		}
 		deduplicateDur = time.Since(start)
 	}
@@ -564,7 +564,7 @@ func (e *Engine) LoadIngestData(
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
 
-	readRangesPerKey, err := getReadRangeFromProps(ctx, e.jobKeys, e.statsFiles, e.storage)
+	readRangesPerKey, err := simplesst.GetReadRangeFromProps(ctx, e.jobKeys, e.statsFiles, e.storage)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -617,7 +617,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 	}
 	kvStore, writer := e.dupKVStore, e.dupWriter
 	e.dupKVStore, e.dupWriter = nil, nil
-	kvStore.finish()
+	kvStore.Finish()
 	if err := writer.Close(ctx); err != nil {
 		logutil.Logger(ctx).Error("close dup writer failed", zap.Error(err))
 		return err

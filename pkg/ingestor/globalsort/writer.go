@@ -49,9 +49,9 @@ import (
 )
 
 var (
-	multiFileStatNum           = 500
-	defaultPropSizeDist        = 1 * size.MB
-	defaultPropKeysDist uint64 = 8 * 1024
+	MultiFileStatNum           = 500
+	DefaultPropSizeDist        = 1 * size.MB
+	DefaultPropKeysDist uint64 = 8 * 1024
 	// Tested on GCP 16c/32c node, 32~64 workers used up all network bandwidth for
 	// part-size in range 5~20M, but not all thread will upload at same time.
 	// this value might not be optimal.
@@ -137,14 +137,14 @@ type rangePropertiesCollector struct {
 // size: the file size after adding 'data'
 func (rc *rangePropertiesCollector) onNextEncodedData(data []byte, size uint64) {
 	keyLen := binary.BigEndian.Uint64(data)
-	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
+	key := data[2*LengthBytes : 2*LengthBytes+keyLen]
 
 	if len(rc.currProp.FirstKey) == 0 {
 		rc.currProp.FirstKey = key
 	}
 	rc.currProp.LastKey = key
 
-	rc.currProp.Size += uint64(len(data) - 2*lengthBytes)
+	rc.currProp.Size += uint64(len(data) - 2*LengthBytes)
 	rc.currProp.Keys++
 
 	if rc.currProp.Size >= rc.propSizeDist ||
@@ -222,8 +222,8 @@ func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
 		memSizeLimit: DefaultMemSizeLimit,
 		blockSize:    DefaultBlockSize,
-		propSizeDist: defaultPropSizeDist,
-		propKeysDist: defaultPropKeysDist,
+		propSizeDist: DefaultPropSizeDist,
+		propKeysDist: DefaultPropKeysDist,
 		onClose:      dummyOnWriterCloseFunc,
 	}
 }
@@ -316,8 +316,8 @@ func (b *WriterBuilder) Build(
 		onDup:          b.onDup,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 0),
-		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
-		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		fileMinKeys:    make([]tidbkv.Key, 0, MultiFileStatNum),
+		fileMaxKeys:    make([]tidbkv.Key, 0, MultiFileStatNum),
 		tikvCodec:      b.tikvCodec,
 	}
 
@@ -475,7 +475,7 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	}
 
 	keyLen := len(key)
-	length := keyLen + len(val) + lengthBytes*2
+	length := keyLen + len(val) + LengthBytes*2
 	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
@@ -488,9 +488,9 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 		}
 	}
 	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(keyLen))
-	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
-	copy(dataBuf[2*lengthBytes:], key)
-	copy(dataBuf[2*lengthBytes+keyLen:], val)
+	binary.BigEndian.AppendUint64(dataBuf[:LengthBytes], uint64(len(val)))
+	copy(dataBuf[2*LengthBytes:], key)
+	copy(dataBuf[2*LengthBytes+keyLen:], val)
 
 	w.kvLocations = append(w.kvLocations, loc)
 	// TODO: maybe we can unify the size calculation during write to store.
@@ -678,12 +678,12 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 func (w *Writer) addNewKVFile2MultiFileStats(dataFile, statFile string, minKey, maxKey []byte) {
 	l := len(w.multiFileStats)
-	if l == 0 || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
+	if l == 0 || len(w.multiFileStats[l-1].Filenames) == MultiFileStatNum {
 		if l > 0 {
 			w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
 		}
 		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
-			Filenames: make([][2]string, 0, multiFileStatNum),
+			Filenames: make([][2]string, 0, MultiFileStatNum),
 		})
 		w.fileMinKeys = w.fileMinKeys[:0]
 		w.fileMaxKeys = w.fileMaxKeys[:0]
@@ -728,7 +728,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 		}
 	}
 
-	kvStore.finish()
+	kvStore.Finish()
 	encodedStat := w.rc.encode()
 	statSize := len(encodedStat)
 	_, err = statWriter.Write(ctx, encodedStat)
@@ -786,7 +786,7 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 			return "", err
 		}
 	}
-	dupStore.finish()
+	dupStore.Finish()
 	err = dupWriter.Close(ctx)
 	dupWriter = nil
 	if err != nil {
@@ -797,20 +797,20 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 
 func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+	keyLen := binary.BigEndian.Uint64(block[:LengthBytes])
+	return block[2*LengthBytes : 2*LengthBytes+keyLen]
 }
 
 func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[2*lengthBytes+keyLen:]
+	keyLen := binary.BigEndian.Uint64(block[:LengthBytes])
+	return block[2*LengthBytes+keyLen:]
 }
 
 func (w *Writer) reCalculateKVSize() int64 {
 	s := int64(0)
 	for _, loc := range w.kvLocations {
-		s += int64(loc.Length) - 2*lengthBytes
+		s += int64(loc.Length) - 2*LengthBytes
 	}
 	return s
 }
@@ -869,7 +869,7 @@ func randPartitionedPrefix(prefix string, rnd *rand.Rand) string {
 	return filepath.Join(partitionPrefix, prefix)
 }
 
-func isValidPartition(in []byte) bool {
+func IsValidPartition(in []byte) bool {
 	if len(in) != 9 || in[0] != partitionHeaderChar {
 		return false
 	}

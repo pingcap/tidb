@@ -87,7 +87,7 @@ func TestMergeKVIter(t *testing.T) {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.finish()
+		kvStore.Finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -139,7 +139,7 @@ func TestOneUpstream(t *testing.T) {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.finish()
+		kvStore.Finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -217,7 +217,7 @@ func TestCorruptContent(t *testing.T) {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.finish()
+		kvStore.Finish()
 		if i == 0 {
 			_, err = writer.Write(ctx, []byte("corrupt"))
 			require.NoError(t, err)
@@ -385,7 +385,7 @@ func TestHotspot(t *testing.T) {
 			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
 			require.NoError(t, err)
 		}
-		kvStore.finish()
+		kvStore.Finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}

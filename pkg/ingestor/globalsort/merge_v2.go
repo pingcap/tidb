@@ -22,6 +22,7 @@ import (
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -129,7 +130,7 @@ func MergeOverlappingFilesV2(
 		now := time.Now()
 
 		var readRanges [][]uint64
-		readRanges, err = getReadRangeFromProps(
+		readRanges, err = simplesst.GetReadRangeFromProps(
 			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
 		if err != nil {
 			return err

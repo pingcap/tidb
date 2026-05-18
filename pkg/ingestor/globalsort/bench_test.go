@@ -28,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -302,7 +303,7 @@ func getKVAndStatFilesByScan(ctx context.Context,
 		lastIdx := bytes.LastIndexByte(bs, '/')
 		secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
 		parentDir := path[secondLastIdx+1 : lastIdx]
-		if strings.HasSuffix(parentDir, statSuffix) {
+		if strings.HasSuffix(parentDir, "_stat") {
 			stats = append(stats, path)
 		} else {
 			data = append(data, path)
@@ -379,7 +380,7 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 	kvCnt := 0
 	for iter.Next() {
 		kvCnt++
-		totalSize += len(iter.Key()) + len(iter.Value()) + lengthBytes*2
+		totalSize += len(iter.Key()) + len(iter.Value()) + LengthBytes*2
 	}
 	intest.Assert(kvCnt == s.totalKVCnt)
 	err = iter.Close()
@@ -701,7 +702,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	output := &memKVsAndBuffers{}
 	now := time.Now()
 
-	readRanges, err := getReadRangeFromProps(ctx, [][]byte{startKey, endKey}, statFiles, store)
+	readRanges, err := simplesst.GetReadRangeFromProps(ctx, [][]byte{startKey, endKey}, statFiles, store)
 	require.NoError(t, err)
 	err = readAllData(
 		ctx, store, dataFiles, statFiles,
@@ -857,7 +858,7 @@ finishCreateFiles:
 	output := &memKVsAndBuffers{}
 	p.beforeTest()
 	now := time.Now()
-	readRanges, err := getReadRangeFromProps(ctx, [][]byte{readRangeStart, readRangeEnd}, statFiles, store)
+	readRanges, err := simplesst.GetReadRangeFromProps(ctx, [][]byte{readRangeStart, readRangeEnd}, statFiles, store)
 	require.NoError(t, err)
 	err = readAllData(
 		ctx, store, dataFiles, statFiles,

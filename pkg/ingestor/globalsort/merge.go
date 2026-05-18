@@ -244,7 +244,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // accurately, here we only consider the memory used by our code, the estimate max
 // memory usage of this function is:
 //
-//	defaultOneWriterMemSizeLimit
+//	DefaultOneWriterMemSizeLimit
 //	+ MaxMergingFilesPerThread * (X + DefaultReadBufferSize)
 //	+ maxUploadWorkersPerThread * (data-part-size + 5MiB(stat-part-size))
 //	+ memory taken by concurrent reading if check-hotspot is enabled
@@ -309,7 +309,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
+		SetMemorySizeLimit(DefaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onWriterClose).
 		SetOnDup(onDup).

@@ -468,7 +468,7 @@ func (p *KVPair) len() int {
 	return len(p.Key) + len(p.Value)
 }
 
-func getPairKey(p *KVPair) []byte {
+func GetPairKey(p *KVPair) []byte {
 	return p.Key
 }
 
@@ -845,12 +845,16 @@ func (i *MergePropIter) Next() bool {
 	return ok
 }
 
-func (i *MergePropIter) prop() *RangeProperty {
+func (i *MergePropIter) GetBaseIterCloseReaderFlag() bool {
+	return *i.baseCloseReaderFlag
+}
+
+func (i *MergePropIter) CurrProperty() *RangeProperty {
 	return i.iter.curr
 }
 
-// readerIndex returns the indices of last accessed 2 level reader.
-func (i *MergePropIter) readerIndex() (int, int) {
+// ReaderIndex returns the indices of last accessed 2 level reader.
+func (i *MergePropIter) ReaderIndex() (int, int) {
 	idx := i.iter.lastReaderIdx
 	return idx, i.iter.readers[idx].iter.lastReaderIdx
 }

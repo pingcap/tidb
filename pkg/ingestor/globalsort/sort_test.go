@@ -37,14 +37,14 @@ import (
 )
 
 func changePropDist(t *testing.T, sizeDist, keysDist uint64) {
-	sizeDistBak := defaultPropSizeDist
-	keysDistBak := defaultPropKeysDist
+	sizeDistBak := DefaultPropSizeDist
+	keysDistBak := DefaultPropKeysDist
 	t.Cleanup(func() {
-		defaultPropSizeDist = sizeDistBak
-		defaultPropKeysDist = keysDistBak
+		DefaultPropSizeDist = sizeDistBak
+		DefaultPropKeysDist = keysDistBak
 	})
-	defaultPropSizeDist = sizeDist
-	defaultPropKeysDist = keysDist
+	DefaultPropSizeDist = sizeDist
+	DefaultPropKeysDist = keysDist
 }
 
 func TestGlobalSortLocalBasic(t *testing.T) {
@@ -170,13 +170,13 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	// use random mergeMemSize to test different memLimit of writer.
 	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
 	bufSizeBak := DefaultReadBufferSize
-	memLimitBak := defaultOneWriterMemSizeLimit
+	memLimitBak := DefaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
 		DefaultReadBufferSize = bufSizeBak
-		defaultOneWriterMemSizeLimit = memLimitBak
+		DefaultOneWriterMemSizeLimit = memLimitBak
 	})
 	DefaultReadBufferSize = 100
-	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
+	DefaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 
 	for _, group := range dataGroup {
 		wctx := workerpool.NewContext(ctx)
@@ -304,4 +304,52 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 
 	// 3. read and sort step
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
+}
+
+// split data and stat files into groups for merge step.
+// like scheduler code for merge sort step in add index and import into.
+func splitDataAndStatFiles(datas []string, stats []string) ([][]string, [][]string) {
+	dataGroup := make([][]string, 0, 10)
+	statGroup := make([][]string, 0, 10)
+
+	start := 0
+	step := 10
+	for start < len(datas) {
+		end := min(start+step, len(datas))
+		dataGroup = append(dataGroup, datas[start:end])
+		statGroup = append(statGroup, stats[start:end])
+		start = end
+	}
+	return dataGroup, statGroup
+}
+
+// split data&stat files, startKeys and endKeys into groups for new merge step.
+func splitDataStatAndKeys(datas []string, stats []string, multiStats []MultipleFilesStat) ([][]string, [][]string, []dbkv.Key, []dbkv.Key) {
+	startKeys := make([]dbkv.Key, 0, 10)
+	endKeys := make([]dbkv.Key, 0, 10)
+	i := 0
+	for ; i < len(multiStats)-1; i += 2 {
+		startKey := BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
+		endKey := BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
+		endKey = dbkv.Key(endKey).Next().Clone()
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
+	if i == len(multiStats)-1 {
+		startKeys = append(startKeys, multiStats[i].MinKey.Clone())
+		endKeys = append(endKeys, multiStats[i].MaxKey.Next().Clone())
+	}
+
+	dataGroup := make([][]string, 0, 10)
+	statGroup := make([][]string, 0, 10)
+
+	start := 0
+	step := 2 * MultiFileStatNum
+	for start < len(datas) {
+		end := min(start+step, len(datas))
+		dataGroup = append(dataGroup, datas[start:end])
+		statGroup = append(statGroup, stats[start:end])
+		start = end
+	}
+	return dataGroup, statGroup, startKeys, endKeys
 }

@@ -185,8 +185,8 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(3*(lengthBytes*2+20)).
-		SetBlockSize(3*(lengthBytes*2+20)).
+		SetMemorySizeLimit(3*(LengthBytes*2+20)).
+		SetBlockSize(3*(LengthBytes*2+20)).
 		Build(memStore, "/test", "0")
 
 	// 200 bytes key values.
@@ -283,11 +283,11 @@ func removePartitionFromMultipleFilesStat(t *testing.T, in MultipleFilesStat) Mu
 }
 
 func TestWriterMultiFileStat(t *testing.T) {
-	oldMultiFileStatNum := multiFileStatNum
+	oldMultiFileStatNum := MultiFileStatNum
 	t.Cleanup(func() {
-		multiFileStatNum = oldMultiFileStatNum
+		MultiFileStatNum = oldMultiFileStatNum
 	})
-	multiFileStatNum = 3
+	MultiFileStatNum = 3
 
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
@@ -881,13 +881,13 @@ func TestRandPartitionedPrefix(t *testing.T) {
 		partitioned := randPartitionedPrefix(prefix, rnd)
 		require.Equal(t, partitionHeaderChar, partitioned[0])
 		require.Equal(t, partitioned[10:], prefix)
-		require.True(t, isValidPartition([]byte(partitioned[:9])))
+		require.True(t, IsValidPartition([]byte(partitioned[:9])))
 	}
 
-	require.False(t, isValidPartition([]byte("aa")))
-	require.False(t, isValidPartition([]byte("pa")))
-	require.False(t, isValidPartition([]byte("p1111000a")))
-	require.False(t, isValidPartition([]byte("pa111000")))
-	require.True(t, isValidPartition([]byte("p00000000")))
-	require.True(t, isValidPartition([]byte("p11110000")))
+	require.False(t, IsValidPartition([]byte("aa")))
+	require.False(t, IsValidPartition([]byte("pa")))
+	require.False(t, IsValidPartition([]byte("p1111000a")))
+	require.False(t, IsValidPartition([]byte("pa111000")))
+	require.True(t, IsValidPartition([]byte("p00000000")))
+	require.True(t, IsValidPartition([]byte("p11110000")))
 }

@@ -138,7 +138,7 @@ func removePartitionPrefix(t *testing.T, in []string) []string {
 		bs := []byte(s)
 		idx := bytes.IndexByte(bs, '/')
 		require.GreaterOrEqual(t, idx, 0)
-		require.True(t, isValidPartition(bs[:idx]))
+		require.True(t, IsValidPartition(bs[:idx]))
 		// we include / after partition prefix in the out, as all tests have it.
 		out = append(out, s[idx:])
 	}
@@ -237,8 +237,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 
 	var summary *WriterSummary
 	writer1 := NewWriterBuilder().
-		SetMemorySizeLimit(2*(lengthBytes*2+10)).
-		SetBlockSize(2*(lengthBytes*2+10)).
+		SetMemorySizeLimit(2*(LengthBytes*2+10)).
+		SetBlockSize(2*(LengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
 		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
@@ -256,8 +256,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, statFiles1, 2)
 
 	writer2 := NewWriterBuilder().
-		SetMemorySizeLimit(2*(lengthBytes*2+10)).
-		SetBlockSize(2*(lengthBytes*2+10)).
+		SetMemorySizeLimit(2*(LengthBytes*2+10)).
+		SetBlockSize(2*(LengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
 		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
@@ -274,8 +274,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, statFiles2, 2)
 
 	writer3 := NewWriterBuilder().
-		SetMemorySizeLimit(2*(lengthBytes*2+10)).
-		SetBlockSize(2*(lengthBytes*2+10)).
+		SetMemorySizeLimit(2*(LengthBytes*2+10)).
+		SetBlockSize(2*(LengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
 		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
@@ -477,7 +477,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 				if memSize >= DefaultMemSizeLimit {
 					memSize = 0
-					w.kvStore.finish()
+					w.kvStore.Finish()
 					encodedStat := w.rc.encode()
 					_, err := w.statWriter.Write(ctx, encodedStat)
 					if err != nil {
@@ -494,7 +494,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 				memSize += kvSize
 				w.totalSize += kvSize
-				w.rc.currProp.Size += kvSize - 2*lengthBytes
+				w.rc.currProp.Size += kvSize - 2*LengthBytes
 				w.rc.currProp.Keys++
 
 				if w.rc.currProp.Size >= w.rc.propSizeDist ||

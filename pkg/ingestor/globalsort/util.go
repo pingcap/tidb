@@ -18,8 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	goerrors "errors"
-	"io"
 	"path"
 	"reflect"
 	"sort"
@@ -28,120 +26,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"go.uber.org/zap/zapcore"
 )
 
 const (
 	metaName = "meta.json"
 )
-
-var (
-	// getReadRangeFromPropsConcurrency limits the number of stats files scanned in
-	// parallel to avoid bursty object-storage reads when an import step tracks a
-	// large number of files. Use a lower default than the data-reader budget
-	// because props scanning is metadata-heavy and benefits less from high fanout.
-	getReadRangeFromPropsConcurrency = 64
-)
-
-// getReadRangeFromProps reads the statistic files to find the largest offset of
-// corresponding sorted data file such that the key at offset is less than or
-// equal to the given start keys. These returned offsets can be used to seek data
-// file reader, read, parse and skip few smaller keys, and then locate the needed
-// data.
-//
-// Caller can specify multiple ascending keys and getReadRangeFromProps will return
-// the offsets per file for each key. For a range [keyA, keyB), the caller can use
-// result[A] as startOffsets and result[B] as estimatedEndOffsets.
-// Empty jobKeys returns an empty result.
-func getReadRangeFromProps(
-	ctx context.Context,
-	jobKeys [][]byte,
-	paths []string,
-	exStorage storeapi.Storage,
-) (_ [][]uint64, err error) {
-	logger := logutil.Logger(ctx)
-	task := log.BeginTask(logger, "seek props offsets")
-	defer func() {
-		task.End(zapcore.ErrorLevel, err)
-	}()
-
-	starts := make([]kv.Key, len(jobKeys))
-	for i := range jobKeys {
-		starts[i] = kv.Key(jobKeys[i])
-	}
-	if len(starts) == 0 {
-		return [][]uint64{}, nil
-	}
-
-	readRangesPerKey := make([][]uint64, len(starts))
-	for i := range starts {
-		readRangesPerKey[i] = make([]uint64, len(paths))
-	}
-
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	eg.SetLimit(getReadRangeFromPropsConcurrency)
-	for i := range paths {
-		eg.Go(func() error {
-			r, err2 := NewStatsReader(egCtx, exStorage, paths[i], 250*1024)
-			if err2 != nil {
-				if goerrors.Is(err2, io.EOF) {
-					return nil
-				}
-				return errors.Trace(err2)
-			}
-			defer func() {
-				_ = r.Close()
-			}()
-
-			keyIdx := 0
-			curKey := starts[keyIdx]
-
-			p, err3 := r.NextProp()
-			var firstKey kv.Key
-			if err3 == nil {
-				firstKey = kv.Key(p.FirstKey)
-			}
-			for {
-				if err3 != nil {
-					if goerrors.Is(err3, io.EOF) {
-						// fill the rest of the offsets with the last offset
-						off := readRangesPerKey[keyIdx][i]
-						for keyIdx++; keyIdx < len(starts); keyIdx++ {
-							readRangesPerKey[keyIdx][i] = off
-						}
-						return nil
-					}
-					return errors.Trace(err3)
-				}
-				for firstKey.Cmp(curKey) > 0 {
-					keyIdx++
-					if keyIdx >= len(starts) {
-						return nil
-					}
-					readRangesPerKey[keyIdx][i] = readRangesPerKey[keyIdx-1][i]
-					curKey = starts[keyIdx]
-				}
-				readRangesPerKey[keyIdx][i] = p.Offset
-				p, err3 = r.NextProp()
-				if err3 == nil {
-					firstKey = kv.Key(p.FirstKey)
-				}
-			}
-		})
-	}
-
-	if err = eg.Wait(); err != nil {
-		return nil, err
-	}
-	return readRangesPerKey, nil
-}
 
 // GetAllFileNames returns files with the same non-partitioned dir.
 //   - for intermediate KV/stat files we store them with a partitioned way to mitigate
@@ -178,7 +70,7 @@ func GetAllFileNames(
 				return nil
 			}
 
-			if !isValidPartition(firstDir) {
+			if !IsValidPartition(firstDir) {
 				return nil
 			}
 			secondIdx := bytes.IndexByte(bs[firstIdx+1:], '/')
@@ -221,8 +113,8 @@ func MockExternalEngine(
 ) (dataFiles []string, statsFiles []string, err error) {
 	var summary *WriterSummary
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+10)).
-		SetBlockSize(10*(lengthBytes*2+10)).
+		SetMemorySizeLimit(10*(LengthBytes*2+10)).
+		SetBlockSize(10*(LengthBytes*2+10)).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
 		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).

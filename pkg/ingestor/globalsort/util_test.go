@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -102,55 +103,55 @@ func TestGetReadRangeFromProps(t *testing.T) {
 	paths := []string{file1, file2}
 
 	// single key between props
-	got, err := getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5")}, paths, store)
+	got, err := simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key2.5")}, paths, store)
 	require.NoError(t, err)
 	// key2.5: file1 => prop "key1" matches (offset=10), file2 => prop "key2" matches (offset=20)
 	require.Equal(t, []uint64{10, 20}, got[0])
 
 	// two keys between props
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key2.6")}, paths, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key2.6")}, paths, store)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{10, 20}, got[0])
 	require.Equal(t, []uint64{10, 20}, got[1])
 
 	// key exactly on a prop boundary
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, paths, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, paths, store)
 	require.NoError(t, err)
 	// key3: file1 => prop "key3" matches (offset=30), file2 => prop "key2" matches (offset=20)
 	require.Equal(t, []uint64{30, 20}, got[0])
 
 	// two keys, second exactly on a prop boundary
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key3")}, paths, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key3")}, paths, store)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{10, 20}, got[0])
 	require.Equal(t, []uint64{30, 20}, got[1])
 
 	// key below all props
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0")}, paths, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key0")}, paths, store)
 	require.NoError(t, err)
 	// key0: no prop <= key0, so offset stays at zero default
 	require.Equal(t, []uint64{0, 0}, got[0])
 
 	// key exactly on first prop
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
 	require.NoError(t, err)
 	// key1: file1 => prop "key1" matches (offset=10), file2 => no prop <= key1 so 0
 	require.Equal(t, []uint64{10, 0}, got[0])
 
 	// two keys: one below all, one on first prop
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0"), []byte("key1")}, paths, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key0"), []byte("key1")}, paths, store)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{0, 0}, got[0])
 	require.Equal(t, []uint64{10, 0}, got[1])
 
 	// key above all props
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999")}, paths, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key999")}, paths, store)
 	require.NoError(t, err)
 	// key999: file1 => last prop "key5" (offset=50), file2 => last prop "key4" (offset=40)
 	require.Equal(t, []uint64{50, 40}, got[0])
 
 	// two identical keys above all props
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999"), []byte("key999")}, paths, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key999"), []byte("key999")}, paths, store)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{50, 40}, got[0])
 	require.Equal(t, []uint64{50, 40}, got[1])
@@ -161,7 +162,7 @@ func TestGetReadRangeFromProps(t *testing.T) {
 	require.NoError(t, err)
 	err = w3.Close(ctx)
 	require.NoError(t, err)
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, []string{file1, file2, file3}, store)
+	got, err = simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, []string{file1, file2, file3}, store)
 	require.NoError(t, err)
 	require.Equal(t, []uint64{30, 20, 0}, got[0])
 }
@@ -179,16 +180,16 @@ func TestGetReadRangeFromPropsEmptyJobKeys(t *testing.T) {
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 
-	got, err := getReadRangeFromProps(ctx, nil, []string{"/test-empty-job-keys"}, store)
+	got, err := simplesst.GetReadRangeFromProps(ctx, nil, []string{"/test-empty-job-keys"}, store)
 	require.NoError(t, err)
 	require.Empty(t, got)
 }
 
 func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
-	backup := getReadRangeFromPropsConcurrency
-	getReadRangeFromPropsConcurrency = 2
+	backup := simplesst.getReadRangeFromPropsConcurrency
+	simplesst.getReadRangeFromPropsConcurrency = 2
 	defer func() {
-		getReadRangeFromPropsConcurrency = backup
+		simplesst.getReadRangeFromPropsConcurrency = backup
 	}()
 
 	ctx := context.Background()
@@ -213,7 +214,7 @@ func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := getReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
+		_, err := simplesst.GetReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
 		errCh <- err
 	}()
 
@@ -241,8 +242,8 @@ func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
 	w := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+2)).
-		SetBlockSize(10*(lengthBytes*2+2)).
+		SetMemorySizeLimit(10*(LengthBytes*2+2)).
+		SetBlockSize(10*(LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")
@@ -262,8 +263,8 @@ func TestGetAllFileNames(t *testing.T) {
 	require.NoError(t, err)
 
 	w2 := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+2)).
-		SetBlockSize(10*(lengthBytes*2+2)).
+		SetMemorySizeLimit(10*(LengthBytes*2+2)).
+		SetBlockSize(10*(LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "3")
@@ -276,8 +277,8 @@ func TestGetAllFileNames(t *testing.T) {
 	require.NoError(t, err)
 
 	w3 := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+2)).
-		SetBlockSize(10*(lengthBytes*2+2)).
+		SetMemorySizeLimit(10*(LengthBytes*2+2)).
+		SetBlockSize(10*(LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "12")
@@ -305,8 +306,8 @@ func TestCleanUpFiles(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
 	w := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+2)).
-		SetBlockSize(10*(lengthBytes*2+2)).
+		SetMemorySizeLimit(10*(LengthBytes*2+2)).
+		SetBlockSize(10*(LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")

@@ -34,6 +34,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// in readAllData, expected concurrency less than this value will not use
+// concurrent reader.
+var readAllDataConcThreshold = uint64(4)
+
 func readAllData(
 	ctx context.Context,
 	store storeapi.Storage,
@@ -174,14 +178,14 @@ func readOneFile(
 		_ = rd.Close()
 	}()
 	if concurrency > 1 {
-		rd.byteReader.enableConcurrentRead(
+		rd.EnableConcurrentRead(
 			storage,
 			dataFile,
 			int(concurrency),
 			ConcurrentReaderBufferSizePerConc,
 			largeBlockBuf,
 		)
-		err = rd.byteReader.switchConcurrentMode(true)
+		err = rd.SwitchConcurrentMode(true)
 		if err != nil {
 			return err
 		}

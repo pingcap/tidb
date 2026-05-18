@@ -198,7 +198,7 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		if err = r.propIter.Error(); err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
-		prop := r.propIter.prop()
+		prop := r.propIter.CurrProperty()
 		r.curGroupSize += int64(prop.Size)
 		r.curRangeJobSize += int64(prop.Size)
 		r.curRegionSplitSize += int64(prop.Size)
@@ -207,7 +207,7 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		r.curRegionSplitKeyCnt += int64(prop.Keys)
 
 		// if this Next call will close the last reader
-		if *r.propIter.baseCloseReaderFlag {
+		if r.propIter.GetBaseIterCloseReaderFlag() {
 			heap.Push(&r.willExhaustHeap, exhaustedHeapElem{
 				key:      r.lastRangeProperty.LastKey,
 				dataFile: r.lastDataFile,
@@ -215,7 +215,7 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			})
 		}
 
-		idx, idx2 := r.propIter.readerIndex()
+		idx, idx2 := r.propIter.ReaderIndex()
 		filePair := r.multiFileStat[idx].Filenames[idx2]
 		dataFilePath := filePair[0]
 		statFilePath := filePair[1]

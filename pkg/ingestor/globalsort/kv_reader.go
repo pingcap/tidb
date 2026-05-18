@@ -22,6 +22,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -84,6 +85,20 @@ func (r *KVReader) NextKV() (key, val []byte, err error) {
 		return nil, nil, noEOF(err)
 	}
 	return keyAndValue[:keyLen], keyAndValue[keyLen:], nil
+}
+
+func (r *KVReader) EnableConcurrentRead(
+	store storeapi.Storage,
+	filename string,
+	concurrency int,
+	bufSizePerConc int,
+	bufferPool *membuf.Buffer,
+) {
+	r.byteReader.enableConcurrentRead(store, filename, concurrency, bufSizePerConc, bufferPool)
+}
+
+func (r *KVReader) SwitchConcurrentMode(useConcurrent bool) error {
+	return r.byteReader.switchConcurrentMode(useConcurrent)
 }
 
 // noEOF converts the EOF error to io.ErrUnexpectedEOF.

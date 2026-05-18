@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -71,7 +72,7 @@ func testReadAndCompare(
 			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
 		}
 
-		readRanges, err := getReadRangeFromProps(
+		readRanges, err := simplesst.GetReadRangeFromProps(
 			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
 		require.NoError(t, err)
 
@@ -119,52 +120,4 @@ func testReadAndCompare(
 	}
 	err = splitter.Close()
 	require.NoError(t, err)
-}
-
-// split data and stat files into groups for merge step.
-// like scheduler code for merge sort step in add index and import into.
-func splitDataAndStatFiles(datas []string, stats []string) ([][]string, [][]string) {
-	dataGroup := make([][]string, 0, 10)
-	statGroup := make([][]string, 0, 10)
-
-	start := 0
-	step := 10
-	for start < len(datas) {
-		end := min(start+step, len(datas))
-		dataGroup = append(dataGroup, datas[start:end])
-		statGroup = append(statGroup, stats[start:end])
-		start = end
-	}
-	return dataGroup, statGroup
-}
-
-// split data&stat files, startKeys and endKeys into groups for new merge step.
-func splitDataStatAndKeys(datas []string, stats []string, multiStats []MultipleFilesStat) ([][]string, [][]string, []dbkv.Key, []dbkv.Key) {
-	startKeys := make([]dbkv.Key, 0, 10)
-	endKeys := make([]dbkv.Key, 0, 10)
-	i := 0
-	for ; i < len(multiStats)-1; i += 2 {
-		startKey := BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
-		endKey := BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
-		endKey = dbkv.Key(endKey).Next().Clone()
-		startKeys = append(startKeys, startKey)
-		endKeys = append(endKeys, endKey)
-	}
-	if i == len(multiStats)-1 {
-		startKeys = append(startKeys, multiStats[i].MinKey.Clone())
-		endKeys = append(endKeys, multiStats[i].MaxKey.Next().Clone())
-	}
-
-	dataGroup := make([][]string, 0, 10)
-	statGroup := make([][]string, 0, 10)
-
-	start := 0
-	step := 2 * multiFileStatNum
-	for start < len(datas) {
-		end := min(start+step, len(datas))
-		dataGroup = append(dataGroup, datas[start:end])
-		statGroup = append(statGroup, stats[start:end])
-		start = end
-	}
-	return dataGroup, statGroup, startKeys, endKeys
 }

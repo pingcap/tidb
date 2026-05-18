@@ -23,8 +23,8 @@ import (
 const (
 	statSuffix = "_stat"
 	dupSuffix  = "_dup"
-	// we use uint64 to store the length of key and value.
-	lengthBytes = 8
+	// LengthBytes we use uint64 to store the length of key and value.
+	LengthBytes = 8
 )
 
 // KeyValueStore stores key-value pairs and maintains the range properties.
@@ -71,15 +71,15 @@ func (s *KeyValueStore) addEncodedData(data []byte) error {
 	return nil
 }
 
-func (s *KeyValueStore) addRawKV(key, val []byte) error {
-	length := len(key) + len(val) + lengthBytes*2
+func (s *KeyValueStore) AddRawKV(key, val []byte) error {
+	length := len(key) + len(val) + LengthBytes*2
 	buf := make([]byte, length)
 	encodeToBuf(buf, key, val)
 	return s.addEncodedData(buf[:length])
 }
 
-// finish closes the KeyValueStore and append the last range property.
-func (s *KeyValueStore) finish() {
+// Finish closes the KeyValueStore and append the last range property.
+func (s *KeyValueStore) Finish() {
 	if s.rc != nil {
 		s.rc.onFileEnd()
 	}
