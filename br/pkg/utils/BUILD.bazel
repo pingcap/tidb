@@ -63,6 +63,10 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//pkg/caller",
+<<<<<<< HEAD
+=======
+        "@io_etcd_go_etcd_api_v3//v3rpc/rpctypes",
+>>>>>>> f1b85a769a0 (*: Add caller information to pd client (#59911))
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",
