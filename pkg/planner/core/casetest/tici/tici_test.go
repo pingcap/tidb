@@ -626,32 +626,22 @@ func TestTiCIMPPIndexScanPartitionPruning(t *testing.T) {
 		testkit.SetTiFlashReplica(t, dom, "test", "employees")
 		testkit.SetTiFlashReplica(t, dom, "test", "stores")
 
-		explicitPartitionSQL := `explain format='brief'
-			select e.id, e.fname, s.name
-			from employees partition(p1) e use index(h_idx)
-			join stores s on e.store_id = s.id
-			where e.id > 101`
-		explicitPartitionPlan := tk.MustQuery(explicitPartitionSQL)
-		explicitPartitionPlan.MultiCheckContain([]string{
-			"HashJoin",
-			"mpp[tiflash]",
-			"partition:p1",
-			"index:h_idx",
-		})
-		explicitPartitionPlan.CheckNotContain("batchCop")
-
-		rangePruningSQL := `explain format='brief'
-			select e.id, e.fname, s.name
-			from employees e use index(h_idx)
-			join stores s on e.store_id = s.id
-			where e.id > 101`
-		rangePruningPlan := tk.MustQuery(rangePruningSQL)
-		rangePruningPlan.MultiCheckContain([]string{
-			"HashJoin",
-			"mpp[tiflash]",
-			"partition:p1,p2",
-			"index:h_idx",
-		})
-		rangePruningPlan.CheckNotContain("batchCop")
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+			Warn []string
+		}
+		integrationSuiteData := GetFTSIndexSuiteData()
+		integrationSuiteData.LoadTestCasesByName("TestTiCIMPPIndexScanPartitionPruning", t, &input, &output)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
 	})
 }

@@ -82,5 +82,12 @@
       "explain format='brief' select count(*) from t2 use index(primary) where i > 10",
       "explain format='brief' select /*+ order_index(t2, primary) */ * from t2 where i > 10 order by i"
     ]
+  },
+  {
+    "name": "TestTiCIMPPIndexScanPartitionPruning",
+    "cases": [
+      "explain format='brief' select e.id, e.fname, s.name from employees partition(p1) e use index(h_idx) join stores s on e.store_id = s.id where e.id > 101",
+      "explain format='brief' select e.id, e.fname, s.name from employees e use index(h_idx) join stores s on e.store_id = s.id where e.id > 101"
+    ]
   }
 ]
