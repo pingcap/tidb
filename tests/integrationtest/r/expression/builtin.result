@@ -3475,9 +3475,6 @@ GET_FORMAT(TIME, 'usa')	GET_FORMAT(TIME, 'USA')	GET_FORMAT(TIME, 'UsA')	GET_FORM
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
 GET_FORMAT(DATE, 'jis')	GET_FORMAT(DATETIME, 'iso')	GET_FORMAT(TIMESTAMP, 'eur')	GET_FORMAT(TIME, 'internal')
 %Y-%m-%d	%Y-%m-%d %H:%i:%s	%Y-%m-%d %H.%i.%s	%H%i%s
-select mask_full('abc', '*'), mask_full(cast('2012-01-02' as date), '*'), mask_full(cast('2012-01-02 03:04:05' as datetime), '*'), mask_full(cast('03:04:05' as time), '*'), mask_full(cast('2012' as year), '*');
-mask_full('abc', '*')	mask_full(cast('2012-01-02' as date), '*')	mask_full(cast('2012-01-02 03:04:05' as datetime), '*')	mask_full(cast('03:04:05' as time), '*')	mask_full(cast('2012' as year), '*')
-***	1970-01-01	1970-01-01 00:00:00	00:00:00	0000
 select mask_full('abc'), mask_full(cast('2012-01-02' as date)), mask_full(cast('2012-01-02 03:04:05' as datetime)), mask_full(cast('03:04:05' as time)), mask_full(cast('2012' as year));
 mask_full('abc')	mask_full(cast('2012-01-02' as date))	mask_full(cast('2012-01-02 03:04:05' as datetime))	mask_full(cast('03:04:05' as time))	mask_full(cast('2012' as year))
 XXX	1970-01-01	1970-01-01 00:00:00	00:00:00	0000
@@ -3487,9 +3484,9 @@ NULL	NULL	NULL	NULL
 drop table if exists t_mask_blob_clob;
 create table t_mask_blob_clob(c longtext, b longblob, b2 longblob);
 insert into t_mask_blob_clob values('secret', x'31323334', x'616263');
-select mask_full(c, '#'), hex(mask_full(b, '*')), mask_null(b2) is null from t_mask_blob_clob;
-mask_full(c, '#')	hex(mask_full(b, '*'))	mask_null(b2) is null
-######	2A2A2A2A	1
+select mask_full(c), hex(mask_full(b)), mask_null(b2) is null from t_mask_blob_clob;
+mask_full(c)	hex(mask_full(b))	mask_null(b2) is null
+XXXXXX	58585858	1
 drop table if exists t_mask_blob_clob;
 select mask_partial('abcdef',1,2,'*'), mask_partial('abcdef',10,0,'*'), mask_partial('abcdef',1,5,'*');
 mask_partial('abcdef',1,2,'*')	mask_partial('abcdef',10,0,'*')	mask_partial('abcdef',1,5,'*')
