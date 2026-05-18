@@ -344,35 +344,9 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, metricscommon.GetConstLabels())
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
-<<<<<<< HEAD
-=======
-
-	prometheus.MustRegister(GlobalMemArbitrationDuration)
-	prometheus.MustRegister(GlobalMemArbitratorWorkMode)
-	prometheus.MustRegister(GlobalMemArbitratorQuota)
-	prometheus.MustRegister(GlobalMemArbitratorWaitingTask)
-	prometheus.MustRegister(GlobalMemArbitratorRuntimeMemMagnifi)
-	prometheus.MustRegister(GlobalMemArbitratorRootPool)
-	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
-	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
-
-	// TLS
-	prometheus.MustRegister(TLSVersion)
-	prometheus.MustRegister(TLSCipher)
-
-	// IndexLookup
-	prometheus.MustRegister(IndexLookUpExecutorDuration)
-	prometheus.MustRegister(IndexLookRowsCounter)
-	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
-	prometheus.MustRegister(IndexLookUpCopTaskCount)
-
-	// StmtSummary
-	prometheus.MustRegister(StmtSummaryWindowRecordCount)
-	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
 
 	// Channelz
 	setupChannelzCollector()
->>>>>>> 3969c851fff (metrics: enhance diagnostic capabilities for gRPC network issues (#67811))
 }
 
 // Register registers custom collectors.
@@ -504,7 +478,7 @@ func initGrpcChannelzCollectorLocked() error {
 
 func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
 	return tikvcollectors.ChannelzCollectorOpts{
-		Namespace: namespace,
+		Namespace: "tidb",
 		Filter: func(node any) (collect bool, walkChildren bool) {
 			// Only collect socket and leaf subchannel info, which are more useful for troubleshooting network issues.
 			switch n := node.(type) {
