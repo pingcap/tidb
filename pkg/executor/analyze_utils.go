@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -84,6 +85,7 @@ func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 }
 
 func getBuildSamplingStatsConcurrency(ctx sessionctx.Context) (int, error) {
+	failpoint.InjectCall("getBuildSamplingStatsConcurrencyCalled")
 	return getIntFromSessionVars(ctx, vardef.TiDBBuildSamplingStatsConcurrency)
 }
 

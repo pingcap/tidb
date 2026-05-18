@@ -298,6 +298,18 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 	buildStatsConcurrency = min(len(tasks), buildStatsConcurrency)
 
+	// Resolve once on the main goroutine before workers fan out;
+	// SessionVars.systems is not safe for concurrent lookup.
+	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.Ctx())
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if task.colExec != nil {
+			task.colExec.samplingStatsConcurrency = samplingStatsConcurrency
+		}
+	}
+
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)

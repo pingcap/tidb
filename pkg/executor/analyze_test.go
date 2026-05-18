@@ -17,7 +17,10 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -336,4 +339,59 @@ func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
 	require.NotZero(t, afterBytes.Load())
 	require.Equal(t, beforeCollectorMem.Load(), afterCollectorMem.Load())
 	require.Equal(t, beforeCollectorMem.Load(), beforeBytes.Load()-afterBytes.Load())
+}
+
+// TestAnalyzeSamplingConcurrencyResolvedOffWorker guards the structural fix
+// for a "concurrent map read and map write" runtime fatal in
+// SessionVars.GetSessionOrGlobalSystemVar: getBuildSamplingStatsConcurrency
+// must never be called from an analyzeWorker goroutine, since workers share
+// one SessionVars and would race on its unsynchronised `systems` map. The
+// value is resolved on the main goroutine in AnalyzeExec.Next before
+// workers fan out and threaded through AnalyzeColumnsExec.samplingStatsConcurrency.
+func TestAnalyzeSamplingConcurrencyResolvedOffWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	// Wide outer pool so the partition tasks run in parallel.
+	tk.MustExec("set @@tidb_build_stats_concurrency = 8")
+	tk.MustExec(`create table t (
+		id int primary key,
+		v int
+	) partition by hash(id) partitions 8`)
+
+	var (
+		mu             sync.Mutex
+		totalCalls     int
+		workerCallSeen bool
+		workerStack    string
+	)
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/executor/getBuildSamplingStatsConcurrencyCalled",
+		func() {
+			buf := make([]byte, 8192)
+			n := runtime.Stack(buf, false)
+			stack := string(buf[:n])
+			mu.Lock()
+			defer mu.Unlock()
+			totalCalls++
+			if strings.Contains(stack, "(*AnalyzeExec).analyzeWorker") {
+				workerCallSeen = true
+				if workerStack == "" {
+					workerStack = stack
+				}
+			}
+		})
+
+	tk.MustExec("analyze table t")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 1, totalCalls,
+		"sampling concurrency must be resolved exactly once per ANALYZE statement")
+	require.Falsef(t, workerCallSeen,
+		"getBuildSamplingStatsConcurrency was called from an analyzeWorker goroutine; "+
+			"workers must read AnalyzeColumnsExec.samplingStatsConcurrency instead, "+
+			"because SessionVars.systems is not safe for concurrent lookup.\nstack:\n%s",
+		workerStack)
 }
