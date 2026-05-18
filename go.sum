@@ -91,10 +91,10 @@ github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa h1:mx7rQc
 github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa/go.mod h1:qn/VrHolklFxsKZNciiayiHO5qi+2v1TN5jEKDkPC2g=
 github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117 h1:+OqGGFc2YHFd82aSHmjlILVt1t4JWJjrNIfV8cVEPow=
 github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117/go.mod h1:bMGIq3AGbytbaMwf8wdv5Phdxz0FWHTIYMSzyrYgnQs=
-github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260422101307-29265f48bf9c h1:/pJL68I4M2Qs462g0M8603Un9jQ4Y7h4xu64slRbU8g=
-github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260422101307-29265f48bf9c/go.mod h1:rg9c3yf9lfQdj9rt5FvwRP9xDubUY6C9hyH4g9zFH1s=
-github.com/YuhaoZhang00/pd/client v0.0.0-20260422102426-7a38b73dddb9 h1:+HCNno0884/InhYcG/f0bsiWdlKiKwVbeHq4azpZF6M=
-github.com/YuhaoZhang00/pd/client v0.0.0-20260422102426-7a38b73dddb9/go.mod h1:I2yRx/Yf8Y8kgM5f3VNp4a8fWpnjPC4TxWk554AY8bM=
+github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260518105120-7f4996084a7b h1:PMKhVE8QsLcs0d+W+0WnX3vZVKPDEVnl/w0cAnlJYoU=
+github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260518105120-7f4996084a7b/go.mod h1:rg9c3yf9lfQdj9rt5FvwRP9xDubUY6C9hyH4g9zFH1s=
+github.com/YuhaoZhang00/pd/client v0.0.0-20260518104838-4677b8172f11 h1:LTmx3OfC8ZTwkBNKIV+b3XVAd8l16x4EicmTb/XkFLM=
+github.com/YuhaoZhang00/pd/client v0.0.0-20260518104838-4677b8172f11/go.mod h1:I2yRx/Yf8Y8kgM5f3VNp4a8fWpnjPC4TxWk554AY8bM=
 github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d h1:licZJFw2RwpHMqeKTCYkitsPqHNxTmd4SNR5r94FGM8=
 github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d/go.mod h1:asat636LX7Bqt5lYEZ27JNDcqxfjdBQuJ/MM4CN/Lzo=
 github.com/alecthomas/units v0.0.0-20231202071711-9a357b53e9c9 h1:ez/4by2iGztzR4L0zgAOR8lTQK9VlyBVVd7G4omaOQs=
