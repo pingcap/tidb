@@ -254,6 +254,13 @@ func compareCNFItemRangeResult(curResult, bestResult *cnfItemRangeResult) (curIs
 // composite CNF item range. IntersectRanges preserves the exact lexical overlap
 // between both access ranges, so the composite CNF item becomes covered by the
 // final access range and does not need an equivalent residual filter.
+//
+// For example, with index (c14, c25, c1), a base CNF range from
+// `c14 >= 1747663372 AND c14 <= 1748705453` may overlap a DNF branch range from
+// `c14 = 1748604343 AND c25 < 216627868`. The intersection keeps only the
+// composite range `[1748604343 -inf, 1748604343 216627868)`, instead of scanning
+// the wider first-column range `[1748604343, 1748604343]` and relying on a
+// residual filter for c25.
 func intersectCNFItemWithBaseRange(
 	sctx *rangerctx.RangerContext,
 	baseRes *DetachRangeResult,
