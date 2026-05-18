@@ -98,6 +98,52 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	}
 }
 
+// TestMysqlTablesWithoutClusteredPK pins the `mysql` base tables without a clustered
+// PRIMARY KEY. A diff flags a regression or a new table whose PK type was not
+// considered; the list also serves as a reference for future clustered-PK work.
+func TestMysqlTablesWithoutClusteredPK(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	expected := []string{
+		"advisory_locks",
+		"bind_info",
+		"columns_priv",
+		"db",
+		"default_roles",
+		"dist_framework_meta",
+		"expr_pushdown_blacklist",
+		"gc_delete_range",
+		"gc_delete_range_done",
+		"global_grants",
+		"global_priv",
+		"global_variables",
+		"opt_rule_blacklist",
+		"password_history",
+		"plan_replayer_status",
+		"plan_replayer_task",
+		"request_unit_by_group",
+		"role_edges",
+		"stats_extended",
+		"stats_feedback",
+		"stats_top_n",
+		"tables_priv",
+		"tidb",
+		"tidb_ddl_reorg",
+		"tidb_kernel_options",
+		"tidb_pitr_id_map",
+		"tidb_runaway_queries",
+		"tidb_ttl_job_history",
+		"tidb_ttl_task",
+		"user",
+	}
+	tk.MustQuery(
+		"SELECT LOWER(table_name) FROM information_schema.tables " +
+			"WHERE table_schema = 'mysql' AND table_type = 'BASE TABLE' " +
+			"AND tidb_pk_type <> 'CLUSTERED' ORDER BY LOWER(table_name)",
+	).Check(testkit.Rows(expected...))
+}
+
 func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	session.MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= 195 {
