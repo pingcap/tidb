@@ -2492,3 +2492,81 @@ func TestUserGroupMisc(t *testing.T) {
 	res = tk2.MustQuery("SHOW GRANTS")
 	require.Equal(t, len(res.Rows()), 2)
 }
+
+func TestInvokerViewCrossDatabaseWithAlias(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+
+	// Setup: two databases with tables in db_data, view in db_view
+	rootTk.MustExec("CREATE DATABASE db_data")
+	rootTk.MustExec("CREATE DATABASE db_view")
+	rootTk.MustExec("CREATE TABLE db_data.t1 (id int, name varchar(50))")
+	rootTk.MustExec("CREATE TABLE db_data.t2 (id int, value int)")
+	rootTk.MustExec("INSERT INTO db_data.t1 VALUES (1, 'alice')")
+	rootTk.MustExec("INSERT INTO db_data.t2 VALUES (1, 100)")
+
+	// Create INVOKER views in db_view referencing tables in db_data
+	rootTk.MustExec(`CREATE DEFINER='root'@'%' SQL SECURITY INVOKER VIEW db_view.v_simple
+		AS SELECT id, name FROM db_data.t1`)
+	rootTk.MustExec(`CREATE DEFINER='root'@'%' SQL SECURITY INVOKER VIEW db_view.v_join
+		AS SELECT t1.id, t1.name, t2.value FROM db_data.t1 t1 JOIN db_data.t2 t2 ON t1.id = t2.id`)
+	rootTk.MustExec(`CREATE DEFINER='root'@'%' SQL SECURITY INVOKER VIEW db_view.v_expr
+		AS SELECT t1.id AS uid, IFNULL(t2.value, 0) AS val, (SELECT name FROM db_data.t1 WHERE id = t1.id) AS nm
+		FROM db_data.t1 t1 LEFT JOIN db_data.t2 t2 ON t1.id = t2.id`)
+
+	// Create user with table-level SELECT on underlying tables and view
+	rootTk.MustExec("CREATE USER 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_data.t1 TO 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_data.t2 TO 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_simple TO 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_join TO 'viewuser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_expr TO 'viewuser'@'localhost'")
+
+	userTk := testkit.NewTestKit(t, store)
+	require.NoError(t, userTk.Session().Auth(&auth.UserIdentity{
+		Username: "viewuser", Hostname: "localhost"}, nil, nil, nil))
+
+	// Without alias — should work
+	userTk.MustQuery("SELECT * FROM db_view.v_simple LIMIT 1").Check(testkit.Rows("1 alice"))
+	userTk.MustQuery("SELECT * FROM db_view.v_join LIMIT 1").Check(testkit.Rows("1 alice 100"))
+	userTk.MustQuery("SELECT * FROM db_view.v_expr LIMIT 1").Check(testkit.Rows("1 100 alice"))
+
+	// With alias — this was the bug: column-level privilege check used (view_db, underlying_table)
+	// which is an invalid combination when view and tables are in different databases
+	userTk.MustQuery("SELECT * FROM db_view.v_simple t1 LIMIT 1").Check(testkit.Rows("1 alice"))
+	userTk.MustQuery("SELECT * FROM db_view.v_join t1 LIMIT 1").Check(testkit.Rows("1 alice 100"))
+	userTk.MustQuery("SELECT * FROM db_view.v_expr t1 LIMIT 1").Check(testkit.Rows("1 100 alice"))
+
+	// With alias and specific column reference
+	userTk.MustQuery("SELECT t1.id, t1.name FROM db_view.v_simple t1 LIMIT 1").Check(testkit.Rows("1 alice"))
+	userTk.MustQuery("SELECT t1.uid FROM db_view.v_expr t1 LIMIT 1").Check(testkit.Rows("1"))
+
+	// Verify that privilege enforcement still works — user without underlying table access should fail
+	rootTk.MustExec("CREATE USER 'nopriv'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_simple TO 'nopriv'@'localhost'")
+	noprivTk := testkit.NewTestKit(t, store)
+	require.NoError(t, noprivTk.Session().Auth(&auth.UserIdentity{
+		Username: "nopriv", Hostname: "localhost"}, nil, nil, nil))
+	// INVOKER view requires the invoker to have privileges on underlying tables
+	// Column-level privilege check returns ErrColumnaccessDenied (1143)
+	noprivTk.MustGetErrCode("SELECT * FROM db_view.v_simple", errno.ErrColumnaccessDenied)
+	noprivTk.MustGetErrCode("SELECT * FROM db_view.v_simple t1", errno.ErrColumnaccessDenied)
+
+	// Column-level privilege on underlying tables should also work with view alias
+	rootTk.MustExec("CREATE USER 'coluser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT(id) ON db_data.t1 TO 'coluser'@'localhost'")
+	rootTk.MustExec("GRANT SELECT ON db_view.v_simple TO 'coluser'@'localhost'")
+	colTk := testkit.NewTestKit(t, store)
+	require.NoError(t, colTk.Session().Auth(&auth.UserIdentity{
+		Username: "coluser", Hostname: "localhost"}, nil, nil, nil))
+	// Has column privilege on t1.id but not t1.name — SELECT * should fail
+	colTk.MustGetErrCode("SELECT * FROM db_view.v_simple", errno.ErrColumnaccessDenied)
+	colTk.MustGetErrCode("SELECT * FROM db_view.v_simple t1", errno.ErrColumnaccessDenied)
+
+	// Cleanup
+	rootTk.MustExec("DROP DATABASE db_data")
+	rootTk.MustExec("DROP DATABASE db_view")
+	rootTk.MustExec("DROP USER 'viewuser'@'localhost'")
+	rootTk.MustExec("DROP USER 'nopriv'@'localhost'")
+	rootTk.MustExec("DROP USER 'coluser'@'localhost'")
+}
