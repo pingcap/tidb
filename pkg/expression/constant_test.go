@@ -269,6 +269,24 @@ func TestConstantFolding(t *testing.T) {
 		newConds := FoldConstant(ctx, expr)
 		require.Equalf(t, tt.result, newConds.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "different for expr %s", tt.condition)
 	}
+
+	ctx := mock.NewContext().GetExprCtx()
+	col := newColumnWithType(0, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_bin", 255))
+	caseRetType := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "binary", 255)
+	caseExpr := newFunctionWithType(ctx, ast.Case, caseRetType,
+		newLonglong(1),
+		col,
+		newString("", "binary"),
+	)
+	caseExpr.GetType(ctx.GetEvalCtx()).SetCharset("binary")
+	caseExpr.GetType(ctx.GetEvalCtx()).SetCollate("binary")
+	folded := FoldConstant(ctx, caseExpr)
+	require.IsType(t, &Column{}, folded)
+	require.NotSame(t, col, folded)
+	require.Equal(t, "utf8mb4", col.RetType.GetCharset())
+	require.Equal(t, "utf8mb4_bin", col.RetType.GetCollate())
+	require.Equal(t, "binary", folded.GetType(ctx.GetEvalCtx()).GetCharset())
+	require.Equal(t, "binary", folded.GetType(ctx.GetEvalCtx()).GetCollate())
 }
 
 func TestConstantFoldingCharsetConvert(t *testing.T) {

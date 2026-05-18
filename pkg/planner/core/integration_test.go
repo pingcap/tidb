@@ -2410,4 +2410,19 @@ from (
     from t0
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c0 varchar(4) character set utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into t1 values ('0'), ('袦')")
+	tk.MustQuery(`select /* issue:68053 direct */ concat(t1.c0, '#', reverse(t1.c0)) from t1
+where true or (case false when 'mU*' then t1.c0 when t1.c0 then (char(t1.c0) = 1) else binary(true) end)
+order by 1`).Check(testkit.Rows("0#0", "袦#袦"))
+	tk.MustQuery(`select /* issue:68053 derived */ concat(ref0, '#', reverse(ref0)) from (
+    select t1.c0 as ref0,
+           (true or (case false when 'mU*' then t1.c0 when t1.c0 then (char(t1.c0) = 1) else binary(true) end)) as ref1
+    from t1
+) as s where ref1 order by 1`).Check(testkit.Rows("0#0", "袦#袦"))
+	tk.MustQuery("select distinct charset(c0), charset(reverse(c0)) from t1").
+		Check(testkit.Rows("utf8mb4 utf8mb4"))
+	tk.MustQuery("select hex(reverse('袦'))").Check(testkit.Rows("E8A2A6"))
 }
