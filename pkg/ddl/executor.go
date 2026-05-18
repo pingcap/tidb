@@ -2034,6 +2034,31 @@ func checkAlterTableMaterializedViewConstraints(
 		return err
 	}
 
+	// Base table with dependent MV: only allow restricted MODIFY/CHANGE COLUMN here.
+	// Detailed MV/MLog validation (including no-reorg compatibility) is done in GetModifiableColumnJob.
+	if tblInfo.MaterializedViewBase != nil && len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
+		if len(specs) != 1 {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes", op),
+			)
+		}
+		spec := specs[0]
+		switch spec.Tp {
+		case ast.AlterTableModifyColumn:
+		case ast.AlterTableChangeColumn:
+			if len(spec.NewColumns) != 1 || spec.OldColumnName == nil || spec.NewColumns[0] == nil ||
+				spec.NewColumns[0].Name == nil || spec.OldColumnName.Name.L != spec.NewColumns[0].Name.Name.L {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+					"CHANGE COLUMN on base table with materialized view dependencies does not support renaming",
+				)
+			}
+		default:
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with materialized view dependencies", op),
+			)
+		}
+	}
+
 	return checkAlterTableBaseTableMLogColumnConstraints(ctx, is, tblInfo, specs, op)
 }
 
