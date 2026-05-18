@@ -874,6 +874,12 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 			"select 1 from b where x + (y ^ z) = 1",
 			"select ? from `b` where `x` + `y` ^ `z` = ?",
 		},
+		// BETWEEN binds weaker than comparison operators, so the parentheses
+		// around BETWEEN are semantic in this shape.
+		{
+			"select 1 from b where (x between y and z) = 1",
+			"select ? from `b` where ( `x` between `y` and `z` ) = ?",
+		},
 	}
 	for _, test := range parenthesesTests {
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)

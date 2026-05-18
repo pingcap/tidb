@@ -1078,6 +1078,14 @@ func canRestoreWithoutParentheses(ctx *format.RestoreCtx, expr ExprNode) bool {
 	}
 	child, ok := expr.(*BinaryOperationExpr)
 	if !ok {
+		// BETWEEN has lower precedence than comparison operators in MySQL, so
+		// `(a BETWEEN b AND c) = d` cannot be restored as `a BETWEEN b AND c = d`.
+		if _, ok := expr.(*BetweenExpr); ok && ctx.ParentBinaryOp != 0 {
+			return false
+		}
+		// Unary expressions need the same conservative handling under a binary
+		// parent because dropping their parentheses can expose a different parse
+		// boundary to the surrounding binary operator.
 		if _, ok := expr.(*UnaryOperationExpr); ok && ctx.ParentBinaryOp != 0 {
 			return false
 		}
