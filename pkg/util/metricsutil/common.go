@@ -77,7 +77,7 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 		securityOpt = tls.ToPDSecurityOption()
 	}
 	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec), opt.WithMetricsLabels(metricscommon.GetConstLabels()), opt.WithInitMetricsOption(false))
+		opt.WithCustomTimeoutOption(timeoutSec), opt.WithInitMetricsOption(false))
 	if err != nil {
 		return err
 	}
