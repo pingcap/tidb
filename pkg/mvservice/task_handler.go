@@ -39,8 +39,8 @@ type MVTaskHandler interface {
 	TryBackoffPurgeManualCancel(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID int64, nextPurge time.Time) (applied bool, appliedNext time.Time, err error)
 	SyncMVRefreshAlertStates(ctx context.Context, sysSessionPool basic.SessionPool, updatedAt time.Time, states []refreshAlertTask) error
 	CleanupStaleMVRefreshAlerts(ctx context.Context, sysSessionPool basic.SessionPool) error
-	loadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
-	loadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
+	LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error)
+	LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error)
 	GetCurrentTSO(ctx context.Context, sysSessionPool basic.SessionPool) (uint64, error)
 	PurgeMVHistoryBeforeTSO(
 		ctx context.Context,

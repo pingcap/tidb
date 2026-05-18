@@ -15,9 +15,10 @@
 package mvservice
 
 import (
-	"hash/crc32"
 	"sort"
 	"strconv"
+
+	"github.com/twmb/murmur3"
 )
 
 // ConsistentHash is a consistent hashing ring.
@@ -42,7 +43,7 @@ func NewConsistentHash(replicas int) *ConsistentHash {
 	replicas = min(max(1, replicas), 200)
 	return &ConsistentHash{
 		data:     make(map[string][]virtualNode),
-		hashFunc: crc32.ChecksumIEEE,
+		hashFunc: murmur3.Sum32,
 		replicas: replicas,
 	}
 }
