@@ -64,7 +64,9 @@ go_library(
         "grouping_sets.go",
         "helper.go",
         "infer_pushdown.go",
+        "loadable_function/include/mysql/udf_registration_types.h",  # keep
         "pkdb_builtin.go",
+        "pkdb_loadable_function.go",
         "pkdb_loadable_function_stub.go",
         "pkdb_stored_function.go",
         "scalar_function.go",
@@ -74,6 +76,9 @@ go_library(
         "vectorized.go",
         "vs_helper.go",
     ],
+    cgo = True,
+    clinkopts = ["-ldl"],
+    copts = ["-Ipkg/expression/pkg/expression/loadable_function/include/mysql"],
     importpath = "github.com/pingcap/tidb/pkg/expression",
     visibility = ["//visibility:public"],
     deps = [
