@@ -435,7 +435,9 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
-	b.tp = from.tp.Clone()
+	if from.tp != nil {
+		b.tp = from.tp.Clone()
+	}
 	b.pbCode = from.pbCode
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
