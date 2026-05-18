@@ -16,6 +16,7 @@ package sortexec
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,7 +129,13 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	}
 	err := sp.sort()
 	require.NoError(t, err)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `1*sleep(1500)->return(false)`)
+	var delayedWrite atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", func() bool {
+		if delayedWrite.CompareAndSwap(false, true) {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		return false
+	})
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
