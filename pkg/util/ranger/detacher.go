@@ -250,8 +250,10 @@ func compareCNFItemRangeResult(curResult, bestResult *cnfItemRangeResult) (curIs
 	return curResult.sameLenPointRanges
 }
 
-// intersectCNFItemWithBaseRange narrows the base first-column CNF range with a composite CNF item range.
-// The original CNF item can still stay in remained conditions to preserve exact filter semantics.
+// intersectCNFItemWithBaseRange narrows the base first-column CNF range with a
+// composite CNF item range. IntersectRanges preserves the exact lexical overlap
+// between both access ranges, so the composite CNF item becomes covered by the
+// final access range and does not need an equivalent residual filter.
 func intersectCNFItemWithBaseRange(
 	sctx *rangerctx.RangerContext,
 	baseRes *DetachRangeResult,
@@ -288,8 +290,9 @@ func intersectCNFItemWithBaseRange(
 			[]expression.Expression{originalConditions[bestCNFItemRes.offset]},
 		)
 	}
-	// The composite CNF item is now represented by the intersected range, so do
-	// not keep an equivalent copy in RemainedConds and add a redundant filter.
+	// The composite CNF item is now represented by the intersected range. Remove
+	// both its access conditions and original DNF condition from RemainedConds to
+	// avoid redundant filters while keeping exact semantics.
 	baseRes.RemainedConds = removeConditions(
 		sctx.ExprCtx.GetEvalCtx(),
 		baseRes.RemainedConds,
@@ -604,10 +607,9 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		// TODO: we will optimize it later.
 		res.RemainedConds = AppendConditionsIfNotExist(d.sctx.ExprCtx.GetEvalCtx(), res.RemainedConds, remainedConds)
 		res.Ranges = ranges
-		// Choosing between point ranges and bestCNF is needed since bestCNF does not cover the intersection
-		// of all conjuncts. Even when we add support for intersection, it could be turned off by a flag or it could be
-		// incomplete due to a long list of conjuncts.
 		if bestCNFItemRes != nil && res != nil && len(res.Ranges) != 0 {
+			// Try the real multi-column intersection first. If it cannot derive
+			// a valid overlap, fall back to the older subset comparison below.
 			if ok, intersectedRes := intersectCNFItemWithBaseRange(d.sctx, res, bestCNFItemRes, newConditions, conditions); ok {
 				intersectedRes.ColumnValues = res.ColumnValues
 				return intersectedRes, nil
