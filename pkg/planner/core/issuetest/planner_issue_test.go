@@ -918,6 +918,20 @@ ORDER BY t1.a, t2.a, t3.a, var`
 			"10 <nil> <nil> 6",
 		))
 	})
+
+	// constant-left-nulleq-partition-pruning
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t_range(a int) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+		tk.MustExec("insert into t_range values (1), (11), (null)")
+		tk.MustQuery("select /* issue:65991 */ a from t_range where 1 <=> a").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:65991 */ a from t_range where null <=> a").Check(testkit.Rows("<nil>"))
+
+		tk.MustExec("create table t_range_cols(a int) partition by range columns(a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+		tk.MustExec("insert into t_range_cols values (1), (11), (null)")
+		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where 1 <=> a").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where null <=> a").Check(testkit.Rows("<nil>"))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
