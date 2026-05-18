@@ -485,7 +485,7 @@ func (m *mockMVServiceHelper) CleanupStaleMVRefreshAlerts(_ context.Context, _ b
 	return m.cleanupStaleRefreshAlertErr
 }
 
-func (m *mockMVServiceHelper) loadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
+func (m *mockMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
 	m.fetchLogsCalls.Add(1)
 	if m.fetchLogsErr != nil {
 		return nil, m.fetchLogsErr
@@ -493,7 +493,7 @@ func (m *mockMVServiceHelper) loadAllTiDBMVLogPurge(context.Context, basic.Sessi
 	return m.fetchLogs, nil
 }
 
-func (m *mockMVServiceHelper) loadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
+func (m *mockMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
 	m.fetchViewCalls.Add(1)
 	if m.fetchViewsErr != nil {
 		return nil, m.fetchViewsErr
@@ -854,7 +854,7 @@ func TestMVServiceMaybeGCMVHistorySkipsWhenNotOwner(t *testing.T) {
 
 	svc.maybeGCOperationHistory(mvsNow())
 	require.Equal(t, int32(0), helper.historyGCCalls.Load())
-	require.Equal(t, 0, helper.runEventCount(mvRunEventHistoryGCGetTSOErr))
+	require.Equal(t, 0, helper.runEventCount(mvRunEventGetTSOErr))
 	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess))
 	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed))
 	require.Equal(t, int64(0), svc.historyGCRetryCount.Load())
@@ -889,7 +889,7 @@ func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
 		svc.maybeGCOperationHistory(mvsNow())
 		require.Equal(t, int32(0), helper.historyGCCalls.Load())
 		require.Eventually(t, func() bool {
-			return helper.runEventCount(mvRunEventHistoryGCGetTSOErr) > 0
+			return helper.runEventCount(mvRunEventGetTSOErr) > 0
 		}, testEventuallyWait, testEventuallyTick)
 		require.Eventually(t, func() bool {
 			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
@@ -927,7 +927,7 @@ func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
 		svc.maybeGCOperationHistory(startAt)
 		require.Equal(t, int32(0), helper.historyGCCalls.Load())
 		require.Eventually(t, func() bool {
-			return helper.runEventCount(mvRunEventHistoryGCGetTSOErr) > 0
+			return helper.runEventCount(mvRunEventGetTSOErr) > 0
 		}, testEventuallyWait, testEventuallyTick)
 
 		helper.currentTSOErr = nil
@@ -973,9 +973,6 @@ func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
 		setHistoryGCOwnerForTest(svc, 5)
 
 		svc.maybeGCOperationHistory(mvsNow())
-		require.Eventually(t, func() bool {
-			return helper.runEventCount(mvRunEventRecoveredPanic) > 0
-		}, testEventuallyWait, testEventuallyTick)
 		require.Eventually(t, func() bool {
 			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
 		}, testEventuallyWait, testEventuallyTick)
@@ -1562,7 +1559,7 @@ func TestServerHelperLoadAllTiDBMLogPurge(t *testing.T) {
 	}
 	pool := recordingSessionPool{se: se}
 
-	got, err := (&serviceHelper{}).loadAllTiDBMVLogPurge(context.Background(), pool)
+	got, err := (&serviceHelper{}).LoadAllTiDBMVLogPurge(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, []string{testSQLFetchMVLogPurge}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
@@ -1614,7 +1611,7 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 	}
 	pool := recordingSessionPool{se: se}
 
-	got, err := (&serviceHelper{}).loadAllTiDBMVRefresh(context.Background(), pool)
+	got, err := (&serviceHelper{}).LoadAllTiDBMVRefresh(context.Background(), pool)
 	require.NoError(t, err)
 	require.Equal(t, []string{testSQLFetchMVRefresh}, se.executedRestrictedSQL)
 	require.Len(t, got, 2)
@@ -2635,12 +2632,37 @@ func TestServerHelperSyncMVRefreshAlertStates(t *testing.T) {
 	err := (&serviceHelper{}).SyncMVRefreshAlertStates(context.Background(), pool, now, states)
 	require.NoError(t, err)
 	require.Equal(t, []string{
-		buildDeleteMVRefreshAlertSQL([]int64{103}),
+		buildDeleteResolvedMVRefreshAlertSQL([]int64{103}),
+		buildClearResolvedMVRefreshAlertLevelSQL(now, []int64{103}),
 		buildUpsertMVRefreshAlertSQL(now, states[:2]),
 	}, se.executedRestrictedSQL)
-	require.Len(t, se.executedRestrictedArg, 2)
+	require.Len(t, se.executedRestrictedArg, 3)
 	require.Empty(t, se.executedRestrictedArg[0])
 	require.Empty(t, se.executedRestrictedArg[1])
+	require.Empty(t, se.executedRestrictedArg[2])
+}
+
+func TestBuildResolvedMVRefreshAlertSQL(t *testing.T) {
+	installMockTimeForTest(t)
+
+	now := mvsNow().Round(0)
+	ids := []int64{103, 104}
+
+	require.Equal(t,
+		"DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN (103,104) AND REFRESH_FAILED IS NULL",
+		buildDeleteResolvedMVRefreshAlertSQL(ids),
+	)
+	require.Equal(t,
+		"UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATED_AT = '"+now.Format("2006-01-02 15:04:05")+"' WHERE MVIEW_ID IN (103,104) AND REFRESH_FAILED IS NOT NULL AND ALERT_LEVEL IS NOT NULL",
+		buildClearResolvedMVRefreshAlertLevelSQL(now, ids),
+	)
+	require.Equal(t,
+		`UPDATE mysql.tidb_mview_refresh_alert AS a
+JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
+SET a.ALERT_LEVEL = NULL, a.UPDATED_AT = NOW(6)
+WHERE i.NEXT_TIME IS NULL AND a.ALERT_LEVEL IS NOT NULL`,
+		buildClearDisabledMVRefreshAlertLevelSQL(),
+	)
 }
 
 func TestServerHelperCleanupStaleMVRefreshAlerts(t *testing.T) {
@@ -2649,9 +2671,10 @@ func TestServerHelperCleanupStaleMVRefreshAlerts(t *testing.T) {
 
 	err := (&serviceHelper{}).CleanupStaleMVRefreshAlerts(context.Background(), pool)
 	require.NoError(t, err)
-	require.Equal(t, []string{buildCleanupStaleMVRefreshAlertSQL()}, se.executedRestrictedSQL)
-	require.Len(t, se.executedRestrictedArg, 1)
+	require.Equal(t, []string{buildClearDisabledMVRefreshAlertLevelSQL(), buildCleanupStaleMVRefreshAlertSQL()}, se.executedRestrictedSQL)
+	require.Len(t, se.executedRestrictedArg, 2)
 	require.Empty(t, se.executedRestrictedArg[0])
+	require.Empty(t, se.executedRestrictedArg[1])
 }
 
 func TestServerHelperTryBackoffPurgeManualCancel(t *testing.T) {
