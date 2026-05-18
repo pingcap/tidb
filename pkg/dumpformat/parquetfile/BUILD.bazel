@@ -56,6 +56,7 @@ go_test(
         "writer_core_test.go",
         "writer_test_helpers_test.go",
     ],
+    data = glob(["testfiles/**"]),
     embed = [":parquetfile"],
     flaky = True,
     shard_count = 25,
