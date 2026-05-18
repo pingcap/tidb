@@ -38,6 +38,9 @@ type LogicalExpand struct {
 	// keep the old gbyExprs for resolve cases like grouping(a+b), the args:
 	// a+b should be resolved to new projected gby col according to ref pos.
 	DistinctGbyExprs []expression.Expression `hash64-equals:"true"`
+	// GbyItemSourceFieldIndices records which SELECT field produced each GROUP BY item.
+	// -1 means the GROUP BY item was not resolved from a SELECT field alias or ordinal.
+	GbyItemSourceFieldIndices []int
 
 	// rollup grouping sets.
 	DistinctSize       int                     `hash64-equals:"true"`
@@ -298,6 +301,30 @@ func (p *LogicalExpand) TrySubstituteExprWithGroupingSetCol(expr expression.Expr
 	}
 	// not found.
 	return expr, false
+}
+
+// TrySubstituteExprWithGroupingSetColByFieldIndex is like TrySubstituteExprWithGroupingSetCol,
+// but it first preserves SELECT-field to GROUP-BY-item bindings produced by aliases or ordinals.
+func (p *LogicalExpand) TrySubstituteExprWithGroupingSetColByFieldIndex(expr expression.Expression, fieldIndex int) (expression.Expression, bool) {
+	if fieldIndex >= 0 {
+		for i, sourceFieldIndex := range p.GbyItemSourceFieldIndices {
+			if sourceFieldIndex != fieldIndex {
+				continue
+			}
+			if bytes.Equal(expr.CanonicalHashCode(), p.DistinctGbyExprs[i].CanonicalHashCode()) {
+				return p.DistinctGroupByCol[i], true
+			}
+		}
+		for i, sourceFieldIndex := range p.GbyItemSourceFieldIndices {
+			if sourceFieldIndex != -1 {
+				continue
+			}
+			if bytes.Equal(expr.CanonicalHashCode(), p.DistinctGbyExprs[i].CanonicalHashCode()) {
+				return p.DistinctGroupByCol[i], true
+			}
+		}
+	}
+	return p.TrySubstituteExprWithGroupingSetCol(expr)
 }
 
 // ResolveGroupingFuncArgsInGroupBy checks whether grouping function args is in grouping items.

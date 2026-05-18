@@ -872,6 +872,43 @@ ORDER BY field1`).Check(testkit.Rows())
 		tk.MustExec("rollback")
 	}
 
+	// issue-65965-rollup-alias-repeated-grouping-key
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("set @@sql_mode = default")
+		tk.MustExec("create table t1 (a int, b int, c int)")
+		tk.MustExec("insert into t1 values (1, 2, 3), (4, 5, 6), (7, 8, 9)")
+
+		expected := testkit.Rows(
+			"1 2 1 3",
+			"1 2 <nil> 3",
+			"1 <nil> <nil> 3",
+			"4 5 4 6",
+			"4 5 <nil> 6",
+			"4 <nil> <nil> 6",
+			"7 8 7 9",
+			"7 8 <nil> 9",
+			"7 <nil> <nil> 9",
+			"<nil> <nil> <nil> 18",
+		)
+		tk.MustQuery("select /* issue:65965 */ a, b, a as d, sum(c) from t1 group by a, b, d with rollup").Sort().Check(expected)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select /* issue:65965 */ a, b, a as d, sum(c) from t1 group by 1, 2, 3 with rollup").Sort().Check(expected)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		mixedExpected := testkit.Rows(
+			"1 1 3",
+			"1 <nil> 3",
+			"4 4 6",
+			"4 <nil> 6",
+			"7 7 9",
+			"7 <nil> 9",
+			"<nil> <nil> 18",
+		)
+		tk.MustQuery("select /* issue:65965 */ a, a as d, sum(c) from t1 group by a, d, a with rollup").Sort().Check(mixedExpected)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	})
+
 	// issue-67802-mutable-user-var-join-cond-should-not-become-inner-side-filter
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		resetTestDB(t, tk)

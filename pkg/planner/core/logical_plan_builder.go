@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -141,24 +142,27 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expression) (base.LogicalPlan, []expression.Expression, error) {
+func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expression, gbyItemSourceFieldIndices []int) (base.LogicalPlan, []expression.Expression, error) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	b.optFlag |= rule.FlagResolveExpand
 
 	// Rollup syntax require expand OP to do the data expansion, different data replica supply the different grouping layout.
-	distinctGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(gbyItems)
-	// build another projection below.
-	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, p.Schema().Len()+len(distinctGbyExprs))}.Init(b.ctx, b.getSelectOffset())
-	// project: child's output and distinct GbyExprs in advance. (make every group-by item to be a column)
+	expandGbyExprs, expandGbySourceFieldIndices, rollupGbyExprsRefPos := deduplicateRollupGbyItems(gbyItems, gbyItemSourceFieldIndices)
+
+	// Build another projection below. When a repeated GROUP BY item is introduced by a SELECT
+	// alias or ordinal, keep that alias/ordinal-backed position visible to Expand because
+	// its ROLLUP output nullability can differ from ordinary repeated items.
+	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, p.Schema().Len()+len(expandGbyExprs))}.Init(b.ctx, b.getSelectOffset())
+	// project: child's output and GbyExprs in advance. (make every group-by item to be a column)
 	projSchema := p.Schema().Clone()
 	names := p.OutputNames()
 	for _, col := range projSchema.Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
-	distinctGbyColNames := make(types.NameSlice, 0, len(distinctGbyExprs))
-	distinctGbyCols := make([]*expression.Column, 0, len(distinctGbyExprs))
-	for _, expr := range distinctGbyExprs {
-		// distinct group expr has been resolved in resolveGby.
+	distinctGbyColNames := make(types.NameSlice, 0, len(expandGbyExprs))
+	distinctGbyCols := make([]*expression.Column, 0, len(expandGbyExprs))
+	for _, expr := range expandGbyExprs {
+		// group expr has been resolved in resolveGby.
 		proj.Exprs = append(proj.Exprs, expr)
 
 		// add the newly appended names.
@@ -184,7 +188,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 	proj.SetSchema(projSchema)
 	proj.SetChildren(p)
 	proj.Proj4Expand = true
-	newGbyItems := expression.RestoreGbyExpression(distinctGbyCols, gbyExprsRefPos)
+	newGbyItems := expression.RestoreGbyExpression(distinctGbyCols, rollupGbyExprsRefPos)
 
 	// build expand.
 	rollupGroupingSets := expression.RollupGroupingSets(newGbyItems)
@@ -202,7 +206,8 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 		DistinctGroupByCol:  distinctGbyCols,
 		DistinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
-		DistinctGbyExprs: distinctGbyExprs,
+		DistinctGbyExprs:          expandGbyExprs,
+		GbyItemSourceFieldIndices: expandGbySourceFieldIndices,
 
 		// fill the gen col names when building level projections.
 	}.Init(b.ctx, b.getSelectOffset())
@@ -250,6 +255,88 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 
 	// defer generating level-projection as last logical optimization rule.
 	return expand, newGbyItems, nil
+}
+
+func deduplicateRollupGbyItems(
+	gbyItems []expression.Expression,
+	sourceFieldIndices []int,
+) (
+	deduplicatedGbyItems []expression.Expression,
+	deduplicatedSourceFieldIndices []int,
+	rollupGbyItemsRefPos []int,
+) {
+	preservePositions := collectPreservedRollupGbyItemPositions(gbyItems, sourceFieldIndices)
+	if !slices.Contains(preservePositions, true) {
+		expandGbyExprs, gbyExprsRefPos := expression.DeduplicateGbyExpression(gbyItems)
+		expandSourceFieldIndices := deriveDeduplicatedGbySourceFieldIndices(gbyExprsRefPos, sourceFieldIndices, len(expandGbyExprs))
+		return expandGbyExprs, expandSourceFieldIndices, gbyExprsRefPos
+	}
+
+	expandGbyExprs := make([]expression.Expression, 0, len(gbyItems))
+	expandSourceFieldIndices := make([]int, 0, len(gbyItems))
+	rollupRefPos := make([]int, 0, len(gbyItems))
+	ordinaryRefPos := make(map[string]int, len(gbyItems))
+
+	for i, item := range gbyItems {
+		sourceFieldIndex := sourceFieldIndexAt(sourceFieldIndices, i)
+		if preservePositions[i] {
+			refPos := len(expandGbyExprs)
+			expandGbyExprs = append(expandGbyExprs, item)
+			expandSourceFieldIndices = append(expandSourceFieldIndices, sourceFieldIndex)
+			rollupRefPos = append(rollupRefPos, refPos)
+			continue
+		}
+
+		key := string(item.CanonicalHashCode())
+		if _, ok := ordinaryRefPos[key]; ok {
+			continue
+		}
+		refPos := len(expandGbyExprs)
+		ordinaryRefPos[key] = refPos
+		expandGbyExprs = append(expandGbyExprs, item)
+		expandSourceFieldIndices = append(expandSourceFieldIndices, sourceFieldIndex)
+		rollupRefPos = append(rollupRefPos, refPos)
+	}
+	return expandGbyExprs, expandSourceFieldIndices, rollupRefPos
+}
+
+func collectPreservedRollupGbyItemPositions(gbyItems []expression.Expression, sourceFieldIndices []int) []bool {
+	preservePositions := make([]bool, len(gbyItems))
+	for i := range gbyItems {
+		if sourceFieldIndexAt(sourceFieldIndices, i) < 0 {
+			continue
+		}
+		for j := range gbyItems {
+			if i == j {
+				continue
+			}
+			if bytes.Equal(gbyItems[i].CanonicalHashCode(), gbyItems[j].CanonicalHashCode()) {
+				preservePositions[i] = true
+				break
+			}
+		}
+	}
+	return preservePositions
+}
+
+func deriveDeduplicatedGbySourceFieldIndices(gbyExprsRefPos []int, sourceFieldIndices []int, distinctLen int) []int {
+	res := make([]int, distinctLen)
+	for i := range res {
+		res[i] = -1
+	}
+	for idx, refPos := range gbyExprsRefPos {
+		if res[refPos] == -1 {
+			res[refPos] = sourceFieldIndexAt(sourceFieldIndices, idx)
+		}
+	}
+	return res
+}
+
+func sourceFieldIndexAt(sourceFieldIndices []int, idx int) int {
+	if idx < len(sourceFieldIndices) {
+		return sourceFieldIndices[idx]
+	}
+	return -1
 }
 
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
@@ -1684,6 +1771,7 @@ func findColFromNaturalUsingJoin(p base.LogicalPlan, col *expression.Column) (na
 
 type resolveGroupingTraverseAction struct {
 	CurrentBlockExpand *logicalop.LogicalExpand
+	SelectFieldIndex   int
 }
 
 func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (res expression.Expression) {
@@ -1692,18 +1780,18 @@ func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (re
 		// when meeting a column, judge whether it's a relate grouping set col.
 		// eg: select a, b from t group by a, c with rollup, here a is, while b is not.
 		// in underlying Expand schema (a,b,c,a',c'), a select list should be resolved to a'.
-		res, _ = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
+		res, _ = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetColByFieldIndex(x, r.SelectFieldIndex)
 	case *expression.CorrelatedColumn:
 		// select 1 in (select t2.a from t group by t2.a, b with rollup) from t2;
 		// in this case: group by item has correlated column t2.a, and it's select list contains t2.a as well.
-		res, _ = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
+		res, _ = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetColByFieldIndex(x, r.SelectFieldIndex)
 	case *expression.Constant:
 		// constant just keep it real: select 1 from t group by a, b with rollup.
 		res = x
 	case *expression.ScalarFunction:
 		// scalar function just try to resolve itself first, then if not changed, trying resolve its children.
 		var substituted bool
-		res, substituted = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
+		res, substituted = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetColByFieldIndex(x, r.SelectFieldIndex)
 		if !substituted {
 			// if not changed, try to resolve it children.
 			// select a+1, grouping(b) from t group by a+1 (projected as c), b with rollup: in this case, a+1 is resolved as c as a whole.
@@ -1721,13 +1809,17 @@ func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (re
 }
 
 func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression.Expression {
+	return b.replaceGroupingFuncByFieldIndex(expr, -1)
+}
+
+func (b *PlanBuilder) replaceGroupingFuncByFieldIndex(expr expression.Expression, fieldIndex int) expression.Expression {
 	// current block doesn't have an expand OP, just return it.
 	// expr can be nil when rewrite eliminates a predicate in non-scalar contexts.
 	if b.currentBlockExpand == nil || expr == nil {
 		return expr
 	}
 	// curExpand can supply the DistinctGbyExprs and gid col.
-	traverseAction := resolveGroupingTraverseAction{CurrentBlockExpand: b.currentBlockExpand}
+	traverseAction := resolveGroupingTraverseAction{CurrentBlockExpand: b.currentBlockExpand, SelectFieldIndex: fieldIndex}
 	return expr.Traverse(traverseAction)
 }
 
@@ -1812,7 +1904,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		// for case: select a+1, b, sum(b), grouping(a) from t group by a, b with rollup.
 		// the column inside aggregate (only sum(b) here) should be resolved to original source column,
 		// while for others, just use expanded columns if exists: a'+ 1, b', group(gid)
-		newExpr = b.replaceGroupingFunc(newExpr)
+		newExpr = b.replaceGroupingFuncByFieldIndex(newExpr, i)
 
 		// For window functions in the order by clause, we will append an field for it.
 		// We need rewrite the window mapper here so order by clause could find the added field.
@@ -3371,7 +3463,8 @@ type gbyResolver struct {
 	isParam    bool
 	skipAggMap map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
-	exprDepth int // exprDepth is the depth of current expression in expression tree.
+	exprDepth        int // exprDepth is the depth of current expression in expression tree.
+	sourceFieldIndex int
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
@@ -3422,6 +3515,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
 						isParam.UseAsValueInGbyByClause = true
 					}
+					if !g.inExpr {
+						g.sourceFieldIndex = index
+					}
 					return ret, true
 				}
 			}
@@ -3450,6 +3546,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			g.err = plannererrors.ErrWrongGroupField.GenWithStackByArgs(fieldName)
 			return inNode, false
 		}
+		g.sourceFieldIndex = pos - 1
 		return ret, true
 	case *ast.ValuesExpr:
 		if v.Column == nil {
@@ -4025,9 +4122,10 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 // The returned `[]ast.Node` may differ from the original `gby.Items` in the group by clause for params. For params, the
 // `gby.Items[].Expr` will not be overwritten. However, the resolved expression is still needed for further processing, so
 // it's returned out.
-func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, error) {
+func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, []int, error) {
 	b.curClause = groupByClause
 	exprs := make([]ast.ExprNode, 0, len(gby.Items))
+	sourceFieldIndices := make([]int, 0, len(gby.Items))
 	schema := p.Schema()
 	names := p.OutputNames()
 	// findJoinFullSchema walks through transparent wrappers (LogicalSelection)
@@ -4048,17 +4146,19 @@ func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause
 		resolver.inExpr = false
 		resolver.exprDepth = 0
 		resolver.isParam = false
+		resolver.sourceFieldIndex = -1
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			return exprs, errors.Trace(resolver.err)
+			return exprs, sourceFieldIndices, errors.Trace(resolver.err)
 		}
 		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
 		}
 
 		exprs = append(exprs, retExpr.(ast.ExprNode))
+		sourceFieldIndices = append(sourceFieldIndices, resolver.sourceFieldIndex)
 	}
-	return exprs, nil
+	return exprs, sourceFieldIndices, nil
 }
 
 func (b *PlanBuilder) rewriteGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, items []ast.ExprNode) (base.LogicalPlan, []expression.Expression, bool, error) {
@@ -4357,8 +4457,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	}
 
 	var gbyExprs []ast.ExprNode
+	var gbyItemSourceFieldIndices []int
 	if sel.GroupBy != nil {
-		gbyExprs, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
+		gbyExprs, gbyItemSourceFieldIndices, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if err != nil {
 			return nil, err
 		}
@@ -4502,7 +4603,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	if needBuildAgg {
 		// if rollup syntax is specified, Expand OP is required to replicate the data to feed different grouping layout.
 		if rollup {
-			p, gbyCols, err = b.buildExpand(p, gbyCols)
+			p, gbyCols, err = b.buildExpand(p, gbyCols, gbyItemSourceFieldIndices)
 			if err != nil {
 				return nil, err
 			}
