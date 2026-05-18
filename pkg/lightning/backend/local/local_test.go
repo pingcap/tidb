@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -43,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -71,6 +72,7 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	atomic2 "go.uber.org/atomic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -666,6 +668,7 @@ type mockPdClient struct {
 	pd.Client
 	stores  []*metapb.Store
 	regions []*router.Region
+	closed  bool
 }
 
 func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
@@ -682,6 +685,14 @@ func (c *mockPdClient) GetTS(ctx context.Context) (int64, int64, error) {
 
 func (c *mockPdClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
+}
+
+func (c *mockPdClient) WithCallerComponent(component caller.Component) pd.Client {
+	return c
+}
+
+func (c *mockPdClient) Close() {
+	c.closed = true
 }
 
 type mockGrpcErr struct{}
@@ -1767,10 +1778,10 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	}
 	memStore := objstore.NewMemStorage()
 
-	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
+	dataFiles, statFiles, err := globalsort.MockExternalEngine(memStore, keys, value)
 	require.NoError(t, err)
 
-	extEngine := external.NewExternalEngine(
+	extEngine := globalsort.NewExternalEngine(
 		ctx,
 		memStore,
 		dataFiles,
@@ -2301,7 +2312,7 @@ func TestExternalEngine(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/globalsort/LoadIngestDataBatchSize", "return(2)")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipOnDuplicateKeyCheck", "return(true)")
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -2320,7 +2331,7 @@ func TestExternalEngine(t *testing.T) {
 	endKey := make([]byte, len(keys[99])+1)
 	copy(endKey, keys[99])
 
-	dataFiles, statFiles, err := external.MockExternalEngine(extStorage, keys, values)
+	dataFiles, statFiles, err := globalsort.MockExternalEngine(extStorage, keys, values)
 	require.NoError(t, err)
 
 	externalCfg := &backend.ExternalEngineConfig{
@@ -2422,6 +2433,104 @@ func TestCheckDiskAvail(t *testing.T) {
 	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
 	err = checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+}
+
+func TestBackendCloseWithoutTiKVClient(t *testing.T) {
+	localStoreDir := t.TempDir()
+	b := &Backend{
+		BackendConfig: BackendConfig{
+			LocalStoreDir: localStoreDir,
+		},
+		engineMgr: &engineManager{
+			BackendConfig: BackendConfig{
+				LocalStoreDir: localStoreDir,
+			},
+			externalEngine: map[uuid.UUID]engineapi.Engine{},
+			bufferPool:     membuf.NewPool(),
+			logger:         log.L(),
+		},
+		importClientFactory: &mockImportClientFactory{},
+	}
+
+	require.NotPanics(t, b.Close)
+}
+
+func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
+	oldNewEtcdSafePointKV := newEtcdSafePointKV
+	oldNewTiKVRPCClient := newTiKVRPCClient
+	oldNewTiKVStore := newTiKVStore
+	oldNewPDClient := newPDClient
+	defer func() {
+		newEtcdSafePointKV = oldNewEtcdSafePointKV
+		newTiKVRPCClient = oldNewTiKVRPCClient
+		newTiKVStore = oldNewTiKVStore
+		newPDClient = oldNewPDClient
+	}()
+
+	var pdClientCalls, safePointKVCalls, rpcClientCalls, kvStoreCalls int
+	inputPDCli := &mockPdClient{}
+	tikvPDCli := &mockPdClient{}
+	newPDClient = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+		pdClientCalls++
+		return tikvPDCli, nil
+	}
+	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
+		safePointKVCalls++
+		return tikv.NewMockSafePointKV(), nil
+	}
+	newTiKVRPCClient = func(_ ...tikv.ClientOpt) tikv.Client {
+		rpcClientCalls++
+		return tikv.NewRPCClient()
+	}
+	newTiKVStore = func(_ string, pdCli pd.Client, _ tikv.SafePointKV, _ tikv.Client, _ ...tikv.Option) (*tikv.KVStore, error) {
+		kvStoreCalls++
+		require.NotSame(t, inputPDCli, pdCli)
+		return nil, errors.New("mock kv store error")
+	}
+
+	b := &Backend{
+		pdCli:     inputPDCli,
+		pdAddrs:   []string{"127.0.0.1:2379"},
+		tls:       &common.TLS{},
+		tikvCodec: keyspace.CodecV1,
+	}
+
+	dupeController, err := b.GetDupeController(context.Background(), 1, nil)
+	require.Nil(t, dupeController)
+	require.ErrorContains(t, err, "mock kv store error")
+	require.Equal(t, 1, pdClientCalls)
+	require.Equal(t, 1, safePointKVCalls)
+	require.Equal(t, 1, rpcClientCalls)
+	require.Equal(t, 1, kvStoreCalls)
+	require.False(t, inputPDCli.closed)
+	require.True(t, tikvPDCli.closed)
+	require.Nil(t, b.tikvCli)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var pdClientCtx context.Context
+	newEtcdSafePointKV = func(_ []string, _ *tls.Config, _ ...tikv.SafePointKVOpt) (tikv.SafePointKV, error) {
+		return tikv.NewMockSafePointKV(), nil
+	}
+	newPDClient = func(ctx context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
+		pdClientCtx = ctx
+		cancel()
+		return nil, ctx.Err()
+	}
+	newTiKVRPCClient = func(_ ...tikv.ClientOpt) tikv.Client {
+		require.FailNow(t, "canceled PD client creation should stop before creating TiKV RPC client")
+		return nil
+	}
+
+	b = &Backend{
+		pdAddrs:   []string{"127.0.0.1:2379"},
+		tls:       &common.TLS{},
+		tikvCodec: keyspace.CodecV1,
+	}
+	dupeController, err = b.GetDupeController(ctx, 1, nil)
+	require.Nil(t, dupeController)
+	require.Same(t, ctx, pdClientCtx)
+	require.ErrorContains(t, err, context.Canceled.Error())
+	require.Nil(t, b.tikvCli)
 }
 
 type mockStoreHelper struct{}

@@ -92,7 +92,6 @@ func TestRUV2SessionParserTotalDoesNotLeakAcrossStandaloneParse(t *testing.T) {
 
 		dctx := se.GetDistSQLCtx()
 		require.Same(t, se.sessionVars.RUV2Metrics, dctx.RUV2Metrics)
-		require.NotNil(t, dctx.RUV2RPCInterceptor)
 	})
 
 	t.Run("internal others bypass skips parser ru accounting", func(t *testing.T) {
@@ -198,9 +197,8 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 	require.NoError(t, err)
 	metrics2 := se.sessionVars.RUV2Metrics
 
-	// Each statement must get a fresh RUV2Metrics object so that the
-	// interceptor bound during execution targets the current statement,
-	// not a previous one.
+	// Each statement must get a fresh RUV2Metrics object so that RUv2 accounting
+	// stays isolated per statement, not reused from a previous one.
 	require.NotNil(t, metrics2)
 	require.NotSame(t, metricsBegin, metrics1, "stmt1 should have different metrics from BEGIN")
 	require.NotSame(t, metrics1, metrics2, "stmt2 should have different metrics from stmt1")

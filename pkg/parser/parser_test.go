@@ -1472,6 +1472,7 @@ func TestDBAStmt(t *testing.T) {
 		{"flush stats_delta *.* cluster", true, "FLUSH STATS_DELTA *.* CLUSTER"},
 		{"flush stats_delta db1.*", true, "FLUSH STATS_DELTA `db1`.*"},
 		{"flush stats_delta db1.* cluster", true, "FLUSH STATS_DELTA `db1`.* CLUSTER"},
+		{"flush stats_delta t1", true, "FLUSH STATS_DELTA `t1`"},
 		{"flush stats_delta db1.t1", true, "FLUSH STATS_DELTA `db1`.`t1`"},
 		{"flush stats_delta db1.t1 cluster", true, "FLUSH STATS_DELTA `db1`.`t1` CLUSTER"},
 		{"flush stats_delta db1.t1, db2.*", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.*"},
@@ -4371,6 +4372,55 @@ func TestErrorMsg(t *testing.T) {
 
 	_, _, err = p.Parse("select 1 collate some_unknown_collation", "", "")
 	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'some_unknown_collation'")
+}
+
+func TestGroupConcatSeparatorCharsetCollation(t *testing.T) {
+	p := parser.New()
+	testCases := []struct {
+		sql     string
+		charset string
+		collate string
+		sep     string
+	}{
+		{
+			sql:     "select group_concat('x')",
+			charset: charset.CharsetLatin1,
+			collate: charset.CollationLatin1,
+			sep:     ",",
+		},
+		{
+			sql:     "select group_concat('x' separator ';')",
+			charset: charset.CharsetLatin1,
+			collate: charset.CollationLatin1,
+			sep:     ";",
+		},
+		{
+			sql:     "select group_concat('x')",
+			charset: mysql.DefaultCharset,
+			collate: mysql.DefaultCollationName,
+			sep:     ",",
+		},
+	}
+
+	for _, tc := range testCases {
+		stmt, err := p.ParseOneStmt(tc.sql, tc.charset, tc.collate)
+		require.NoError(t, err)
+
+		sel, ok := stmt.(*ast.SelectStmt)
+		require.True(t, ok)
+		require.Len(t, sel.Fields.Fields, 1)
+
+		agg, ok := sel.Fields.Fields[0].Expr.(*ast.AggregateFuncExpr)
+		require.True(t, ok)
+		require.Equal(t, ast.AggFuncGroupConcat, agg.F)
+		require.GreaterOrEqual(t, len(agg.Args), 2)
+
+		separator, ok := agg.Args[len(agg.Args)-1].(ast.ValueExpr)
+		require.True(t, ok)
+		require.Equal(t, tc.sep, separator.GetString())
+		require.Equal(t, tc.charset, separator.GetType().GetCharset())
+		require.Equal(t, tc.collate, separator.GetType().GetCollate())
+	}
 }
 
 func TestOptimizerHints(t *testing.T) {

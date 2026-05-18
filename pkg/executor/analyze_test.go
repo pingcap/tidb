@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -212,6 +213,25 @@ func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("analyze hangs after save analyze result error")
 	}
+}
+
+func TestBuildAnalyzePreFlushUsesStatementContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_pre_analyze_flush_ctx(a int, b int, key idx_b(b))")
+	tk.MustExec("insert into t_pre_analyze_flush_ctx values (1, 1), (2, 2)")
+
+	stmtNodes, err := tk.Session().Parse(context.Background(), "analyze table t_pre_analyze_flush_ctx all columns")
+	require.NoError(t, err)
+	require.Len(t, stmtNodes, 1)
+	stmt, err := (&executor.Compiler{Ctx: tk.Session()}).Compile(context.Background(), stmtNodes[0])
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = executor.BuildExecutorForTest(ctx, stmt)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {

@@ -157,7 +157,10 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	dupeController := bc.backend.GetDupeController(bc.cfg.GetWorkerConcurrency(), nil)
+	dupeController, err := bc.backend.GetDupeController(bc.ctx, bc.cfg.GetWorkerConcurrency(), nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode:     mysql.ModeStrictAllTables,
 		SysVars:     bc.sysVars,

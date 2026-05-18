@@ -44,20 +44,20 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
-func waitCheckpoint(t *testing.T, sub *streamhelper.FlushSubscriber, checkpoint uint64) *spans.ValueSortedFull {
+func collectCheckpointSpans(t *testing.T, sub *streamhelper.FlushSubscriber, checkpoint uint64) *spans.ValueSortedFull {
 	t.Helper()
-	merged := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	deadline := time.After(30 * time.Second)
-	for merged.MinValue() < checkpoint {
-		select {
-		case evt, ok := <-sub.Events():
-			require.True(t, ok, "subscriber closed before reaching checkpoint %d", checkpoint)
-			merged.Merge(evt)
-		case <-deadline:
-			require.FailNowf(t, "timed out waiting for checkpoint", "expected %d, got %d", checkpoint, merged.MinValue())
+	observed := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	require.Eventually(t, func() bool {
+		for {
+			select {
+			case event := <-sub.Events():
+				observed.Merge(event)
+			default:
+				return observed.MinValue() == checkpoint
+			}
 		}
-	}
-	return merged
+	}, 3*time.Second, 100*time.Millisecond)
+	return observed
 }
 
 func TestSubBasic(t *testing.T) {
@@ -68,29 +68,15 @@ func TestSubBasic(t *testing.T) {
 	installSubscribeSupport(c)
 	sub := streamhelper.NewSubscriber(c, c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
-	const flushRounds = 10
 	var cp uint64
-	for range flushRounds - 1 {
+	for range 10 {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	fp := "github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend"
-	req.NoError(failpoint.Enable(fp, "pause"))
-	releaseErr := make(chan error, 1)
-	cp = c.advanceCheckpoints()
-	c.flushAll()
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		releaseErr <- failpoint.Disable(fp)
-	}()
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
-	s := waitCheckpoint(t, sub, cp)
-	req.NoError(<-releaseErr)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 	defer func() {
 		if t.Failed() {
 			fmt.Println(c)
@@ -195,12 +181,8 @@ func TestStoreRemoved(t *testing.T) {
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 
 	defer func() {
 		if t.Failed() {

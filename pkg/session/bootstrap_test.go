@@ -943,27 +943,33 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(ver139), ver)
 	}
+	checkUpgraded := func() {
+		s := CreateSessionAndSetID(t, store)
+		defer s.Close()
+		ver, err := GetBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Less(t, int64(ver139), ver)
+	}
 
 	// drop column task_key and then upgrade
 	s := CreateSessionAndSetID(t, store)
 	MustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
+	s.Close()
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err := GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
-	dom.Close()
+	checkUpgraded()
 
-	// upgrade with column task_key exists
+	// Create the reset session while the current domain is still alive; sessions
+	// bound to a closed domain can fail schema validation on commit.
 	s = CreateSessionAndSetID(t, store)
 	resetTo139(s)
+	s.Close()
+	dom.Close()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
+	checkUpgraded()
 	dom.Close()
 }
 
@@ -1879,24 +1885,29 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 
 	versions := make([]int, 0, len(versionedBootstrapSchemas))
-	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	dbNameToID := make(map[string]int64)
+	allTableIDs := make([]int64, 0, len(versionedBootstrapSchemas))
 	for _, vbs := range versionedBootstrapSchemas {
 		versions = append(versions, int(vbs.ver))
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
-			allIDs = append(allIDs, db.ID)
+			if existingID, ok := dbNameToID[db.Name]; ok {
+				require.Equalf(t, existingID, db.ID, "database %s should have consistent ID across versions", db.Name)
+			} else {
+				dbNameToID[db.Name] = db.ID
+			}
 
 			testTableBasicInfoSlice(t, db.Tables, "IF NOT EXISTS mysql.%s (")
 			for _, tbl := range db.Tables {
-				allIDs = append(allIDs, tbl.ID)
+				allTableIDs = append(allTableIDs, tbl.ID)
 			}
 		}
 	}
 	require.IsIncreasing(t, versions,
 		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
-	slices.Sort(allIDs)
-	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
+	slices.Sort(allTableIDs)
+	require.IsIncreasing(t, allTableIDs, "versionedBootstrapSchemas should not have duplicate table IDs")
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {
