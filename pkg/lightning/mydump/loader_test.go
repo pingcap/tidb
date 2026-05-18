@@ -31,6 +31,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -1230,7 +1231,7 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	seed := time.Now().Unix()
 	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
 	rnd := rand.New(rand.NewSource(seed))
-	pc := []md.ParquetColumn{
+	pc := []testutils.ParquetColumn{
 		{
 			Name:      "id",
 			Type:      parquet.Types.Int64,
@@ -1279,7 +1280,7 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 			},
 		},
 	}
-	md.WriteParquetFile(s.sourceDir, fileName, pc, count)
+	testutils.WriteParquetFile(s.sourceDir, fileName, pc, count)
 
 	rowCount, rowSize, err := md.SampleStatisticsFromParquet(ctx, fileName, store)
 	require.NoError(t, err)
