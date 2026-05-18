@@ -429,10 +429,9 @@ func main() {
 	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)
 	if standbyController != nil {
-		standbyController.EndStandby(nil)
-
 		svr.StandbyController = standbyController
 		svr.StandbyController.OnServerCreated(svr)
+		standbyController.EndStandby(nil)
 	}
 
 	exited := make(chan struct{})

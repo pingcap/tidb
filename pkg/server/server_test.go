@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net"
 	"path/filepath"
 	"testing"
 
@@ -141,6 +142,10 @@ func TestSeverHealth(t *testing.T) {
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
+	require.NotNil(t, server.listener, "server should initialize the listener before Run")
+	conflict, err := net.Listen("tcp", server.ListenAddr().String())
+	require.Error(t, err)
+	require.Nil(t, conflict)
 	require.False(t, server.health.Load(), "server should not be healthy")
 	go func() {
 		err = server.Run(nil)
