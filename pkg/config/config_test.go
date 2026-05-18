@@ -186,7 +186,7 @@ metric-label = "label_b"
 `
 	_, err := toml.Decode(content, conf)
 	require.NoError(t, err)
-	require.NoError(t, conf.Valid())
+	require.NoError(t, conf.KeyspaceObservability.Valid())
 	require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{
 		"meta_a": "value_a",
 		"meta_b": "value_b",
@@ -257,6 +257,33 @@ metric-label = "KEYSPACE_ID"
 			err: `reserved metric-label "KEYSPACE_ID"`,
 		},
 		{
+			name: "reserved metric variable label",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "TYPE"
+`,
+			err: `reserved metric-label "TYPE"`,
+		},
+		{
+			name: "reserved slow log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "Digest"
+`,
+			err: `reserved slow-log-field "Digest"`,
+		},
+		{
+			name: "invalid slow log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "Bad Field"
+`,
+			err: `invalid slow-log-field "Bad Field"`,
+		},
+		{
 			name: "duplicate slow log field",
 			content: `
 [[keyspace-observability.fields]]
@@ -268,6 +295,15 @@ source = "meta_b"
 slow-log-field = "Slow_meta"
 `,
 			err: `duplicated slow-log-field "Slow_meta"`,
+		},
+		{
+			name: "reserved stmt log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+stmt-log-field = "digest"
+`,
+			err: `reserved stmt-log-field "digest"`,
 		},
 		{
 			name: "duplicate stmt log field",
@@ -288,9 +324,18 @@ stmt-log-field = "stmt_meta"
 			conf := NewConfig()
 			_, err := toml.Decode(tt.content, conf)
 			require.NoError(t, err)
-			require.ErrorContains(t, conf.Valid(), tt.err)
+			require.ErrorContains(t, conf.KeyspaceObservability.Valid(), tt.err)
 		})
 	}
+
+	conf := NewConfig()
+	_, err := toml.Decode(`
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "label_a"
+`, conf)
+	require.NoError(t, err)
+	require.ErrorContains(t, conf.Valid(), "keyspace-observability.fields can only be configured when deploy-mode is starter")
 }
 
 func TestRemovedVariableCheck(t *testing.T) {
@@ -1230,6 +1275,17 @@ dxf-resource-limit = 101`), 0644))
 	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "label_a"
+`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)

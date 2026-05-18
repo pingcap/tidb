@@ -481,6 +481,7 @@ tikv-storage-processed-keys-batch-get = 0.00266791
 tikv-storage-processed-keys-get = 0.01416829
 
 # Map selected keyspace metadata entries to observability outputs.
+# Only valid when deploy-mode is starter.
 # [[keyspace-observability.fields]]
 # source = "meta_key"
 # metric-label = "metric_label"

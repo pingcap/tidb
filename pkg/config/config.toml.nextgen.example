@@ -447,6 +447,7 @@ allow-expression-index = false
 engines = ["tikv", "tiflash", "tidb"]
 
 # Map selected keyspace metadata entries to observability outputs.
+# Only valid when deploy-mode is starter.
 # [[keyspace-observability.fields]]
 # source = "meta_key"
 # metric-label = "metric_label"
