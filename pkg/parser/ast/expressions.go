@@ -184,21 +184,20 @@ func (n *BinaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.Flags |= format.RestoreBracketAroundBetweenExpr
 	}
 	parentOp, parentSide := ctx.ParentBinaryOp, ctx.ParentBinarySide
+	defer func() {
+		ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
+	}()
 	ctx.ParentBinaryOp, ctx.ParentBinarySide = int(n.Op), binaryOpLeftSide
 	if err := n.L.Restore(ctx); err != nil {
-		ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
 	}
-	ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
 	if err := restoreBinaryOpWithSpacesAround(ctx, n.Op); err != nil {
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.Op")
 	}
 	ctx.ParentBinaryOp, ctx.ParentBinarySide = int(n.Op), binaryOpRightSide
 	if err := n.R.Restore(ctx); err != nil {
-		ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
 		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.R")
 	}
-	ctx.ParentBinaryOp, ctx.ParentBinarySide = parentOp, parentSide
 	if ctx.Flags.HasRestoreBracketAroundBinaryOperation() {
 		ctx.WritePlain(")")
 		ctx.Flags = originalFlags
@@ -1025,9 +1024,13 @@ func (n *ParenthesesExpr) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	}
 	ctx.WritePlain("(")
+	inUnaryOperation, parentOp, parentSide := ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide
+	ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide = false, 0, 0
 	if err := n.Expr.Restore(ctx); err != nil {
+		ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide = inUnaryOperation, parentOp, parentSide
 		return errors.Annotate(err, "An error occurred when restore ParenthesesExpr.Expr")
 	}
+	ctx.InUnaryOperation, ctx.ParentBinaryOp, ctx.ParentBinarySide = inUnaryOperation, parentOp, parentSide
 	ctx.WritePlain(")")
 	return nil
 }
@@ -1061,6 +1064,14 @@ const (
 	binaryOpRightSide
 )
 
+// The restore precedence table follows MySQL operator precedence: larger values
+// bind tighter, and 0 means unknown so parentheses must be kept. Unary parents
+// keep parentheses because expressions like -(a + b) are not equivalent to
+// -a + b. Binary operators are left-associative, so same-precedence right
+// children can drop parentheses only for associative operators. Subtraction,
+// division, integer division, and modulo are intentionally excluded because
+// a - (b - c) and a / (b / c) are not equivalent to their unparenthesized forms.
+// See https://dev.mysql.com/doc/refman/8.4/en/operator-precedence.html.
 func canRestoreWithoutParentheses(ctx *format.RestoreCtx, expr ExprNode) bool {
 	if ctx.InUnaryOperation {
 		return false
@@ -1107,15 +1118,15 @@ func restoreBinaryPrecedence(op opcode.Op) int {
 		return 4
 	case opcode.Or:
 		return 5
-	case opcode.Xor:
-		return 6
 	case opcode.And:
-		return 7
+		return 6
 	case opcode.LeftShift, opcode.RightShift:
-		return 8
+		return 7
 	case opcode.Plus, opcode.Minus:
-		return 9
+		return 8
 	case opcode.Mul, opcode.Div, opcode.IntDiv, opcode.Mod:
+		return 9
+	case opcode.Xor:
 		return 10
 	default:
 		return 0
@@ -1300,12 +1311,13 @@ func (n *UnaryOperationExpr) Restore(ctx *format.RestoreCtx) error {
 		return errors.Trace(err)
 	}
 	inUnaryOperation := ctx.InUnaryOperation
+	defer func() {
+		ctx.InUnaryOperation = inUnaryOperation
+	}()
 	ctx.InUnaryOperation = true
 	if err := n.V.Restore(ctx); err != nil {
-		ctx.InUnaryOperation = inUnaryOperation
 		return errors.Trace(err)
 	}
-	ctx.InUnaryOperation = inUnaryOperation
 	return nil
 }
 

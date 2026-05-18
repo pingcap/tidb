@@ -373,11 +373,19 @@ type RestoreWriter interface {
 
 // RestoreCtx is `Restore` context to hold flags and writer.
 type RestoreCtx struct {
-	Flags            RestoreFlags
-	In               RestoreWriter
-	DefaultDB        string
-	ParentBinaryOp   int
+	Flags     RestoreFlags
+	In        RestoreWriter
+	DefaultDB string
+	// ParentBinaryOp stores the parent opcode.Op as an int; 0 means no parent.
+	// Callers that set it before restoring a child expression must restore it
+	// before returning.
+	ParentBinaryOp int
+	// ParentBinarySide is interpreted by expression restore as the binary child
+	// side sentinel. It is meaningful only together with ParentBinaryOp and must
+	// be restored by callers that set it.
 	ParentBinarySide int
+	// InUnaryOperation marks that a child expression is being restored as a unary
+	// operand. Callers must restore the previous value before returning.
 	InUnaryOperation bool
 	CTERestorer
 }

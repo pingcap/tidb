@@ -118,12 +118,15 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 	return builder.String(), true
 }
 
-// Three flags for restore with default DB:
+// Flags for restore with default DB:
 // 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;
 // 2. RestoreSpacesAroundBinaryOperation specifies to add space around binary operation;
 // 3. RestoreStringWithoutCharset specifies to not print charset before string;
 // 4. RestoreNameBackQuotes specifies to use back quotes to surround the name;
 const defaultRestoreFlag = format.RestoreStringSingleQuotes | format.RestoreSpacesAroundBinaryOperation | format.RestoreStringWithoutCharset | format.RestoreNameBackQuotes
+
+// bindingRestoreFlag skips redundant expression parentheses only for binding
+// normalization, leaving general SQL restore behavior unchanged.
 const bindingRestoreFlag = defaultRestoreFlag | format.RestoreSkipRedundantParentheses
 
 // RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB

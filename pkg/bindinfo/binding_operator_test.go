@@ -862,11 +862,53 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 			"select 1 from b where (not x) = 1",
 			"select ? from `b` where ( not `x` ) = ?",
 		},
+		{
+			"select 1 from b where (x + y) ^ z = 1",
+			"select ? from `b` where ( `x` + `y` ) ^ `z` = ?",
+		},
+		{
+			"select 1 from b where (x * y) ^ z = 1",
+			"select ? from `b` where ( `x` * `y` ) ^ `z` = ?",
+		},
+		{
+			"select 1 from b where x + (y ^ z) = 1",
+			"select ? from `b` where `x` + `y` ^ `z` = ?",
+		},
 	}
 	for _, test := range parenthesesTests {
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)
 		n, _ := bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		require.Equalf(t, test.normalized, n, "sql: %s", test.sql)
+	}
+
+	issue67363SQLs := []string{
+		"select pid from t where id=1 and (ptype=1 or ptype=2) order by pid limit 10",
+		"select pid from t where id=1 and ((ptype=1) or ptype=2) order by pid limit 10",
+		"select pid from t where id=1 and (ptype=1 or (ptype=2)) order by pid limit 10",
+		"select pid from t where id=1 and ((ptype=1) or (ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1) and (ptype=1 or ptype=2) order by pid limit 10",
+		"select pid from t where (id=1) and ((ptype=1) or ptype=2) order by pid limit 10",
+		"select pid from t where (id=1) and (ptype=1 or (ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1) and ((ptype=1) or (ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1 and (ptype=1 or ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1 and ((ptype=1) or ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1 and (ptype=1 or (ptype=2))) order by pid limit 10",
+		"select pid from t where (id=1 and ((ptype=1) or (ptype=2))) order by pid limit 10",
+		"select pid from t where ((id=1) and (ptype=1 or ptype=2)) order by pid limit 10",
+		"select pid from t where ((id=1) and ((ptype=1) or ptype=2)) order by pid limit 10",
+		"select pid from t where ((id=1) and (ptype=1 or (ptype=2))) order by pid limit 10",
+		"select pid from t where ((id=1) and ((ptype=1) or (ptype=2))) order by pid limit 10",
+	}
+	var normalized, digest string
+	for i, sql := range issue67363SQLs {
+		stmt, _, _ := utilNormalizeWithDefaultDB(t, sql)
+		n, d := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		if i == 0 {
+			normalized, digest = n, d
+			continue
+		}
+		require.Equalf(t, normalized, n, "sql: %s", sql)
+		require.Equalf(t, digest, d, "sql: %s", sql)
 	}
 }
 
