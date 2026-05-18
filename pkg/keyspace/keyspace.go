@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -60,6 +61,10 @@ func GetKeyspaceNameBySettings() (keyspaceName string) {
 
 	if !IsKeyspaceNameEmpty(keyspaceName) {
 		return keyspaceName
+	}
+
+	if !deploymode.IsStarter() {
+		return ""
 	}
 
 	keyspaceName = os.Getenv(config.EnvVarKeyspaceName)

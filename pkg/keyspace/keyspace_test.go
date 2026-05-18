@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
@@ -56,6 +57,19 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 		keyspaceNameBytes = nil
 		genKeyspaceNameOnce = sync.Once{}
 	}
+	setDeployMode := func(t *testing.T, mode deploymode.Mode) {
+		t.Helper()
+
+		if !kerneltype.IsNextGen() {
+			t.Skip("deploy mode only applies to nextgen")
+		}
+
+		original := deploymode.Get()
+		require.NoError(t, deploymode.Set(mode))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(original))
+		})
+	}
 	restoreGlobalConfigAndCache := func(t *testing.T) {
 		t.Helper()
 
@@ -92,6 +106,7 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 		const keyspaceNameInEnv = "test_keyspace_env"
 
 		restoreGlobalConfigAndCache(t)
+		setDeployMode(t, deploymode.Starter)
 		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = ""
@@ -115,6 +130,7 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 		const keyspaceNameInEnv = "test_keyspace_env_first"
 
 		restoreGlobalConfigAndCache(t)
+		setDeployMode(t, deploymode.Starter)
 		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = ""
@@ -129,6 +145,32 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 			require.Nil(t, getKeyspaceNameByte)
 		}
 		require.Equal(t, keyspaceNameInEnv, GetKeyspaceNameBySettings())
+	})
+
+	t.Run("does not fallback to env when not starter", func(t *testing.T) {
+		const keyspaceNameInEnv = "test_keyspace_env_non_starter"
+
+		restoreGlobalConfigAndCache(t)
+		if kerneltype.IsNextGen() {
+			setDeployMode(t, deploymode.Premium)
+		}
+		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = ""
+		})
+
+		getKeyspaceName := GetKeyspaceNameBySettings()
+		require.Empty(t, getKeyspaceName)
+		require.True(t, IsKeyspaceNameEmpty(getKeyspaceName))
+		require.Empty(t, config.GetGlobalKeyspaceName())
+
+		resetKeyspaceNameCache()
+		getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+		if kerneltype.IsNextGen() {
+			require.Equal(t, []byte(""), getKeyspaceNameByte)
+		} else {
+			require.Nil(t, getKeyspaceNameByte)
+		}
 	})
 }
 
