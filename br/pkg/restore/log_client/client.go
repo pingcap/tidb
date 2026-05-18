@@ -1534,15 +1534,20 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 // per-batch splitting (4096 files at a time) resets accumulated sizes at each batch
 // boundary, producing insufficient splits for workloads that spread data across many
 // regions (e.g., secondary index builds).
+//
+// Returns (true, nil) when splits were successfully issued; (false, nil) when
+// there are no DML files to split; (false, err) on any failure. Callers that
+// receive true should skip the fallback per-batch split to avoid redundant
+// split+scatter work.
 func (rc *LogClient) PreSplitRegions(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
 	g glue.Glue,
 	store kv.Storage,
-) error {
+) (bool, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	defer se.Close()
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
@@ -1556,14 +1561,14 @@ func (rc *LogClient) PreSplitRegions(
 
 	logIter, err := rc.LoadDMLFiles(ctx)
 	if err != nil {
-		return errors.Annotate(err, "pre-split: load DML files")
+		return false, errors.Annotate(err, "pre-split: load DML files")
 	}
 
 	var fileCount int
 	startTime := time.Now()
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		if r.Err != nil {
-			return errors.Annotate(r.Err, "pre-split: iterate DML files")
+			return false, errors.Annotate(r.Err, "pre-split: iterate DML files")
 		}
 		file := r.Item
 		if file.IsMeta {
@@ -1594,18 +1599,18 @@ func (rc *LogClient) PreSplitRegions(
 		zap.Duration("merge-took", time.Since(startTime)))
 
 	if fileCount == 0 {
-		return nil
+		return false, nil
 	}
 
 	splitStart := time.Now()
 	accumulations := strategy.GetAccumulations()
 	if err := splitter.ExecuteRegions(ctx, accumulations); err != nil {
-		return errors.Annotate(err, "pre-split: execute regions")
+		return false, errors.Annotate(err, "pre-split: execute regions")
 	}
 	log.Info("pre-split: completed",
 		zap.Duration("split-took", time.Since(splitStart)),
 		zap.Duration("total-took", time.Since(startTime)))
-	return nil
+	return true, nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(

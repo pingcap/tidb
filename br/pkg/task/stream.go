@@ -1694,9 +1694,12 @@ func restoreStream(
 	}
 
 	// Pre-split regions based on total data volume across ALL files.
-	if err := client.PreSplitRegions(ctx, rewriteRules, g, mgr.GetStorage()); err != nil {
+	// On success the pipeline-level per-batch split is skipped to avoid
+	// redundant split+scatter work (see WrapLogFilesIterWithSplitHelper below).
+	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, g, mgr.GetStorage())
+	if preSplitErr != nil {
 		log.Warn("pre-split regions failed, continuing with per-batch splitting",
-			zap.Error(err))
+			zap.Error(preSplitErr))
 	}
 
 	logFilesIter, err := client.LoadDMLFiles(ctx)
@@ -1750,9 +1753,16 @@ func restoreStream(
 		}
 
 		logFilesIter = iter.WithEmitSizeTrace(logFilesIter, metrics.KVLogFileEmittedMemory.WithLabelValues("0-loaded"))
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
-		if err != nil {
-			return errors.Trace(err)
+		// Skip per-batch splitting when pre-split already covered all files;
+		// doing both passes would produce redundant split+scatter calls.
+		var logFilesIterWithSplit logclient.LogIter
+		if preSplitDone {
+			logFilesIterWithSplit = logFilesIter
+		} else {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		logFilesIterWithSplit = iter.WithEmitSizeTrace(logFilesIterWithSplit, metrics.KVLogFileEmittedMemory.WithLabelValues("1-split"))
 
