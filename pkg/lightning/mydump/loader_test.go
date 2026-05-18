@@ -798,7 +798,8 @@ func TestFileRouting(t *testing.T) {
 	s.touch(t, "d1/test1.sql")
 	s.touch(t, "d1/test2.001.sql")
 	s.touch(t, "d1/v1-table.sql")
-	s.writeFile(t, "d1/v1-view.sql", "CREATE VIEW v1 AS SELECT 1;")
+	viewSQL := "CREATE VIEW v1 AS SELECT 1;"
+	s.writeFile(t, "d1/v1-view.sql", viewSQL)
 	s.touch(t, "d1/t1-schema-create.sql")
 	s.touch(t, "d2/schema.sql")
 	s.touch(t, "d2/abc-table.sql")
@@ -842,7 +843,12 @@ func TestFileRouting(t *testing.T) {
 					Name: "v1",
 					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "d1", Name: "v1"},
-						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-view.sql"), Type: md.SourceTypeViewSchema},
+						FileMeta: md.SourceFileMeta{
+							Path:     filepath.FromSlash("d1/v1-view.sql"),
+							Type:     md.SourceTypeViewSchema,
+							FileSize: int64(len(viewSQL)),
+							RealSize: int64(len(viewSQL)),
+						},
 					},
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
