@@ -24,30 +24,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEstimateTiCICountReturnsPseudoCountWhenLocateTimesOut(t *testing.T) {
-	client := &cancelAwareFullTextMockShardClient{wait: time.Second}
-	store := &Store{
-		kvStore: &kvStore{
-			TiCIShardCache: NewTiCIShardCache(client),
-		},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
-	defer cancel()
-
-	count, err := store.EstimateTiCICount(ctx, &kv.TiCIEstimateCountRequest{
-		TableID:      1,
-		IndexID:      2,
-		FTSQueryInfo: &tipb.FTSQueryInfo{QueryType: tipb.FTSQueryType_FTSQueryTypeWithScore},
-		KeyRanges: kv.NewNonPartitionedKeyRanges([]kv.KeyRange{
-			{StartKey: []byte("a"), EndKey: []byte("b")},
-		}),
-	}, time.Millisecond)
-
-	require.NoError(t, err)
-	require.Equal(t, uint64(1000), count)
-}
-
 func TestTiCIEstimateCountHelpers(t *testing.T) {
+	t.Run("return pseudo count when locate times out", func(t *testing.T) {
+		client := &cancelAwareFullTextMockShardClient{wait: time.Second}
+		store := &Store{
+			kvStore: &kvStore{
+				TiCIShardCache: NewTiCIShardCache(client),
+			},
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+		defer cancel()
+
+		count, err := store.EstimateTiCICount(ctx, &kv.TiCIEstimateCountRequest{
+			TableID:      1,
+			IndexID:      2,
+			FTSQueryInfo: &tipb.FTSQueryInfo{QueryType: tipb.FTSQueryType_FTSQueryTypeWithScore},
+			KeyRanges: kv.NewNonPartitionedKeyRanges([]kv.KeyRange{
+				{StartKey: []byte("a"), EndKey: []byte("b")},
+			}),
+		}, time.Millisecond)
+
+		require.NoError(t, err)
+		require.Equal(t, uint64(1000), count)
+	})
+
 	t.Run("build shard groups", func(t *testing.T) {
 		locations := []*ShardLocation{
 			{
