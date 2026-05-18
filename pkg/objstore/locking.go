@@ -177,6 +177,22 @@ var (
 	nowFunc = time.Now
 )
 
+// SetLeaseConstantsForTest overrides the lease-related timing knobs for tests.
+// The returned restore function must be called so later tests see production
+// values again.
+func SetLeaseConstantsForTest(ttl, interval time.Duration, maxRetries int, baseBackoff time.Duration) (restore func()) {
+	oldTTL, oldInterval := LeaseTTL, renewInterval
+	oldMax, oldBackoff := renewMaxRetries, renewBaseBackoff
+	LeaseTTL = ttl
+	renewInterval = interval
+	renewMaxRetries = maxRetries
+	renewBaseBackoff = baseBackoff
+	return func() {
+		LeaseTTL, renewInterval = oldTTL, oldInterval
+		renewMaxRetries, renewBaseBackoff = oldMax, oldBackoff
+	}
+}
+
 // LockMeta is the meta information of a lock.
 type LockMeta struct {
 	LockedAt   time.Time `json:"locked_at"`

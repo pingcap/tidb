@@ -5,6 +5,7 @@ package stream
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/google/uuid"
@@ -2601,6 +2603,90 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	require.ElementsMatch(t, maps.Keys(effs.Deletions), []string{mN(1), lN(1), lN(4), mig3p})
 }
 
+func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
+	const (
+		leaseTTL      = 80 * time.Millisecond
+		renewInterval = 10 * time.Millisecond
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	s := tmp(t)
+	est := MigrationExtension(s)
+	pmig(s, 1, mig(mTruncatedTo(42)))
+
+	enteredCheck := make(chan struct{})
+	releaseCheck := make(chan struct{})
+	done := make(chan MergeAndMigratedTo, 1)
+	releaseOnce := sync.Once{}
+	release := func() { releaseOnce.Do(func() { close(releaseCheck) }) }
+	goroutineStarted := false
+	cleanupDone := false
+	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, 3, 5*time.Millisecond)
+	defer func() {
+		cancel()
+		if goroutineStarted && !cleanupDone {
+			release()
+			<-done
+		}
+		restoreLeaseConstants()
+	}()
+
+	go func() {
+		done <- est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptInteractiveCheck(func(context.Context, *backuppb.Migration) bool {
+			close(enteredCheck)
+			<-releaseCheck
+			return true
+		}))
+	}()
+	goroutineStarted = true
+
+	select {
+	case <-enteredCheck:
+	case <-time.After(time.Second):
+		t.Fatal("MergeAndMigrateTo did not reach interactive check")
+	}
+
+	readLockMeta := func() (objstore.LockMeta, bool) {
+		metaBytes, err := s.ReadFile(ctx, lockPrefix+".WRIT")
+		if err != nil {
+			return objstore.LockMeta{}, false
+		}
+		var meta objstore.LockMeta
+		if err := json.Unmarshal(metaBytes, &meta); err != nil {
+			return objstore.LockMeta{}, false
+		}
+		return meta, true
+	}
+
+	initialMeta, ok := readLockMeta()
+	require.True(t, ok)
+	originalReclaimAt := initialMeta.ExpireAt.Add(leaseTTL)
+
+	require.Eventually(t, func() bool {
+		meta, ok := readLockMeta()
+		return ok && meta.ExpireAt.After(initialMeta.ExpireAt.Add(leaseTTL/2))
+	}, 2*time.Second, 10*time.Millisecond)
+
+	if wait := time.Until(originalReclaimAt.Add(20 * time.Millisecond)); wait > 0 {
+		time.Sleep(wait)
+	}
+
+	reclaimed, err := objstore.CleanUpStaleLock(ctx, s, lockPrefix+".WRIT")
+	require.NoError(t, err)
+	require.False(t, reclaimed, "active MergeAndMigrateTo write lock should be renewed and not reclaimed")
+
+	_, err = objstore.TryLockRemoteWrite(ctx, s, lockPrefix, "competing writer")
+	require.Error(t, err, "competing writer should not acquire the write lock while MergeAndMigrateTo is alive")
+
+	release()
+	select {
+	case res := <-done:
+		require.Empty(t, res.Warnings)
+		cleanupDone = true
+	case <-time.After(time.Second):
+		t.Fatal("MergeAndMigrateTo did not finish after releasing interactive check")
+	}
+}
+
 func TestRemoveCompaction(t *testing.T) {
 	s := tmp(t)
 	ctx := context.Background()
@@ -2859,6 +2945,25 @@ func TestUnsupportedVersion(t *testing.T) {
 	_, err := est.Load(ctx)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "ErrMigrationVersionNotSupported")
+}
+
+func TestLoadIgnoresBaseTmp(t *testing.T) {
+	ctx := context.Background()
+	s := tmp(t)
+	est := MigrationExtension(s)
+
+	base := mig(mTruncatedTo(42))
+	pmig(s, 0, base)
+
+	tmpMig := mig(mTruncatedTo(96))
+	tmpContent, err := tmpMig.Marshal()
+	require.NoError(t, err)
+	require.NoError(t, s.WriteFile(ctx, path.Join(migrationPrefix, baseTmp), tmpContent))
+
+	migs, err := est.Load(ctx)
+	require.NoError(t, err)
+	requireMigrationsEqual(t, base, migs.Base)
+	require.Empty(t, migs.Layers)
 }
 
 func TestCreator(t *testing.T) {

@@ -42,16 +42,7 @@ func TEST_StopRenewal(l *RemoteLock) {
 // The returned restore function must be called (typically via t.Cleanup) so
 // later tests see production values again.
 func TEST_SetLeaseConstants(ttl, interval time.Duration, maxRetries int, baseBackoff time.Duration) (restore func()) {
-	oldTTL, oldInterval := LeaseTTL, renewInterval
-	oldMax, oldBackoff := renewMaxRetries, renewBaseBackoff
-	LeaseTTL = ttl
-	renewInterval = interval
-	renewMaxRetries = maxRetries
-	renewBaseBackoff = baseBackoff
-	return func() {
-		LeaseTTL, renewInterval = oldTTL, oldInterval
-		renewMaxRetries, renewBaseBackoff = oldMax, oldBackoff
-	}
+	return SetLeaseConstantsForTest(ttl, interval, maxRetries, baseBackoff)
 }
 
 // TEST_SetNow overrides nowFunc for deterministic time-based tests.
