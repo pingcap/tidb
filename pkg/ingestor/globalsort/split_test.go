@@ -456,7 +456,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			key[keySize-1] = byte(i % 256)
 			key[keySize-2] = byte(i / 256)
 			// to make sure the encoded KV size is 20KB
-			value := make([]byte, size.KB - 2 * simplesst.LengthBytes)
+			value := make([]byte, size.KB-2*simplesst.LengthBytes)
 			minKey := slices.Clone(key)
 			var maxKey []byte
 
@@ -465,18 +465,22 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			statFile := filepath.Join(uuid.New().String(), "one-file")
 			statWriter, err := store.Create(ctx, statFile, &storeapi.WriterOption{
 				Concurrency: 8,
-				PartSize:    5*units.MiB,
+				PartSize:    5 * units.MiB,
 			})
-			require.NoError(t, err)
+			if err != nil {
+				return err
+			}
 
-			memSize, lastMemSize := uint64(0),  uint64(0)
+			memSize, lastMemSize := uint64(0), uint64(0)
 			for j := range int(64 * size.GB / kvSize) {
 				if memSize-lastMemSize >= simplesst.DefaultMemSizeLimit {
-					lastMemSize=memSize
+					lastMemSize = memSize
 					kvStore.Finish()
 					encodedStat := rc.Encode()
 					_, err := statWriter.Write(ctx, encodedStat)
-					require.NoError(t, err)
+					if err != nil {
+						return err
+					}
 					rc.Reset()
 					// the new prop should have the same offset with kvStore.
 					rc.CurrProp().Offset = memSize
@@ -501,7 +505,9 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			kvStore.Finish()
 			encodedStat := rc.Encode()
 			_, err = statWriter.Write(ctx, encodedStat)
-			require.NoError(t, err)
+			if err != nil {
+				return err
+			}
 
 			// copied from mergeOverlappingFilesInternal
 			var stat simplesst.MultipleFilesStat
