@@ -3416,15 +3416,24 @@ func TestIssue57531(t *testing.T) {
 			netConn := getRawNetConn(t, conn)
 
 			// execute `select sleep(300)`
+			startErrCh := make(chan error, 1)
 			go func() {
 				if i == 0 {
+					startErrCh <- nil
 					conn.QueryContext(context.Background(), "select sleep(300)")
 				} else {
 					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
-					require.NoError(t, err)
+					startErrCh <- err
+					if err != nil {
+						return
+					}
+					defer func() {
+						_ = stmt.Close()
+					}()
 					stmt.Exec(300)
 				}
 			}()
+			require.NoError(t, <-startErrCh)
 			// have two sessions
 			require.Eventually(t, func() bool {
 				rsCnt = 0
@@ -3449,7 +3458,9 @@ func TestIssue57531(t *testing.T) {
 				for rs.Next() {
 					cnt++
 				}
-				return cnt == 1
+				err := rs.Err()
+				closeErr := rs.Close()
+				return err == nil && closeErr == nil && cnt == 1
 			}, 5*time.Second, 50*time.Millisecond)
 		})
 	}
