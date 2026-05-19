@@ -256,47 +256,16 @@ func preparePluginModFile(pkgDir, tidbDir string) (string, func(), error) {
 	if err := os.WriteFile(modFilePath, pluginModBytes, 0o644); err != nil {
 		return "", func() {}, err
 	}
-	sumFilePath := strings.TrimSuffix(modFilePath, ".mod") + ".sum"
-	if err := writeMergedSumFile(sumFilePath, filepath.Join(pkgDir, "go.sum"), filepath.Join(tidbDir, "go.sum")); err != nil {
-		return "", func() {}, err
-	}
 	cleanup := func() {
 		if err := os.Remove(modFilePath); err != nil && !os.IsNotExist(err) {
 			log.Printf("remove tmp module file %s failure, please clean up manually at %v", modFilePath, err)
 		}
+		sumFilePath := strings.TrimSuffix(modFilePath, ".mod") + ".sum"
 		if err := os.Remove(sumFilePath); err != nil && !os.IsNotExist(err) {
 			log.Printf("remove tmp module sum file %s failure, please clean up manually at %v", sumFilePath, err)
 		}
 	}
 	return modFilePath, cleanup, nil
-}
-
-func writeMergedSumFile(dstPath string, srcPaths ...string) error {
-	lines := make(map[string]struct{})
-	orderedLines := make([]string, 0)
-	for _, srcPath := range srcPaths {
-		srcBytes, err := os.ReadFile(srcPath)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		for _, line := range strings.SplitAfter(string(srcBytes), "\n") {
-			if line == "" || line == "\n" {
-				continue
-			}
-			if _, ok := lines[line]; ok {
-				continue
-			}
-			lines[line] = struct{}{}
-			orderedLines = append(orderedLines, line)
-		}
-	}
-	if len(orderedLines) == 0 {
-		return nil
-	}
-	return os.WriteFile(dstPath, []byte(strings.Join(orderedLines, "")), 0o644)
 }
 
 func hasReplace(mod *modfile.File, oldPath, oldVersion string) bool {
