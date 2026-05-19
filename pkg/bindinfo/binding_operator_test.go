@@ -17,6 +17,7 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -32,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
-
-var benchmarkNormalizeStmtForBindingResult string
 
 func TestBindingCache(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -961,7 +960,7 @@ func BenchmarkNormalizeStmtForBinding(b *testing.B) {
 			for b.Loop() {
 				normalized, _ = bindinfo.NormalizeStmtForBinding(stmt, "test", true)
 			}
-			benchmarkNormalizeStmtForBindingResult = normalized
+			runtime.KeepAlive(normalized)
 		})
 	}
 }
