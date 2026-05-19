@@ -28,13 +28,15 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"golang.org/x/mod/modfile"
 )
 
 var (
-	pkgDir  string
-	outDir  string
-	pgoFile string
-	nextGen bool
+	pkgDir      string
+	outDir      string
+	pgoFile     string
+	tidbRootDir string
+	nextGen     bool
 )
 
 const codeTemplate = `
@@ -78,6 +80,7 @@ func init() {
 	flag.StringVar(&pkgDir, "pkg-dir", "", "plugin package folder path")
 	flag.StringVar(&outDir, "out-dir", "", "plugin packaged folder path")
 	flag.StringVar(&pgoFile, "pgo-file", "", "go profile-guided optimization(pgo) file path")
+	flag.StringVar(&tidbRootDir, "tidb-dir", "", "TiDB source root used to inherit go.mod replace directives")
 	flag.BoolVar(&nextGen, "next-gen", false, "whether to build plugin with next-gen features")
 	flag.Usage = usage
 }
@@ -151,10 +154,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	modFile, cleanupModFile, err := preparePluginModFileForBuild(pkgDir)
+	if err != nil {
+		log.Printf("prepare plugin module file failure, %+v\n", err)
+		os.Exit(1)
+	}
+	defer cleanupModFile()
+
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
 	ctx := context.Background()
 	flags := make([]string, 0, 4)
 	flags = append(flags, "build")
+	if modFile != "" {
+		flags = append(flags, "-modfile="+modFile)
+	}
 	if pgoFile != "" {
 		flags = append(flags, "-pgo="+pgoFile)
 	}
@@ -185,4 +198,148 @@ func main() {
 	if err != nil {
 		log.Printf("print manifest detail failure, err: %v", err)
 	}
+}
+
+func preparePluginModFileForBuild(pkgDir string) (string, func(), error) {
+	tidbDir, err := findTiDBRoot(pkgDir)
+	if err != nil {
+		log.Printf("skip inheriting TiDB go.mod replace directives: %v", err)
+		return "", func() {}, nil
+	}
+	return preparePluginModFile(pkgDir, tidbDir)
+}
+
+func preparePluginModFile(pkgDir, tidbDir string) (string, func(), error) {
+	pluginModPath := filepath.Join(pkgDir, "go.mod")
+	pluginModBytes, err := os.ReadFile(pluginModPath)
+	if err != nil {
+		return "", func() {}, err
+	}
+	pluginMod, err := modfile.Parse(pluginModPath, pluginModBytes, nil)
+	if err != nil {
+		return "", func() {}, err
+	}
+
+	tidbModPath := filepath.Join(tidbDir, "go.mod")
+	tidbModBytes, err := os.ReadFile(tidbModPath)
+	if err != nil {
+		return "", func() {}, err
+	}
+	tidbMod, err := modfile.Parse(tidbModPath, tidbModBytes, nil)
+	if err != nil {
+		return "", func() {}, err
+	}
+
+	addedReplace := false
+	for _, replace := range tidbMod.Replace {
+		if replace.Old.Path == "github.com/pingcap/tidb" || hasReplace(pluginMod, replace.Old.Path, replace.Old.Version) {
+			continue
+		}
+		newPath := replace.New.Path
+		if isLocalReplacePath(newPath) && !filepath.IsAbs(newPath) {
+			newPath = filepath.Join(tidbDir, newPath)
+		}
+		if err := pluginMod.AddReplace(replace.Old.Path, replace.Old.Version, newPath, replace.New.Version); err != nil {
+			return "", func() {}, err
+		}
+		addedReplace = true
+	}
+	if !addedReplace {
+		return "", func() {}, nil
+	}
+
+	pluginModBytes, err = pluginMod.Format()
+	if err != nil {
+		return "", func() {}, err
+	}
+	modFilePath := filepath.Join(pkgDir, ".pluginpkg.mod")
+	if err := os.WriteFile(modFilePath, pluginModBytes, 0o644); err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() {
+		if err := os.Remove(modFilePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove tmp module file %s failure, please clean up manually at %v", modFilePath, err)
+		}
+		sumFilePath := strings.TrimSuffix(modFilePath, ".mod") + ".sum"
+		if err := os.Remove(sumFilePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove tmp module sum file %s failure, please clean up manually at %v", sumFilePath, err)
+		}
+	}
+	return modFilePath, cleanup, nil
+}
+
+func hasReplace(mod *modfile.File, oldPath, oldVersion string) bool {
+	for _, replace := range mod.Replace {
+		if replace.Old.Path == oldPath && replace.Old.Version == oldVersion {
+			return true
+		}
+	}
+	return false
+}
+
+func findTiDBRoot(pkgDir string) (string, error) {
+	if tidbRootDir != "" {
+		return cleanTiDBRoot(tidbRootDir)
+	}
+
+	candidates := make([]string, 0, 8)
+	if executablePath, err := os.Executable(); err == nil {
+		dir := filepath.Dir(executablePath)
+		for i := 0; i < 6; i++ {
+			candidates = append(candidates, dir)
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	candidates = append(candidates,
+		filepath.Join(pkgDir, "..", "..", "tidb"),
+		filepath.Join(pkgDir, "..", "tidb"),
+	)
+
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		candidate, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		if isTiDBRoot(candidate) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("cannot find TiDB source root")
+}
+
+func cleanTiDBRoot(dir string) (string, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	if !isTiDBRoot(absDir) {
+		return "", fmt.Errorf("%s is not a TiDB source root", absDir)
+	}
+	return absDir, nil
+}
+
+func isTiDBRoot(dir string) bool {
+	modPath := filepath.Join(dir, "go.mod")
+	modBytes, err := os.ReadFile(modPath)
+	if err != nil {
+		return false
+	}
+	mod, err := modfile.Parse(modPath, modBytes, nil)
+	if err != nil || mod.Module == nil {
+		return false
+	}
+	return mod.Module.Mod.Path == "github.com/pingcap/tidb"
+}
+
+func isLocalReplacePath(path string) bool {
+	return filepath.IsAbs(path) || strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../")
 }
