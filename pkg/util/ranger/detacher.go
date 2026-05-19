@@ -547,6 +547,12 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		}
 		return res, nil
 	}
+	// TODO: The EQ/IN extraction path (ExtractEqAndInCondition, specifically getPotentialEqOrInColOffset)
+	// still rejects columns with binary-casted literals, which causes suffix index columns to be treated
+	// as filters. It should apply the same CAST(... AS BINARY) / collation-compatibility exception used
+	// in the detacher loop so binary-cast equality predicates are treated as index-equalities. Fix this
+	// in a later release and add a regression test for a composite index case (e.g., index on (f,g) with
+	// f = CAST('a' AS BINARY) AND g = 1).
 	for _, cond := range newConditions {
 		isAccessCond, shouldReserve := checker.check(cond)
 		if !isAccessCond {
