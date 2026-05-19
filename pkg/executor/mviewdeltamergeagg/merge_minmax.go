@@ -475,9 +475,8 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 						decision = minMaxDecisionRecompute
 					}
 				}
-			} else {
-				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
+			// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
 				decision = minMaxDecisionUseAdded
@@ -624,9 +623,8 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 						decision = minMaxDecisionRecompute
 					}
 				}
-			} else {
-				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
+			// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
 				decision = minMaxDecisionUseAdded
@@ -773,9 +771,8 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 						decision = minMaxDecisionRecompute
 					}
 				}
-			} else {
-				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
+			// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
 				decision = minMaxDecisionUseAdded
@@ -922,9 +919,8 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 						decision = minMaxDecisionRecompute
 					}
 				}
-			} else {
-				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
+			// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
 				decision = minMaxDecisionUseAdded
@@ -1071,9 +1067,8 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 						decision = minMaxDecisionRecompute
 					}
 				}
-			} else {
-				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
+			// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
 				decision = minMaxDecisionUseAdded
@@ -1220,9 +1215,8 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 						decision = minMaxDecisionRecompute
 					}
 				}
-			} else {
-				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
+			// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
 				decision = minMaxDecisionUseAdded
@@ -1369,9 +1363,8 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 						decision = minMaxDecisionRecompute
 					}
 				}
-			} else {
-				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
+			// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
 				decision = minMaxDecisionUseAdded
@@ -1525,9 +1518,8 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 						decision = minMaxDecisionRecompute
 					}
 				}
-			} else {
-				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
+			// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
 				decision = minMaxDecisionUseAdded

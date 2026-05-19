@@ -186,6 +186,7 @@ type Exec struct {
 	compiledMergers      []aggMerger
 	compiledOutputColCnt int
 	aggOutputColIDs      []int
+	keyTypes             []*types.FieldType
 	prepared             bool
 	executed             bool
 	runtimeStats         *mergeRuntimeStats
@@ -651,16 +652,23 @@ func (e *Exec) validateMinMaxRecompute(childTypes []*types.FieldType) error {
 	if len(meta.KeyInputColIDs) == 0 {
 		return errors.New("MinMaxRecompute requires non-empty KeyInputColIDs")
 	}
+	keyTypes := make([]*types.FieldType, len(meta.KeyInputColIDs))
 	seenKey := make(map[int]struct{}, len(meta.KeyInputColIDs))
-	for _, keyColID := range meta.KeyInputColIDs {
+	for keyPos, keyColID := range meta.KeyInputColIDs {
 		if keyColID < 0 || keyColID >= len(childTypes) {
 			return errors.Errorf("MinMaxRecompute key col %d out of range [0,%d)", keyColID, len(childTypes))
 		}
 		if _, dup := seenKey[keyColID]; dup {
 			return errors.Errorf("duplicate MinMaxRecompute key col %d", keyColID)
 		}
+		keyTp := childTypes[keyColID]
+		if keyTp == nil {
+			return errors.Errorf("MinMaxRecompute key col %d type is unavailable", keyColID)
+		}
+		keyTypes[keyPos] = keyTp
 		seenKey[keyColID] = struct{}{}
 	}
+	e.keyTypes = keyTypes
 	keyResultColIdxes := meta.KeyResultColIdxes
 	if len(keyResultColIdxes) != len(meta.KeyInputColIDs) {
 		return errors.Errorf(
@@ -976,17 +984,7 @@ func (e *Exec) recomputeMinMaxRows(
 	}
 	childTypes := e.Children(0).RetFieldTypes()
 	keyColIDs := e.MinMaxRecompute.KeyInputColIDs
-	keyTypes := make([]*types.FieldType, len(keyColIDs))
-	for keyPos, keyColID := range keyColIDs {
-		if keyColID < 0 || keyColID >= len(childTypes) {
-			return errors.Errorf("min/max recompute key col id %d out of range [0,%d)", keyColID, len(childTypes))
-		}
-		keyTp := childTypes[keyColID]
-		if keyTp == nil {
-			return errors.Errorf("min/max recompute key col id %d type is unavailable", keyColID)
-		}
-		keyTypes[keyPos] = keyTp
-	}
+	keyTypes := e.keyTypes
 	overrides := workerData.minMaxRecomputeOverrides
 	batchMappings := workerData.minMaxBatchMappings[:0]
 
