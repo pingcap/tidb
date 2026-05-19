@@ -861,7 +861,6 @@ const (
 	ErrBadUser                                               = 3162
 	ErrUserAlreadyExists                                     = 3163
 	ErrInvalidJSONPathArrayCell                              = 3165
-	ErrUserPrefixMismatch                                    = 20003
 	ErrInvalidEncryptionOption                               = 3184
 	ErrTooLongValueForType                                   = 3505
 	ErrPKIndexCantBeInvisible                                = 3522
@@ -1191,4 +1190,5 @@ const (
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
 	ErrTiFlashBackfillIndex      = 9014
+	ErrUserPrefixMismatch        = 20003
 )

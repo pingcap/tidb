@@ -864,7 +864,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBadUser:                                               mysql.Message("User %s does not exist.", nil),
 	ErrUserAlreadyExists:                                     mysql.Message("User %s already exists.", nil),
 	ErrInvalidJSONPathArrayCell:                              mysql.Message("A path expression is not a path to a cell in an array.", nil),
-	ErrUserPrefixMismatch:                                    mysql.Message("User name prefix does not match the assigned keyspace.", nil),
 	ErrInvalidEncryptionOption:                               mysql.Message("Invalid encryption option.", nil),
 	ErrTooLongValueForType:                                   mysql.Message("Too long enumeration/set value for column %s.", nil),
 	ErrPKIndexCantBeInvisible:                                mysql.Message("A primary key index cannot be invisible", nil),
@@ -1201,4 +1200,5 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWarnGlobalIndexNeedManuallyAnalyze: mysql.Message("Auto analyze is not effective for index '%-.192s', need analyze manually", nil),
 	ErrTimeStampInDSTTransition:           mysql.Message("Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'", nil),
 	ErrInvalidAffinityOption:              mysql.Message("Invalid AFFINITY %s", nil),
+	ErrUserPrefixMismatch:                 mysql.Message("User name prefix does not match the assigned keyspace.", nil),
 }

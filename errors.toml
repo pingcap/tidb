@@ -3106,11 +3106,6 @@ error = '''
 You must reset your password using ALTER USER statement before executing this statement
 '''
 
-["server:20003"]
-error = '''
-User name prefix does not match the assigned keyspace.
-'''
-
 ["server:3159"]
 error = '''
 Connections using insecure transport are prohibited while --require_secure_transport=ON.
@@ -3134,6 +3129,11 @@ invalid type
 ["server:8130"]
 error = '''
 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk
+'''
+
+["server:20003"]
+error = '''
+User name prefix does not match the assigned keyspace.
 '''
 
 ["session:8002"]
@@ -3620,4 +3620,3 @@ snapshot is older than GC safe point %s
 error = '''
 option '%s' is no longer supported. Reason: %s
 '''
-
