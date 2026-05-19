@@ -265,7 +265,7 @@ func (e *Engine) loadRangeBatchData(
 
 	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
 		kvs := make([]simplesst.KVPair, 0, 1)
-		kvs = append(kvs, simplesst.KVPair{[]byte{}, []byte{}})
+		kvs = append(kvs, simplesst.KVPair{Key: []byte{}, Value: []byte{}})
 		data := e.buildIngestData(kvs, nil)
 		data.IncRef()
 		select {
