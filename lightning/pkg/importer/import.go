@@ -1287,7 +1287,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 
 func getEtcdCliByPDCli(pdCli pd.Client, tls *common.TLS, keyspaceName string) (*clientv3.Client, tidbkv.Storage, error) {
 	if pdCli == nil {
-		log.FromContext(context.Background()).Warn("pd client is nil, return nil", zap.String("keyspaceName", keyspaceName))
+		logutil.Logger(context.Background()).Warn("pd client is nil, return nil", zap.String("keyspaceName", keyspaceName))
 		return nil, nil, nil
 	}
 	// Disable GC because TiDB enables GC already.
