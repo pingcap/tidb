@@ -18,7 +18,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/dumpformat/parsedef",
-        "//pkg/ingestor/globalsort",
+        "//pkg/ingestor/simplesst",
         "//pkg/lightning/common",
         "//pkg/lightning/log",
         "//pkg/objstore",
