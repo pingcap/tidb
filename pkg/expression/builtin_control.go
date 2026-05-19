@@ -328,8 +328,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		selectedBranch := args[selectedBranchIdx]
 		selectedBranchTp := selectedBranch.GetType(ctx.GetEvalCtx())
 		_, selectedBranchIsConstant := selectedBranch.(*Constant)
-		if selectedBranchTp.EvalType() != types.ETString &&
-			selectedBranchTp.GetType() != mysql.TypeNull &&
+		if selectedBranchTp.GetType() != mysql.TypeNull &&
 			!selectedBranchIsConstant {
 			// Do not let unreachable CASE result arms force casts or warnings on the selected branch.
 			rewriteCaseWhenDeadBranches(args, selectedBranchIdx, selectedBranchTp.Clone())
@@ -766,7 +765,6 @@ func (c *ifFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 		selectedBranchTp := selectedBranch.GetType(ctx.GetEvalCtx())
 		_, selectedBranchIsConstant := selectedBranch.(*Constant)
 		if retTp.EvalType() == types.ETString &&
-			selectedBranchTp.EvalType() != types.ETString &&
 			selectedBranchTp.GetType() != mysql.TypeNull &&
 			!selectedBranchIsConstant {
 			retTp = selectedBranchTp.Clone()

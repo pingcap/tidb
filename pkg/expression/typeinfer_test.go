@@ -844,6 +844,8 @@ func (s *InferTypeSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 		{"if(null, 'dead', c_float_d)", mysql.TypeFloat, charset.CharsetBin, 0, 12, types.UnspecifiedLength},
 		{"if(1, c_float_d, 'dead')", mysql.TypeFloat, charset.CharsetBin, 0, 12, types.UnspecifiedLength},
 		{"if(0, 'dead', c_float_d)", mysql.TypeFloat, charset.CharsetBin, 0, 12, types.UnspecifiedLength},
+		{"if(1, c_char, _binary'dead')", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, 0},
+		{"if(0, _binary'dead', c_char)", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, 0},
 		{"if(c_int_d, c_time_d, c_datetime)", mysql.TypeDatetime, charset.CharsetUTF8MB4, mysql.BinaryFlag, 22, 2}, // TODO: should not be BinaryFlag
 		{"if(c_int_d, c_time, c_json)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, math.MaxUint32, types.UnspecifiedLength},
 		{"if(null, null, null)", mysql.TypeNull, charset.CharsetBin, mysql.BinaryFlag, 0, 0},
@@ -851,6 +853,8 @@ func (s *InferTypeSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 		{"case when c_int_d > 1 then c_double_d else c_bchar end", mysql.TypeString, charset.CharsetUTF8MB4, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"case when null then 'dead' else c_float_d end", mysql.TypeFloat, charset.CharsetBin, 0, 12, types.UnspecifiedLength},
 		{"case when 1 then c_float_d else 'dead' end", mysql.TypeFloat, charset.CharsetBin, 0, 12, types.UnspecifiedLength},
+		{"case when 1 then c_char else _binary'dead' end", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, 0},
+		{"case when null then _binary'dead' else c_char end", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, 0},
 		{"case when c_int_d > 2 then c_double_d when c_int_d < 1 then c_decimal else c_double_d end", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"case when c_double_d > 2 then c_decimal else 1 end", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 3},
 		{"case when c_time is not null then c_time else c_date end", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp + 3 + 1, 3},
