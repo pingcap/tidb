@@ -68,14 +68,6 @@ func formatSubURL(path, version string) string {
 	return fmt.Sprintf("gomod/%s/%s-%s.zip", path, modulePathToBazelRepoName(path), version)
 }
 
-func formatVPCPublicURL(path, version string) string {
-	return fmt.Sprintf("http://bazel-cache.pingcap.net:8080/%s", formatSubURL(path, version))
-}
-
-func formatVPCPrivateURL(path, version string) string {
-	return fmt.Sprintf("http://ats.apps.svc/%s", formatSubURL(path, version))
-}
-
 func formatCDNURL(path, version string) string {
 	return fmt.Sprintf("https://cache.hawkingrei.com/%s", formatSubURL(path, version))
 }
@@ -366,20 +358,16 @@ def go_deps():
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
 		dumpBuildNamingConventionArgsForRepo(repoName)
-		expectedVPCPrivateURL := formatVPCPrivateURL(replaced.Path, replaced.Version)
 		expectedCDNURL := formatCDNURL(replaced.Path, replaced.Version)
 		expectedPublicURL := formatPublicURL(replaced.Path, replaced.Version)
-		expectedVPCPublicURL := formatVPCPublicURL(replaced.Path, replaced.Version)
 		fmt.Printf("        importpath = \"%s\",\n", mod.Path)
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
 			return err
 		}
 		oldMirror, ok := existingMirrors[repoName]
 		if ok &&
-			slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
 			slices.Contains(oldMirror.URL, expectedCDNURL) &&
-			slices.Contains(oldMirror.URL, expectedPublicURL) &&
-			slices.Contains(oldMirror.URL, expectedVPCPublicURL) {
+			slices.Contains(oldMirror.URL, expectedPublicURL) {
 			// The URL matches, so just reuse the old mirror.
 			fmt.Printf(`        sha256 = "%s",
         strip_prefix = "%s@%s",
@@ -387,9 +375,8 @@ def go_deps():
 			"%s",
 			"%s",
 			"%s",
-			"%s",
         ],
-`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
+`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedCDNURL, expectedPublicURL)
 		} else if isMirror {
 			// We'll have to mirror our copy of the zip ourselves.
 			d := downloaded[replaced.Path]
@@ -405,10 +392,8 @@ def go_deps():
         urls = [
             "%s",
             "%s",
-            "%s",
-            "%s",
         ],
-`, sha, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
+`, sha, replaced.Path, replaced.Version, expectedCDNURL, expectedPublicURL)
 			g.Go(func() error {
 				return uploadFile(ctx, client, d.Zip, formatSubURL(replaced.Path, replaced.Version))
 			})
