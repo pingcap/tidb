@@ -1190,6 +1190,7 @@ func prepareKeyspaceObservability() error {
 	if err != nil {
 		return err
 	}
+	keyspace.SetKeyspaceMeta(keyspaceMeta)
 	return prepareKeyspaceObservabilityWithKeyspaceMeta(keyspaceMeta, cfg.KeyspaceName, deploymode.IsStarter())
 }
 
