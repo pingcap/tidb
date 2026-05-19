@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -99,7 +100,7 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
-		files, err := globalsort.GetAllFileNames(context.Background(), extStore, prefix)
+		files, err := simplesst.GetAllFileNames(context.Background(), extStore, prefix)
 		require.NoError(t, err)
 		require.Greater(t, jobID, int64(0))
 		require.Equal(t, 0, len(files))
@@ -112,7 +113,7 @@ func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
 	require.NoError(t, err)
 	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	dataFiles, err := globalsort.GetAllFileNames(context.Background(), extStore, dir)
+	dataFiles, err := simplesst.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)
 	filteredFiles := make([]string, 0)
 	for _, f := range dataFiles {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalsort
+package simplesst
 
 import (
 	"bytes"
@@ -103,6 +103,43 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 	return writer.Close(ctx)
 }
 
+func removePartitionPrefix(t *testing.T, in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		bs := []byte(s)
+		idx := bytes.IndexByte(bs, '/')
+		require.GreaterOrEqual(t, idx, 0)
+		require.True(t, IsValidPartition(bs[:idx]))
+		// we include / after partition prefix in the out, as all tests have it.
+		out = append(out, s[idx:])
+	}
+	sort.Strings(out)
+	return out
+}
+
+func getKVAndStatFilesByScan(ctx context.Context,
+	store storeapi.Storage,
+	nonPartitionedDir string,
+) ([]string, []string, error) {
+	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	var data, stats []string
+	for _, path := range names {
+		bs := []byte(path)
+		lastIdx := bytes.LastIndexByte(bs, '/')
+		secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
+		parentDir := path[secondLastIdx+1 : lastIdx]
+		if strings.HasSuffix(parentDir, "_stat") {
+			stats = append(stats, path)
+		} else {
+			data = append(data, path)
+		}
+	}
+	return data, stats, nil
+}
+
 func TestWriter(t *testing.T) {
 	seed := time.Now().Unix()
 	rand.Seed(seed)
@@ -160,17 +197,17 @@ func TestWriter(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
-	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
+	statReader, err := NewStatsReader(ctx, memStore, kvAndStat[1], bufSize)
 	require.NoError(t, err)
 
 	var keyCnt uint64 = 0
 	for {
-		p, err := statReader.nextProp()
+		p, err := statReader.NextProp()
 		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
-		keyCnt += p.keys
+		keyCnt += p.Keys
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
 	require.NoError(t, statReader.Close())
@@ -185,8 +222,8 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(3*(lengthBytes*2+20)).
-		SetBlockSize(3*(lengthBytes*2+20)).
+		SetMemorySizeLimit(3*(LengthBytes*2+20)).
+		SetBlockSize(3*(LengthBytes*2+20)).
 		Build(memStore, "/test", "0")
 
 	// 200 bytes key values.
@@ -253,7 +290,7 @@ func TestMultiFileStat(t *testing.T) {
 	// [3, 5], [1, 3], [2, 4]
 	startKeys := []dbkv.Key{{3}, {1}, {2}}
 	endKeys := []dbkv.Key{{5}, {3}, {4}}
-	s.build(startKeys, endKeys)
+	s.Build(startKeys, endKeys)
 	require.EqualValues(t, []byte{1}, s.MinKey)
 	require.EqualValues(t, []byte{5}, s.MaxKey)
 	require.EqualValues(t, 3, s.MaxOverlappingNum)
@@ -283,11 +320,11 @@ func removePartitionFromMultipleFilesStat(t *testing.T, in MultipleFilesStat) Mu
 }
 
 func TestWriterMultiFileStat(t *testing.T) {
-	oldMultiFileStatNum := multiFileStatNum
+	oldMultiFileStatNum := MultiFileStatNum
 	t.Cleanup(func() {
-		multiFileStatNum = oldMultiFileStatNum
+		MultiFileStatNum = oldMultiFileStatNum
 	})
-	multiFileStatNum = 3
+	MultiFileStatNum = 3
 
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
@@ -542,15 +579,15 @@ func TestFlushKVsRetry(t *testing.T) {
 
 	require.False(t, store.shouldFail)
 
-	r, err := newStatsReader(ctx, store, kvAndStat[1], 100)
+	r, err := NewStatsReader(ctx, store, kvAndStat[1], 100)
 	require.NoError(t, err)
-	p, err := r.nextProp()
+	p, err := r.NextProp()
 	lastKey := []byte{}
 	for !goerrors.Is(err, io.EOF) {
 		require.NoError(t, err)
-		require.True(t, bytes.Compare(lastKey, p.firstKey) < 0)
-		lastKey = append(lastKey[:0], p.firstKey...)
-		p, err = r.nextProp()
+		require.True(t, bytes.Compare(lastKey, p.FirstKey) < 0)
+		lastKey = append(lastKey[:0], p.FirstKey...)
+		p, err = r.NextProp()
 	}
 }
 
@@ -881,13 +918,13 @@ func TestRandPartitionedPrefix(t *testing.T) {
 		partitioned := randPartitionedPrefix(prefix, rnd)
 		require.Equal(t, partitionHeaderChar, partitioned[0])
 		require.Equal(t, partitioned[10:], prefix)
-		require.True(t, isValidPartition([]byte(partitioned[:9])))
+		require.True(t, IsValidPartition([]byte(partitioned[:9])))
 	}
 
-	require.False(t, isValidPartition([]byte("aa")))
-	require.False(t, isValidPartition([]byte("pa")))
-	require.False(t, isValidPartition([]byte("p1111000a")))
-	require.False(t, isValidPartition([]byte("pa111000")))
-	require.True(t, isValidPartition([]byte("p00000000")))
-	require.True(t, isValidPartition([]byte("p11110000")))
+	require.False(t, IsValidPartition([]byte("aa")))
+	require.False(t, IsValidPartition([]byte("pa")))
+	require.False(t, IsValidPartition([]byte("p1111000a")))
+	require.False(t, IsValidPartition([]byte("pa111000")))
+	require.True(t, IsValidPartition([]byte("p00000000")))
+	require.True(t, IsValidPartition([]byte("p11110000")))
 }

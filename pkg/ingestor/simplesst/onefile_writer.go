@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalsort
+package simplesst
 
 import (
 	"context"
@@ -36,15 +36,15 @@ import (
 )
 
 var (
-	// defaultOneWriterMemSizeLimit is the memory size limit for one writer. OneWriter can write
+	// DefaultOneWriterMemSizeLimit is the memory size limit for one writer. OneWriter can write
 	// data in stream, this memory limit is only used to avoid allocating too many times
 	// for each KV pair.
-	defaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
+	DefaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
 	// DefaultOneWriterBlockSize is the default block size for one writer.
 	// TODO currently we don't have per-writer mem size limit, we always use the
 	// default mem size limit as the block size.
 	// it's ok for now, we can make it configurable in the future.
-	DefaultOneWriterBlockSize = int(defaultOneWriterMemSizeLimit)
+	DefaultOneWriterBlockSize = int(DefaultOneWriterMemSizeLimit)
 )
 
 const (
@@ -66,7 +66,7 @@ type OneFileWriter struct {
 	// Statistic information per writer.
 	totalSize uint64
 	totalCnt  uint64
-	rc        *rangePropertiesCollector
+	rc        *RangePropertiesCollector
 
 	// file information.
 	writerID       string
@@ -208,7 +208,7 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 			if err := w.lazyInitDupFile(ctx); err != nil {
 				return err
 			}
-			if err := w.dupKVStore.addRawKV(idxKey, idxVal); err != nil {
+			if err := w.dupKVStore.AddRawKV(idxKey, idxVal); err != nil {
 				return err
 			}
 			w.recordedDupCnt++
@@ -251,7 +251,7 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	}
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
-	length := len(idxKey) + len(idxVal) + lengthBytes*2
+	length := len(idxKey) + len(idxVal) + LengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if buf == nil {
 		w.kvBuffer.Reset()
@@ -261,18 +261,18 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 		// 2. write statistics if one kvBuffer is used.
-		w.kvStore.finish()
-		encodedStat := w.rc.encode()
+		w.kvStore.Finish()
+		encodedStat := w.rc.Encode()
 		_, err := w.statWriter.Write(ctx, encodedStat)
 		if err != nil {
 			return err
 		}
-		w.rc.reset()
+		w.rc.Reset()
 		// the new prop should have the same offset with kvStore.
-		w.rc.currProp.offset = w.kvStore.offset
+		w.rc.currProp.Offset = w.kvStore.offset
 	}
 	encodeToBuf(buf, idxKey, idxVal)
-	w.maxKey = buf[lengthBytes*2 : lengthBytes*2+keyLen]
+	w.maxKey = buf[LengthBytes*2 : LengthBytes*2+keyLen]
 	err := w.kvStore.addEncodedData(buf[:length])
 	if err != nil {
 		return err
@@ -309,7 +309,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		maxKey = slices.Clone(w.maxKey)
 		var stat MultipleFilesStat
 		stat.Filenames = append(stat.Filenames, [2]string{w.dataFile, w.statFile})
-		stat.build([]tidbkv.Key{w.minKey}, []tidbkv.Key{maxKey})
+		stat.Build([]tidbkv.Key{w.minKey}, []tidbkv.Key{maxKey})
 		mStats = append(mStats, stat)
 	}
 	conflictInfo := engineapi.ConflictInfo{}
@@ -341,13 +341,13 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 	}
 	if w.dataWriter != nil {
 		// 1. write remaining statistic.
-		w.kvStore.finish()
-		encodedStat := w.rc.encode()
+		w.kvStore.Finish()
+		encodedStat := w.rc.Encode()
 		_, err = w.statWriter.Write(ctx, encodedStat)
 		if err != nil {
 			return err
 		}
-		w.rc.reset()
+		w.rc.Reset()
 		// 2. close data writer.
 		err1 := w.dataWriter.Close(ctx)
 		if err1 != nil {
@@ -364,7 +364,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		}
 	}
 	if w.dupWriter != nil {
-		w.dupKVStore.finish()
+		w.dupKVStore.Finish()
 		if err3 := w.dupWriter.Close(ctx); err3 != nil {
 			err = err3
 			w.logger.Error("Close dup writer failed", zap.Error(err))
@@ -380,10 +380,10 @@ func (w *OneFileWriter) getPartitionedPrefix() string {
 
 // caller should make sure the buf is large enough to hold the encoded data.
 func encodeToBuf(buf, key, value []byte) {
-	intest.Assert(len(buf) == lengthBytes*2+len(key)+len(value))
+	intest.Assert(len(buf) == LengthBytes*2+len(key)+len(value))
 	keyLen := len(key)
 	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
-	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(value)))
-	copy(buf[lengthBytes*2:], key)
-	copy(buf[lengthBytes*2+keyLen:], value)
+	binary.BigEndian.AppendUint64(buf[LengthBytes:LengthBytes], uint64(len(value)))
+	copy(buf[LengthBytes*2:], key)
+	copy(buf[LengthBytes*2+keyLen:], value)
 }

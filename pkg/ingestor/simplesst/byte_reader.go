@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalsort
+package simplesst
 
 import (
 	"context"
@@ -40,9 +40,6 @@ var (
 	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
 	// external readers within one task.
 	concurrentReaderTotalConcurrency = 256
-	// in readAllData, expected concurrency less than this value will not use
-	// concurrent reader.
-	readAllDataConcThreshold = uint64(4)
 )
 
 // byteReader provides structured reading on a byte stream of external storage.

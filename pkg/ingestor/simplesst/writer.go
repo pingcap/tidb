@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalsort
+package simplesst
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"math/rand"
 	"path/filepath"
@@ -47,9 +48,12 @@ import (
 )
 
 var (
-	multiFileStatNum           = 500
-	defaultPropSizeDist        = 1 * size.MB
-	defaultPropKeysDist uint64 = 8 * 1024
+	// MultiFileStatNum is the number of files for each MultipleFilesStat.
+	MultiFileStatNum = 500
+	// DefaultPropSizeDist is the default distance of range size for each property, which is 1MB.
+	DefaultPropSizeDist = 1 * size.MB
+	// DefaultPropKeysDist is the default distance of range keys for each property, which is 8K keys.
+	DefaultPropKeysDist uint64 = 8 * 1024
 	// Tested on GCP 16c/32c node, 32~64 workers used up all network bandwidth for
 	// part-size in range 5~20M, but not all thread will upload at same time.
 	// this value might not be optimal.
@@ -67,6 +71,9 @@ var (
 	MaxMergeSortFileCountStep = 4000
 	// MergeSortMaxSubtaskTargetFiles assumes each merge sort subtask generates 16 files.
 	MergeSortMaxSubtaskTargetFiles = 16
+	// MinUploadPartSize is the minimum size of each part when uploading files to
+	// external storage, which is 5MiB for both S3 and GCS.
+	MinUploadPartSize int64 = 5 * units.MiB
 )
 
 const (
@@ -119,55 +126,71 @@ func GetAdjustedBlockSize(totalBufSize uint64, defBlockSize int) int {
 	return defBlockSize
 }
 
-// rangePropertiesCollector collects range properties for each range. The zero
-// value of rangePropertiesCollector is not ready to use, should call reset()
+// RangePropertiesCollector collects range properties for each range. The zero
+// value of RangePropertiesCollector is not ready to use, should call reset()
 // first.
-type rangePropertiesCollector struct {
-	props        []*rangeProperty
-	currProp     *rangeProperty
+type RangePropertiesCollector struct {
+	props        []*RangeProperty
+	currProp     *RangeProperty
 	propSizeDist uint64
 	propKeysDist uint64
 }
 
-// size: the file size after adding 'data'
-func (rc *rangePropertiesCollector) onNextEncodedData(data []byte, size uint64) {
-	keyLen := binary.BigEndian.Uint64(data)
-	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
-
-	if len(rc.currProp.firstKey) == 0 {
-		rc.currProp.firstKey = key
+// NewRangePropertiesCollector creates a new RangePropertiesCollector.
+func NewRangePropertiesCollector(propSizeDist uint64, propKeysDist uint64) *RangePropertiesCollector {
+	return &RangePropertiesCollector{
+		props:        make([]*RangeProperty, 0, 1024),
+		currProp:     &RangeProperty{},
+		propSizeDist: propSizeDist,
+		propKeysDist: propKeysDist,
 	}
-	rc.currProp.lastKey = key
+}
 
-	rc.currProp.size += uint64(len(data) - 2*lengthBytes)
-	rc.currProp.keys++
+// CurrProp returns the current range property.
+func (rc *RangePropertiesCollector) CurrProp() *RangeProperty {
+	return rc.currProp
+}
 
-	if rc.currProp.size >= rc.propSizeDist ||
-		rc.currProp.keys >= rc.propKeysDist {
+// size: the file size after adding 'data'
+func (rc *RangePropertiesCollector) onNextEncodedData(data []byte, size uint64) {
+	keyLen := binary.BigEndian.Uint64(data)
+	key := data[2*LengthBytes : 2*LengthBytes+keyLen]
+
+	if len(rc.currProp.FirstKey) == 0 {
+		rc.currProp.FirstKey = key
+	}
+	rc.currProp.LastKey = key
+
+	rc.currProp.Size += uint64(len(data) - 2*LengthBytes)
+	rc.currProp.Keys++
+
+	if rc.currProp.Size >= rc.propSizeDist ||
+		rc.currProp.Keys >= rc.propKeysDist {
 		newProp := *rc.currProp
 		rc.props = append(rc.props, &newProp)
 		// reset currProp, and start to update this prop.
-		rc.currProp.firstKey = nil
-		rc.currProp.offset = size
-		rc.currProp.keys = 0
-		rc.currProp.size = 0
+		rc.currProp.FirstKey = nil
+		rc.currProp.Offset = size
+		rc.currProp.Keys = 0
+		rc.currProp.Size = 0
 	}
 }
 
-func (rc *rangePropertiesCollector) onFileEnd() {
-	if rc.currProp.keys > 0 {
+func (rc *RangePropertiesCollector) onFileEnd() {
+	if rc.currProp.Keys > 0 {
 		newProp := *rc.currProp
 		rc.props = append(rc.props, &newProp)
 	}
 }
 
-func (rc *rangePropertiesCollector) reset() {
+// Reset the collector.
+func (rc *RangePropertiesCollector) Reset() {
 	rc.props = rc.props[:0]
-	rc.currProp = &rangeProperty{}
+	rc.currProp = &RangeProperty{}
 }
 
-// encode encodes rc.props to a byte slice.
-func (rc *rangePropertiesCollector) encode() []byte {
+// Encode encodes rc.props to a byte slice.
+func (rc *RangePropertiesCollector) Encode() []byte {
 	b := make([]byte, 0, 1024)
 	return encodeMultiProps(b, rc.props)
 }
@@ -217,8 +240,8 @@ func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
 		memSizeLimit: DefaultMemSizeLimit,
 		blockSize:    DefaultBlockSize,
-		propSizeDist: defaultPropSizeDist,
-		propKeysDist: defaultPropKeysDist,
+		propSizeDist: DefaultPropSizeDist,
+		propKeysDist: DefaultPropKeysDist,
 		onClose:      dummyOnWriterCloseFunc,
 	}
 }
@@ -294,12 +317,7 @@ func (b *WriterBuilder) Build(
 	)
 	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 	ret := &Writer{
-		rc: &rangePropertiesCollector{
-			props:        make([]*rangeProperty, 0, 1024),
-			currProp:     &rangeProperty{},
-			propSizeDist: b.propSizeDist,
-			propKeysDist: b.propKeysDist,
-		},
+		rc:             NewRangePropertiesCollector(b.propSizeDist, b.propKeysDist),
 		store:          store,
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
@@ -311,8 +329,8 @@ func (b *WriterBuilder) Build(
 		onDup:          b.onDup,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 0),
-		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
-		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		fileMinKeys:    make([]tidbkv.Key, 0, MultiFileStatNum),
+		fileMaxKeys:    make([]tidbkv.Key, 0, MultiFileStatNum),
 		tikvCodec:      b.tikvCodec,
 	}
 
@@ -332,12 +350,7 @@ func (b *WriterBuilder) BuildOneFile(
 	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 
 	ret := &OneFileWriter{
-		rc: &rangePropertiesCollector{
-			props:        make([]*rangeProperty, 0, 1024),
-			currProp:     &rangeProperty{},
-			propSizeDist: b.propSizeDist,
-			propKeysDist: b.propKeysDist,
-		},
+		rc:             NewRangePropertiesCollector(b.propSizeDist, b.propKeysDist),
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		store:          store,
 		filenamePrefix: filenamePrefix,
@@ -381,7 +394,8 @@ func (s *startKeysAndFiles) Swap(i, j int) {
 	s.files[i], s.files[j] = s.files[j], s.files[i]
 }
 
-func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
+// Build the multiple file stat.
+func (m *MultipleFilesStat) Build(startKeys, endKeys []tidbkv.Key) {
 	if len(startKeys) == 0 {
 		return
 	}
@@ -432,7 +446,7 @@ type Writer struct {
 	filenamePrefix string
 	rnd            *rand.Rand
 
-	rc *rangePropertiesCollector
+	rc *RangePropertiesCollector
 
 	kvBuffer    *membuf.Buffer
 	kvLocations []membuf.SliceLocation
@@ -470,7 +484,7 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	}
 
 	keyLen := len(key)
-	length := keyLen + len(val) + lengthBytes*2
+	length := keyLen + len(val) + LengthBytes*2
 	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
@@ -483,9 +497,9 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 		}
 	}
 	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(keyLen))
-	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(val)))
-	copy(dataBuf[2*lengthBytes:], key)
-	copy(dataBuf[2*lengthBytes+keyLen:], val)
+	binary.BigEndian.AppendUint64(dataBuf[:LengthBytes], uint64(len(val)))
+	copy(dataBuf[2*LengthBytes:], key)
+	copy(dataBuf[2*LengthBytes+keyLen:], val)
 
 	w.kvLocations = append(w.kvLocations, loc)
 	// TODO: maybe we can unify the size calculation during write to store.
@@ -596,7 +610,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyRemove:
-			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
+			w.kvLocations, _, dupCnt = RemoveDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
 			dupKey := slices.Clone(w.getKeyByLoc(&dupLoc))
@@ -652,7 +666,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.addNewKVFile2MultiFileStats(dataFile, statFile, minKey, maxKey)
 	}
 	if fromClose && len(w.multiFileStats) > 0 {
-		w.multiFileStats[len(w.multiFileStats)-1].build(w.fileMinKeys, w.fileMaxKeys)
+		w.multiFileStats[len(w.multiFileStats)-1].Build(w.fileMinKeys, w.fileMaxKeys)
 	}
 
 	// maintain dup statistics
@@ -673,12 +687,12 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 func (w *Writer) addNewKVFile2MultiFileStats(dataFile, statFile string, minKey, maxKey []byte) {
 	l := len(w.multiFileStats)
-	if l == 0 || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
+	if l == 0 || len(w.multiFileStats[l-1].Filenames) == MultiFileStatNum {
 		if l > 0 {
-			w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
+			w.multiFileStats[l-1].Build(w.fileMinKeys, w.fileMaxKeys)
 		}
 		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
-			Filenames: make([][2]string, 0, multiFileStatNum),
+			Filenames: make([][2]string, 0, MultiFileStatNum),
 		})
 		w.fileMinKeys = w.fileMinKeys[:0]
 		w.fileMaxKeys = w.fileMaxKeys[:0]
@@ -713,7 +727,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 			_ = statWriter.Close(ctx)
 		}
 	}()
-	w.rc.reset()
+	w.rc.Reset()
 	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
 	for _, pair := range w.kvLocations {
@@ -723,8 +737,8 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 		}
 	}
 
-	kvStore.finish()
-	encodedStat := w.rc.encode()
+	kvStore.Finish()
+	encodedStat := w.rc.Encode()
 	statSize := len(encodedStat)
 	_, err = statWriter.Write(ctx, encodedStat)
 	if err != nil {
@@ -781,7 +795,7 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 			return "", err
 		}
 	}
-	dupStore.finish()
+	dupStore.Finish()
 	err = dupWriter.Close(ctx)
 	dupWriter = nil
 	if err != nil {
@@ -792,20 +806,20 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 
 func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+	keyLen := binary.BigEndian.Uint64(block[:LengthBytes])
+	return block[2*LengthBytes : 2*LengthBytes+keyLen]
 }
 
 func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[2*lengthBytes+keyLen:]
+	keyLen := binary.BigEndian.Uint64(block[:LengthBytes])
+	return block[2*LengthBytes+keyLen:]
 }
 
 func (w *Writer) reCalculateKVSize() int64 {
 	s := int64(0)
 	for _, loc := range w.kvLocations {
-		s += int64(loc.Length) - 2*lengthBytes
+		s += int64(loc.Length) - 2*LengthBytes
 	}
 	return s
 }
@@ -864,7 +878,8 @@ func randPartitionedPrefix(prefix string, rnd *rand.Rand) string {
 	return filepath.Join(partitionPrefix, prefix)
 }
 
-func isValidPartition(in []byte) bool {
+// IsValidPartition check if the partition prefix is valid.
+func IsValidPartition(in []byte) bool {
 	if len(in) != 9 || in[0] != partitionHeaderChar {
 		return false
 	}
@@ -910,4 +925,21 @@ func (e *EngineWriter) IsSynced() bool {
 // Close implements backend.EngineWriter interface.
 func (e *EngineWriter) Close(ctx context.Context) (common.ChunkFlushStatus, error) {
 	return nil, e.w.Close(ctx)
+}
+
+func getSpeed(n uint64, dur float64, isBytes bool) string {
+	if dur == 0 {
+		return "-"
+	}
+	if isBytes {
+		return units.BytesSize(float64(n) / dur)
+	}
+	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
+}
+
+func getHash(s string) int64 {
+	h := fnv.New64a()
+	// this hash function never return error
+	_, _ = h.Write([]byte(s))
+	return int64(h.Sum64())
 }
