@@ -201,8 +201,8 @@ type mergeWorkerData struct {
 	minMaxBatchMappings          []int
 	batchUniqueRows              []int
 	batchResultRows              []int
-	batchRowLookupKeyIdx         []int
 	batchRowSeenByMapping        []int
+	batchRowToLookupKeyIdx       []int
 	batchLookupKeyContents       []MinMaxBatchLookupContent
 	batchRefsByLookupKey         [][]batchRowRef
 	batchLookupKeyDatums         []types.Datum
@@ -1175,27 +1175,10 @@ func (e *Exec) recomputeMinMaxBatch(
 	if workerData == nil {
 		return errors.New("min/max batch recompute requires worker data")
 	}
-	typeCtx := e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	if len(keyTypes) != len(keyColIDs) {
 		return errors.Errorf("min/max batch key/type count mismatch: keys=%d types=%d", len(keyColIDs), len(keyTypes))
 	}
 	rowCnt := input.NumRows()
-
-	const (
-		batchRowLookupKeyUnknown  = -2
-		batchRowLookupKeySelected = -3
-	)
-
-	rowLookupKeyIdx := workerData.batchRowLookupKeyIdx
-	if cap(rowLookupKeyIdx) < rowCnt {
-		rowLookupKeyIdx = make([]int, rowCnt)
-	} else {
-		rowLookupKeyIdx = rowLookupKeyIdx[:rowCnt]
-	}
-	for i := range rowLookupKeyIdx {
-		rowLookupKeyIdx[i] = batchRowLookupKeyUnknown
-	}
-	workerData.batchRowLookupKeyIdx = rowLookupKeyIdx
 
 	rowSeenByMapping := workerData.batchRowSeenByMapping
 	if cap(rowSeenByMapping) < rowCnt {
@@ -1222,10 +1205,6 @@ func (e *Exec) recomputeMinMaxBatch(
 			continue
 		}
 		mapping := e.AggMappings[mappingIdx]
-		override, err := ensureMappingOverride(overrides, mappingIdx, len(mapping.ColID), len(rows))
-		if err != nil {
-			return err
-		}
 		duplicateCheckToken := mappingIdx + 1
 		for _, rowIdx := range rows {
 			if rowIdx < 0 || rowIdx >= rowCnt {
@@ -1234,12 +1213,21 @@ func (e *Exec) recomputeMinMaxBatch(
 			if rowSeenByMapping[rowIdx] == duplicateCheckToken {
 				return errors.Errorf("min/max batch recompute has duplicate row %d for mapping %d", rowIdx, mappingIdx)
 			}
-			rowSeenByMapping[rowIdx] = duplicateCheckToken
-
-			if rowLookupKeyIdx[rowIdx] == batchRowLookupKeyUnknown {
-				rowLookupKeyIdx[rowIdx] = batchRowLookupKeySelected
+			if rowSeenByMapping[rowIdx] == 0 {
 				uniqueRows = append(uniqueRows, rowIdx)
 			}
+			rowSeenByMapping[rowIdx] = duplicateCheckToken
+		}
+		override := overrides[mappingIdx]
+		if override == nil {
+			override = &mappingRecomputeOverride{
+				rowIdxes:       make([]int, 0, len(rows)),
+				valuesByOutput: make([][]types.Datum, len(mapping.ColID)),
+			}
+			for i := range override.valuesByOutput {
+				override.valuesByOutput[i] = make([]types.Datum, 0, len(rows))
+			}
+			overrides[mappingIdx] = override
 		}
 		override.rowIdxes = rows
 		for colPos := range mapping.ColID {
@@ -1256,6 +1244,14 @@ func (e *Exec) recomputeMinMaxBatch(
 		return nil
 	}
 
+	rowToLookupKeyIdx := workerData.batchRowToLookupKeyIdx
+	if cap(rowToLookupKeyIdx) < rowCnt {
+		rowToLookupKeyIdx = make([]int, rowCnt)
+	} else {
+		rowToLookupKeyIdx = rowToLookupKeyIdx[:rowCnt]
+	}
+	workerData.batchRowToLookupKeyIdx = rowToLookupKeyIdx
+
 	lookupKeyContents := workerData.batchLookupKeyContents
 	if cap(lookupKeyContents) < len(uniqueRows) {
 		lookupKeyContents = make([]MinMaxBatchLookupContent, len(uniqueRows))
@@ -1264,21 +1260,20 @@ func (e *Exec) recomputeMinMaxBatch(
 	}
 	workerData.batchLookupKeyContents = lookupKeyContents
 
-	refsByLookupKeySlots := workerData.batchRefsByLookupKey
-	if cap(refsByLookupKeySlots) < len(uniqueRows) {
-		refsByLookupKeySlots = make([][]batchRowRef, len(uniqueRows))
+	refsByLookupKey := workerData.batchRefsByLookupKey
+	if cap(refsByLookupKey) < len(uniqueRows) {
+		refsByLookupKey = make([][]batchRowRef, len(uniqueRows))
 	} else {
-		refsByLookupKeySlots = refsByLookupKeySlots[:len(uniqueRows)]
+		refsByLookupKey = refsByLookupKey[:len(uniqueRows)]
 	}
-	workerData.batchRefsByLookupKey = refsByLookupKeySlots
+	workerData.batchRefsByLookupKey = refsByLookupKey
 
-	lookupKeys := lookupKeyContents[:0]
-	refsByLookupKey := refsByLookupKeySlots[:0]
-	keyDatumBuffer := make([]types.Datum, len(keyColIDs))
+	keyColCnt := len(keyColIDs)
 	flatLookupKeyDatums := workerData.batchLookupKeyDatums[:0]
-	if cap(flatLookupKeyDatums) < len(uniqueRows)*len(keyColIDs) {
-		flatLookupKeyDatums = make([]types.Datum, 0, len(uniqueRows)*len(keyColIDs))
+	if cap(flatLookupKeyDatums) < len(uniqueRows)*keyColCnt {
+		flatLookupKeyDatums = make([]types.Datum, 0, len(uniqueRows)*keyColCnt)
 	}
+	typeCtx := e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	encodedInputKeys, nullByInputRow, err := encodeChunkKeyRowsColumnar(
 		typeCtx,
 		input,
@@ -1295,36 +1290,38 @@ func (e *Exec) recomputeMinMaxBatch(
 	workerData.batchInputNullByRow = nullByInputRow
 
 	keyIdxByEncoded := make(map[hack.MutableString]int, len(uniqueRows))
-	for logicalPos, rowIdx := range uniqueRows {
-		encodedKey := encodedInputKeys[logicalPos]
-		lookupKey := hack.String(encodedKey)
-		keyIdx, exists := keyIdxByEncoded[lookupKey]
-		if !exists {
-			keyIdx = len(lookupKeys)
-			// encodedKey aliases worker scratch; clone before putting into map.
-			stableEncodedKey := append([]byte(nil), encodedKey...)
-			keyIdxByEncoded[hack.String(stableEncodedKey)] = keyIdx
-
-			inputRow := input.GetRow(rowIdx)
-			base := len(flatLookupKeyDatums)
-			flatLookupKeyDatums = flatLookupKeyDatums[:base+len(keyDatumBuffer)]
-			keyDatums := flatLookupKeyDatums[base : base+len(keyDatumBuffer)]
-			for keyPos, keyColID := range keyColIDs {
-				inputRow.DatumWithBuffer(keyColID, keyTypes[keyPos], &keyDatumBuffer[keyPos])
-				keyDatumBuffer[keyPos].Copy(&keyDatums[keyPos])
-			}
-			lookupKeys = append(lookupKeys, MinMaxBatchLookupContent{Keys: keyDatums})
-			refsByLookupKeySlots[keyIdx] = refsByLookupKeySlots[keyIdx][:0]
-			refsByLookupKey = append(refsByLookupKey, refsByLookupKeySlots[keyIdx])
+	for rowPos, rowIdx := range uniqueRows {
+		encodedKey := encodedInputKeys[rowPos]
+		if _, exists := keyIdxByEncoded[hack.String(encodedKey)]; exists {
+			return errors.Errorf("duplicate lookup key for min/max batch recompute at input")
 		}
-		rowLookupKeyIdx[rowIdx] = keyIdx
+
+		// hack.String does not copy. encodedInputKeys is scratch-backed and reusable,
+		// so copy bytes before storing the map key.
+		stableEncodedKey := make([]byte, len(encodedKey))
+		copy(stableEncodedKey, encodedKey)
+		keyIdxByEncoded[hack.String(stableEncodedKey)] = rowPos
+		rowToLookupKeyIdx[rowIdx] = rowPos
+
+		inputRow := input.GetRow(rowIdx)
+		base := len(flatLookupKeyDatums)
+		flatLookupKeyDatums = flatLookupKeyDatums[:base+keyColCnt]
+		keyDatums := flatLookupKeyDatums[base : base+keyColCnt]
+		var keyDatum types.Datum
+		for keyPos, keyColID := range keyColIDs {
+			keyDatum = types.Datum{}
+			inputRow.DatumWithBuffer(keyColID, keyTypes[keyPos], &keyDatum)
+			keyDatum.Copy(&keyDatums[keyPos])
+		}
+		lookupKeyContents[rowPos] = MinMaxBatchLookupContent{Keys: keyDatums}
+		refsByLookupKey[rowPos] = refsByLookupKey[rowPos][:0]
 	}
 	workerData.batchLookupKeyDatums = flatLookupKeyDatums
 
 	for _, mappingIdx := range batchMappings {
 		override := overrides[mappingIdx]
 		for rowPos, rowIdx := range override.rowIdxes {
-			keyIdx := rowLookupKeyIdx[rowIdx]
+			keyIdx := rowToLookupKeyIdx[rowIdx]
 			refsByLookupKey[keyIdx] = append(refsByLookupKey[keyIdx], batchRowRef{
 				mappingIdx: mappingIdx,
 				rowIdx:     rowIdx,
@@ -1336,7 +1333,7 @@ func (e *Exec) recomputeMinMaxBatch(
 	clear(rowSeenByMapping)
 	seenResultKeyCnt := 0
 
-	batchExec, err := e.MinMaxRecompute.BatchBuilder.Build(ctx, &MinMaxBatchBuildRequest{LookupKeys: lookupKeys})
+	batchExec, err := e.MinMaxRecompute.BatchBuilder.Build(ctx, &MinMaxBatchBuildRequest{LookupKeys: lookupKeyContents})
 	if err != nil {
 		return err
 	}
@@ -1415,10 +1412,10 @@ func (e *Exec) recomputeMinMaxBatch(
 		}
 	}
 
-	if seenResultKeyCnt != len(lookupKeys) {
+	if seenResultKeyCnt != len(lookupKeyContents) {
 		return errors.Errorf(
 			"min/max batch recompute result key count mismatch: expected %d, got %d",
-			len(lookupKeys),
+			len(lookupKeyContents),
 			seenResultKeyCnt,
 		)
 	}
