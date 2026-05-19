@@ -27,6 +27,11 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
+const (
+	ticiEstimateLocateTimeout         = 5 * time.Minute
+	ticiEstimatePseudoRowCount uint64 = 1000
+)
+
 type ticiEstimateShardGroup struct {
 	addr          string
 	shardInfos    []*coprocessor.ShardInfo
@@ -51,8 +56,13 @@ func (s *Store) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCount
 	}
 
 	kvRanges := req.KeyRanges.AppendSelfTo(nil)
-	locations, err := cache.BatchLocateKeyRanges(ctx, req.TableID, req.IndexID, kvRanges)
+	locateCtx, cancel := context.WithTimeout(ctx, ticiEstimateLocateTimeout)
+	locations, err := cache.BatchLocateKeyRanges(locateCtx, req.TableID, req.IndexID, kvRanges)
+	cancel()
 	if err != nil {
+		if errors.Cause(err) == context.DeadlineExceeded {
+			return ticiEstimatePseudoRowCount, nil
+		}
 		return 0, err
 	}
 	groups, totalUniqueShards := buildTiCIEstimateShardGroups(locations)

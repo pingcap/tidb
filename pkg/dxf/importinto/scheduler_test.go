@@ -24,11 +24,36 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+type postProcessMetaTaskHandle struct {
+	metas [][]byte
+}
+
+func (h *postProcessMetaTaskHandle) GetPreviousSubtaskMetas(_ int64, step proto.Step) ([][]byte, error) {
+	if step != proto.ImportStepPostProcess {
+		return nil, nil
+	}
+	return h.metas, nil
+}
+
+func (*postProcessMetaTaskHandle) GetPreviousSubtaskSummary(int64, proto.Step) ([]*execute.SubtaskSummary, error) {
+	return nil, nil
+}
+
+func (*postProcessMetaTaskHandle) WithNewSession(func(sessionctx.Context) error) error {
+	return nil
+}
+
+func (*postProcessMetaTaskHandle) WithNewTxn(context.Context, func(sessionctx.Context) error) error {
+	return nil
+}
 
 type importIntoSuite struct {
 	suite.Suite
@@ -168,4 +193,29 @@ func TestIsImporting2TiKV(t *testing.T) {
 	require.False(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepPostProcess}}))
 	require.True(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}}))
 	require.True(t, ext.isImporting2TiKV(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepWriteAndIngest}}))
+}
+
+func TestMergeTiCIIndexSummaryFromPostProcess(t *testing.T) {
+	ticiSummary := &importer.TiCIIndexSummary{
+		Incomplete:      true,
+		TableID:         1,
+		IndexIDs:        []int64{101, 102},
+		ReadyIndexIDs:   []int64{101},
+		PendingIndexIDs: []int64{102},
+		ErrorIndexIDs:   []int64{102},
+		Reason:          "check-add-index-progress-failed",
+		ErrorMessage:    "tici unavailable",
+	}
+	postProcessMeta, err := json.Marshal(&PostProcessStepMeta{TiCIIndexSummary: ticiSummary})
+	require.NoError(t, err)
+
+	taskMeta := &TaskMeta{}
+	err = mergeTiCIIndexSummaryFromPostProcess(
+		context.Background(),
+		&postProcessMetaTaskHandle{metas: [][]byte{postProcessMeta}},
+		&proto.Task{TaskBase: proto.TaskBase{ID: 123}},
+		taskMeta,
+	)
+	require.NoError(t, err)
+	require.Equal(t, ticiSummary, taskMeta.Summary.TiCIIndexSummary)
 }

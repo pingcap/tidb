@@ -357,6 +357,27 @@ type Summary struct {
 	// cannot deduplicate during collecting its checksum, so we will skip later
 	// checksum step.
 	TooManyConflicts bool `json:"too-many-conflicts,omitempty"`
+
+	// TiCIIndexSummary records TiCI full-text index readiness warnings for
+	// IMPORT INTO. A finished import job can still have this field when TiKV
+	// import completed but TiCI full-text indexes are incomplete.
+	TiCIIndexSummary *TiCIIndexSummary `json:"tici-index-summary,omitempty"`
+}
+
+// TiCIIndexSummary records TiCI full-text index readiness status for IMPORT INTO.
+type TiCIIndexSummary struct {
+	Incomplete bool `json:"incomplete,omitempty"`
+
+	TableID  int64   `json:"table-id,omitempty"`
+	IndexIDs []int64 `json:"index-ids,omitempty"`
+
+	ReadyIndexIDs   []int64 `json:"ready-index-ids,omitempty"`
+	PendingIndexIDs []int64 `json:"pending-index-ids,omitempty"`
+	FailedIndexIDs  []int64 `json:"failed-index-ids,omitempty"`
+	ErrorIndexIDs   []int64 `json:"error-index-ids,omitempty"`
+
+	Reason       string `json:"reason,omitempty"`
+	ErrorMessage string `json:"error-message,omitempty"`
 }
 
 // LoadDataController load data controller.

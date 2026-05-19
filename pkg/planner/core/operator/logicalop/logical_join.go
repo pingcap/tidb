@@ -52,11 +52,15 @@ type LogicalJoin struct {
 	StraightJoin bool
 
 	// HintInfo stores the join algorithm hint information specified by client.
-	HintInfo            *utilhint.PlanHints
-	PreferJoinType      uint
-	PreferJoinOrder     bool
-	LeftPreferJoinType  uint
-	RightPreferJoinType uint
+	HintInfo *utilhint.PlanHints
+	// InternalHintInfo stores a synthesized LEADING preference used only by the
+	// order-aware reorder rule. It must not be treated as a user hint.
+	InternalHintInfo        *utilhint.PlanHints
+	PreferJoinType          uint
+	PreferJoinOrder         bool
+	InternalPreferJoinOrder bool
+	LeftPreferJoinType      uint
+	RightPreferJoinType     uint
 
 	EqualConditions []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
@@ -91,11 +95,21 @@ type LogicalJoin struct {
 	FullSchema *expression.Schema
 	FullNames  types.NameSlice
 
+	// PreferCorrelate is set to true when this SemiJoin originated from a non-correlated
+	// IN subquery during the correlate alternative round, indicating that the CorrelateSolver
+	// should convert it back to a correlated Apply with index lookups.
+	PreferCorrelate bool
+
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
 
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
+
+	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
+	// first logical round. It is only used to decide whether an equivalent same-order
+	// PhysicalIndexJoin candidate has already been generated.
+	FromDecorrelatedApply bool
 }
 
 // Init initializes LogicalJoin.
@@ -1979,11 +1993,13 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 	subAgg.SetSchema(expression.NewSchema(aggOutputCols...))
 	subAgg.BuildSelfKeyInfo(subAgg.Schema())
 	innerJoin := LogicalJoin{
-		JoinType:        base.InnerJoin,
-		HintInfo:        p.HintInfo,
-		PreferJoinType:  p.PreferJoinType,
-		PreferJoinOrder: p.PreferJoinOrder,
-		EqualConditions: make([]*expression.ScalarFunction, 0, len(p.EqualConditions)),
+		JoinType:                base.InnerJoin,
+		HintInfo:                p.HintInfo,
+		InternalHintInfo:        p.InternalHintInfo,
+		PreferJoinType:          p.PreferJoinType,
+		PreferJoinOrder:         p.PreferJoinOrder,
+		InternalPreferJoinOrder: p.InternalPreferJoinOrder,
+		EqualConditions:         make([]*expression.ScalarFunction, 0, len(p.EqualConditions)),
 	}.Init(p.SCtx(), p.QueryBlockOffset())
 	innerJoin.SetChildren(p.Children()[0], subAgg)
 	innerJoin.SetSchema(expression.MergeSchema(p.Children()[0].Schema().Clone(), subAgg.Schema().Clone()))

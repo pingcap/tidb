@@ -91,6 +91,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, vardef.DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(vardef.DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, vardef.DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -210,6 +211,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
 
+	require.False(t, v.EnableAlternativeLogicalPlans)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAlternativeLogicalPlans, "1")
+	require.NoError(t, err)
+	require.True(t, v.EnableAlternativeLogicalPlans)
+
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
 	err = v.SetSystemVar(vardef.TiDBMaxChunkSize, "2")
@@ -263,6 +269,14 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
+
+	require.Equal(t, vardef.DefTiDBOptEnableAdvancedJoinReorder, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAdvancedJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAdvancedJoinReorder, "ON")
+	require.NoError(t, err)
+	require.Equal(t, true, v.TiDBOptEnableAdvancedJoinReorder)
 
 	err = v.SetSystemVar(vardef.TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)

@@ -244,15 +244,15 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 	// Non-BOOLEAN MODE is rejected.
 	tk.MustContainErrMsg(
 		"explain format='brief' select * from t1 where match(title) against ('hello')",
-		"Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST",
+		"This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'",
 	)
 	tk.MustContainErrMsg(
 		"explain format='brief' select * from t1 where match(title) against ('hello' IN NATURAL LANGUAGE MODE)",
-		"Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST",
+		"This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'",
 	)
 	tk.MustContainErrMsg(
 		"explain format='brief' select * from t1 where match(title) against ('hello' WITH QUERY EXPANSION)",
-		"Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST",
+		"This version of TiDB doesn't yet support 'MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)'",
 	)
 
 	// BOOLEAN MODE should allow multiple SHOULD terms. With a no-score TiCI query,

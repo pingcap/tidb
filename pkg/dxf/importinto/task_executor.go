@@ -829,7 +829,11 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 	failpoint.Inject("waitBeforePostProcess", func() {
 		time.Sleep(5 * time.Second)
 	})
-	return p.postProcess(ctx, &stepMeta, logger)
+	if err = p.postProcess(ctx, &stepMeta, logger); err != nil {
+		return err
+	}
+	subtask.Meta, err = json.Marshal(&stepMeta)
+	return errors.Trace(err)
 }
 
 type importExecutor struct {

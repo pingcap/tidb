@@ -38,9 +38,11 @@ const (
 	FlagDeriveTopNFromWindow
 	FlagPredicateSimplification
 	FlagPushDownTopN
+	FlagOrderAwareJoinReorder
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagOuterJoinToSemiJoin
+	FlagCorrelate
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem

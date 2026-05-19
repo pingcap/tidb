@@ -106,3 +106,30 @@ type PartitionAccesser interface {
 type PartitionTable interface {
 	PartitionExpr() *tables.PartitionExpr
 }
+
+// FTSLikeFallbackError marks a native full-text-search planning error that can
+// be retried through the MATCH...AGAINST-to-LIKE fallback round when
+// alternative logical plans are enabled for a direct-boolean predicate context.
+//
+// The optimizer unwraps this back to Cause whenever no fallback round is
+// available, so users still see the original error message in non-fallback
+// scenarios.
+type FTSLikeFallbackError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *FTSLikeFallbackError) Error() string {
+	if e == nil || e.Cause == nil {
+		return ""
+	}
+	return e.Cause.Error()
+}
+
+// Unwrap returns the original native-FTS error.
+func (e *FTSLikeFallbackError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
