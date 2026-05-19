@@ -105,11 +105,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
-=======
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
->>>>>>> a62a6d1ff90 (server, session: interrupt autocommit DML after disconnect (#68237))
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"

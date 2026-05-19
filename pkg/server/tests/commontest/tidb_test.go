@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/plugin"
 	server2 "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
@@ -3399,8 +3401,6 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 		ts.CheckRows(t, rows, "a b\nc d")
 	})
 }
-<<<<<<< HEAD
-=======
 
 func TestIssue57531(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
@@ -3674,7 +3674,6 @@ func TestCloseConnForUndeterminedError(t *testing.T) {
 	require.EqualError(t, err, "invalid connection")
 }
 
->>>>>>> a62a6d1ff90 (server, session: interrupt autocommit DML after disconnect (#68237))
 func TestAuditPluginInfoForStarting(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
