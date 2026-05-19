@@ -7546,7 +7546,8 @@ func TestWithoutCharsetFlags(t *testing.T) {
 func TestRestoreBinOpWithBrackets(t *testing.T) {
 	cases := []testCase{
 		{"select mod(a+b, 4)+1", true, "SELECT (((`a` + `b`) % 4) + 1)"},
-		{"SELECT MOD(10, 2 BETWEEN 0 and 5)", true, "SELECT (10 % (2 BETWEEN 0 AND 5))"}, // issue #59000
+		{"SELECT MOD(10, 2 BETWEEN 0 and 5)", true, "SELECT (10 % (2 BETWEEN 0 AND 5))"},                               // issue #59000
+		{"SELECT c0 BETWEEN 2.5 AND c0 >> 1 > 1 - c0", true, "SELECT `c0` BETWEEN 2.5 AND ((`c0` >> 1) > (1 - `c0`))"}, // issue #66045
 		{"select mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1", true, "SELECT (((year(`a`) - abs((weekday(`a`) + dayofweek(`a`)))) % 4) + 1)"},
 	}
 
@@ -7583,6 +7584,72 @@ func TestRestoreBinOpWithBrackets(t *testing.T) {
 			comment = fmt.Sprintf("restore %v; expect %v", restoreSQLs, tbl.restore)
 			require.Equal(t, tbl.restore, restoreSQLs, comment)
 		}
+	}
+
+	for _, tbl := range []struct {
+		src        string
+		assertType func(t *testing.T, expr ast.ExprNode)
+	}{
+		{
+			src: "select c0 between 1 and c1 is true",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.IsTruthExpr)
+				require.True(t, ok)
+				require.False(t, right.Not)
+				require.Equal(t, int64(1), right.True)
+			},
+		},
+		{
+			src: "select c0 between 1 and c1 is false",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.IsTruthExpr)
+				require.True(t, ok)
+				require.False(t, right.Not)
+				require.Equal(t, int64(0), right.True)
+			},
+		},
+		{
+			src: "select c0 between 1 and c1 is not true",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.IsTruthExpr)
+				require.True(t, ok)
+				require.True(t, right.Not)
+				require.Equal(t, int64(1), right.True)
+			},
+		},
+		{
+			src: "select c0 between 1 and c1 is unknown",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.IsNullExpr)
+				require.True(t, ok)
+				require.False(t, right.Not)
+			},
+		},
+		{
+			src: "select c0 between 1 and c1 <=> 1",
+			assertType: func(t *testing.T, expr ast.ExprNode) {
+				between, ok := expr.(*ast.BetweenExpr)
+				require.True(t, ok)
+				right, ok := between.Right.(*ast.BinaryOperationExpr)
+				require.True(t, ok)
+				require.Equal(t, opcode.NullEQ, right.Op)
+			},
+		},
+	} {
+		stmt, err := p.ParseOneStmt(tbl.src, "", "")
+		require.NoError(t, err, tbl.src)
+		sel, ok := stmt.(*ast.SelectStmt)
+		require.True(t, ok, tbl.src)
+		require.Len(t, sel.Fields.Fields, 1, tbl.src)
+		tbl.assertType(t, sel.Fields.Fields[0].Expr)
 	}
 }
 
