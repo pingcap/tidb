@@ -643,6 +643,13 @@
         "Warn": null
       },
       {
+        "SQL": "explain format='brief' select * from t1 where match(title) against (NULL IN BOOLEAN MODE)",
+        "Plan": [
+          "TableDual 1.00 root  rows:0"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format='brief' select * from t6 where match(title) against ('hello' IN BOOLEAN MODE)",
         "Plan": [
           "Projection 10000.00 root  test.t6.id, test.t6.title",
