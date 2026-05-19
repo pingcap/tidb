@@ -233,9 +233,18 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	failpoint.Inject("finishStmtError", func() {
 		failpoint.Return(errors.New("occur an error after finishStmt"))
 	})
+<<<<<<< HEAD
 	sessVars := se.sessionVars
 	if !sql.IsReadOnly(sessVars) {
 		// All the history should be added here.
+=======
+	readOnly := sql.IsReadOnly(sessVars)
+	if !readOnly && meetsErr == nil && shouldCheckConnectionAliveBeforeCommit(sessVars, sql) {
+		sessVars.SQLKiller.CheckConnectionAlive()
+		meetsErr = sessVars.SQLKiller.HandleSignal()
+	}
+	if !readOnly {
+>>>>>>> a62a6d1ff90 (server, session: interrupt autocommit DML after disconnect (#68237))
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
 			GetHistory(se).Add(sql, sessVars.StmtCtx)
 		}
@@ -267,6 +276,33 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	return checkStmtLimit(ctx, se, true)
 }
 
+<<<<<<< HEAD
+=======
+// isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.
+func isLoadDataLocal(sql sqlexec.Statement) bool {
+	if s, ok := sql.GetStmtNode().(*ast.LoadDataStmt); ok {
+		return s.FileLocRef == ast.FileLocClient
+	}
+	return false
+}
+
+func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
+	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
+	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
+	if err != nil || stmt == nil {
+		return false
+	}
+	switch stmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	default:
+		return false
+	}
+}
+
+>>>>>>> a62a6d1ff90 (server, session: interrupt autocommit DML after disconnect (#68237))
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	isInternal := false
 	if internal := se.txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {

@@ -230,9 +230,15 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args []param.BinaryParam, useCursor bool) (err error) {
+<<<<<<< HEAD
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+=======
+	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
+
+	//nolint:forcetypeassert
+>>>>>>> a62a6d1ff90 (server, session: interrupt autocommit DML after disconnect (#68237))
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
@@ -306,9 +312,25 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		sql = planCacheStmt.StmtText
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
+	clearConnectionAlive := func() {}
+	monitoringConnectionAlive := false
+	if planCacheStmt != nil && planCacheStmt.PreparedAst != nil {
+		monitoringConnectionAlive = shouldMonitorConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
+		if monitoringConnectionAlive {
+			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
+		}
+	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
+	if rs == nil || err != nil {
+		clearConnectionAlive()
+	}
 	var lazy bool
 	if rs != nil {
+		if !monitoringConnectionAlive {
+			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
+		}
 		defer func() {
 			if !lazy {
 				rs.Close()

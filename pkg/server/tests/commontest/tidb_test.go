@@ -3399,6 +3399,282 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 		ts.CheckRows(t, rows, "a b\nc d")
 	})
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue57531(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	var rsCnt int
+	for i := range 2 {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			conn, err := dbt.GetDB().Conn(context.Background())
+			require.NoError(t, err)
+			defer func() {
+				_ = conn.Close()
+			}()
+			netConn := getRawNetConn(t, conn)
+
+			// execute `select sleep(300)`
+			go func() {
+				if i == 0 {
+					conn.QueryContext(context.Background(), "select sleep(300)")
+				} else {
+					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
+					require.NoError(t, err)
+					stmt.Exec(300)
+				}
+			}()
+			time.Sleep(200 * time.Millisecond)
+
+			// have two sessions
+			rsCnt = 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				rsCnt++
+			}
+			require.Equal(t, rsCnt, 2)
+
+			// close tcp connection
+			netConn.Close()
+		})
+
+		// the `select sleep(300)` is killed
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			require.Eventually(t, func() bool {
+				rs := dbt.MustQuery("show processlist")
+				cnt := 0
+				for rs.Next() {
+					cnt++
+				}
+				return cnt == 1
+			}, 5*time.Second, 50*time.Millisecond)
+		})
+	}
+}
+
+func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	enableFastConnectionAliveMonitor(t)
+
+	for _, prepared := range []bool{false, true} {
+		name := "query"
+		if prepared {
+			name = "prepared"
+		}
+		for _, insertCase := range []struct {
+			name     string
+			buildSQL func(tableName string) string
+		}{
+			{
+				name: "single_row",
+				buildSQL: func(tableName string) string {
+					return fmt.Sprintf("insert into %s values (1, sleep(300))", tableName)
+				},
+			},
+			{
+				name: "multi_rows",
+				buildSQL: func(tableName string) string {
+					return fmt.Sprintf("insert into %s values (1, 1), (2, sleep(300)), (3, 3), (4, 4), (5, 5)", tableName)
+				},
+			},
+		} {
+			t.Run(name+"/"+insertCase.name, func(t *testing.T) {
+				ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+					tableName := "issue57531_insert_" + name + "_" + insertCase.name
+					dbt.MustExec("drop table if exists " + tableName)
+					dbt.MustExec("create table " + tableName + " (a int primary key, b int)")
+					runClientDisconnectAutocommitInsert(t, dbt, tableName, insertCase.buildSQL(tableName), prepared)
+				})
+			})
+		}
+	}
+}
+
+func runClientDisconnectAutocommitInsert(t *testing.T, dbt *testkit.DBTestKit, tableName, insertSQL string, prepared bool) {
+	conn, err := dbt.GetDB().Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	var stmt *sql.Stmt
+	if prepared {
+		stmt, err = conn.PrepareContext(context.Background(), insertSQL)
+		require.NoError(t, err)
+		defer func() {
+			_ = stmt.Close()
+		}()
+	}
+	netConn := getRawNetConn(t, conn)
+
+	done := make(chan error, 1)
+	go func() {
+		var execErr error
+		if prepared {
+			_, execErr = stmt.ExecContext(context.Background())
+		} else {
+			_, execErr = conn.ExecContext(context.Background(), insertSQL)
+		}
+		done <- execErr
+	}()
+
+	pattern := fmt.Sprintf("insert into %s%%", tableName)
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 1
+	}, 5*time.Second, 50*time.Millisecond)
+	processID, ok := processlistIDByInfo(t, dbt, pattern)
+	require.True(t, ok)
+	cleanupProcessByID(t, dbt.GetDB(), processID)
+
+	require.NoError(t, netConn.Close())
+
+	var execErr error
+	require.Eventually(t, func() bool {
+		select {
+		case execErr = <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 50*time.Millisecond)
+	require.Error(t, execErr)
+
+	require.Eventually(t, func() bool {
+		return processlistCountByInfo(t, dbt, pattern) == 0
+	}, 5*time.Second, 50*time.Millisecond)
+
+	var cnt int
+	err = dbt.GetDB().QueryRowContext(context.Background(), "select count(*) from "+tableName).Scan(&cnt)
+	require.NoError(t, err)
+	require.Equal(t, 0, cnt)
+}
+
+func enableFastConnectionAliveMonitor(t *testing.T) {
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/server/mockConnectionAliveMonitorInterval",
+		`return(1)`,
+	))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/mockConnectionAliveMonitorInterval"))
+	})
+}
+
+func getRawNetConn(t *testing.T, conn *sql.Conn) net.Conn {
+	var netConn net.Conn
+	err := conn.Raw(func(driverConn any) error {
+		v := reflect.ValueOf(driverConn)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		f := v.FieldByName("netConn")
+		if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+			netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotNil(t, netConn)
+	return netConn
+}
+
+func processlistCountByInfo(t *testing.T, dbt *testkit.DBTestKit, pattern string) int {
+	var cnt int
+	err := dbt.GetDB().QueryRowContext(
+		context.Background(),
+		"select count(*) from information_schema.processlist where info like ?",
+		pattern,
+	).Scan(&cnt)
+	require.NoError(t, err)
+	return cnt
+}
+
+func processlistIDByInfo(t *testing.T, dbt *testkit.DBTestKit, pattern string) (uint64, bool) {
+	var id uint64
+	err := dbt.GetDB().QueryRowContext(
+		context.Background(),
+		"select id from information_schema.processlist where info like ? limit 1",
+		pattern,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false
+	}
+	require.NoError(t, err)
+	return id, true
+}
+
+func cleanupProcessByID(t *testing.T, db *sql.DB, processID uint64) {
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+
+		var cnt int
+		err = conn.QueryRowContext(
+			ctx,
+			"select count(*) from information_schema.processlist where id = ?",
+			processID,
+		).Scan(&cnt)
+		if err != nil || cnt == 0 {
+			return
+		}
+		_, _ = conn.ExecContext(ctx, fmt.Sprintf("kill query %d", processID))
+	})
+}
+
+func TestCloseConnForUndeterminedError(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Host = "127.0.0.1" // No network interface listening for mysql traffic
+	cfg.Port = 2333
+	cfg.Status.ReportStatus = false
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	defer server.Close()
+
+	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:2333)/test")
+	require.NoError(t, err)
+	defer terror.Call(db.Close)
+
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("create table t(a int)")
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer terror.Call(conn.Close)
+
+	_, err = conn.ExecContext(context.Background(), "begin")
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(context.Background(), "insert into t values(1)")
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult", `return("undeterminedResult")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult"))
+	}()
+
+	_, err = conn.ExecContext(context.Background(), "commit")
+	// because TiKV responses UndeterminedResult, the connection should be disconnected without reporting mysql error.
+	require.EqualError(t, err, "invalid connection")
+}
+
+>>>>>>> a62a6d1ff90 (server, session: interrupt autocommit DML after disconnect (#68237))
 func TestAuditPluginInfoForStarting(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 

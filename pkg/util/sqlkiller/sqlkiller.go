@@ -122,6 +122,30 @@ func (killer *SQLKiller) HandleSignal() error {
 			}
 		}
 	})
+<<<<<<< HEAD
+=======
+
+	// Checks if the connection is alive.
+	// For performance reasons, the check interval should be at least `checkConnectionAliveDur`(1 second).
+	fn := killer.IsConnectionAlive.Load()
+	lastCheckTime := killer.lastCheckTime.Load()
+	if fn != nil {
+		var checkConnectionAliveDur time.Duration = time.Second
+		now := time.Now()
+		if intest.InTest {
+			checkConnectionAliveDur = time.Millisecond
+		}
+		if lastCheckTime == nil {
+			killer.lastCheckTime.Store(&now)
+		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
+			killer.lastCheckTime.Store(&now)
+			if !(*fn)() {
+				killer.sendKillSignal(QueryInterrupted)
+			}
+		}
+	}
+
+>>>>>>> a62a6d1ff90 (server, session: interrupt autocommit DML after disconnect (#68237))
 	status := atomic.LoadUint32(&killer.Signal)
 	err := killer.getKillError(status)
 	if status == ServerMemoryExceeded {
@@ -129,6 +153,14 @@ func (killer *SQLKiller) HandleSignal() error {
 			zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	return err
+}
+
+// CheckConnectionAlive checks whether the connection is alive immediately.
+func (killer *SQLKiller) CheckConnectionAlive() {
+	fn := killer.IsConnectionAlive.Load()
+	if fn != nil && !(*fn)() {
+		killer.sendKillSignal(QueryInterrupted)
+	}
 }
 
 // Reset resets the SqlKiller.
