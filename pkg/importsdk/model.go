@@ -23,17 +23,22 @@ import (
 
 // TableMeta contains metadata for a table to be imported
 type TableMeta struct {
-	Database     string
-	Table        string
-	DataFiles    []DataFileMeta
-	TotalSize    int64  // In bytes
+	Database  string
+	Table     string
+	DataFiles []DataFileMeta
+	// TotalSize is the sum of DataFiles.Size in bytes.
+	// By default, Size is the storage-reported file size. With WithEstimateRealSize(true),
+	// compressed and parquet files use estimated uncompressed/row-oriented size instead.
+	TotalSize    int64
 	WildcardPath string // Wildcard pattern that matches only this table's data files
 	SchemaFile   string // Path to the table schema file, if available
 }
 
 // DataFileMeta contains metadata for a data file
 type DataFileMeta struct {
-	Path        string
+	Path string
+	// Size is the storage-reported file size by default. With WithEstimateRealSize(true),
+	// compressed and parquet files use estimated uncompressed/row-oriented size instead.
 	Size        int64
 	Format      mydump.SourceType
 	Compression mydump.Compression
