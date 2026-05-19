@@ -110,6 +110,10 @@ type PhysicalTable struct {
 	KeyColumns []*model.ColumnInfo
 	// KeyColumnTypes is the types of the key columns
 	KeyColumnTypes []*types.FieldType
+	// IndexScanColumnTypes is the types of the columns returned by an index scan:
+	// time column followed by the key columns. It is nil when the table has no
+	// TTL time column (e.g. runaway record tables).
+	IndexScanColumnTypes []*types.FieldType
 	// TimeColum is the time column used for TTL
 	TimeColumn *model.ColumnInfo
 }
@@ -155,7 +159,7 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		physicalID = partitionDef.ID
 	}
 
-	return &PhysicalTable{
+	pt := &PhysicalTable{
 		ID:             physicalID,
 		Schema:         schema,
 		TableInfo:      tbl,
@@ -164,7 +168,13 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		KeyColumns:     keyColumns,
 		KeyColumnTypes: keyColumTypes,
 		TimeColumn:     timeColumn,
-	}, nil
+	}
+	if timeColumn != nil {
+		pt.IndexScanColumnTypes = make([]*types.FieldType, 0, 1+len(keyColumTypes))
+		pt.IndexScanColumnTypes = append(pt.IndexScanColumnTypes, &timeColumn.FieldType)
+		pt.IndexScanColumnTypes = append(pt.IndexScanColumnTypes, keyColumTypes...)
+	}
+	return pt, nil
 }
 
 // NewPhysicalTable create a new PhysicalTable
@@ -690,6 +700,79 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	}
 	d.SetBytes(val)
 	return d
+}
+
+// FindTTLIndex finds a secondary index that contains the TTL column as its prefix.
+// Returns nil if no suitable index exists.
+func (t *PhysicalTable) FindTTLIndex() *model.IndexInfo {
+	for _, idx := range t.Indices {
+		if idx.Primary {
+			continue
+		}
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if idx.Invisible {
+			continue
+		}
+		if len(idx.Columns) == 0 {
+			continue
+		}
+		// Check if the TTL column is the first column of the index
+		if idx.Columns[0].Name.L == t.TimeColumn.Name.L {
+			return idx
+		}
+	}
+	return nil
+}
+
+// SplitIndexScanRanges splits scan ranges by TTL column value distribution.
+// Each range is a [start, end) interval of TTL column values.
+func (t *PhysicalTable) SplitIndexScanRanges(expireTime time.Time, splitCnt int) []ScanRange {
+	if splitCnt <= 1 {
+		return []ScanRange{newFullRange()}
+	}
+
+	// Use the type-specific minimum valid time as the split start.
+	// TIMESTAMP cannot represent values before 1970, while DATETIME/DATE
+	// can go back to year 1. Using a universal zero time for DATETIME
+	// avoids silently skipping data between year 1 and 1970.
+	var minTime time.Time
+	switch t.TimeColumn.FieldType.GetType() {
+	case mysql.TypeTimestamp:
+		minTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	default:
+		minTime = time.Time{}
+	}
+	if expireTime.Before(minTime) {
+		return []ScanRange{newFullRange()}
+	}
+
+	duration := expireTime.Sub(minTime)
+	interval := duration / time.Duration(splitCnt)
+
+	ft := t.TimeColumn.FieldType
+	ranges := make([]ScanRange, 0, splitCnt)
+	for i := range splitCnt {
+		start := minTime.Add(time.Duration(i) * interval)
+		end := minTime.Add(time.Duration(i+1) * interval)
+		if i == splitCnt-1 {
+			end = expireTime
+		}
+
+		startDatum := types.NewTimeDatum(types.NewTime(
+			types.FromGoTime(start),
+			ft.GetType(),
+			ft.GetDecimal(),
+		))
+		endDatum := types.NewTimeDatum(types.NewTime(
+			types.FromGoTime(end),
+			ft.GetType(),
+			ft.GetDecimal(),
+		))
+		ranges = append(ranges, newDatumRange(startDatum, endDatum))
+	}
+	return ranges
 }
 
 // GetASCIIPrefixDatumFromBytes is used to convert bytes to string datum which only contains ASCII prefix string.

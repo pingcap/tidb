@@ -3355,6 +3355,13 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(vardef.TTLDeleteWorkerCount.Load())), nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLEnableIndexScan, Value: BoolToOnOff(vardef.DefTiDBTTLEnableIndexScan), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		vardef.TTLEnableIndexScan.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.TTLEnableIndexScan.Load()), nil
+	},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableResourceControl, Value: BoolToOnOff(vardef.DefTiDBEnableResourceControl), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		if TiDBOptOn(s) != vardef.EnableResourceControl.Load() {
 			vardef.EnableResourceControl.Store(TiDBOptOn(s))

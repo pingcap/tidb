@@ -507,6 +507,7 @@ const (
 		status_update_time timestamp NULL DEFAULT NULL,
 		state text,
 		created_time timestamp NOT NULL,
+		split_by bigint DEFAULT NULL,
 		primary key(job_id, scan_id),
 		key(created_time));`
 

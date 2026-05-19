@@ -290,3 +290,112 @@ func TestEvalTTLExpireTime(t *testing.T) {
 	require.Equal(t, "1969-12-31 22:57:00", tm.In(time.UTC).Format(time.DateTime))
 	require.Same(t, tzBerlin, tm.Location())
 }
+
+func TestFindTTLIndex(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		def         string
+		hasTTLIndex bool
+		indexName   string
+	}{
+		{
+			def:         "(id int primary key, t datetime) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(id int primary key, t datetime, index idx_t(t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, index idx_t(t, id)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, index idx_t(id, t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(id int primary key, t datetime, index idx_a(id), index idx_t(t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+	}
+
+	for i, c := range cases {
+		tblName := fmt.Sprintf("ttl_idx_%d", i)
+		tk.MustExec(fmt.Sprintf("create table %s %s", tblName, c.def))
+		tb, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tblName))
+		require.NoError(t, err)
+		tblInfo := tb.Meta()
+		ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
+		require.NoError(t, err)
+
+		idx := ttlTbl.FindTTLIndex()
+		if c.hasTTLIndex {
+			require.NotNil(t, idx, "table %s should have TTL index", tblName)
+			require.Equal(t, c.indexName, idx.Name.O)
+		} else {
+			require.Nil(t, idx, "table %s should not have TTL index", tblName)
+		}
+	}
+}
+
+func TestSplitIndexScanRanges(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test.ttl_split(id int primary key, t datetime) ttl = `t` + interval 1 day")
+
+	tb, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_split"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
+	require.NoError(t, err)
+
+	expireTime := time.Date(2025, 5, 14, 0, 0, 0, 0, time.UTC)
+	splitCnt := 4
+	ranges := ttlTbl.SplitIndexScanRanges(expireTime, splitCnt)
+	require.Len(t, ranges, splitCnt)
+
+	// All ranges should have start < end
+	for i, r := range ranges {
+		require.Len(t, r.Start, 1, "range %d start should have 1 datum", i)
+		require.Len(t, r.End, 1, "range %d end should have 1 datum", i)
+		startTime := r.Start[0].GetMysqlTime()
+		endTime := r.End[0].GetMysqlTime()
+		require.False(t, startTime.Compare(endTime) >= 0, "range %d start should be before end", i)
+	}
+
+	// For DATETIME, the split starts from the minimum representable time (0001-01-01).
+	firstStart := ranges[0].Start[0].GetMysqlTime()
+	require.Equal(t, "0001-01-01 00:00:00", firstStart.String())
+
+	// Last range should end at expireTime
+	lastEnd := ranges[len(ranges)-1].End[0].GetMysqlTime()
+	require.Equal(t, expireTime.Format(time.DateTime), lastEnd.String())
+
+	// Test with splitCnt <= 1 returns full range
+	ranges = ttlTbl.SplitIndexScanRanges(expireTime, 1)
+	require.Len(t, ranges, 1)
+	require.Empty(t, ranges[0].Start)
+	require.Empty(t, ranges[0].End)
+
+	// Test with TIMESTAMP column: split should start from 1970-01-01.
+	tk.MustExec("create table test.ttl_split_ts(id int primary key, ts timestamp) ttl = `ts` + interval 1 day")
+	tbTS, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_split_ts"))
+	require.NoError(t, err)
+	ttlTblTS, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbTS.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+
+	ranges = ttlTblTS.SplitIndexScanRanges(expireTime, splitCnt)
+	require.Len(t, ranges, splitCnt)
+	firstStartTS := ranges[0].Start[0].GetMysqlTime()
+	require.Equal(t, "1970-01-01 00:00:00", firstStartTS.String())
+	lastEndTS := ranges[len(ranges)-1].End[0].GetMysqlTime()
+	require.Equal(t, expireTime.Format(time.DateTime), lastEndTS.String())
+}

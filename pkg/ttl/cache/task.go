@@ -36,7 +36,8 @@ const selectFromTTLTask = `SELECT LOW_PRIORITY
 	status,
 	status_update_time,
 	state,
-	created_time FROM mysql.tidb_ttl_task`
+	created_time,
+	split_by FROM mysql.tidb_ttl_task`
 const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	job_id = %?,
 	table_id = %?,
@@ -44,7 +45,8 @@ const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	scan_range_start = %?,
 	scan_range_end = %?,
 	expire_time = %?,
-	created_time = %?`
+	created_time = %?,
+	split_by = %?`
 
 // SelectFromTTLTaskWithJobID returns an SQL statement to get all tasks of the specified job in mysql.tidb_ttl_task
 func SelectFromTTLTaskWithJobID(jobID string) (string, []any) {
@@ -66,7 +68,7 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
 func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
-	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []any, error) {
+	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time, splitBy *int64) (string, []any, error) {
 	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
@@ -75,8 +77,12 @@ func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID i
 	if err != nil {
 		return "", nil, err
 	}
+	var splitByArg any
+	if splitBy != nil {
+		splitByArg = *splitBy
+	}
 	return insertIntoTTLTask, []any{jobID, tableID, int64(scanID),
-		rangeStart, rangeEnd, expireTime, createdTime}, nil
+		rangeStart, rangeEnd, expireTime, createdTime, splitByArg}, nil
 }
 
 // TaskStatus represents the current status of a task
@@ -106,6 +112,7 @@ type TTLTask struct {
 	StatusUpdateTime time.Time
 	State            *TTLTaskState
 	CreatedTime      time.Time
+	SplitBy          *int64
 }
 
 // TTLTaskState records the internal states of the ttl task
@@ -193,6 +200,11 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 	task.CreatedTime, err = row.GetTime(12).GoTime(timeZone)
 	if err != nil {
 		return nil, err
+	}
+
+	if !row.IsNull(13) {
+		splitBy := row.GetInt64(13)
+		task.SplitBy = &splitBy
 	}
 
 	return task, nil

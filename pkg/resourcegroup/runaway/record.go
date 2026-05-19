@@ -287,7 +287,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
-	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil)
+	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil, "")
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return

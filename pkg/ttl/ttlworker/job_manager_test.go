@@ -456,7 +456,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
 				nil, nil,
 			},
 			{
@@ -478,7 +478,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
 				nil, nil,
 			},
 			{
@@ -514,7 +514,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
 				nil, nil,
 			},
 			{
@@ -544,7 +544,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
 				nil, nil,
 			},
 			{

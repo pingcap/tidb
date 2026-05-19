@@ -76,7 +76,7 @@ func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 	defer tk.MustExec("set @@global.tidb_ttl_running_tasks=-1")
 	for i := 1; i <= 16; i++ {
 		jobID := strconv.Itoa(i)
-		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), jobID, int64(1000+i), i, nil, nil, time.Now(), time.Now())
+		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), jobID, int64(1000+i), i, nil, nil, time.Now(), time.Now(), nil)
 		require.NoError(t, err)
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 		_, err = tk.Session().ExecuteInternal(ctx, sql, args...)

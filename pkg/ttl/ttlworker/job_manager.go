@@ -853,12 +853,22 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		ranges, err := table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
-		if err != nil {
-			return errors.Wrap(err, "split scan ranges")
+		var ranges []cache.ScanRange
+		var splitBy *int64
+		if vardef.TTLEnableIndexScan.Load() {
+			if idx := table.FindTTLIndex(); idx != nil {
+				splitBy = &idx.ID
+				ranges = table.SplitIndexScanRanges(expireTime, getScanSplitCnt(se.GetStore()))
+			}
+		}
+		if ranges == nil {
+			ranges, err = table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
+			if err != nil {
+				return errors.Wrap(err, "split scan ranges")
+			}
 		}
 		for scanID, r := range ranges {
-			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now)
+			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now, splitBy)
 			if err != nil {
 				return errors.Wrap(err, "encode scan task")
 			}
