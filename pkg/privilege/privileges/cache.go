@@ -1634,6 +1634,18 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		}
 	}
 
+	if records, exists := p.RoutinePrivMap[user]; exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.baseRecord.match(user, host) &&
+				strings.EqualFold(record.DB, db) {
+				if record.RoutinePriv != 0 {
+					return true
+				}
+			}
+		}
+	}
+
 	return false
 }
 

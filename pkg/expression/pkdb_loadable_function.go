@@ -445,6 +445,12 @@ func (c *loadableFuncClass) getFunction(
 	ctx BuildContext,
 	args []Expression,
 ) (f builtinFunc, errRet error) {
+	if checker, err := c.GetPrivilegeChecker(ctx.GetEvalCtx()); err != nil {
+		return nil, err
+	} else if checker != nil && !checker.RequestVerification("", "", "", mysql.ExecutePriv) {
+		return nil, errSpecificAccessDenied.FastGenByArgs("EXECUTE")
+	}
+
 	// TODO: mimic newBaseBuiltinFuncWithTp when types needs to be coerced.
 	var ft byte
 	switch c.funcDef.evalTp {
@@ -1165,6 +1171,7 @@ func getArgFieldTypes(ctx EvalContext, args []Expression) []*types.FieldType {
 
 type loadableFuncClass struct {
 	baseFunctionClass
+	expropt.PrivilegeCheckerPropReader
 	funcDef *LoadableFunctionDef
 	flen    int
 }

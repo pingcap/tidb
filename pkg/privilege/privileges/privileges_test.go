@@ -2305,6 +2305,16 @@ func TestSetRoutinePrivileges(t *testing.T) {
 	tk.MustExec(`CREATE USER 'test3'@'%'`)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustGetErrCode(`grant execute on procedure test.t2 to test3`, 8121)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+
+	tk.MustExec(`CREATE USER 'test_func'@'%'`)
+	tk.MustExec(`CREATE FUNCTION test.fn_visible() returns int return 1`)
+	tk.MustExec(`grant execute on function test.fn_visible to test_func`)
+	tk.MustQuery("show grants for test_func").Check(testkit.Rows("GRANT USAGE ON *.* TO 'test_func'@'%'", "GRANT EXECUTE ON FUNCTION `test`.`fn_visible` TO 'test_func'@'%'"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_func", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery(`show databases like 'test'`).Check(testkit.Rows("test"))
+	tk.MustExec(`use test`)
+	tk.MustQuery(`select fn_visible()`).Check(testkit.Rows("1"))
 }
 
 func TestSelectColumnPrivilege(t *testing.T) {

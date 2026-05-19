@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -157,6 +158,25 @@ func TestLoadableFunctionMockedCreatePrivilegeDenied(t *testing.T) {
 	mgr.allowInsert = true
 	tk.MustExec("create function udf_priv_create returns integer soname 'udf1.so'")
 	tk.MustExec("drop function udf_priv_create")
+}
+
+func TestLoadableFunctionMockedExecutePrivilege(t *testing.T) {
+	restore := expression.SetLoadUDFHookForTest(expression.MockLoadUDFForTest)
+	t.Cleanup(restore)
+
+	store := testkit.CreateMockStore(t)
+	tkRoot := testkit.NewTestKit(t, store)
+	tkRoot.InProcedure()
+	tkRoot.MustExec("create function udf_exec returns integer soname 'udf1.so'")
+	tkRoot.MustExec(`create user 'udf_user'@'%'`)
+
+	tkUser := testkit.NewTestKit(t, store)
+	tkUser.InProcedure()
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "udf_user", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
+	tkUser.MustGetErrCode("select udf_exec(1)", mysql.ErrSpecificAccessDenied)
+
+	tkRoot.MustExec(`grant execute on *.* to 'udf_user'@'%'`)
+	tkUser.MustQuery("select udf_exec(1)").Check(testkit.Rows("2"))
 }
 
 func TestLoadableFunctionMockedSelectOnTable(t *testing.T) {
