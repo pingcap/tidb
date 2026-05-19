@@ -2543,7 +2543,7 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (f varchar(10) collate utf8mb4_general_ci, index idx_f(f))")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	sctx := tk.Session()
