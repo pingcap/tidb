@@ -40,16 +40,16 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	memStore := objstore.NewMemStorage()
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
-	rc := &rangePropertiesCollector{
+	rc := &RangePropertiesCollector{
 		propSizeDist: 100,
 		propKeysDist: 2,
 	}
-	rc.reset()
+	rc.Reset()
 	initRC := *rc
 	kvStore := NewKeyValueStore(ctx, writer, rc)
 
 	require.Equal(t, &initRC, rc)
-	encoded := rc.encode()
+	encoded := rc.Encode()
 	require.Len(t, encoded, 0)
 
 	k1, v1 := []byte("key1"), []byte("value1")
@@ -71,7 +71,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		Keys:     2,
 	}
 	require.Equal(t, expected, rc.props[0])
-	encoded = rc.encode()
+	encoded = rc.Encode()
 	require.Greater(t, len(encoded), 0)
 
 	// when not accumulated enough data, no range property will be added.
@@ -95,11 +95,11 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 
 	writer, err = memStore.Create(ctx, "/test2", nil)
 	require.NoError(t, err)
-	rc = &rangePropertiesCollector{
+	rc = &RangePropertiesCollector{
 		propSizeDist: 1,
 		propKeysDist: 100,
 	}
-	rc.reset()
+	rc.Reset()
 	kvStore = NewKeyValueStore(ctx, writer, rc)
 	err = kvStore.addEncodedData(getEncodedData(k1, v1))
 	require.NoError(t, err)
@@ -139,11 +139,11 @@ func TestKVReadWrite(t *testing.T) {
 	memStore := objstore.NewMemStorage()
 	writer, err := memStore.Create(ctx, "/test", nil)
 	require.NoError(t, err)
-	rc := &rangePropertiesCollector{
+	rc := &RangePropertiesCollector{
 		propSizeDist: 100,
 		propKeysDist: 2,
 	}
-	rc.reset()
+	rc.Reset()
 	kvStore := NewKeyValueStore(ctx, writer, rc)
 
 	kvCnt := rand.Intn(10) + 10

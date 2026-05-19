@@ -229,7 +229,7 @@ func TestGetReadRangeFromProps(t *testing.T) {
 	store := objstore.NewMemStorage()
 
 	// file1 has props at offsets 10, 30, 50 with keys "key1", "key3", "key5"
-	rc1 := &rangePropertiesCollector{
+	rc1 := &RangePropertiesCollector{
 		props: []*RangeProperty{
 			{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1},
 			{FirstKey: []byte("key3"), Offset: 30, Size: 10, Keys: 1},
@@ -239,13 +239,13 @@ func TestGetReadRangeFromProps(t *testing.T) {
 	file1 := "/test1"
 	w1, err := store.Create(ctx, file1, nil)
 	require.NoError(t, err)
-	_, err = w1.Write(ctx, rc1.encode())
+	_, err = w1.Write(ctx, rc1.Encode())
 	require.NoError(t, err)
 	err = w1.Close(ctx)
 	require.NoError(t, err)
 
 	// file2 has props at offsets 20, 40 with keys "key2", "key4"
-	rc2 := &rangePropertiesCollector{
+	rc2 := &RangePropertiesCollector{
 		props: []*RangeProperty{
 			{FirstKey: []byte("key2"), Offset: 20, Size: 10, Keys: 1},
 			{FirstKey: []byte("key4"), Offset: 40, Size: 10, Keys: 1},
@@ -254,7 +254,7 @@ func TestGetReadRangeFromProps(t *testing.T) {
 	file2 := "/test2"
 	w2, err := store.Create(ctx, file2, nil)
 	require.NoError(t, err)
-	_, err = w2.Write(ctx, rc2.encode())
+	_, err = w2.Write(ctx, rc2.Encode())
 	require.NoError(t, err)
 	err = w2.Close(ctx)
 	require.NoError(t, err)
@@ -332,9 +332,9 @@ func TestGetReadRangeFromPropsEmptyJobKeys(t *testing.T) {
 
 	writer, err := store.Create(ctx, "/test-empty-job-keys", nil)
 	require.NoError(t, err)
-	_, err = writer.Write(ctx, (&rangePropertiesCollector{
+	_, err = writer.Write(ctx, (&RangePropertiesCollector{
 		props: []*RangeProperty{{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1}},
-	}).encode())
+	}).Encode())
 	require.NoError(t, err)
 	err = writer.Close(ctx)
 	require.NoError(t, err)
@@ -363,9 +363,9 @@ func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
 		paths[i] = fmt.Sprintf("/test-open-limit-%d", i)
 		writer, err := store.Create(ctx, paths[i], nil)
 		require.NoError(t, err)
-		_, err = writer.Write(ctx, (&rangePropertiesCollector{
+		_, err = writer.Write(ctx, (&RangePropertiesCollector{
 			props: []*RangeProperty{{FirstKey: []byte("key1"), Offset: 10, Size: 10, Keys: 1}},
-		}).encode())
+		}).Encode())
 		require.NoError(t, err)
 		err = writer.Close(ctx)
 		require.NoError(t, err)

@@ -66,7 +66,7 @@ type OneFileWriter struct {
 	// Statistic information per writer.
 	totalSize uint64
 	totalCnt  uint64
-	rc        *rangePropertiesCollector
+	rc        *RangePropertiesCollector
 
 	// file information.
 	writerID       string
@@ -262,12 +262,12 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		}
 		// 2. write statistics if one kvBuffer is used.
 		w.kvStore.Finish()
-		encodedStat := w.rc.encode()
+		encodedStat := w.rc.Encode()
 		_, err := w.statWriter.Write(ctx, encodedStat)
 		if err != nil {
 			return err
 		}
-		w.rc.reset()
+		w.rc.Reset()
 		// the new prop should have the same offset with kvStore.
 		w.rc.currProp.Offset = w.kvStore.offset
 	}
@@ -309,7 +309,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		maxKey = slices.Clone(w.maxKey)
 		var stat MultipleFilesStat
 		stat.Filenames = append(stat.Filenames, [2]string{w.dataFile, w.statFile})
-		stat.build([]tidbkv.Key{w.minKey}, []tidbkv.Key{maxKey})
+		stat.Build([]tidbkv.Key{w.minKey}, []tidbkv.Key{maxKey})
 		mStats = append(mStats, stat)
 	}
 	conflictInfo := engineapi.ConflictInfo{}
@@ -342,12 +342,12 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 	if w.dataWriter != nil {
 		// 1. write remaining statistic.
 		w.kvStore.Finish()
-		encodedStat := w.rc.encode()
+		encodedStat := w.rc.Encode()
 		_, err = w.statWriter.Write(ctx, encodedStat)
 		if err != nil {
 			return err
 		}
-		w.rc.reset()
+		w.rc.Reset()
 		// 2. close data writer.
 		err1 := w.dataWriter.Close(ctx)
 		if err1 != nil {

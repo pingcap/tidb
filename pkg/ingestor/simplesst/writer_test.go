@@ -290,7 +290,7 @@ func TestMultiFileStat(t *testing.T) {
 	// [3, 5], [1, 3], [2, 4]
 	startKeys := []dbkv.Key{{3}, {1}, {2}}
 	endKeys := []dbkv.Key{{5}, {3}, {4}}
-	s.build(startKeys, endKeys)
+	s.Build(startKeys, endKeys)
 	require.EqualValues(t, []byte{1}, s.MinKey)
 	require.EqualValues(t, []byte{5}, s.MaxKey)
 	require.EqualValues(t, 3, s.MaxOverlappingNum)

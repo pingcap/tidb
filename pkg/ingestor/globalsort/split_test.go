@@ -21,6 +21,7 @@ import (
 	"math"
 	"net/http"
 	_ "net/http/pprof"
+	"path/filepath"
 	"slices"
 	"sort"
 	"testing"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -443,71 +445,44 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	// files, so we directly write 4000*256MB/16 = 64GB data to onefile writer.
 	fileNum := 3000
 	statCh := make(chan []simplesst.MultipleFilesStat, fileNum)
-	onClose := func(s *simplesst.WriterSummary) {
-		statCh <- s.MultipleFilesStats
-	}
 
 	eg := errgroup.Group{}
 	eg.SetLimit(30)
 	for i := range fileNum {
 		eg.Go(func() error {
-			w := simplesst.NewWriterBuilder().
-				SetMemorySizeLimit(simplesst.DefaultMemSizeLimit).
-				SetBlockSize(32*units.MiB). // dataKVGroupBlockSize
-				SetPropKeysDistance(8*1024).
-				SetPropSizeDistance(size.MB).
-				SetOnCloseFunc(onClose).
-				BuildOneFile(store, "/mock-test", uuid.New().String())
-			w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
-			// we don't need data files
-			err := w.dataWriter.Close(ctx)
-			require.NoError(t, err)
-			w.dataWriter = objstore.NoopWriter{}
-
 			kvSize := 20 * size.KB
 			keySize := size.KB
 			key := make([]byte, keySize)
 			key[keySize-1] = byte(i % 256)
 			key[keySize-2] = byte(i / 256)
+			// to make sure the encoded KV size is 20KB
+			value := make([]byte, size.KB - 2 * simplesst.LengthBytes)
 			minKey := slices.Clone(key)
 			var maxKey []byte
 
-			memSize := uint64(0)
+			rc := simplesst.NewRangePropertiesCollector(size.MB, 8*1024)
+			kvStore := simplesst.NewKeyValueStore(context.Background(), objstore.NoopWriter{}, rc)
+			statFile := filepath.Join(uuid.New().String(), "one-file")
+			statWriter, err := store.Create(ctx, statFile, &storeapi.WriterOption{
+				Concurrency: 8,
+				PartSize:    5*units.MiB,
+			})
+			require.NoError(t, err)
+
+			memSize, lastMemSize := uint64(0),  uint64(0)
 			for j := range int(64 * size.GB / kvSize) {
-				// copied from OneFileWriter.WriteRow
-
-				if memSize >= simplesst.DefaultMemSizeLimit {
-					memSize = 0
-					w.kvStore.Finish()
-					encodedStat := w.rc.encode()
-					_, err := w.statWriter.Write(ctx, encodedStat)
-					if err != nil {
-						return err
-					}
-					w.rc.reset()
+				if memSize-lastMemSize >= simplesst.DefaultMemSizeLimit {
+					lastMemSize=memSize
+					kvStore.Finish()
+					encodedStat := rc.Encode()
+					_, err := statWriter.Write(ctx, encodedStat)
+					require.NoError(t, err)
+					rc.Reset()
 					// the new prop should have the same offset with kvStore.
-					w.rc.currProp.Offset = w.kvStore.offset
+					rc.CurrProp().Offset = memSize
 				}
-				if len(w.rc.currProp.FirstKey) == 0 {
-					w.rc.currProp.FirstKey = key
-				}
-				w.rc.currProp.LastKey = key
-
-				memSize += kvSize
-				w.totalSize += kvSize
-				w.rc.currProp.Size += kvSize - 2*simplesst.LengthBytes
-				w.rc.currProp.Keys++
-
-				if w.rc.currProp.Size >= w.rc.propSizeDist ||
-					w.rc.currProp.Keys >= w.rc.propKeysDist {
-					newProp := *w.rc.currProp
-					w.rc.props = append(w.rc.props, &newProp)
-					// reset currProp, and start to update this prop.
-					w.rc.currProp.FirstKey = nil
-					w.rc.currProp.Offset = memSize
-					w.rc.currProp.Keys = 0
-					w.rc.currProp.Size = 0
-				}
+				require.NoError(t, kvStore.AddRawKV(key, value))
+				memSize = kvStore.Offset()
 
 				if j == int(64*size.GB/kvSize)-1 {
 					maxKey = slices.Clone(key)
@@ -523,13 +498,18 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 				}
 			}
 
+			kvStore.Finish()
+			encodedStat := rc.Encode()
+			_, err = statWriter.Write(ctx, encodedStat)
+			require.NoError(t, err)
+
 			// copied from mergeOverlappingFilesInternal
 			var stat simplesst.MultipleFilesStat
 			stat.Filenames = append(stat.Filenames,
-				[2]string{w.dataFile, w.statFile})
-			stat.build([]kv.Key{minKey}, []kv.Key{maxKey})
+				[2]string{"dummy-file-name", statFile})
+			stat.Build([]kv.Key{minKey}, []kv.Key{maxKey})
 			statCh <- []simplesst.MultipleFilesStat{stat}
-			return w.Close(ctx)
+			return statWriter.Close(ctx)
 		})
 	}
 

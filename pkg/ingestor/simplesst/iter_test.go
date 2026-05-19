@@ -47,11 +47,11 @@ func TestMergeKVIter(t *testing.T) {
 	for i, filename := range filenames {
 		writer, err := memStore.Create(ctx, filename, nil)
 		require.NoError(t, err)
-		rc := &rangePropertiesCollector{
+		rc := &RangePropertiesCollector{
 			propSizeDist: 100,
 			propKeysDist: 2,
 		}
-		rc.reset()
+		rc.Reset()
 		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
@@ -99,11 +99,11 @@ func TestOneUpstream(t *testing.T) {
 	for i, filename := range filenames {
 		writer, err := memStore.Create(ctx, filename, nil)
 		require.NoError(t, err)
-		rc := &rangePropertiesCollector{
+		rc := &RangePropertiesCollector{
 			propSizeDist: 100,
 			propKeysDist: 2,
 		}
-		rc.reset()
+		rc.Reset()
 		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
@@ -177,11 +177,11 @@ func TestCorruptContent(t *testing.T) {
 	for i, filename := range filenames {
 		writer, err := memStore.Create(ctx, filename, nil)
 		require.NoError(t, err)
-		rc := &rangePropertiesCollector{
+		rc := &RangePropertiesCollector{
 			propSizeDist: 100,
 			propKeysDist: 2,
 		}
-		rc.reset()
+		rc.Reset()
 		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
@@ -345,11 +345,11 @@ func TestHotspot(t *testing.T) {
 	for i, filename := range filenames {
 		writer, err := store.Create(ctx, filename, nil)
 		require.NoError(t, err)
-		rc := &rangePropertiesCollector{
+		rc := &RangePropertiesCollector{
 			propSizeDist: 100,
 			propKeysDist: 2,
 		}
-		rc.reset()
+		rc.Reset()
 		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, k := range keys[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
@@ -440,11 +440,11 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 		filenames = append(filenames, filename)
 		writer, err := store.Create(ctx, filename, nil)
 		require.NoError(t, err)
-		rc := &rangePropertiesCollector{
+		rc := &RangePropertiesCollector{
 			propSizeDist: 100,
 			propKeysDist: 2,
 		}
-		rc.reset()
+		rc.Reset()
 		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for range 1000 {
 			key := fmt.Sprintf("key%06d", cur)
