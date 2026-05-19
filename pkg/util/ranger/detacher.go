@@ -1099,16 +1099,11 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 		convertToSortKey: true,
 		rangeMaxSize:     rangeMaxSize,
 	}
-<<<<<<< HEAD
 	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, newTpSlice, false)
-	return res.Ranges, res.AccessConds, err
-=======
-	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, false)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	return res.Ranges, res.AccessConds, res.RemainedConds, nil
->>>>>>> 4a6574e456a (planner: Fix CAST AS BINARY index usage (#67898))
 }
 
 func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {
