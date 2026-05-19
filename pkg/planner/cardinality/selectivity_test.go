@@ -308,27 +308,36 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	tblInfo := tb.Meta()
 
 	// Use mock stats so Idx2ColUniqueIDs is populated (required by getIndexRowCountForStatsV2).
-	realtimeCount := int64(51) // 50 rows + 1 NULL
+	// 50 distinct non-NULL values + 1 NULL row, so the not-null range can produce a
+	// strictly smaller estimate than RealtimeCount and catch a buggy fast-path that
+	// returns RealtimeCount for [MinNotNull,+inf).
+	const nonNullCount = 50
+	const nullCount = 1
+	realtimeCount := int64(nonNullCount + nullCount)
 	statsTbl := mockStatsTable(tblInfo, realtimeCount)
-	colValues, err := generateIntDatum(1, 51)
+	colValues, err := generateIntDatum(1, nonNullCount)
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
+		colHist := mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong))
+		colHist.NullCount = nullCount
 		statsTbl.SetCol(int64(i), &statistics.Column{
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Histogram:         *colHist,
 			Info:              tblInfo.Columns[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			StatsVer:          2,
 		})
 	}
 	// Index histogram must store encoded key bytes (same as getIndexRowCountForStatsV2 uses for l/r).
-	idxValues := make([]types.Datum, 51)
-	for i := 0; i < 51; i++ {
+	idxValues := make([]types.Datum, nonNullCount)
+	for i := range idxValues {
 		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
 		require.NoError(t, err)
 		idxValues[i].SetBytes(enc)
 	}
+	idxHist := mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob))
+	idxHist.NullCount = nullCount
 	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
-		Histogram:         *mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
+		Histogram:         *idxHist,
 		Info:              tblInfo.Indices[0],
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 		StatsVer:          2,
@@ -346,13 +355,14 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	require.Equal(t, float64(realtimeCount), countResult,
 		"full range [NULL,+inf) should use fast path and return RealtimeCount")
 
-	// Full range excluding NULLs [MinNotNull, +inf) should NOT use fast path.
-	// It goes through histogram estimation.
+	// Full range excluding NULLs [MinNotNull, +inf) must NOT use the fast path.
+	// With nullCount > 0, the histogram estimate must be strictly below RealtimeCount;
+	// equality would mean the fast path was wrongly taken.
 	fullNotNullRanges := ranger.FullNotNullRange()
 	countResult2, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullNotNullRanges)
 	require.NoError(t, err)
-	require.LessOrEqual(t, countResult2, float64(realtimeCount),
-		"full not-null range excludes NULLs, estimate should be <= RealtimeCount")
+	require.Less(t, countResult2, float64(realtimeCount),
+		"full not-null range excludes %d NULL row(s), estimate must be < RealtimeCount", nullCount)
 
 	// Bounded range should NOT use fast path.
 	boundedRanges := getRange(1, 10)
@@ -360,6 +370,21 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 	require.NoError(t, err)
 	require.Less(t, countResult3, float64(realtimeCount),
 		"bounded range should use histogram estimation, not fast path")
+
+	// (NULL, +inf) with an exclusive lower bound drops the NULL endpoint, so the
+	// fast path must not apply — otherwise the NULL row would be silently counted.
+	var nullDatum types.Datum
+	nullDatum.SetNull()
+	exclusiveNullRanges := []*ranger.Range{{
+		LowVal:     []types.Datum{nullDatum},
+		HighVal:    []types.Datum{types.MaxValueDatum()},
+		LowExclude: true,
+		Collators:  collate.GetBinaryCollatorSlice(1),
+	}}
+	countResult4, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, exclusiveNullRanges)
+	require.NoError(t, err)
+	require.Less(t, countResult4, float64(realtimeCount),
+		"exclusive lower bound on NULL must drop the NULL row, estimate must be < RealtimeCount")
 }
 
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {

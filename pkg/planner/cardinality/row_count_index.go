@@ -690,10 +690,16 @@ func canSkipIndexEstimation(idx *statistics.Index, indexRanges []*ranger.Range) 
 }
 
 // isFullRangeIncludingNulls checks if a single range covers all values including NULLs.
-// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull),
-// not KindMinNotNull, ensuring NULL rows are included in the count.
+// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull) inclusive,
+// not KindMinNotNull and not an exclusive lower bound, so NULL rows are guaranteed to be
+// included in the count.
 func isFullRangeIncludingNulls(ran *ranger.Range) bool {
 	if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) == 0 {
+		return false
+	}
+	// An exclusive bound on NULL (low) or +inf (high) would drop those endpoints
+	// and shrink the range, so the fast path must not apply.
+	if ran.LowExclude || ran.HighExclude {
 		return false
 	}
 	for i := range ran.LowVal {
