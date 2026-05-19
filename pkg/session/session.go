@@ -533,6 +533,10 @@ func (s *session) doCommit(ctx context.Context) error {
 			}
 		}
 	})
+	failpoint.Inject("mockCommitResultUndetermined", func() {
+		s.RollbackTxn(ctx)
+		failpoint.Return(terror.ErrResultUndetermined)
+	})
 
 	sessVars := s.GetSessionVars()
 

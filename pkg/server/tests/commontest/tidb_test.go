@@ -3425,15 +3425,17 @@ func TestIssue57531(t *testing.T) {
 					stmt.Exec(300)
 				}
 			}()
-			time.Sleep(200 * time.Millisecond)
-
 			// have two sessions
-			rsCnt = 0
-			rs := dbt.MustQuery("show processlist")
-			for rs.Next() {
-				rsCnt++
-			}
-			require.Equal(t, rsCnt, 2)
+			require.Eventually(t, func() bool {
+				rsCnt = 0
+				rs := dbt.MustQuery("show processlist")
+				for rs.Next() {
+					rsCnt++
+				}
+				err := rs.Err()
+				closeErr := rs.Close()
+				return err == nil && closeErr == nil && rsCnt == 2
+			}, 5*time.Second, 50*time.Millisecond)
 
 			// close tcp connection
 			netConn.Close()
@@ -3632,7 +3634,7 @@ func cleanupProcessByID(t *testing.T, db *sql.DB, processID uint64) {
 func TestCloseConnForUndeterminedError(t *testing.T) {
 	cfg := util2.NewTestConfig()
 	cfg.Host = "127.0.0.1" // No network interface listening for mysql traffic
-	cfg.Port = 2333
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 
 	ts := servertestkit.CreateTidbTestSuite(t)
@@ -3647,7 +3649,8 @@ func TestCloseConnForUndeterminedError(t *testing.T) {
 	<-server2.RunInGoTestChan
 	defer server.Close()
 
-	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:2333)/test")
+	port := testutil.GetPortFromTCPAddr(server.ListenAddr())
+	db, err := sql.Open("mysql", fmt.Sprintf("root@tcp(127.0.0.1:%d)/test", port))
 	require.NoError(t, err)
 	defer terror.Call(db.Close)
 
@@ -3664,13 +3667,13 @@ func TestCloseConnForUndeterminedError(t *testing.T) {
 	_, err = conn.ExecContext(context.Background(), "insert into t values(1)")
 	require.NoError(t, err)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult", `return("undeterminedResult")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitResultUndetermined", `return()`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcCommitResult"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitResultUndetermined"))
 	}()
 
 	_, err = conn.ExecContext(context.Background(), "commit")
-	// because TiKV responses UndeterminedResult, the connection should be disconnected without reporting mysql error.
+	// Because the commit result is undetermined, the connection should be disconnected without reporting mysql error.
 	require.EqualError(t, err, "invalid connection")
 }
 
