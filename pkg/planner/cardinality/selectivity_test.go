@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -334,26 +335,47 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 		require.NoError(t, err)
 		idxValues[i].SetBytes(enc)
 	}
+	// Mark the index as NOT fully loaded so we can prove the fast path runs before
+	// IndexStatsIsInvalid: under a not-fully-loaded status, the slow path would queue
+	// this index into AsyncLoadHistogramNeededItems, and the assertion below would
+	// fail if canSkipIndexEstimation no longer short-circuited the call.
 	idxHist := mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob))
 	idxHist.NullCount = nullCount
 	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
 		Histogram:         *idxHist,
 		Info:              tblInfo.Indices[0],
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsLoadedStatus: statistics.NewStatsAllEvictedStatus(),
 		StatsVer:          2,
 	})
 	generateMapsForMockStatsTbl(statsTbl)
 
 	idxID := tblInfo.Indices[0].ID
-	sctx := mock.NewContext()
+	// Use the testkit's real session so recordUsedItemStatsStatus can resolve the
+	// table via domain.GetDomain(sctx).InfoSchema(); the bare mock.NewContext() has
+	// no domain registered and would panic now that the index is not FullLoad.
+	sctx := tk.Session().GetPlanCtx()
+	idxItem := model.TableItemID{TableID: tblInfo.ID, ID: idxID, IsIndex: true}
+	hasAsyncLoadEntry := func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableItemID == idxItem {
+				return true
+			}
+		}
+		return false
+	}
 
 	// Full range including NULLs [NULL, +inf) triggers canSkipIndexEstimation fast path.
-	// Result should equal RealtimeCount exactly (no histogram estimation).
+	// Result should equal RealtimeCount exactly (no histogram estimation), and the fast
+	// path must run before IndexStatsIsInvalid so the evicted index is NOT queued for
+	// async load — otherwise the optimization would still pay for the wasted I/O.
+	asyncload.AsyncLoadHistogramNeededItems.Delete(idxItem)
 	fullRanges := ranger.FullRange()
 	countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, fullRanges)
 	require.NoError(t, err)
 	require.Equal(t, float64(realtimeCount), countResult,
 		"full range [NULL,+inf) should use fast path and return RealtimeCount")
+	require.False(t, hasAsyncLoadEntry(),
+		"fast path must short-circuit before IndexStatsIsInvalid and not queue the evicted index for async load")
 
 	// Full range excluding NULLs [MinNotNull, +inf) must NOT use the fast path.
 	// With nullCount > 0, the histogram estimate must be strictly below RealtimeCount;
