@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -30,15 +31,19 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -48,6 +53,14 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
+
+type keyspaceOnlyStore struct {
+	tidbkv.Storage
+}
+
+func (keyspaceOnlyStore) GetKeyspace() string {
+	return ""
+}
 
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{
@@ -361,6 +374,151 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	cfg = c.getLocalBackendCfg("", "http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
+}
+
+func newParquetPlanAndControllerForTest(ctx context.Context, t *testing.T, sctx *mock.Context) (*Plan, *LoadDataController, error) {
+	t.Helper()
+	sctx.Store = keyspaceOnlyStore{}
+
+	node, err := parser.New().ParseOneStmt("create table t(a timestamp)", "", "")
+	require.NoError(t, err)
+	tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	tblInfo.State = model.StatePublic
+	table := tables.MockTableFromMeta(tblInfo)
+
+	fileName := filepath.Join(t.TempDir(), "data.parquet")
+	require.NoError(t, os.WriteFile(fileName, nil, 0o644))
+	format := DataFormatParquet
+	plan, err := NewImportPlan(ctx, sctx, plannercore.ImportInto{
+		Path:   fileName,
+		Format: &format,
+		Table: &resolve.TableNameW{
+			TableName: &ast.TableName{
+				Schema: ast.NewCIStr("test"),
+				Name:   ast.NewCIStr("t"),
+			},
+			DBInfo: &model.DBInfo{
+				Name: ast.NewCIStr("test"),
+				ID:   1,
+			},
+		},
+	}.Init(sctx.GetPlanCtx()), table)
+	require.NoError(t, err)
+
+	controller, err := NewLoadDataController(plan, table, &ASTArgs{})
+	return plan, controller, err
+}
+
+func TestImportPlanParquetLocation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("import_plan_parquet_location", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+		sctx.GetSessionVars().TimeZone = asiaShanghai
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(asiaShanghai)
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.NoError(t, err)
+		require.Equal(t, "Asia/Shanghai", plan.LocationID)
+		require.NotNil(t, controller.ParquetLocation())
+		require.Equal(t, "Asia/Shanghai", controller.ParquetLocation().String())
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		require.NoError(t, controller.InitDataFiles(ctx))
+		require.Len(t, controller.dataFiles, 1)
+		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
+	})
+
+	t.Run("import_plan_parquet_fixed_offset_location", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "+08:00"))
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.NoError(t, err)
+		require.Equal(t, "+08:00", plan.LocationID)
+		require.NotNil(t, controller.ParquetLocation())
+		_, offset := time.Now().In(controller.ParquetLocation()).Zone()
+		require.Equal(t, 8*3600, offset)
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		require.NoError(t, controller.InitDataFiles(ctx))
+		require.Len(t, controller.dataFiles, 1)
+		require.Same(t, controller.ParquetLocation(), controller.dataFiles[0].ParquetMeta.Loc)
+	})
+
+	t.Run("import_plan_parquet_named_fixed_zone_location_is_rejected", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		loc := time.FixedZone("UTC+8", 8*3600)
+		sctx.GetSessionVars().TimeZone = loc
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.Equal(t, "UTC+8", plan.LocationID)
+		require.Nil(t, controller)
+		require.ErrorContains(t, err, "invalid location UTC+8")
+	})
+
+	t.Run("import_plan_parquet_unnamed_fixed_zone_location", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		loc := time.FixedZone("", -6*3600)
+		sctx.GetSessionVars().TimeZone = loc
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(loc)
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.NoError(t, err)
+		require.Equal(t, "-06:00", plan.LocationID)
+		require.NotNil(t, controller.ParquetLocation())
+		_, offset := time.Now().In(controller.ParquetLocation()).Zone()
+		require.Equal(t, -6*3600, offset)
+	})
+
+	t.Run("legacy_import_task_meta_without_location_id_uses_utc", func(t *testing.T) {
+		sctx := mock.NewContext()
+		defer sctx.Close()
+		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+		sctx.GetSessionVars().TimeZone = asiaShanghai
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(asiaShanghai)
+
+		plan, controller, err := newParquetPlanAndControllerForTest(ctx, t, sctx)
+		require.NoError(t, err)
+		taskMetaBytes, err := json.Marshal(struct {
+			Plan *Plan
+		}{
+			Plan: plan,
+		})
+		require.NoError(t, err)
+
+		var taskMeta map[string]any
+		require.NoError(t, json.Unmarshal(taskMetaBytes, &taskMeta))
+		planMeta, ok := taskMeta["Plan"].(map[string]any)
+		require.True(t, ok)
+		delete(planMeta, "LocationID")
+		legacyTaskMetaBytes, err := json.Marshal(taskMeta)
+		require.NoError(t, err)
+
+		var legacyTaskMeta struct {
+			Plan Plan
+		}
+		require.NoError(t, json.Unmarshal(legacyTaskMetaBytes, &legacyTaskMeta))
+		require.Empty(t, legacyTaskMeta.Plan.LocationID)
+
+		legacyController, err := NewLoadDataController(&legacyTaskMeta.Plan, controller.Table, &ASTArgs{})
+		require.NoError(t, err)
+		require.Same(t, time.UTC, legacyController.ParquetLocation())
+
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipEstimateCompressionForParquet", "return(true)")
+		require.NoError(t, legacyController.InitDataFiles(ctx))
+		require.Len(t, legacyController.dataFiles, 1)
+		require.Same(t, time.UTC, legacyController.dataFiles[0].ParquetMeta.Loc)
+	})
 }
 
 func TestInitCompressedFiles(t *testing.T) {

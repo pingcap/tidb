@@ -236,6 +236,48 @@ func scanRegionsLimitWithRetry(
 	return batch, mustLeader, err
 }
 
+// PaginateScanRegionWithCodecAware scans a logical KV range. Callers pass
+// logical start and end keys, and this helper converts them to PD scan keys
+// before scanning. Without a CodecPDClient it uses codec.EncodeBytes and
+// returns PD-encoded region boundary keys. With a CodecPDClient it decodes the
+// input range before scanning and re-encodes returned region boundaries through
+// the active codec.
+func PaginateScanRegionWithCodecAware(
+	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
+) ([]*RegionInfo, error) {
+	var encodeRegionRange func([]byte, []byte) ([]byte, []byte)
+	if codecCli := client.GetCodecPDClient(); codecCli != nil {
+		var err error
+		cd := codecCli.GetCodec()
+		encodeRegionRange = cd.EncodeRegionRange
+		startKey, endKey, err = cd.DecodeRange(startKey, endKey)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		startKey = codec.EncodeBytes(nil, startKey)
+		endKey = codec.EncodeBytes(nil, endKey)
+	}
+	regions, err := PaginateScanRegion(ctx, client, startKey, endKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	if encodeRegionRange != nil {
+		// codec PD client will return the region with keys after decode.
+		encodeRegionKeys(regions, encodeRegionRange)
+	}
+	return regions, nil
+}
+
+func encodeRegionKeys(regions []*RegionInfo, encodeRegionRange func([]byte, []byte) ([]byte, []byte)) {
+	for _, region := range regions {
+		if region == nil || region.Region == nil {
+			continue
+		}
+		region.Region.StartKey, region.Region.EndKey = encodeRegionRange(region.Region.StartKey, region.Region.EndKey)
+	}
+}
+
 // PaginateScanRegion scan regions with a limit pagination and return all regions
 // at once. The returned regions are continuous and cover the key range. If not,
 // or meet errors, it will retry internally.

@@ -16,6 +16,7 @@ package staticrecordset_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -241,8 +242,14 @@ func TestFinishStmtError(t *testing.T) {
 	require.NoError(t, err)
 	drs := rs.(sqlexec.DetachableRecordSet)
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/session/finishStmtError", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/finishStmtError")
+	const finishStmtErrFpName = "github.com/pingcap/tidb/pkg/session/finishStmtError"
+	connID := tk.Session().GetSessionVars().ConnectionID
+	if err := failpoint.Enable(finishStmtErrFpName, fmt.Sprintf("return(%d)", connID)); err != nil {
+		t.Skipf("skip because failpoint is not enabled: %v", err)
+	}
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(finishStmtErrFpName))
+	})
 	// Then `TryDetach` should return `true`, because the original record set is detached and cannot be used anymore.
 	_, ok, err := drs.TryDetach()
 	require.True(t, ok)

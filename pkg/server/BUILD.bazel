@@ -24,6 +24,7 @@ go_library(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
@@ -164,6 +165,8 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/expression",
@@ -214,6 +217,7 @@ go_test(
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_prometheus_client_golang//prometheus/testutil",

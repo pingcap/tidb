@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "checkpoints",
+    srcs = ["checkpoints.go"],
+    importpath = "github.com/pingcap/tidb/lightning/pkg/checkpoints",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/version/build",
+        "//lightning/pkg/checkpoints/checkpointspb",
+        "//pkg/lightning/common",
+        "//pkg/lightning/config",
+        "//pkg/lightning/importdef",
+        "//pkg/lightning/log",
+        "//pkg/lightning/mydump",
+        "//pkg/lightning/verification",
+        "//pkg/meta/model",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "//pkg/util/logutil",
+        "@com_github_joho_sqltocsv//:sqltocsv",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "checkpoints_test",
+    timeout = "short",
+    srcs = [
+        "checkpoints_file_test.go",
+        "checkpoints_sql_test.go",
+        "checkpoints_test.go",
+        "main_test.go",
+    ],
+    embed = [":checkpoints"],
+    flaky = True,
+    race = "on",
+    shard_count = 29,
+    deps = [
+        "//br/pkg/version/build",
+        "//lightning/pkg/checkpoints/checkpointspb",
+        "//pkg/lightning/common",
+        "//pkg/lightning/config",
+        "//pkg/lightning/importdef",
+        "//pkg/lightning/mydump",
+        "//pkg/lightning/verification",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/testkit/testsetup",
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

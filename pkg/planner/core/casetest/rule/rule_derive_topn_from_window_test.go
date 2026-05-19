@@ -27,54 +27,55 @@ import (
 type Input []string
 
 // TiFlash cases. TopN pushed down to storage only when no partition by.
-func TestPushDerivedTopnFlash(t *testing.T) {
+func TestDerivedTopNSuite(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("set tidb_opt_derive_topn=1")
 		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
+		tk.MustExec("drop table if exists t, t3")
 		tk.MustExec("create table t(a int, b int, primary key(b,a))")
-		testkit.SetTiFlashReplica(t, dom, "test", "t")
-		tk.MustExec("set tidb_enforce_mpp=1")
-		tk.MustExec("set @@session.tidb_allow_mpp=ON;")
-		var input Input
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-		suiteData := GetDerivedTopNSuiteData()
-		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
-			testdata.OnRecord(func() {
-				output[i].SQL = sql
-				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
-			})
-			plan.Check(testkit.Rows(output[i].Plan...))
-		}
-	})
-}
-
-func TestTopNPushdown(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-
-		tk.MustExec(`drop table if exists t3`)
 		tk.MustExec(`CREATE TABLE t3(c0 INT, primary key(c0))`)
 		tk.MustExec(`insert into t3 values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)`)
-		rs := tk.MustQuery(`SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).Rows()
-		lastVal := -1.0
-		for _, r := range rs {
-			v := r[0].(string)
-			val, err := strconv.ParseFloat(v, 64)
-			require.NoError(t, err)
-			require.True(t, val >= lastVal)
-			lastVal = val
-		}
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
 
-		tk.MustQuery(`explain format = 'plan_tree' SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).
-			Check(testkit.Rows(`TopN root  Column, offset:0, count:10`,
-				`└─Projection root  rand()->Column`,
-				`  └─TableReader root  data:TableFullScan`,
-				`    └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`))
+		t.Run("TestPushDerivedTopnFlash", func(t *testing.T) {
+			tk.MustExec("set tidb_opt_derive_topn=1")
+			tk.MustExec("set tidb_enforce_mpp=1")
+			tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+			var input Input
+			var output []struct {
+				SQL  string
+				Plan []string
+			}
+			suiteData := GetDerivedTopNSuiteData()
+			suiteData.LoadTestCasesByName("TestPushDerivedTopnFlash", t, &input, &output, cascades, "TestPushDerivedTopnFlash")
+			for i, sql := range input {
+				plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
+				testdata.OnRecord(func() {
+					output[i].SQL = sql
+					output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+				})
+				plan.Check(testkit.Rows(output[i].Plan...))
+			}
+		})
+
+		t.Run("TestTopNPushdown", func(t *testing.T) {
+			tk.MustExec("set tidb_opt_derive_topn=0")
+			tk.MustExec("set tidb_enforce_mpp=0")
+			tk.MustExec("set @@session.tidb_allow_mpp=OFF")
+			rs := tk.MustQuery(`SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).Rows()
+			lastVal := -1.0
+			for _, r := range rs {
+				v := r[0].(string)
+				val, err := strconv.ParseFloat(v, 64)
+				require.NoError(t, err)
+				require.True(t, val >= lastVal)
+				lastVal = val
+			}
+
+			tk.MustQuery(`explain format = 'plan_tree' SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).
+				Check(testkit.Rows(`TopN root  Column, offset:0, count:10`,
+					`└─Projection root  rand()->Column`,
+					`  └─TableReader root  data:TableFullScan`,
+					`    └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`))
+		})
 	})
 }

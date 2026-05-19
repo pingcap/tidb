@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -69,7 +70,7 @@ func createContext(t testing.TB) *mock.Context {
 	ctx.ResetSessionAndStmtTimeZone(tz)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
-	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))
+	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", strconv.FormatUint(config.GetMaxAllowedPacket(), 10)))
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	return ctx
 }
