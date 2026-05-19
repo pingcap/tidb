@@ -58,7 +58,7 @@ func (e *Exec) buildMinMaxMerger(
 	if len(mapping.ColID) != 1 {
 		return nil, errors.Errorf("%s mapping expects exactly 1 output column, got %d", mapping.AggFunc.Name, len(mapping.ColID))
 	}
-	exprNullable, err := e.isMinMaxExprNullable(mapping)
+	exprNullable, err := e.isMinMaxArgNullable(mapping)
 	if err != nil {
 		return nil, errors.Annotatef(err, "%s mapping expression nullability", mapping.AggFunc.Name)
 	}
@@ -235,7 +235,7 @@ func validateMinMaxValueTypes(outputTp, addedTp, removedTp *types.FieldType) err
 	return nil
 }
 
-func (e *Exec) isMinMaxExprNullable(mapping Mapping) (bool, error) {
+func (e *Exec) isMinMaxArgNullable(mapping Mapping) (bool, error) {
 	if mapping.AggFunc == nil {
 		return false, errors.New("AggFunc is nil")
 	}
@@ -301,37 +301,28 @@ func (m *minMaxMergerBase) resolveColumns(
 	return
 }
 
-func (*minMaxMergerBase) validateCountColumnsAllNotNull(numRows int, countCol, addedCntCol, removedCntCol *chunk.Column) error {
-	if rowIdx := firstNullRow(countCol, numRows); rowIdx >= 0 {
-		return errors.Errorf("count is null at row %d", rowIdx)
+func (*minMaxMergerBase) validateCountColumns(
+	countCol, addedCntCol, removedCntCol *chunk.Column,
+) error {
+	if countCol.HasNull() {
+		return errors.New("min/max final count contains null")
 	}
-	if rowIdx := firstNullRow(addedCntCol, numRows); rowIdx >= 0 {
-		return errors.Errorf("count is null at row %d", rowIdx)
+	if addedCntCol.HasNull() {
+		return errors.New("min/max added count contains null")
 	}
-	if rowIdx := firstNullRow(removedCntCol, numRows); rowIdx >= 0 {
-		return errors.Errorf("count is null at row %d", rowIdx)
+	if removedCntCol.HasNull() {
+		return errors.New("min/max removed count contains null")
+	}
+	if neg, ok := firstNegativeCountValue(countCol.Int64s()); ok {
+		return errors.Errorf("min/max final count becomes negative (%d)", neg)
+	}
+	if neg, ok := firstNegativeCountValue(addedCntCol.Int64s()); ok {
+		return errors.Errorf("min/max added count becomes negative (%d)", neg)
+	}
+	if neg, ok := firstNegativeCountValue(removedCntCol.Int64s()); ok {
+		return errors.Errorf("min/max removed count becomes negative (%d)", neg)
 	}
 	return nil
-}
-
-func (*minMaxMergerBase) rowCounts(rowIdx int, countVals, addedCntVals, removedCntVals []int64) (shouldExist bool, addedCnt, removedCnt int64, err error) {
-	finalCnt := countVals[rowIdx]
-	if finalCnt < 0 {
-		return false, 0, 0, errors.Errorf("count becomes negative (%d) at row %d", finalCnt, rowIdx)
-	}
-	if finalCnt == 0 {
-		return false, 0, 0, nil
-	}
-	addedCnt = addedCntVals[rowIdx]
-	if addedCnt < 0 {
-		return false, 0, 0, errors.Errorf("count becomes negative (%d) at row %d", addedCnt, rowIdx)
-	}
-	removedCnt = removedCntVals[rowIdx]
-	if removedCnt < 0 {
-		return false, 0, 0, errors.Errorf("count becomes negative (%d) at row %d", removedCnt, rowIdx)
-	}
-	shouldExist = true
-	return
 }
 
 type minMaxDecision uint8
@@ -343,9 +334,6 @@ const (
 )
 
 func prepareMinMaxRecomputeRows(workerData *mergeWorkerData, mappingIdx int) ([]int, error) {
-	if workerData == nil {
-		return nil, errors.New("min/max recompute requires worker data")
-	}
 	if mappingIdx < 0 || mappingIdx >= len(workerData.minMaxRecomputeRowsByMapping) {
 		return nil, errors.Errorf("min/max mapping idx %d out of recompute slice range [0,%d)", mappingIdx, len(workerData.minMaxRecomputeRowsByMapping))
 	}
@@ -422,10 +410,10 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 	if err != nil {
 		return err
 	}
-	numRows := input.NumRows()
-	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumns(countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
+	numRows := input.NumRows()
 	countVals := countCol.Int64s()
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
@@ -436,14 +424,13 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 	addedVals := addedCol.Int64s()
 	removedVals := removedCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
-		if err != nil {
-			return err
-		}
-		if !shouldExist {
+		finalCnt := countVals[rowIdx]
+		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
 		}
+		addedCnt := addedCntVals[rowIdx]
+		removedCnt := removedCntVals[rowIdx]
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
@@ -488,6 +475,8 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 						decision = minMaxDecisionRecompute
 					}
 				}
+			} else {
+				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
@@ -502,7 +491,6 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 			if !oldExists {
 				logutil.BgLogger().Error(
 					"invalid min/max int fast-path state (remove-dominant without old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
@@ -518,7 +506,6 @@ func (m *minMaxIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chun
 			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 				logutil.BgLogger().Error(
 					"invalid min/max int fast-path state (remove-dominant outranks old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),
@@ -572,10 +559,10 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	if err != nil {
 		return err
 	}
-	numRows := input.NumRows()
-	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumns(countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
+	numRows := input.NumRows()
 	countVals := countCol.Int64s()
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
@@ -586,14 +573,13 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	addedVals := addedCol.Uint64s()
 	removedVals := removedCol.Uint64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
-		if err != nil {
-			return err
-		}
-		if !shouldExist {
+		finalCnt := countVals[rowIdx]
+		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
 		}
+		addedCnt := addedCntVals[rowIdx]
+		removedCnt := removedCntVals[rowIdx]
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
@@ -638,6 +624,8 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 						decision = minMaxDecisionRecompute
 					}
 				}
+			} else {
+				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
@@ -652,7 +640,6 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			if !oldExists {
 				logutil.BgLogger().Error(
 					"invalid min/max uint fast-path state (remove-dominant without old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
@@ -668,7 +655,6 @@ func (m *minMaxUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 				logutil.BgLogger().Error(
 					"invalid min/max uint fast-path state (remove-dominant outranks old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),
@@ -722,10 +708,10 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	if err != nil {
 		return err
 	}
-	numRows := input.NumRows()
-	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumns(countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
+	numRows := input.NumRows()
 	countVals := countCol.Int64s()
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
@@ -736,14 +722,13 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Float32s()
 	removedVals := removedCol.Float32s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
-		if err != nil {
-			return err
-		}
-		if !shouldExist {
+		finalCnt := countVals[rowIdx]
+		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
 		}
+		addedCnt := addedCntVals[rowIdx]
+		removedCnt := removedCntVals[rowIdx]
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
@@ -788,6 +773,8 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 						decision = minMaxDecisionRecompute
 					}
 				}
+			} else {
+				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
@@ -802,7 +789,6 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if !oldExists {
 				logutil.BgLogger().Error(
 					"invalid min/max float32 fast-path state (remove-dominant without old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
@@ -818,7 +804,6 @@ func (m *minMaxFloat32Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 				logutil.BgLogger().Error(
 					"invalid min/max float32 fast-path state (remove-dominant outranks old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),
@@ -872,10 +857,10 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	if err != nil {
 		return err
 	}
-	numRows := input.NumRows()
-	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumns(countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
+	numRows := input.NumRows()
 	countVals := countCol.Int64s()
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
@@ -886,14 +871,13 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Float64s()
 	removedVals := removedCol.Float64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
-		if err != nil {
-			return err
-		}
-		if !shouldExist {
+		finalCnt := countVals[rowIdx]
+		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
 		}
+		addedCnt := addedCntVals[rowIdx]
+		removedCnt := removedCntVals[rowIdx]
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
@@ -938,6 +922,8 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 						decision = minMaxDecisionRecompute
 					}
 				}
+			} else {
+				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
@@ -952,7 +938,6 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if !oldExists {
 				logutil.BgLogger().Error(
 					"invalid min/max float64 fast-path state (remove-dominant without old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
@@ -968,7 +953,6 @@ func (m *minMaxFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 				logutil.BgLogger().Error(
 					"invalid min/max float64 fast-path state (remove-dominant outranks old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),
@@ -1022,10 +1006,10 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	if err != nil {
 		return err
 	}
-	numRows := input.NumRows()
-	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumns(countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
+	numRows := input.NumRows()
 	countVals := countCol.Int64s()
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
@@ -1036,14 +1020,13 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 	addedVals := addedCol.Decimals()
 	removedVals := removedCol.Decimals()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
-		if err != nil {
-			return err
-		}
-		if !shouldExist {
+		finalCnt := countVals[rowIdx]
+		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
 		}
+		addedCnt := addedCntVals[rowIdx]
+		removedCnt := removedCntVals[rowIdx]
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
@@ -1088,6 +1071,8 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 						decision = minMaxDecisionRecompute
 					}
 				}
+			} else {
+				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
@@ -1102,7 +1087,6 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if !oldExists {
 				logutil.BgLogger().Error(
 					"invalid min/max decimal fast-path state (remove-dominant without old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
@@ -1118,7 +1102,6 @@ func (m *minMaxDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*
 			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 				logutil.BgLogger().Error(
 					"invalid min/max decimal fast-path state (remove-dominant outranks old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),
@@ -1172,10 +1155,10 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	if err != nil {
 		return err
 	}
-	numRows := input.NumRows()
-	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumns(countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
+	numRows := input.NumRows()
 	countVals := countCol.Int64s()
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
@@ -1186,14 +1169,13 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 	addedVals := addedCol.Times()
 	removedVals := removedCol.Times()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
-		if err != nil {
-			return err
-		}
-		if !shouldExist {
+		finalCnt := countVals[rowIdx]
+		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
 		}
+		addedCnt := addedCntVals[rowIdx]
+		removedCnt := removedCntVals[rowIdx]
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
@@ -1238,6 +1220,8 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 						decision = minMaxDecisionRecompute
 					}
 				}
+			} else {
+				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
@@ -1252,7 +1236,6 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			if !oldExists {
 				logutil.BgLogger().Error(
 					"invalid min/max time fast-path state (remove-dominant without old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
@@ -1268,7 +1251,6 @@ func (m *minMaxTimeMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 				logutil.BgLogger().Error(
 					"invalid min/max time fast-path state (remove-dominant outranks old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),
@@ -1322,10 +1304,10 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 	if err != nil {
 		return err
 	}
-	numRows := input.NumRows()
-	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumns(countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
+	numRows := input.NumRows()
 	countVals := countCol.Int64s()
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
@@ -1336,14 +1318,13 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 	addedVals := addedCol.GoDurations()
 	removedVals := removedCol.GoDurations()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
-		if err != nil {
-			return err
-		}
-		if !shouldExist {
+		finalCnt := countVals[rowIdx]
+		if finalCnt == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
 		}
+		addedCnt := addedCntVals[rowIdx]
+		removedCnt := removedCntVals[rowIdx]
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
@@ -1388,6 +1369,8 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 						decision = minMaxDecisionRecompute
 					}
 				}
+			} else {
+				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
@@ -1402,7 +1385,6 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 			if !oldExists {
 				logutil.BgLogger().Error(
 					"invalid min/max duration fast-path state (remove-dominant without old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
@@ -1418,7 +1400,6 @@ func (m *minMaxDurationMerger) mergeChunk(input *chunk.Chunk, computedByOrder []
 			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 				logutil.BgLogger().Error(
 					"invalid min/max duration fast-path state (remove-dominant outranks old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),
@@ -1473,23 +1454,22 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 	if err != nil {
 		return err
 	}
-	numRows := input.NumRows()
-	if err := m.validateCountColumnsAllNotNull(numRows, countCol, addedCntCol, removedCntCol); err != nil {
+	if err := m.validateCountColumns(countCol, addedCntCol, removedCntCol); err != nil {
 		return err
 	}
+	numRows := input.NumRows()
 	countVals := countCol.Int64s()
 	addedCntVals := addedCntCol.Int64s()
 	removedCntVals := removedCntCol.Int64s()
 	resultCol := chunk.NewColumn(m.retTp, numRows)
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		shouldExist, addedCnt, removedCnt, err := m.rowCounts(rowIdx, countVals, addedCntVals, removedCntVals)
-		if err != nil {
-			return err
-		}
-		if !shouldExist {
+		finalCnt := countVals[rowIdx]
+		if finalCnt == 0 {
 			resultCol.AppendNull()
 			continue
 		}
+		addedCnt := addedCntVals[rowIdx]
+		removedCnt := removedCntVals[rowIdx]
 		oldExists := !oldCol.IsNull(rowIdx)
 		addExists := !addedCol.IsNull(rowIdx)
 		removeExists := !removedCol.IsNull(rowIdx)
@@ -1545,6 +1525,8 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 						decision = minMaxDecisionRecompute
 					}
 				}
+			} else {
+				// If sameExtremumValue is false, it means both sides are absent, and old value should be kept
 			}
 		} else if chooseAddRemove > 0 {
 			if !oldExists {
@@ -1559,7 +1541,6 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 			if !oldExists {
 				logutil.BgLogger().Error(
 					"invalid min/max string fast-path state (remove-dominant without old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int64("added_cnt", addedCnt),
 					zap.Int64("removed_cnt", removedCnt),
@@ -1575,7 +1556,6 @@ func (m *minMaxStringMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*c
 			if (m.isMax && cmpOld > 0) || (!m.isMax && cmpOld < 0) {
 				logutil.BgLogger().Error(
 					"invalid min/max string fast-path state (remove-dominant outranks old value)",
-					zap.Int("row", rowIdx),
 					zap.Bool("is_max", m.isMax),
 					zap.Int("cmp_old", cmpOld),
 					zap.Int64("added_cnt", addedCnt),

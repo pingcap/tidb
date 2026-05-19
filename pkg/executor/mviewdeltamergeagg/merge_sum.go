@@ -21,9 +21,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-func validateCountExprAllNotNull(countCol *chunk.Column, numRows int) error {
-	if rowIdx := firstNullRow(countCol, numRows); rowIdx >= 0 {
-		return errors.Errorf("count is null at row %d", rowIdx)
+func validateCountColumn(countCol *chunk.Column) error {
+	if countCol.HasNull() {
+		return errors.New("sum count dependency contains null")
+	}
+	if neg, ok := firstNegativeCountValue(countCol.Int64s()); ok {
+		return errors.Errorf("sum count dependency becomes negative (%d)", neg)
 	}
 	return nil
 }
@@ -206,14 +209,11 @@ func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.C
 		return nil
 	}
 
-	if err := validateCountExprAllNotNull(countCol, numRows); err != nil {
+	if err := validateCountColumn(countCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countVals[rowIdx] < 0 {
-			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
-		}
 		if countVals[rowIdx] == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
@@ -286,14 +286,11 @@ func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 		return nil
 	}
 
-	if err := validateCountExprAllNotNull(countCol, numRows); err != nil {
+	if err := validateCountColumn(countCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countVals[rowIdx] < 0 {
-			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
-		}
 		if countVals[rowIdx] == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
@@ -362,14 +359,11 @@ func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return nil
 	}
 
-	if err := validateCountExprAllNotNull(countCol, numRows); err != nil {
+	if err := validateCountColumn(countCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countVals[rowIdx] < 0 {
-			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
-		}
 		if countVals[rowIdx] == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue
@@ -431,14 +425,11 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		return nil
 	}
 
-	if err := validateCountExprAllNotNull(countCol, numRows); err != nil {
+	if err := validateCountColumn(countCol); err != nil {
 		return err
 	}
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countVals[rowIdx] < 0 {
-			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
-		}
 		if countVals[rowIdx] == 0 {
 			resultCol.SetNull(rowIdx, true)
 			continue

@@ -76,7 +76,7 @@ type MinMaxBatchLookupContent struct {
 // MinMaxBatchBuildRequest is the input to build one batch recompute executor.
 type MinMaxBatchBuildRequest struct {
 	// LookupKeys are deduplicated keys for this batch.
-	LookupKeys []*MinMaxBatchLookupContent
+	LookupKeys []MinMaxBatchLookupContent
 }
 
 // MinMaxBatchExecBuilder builds one opened recompute executor for one batch request.
@@ -196,11 +196,12 @@ type mergeWorkerData struct {
 	updateOpIndexes              []int
 	updateChanged                []bool
 	minMaxRecomputeRowsByMapping [][]int
+	minMaxRecomputeOverrides     []*mappingRecomputeOverride
+	minMaxBatchMappings          []int
 	batchUniqueRows              []int
 	batchResultRows              []int
 	batchRowLookupKeyIdx         []int
 	batchRowSeenByMapping        []int
-	batchLookupKeys              []*MinMaxBatchLookupContent
 	batchLookupKeyContents       []MinMaxBatchLookupContent
 	batchRefsByLookupKey         [][]batchRowRef
 	batchLookupKeyDatums         []types.Datum
@@ -210,19 +211,14 @@ type mergeWorkerData struct {
 	batchResultNullByRow         []bool
 }
 
-type mergePipelineStats struct {
-	readerTime      time.Duration
-	writerTime      time.Duration
-	mergeWorkerTime []time.Duration
-	writerDetail    mergeWriterStats
-}
-
 type mergeRuntimeStats struct {
 	readerTime      time.Duration
 	writerTime      time.Duration
 	mergeWorkerTime []time.Duration
 	writerDetail    mergeWriterStats
 }
+
+type mergePipelineStats = mergeRuntimeStats
 
 type mergeWriterStats struct {
 	chunks int64
@@ -834,19 +830,6 @@ func (e *Exec) prepareMergers() error {
 		if len(mapping.ColID) == 0 {
 			return errors.Errorf("mapping for agg=%s must output at least 1 column", aggName)
 		}
-		seenInMapping := make(map[int]struct{}, len(mapping.ColID))
-		for _, outputColID := range mapping.ColID {
-			if outputColID < 0 || outputColID >= len(childTypes) {
-				return errors.Errorf("output col id %d out of range [0,%d)", outputColID, len(childTypes))
-			}
-			if _, dup := seenInMapping[outputColID]; dup {
-				return errors.Errorf("duplicate output col id %d in one mapping", outputColID)
-			}
-			if _, dup := colID2ComputedIdx[outputColID]; dup {
-				return errors.Errorf("duplicate output col id %d in AggMappings", outputColID)
-			}
-			seenInMapping[outputColID] = struct{}{}
-		}
 
 		var merger aggMerger
 		var err error
@@ -876,6 +859,9 @@ func (e *Exec) prepareMergers() error {
 			if outputColID != mapping.ColID[idx] {
 				return errors.Errorf("agg=%s output col mismatch at position %d: mapping=%d merger=%d", aggName, idx, mapping.ColID[idx], outputColID)
 			}
+			if _, dup := colID2ComputedIdx[outputColID]; dup {
+				return errors.Errorf("duplicate output col id %d in AggMappings", outputColID)
+			}
 			colID2ComputedIdx[outputColID] = e.compiledOutputColCnt
 			e.compiledOutputColCnt++
 			e.aggOutputColIDs = append(e.aggOutputColIDs, outputColID)
@@ -887,9 +873,10 @@ func (e *Exec) prepareMergers() error {
 }
 
 func (e *Exec) mergeOneChunk(ctx context.Context, chk *chunk.Chunk, workerData *mergeWorkerData, workerIdx int) (*ChunkResult, error) {
-	if workerData != nil {
-		workerData.prepareMinMaxRecomputeRows(len(e.AggMappings))
+	if workerData == nil {
+		return nil, errors.New("merge worker data is nil")
 	}
+	workerData.prepareMinMaxRecompute(len(e.AggMappings))
 	computedByOrder := make([]*chunk.Column, e.compiledOutputColCnt)
 	computedBuiltCnt := 0
 	computedByColID := make([]*chunk.Column, chk.NumCols())
@@ -936,20 +923,34 @@ func (e *Exec) mergeOneChunk(ctx context.Context, chk *chunk.Chunk, workerData *
 	}, nil
 }
 
-func (d *mergeWorkerData) prepareMinMaxRecomputeRows(mappingCnt int) {
+func (d *mergeWorkerData) prepareMinMaxRecompute(mappingCnt int) {
 	if mappingCnt <= 0 {
-		d.minMaxRecomputeRowsByMapping = nil
 		return
 	}
-	if len(d.minMaxRecomputeRowsByMapping) < mappingCnt {
-		old := d.minMaxRecomputeRowsByMapping
+	if cap(d.minMaxRecomputeRowsByMapping) < mappingCnt {
 		d.minMaxRecomputeRowsByMapping = make([][]int, mappingCnt)
-		copy(d.minMaxRecomputeRowsByMapping, old)
+	} else {
+		d.minMaxRecomputeRowsByMapping = d.minMaxRecomputeRowsByMapping[:mappingCnt]
 	}
-	d.minMaxRecomputeRowsByMapping = d.minMaxRecomputeRowsByMapping[:mappingCnt]
 	for idx := range d.minMaxRecomputeRowsByMapping {
 		d.minMaxRecomputeRowsByMapping[idx] = d.minMaxRecomputeRowsByMapping[idx][:0]
 	}
+	if cap(d.minMaxRecomputeOverrides) < mappingCnt {
+		d.minMaxRecomputeOverrides = make([]*mappingRecomputeOverride, mappingCnt)
+	} else {
+		d.minMaxRecomputeOverrides = d.minMaxRecomputeOverrides[:mappingCnt]
+	}
+	for idx := range d.minMaxRecomputeOverrides {
+		override := d.minMaxRecomputeOverrides[idx]
+		if override == nil {
+			continue
+		}
+		override.rowIdxes = override.rowIdxes[:0]
+		for colPos := range override.valuesByOutput {
+			override.valuesByOutput[colPos] = override.valuesByOutput[colPos][:0]
+		}
+	}
+	d.minMaxBatchMappings = d.minMaxBatchMappings[:0]
 }
 
 func (e *Exec) recomputeMinMaxRows(
@@ -960,9 +961,6 @@ func (e *Exec) recomputeMinMaxRows(
 	workerIdx int,
 ) error {
 	if e.MinMaxRecompute == nil || workerData == nil {
-		return nil
-	}
-	if len(workerData.minMaxRecomputeRowsByMapping) == 0 {
 		return nil
 	}
 	if len(e.aggOutputColIDs) == 0 {
@@ -976,7 +974,6 @@ func (e *Exec) recomputeMinMaxRows(
 	if countStarCol == nil {
 		return errors.Errorf("count(*) output col %d is missing in computed columns", countStarOutputColID)
 	}
-	countStarVals := countStarCol.Int64s()
 	childTypes := e.Children(0).RetFieldTypes()
 	keyColIDs := e.MinMaxRecompute.KeyInputColIDs
 	keyTypes := make([]*types.FieldType, len(keyColIDs))
@@ -990,8 +987,8 @@ func (e *Exec) recomputeMinMaxRows(
 		}
 		keyTypes[keyPos] = keyTp
 	}
-	overrides := make([]*mappingRecomputeOverride, len(e.AggMappings))
-	batchMappings := make([]int, 0)
+	overrides := workerData.minMaxRecomputeOverrides
+	batchMappings := workerData.minMaxBatchMappings[:0]
 
 	for mappingIdx, rows := range workerData.minMaxRecomputeRowsByMapping {
 		if len(rows) == 0 {
@@ -1012,7 +1009,6 @@ func (e *Exec) recomputeMinMaxRows(
 				childTypes,
 				keyColIDs,
 				keyTypes,
-				countStarVals,
 				workerIdx,
 				mappingIdx,
 				rows,
@@ -1026,6 +1022,7 @@ func (e *Exec) recomputeMinMaxRows(
 			return errors.Errorf("unknown MinMaxRecompute strategy %d for mapping %d", recomputeMeta.Strategy, mappingIdx)
 		}
 	}
+	workerData.minMaxBatchMappings = batchMappings
 	if len(batchMappings) > 0 {
 		if err := e.recomputeMinMaxBatch(
 			ctx,
@@ -1033,7 +1030,6 @@ func (e *Exec) recomputeMinMaxRows(
 			childTypes,
 			keyColIDs,
 			keyTypes,
-			countStarVals,
 			batchMappings,
 			workerData,
 			overrides,
@@ -1050,7 +1046,6 @@ func (e *Exec) recomputeMinMaxSingleRow(
 	childTypes []*types.FieldType,
 	keyColIDs []int,
 	keyTypes []*types.FieldType,
-	countStarVals []int64,
 	workerIdx int,
 	mappingIdx int,
 	recomputeRows []int,
@@ -1119,12 +1114,6 @@ func (e *Exec) recomputeMinMaxSingleRow(
 		if rowIdx < 0 || rowIdx >= rowCnt {
 			return errors.Errorf("min/max single-row recompute row idx %d out of range [0,%d)", rowIdx, rowCnt)
 		}
-		if countStarVals[rowIdx] < 0 {
-			return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
-		}
-		if countStarVals[rowIdx] == 0 {
-			return errors.Errorf("min/max single-row recompute has zero count(*) at row %d", rowIdx)
-		}
 		inputRow := input.GetRow(rowIdx)
 		for keyPos, keyColID := range keyColIDs {
 			inputRow.DatumWithBuffer(keyColID, keyTypes[keyPos], worker.KeyCols[keyPos].Data)
@@ -1178,7 +1167,6 @@ func (e *Exec) recomputeMinMaxBatch(
 	childTypes []*types.FieldType,
 	keyColIDs []int,
 	keyTypes []*types.FieldType,
-	countStarVals []int64,
 	batchMappings []int,
 	workerData *mergeWorkerData,
 	overrides []*mappingRecomputeOverride,
@@ -1251,12 +1239,6 @@ func (e *Exec) recomputeMinMaxBatch(
 			rowSeenByMapping[rowIdx] = duplicateCheckToken
 
 			if rowLookupKeyIdx[rowIdx] == batchRowLookupKeyUnknown {
-				if countStarVals[rowIdx] < 0 {
-					return errors.Errorf("count(*) becomes negative (%d) at row %d", countStarVals[rowIdx], rowIdx)
-				}
-				if countStarVals[rowIdx] == 0 {
-					return errors.Errorf("min/max batch recompute has zero count(*) at row %d for mapping %d", rowIdx, mappingIdx)
-				}
 				rowLookupKeyIdx[rowIdx] = batchRowLookupKeySelected
 				uniqueRows = append(uniqueRows, rowIdx)
 			}
@@ -1276,14 +1258,6 @@ func (e *Exec) recomputeMinMaxBatch(
 		return nil
 	}
 
-	lookupKeySlots := workerData.batchLookupKeys
-	if cap(lookupKeySlots) < len(uniqueRows) {
-		lookupKeySlots = make([]*MinMaxBatchLookupContent, len(uniqueRows))
-	} else {
-		lookupKeySlots = lookupKeySlots[:len(uniqueRows)]
-	}
-	workerData.batchLookupKeys = lookupKeySlots
-
 	lookupKeyContents := workerData.batchLookupKeyContents
 	if cap(lookupKeyContents) < len(uniqueRows) {
 		lookupKeyContents = make([]MinMaxBatchLookupContent, len(uniqueRows))
@@ -1300,7 +1274,7 @@ func (e *Exec) recomputeMinMaxBatch(
 	}
 	workerData.batchRefsByLookupKey = refsByLookupKeySlots
 
-	lookupKeys := lookupKeySlots[:0]
+	lookupKeys := lookupKeyContents[:0]
 	refsByLookupKey := refsByLookupKeySlots[:0]
 	keyDatumBuffer := make([]types.Datum, len(keyColIDs))
 	flatLookupKeyDatums := workerData.batchLookupKeyDatums[:0]
@@ -1341,8 +1315,7 @@ func (e *Exec) recomputeMinMaxBatch(
 				inputRow.DatumWithBuffer(keyColID, keyTypes[keyPos], &keyDatumBuffer[keyPos])
 				keyDatumBuffer[keyPos].Copy(&keyDatums[keyPos])
 			}
-			lookupKeyContents[keyIdx].Keys = keyDatums
-			lookupKeys = append(lookupKeys, &lookupKeyContents[keyIdx])
+			lookupKeys = append(lookupKeys, MinMaxBatchLookupContent{Keys: keyDatums})
 			refsByLookupKeySlots[keyIdx] = refsByLookupKeySlots[keyIdx][:0]
 			refsByLookupKey = append(refsByLookupKey, refsByLookupKeySlots[keyIdx])
 		}
@@ -1840,7 +1813,7 @@ func (e *Exec) buildRowOps(input *chunk.Chunk, computedByColID []*chunk.Column, 
 	for rowIdx := 0; rowIdx < input.NumRows(); rowIdx++ {
 		newCount := newCountStarVals[rowIdx]
 		if newCount < 0 {
-			return nil, nil, 0, 0, errors.Errorf("count(*) becomes negative (%d) at row %d", newCount, rowIdx)
+			return nil, nil, 0, 0, errors.Errorf("count(*) becomes negative (%d)", newCount)
 		}
 		oldExists := !oldCountStarCol.IsNull(rowIdx)
 

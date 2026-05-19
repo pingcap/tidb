@@ -94,18 +94,6 @@ func resolveSingleOutputOldColumn(
 	return input.Column(outputColID), nil
 }
 
-func firstNullRow(col *chunk.Column, numRows int) int {
-	if !col.HasNull() {
-		return -1
-	}
-	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if col.IsNull(rowIdx) {
-			return rowIdx
-		}
-	}
-	return -1
-}
-
 func resolveFieldTypeByColID(colID int, childTypes []*types.FieldType) (*types.FieldType, error) {
 	if colID < 0 || colID >= len(childTypes) {
 		return nil, errors.Errorf("col id %d out of range [0,%d)", colID, len(childTypes))
@@ -156,4 +144,13 @@ func validateDepRefSource(ref depRef, expected depRefSource) error {
 		return errors.Errorf("must come from %s", depRefSourceName(expected))
 	}
 	return nil
+}
+
+func firstNegativeCountValue(vals []int64) (int64, bool) {
+	for _, v := range vals {
+		if v < 0 {
+			return v, true
+		}
+	}
+	return 0, false
 }

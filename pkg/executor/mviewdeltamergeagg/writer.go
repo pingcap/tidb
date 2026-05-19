@@ -66,7 +66,7 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 	}
 	publicCols := e.TargetTable.Cols()
 	if len(publicCols) != len(writableCols) {
-		return nil, errors.New("Exec stage1 does not support target table with non-public writable columns")
+		return nil, errors.New("Exec does not support target table with non-public writable columns")
 	}
 
 	colIDs := make([]int, len(writableCols))

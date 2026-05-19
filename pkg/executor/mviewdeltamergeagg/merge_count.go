@@ -82,8 +82,8 @@ func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Co
 	}
 
 	numRows := input.NumRows()
-	if rowIdx := firstNullRow(deltaCol, numRows); rowIdx >= 0 {
-		return errors.Errorf("count delta is null at row %d", rowIdx)
+	if deltaCol.HasNull() {
+		return errors.New("count delta contains null")
 	}
 
 	resultCol := chunk.NewColumn(m.retTp, numRows)
@@ -103,7 +103,7 @@ func (m *countMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Co
 			return err
 		}
 		if newVal < 0 {
-			return errors.Errorf("count becomes negative (%d) at row %d", newVal, rowIdx)
+			return errors.Errorf("count becomes negative (%d)", newVal)
 		}
 		resultVals[rowIdx] = newVal
 	}
