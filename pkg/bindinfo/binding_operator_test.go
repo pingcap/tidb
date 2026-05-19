@@ -860,6 +860,62 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 			"select 1 from b where x = 1 and (y = 1 or y = 2)",
 			"select ? from `b` where `x` = ? and ( `y` = ? or `y` = ? )",
 		},
+		// IN, LIKE, REGEXP, IS NULL, IS TRUE, BETWEEN, subquery comparison,
+		// MEMBER OF, BINARY, and COLLATE are not BinaryOperationExpr parents,
+		// but their operands still need precedence context so a lower-precedence
+		// OR group keeps its parentheses.
+		{
+			"select 1 from b where (x or y) in (1, 2)",
+			"select ? from `b` where ( `x` or `y` ) in ( ... )",
+		},
+		{
+			"select 1 from b where (x or y) like 'x%'",
+			"select ? from `b` where ( `x` or `y` ) like ?",
+		},
+		{
+			"select 1 from b where (x or y) regexp 'x'",
+			"select ? from `b` where ( `x` or `y` ) regexp ?",
+		},
+		{
+			"select 1 from b where (x or y) is null",
+			"select ? from `b` where ( `x` or `y` ) is ?",
+		},
+		{
+			"select 1 from b where (x or y) is true",
+			"select ? from `b` where ( `x` or `y` ) is true",
+		},
+		{
+			"select 1 from b where (x or y) between 1 and 2",
+			"select ? from `b` where ( `x` or `y` ) between ? and ?",
+		},
+		{
+			"select 1 from b where x between (y or z) and 1",
+			"select ? from `b` where `x` between ( `y` or `z` ) and ?",
+		},
+		{
+			"select 1 from b where (x or y) = any (select z from b)",
+			"select ? from `b` where ( `x` or `y` ) = any ( select `z` from `b` )",
+		},
+		{
+			"select 1 from b where exists (select 1 from b where (x or y) in (1, 2))",
+			"select ? from `b` where exists ( select ? from `b` where ( `x` or `y` ) in ( ... ) )",
+		},
+		{
+			"select 1 from b where (x or y) member of ('[true]')",
+			"select ? from `b` where ( `x` or `y` ) member of ( ? )",
+		},
+		{
+			"select 1 from b where 1 member of ((x or y))",
+			"select ? from `b` where ? member of ( ( `x` or `y` ) )",
+		},
+		{
+			"select 1 from b where binary (x or y)",
+			"select ? from `b` where binary ( `x` or `y` )",
+		},
+		{
+			"select 1 from b where (x or y) collate utf8mb4_bin",
+			"select ? from `b` where ( `x` or `y` ) collate `utf8mb4_bin`",
+		},
 		// Unary NOT keeps its operand parenthesized so the restore output does not
 		// expose a different parse boundary.
 		{
