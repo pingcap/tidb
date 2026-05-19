@@ -586,21 +586,26 @@ func (is *infoSchemaMisc) ResourceGroupByName(name ast.CIStr) (*model.ResourceGr
 }
 
 // MaskingPolicyByName returns masking policy metadata by policy name with delayed loading.
-// Note: Policy name is only unique per table, not globally. This method returns the first matching
-// policy if multiple tables have policies with the same name. For precise lookup, use MaskingPolicyByTableColumn.
+// Note: Policy name is only unique per table, not globally. If multiple tables have policies
+// with the same name, this method returns (nil, false) to avoid returning an ambiguous result.
+// For precise lookup, use MaskingPolicyByTableColumn.
 func (is *infoSchema) MaskingPolicyByName(name ast.CIStr) (*model.MaskingPolicyInfo, bool) {
 	is.loadMaskingPoliciesIfNeeded()
 
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
+	var found *model.MaskingPolicyInfo
 	for _, colMap := range is.maskingPolicyTableColumnMap {
 		for _, policy := range colMap {
 			if policy.Name.L == name.L {
-				return policy, true
+				if found != nil {
+					return nil, false
+				}
+				found = policy
 			}
 		}
 	}
-	return nil, false
+	return found, found != nil
 }
 
 // MaskingPolicyByTableColumn returns masking policy metadata by table and column IDs with delayed loading.
@@ -740,6 +745,8 @@ func LoadMaskingPolicies(factory func() (pools.Resource, error)) ([]*model.Maski
 // loadMaskingPoliciesWithTableIDs loads masking policy metadata through mysql.tidb_masking_policy.
 // If tableIDs is empty, all policies are loaded.
 func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tableIDs []int64) ([]*model.MaskingPolicyInfo, error) {
+	const maxBatchSize = 1024
+
 	resource, err := factory()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -753,25 +760,48 @@ func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tab
 		return nil, errors.New("failed to cast resource to sessionctx.Context")
 	}
 
-	query, args := buildLoadMaskingPoliciesQuery(tableIDs)
-	internalCtx := kv.WithInternalSourceType(stdctx.Background(), kv.InternalTxnDDL)
-	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
-		internalCtx,
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		query,
-		args...,
-	)
-	if err != nil {
-		return nil, errors.Trace(err)
+	ids, hasFilter := normalizeMaskingPolicyTableIDs(tableIDs)
+	if hasFilter && len(ids) == 0 {
+		return nil, nil
 	}
 
-	policies := make([]*model.MaskingPolicyInfo, 0, len(rows))
-	for _, row := range rows {
-		policy, err := maskingPolicyInfoFromChunkRow(row)
+	loadBatch := func(batchIDs []int64, policies []*model.MaskingPolicyInfo) ([]*model.MaskingPolicyInfo, error) {
+		query, args := buildLoadMaskingPoliciesQuery(batchIDs)
+		internalCtx := kv.WithInternalSourceType(stdctx.Background(), kv.InternalTxnDDL)
+		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+			internalCtx,
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			query,
+			args...,
+		)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		policies = append(policies, policy)
+
+		for _, row := range rows {
+			policy, err := maskingPolicyInfoFromChunkRow(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			policies = append(policies, policy)
+		}
+		return policies, nil
+	}
+
+	policies := make([]*model.MaskingPolicyInfo, 0)
+	if !hasFilter {
+		policies, err = loadBatch(nil, policies)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		for start := 0; start < len(ids); start += maxBatchSize {
+			end := min(start+maxBatchSize, len(ids))
+			policies, err = loadBatch(ids[start:end], policies)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	slices.SortFunc(policies, func(a, b *model.MaskingPolicyInfo) int {
@@ -790,6 +820,30 @@ func buildLoadMaskingPoliciesQuery(tableIDs []int64) (string, []any) {
 	const baseQuery = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
 FROM mysql.tidb_masking_policy`
 
+	var sb strings.Builder
+	sb.WriteString(baseQuery)
+	args := make([]any, 0, len(tableIDs))
+	if len(tableIDs) > 0 {
+		sb.WriteString(" WHERE table_id IN (")
+		for i, id := range tableIDs {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("%?")
+			args = append(args, id)
+		}
+		sb.WriteString(")")
+	}
+	sb.WriteString(" ORDER BY table_id, column_id, policy_id")
+	return sb.String(), args
+}
+
+func normalizeMaskingPolicyTableIDs(tableIDs []int64) ([]int64, bool) {
+	hasFilter := len(tableIDs) > 0
+	if !hasFilter {
+		return nil, false
+	}
+
 	idSet := make(map[int64]struct{}, len(tableIDs))
 	ids := make([]int64, 0, len(tableIDs))
 	for _, id := range tableIDs {
@@ -803,22 +857,7 @@ FROM mysql.tidb_masking_policy`
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-
-	var sb strings.Builder
-	sb.WriteString(baseQuery)
-	args := make([]any, 0, len(ids))
-	if len(ids) > 0 {
-		sb.WriteString(" WHERE ")
-		for i, id := range ids {
-			if i > 0 {
-				sb.WriteString(" OR ")
-			}
-			sb.WriteString("table_id = %?")
-			args = append(args, id)
-		}
-	}
-	sb.WriteString(" ORDER BY table_id, column_id, policy_id")
-	return sb.String(), args
+	return ids, true
 }
 
 func maskingPolicyInfoFromChunkRow(row chunk.Row) (*model.MaskingPolicyInfo, error) {
