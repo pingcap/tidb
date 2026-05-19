@@ -413,7 +413,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	if len(stmt.RelevantOptVarNames) > 0 || len(stmt.RelevantOptFixIDs) > 0 {
 		hashLen++
 		hashLen += len(stmt.RelevantOptVarNames) * 128
-		hashLen += len(stmt.RelevantOptFixIDs) * 64
+		hashLen += relevantOptFixesHashLen(vars, stmt.RelevantOptFixIDs)
 	}
 
 	hash := make([]byte, 0, hashLen)
@@ -550,6 +550,18 @@ func collectRelevantOptVarsAndFixes(vars *variable.SessionVars) (varNames []stri
 	}
 	slices.Sort(fixIDs)
 	return
+}
+
+func relevantOptFixesHashLen(vars *variable.SessionVars, fixIDs []uint64) int {
+	hashLen := 0
+	for _, fixID := range fixIDs {
+		// codec.EncodeUint(fixID) + '=' + fixValue + ';'
+		hashLen += 8 + 2
+		if fixVal, ok := vars.OptimizerFixControl[fixID]; ok {
+			hashLen += len(fixVal)
+		}
+	}
+	return hashLen
 }
 
 func appendRelevantOptVarsAndFixes(hash []byte, vars *variable.SessionVars, stmt *PlanCacheStmt) []byte {
@@ -876,8 +888,10 @@ type PlanCacheStmt struct {
 	// BindingInfo caches normalization results for binding matching across executions.
 	BindingInfo bindinfo.BindingMatchInfo
 
+	// RelevantOptVarNames stores optimizer variables observed during prepared plan building.
 	RelevantOptVarNames []string
-	RelevantOptFixIDs   []uint64
+	// RelevantOptFixIDs stores optimizer fix-control IDs observed during prepared plan building.
+	RelevantOptFixIDs []uint64
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then

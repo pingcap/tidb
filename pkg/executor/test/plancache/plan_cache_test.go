@@ -896,9 +896,9 @@ func testPreparePlanCache4Function(t *testing.T, tk *testkit.TestKit) {
 
 func testPreparePlanCache4DifferentSystemVars(t *testing.T, tk *testkit.TestKit) {
 	t.Helper()
-	tk.MustExec("set @old_sql_select_limit := @@sql_select_limit, @old_tidb_enable_index_merge := @@tidb_enable_index_merge, @old_tidb_enable_collect_execution_info := @@tidb_enable_collect_execution_info, @old_tidb_enable_parallel_apply := @@tidb_enable_parallel_apply, @old_tidb_enable_plan_cache_for_subquery := @@tidb_enable_plan_cache_for_subquery, @old_tidb_opt_enable_semi_join_rewrite := @@tidb_opt_enable_semi_join_rewrite")
+	tk.MustExec("set @old_sql_select_limit := @@sql_select_limit, @old_tidb_enable_index_merge := @@tidb_enable_index_merge, @old_tidb_enable_collect_execution_info := @@tidb_enable_collect_execution_info, @old_tidb_enable_parallel_apply := @@tidb_enable_parallel_apply, @old_tidb_enable_plan_cache_for_subquery := @@tidb_enable_plan_cache_for_subquery, @old_tidb_opt_enable_semi_join_rewrite := @@tidb_opt_enable_semi_join_rewrite, @old_tidb_opt_always_keep_join_key := @@tidb_opt_always_keep_join_key")
 	defer func() {
-		tk.MustExec("set @@sql_select_limit = @old_sql_select_limit, @@tidb_enable_index_merge = @old_tidb_enable_index_merge, @@tidb_enable_collect_execution_info = @old_tidb_enable_collect_execution_info, @@tidb_enable_parallel_apply = @old_tidb_enable_parallel_apply, @@tidb_enable_plan_cache_for_subquery = @old_tidb_enable_plan_cache_for_subquery, @@tidb_opt_enable_semi_join_rewrite = @old_tidb_opt_enable_semi_join_rewrite")
+		tk.MustExec("set @@sql_select_limit = @old_sql_select_limit, @@tidb_enable_index_merge = @old_tidb_enable_index_merge, @@tidb_enable_collect_execution_info = @old_tidb_enable_collect_execution_info, @@tidb_enable_parallel_apply = @old_tidb_enable_parallel_apply, @@tidb_enable_plan_cache_for_subquery = @old_tidb_enable_plan_cache_for_subquery, @@tidb_opt_enable_semi_join_rewrite = @old_tidb_opt_enable_semi_join_rewrite, @@tidb_opt_always_keep_join_key = @old_tidb_opt_always_keep_join_key")
 	}()
 
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
@@ -974,6 +974,19 @@ func testPreparePlanCache4DifferentSystemVars(t *testing.T, tk *testkit.TestKit)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	semiJoinPlan := tk.MustQuery("explain format='brief' " + query)
 	require.Contains(t, fmt.Sprint(semiJoinPlan.Rows()), "semi join")
+
+	tk.MustExec("set @@tidb_opt_always_keep_join_key = 1")
+	tk.MustExec("drop table if exists join_key_a, join_key_b")
+	tk.MustExec("create table join_key_a (a int)")
+	tk.MustExec("create table join_key_b (a int)")
+	tk.MustExec("prepare stmt from 'select 1 from join_key_a left join join_key_b on join_key_a.a = join_key_b.a where join_key_a.a = 1'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_opt_always_keep_join_key = 0")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func testPreparePC4Binding(t *testing.T, tk *testkit.TestKit) {
