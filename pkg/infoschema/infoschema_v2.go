@@ -214,6 +214,33 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 	}
 }
 
+// GetPartitionedTableIDs returns all partitioned table IDs for the given schema version.
+// This is used to replace ListTablesWithSpecialAttribute(PartitionAttribute) in V2,
+// allowing partition tables to be loaded on-demand from the Sieve cache.
+// See design doc: explorer/partition-table-optimization-design.md
+func (isd *Data) GetPartitionedTableIDs(schemaVersion int64) []int64 {
+	var tidSet map[int64]bool
+	isd.pid2tid.Load().Ascend(func(item partitionItem) bool {
+		if item.schemaVersion == schemaVersion && !item.tomb {
+			if tidSet == nil {
+				tidSet = make(map[int64]bool)
+			}
+			tidSet[item.tableID] = true
+		}
+		return true
+	})
+
+	if tidSet == nil {
+		return nil
+	}
+
+	result := make([]int64, 0, len(tidSet))
+	for tid := range tidSet {
+		result = append(result, tid)
+	}
+	return result
+}
+
 func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 	isd.specials.LoadOrStore(di.Name.L, tables)
 }
@@ -1455,6 +1482,19 @@ var loadTableSF = &singleflight.Group{}
 func IsV2(is InfoSchema) (bool, *infoschemaV2) {
 	ret, ok := is.(*infoschemaV2)
 	return ok, ret
+}
+
+// GetPartitionedTableIDsV2 returns all partitioned table IDs for the given schema version.
+// This is used to replace ListTablesWithSpecialAttribute(PartitionAttribute) in V2,
+// allowing partition tables to be loaded on-demand from the Sieve cache.
+// Returns nil if not V2 or no partitioned tables found.
+// See design doc: explorer/partition-table-optimization-design.md
+func GetPartitionedTableIDsV2(is InfoSchema, schemaVersion int64) []int64 {
+	_, isv2 := IsV2(is)
+	if isv2 == nil {
+		return nil
+	}
+	return isv2.Data.GetPartitionedTableIDs(schemaVersion)
 }
 
 func applyTableUpdate(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {

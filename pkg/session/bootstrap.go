@@ -569,6 +569,8 @@ func oldPasswordUpgrade(pass string) (string, error) {
 }
 
 // rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
+// In V2, this is optimized by using GetPartitionedTableIDs to reduce the scan scope,
+// then loading PartitionInfo on-demand for LIST partitions only.
 func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 	type partitionExpr interface {
 		PartitionExpr() *tables.PartitionExpr
@@ -576,21 +578,46 @@ func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
-	for _, db := range dbs {
-		for _, t := range db.TableInfos {
-			pi := t.GetPartitionInfo()
-			if pi == nil || pi.Type != ast.PartitionTypeList {
-				continue
-			}
-			tbl, ok := is.TableByID(ctx, t.ID)
-			intest.Assert(ok, "table not found in infoschema")
-			pe := tbl.(partitionExpr).PartitionExpr()
-			for _, cp := range pe.ColPrunes {
-				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
-					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
-					break
+
+	// Get all partitioned table IDs using V2 API if available
+	var listPartitionTableIDs []int64
+	partitionedTableIDs := infoschema.GetPartitionedTableIDsV2(is, is.SchemaMetaVersion())
+	if len(partitionedTableIDs) > 0 {
+		// V2: Extract partitioned table IDs from pid2tid btree
+		for _, tid := range partitionedTableIDs {
+			// Load TableInfo on-demand to check partition type
+			if tblInfo, ok := is.TableInfoByID(tid); ok {
+				pi := tblInfo.GetPartitionInfo()
+				if pi != nil && pi.Type == ast.PartitionTypeList {
+					listPartitionTableIDs = append(listPartitionTableIDs, tid)
 				}
+			}
+		}
+	} else {
+		// V1 fallback: Use ListTablesWithSpecialAttribute
+		dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+		for _, db := range dbs {
+			for _, t := range db.TableInfos {
+				pi := t.GetPartitionInfo()
+				if pi != nil && pi.Type == ast.PartitionTypeList {
+					listPartitionTableIDs = append(listPartitionTableIDs, t.ID)
+				}
+			}
+		}
+	}
+
+	// Rebuild value maps for LIST partitions only
+	for _, tid := range listPartitionTableIDs {
+		tbl, ok := is.TableByID(ctx, tid)
+		intest.Assert(ok, "table not found in infoschema")
+		tblInfo := tbl.Meta()
+		pi := tblInfo.GetPartitionInfo()
+		intest.AssertNotNil(pi)
+		pe := tbl.(partitionExpr).PartitionExpr()
+		for _, cp := range pe.ColPrunes {
+			if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
+				logutil.BgLogger().Warn("build list column partition value map and sorted failed")
+				break
 			}
 		}
 	}

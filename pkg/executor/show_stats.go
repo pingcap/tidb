@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -44,20 +45,35 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
-	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+
+	// Build partitioned table ID map using V2 API for better memory efficiency
 	partitionedTables := make(map[int64]*model.TableInfo)
-	for _, result := range tableInfoResult {
-		for _, tbl := range result.TableInfos {
-			partitionedTables[tbl.ID] = tbl
+	is := do.InfoSchema()
+	partitionedTableIDs := infoschema.GetPartitionedTableIDsV2(is, is.SchemaMetaVersion())
+	if len(partitionedTableIDs) > 0 {
+		// V2: Load PartitionInfo on-demand from storage (or cache)
+		for _, tid := range partitionedTableIDs {
+			if tblInfo, ok := is.TableInfoByID(tid); ok {
+				partitionedTables[tid] = tblInfo
+			}
+		}
+	} else {
+		// V1 fallback: Use ListTablesWithSpecialAttribute
+		tableInfoResult := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+		for _, result := range tableInfoResult {
+			for _, tbl := range result.TableInfos {
+				partitionedTables[tbl.ID] = tbl
+			}
 		}
 	}
+
 	for _, db := range dbs {
 		if fieldFilter != "" && db.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
 			continue
 		}
-		tableNames, err := do.InfoSchema().SchemaSimpleTableInfos(ctx, db)
+		tableNames, err := is.SchemaSimpleTableInfos(ctx, db)
 		terror.Log(err)
 		for _, nameInfo := range tableNames {
 			tblID := nameInfo.ID
@@ -459,20 +475,35 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
-	tableInfoResult := do.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+
+	// Build partitioned table ID map using V2 API for better memory efficiency
 	partitionedTables := make(map[int64]*model.TableInfo)
-	for _, result := range tableInfoResult {
-		for _, tbl := range result.TableInfos {
-			partitionedTables[tbl.ID] = tbl
+	is := do.InfoSchema()
+	partitionedTableIDs := infoschema.GetPartitionedTableIDsV2(is, is.SchemaMetaVersion())
+	if len(partitionedTableIDs) > 0 {
+		// V2: Load PartitionInfo on-demand from storage (or cache)
+		for _, tid := range partitionedTableIDs {
+			if tblInfo, ok := is.TableInfoByID(tid); ok {
+				partitionedTables[tid] = tblInfo
+			}
+		}
+	} else {
+		// V1 fallback: Use ListTablesWithSpecialAttribute
+		tableInfoResult := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+		for _, result := range tableInfoResult {
+			for _, tbl := range result.TableInfos {
+				partitionedTables[tbl.ID] = tbl
+			}
 		}
 	}
+
 	for _, db := range dbs {
 		if fieldFilter != "" && db.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
 			continue
 		}
-		tableNames, err := do.InfoSchema().SchemaSimpleTableInfos(ctx, db)
+		tableNames, err := is.SchemaSimpleTableInfos(ctx, db)
 		terror.Log(err)
 		for _, nameInfo := range tableNames {
 			tblID := nameInfo.ID
