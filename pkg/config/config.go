@@ -232,6 +232,7 @@ type Config struct {
 	DXFResourceLimit           int                     `toml:"dxf-resource-limit" json:"dxf-resource-limit"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
 	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
+	Starter                    Starter                 `toml:"starter" json:"starter"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`

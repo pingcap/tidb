@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "doc.go",
         "keyspace.go",
+        "starter_labels.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/keyspace",
     visibility = ["//visibility:public"],

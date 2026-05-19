@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "tidb-server_lib",
-    srcs = ["main.go"],
+    srcs = [
+        "main.go",
+        "starter.go",
+    ],
     importpath = "github.com/pingcap/tidb/cmd/tidb-server",
     visibility = ["//visibility:private"],
     deps = [
@@ -70,8 +73,12 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/push",
+        "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/transaction",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@org_uber_go_automaxprocs//maxprocs",
         "@org_uber_go_zap//:zap",
     ],

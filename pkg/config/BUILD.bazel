@@ -6,6 +6,7 @@ go_library(
         "config.go",
         "config_util.go",
         "const.go",
+        "starter.go",
         "store.go",
         "tiflash.go",
     ],

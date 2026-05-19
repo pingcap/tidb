@@ -4349,6 +4349,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 
+	runStarterUpgrade(store)
+	runStarterBranchAmend(store)
+	runStarterRestoreAmend(store)
+
 	// initiate disttask framework components which need a store
 	scheduler.RegisterSchedulerFactory(
 		proto.ImportInto,
