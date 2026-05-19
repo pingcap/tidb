@@ -168,8 +168,22 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 		access = append(access, newCond)
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	ranges, _, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
-	return ranges, err
+	var remainedConds []expression.Expression
+	ranges, _, remainedConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
+	if err != nil {
+		return nil, err
+	}
+	// Preserve residual predicates returned by the detacher (e.g., CAST(... AS BINARY)
+	// comparisons whose index ranges only approximate the predicate). Merge them back
+	// into the access condition set so they are not lost on the correlated-access path
+	// and remain available to subsequent KV-range / filter logic as residual predicates.
+	if len(remainedConds) > 0 {
+		merged := make([]expression.Expression, 0, len(access)+len(remainedConds))
+		merged = append(merged, access...)
+		merged = append(merged, remainedConds...)
+		is.AccessCondition = merged
+	}
+	return ranges, nil
 }
 
 type indexReaderExecutorContext struct {
