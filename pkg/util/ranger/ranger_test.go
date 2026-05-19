@@ -2550,6 +2550,35 @@ func TestRangeExtractionForComplexORFilter(t *testing.T) {
 	require.Equal(t,
 		"[[1747663372,1748015999) [1748604343 -inf,1748604343 216627868) (1748604343 473050276 154835914,1748604343 473050276 +inf]]",
 		fmt.Sprintf("%v", res.Ranges))
+
+	tk.MustExec("insert into t1 values (0, 1748604343, 100)")
+	tk.MustExec("insert into t1 values (7, 1747900000, 999)")
+	tk.MustExec("insert into t1 values (154835914, 1748604343, 100)")
+	tk.MustExec("insert into t1 values (154835915, 1748604343, 473050276)")
+	residualFilterSQL := `select c1, c14, c25 from t1 use index(i12) where
+		c14 >= 1747663372 and c14 <= 1748705453 and
+		(c14 < 1748015999 or
+			(c14 = 1748604343 and c25 < 216627868 and c1 + 1 = 154835915) or
+			(c14 = 1748604343 and c25 = 473050276 and c1 > 154835914))`
+	residualSQL := residualFilterSQL + " order by c1, c25"
+	tk.MustQuery(residualSQL).Check(testkit.Rows(
+		"7 1747900000 999",
+		"154835914 1748604343 100",
+		"154835915 1748604343 473050276",
+	))
+
+	selection = getSelectionFromQuery(t, sctx, residualFilterSQL)
+	conds = make([]expression.Expression, len(selection.Conditions))
+	for i, cond := range selection.Conditions {
+		conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+	}
+	tbl = selection.Children()[0].(*logicalop.DataSource).TableInfo
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
+	res, err = ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
+	require.NoError(t, err)
+	filterConds := expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds)
+	require.Contains(t, filterConds, "eq(plus(test.t1.c1, 1), 154835915)")
+	require.Contains(t, filterConds, "or(lt(test.t1.c14, 1748015999)")
 }
 
 func TestIssue50051(t *testing.T) {

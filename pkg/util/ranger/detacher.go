@@ -290,16 +290,17 @@ func intersectCNFItemWithBaseRange(
 		bestCNFItemRes.rangeResult.AccessConds,
 	)
 	coveredConds := bestCNFItemRes.rangeResult.AccessConds
-	if bestCNFItemRes.offset >= 0 && bestCNFItemRes.offset < len(originalConditions) {
+	if len(bestCNFItemRes.rangeResult.RemainedConds) == 0 &&
+		bestCNFItemRes.offset >= 0 && bestCNFItemRes.offset < len(originalConditions) {
 		coveredConds = AppendConditionsIfNotExist(
 			sctx.ExprCtx.GetEvalCtx(),
 			coveredConds,
 			[]expression.Expression{originalConditions[bestCNFItemRes.offset]},
 		)
 	}
-	// The composite CNF item is now represented by the intersected range. Remove
-	// both its access conditions and original DNF condition from RemainedConds to
-	// avoid redundant filters while keeping exact semantics.
+	// The composite CNF item is fully represented by the intersected range only
+	// when its detach result has no residual filters. Otherwise, keep the
+	// original condition so the final plan still applies the exact predicate.
 	baseRes.RemainedConds = removeConditions(
 		sctx.ExprCtx.GetEvalCtx(),
 		baseRes.RemainedConds,
@@ -310,6 +311,11 @@ func intersectCNFItemWithBaseRange(
 	// covered composite item, append only the new conditions that are neither
 	// covered by that item nor already represented by the final access range.
 	remainedConds := removeConditions(sctx.ExprCtx.GetEvalCtx(), newConditions, coveredConds)
+	remainedConds = AppendConditionsIfNotExist(
+		sctx.ExprCtx.GetEvalCtx(),
+		remainedConds,
+		bestCNFItemRes.rangeResult.RemainedConds,
+	)
 	remainedConds = removeConditions(sctx.ExprCtx.GetEvalCtx(), remainedConds, baseRes.AccessConds)
 	baseRes.RemainedConds = AppendConditionsIfNotExist(sctx.ExprCtx.GetEvalCtx(), baseRes.RemainedConds, remainedConds)
 	return true, baseRes
