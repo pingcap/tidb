@@ -838,8 +838,9 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-	// For explain for connection, we can directly decode the binary plan to get the explain rows.
-	if e.BriefBinaryPlan != "" {
+	// EXPLAIN FOR CONNECTION should prefer the live runtime stats collector because
+	// BriefBinaryPlan is only a snapshot taken when ProcessInfo was recorded.
+	if e.BriefBinaryPlan != "" && e.RuntimeStatsColl == nil {
 		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
 			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
 		}
