@@ -4235,7 +4235,8 @@ func estimateIndexKVBytesPerRowForBasicPrediction(
 	indexCols []*expression.Column,
 ) float64 {
 	statsColl := statsTbl.HistColl.ID2UniqueID(indexCols)
-	keyBytes := rowsize.GetIndexAvgRowSize(sctx.GetSessionVars(), statsColl, indexCols, idxInfo.Unique)
+	sessVars := sctx.GetSessionVars() //nolint:forbidigo
+	keyBytes := rowsize.GetIndexAvgRowSize(sessVars, statsColl, indexCols, idxInfo.Unique)
 	valueBytes := estimateIndexValueBytesPerRowForPrediction(tblInfo, idxInfo, &statsTbl.HistColl)
 	return keyBytes + valueBytes
 }
@@ -4619,10 +4620,14 @@ func cloneDatumsForPrediction(datums []types.Datum) []types.Datum {
 }
 
 func predictionTimeLocation(sctx sessionctx.Context) *time.Location {
-	if sctx == nil || sctx.GetSessionVars() == nil {
+	if sctx == nil {
 		return time.UTC
 	}
-	loc := sctx.GetSessionVars().StmtCtx.TimeZone()
+	sessVars := sctx.GetSessionVars() //nolint:forbidigo
+	if sessVars == nil {
+		return time.UTC
+	}
+	loc := sessVars.StmtCtx.TimeZone()
 	if loc == nil {
 		return time.UTC
 	}

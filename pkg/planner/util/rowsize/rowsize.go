@@ -29,7 +29,12 @@ import (
 const pseudoColSize = 8.0
 
 // GetIndexAvgRowSize computes average row size for an index scan.
-func GetIndexAvgRowSize(sessionVars *variable.SessionVars, coll *statistics.HistColl, cols []*expression.Column, isUnique bool) (size float64) {
+func GetIndexAvgRowSize(
+	sessionVars *variable.SessionVars,
+	coll *statistics.HistColl,
+	cols []*expression.Column,
+	isUnique bool,
+) (size float64) {
 	size = GetAvgRowSize(sessionVars, coll, cols, true, true)
 	// tablePrefix(1) + tableID(8) + indexPrefix(2) + indexID(8)
 	// Because the cols for index scan always contain the handle, so we don't add the rowID here.
@@ -42,7 +47,13 @@ func GetIndexAvgRowSize(sessionVars *variable.SessionVars, coll *statistics.Hist
 }
 
 // GetTableAvgRowSize computes average row size for a table scan, excluding the index key-value pairs.
-func GetTableAvgRowSize(sessionVars *variable.SessionVars, coll *statistics.HistColl, cols []*expression.Column, storeType kv.StoreType, handleInCols bool) (size float64) {
+func GetTableAvgRowSize(
+	sessionVars *variable.SessionVars,
+	coll *statistics.HistColl,
+	cols []*expression.Column,
+	storeType kv.StoreType,
+	handleInCols bool,
+) (size float64) {
 	size = GetAvgRowSize(sessionVars, coll, cols, false, true)
 	switch storeType {
 	case kv.TiKV:
@@ -60,7 +71,13 @@ func GetTableAvgRowSize(sessionVars *variable.SessionVars, coll *statistics.Hist
 }
 
 // GetAvgRowSize computes average row size for given columns.
-func GetAvgRowSize(sessionVars *variable.SessionVars, coll *statistics.HistColl, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
+func GetAvgRowSize(
+	sessionVars *variable.SessionVars,
+	coll *statistics.HistColl,
+	cols []*expression.Column,
+	isEncodedKey bool,
+	isForScan bool,
+) (size float64) {
 	if coll.Pseudo || coll.ColNum() == 0 || coll.RealtimeCount == 0 {
 		size = pseudoColSize * float64(len(cols))
 	} else {
@@ -134,7 +151,8 @@ func AvgColSize(c *statistics.Column, count int64, isKey bool) float64 {
 	switch c.Histogram.Tp.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return 8 * notNullRatio
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
+		mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
 		if isKey {
 			return 8 * notNullRatio
 		}
