@@ -169,16 +169,14 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 	if err != nil {
 		return nil, err
 	}
-	// Preserve residual predicates returned by the detacher (e.g., CAST(... AS BINARY)
-	// comparisons whose index ranges only approximate the predicate). Merge them back
-	// into the access condition set so they are not lost on the correlated-access path
-	// and remain available to subsequent KV-range / filter logic as residual predicates.
-	if len(remainedConds) > 0 {
-		merged := make([]expression.Expression, 0, len(access)+len(remainedConds))
-		merged = append(merged, access...)
-		merged = append(merged, remainedConds...)
-		is.AccessCondition = merged
-	}
+	// The planner only admits an AccessCondition into the correlated-access path when the
+	// detacher can fully encode it as ranges (e.g. binary-collation residuals require a
+	// Constant operand, which is rejected before reaching here). If a future planner change
+	// lets residuals through, they would need to be applied as filters via PhysicalSelection
+	// or an equivalent re-applied predicate list -- PhysicalIndexScan.ToPB does not encode
+	// AccessCondition into the DAG request, so attaching them to is.AccessCondition would
+	// neither push them down nor evaluate them locally.
+	intest.Assert(len(remainedConds) == 0, "rebuildIndexRanges: detacher returned residuals on correlated-access path")
 	return ranges, nil
 }
 
