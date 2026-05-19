@@ -27,18 +27,18 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
-// BuildStream constructs the executor for a stream window physical plan. The
-// caller must ensure that the child already provides the required order.
-func BuildStream(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec.Executor) (exec.Executor, error) {
+// BuildOrdered constructs the executor for a window plan whose child already
+// provides the required partition/order property.
+func BuildOrdered(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec.Executor) (exec.Executor, error) {
 	windowExec, err := Build(sctx, v, childExec, true)
 	if err != nil {
 		return nil, err
 	}
 	pipelinedExec, ok := windowExec.(*PipelinedWindowExec)
 	if !ok {
-		return nil, errors.New("stream window must be built with pipelined window executor")
+		return nil, errors.New("ordered window must be built with pipelined window executor")
 	}
-	return &StreamWindowExec{PipelinedWindowExec: pipelinedExec}, nil
+	return &OrderedWindowExec{PipelinedWindowExec: pipelinedExec}, nil
 }
 
 // Build constructs the concrete executor for a window physical plan.

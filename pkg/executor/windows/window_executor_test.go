@@ -56,7 +56,7 @@ func TestWindowExecutorsBasic(t *testing.T) {
 	}
 }
 
-func TestBuildStreamWindowExec(t *testing.T) {
+func TestBuildOrderedWindowExec(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
@@ -83,20 +83,20 @@ func TestBuildStreamWindowExec(t *testing.T) {
 	windowSchema.Append(&expression.Column{Index: 2, UniqueID: 3, RetType: types.NewFieldType(mysql.TypeLonglong)})
 	windowPlan := physicalWindowForTest(sctx.GetPlanCtx(), windowSchema, colA, colB, windowFunc)
 
-	streamExec, err := windowexec.BuildStream(sctx, windowPlan, childExec)
+	orderedExec, err := windowexec.BuildOrdered(sctx, windowPlan, childExec)
 	require.NoError(t, err)
-	require.IsType(t, &windowexec.StreamWindowExec{}, streamExec)
+	require.IsType(t, &windowexec.OrderedWindowExec{}, orderedExec)
 
 	ctx := context.Background()
-	require.NoError(t, streamExec.Open(ctx))
+	require.NoError(t, orderedExec.Open(ctx))
 	defer func() {
-		require.NoError(t, streamExec.Close())
+		require.NoError(t, orderedExec.Close())
 	}()
 
-	chk := exec.NewFirstChunk(streamExec)
+	chk := exec.NewFirstChunk(orderedExec)
 	rows := make([]string, 0, 4)
 	for {
-		require.NoError(t, streamExec.Next(ctx, chk))
+		require.NoError(t, orderedExec.Next(ctx, chk))
 		if chk.NumRows() == 0 {
 			break
 		}

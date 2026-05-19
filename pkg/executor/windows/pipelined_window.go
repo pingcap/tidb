@@ -77,9 +77,9 @@ type PipelinedWindowExec struct {
 	initializedSlidingWindow bool
 }
 
-// StreamWindowExec executes windows whose input already satisfies the required
+// OrderedWindowExec executes windows whose input already satisfies the required
 // partition/order property.
-type StreamWindowExec struct {
+type OrderedWindowExec struct {
 	*PipelinedWindowExec
 }
 
