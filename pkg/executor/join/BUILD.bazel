@@ -81,6 +81,7 @@ go_test(
     srcs = [
         "anti_semi_join_probe_test.go",
         "bench_test.go",
+        "close_cancel_test.go",
         "concurrent_map_test.go",
         "hash_table_v1_test.go",
         "hash_table_v2_test.go",
