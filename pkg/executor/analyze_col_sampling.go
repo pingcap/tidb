@@ -217,9 +217,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	}()
 
-	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
-	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for range l {
+	totalLen := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
+	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
+	for range totalLen {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 
@@ -251,7 +251,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, l, id)
+			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, totalLen, id)
 		})
 	}
 	// Merge the result from collectors.
@@ -342,7 +342,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		return i.Handle.Compare(j.Handle)
 	})
 
-	totalLen := len(e.colsInfo) + len(e.indexes)
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
@@ -431,7 +430,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(ctx context.Context, ind
 			}
 		}
 	}()
-	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
+	tasks := e.buildSubIndexJobForSpecialIndex(ctx, indexInfos)
 	taskCh := make(chan *analyzeTask, len(tasks))
 	pendingJobs := make(map[uint64]*statistics.AnalyzeJob, len(tasks))
 	for _, task := range tasks {
@@ -533,11 +532,11 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(ctx context.Context, taskCh ch
 
 // buildSubIndexJobForSpecialIndex builds sub index pushed down task to calculate the NDV information for indexes containing virtual column.
 // This is because we cannot push the calculation of the virtual column down to the tikv side.
-func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model.IndexInfo) []*analyzeTask {
+func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(ctx context.Context, indexInfos []*model.IndexInfo) []*analyzeTask {
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
-	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), e.ctx)
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(ctx, e.ctx)
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,
@@ -602,7 +601,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	cancel context.CancelCauseFunc,
 	resultCh chan<- *samplingMergeResult,
 	taskCh <-chan []byte,
-	l int,
+	totalLen int,
 	index int,
 ) {
 	// Only close the resultCh in the first worker.
@@ -640,8 +639,8 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		}
 	})
 	// Keep one private collector per merge worker and flush it when taskCh is closed.
-	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for range l {
+	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
+	for range totalLen {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 	// Early-return paths need to release the worker-local collector explicitly.
@@ -671,7 +670,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			inflightRespSize = int64(colResp.Size())
 			e.memTracker.Consume(inflightRespSize)
 
-			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
 			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 
@@ -762,9 +761,9 @@ workLoop:
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
 				// 8 means the pointer size of sampleItems slice.
-				// types.EmptyDatumSize means the empty datum size we shallow copied from row.Columns to SampleItem.Value.
+				// statistics.EmptySampleItemSize already accounts for the embedded types.Datum in SampleItem.Value.
 				// The real underlying byte slice of Datum in row.Columns has already be accounted FromProto().
-				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + types.EmptyDatumSize)
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
 				e.memTracker.Consume(collectorMemSize)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
@@ -789,7 +788,7 @@ workLoop:
 						consumeBuffered(deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value:   &val,
+						Value:   val,
 						Ordinal: j,
 					})
 				}
@@ -810,8 +809,8 @@ workLoop:
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
-				// types.EmptyDatumSize: same meaning as above branch.
-				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8 + types.EmptyDatumSize)
+				// statistics.EmptySampleItemSize already accounts for the embedded types.Datum in SampleItem.Value.
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
 				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
 			indexSampleCollectLoop:
@@ -848,9 +847,8 @@ workLoop:
 						// here we need to account the remaining bytes.
 						consumeBuffered(int64(cap(b) - 8))
 					}
-					tmp := types.NewBytesDatum(b)
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value: &tmp,
+						Value: types.NewBytesDatum(b),
 					})
 				}
 				flushBuffered(&collectorMemSize)

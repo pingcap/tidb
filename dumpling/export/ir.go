@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 )
 
 // TableDataIR is table data intermediate representation.
@@ -36,7 +37,11 @@ type TableMeta interface {
 	AvgRowLength() uint64
 	HasImplicitRowID() bool
 	ChunkKey() string
+	ColumnInfos() []*ColumnInfo
 }
+
+// ColumnInfo is an alias of parquet column metadata used by dumpling.
+type ColumnInfo = parquetfile.ColumnInfo
 
 // SQLRowIter is the iterator on a collection of sql.Row.
 type SQLRowIter interface {
@@ -58,6 +63,7 @@ type RowReceiverStringer interface {
 type Stringer interface {
 	WriteToBuffer(*bytes.Buffer, bool)
 	WriteToBufferInCsv(*bytes.Buffer, bool, *csvOption)
+	GetRawBytes() []sql.RawBytes
 }
 
 // RowReceiver is an interface which represents sql types that support bind address for *sql.Rows

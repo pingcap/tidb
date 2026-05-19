@@ -423,7 +423,7 @@
       "pkg/lightning/mydump/": "ignore mydump code",
       "pkg/lightning/checkpoints/checkpoints.go": "ignore checkpoints code",
       "pkg/lightning/checkpoints/glue_checkpoint.go": "ignore glue_checkpoint code",
-      "pkg/lightning/backend/local/": "ignore local code",
+      "pkg/ingestor/ingestctrl/": "ignore local code",
       "pkg/lightning/backend/tidb/tidb.go": "ignore tidb code",
       "pkg/lightning/backend/tidb/tidb_test.go": "ignore tidb code",
       "pkg/lightning/checkpoints/checkpoints_test.go": "ignore checkpoints code",
@@ -435,7 +435,6 @@
       "lightning/pkg/importer": "ignore importer code",
       "br/cmd/tidb-lightning-ctl/main.go": "ignore main code",
       "br/pkg/stream/rewrite_meta_rawkv.go": "ignore rewrite_meta_rawkv code",
-      "lightning/pkg/web/": "ignore web code",
       "br/pkg/mock/": "ignore mock code",
       "br/pkg/aws/ebs.go": "ignore ebs code",
       "br/pkg/backup/": "ignore backup code",
@@ -658,7 +657,7 @@
       "pkg/util/chunk": "ignore util/chunk",
       "pkg/lightning/mydump/": "more than 50",
       "lightning/pkg/importer/": "more than 50",
-      "pkg/lightning/backend/local/": "more than 50",
+      "pkg/ingestor/ingestctrl/": "more than 50",
       "br/pkg/restore/": "more than 50",
       "br/pkg/storage/": "more than 50",
       "pkg/ddl/tests/partition/": "more than 50"
@@ -1066,8 +1065,8 @@
       "br/pkg/streamhelper/advancer_cliext.go": "github.com/golang/protobuf deprecated",
       "pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
       "pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
-      "pkg/lightning/backend/local/local.go": "grpc Compressor/Decompressor is deprecated",
-      "pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated",
+      "pkg/ingestor/ingestctrl/local.go": "grpc Compressor/Decompressor is deprecated",
+      "pkg/ingestor/ingestctrl/compress.go": "grpc Compressor/Decompressor is deprecated",
       "pkg/domain/infosync/resource_manager_client.go": "github.com/golang/protobuf deprecated"
     },
     "only_files": {

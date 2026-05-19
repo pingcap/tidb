@@ -103,6 +103,24 @@ func TestWriteInsert(t *testing.T) {
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, ReadGauge(m.finishedRowsGauge), float64(len(data)))
 	require.Equal(t, ReadGauge(m.finishedSizeGauge), float64(len(expected)))
+
+	t.Run("parquet tracks finished size gauge", func(t *testing.T) {
+		parquetData := [][]driver.Value{
+			{"1"},
+			{"2"},
+			{"3"},
+		}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
+		parquetWriter := NewBufferWriter()
+		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
+
+		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
+		require.NoError(t, err)
+		require.Equal(t, uint64(len(parquetData)), n)
+		require.Equal(t, float64(len(parquetData)), ReadGauge(parquetMetrics.finishedRowsGauge))
+		require.Greater(t, ReadGauge(parquetMetrics.finishedSizeGauge), float64(0))
+	})
 }
 
 func TestWriteInsertReturnsError(t *testing.T) {
@@ -141,6 +159,26 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	// error occurred, should revert pointer to zero
 	require.Equal(t, ReadGauge(m.finishedRowsGauge), float64(0))
 	require.Equal(t, ReadGauge(m.finishedSizeGauge), float64(0))
+
+	t.Run("parquet reverts finished metrics on error", func(t *testing.T) {
+		parquetData := [][]driver.Value{
+			{"1"},
+			{"2"},
+			{"3"},
+		}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetRowErr := errors.New("mock parquet row error")
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
+		parquetTableIR.rowErr = parquetRowErr
+		parquetWriter := NewBufferWriter()
+		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
+
+		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
+		require.ErrorIs(t, err, parquetRowErr)
+		require.Equal(t, uint64(len(parquetData)-1), n)
+		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedRowsGauge))
+		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedSizeGauge))
+	})
 }
 
 func TestWriteInsertInCsv(t *testing.T) {

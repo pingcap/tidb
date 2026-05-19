@@ -256,6 +256,11 @@ else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
+.PHONY: server_failpoint
+server_failpoint: failpoint-enable ## Build TiDB server binary with failpoints enabled
+	$(SERVER_BUILD_CMD) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+
 .PHONY: init-submodule
 init-submodule:
 	git submodule init && git submodule update --force
@@ -384,10 +389,6 @@ tools/bin/golangci-lint:
 	$(eval GOLANGCI_LINT_VERSION := $(shell grep 'github.com/golangci/golangci-lint/v2' go.mod | awk '{print $$2}'))
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
-.PHONY: tools/bin/vfsgendev
-tools/bin/vfsgendev:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
-
 .PHONY: tools/bin/gotestsum
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
@@ -447,10 +448,6 @@ bench-daily:
 .PHONY: build_tools
 build_tools: build_br build_lightning build_lightning-ctl ## Build all BR and Lightning tools
 
-.PHONY: lightning_web
-lightning_web: ## Build Lightning web UI
-	@cd lightning/web && npm install && npm run build
-
 .PHONY: build_br
 build_br: ## Build BR (backup and restore) tool 
 ifeq ($(shell echo $(GOOS) | tr A-Z a-z),darwin)
@@ -460,10 +457,6 @@ else
 	@echo "Detected non-macOS ($(ARCH)), disabling CGO"
 	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 endif
-
-.PHONY: build_lightning_for_web
-build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 .PHONY: build_lightning
 build_lightning: ## Build TiDB Lightning data import tool
@@ -563,7 +556,7 @@ mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/common ChunkFlushStatus > br/pkg/mock/common.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
-	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
+	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/ingestor/ingestctrl DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/dxf/framework/mock/task_executor_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/dxf/framework/mock/scheduler_mock.go
@@ -616,9 +609,8 @@ br_bins:
 	@rm tmp_parser.go
 
 .PHONY: data_parsers
-data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
+data_parsers: pkg/lightning/mydump/parser_generated.go
 	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" lightning/pkg/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
-	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
 
 .PHONY: build_dumpling
 build_dumpling: ## Build Dumpling data export tool
