@@ -7168,6 +7168,7 @@ def go_deps():
         build_tags = ["intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sha256 = "32b77c97e7afb37ce967a63381eaf866564dd8229364a5004c92654e9037f9f0",
         strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260420090212-754a707563bd",
         urls = [
@@ -7175,6 +7176,15 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260420090212-754a707563bd.zip",
             "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260420090212-754a707563bd.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260420090212-754a707563bd.zip",
+=======
+        sha256 = "c141a99a743835252241ccc913861f671f4aec654e4c5c1920ab1bdf4c3586b7",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260511022933-fb7ee09992a7",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260511022933-fb7ee09992a7.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260511022933-fb7ee09992a7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260511022933-fb7ee09992a7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260511022933-fb7ee09992a7.zip",
+>>>>>>> caf87e71cc1 (executor: log reason when TiFlash RPC context is unavailable (#68264))
         ],
     )
     go_repository(
