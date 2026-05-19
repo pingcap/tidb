@@ -802,9 +802,6 @@ func getTargetSchemaName(sctx sessionctx.Context, dbName string, is infoschema.I
 	if len(dbName) == 0 {
 		return ""
 	}
-	if is == nil {
-		is = domain.GetDomain(sctx).InfoSchema()
-	}
 	if db, ok := is.SchemaByName(ast.NewCIStr(dbName)); ok {
 		return db.Name.O
 	}
@@ -818,9 +815,6 @@ func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbNam
 		if len(dbName) == 0 {
 			return "", nil, errors.New("miss DB name for grant privilege")
 		}
-	}
-	if is == nil {
-		is = domain.GetDomain(sctx).InfoSchema()
 	}
 	dbName = getTargetSchemaName(sctx, dbName, is)
 	name := ast.NewCIStr(tableName)
