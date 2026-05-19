@@ -435,6 +435,8 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().SetAllowPreferRangeScan(state.varValues[i].(bool))
 		case vardef.TiDBOptEnableNoDecorrelateInSelect:
 			sctx.GetSessionVars().EnableNoDecorrelateInSelect = state.varValues[i].(bool)
+		case vardef.TiDBOptAlwaysKeepJoinKey:
+			sctx.GetSessionVars().AlwaysKeepJoinKey = state.varValues[i].(bool)
 		case vardef.TiDBOptEnableSemiJoinRewrite:
 			sctx.GetSessionVars().EnableSemiJoinRewrite = state.varValues[i].(bool)
 		case vardef.TiDBOptSelectivityFactor:
