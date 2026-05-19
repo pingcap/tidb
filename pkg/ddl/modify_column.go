@@ -2176,8 +2176,18 @@ func analyzeMVColumnUsage(sel *ast.SelectStmt, colNameL string) (*mvColumnUsage,
 	if sel == nil || sel.Fields == nil {
 		return usage, nil
 	}
+	directOutputSet := make(map[int]struct{})
+	aliasToOffset := make(map[string]int)
 	// SELECT list: only allow direct column reference as the root expression.
 	for i, f := range sel.Fields.Fields {
+		if f == nil {
+			continue
+		}
+		if f.AsName.L != "" {
+			if _, ok := aliasToOffset[f.AsName.L]; !ok {
+				aliasToOffset[f.AsName.L] = i
+			}
+		}
 		if f.WildCard != nil {
 			usage.unsupportedReason = "SELECT *"
 			return usage, nil
@@ -2187,6 +2197,7 @@ func analyzeMVColumnUsage(sel *ast.SelectStmt, colNameL string) (*mvColumnUsage,
 		}
 		if colExpr, ok := f.Expr.(*ast.ColumnNameExpr); ok && colExpr.Name != nil && colExpr.Name.Name.L == colNameL {
 			usage.directOutputOffsets = append(usage.directOutputOffsets, i)
+			directOutputSet[i] = struct{}{}
 			continue
 		}
 		if exprContainsColumnRef(f.Expr, colNameL) {
@@ -2219,9 +2230,27 @@ func analyzeMVColumnUsage(sel *ast.SelectStmt, colNameL string) (*mvColumnUsage,
 			if item == nil || item.Expr == nil {
 				continue
 			}
+			// GROUP BY ordinal (e.g. GROUP BY 1).
+			if expr, ok := item.Expr.(*ast.PositionExpr); ok && expr.N > 0 {
+				off := expr.N - 1
+				if _, ok := directOutputSet[off]; ok {
+					usage.isGroupKey = true
+					continue
+				}
+			}
 			if colExpr, ok := item.Expr.(*ast.ColumnNameExpr); ok && colExpr.Name != nil && colExpr.Name.Name.L == colNameL {
 				usage.isGroupKey = true
 				continue
+			}
+			// GROUP BY output alias (e.g. GROUP BY k where SELECT a AS k).
+			if colExpr, ok := item.Expr.(*ast.ColumnNameExpr); ok && colExpr.Name != nil &&
+				colExpr.Name.Schema.L == "" && colExpr.Name.Table.L == "" {
+				if off, ok := aliasToOffset[colExpr.Name.Name.L]; ok {
+					if _, ok := directOutputSet[off]; ok {
+						usage.isGroupKey = true
+						continue
+					}
+				}
 			}
 			if exprContainsColumnRef(item.Expr, colNameL) {
 				usage.unsupportedReason = "GROUP BY expressions"
