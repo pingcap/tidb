@@ -43,6 +43,7 @@ replace (
 	github.com/tikv/pd/client => github.com/YuhaoZhang00/pd/client v0.0.0-20260514081800-e393a2130e70
 )
 `), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tidbDir, "go.sum"), []byte("github.com/YuhaoZhang00/client-go/v2 v2.0.8 h1:test\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "go.mod"), []byte(`
 module github.com/pingcap/enterprise-plugin/whitelist
 
@@ -52,6 +53,7 @@ require github.com/pingcap/tidb v0.0.0
 
 replace github.com/pingcap/tidb => ../../tidb
 `), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "go.sum"), []byte("github.com/pingcap/log v1.1.1 h1:test\n"), 0o644))
 
 	modFile, cleanup, err := preparePluginModFile(pkgDir, tidbDir)
 	require.NoError(t, err)
@@ -67,4 +69,9 @@ replace github.com/pingcap/tidb => ../../tidb
 	require.Contains(t, content, "github.com/tikv/pd/client => github.com/YuhaoZhang00/pd/client v0.0.0-20260514081800-e393a2130e70")
 	require.Contains(t, content, "github.com/pingcap/tidb/pkg/parser => "+filepath.Join(tidbDir, "pkg", "parser"))
 	require.False(t, strings.Contains(content, "github.com/pingcap/tidb => ../tidb"))
+
+	sumContent, err := os.ReadFile(strings.TrimSuffix(modFile, ".mod") + ".sum")
+	require.NoError(t, err)
+	require.Contains(t, string(sumContent), "github.com/pingcap/log v1.1.1 h1:test\n")
+	require.Contains(t, string(sumContent), "github.com/YuhaoZhang00/client-go/v2 v2.0.8 h1:test\n")
 }
