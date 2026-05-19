@@ -60,6 +60,14 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
+	// Fast-path: a full-range scan over a non-MV index returns exactly RealtimeCount
+	// regardless of histogram availability, so we can short-circuit before
+	// IndexStatsIsInvalid — which would otherwise queue an unnecessary async
+	// histogram load whenever the index stats are not fully loaded.
+	if idx != nil && canSkipIndexEstimation(idx, indexRanges) {
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
+		return float64(realtimeCnt), nil
+	}
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
@@ -78,9 +86,6 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 			"TopN total count", idx.TopN.TotalCount(),
 			"Increase Factor", idx.GetIncreaseFactor(realtimeCnt),
 		)
-	}
-	if canSkipIndexEstimation(idx, indexRanges) {
-		return float64(realtimeCnt), nil
 	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
