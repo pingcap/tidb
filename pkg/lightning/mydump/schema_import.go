@@ -240,13 +240,14 @@ func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPla
 	p.SetSQLMode(si.sqlMode)
 
 	for _, node := range plan.viewPlan.ordered {
-		if existingViews.has(node.key) {
+		normalizedKey := normalizeTableName(node.key.Schema, node.key.Name)
+		if existingViews.has(normalizedKey) {
 			si.logger.Info("view already exists in downstream, skip",
 				zap.String("db", node.key.Schema),
 				zap.String("view-name", node.key.Name))
 			continue
 		}
-		if existingTables.has(node.key) {
+		if existingTables.has(normalizedKey) {
 			return common.ErrCreateSchema.GenWithStack("downstream table already exists for view '%s'", node.key.String())
 		}
 		if err := si.runCommonJob(ctx, p, &schemaJob{

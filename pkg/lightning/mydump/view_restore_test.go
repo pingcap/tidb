@@ -103,6 +103,22 @@ JOIN db2.base_table ON base_table.id = src.id;
 	)
 }
 
+func TestParseViewSchemaSQLIgnoresCTEDependencies(t *testing.T) {
+	p := parser.New()
+	currentView := filter.Table{Schema: "test", Name: "v_cte"}
+	sql := `
+CREATE VIEW v_cte AS
+WITH cte AS (
+	SELECT id FROM t1
+)
+SELECT cte.id FROM cte;
+`
+
+	parsed, err := parseViewSchemaSQL(p, currentView, sql)
+	require.NoError(t, err)
+	require.Equal(t, []filter.Table{{Schema: "test", Name: "t1"}}, parsed.deps)
+}
+
 func TestBuildViewRestorePlan(t *testing.T) {
 	v1 := filter.Table{Schema: "test", Name: "v1"}
 	v2 := filter.Table{Schema: "test", Name: "v2"}
@@ -169,6 +185,31 @@ func TestBuildViewRestorePlanSupportsMultipleAndCrossSchemaViewDeps(t *testing.T
 	require.Equal(t, 2, plan.nodes[db2v2].indegree)
 	require.Equal(t, []filter.Table{db2v2}, plan.nodes[db1v1].dependents)
 	require.Equal(t, []filter.Table{db2v2}, plan.nodes[db2v3].dependents)
+}
+
+func TestBuildViewRestorePlanNormalizesCaseInsensitiveDeps(t *testing.T) {
+	v1 := filter.Table{Schema: "test", Name: "v1"}
+	v2 := filter.Table{Schema: "test", Name: "V2"}
+	dumpTables := make(tableNameSet)
+	dumpTables.add(filter.Table{Schema: "test", Name: "t"})
+
+	plan, err := buildViewRestorePlan([]*parsedViewSchema{
+		{
+			key:       v1,
+			deps:      []filter.Table{{Schema: "test", Name: "t"}},
+			createSQL: "CREATE VIEW `test`.`v1` AS SELECT `id` FROM `test`.`t`;",
+		},
+		{
+			key:       v2,
+			deps:      []filter.Table{{Schema: "Test", Name: "V1"}},
+			createSQL: "CREATE VIEW `test`.`V2` AS SELECT `id` FROM `test`.`v1`;",
+		},
+	}, dumpTables)
+	require.NoError(t, err)
+	require.Len(t, plan.ordered, 2)
+	require.Equal(t, v1, plan.ordered[0].key)
+	require.Equal(t, v2, plan.ordered[1].key)
+	require.Empty(t, plan.nodes[normalizeTableName(v2.Schema, v2.Name)].externalDeps)
 }
 
 func TestBuildViewRestorePlanDetectsCycle(t *testing.T) {

@@ -36,14 +36,14 @@ func (s tableNameSet) add(tbl filter.Table) {
 	if s == nil {
 		return
 	}
-	s[tbl] = struct{}{}
+	s[normalizeTableName(tbl.Schema, tbl.Name)] = struct{}{}
 }
 
 func (s tableNameSet) has(tbl filter.Table) bool {
 	if s == nil {
 		return false
 	}
-	_, ok := s[tbl]
+	_, ok := s[normalizeTableName(tbl.Schema, tbl.Name)]
 	return ok
 }
 
@@ -85,24 +85,75 @@ type SchemaImportPlan struct {
 type viewDependencyCollector struct {
 	currentSchema string
 	deps          tableNameSet
+	cteNameScopes []map[string]struct{}
+}
+
+func (c *viewDependencyCollector) pushCTEScope() {
+	c.cteNameScopes = append(c.cteNameScopes, make(map[string]struct{}))
+}
+
+func (c *viewDependencyCollector) popCTEScope() {
+	if len(c.cteNameScopes) == 0 {
+		return
+	}
+	c.cteNameScopes = c.cteNameScopes[:len(c.cteNameScopes)-1]
+}
+
+func (c *viewDependencyCollector) recordCTEName(name string) {
+	if len(c.cteNameScopes) == 0 {
+		return
+	}
+	c.cteNameScopes[len(c.cteNameScopes)-1][strings.ToLower(name)] = struct{}{}
+}
+
+func (c *viewDependencyCollector) isCTEName(name string) bool {
+	normalized := strings.ToLower(name)
+	for i := len(c.cteNameScopes) - 1; i >= 0; i-- {
+		if _, ok := c.cteNameScopes[i][normalized]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
-	tbl, ok := n.(*ast.TableName)
-	if !ok {
+	switch node := n.(type) {
+	case *ast.SelectStmt:
+		if node.With != nil {
+			c.pushCTEScope()
+		}
+		return n, false
+	case *ast.CommonTableExpression:
+		if node.IsRecursive {
+			c.recordCTEName(node.Name.O)
+		}
+		return n, false
+	case *ast.TableName:
+		if node.Schema.O == "" && c.isCTEName(node.Name.O) {
+			return n, true
+		}
+
+		schema := node.Schema.O
+		if schema == "" {
+			// Dumpling may omit the schema for same-database references.
+			schema = c.currentSchema
+		}
+		c.deps.add(filterTableName(schema, node.Name.O))
+		return n, true
+	default:
 		return n, false
 	}
-
-	schema := tbl.Schema.O
-	if schema == "" {
-		// Dumpling may omit the schema for same-database references.
-		schema = c.currentSchema
-	}
-	c.deps.add(filter.Table{Schema: schema, Name: tbl.Name.O})
-	return n, true
 }
 
-func (*viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
+func (c *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
+	switch node := n.(type) {
+	case *ast.CommonTableExpression:
+		c.recordCTEName(node.Name.O)
+	case *ast.SelectStmt:
+		if node.With != nil {
+			c.popCTEScope()
+		}
+	}
 	return n, true
 }
 
@@ -235,10 +286,11 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 	}
 
 	for _, parsed := range parsedViews {
-		if _, exists := plan.nodes[parsed.key]; exists {
+		normalizedKey := normalizeTableName(parsed.key.Schema, parsed.key.Name)
+		if _, exists := plan.nodes[normalizedKey]; exists {
 			return nil, errors.Errorf("duplicate view definition for %s", parsed.key.String())
 		}
-		plan.nodes[parsed.key] = &viewNode{
+		plan.nodes[normalizedKey] = &viewNode{
 			key:       parsed.key,
 			deps:      append([]filter.Table(nil), parsed.deps...),
 			createSQL: parsed.createSQL,
@@ -246,19 +298,21 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 	}
 
 	for _, node := range plan.nodes {
+		nodeKey := normalizeTableName(node.key.Schema, node.key.Name)
 		for _, dep := range node.deps {
-			if dep == node.key {
+			normalizedDep := normalizeTableName(dep.Schema, dep.Name)
+			if normalizedDep == nodeKey {
 				return nil, errors.Errorf("cyclic view dependency detected for %s", node.key.String())
 			}
-			if depNode, ok := plan.nodes[dep]; ok {
+			if depNode, ok := plan.nodes[normalizedDep]; ok {
 				node.indegree++
-				depNode.dependents = append(depNode.dependents, node.key)
+				depNode.dependents = append(depNode.dependents, nodeKey)
 				continue
 			}
-			if dumpTables.has(dep) {
+			if dumpTables.has(normalizedDep) {
 				continue
 			}
-			node.externalDeps = append(node.externalDeps, dep)
+			node.externalDeps = append(node.externalDeps, normalizedDep)
 		}
 		sort.Slice(node.dependents, func(i, j int) bool {
 			if node.dependents[i].Schema != node.dependents[j].Schema {

@@ -285,6 +285,30 @@ func TestSchemaImporter(t *testing.T) {
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV2)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameValidV1)))
 	})
+
+	t.Run("view: skip existing view with different case", func(t *testing.T) {
+		fileNameV2 := "test03.V2-schema-view.sql"
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV2), []byte("create view V2 as select * from t;"), 0o644))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test03", Tables: []*MDTableMeta{{DB: "test03", Name: "t"}}},
+			{Name: "test03", Views: []*MDTableMeta{
+				{DB: "test03", Name: "V2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV2}}},
+			}},
+		}
+
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test03"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test03`.`t`").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t", "CREATE TABLE `t` (a int);"))
+		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test03' AND TABLE_NAME = 't'").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}).AddRow("BASE TABLE"))
+		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test03' AND TABLE_NAME = 'V2'").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}).AddRow("VIEW"))
+
+		require.NoError(t, importer.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV2)))
+	})
 }
 
 func TestNewSchemaImportPlan(t *testing.T) {
