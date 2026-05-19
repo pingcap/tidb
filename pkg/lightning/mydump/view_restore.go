@@ -74,6 +74,19 @@ type viewRestorePlan struct {
 	ordered []*viewNode
 }
 
+func lessTableName(left, right filter.Table) bool {
+	if left.Schema != right.Schema {
+		return left.Schema < right.Schema
+	}
+	return left.Name < right.Name
+}
+
+func sortTableNames(tables []filter.Table) {
+	sort.Slice(tables, func(i, j int) bool {
+		return lessTableName(tables[i], tables[j])
+	})
+}
+
 // SchemaImportPlan describes the schema objects that should be restored from a dump.
 type SchemaImportPlan struct {
 	dbMetas  []*MDDatabaseMeta
@@ -262,12 +275,7 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 	for dep := range collector.deps {
 		deps = append(deps, dep)
 	}
-	sort.Slice(deps, func(i, j int) bool {
-		if deps[i].Schema != deps[j].Schema {
-			return deps[i].Schema < deps[j].Schema
-		}
-		return deps[i].Name < deps[j].Name
-	})
+	sortTableNames(deps)
 
 	return &parsedViewSchema{
 		key:       currentView,
@@ -314,18 +322,8 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 			}
 			node.externalDeps = append(node.externalDeps, normalizedDep)
 		}
-		sort.Slice(node.dependents, func(i, j int) bool {
-			if node.dependents[i].Schema != node.dependents[j].Schema {
-				return node.dependents[i].Schema < node.dependents[j].Schema
-			}
-			return node.dependents[i].Name < node.dependents[j].Name
-		})
-		sort.Slice(node.externalDeps, func(i, j int) bool {
-			if node.externalDeps[i].Schema != node.externalDeps[j].Schema {
-				return node.externalDeps[i].Schema < node.externalDeps[j].Schema
-			}
-			return node.externalDeps[i].Name < node.externalDeps[j].Name
-		})
+		sortTableNames(node.dependents)
+		sortTableNames(node.externalDeps)
 	}
 
 	// Kahn's algorithm with a deterministic ready queue keeps view creation
@@ -338,12 +336,7 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 			ready = append(ready, key)
 		}
 	}
-	sort.Slice(ready, func(i, j int) bool {
-		if ready[i].Schema != ready[j].Schema {
-			return ready[i].Schema < ready[j].Schema
-		}
-		return ready[i].Name < ready[j].Name
-	})
+	sortTableNames(ready)
 
 	for len(ready) > 0 {
 		key := ready[0]
@@ -357,12 +350,7 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 				ready = append(ready, dependent)
 			}
 		}
-		sort.Slice(ready, func(i, j int) bool {
-			if ready[i].Schema != ready[j].Schema {
-				return ready[i].Schema < ready[j].Schema
-			}
-			return ready[i].Name < ready[j].Name
-		})
+		sortTableNames(ready)
 	}
 
 	if len(plan.ordered) != len(plan.nodes) {

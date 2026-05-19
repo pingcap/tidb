@@ -119,6 +119,18 @@ SELECT cte.id FROM cte;
 	require.Equal(t, []filter.Table{{Schema: "test", Name: "t1"}}, parsed.deps)
 }
 
+func TestParseViewSchemaSQLRejectsMultipleCreateStatements(t *testing.T) {
+	p := parser.New()
+	currentView := filter.Table{Schema: "test", Name: "v_multi"}
+	sql := `
+CREATE VIEW v_multi AS SELECT 1;
+CREATE VIEW v_multi AS SELECT 2;
+`
+
+	_, err := parseViewSchemaSQL(p, currentView, sql)
+	require.ErrorContains(t, err, "multiple create view statements found")
+}
+
 func TestBuildViewRestorePlan(t *testing.T) {
 	v1 := filter.Table{Schema: "test", Name: "v1"}
 	v2 := filter.Table{Schema: "test", Name: "v2"}
@@ -210,6 +222,32 @@ func TestBuildViewRestorePlanNormalizesCaseInsensitiveDeps(t *testing.T) {
 	require.Equal(t, v1, plan.ordered[0].key)
 	require.Equal(t, v2, plan.ordered[1].key)
 	require.Empty(t, plan.nodes[normalizeTableName(v2.Schema, v2.Name)].externalDeps)
+}
+
+func TestBuildViewRestorePlanRejectsCaseInsensitiveDuplicates(t *testing.T) {
+	_, err := buildViewRestorePlan([]*parsedViewSchema{
+		{
+			key:       filter.Table{Schema: "test", Name: "v1"},
+			createSQL: "CREATE VIEW `test`.`v1` AS SELECT 1;",
+		},
+		{
+			key:       filter.Table{Schema: "Test", Name: "V1"},
+			createSQL: "CREATE VIEW `test`.`V1` AS SELECT 1;",
+		},
+	}, nil)
+	require.ErrorContains(t, err, "duplicate view definition")
+}
+
+func TestValidateViewRestorePlanRejectsMissingExternalDependency(t *testing.T) {
+	plan := &viewRestorePlan{
+		ordered: []*viewNode{{
+			key:          filter.Table{Schema: "test", Name: "v1"},
+			externalDeps: []filter.Table{{Schema: "test", Name: "missing_tbl"}},
+		}},
+	}
+
+	err := validateViewRestorePlan(plan, make(tableNameSet))
+	require.ErrorContains(t, err, "missing dependency")
 }
 
 func TestBuildViewRestorePlanDetectsCycle(t *testing.T) {
