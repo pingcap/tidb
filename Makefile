@@ -163,6 +163,12 @@ integrationtest: server_check
 	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
 	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage.dat
 
+.PHONY: loadablefunctest
+loadablefunctest: server_check
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@cd tests/loadablefunc && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
+	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage-loadablefunc.dat
+
 .PHONY: ddltest
 ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
