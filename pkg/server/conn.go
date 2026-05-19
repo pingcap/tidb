@@ -2054,7 +2054,7 @@ func (cc *clientConn) setSQLKillerConnectionAlive() func() {
 		}
 		return true
 	}
-	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
+	cc.ctx.GetSessionVars().SQLKiller.SetConnectionAliveFunc(fn)
 	stopMonitor := make(chan struct{})
 	doneMonitor := make(chan struct{})
 	go cc.monitorConnectionAlive(fn, stopMonitor, doneMonitor)
@@ -2064,7 +2064,7 @@ func (cc *clientConn) setSQLKillerConnectionAlive() func() {
 		clearOnce.Do(func() {
 			close(stopMonitor)
 			<-doneMonitor
-			cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
+			cc.ctx.GetSessionVars().SQLKiller.SetConnectionAliveFunc(nil)
 		})
 	}
 }
