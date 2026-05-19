@@ -15,6 +15,7 @@
 package windows
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
@@ -25,6 +26,44 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
+
+// BuildStream constructs the executor for a stream window physical plan.
+// The caller is responsible for ensuring the child already provides the
+// required partition/order property.
+func BuildStream(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec.Executor) (exec.Executor, error) {
+	windowExec, err := Build(sctx, v, childExec, true)
+	if err != nil {
+		return nil, err
+	}
+	pipelinedExec, ok := windowExec.(*PipelinedWindowExec)
+	if !ok {
+		return nil, errors.New("stream window must be built with pipelined window executor")
+	}
+	return &StreamWindowExec{PipelinedWindowExec: pipelinedExec}, nil
+}
+
+// BuildPartitionTopN constructs the executor-side pruning helper for
+// row_number stream windows with a per-partition upper bound.
+func BuildPartitionTopN(
+	sctx sessionctx.Context,
+	schema *expression.Schema,
+	id int,
+	childExec exec.Executor,
+	partitionBy []expression.Expression,
+	resultColIdx int,
+	limitCount uint64,
+) *PartitionTopNWindowExec {
+	return &PartitionTopNWindowExec{
+		BaseExecutor: exec.NewBaseExecutor(sctx, schema, id, childExec),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(
+			sctx.GetExprCtx().GetEvalCtx(),
+			sctx.GetSessionVars().EnableVectorizedExpression,
+			partitionBy,
+		),
+		limitCount:   limitCount,
+		resultColIdx: resultColIdx,
+	}
+}
 
 // Build constructs the concrete executor for a window physical plan.
 func Build(sctx sessionctx.Context, v *physicalop.PhysicalWindow, childExec exec.Executor, forcePipelined bool) (exec.Executor, error) {
