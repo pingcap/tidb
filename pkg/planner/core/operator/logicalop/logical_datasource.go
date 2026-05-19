@@ -1073,14 +1073,6 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	index *model.IndexInfo,
 	matchedCondIdxes []int,
 ) error {
-	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI Index currently can not be cached")
-	ticiPath, err := ds.keepOnlyTiCIPath(index)
-	if err != nil {
-		return err
-	}
-	if ds.HasForceHints && !ticiPath.Forced {
-		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
-	}
 	matchedCondSet := make(map[int]struct{}, len(matchedCondIdxes))
 	for _, idx := range matchedCondIdxes {
 		matchedCondSet[idx] = struct{}{}
@@ -1089,11 +1081,31 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	tableFilters := make([]expression.Expression, 0, len(ds.PushedDownConds)-len(matchedCondIdxes))
 	for i, cond := range ds.PushedDownConds {
 		if _, ok := matchedCondSet[i]; ok {
+			// MATCH ... AGAINST(NULL) rewrites to a NULL constant. Keep it as a
+			// residual filter instead of sending a Null expression through FtsQueryInfo.
+			if c, isConst := cond.(*expression.Constant); isConst && c.Value.IsNull() {
+				tableFilters = append(tableFilters, cond)
+				continue
+			}
 			matchedConds = append(matchedConds, cond)
 			continue
 		}
 		tableFilters = append(tableFilters, cond)
 	}
+	if len(matchedConds) == 0 {
+		ds.PushedDownConds = tableFilters
+		return nil
+	}
+
+	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI Index currently can not be cached")
+	ticiPath, err := ds.keepOnlyTiCIPath(index)
+	if err != nil {
+		return err
+	}
+	if ds.HasForceHints && !ticiPath.Forced {
+		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
+	}
+
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
