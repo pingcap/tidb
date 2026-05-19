@@ -236,11 +236,11 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 }
 
 func (lm *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
-	return lm.streamingMetaByTS(ctx)
+	return lm.streamingMetaByTS(ctx, func(_ string) bool { return true })
 }
 
-func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, error) {
-	it, err := lm.createMetaIterOver(ctx, lm.storage)
+func (lm *LogFileManager) streamingMetaByTS(ctx context.Context, cond func(path string) bool) (MetaNameIter, error) {
+	it, err := lm.createMetaIterOver(ctx, lm.storage, cond)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +250,7 @@ func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, 
 	return filtered, nil
 }
 
-func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storeapi.Storage) (MetaNameIter, error) {
+func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storeapi.Storage, cond func(path string) bool) (MetaNameIter, error) {
 	opt := &storeapi.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
@@ -258,7 +258,7 @@ func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storeapi.Sto
 			return nil
 		}
 		newPath := stream.FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
-		if len(newPath) > 0 {
+		if len(newPath) > 0 && cond(newPath) {
 			names = append(names, newPath)
 		}
 		return nil
@@ -347,7 +347,13 @@ func (lm *LogFileManager) collectDDLFilesAndPrepareCache(
 // LoadDDLFiles loads all DDL files needs to be restored in the restoration.
 // This function returns all DDL files needing directly because we need sort all of them.
 func (lm *LogFileManager) LoadDDLFiles(ctx context.Context) ([]Log, error) {
-	m, err := lm.streamingMeta(ctx)
+	m, err := lm.streamingMetaByTS(ctx, func(path string) bool {
+		parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(path)
+		if err != nil {
+			return true
+		}
+		return parsedName.HasDDLFiles()
+	})
 	if err != nil {
 		return nil, err
 	}

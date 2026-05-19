@@ -32,6 +32,11 @@ const (
 	NameMinBeginTsInDefaultCfTag byte = 'd'
 	NameMinTSTag                 byte = 'l'
 	NameMaxTSTag                 byte = 'u'
+	NameFlagsTag                 byte = 'p'
+)
+
+const (
+	flagHasDDLFiles = 1 << iota
 )
 
 var (
@@ -46,6 +51,9 @@ type ParsedName struct {
 	MinBeginTsInDefaultCf uint64
 	MinTS                 uint64
 	MaxTS                 uint64
+	Flags                 uint64
+
+	HasFlags bool
 }
 
 type ShiftTSStatus uint8
@@ -75,6 +83,13 @@ func (parsedName *ParsedName) CalculateShiftTS(startTS uint64, restoreTS uint64)
 		return 0, ShiftTSInvalidStats
 	}
 	return parsedName.MinBeginTsInDefaultCf, ShiftTSFound
+}
+
+func (parsedName *ParsedName) HasDDLFiles() bool {
+	if !parsedName.HasFlags {
+		return true
+	}
+	return parsedName.Flags&flagHasDDLFiles != 0
 }
 
 // TryParseTaggedBackupMetaFileName parses the tagged backupmeta file-name format.
@@ -138,6 +153,8 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 		minBeginTsInDefaultCf uint64
 		minTs                 uint64
 		maxTs                 uint64
+		flags                 uint64
+		hasFlags              bool
 		seenTags              [256]bool
 	)
 	for pos := 0; pos < len(suffix); {
@@ -165,6 +182,9 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 			minTs = value
 		case NameMaxTSTag:
 			maxTs = value
+		case NameFlagsTag:
+			hasFlags = true
+			flags = value
 		}
 		pos += taggedMetaTagValueLen
 	}
@@ -182,6 +202,8 @@ func parseTaggedBackupMetaFileName(fileName string) (ParsedName, error) {
 		MinBeginTsInDefaultCf: minBeginTsInDefaultCf,
 		MinTS:                 minTs,
 		MaxTS:                 maxTs,
+		Flags:                 flags,
+		HasFlags:              hasFlags,
 	}, nil
 }
 
