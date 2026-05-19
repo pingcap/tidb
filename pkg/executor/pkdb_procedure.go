@@ -155,7 +155,7 @@ func (e *ProcedureExec) triggerCallProcedure(ctx context.Context) (err error) {
 // procedureExistsInternal Query whether the stored procedure exists.
 func procedureExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, db, tp string) (string, bool, error) {
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, `SELECT Definer FROM %n.%n WHERE route_schema=%? AND name=%? AND type=%? FOR UPDATE;`, mysql.SystemDB, mysql.Routines, db, name, tp)
+	sqlescape.MustFormatSQL(sql, `SELECT Definer FROM %n.%n WHERE lower(route_schema)=%? AND name=%? AND type=%? FOR UPDATE;`, mysql.SystemDB, mysql.Routines, strings.ToLower(db), name, tp)
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return "", false, err
@@ -331,7 +331,7 @@ func getProcedureInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	}
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "select route_schema,name,type,definition_utf8,parameter_str,is_deterministic,sql_data_access,security_type,definer,sql_mode,")
-	sqlescape.MustFormatSQL(sql, "character_set_client,connection_collation,schema_collation,created,last_altered,comment,options,external_language from %n.%n where route_schema = %? and name = %? and type = %? ", mysql.SystemDB, mysql.Routines, db, name, tpStr)
+	sqlescape.MustFormatSQL(sql, "character_set_client,connection_collation,schema_collation,created,last_altered,comment,options,external_language from %n.%n where lower(route_schema) = %? and name = %? and type = %? ", mysql.SystemDB, mysql.Routines, strings.ToLower(db), name, tpStr)
 
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {

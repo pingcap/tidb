@@ -775,10 +775,10 @@ func getRoutineDefiner(
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 		internalCtx,
 		nil,
-		"SELECT definer FROM %n.%n WHERE route_schema=%? AND name=%? AND type=%? LIMIT 1",
+		"SELECT definer FROM %n.%n WHERE lower(route_schema)=%? AND name=%? AND type=%? LIMIT 1",
 		mysql.SystemDB,
 		mysql.Routines,
-		schemaName,
+		strings.ToLower(schemaName),
 		routineName,
 		routineType,
 	)
@@ -853,11 +853,11 @@ func (w *worker) onCreateProcedure(jobCtx *jobContext, job *model.Job) (ver int6
 	// Check if routine exists.
 	existsRows, err := w.sess.Execute(
 		internalCtx,
-		"SELECT definer FROM %n.%n WHERE route_schema=%? AND name=%? AND type=%? LIMIT 1",
+		"SELECT definer FROM %n.%n WHERE lower(route_schema)=%? AND name=%? AND type=%? LIMIT 1",
 		"create-procedure-check-exists",
 		mysql.SystemDB,
 		mysql.Routines,
-		procInfo.Schema.O,
+		procInfo.Schema.L,
 		procInfo.Name.O,
 		procInfo.Type,
 	)
@@ -1029,11 +1029,11 @@ func (w *worker) onDropProcedure(jobCtx *jobContext, job *model.Job) (ver int64,
 	internalCtx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnProcedure)
 	_, err = w.sess.Execute(
 		internalCtx,
-		"DELETE FROM %n.%n WHERE route_schema=%? AND name=%? AND type=%?",
+		"DELETE FROM %n.%n WHERE lower(route_schema)=%? AND name=%? AND type=%?",
 		"drop-procedure-delete",
 		mysql.SystemDB,
 		mysql.Routines,
-		args.Schema.O,
+		args.Schema.L,
 		args.Name.O,
 		args.Type,
 	)
@@ -1146,11 +1146,11 @@ func (w *worker) onAlterProcedure(jobCtx *jobContext, job *model.Job) (ver int64
 	internalCtx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnProcedure)
 	existsRows, err := w.sess.Execute(
 		internalCtx,
-		"SELECT options FROM %n.%n WHERE route_schema=%? AND name=%? AND type=%? LIMIT 1",
+		"SELECT options FROM %n.%n WHERE lower(route_schema)=%? AND name=%? AND type=%? LIMIT 1",
 		"alter-procedure-check-exists",
 		mysql.SystemDB,
 		mysql.Routines,
-		args.Schema.O,
+		args.Schema.L,
 		args.Name.O,
 		args.Type,
 	)
@@ -1220,8 +1220,8 @@ func (w *worker) onAlterProcedure(jobCtx *jobContext, job *model.Job) (ver int64
 			params = append(params, *options)
 		}
 	}
-	updateSQL.WriteString(" WHERE route_schema = %? AND name = %? AND type = %?")
-	params = append(params, args.Schema.O, args.Name.O, args.Type)
+	updateSQL.WriteString(" WHERE lower(route_schema) = %? AND name = %? AND type = %?")
+	params = append(params, args.Schema.L, args.Name.O, args.Type)
 
 	_, err = w.sess.Execute(
 		internalCtx,

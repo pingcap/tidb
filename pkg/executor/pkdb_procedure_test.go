@@ -2803,6 +2803,120 @@ func TestInformationSchemaParametersPredicateRegressions(t *testing.T) {
 	})
 }
 
+func TestProcedureMetadataCleanupForMixedCaseSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+
+	tk.MustExec("drop database if exists Foo")
+	tk.MustExec("drop database if exists foo")
+
+	tk.MustExec("create database Foo")
+	tk.MustExec("use Foo")
+	tk.MustExec("create procedure proc_case() begin select 1; end;")
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'proc_case' and type = 'PROCEDURE'
+		order by route_schema
+	`).Check(testkit.Rows(
+		"Foo proc_case PROCEDURE",
+	))
+
+	tk.MustExec("drop database Foo")
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'proc_case' and type = 'PROCEDURE'
+		order by route_schema
+	`).Check(testkit.Rows())
+
+	tk.MustExec("create database foo")
+	tk.MustExec("use foo")
+	tk.MustExec("create procedure proc_case() begin select 2; end;")
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'proc_case' and type = 'PROCEDURE'
+		order by route_schema
+	`).Check(testkit.Rows(
+		"foo proc_case PROCEDURE",
+	))
+}
+
+func TestRoutineOperationsWithMixedCaseSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+
+	tk.MustExec("drop user if exists routine_case_user")
+	tk.MustExec("drop database if exists Foo")
+	tk.MustExec("drop database if exists foo")
+	tk.MustExec("create database Foo")
+	tk.MustExec("use Foo")
+	tk.MustExec("create procedure p() comment 'p0' begin select 1; end;")
+	tk.MustExec("create function f() returns int comment 'f0' begin return 1; end;")
+
+	require.Len(t, tk.MustQuery("show create procedure foo.p").Rows(), 1)
+	require.Len(t, tk.MustQuery("show create function foo.f").Rows(), 1)
+
+	tk.MustExec("alter procedure foo.p comment 'p1'")
+	tk.MustExec("alter function foo.f comment 'f1'")
+	tk.MustQuery(`
+		select comment
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'p' and type = 'PROCEDURE'
+	`).Check(testkit.Rows("p1"))
+	tk.MustQuery(`
+		select comment
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'f' and type = 'FUNCTION'
+	`).Check(testkit.Rows("f1"))
+
+	tk.MustExec("create user routine_case_user")
+	tk.MustExec("grant execute on procedure foo.p to routine_case_user")
+	tk.MustExec("grant execute on function foo.f to routine_case_user")
+
+	tk.MustExec("drop procedure foo.p")
+	tk.MustExec("drop function foo.f")
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'p' and type = 'PROCEDURE'
+	`).Check(testkit.Rows())
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name = 'f' and type = 'FUNCTION'
+	`).Check(testkit.Rows())
+}
+
+func TestRoutineCreateRejectsMixedCaseSchemaDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+
+	tk.MustExec("drop database if exists Foo")
+	tk.MustExec("drop database if exists foo")
+	tk.MustExec("create database Foo")
+
+	tk.MustExec("create procedure Foo.proc_dup() begin select 1; end;")
+	tk.MustGetErrCode("create procedure foo.proc_dup() begin select 2; end;", 1304)
+
+	tk.MustExec("create function Foo.func_dup() returns int begin return 1; end;")
+	tk.MustGetErrCode("create function foo.func_dup() returns int begin return 2; end;", 1304)
+
+	tk.MustQuery(`
+		select route_schema, name, type
+		from mysql.routines
+		where lower(route_schema) = 'foo' and name in ('proc_dup', 'func_dup')
+		order by name, type, route_schema
+	`).Check(testkit.Rows(
+		"Foo func_dup FUNCTION",
+		"Foo proc_dup PROCEDURE",
+	))
+}
+
 func TestProcedureTranscation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

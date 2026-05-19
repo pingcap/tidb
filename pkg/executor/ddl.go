@@ -17,13 +17,11 @@ package executor
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -817,16 +815,12 @@ func (e *DDLExec) dropProcedure(schemaName pmodel.CIStr) error {
 		return err
 	}
 	defer e.ReleaseSysSession(internalCtx, sysSession)
-	sysvar := variable.GetSysVar(variable.LowerCaseTableNames)
-	val, err := strconv.Atoi(sysvar.Value)
-	if err != nil {
-		return err
-	}
-	is := schematracker.NewSchemaTracker(val)
-	key := is.InfoStore.CiStr2Key(schemaName)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "delete from %n.%n where route_schema = %?", mysql.SystemDB, mysql.Routines, key)
+	// Stored routines keep route_schema in the original database letter case.
+	// When a mixed-case database is dropped, delete case-insensitively so stale
+	// mysql.routines rows are not left behind.
+	sqlescape.MustFormatSQL(sql, "delete from %n.%n where lower(route_schema) = %?", mysql.SystemDB, mysql.Routines, schemaName.L)
 	logutil.BgLogger().Info(sql.String())
 	_, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String())
 	if err != nil {

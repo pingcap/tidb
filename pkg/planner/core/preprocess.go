@@ -202,6 +202,7 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 		sc.UserFuncCtx.StoredFuncName = make(map[[2]string]*types.FieldType)
 	}
 	sc.UserFuncCtx.Unlock()
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	var (
 		do         *domain.Domain
 		sysSession sessionctx.Context
@@ -229,58 +230,66 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 			continue
 		}
 		sc.UserFuncCtx.Unlock()
+		routine, ok := is.RoutineByName(pmodel.NewCIStr(schema), pmodel.NewCIStr(name), "FUNCTION")
 		internalExecCtx := ctx
-		if sysSession == nil {
-			do = domain.GetDomain(sctx)
-			se, err := do.SysSessionPool().Get()
+		if ok && routine.RetType != nil {
+			sc.UserFuncCtx.Lock()
+			sc.UserFuncCtx.StoredFuncName[key] = routine.RetType
+			sc.UserFuncCtx.Unlock()
+		} else {
+			// Fallback to querying mysql.routines to avoid false negatives when routine cache is unavailable.
+			if sysSession == nil {
+				do = domain.GetDomain(sctx)
+				se, err := do.SysSessionPool().Get()
+				if err != nil {
+					logutil.BgLogger().Warn("preloadUserStoredFunction: get sys session failed", zap.Error(err))
+					return errors.Trace(err)
+				}
+				sysRes = se
+				sysSession = se.(sessionctx.Context)
+			}
+			internalExecCtx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+			rs, err := sysSession.GetSQLExecutor().ExecuteInternal(
+				internalExecCtx,
+				"SELECT definition_utf8, sql_mode, character_set_client, connection_collation FROM %n.%n WHERE lower(route_schema) = %? AND name = %? AND type = 'FUNCTION'",
+				mysql.SystemDB,
+				mysql.Routines,
+				schemaLookup,
+				name,
+			)
 			if err != nil {
-				logutil.BgLogger().Warn("preloadUserStoredFunction: get sys session failed", zap.Error(err))
 				return errors.Trace(err)
 			}
-			sysRes = se
-			sysSession = se.(sessionctx.Context)
-		}
-		internalExecCtx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-		rs, err := sysSession.GetSQLExecutor().ExecuteInternal(
-			internalExecCtx,
-			"SELECT definition_utf8, sql_mode, character_set_client, connection_collation FROM %n.%n WHERE lower(route_schema) = %? AND name = %? AND type = 'FUNCTION'",
-			mysql.SystemDB,
-			mysql.Routines,
-			schemaLookup,
-			name,
-		)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		rows, err := sqlexec.DrainRecordSet(internalExecCtx, rs, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = rs.Close()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if len(rows) == 0 {
+			rows, err := sqlexec.DrainRecordSet(internalExecCtx, rs, 1)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = rs.Close()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if len(rows) == 0 {
+				sc.UserFuncCtx.Lock()
+				sc.UserFuncCtx.StoredFuncName[key] = nil
+				sc.UserFuncCtx.Unlock()
+				// Don't return error here, the function-not-exist error will be reported during
+				// plan building. Continue preloading the remaining function names so that a
+				// missing/non-stored function earlier in the list doesn't block later stored
+				// functions in the same statement.
+				continue
+			}
+			definition := rows[0].GetString(0)
+			sqlModeStr := rows[0].GetSet(1).String()
+			charset := rows[0].GetString(2)
+			collation := rows[0].GetString(3)
+			retType, err := parseStoredFunctionReturnType(definition, sqlModeStr, charset, collation)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			sc.UserFuncCtx.Lock()
-			sc.UserFuncCtx.StoredFuncName[key] = nil
+			sc.UserFuncCtx.StoredFuncName[key] = retType
 			sc.UserFuncCtx.Unlock()
-			// Don't return error here, the function-not-exist error will be reported during
-			// plan building. Continue preloading the remaining function names so that a
-			// missing/non-stored function earlier in the list doesn't block later stored
-			// functions in the same statement.
-			continue
 		}
-		definition := rows[0].GetString(0)
-		sqlModeStr := rows[0].GetSet(1).String()
-		charset := rows[0].GetString(2)
-		collation := rows[0].GetString(3)
-		retType, err := parseStoredFunctionReturnType(definition, sqlModeStr, charset, collation)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		sc.UserFuncCtx.Lock()
-		sc.UserFuncCtx.StoredFuncName[key] = retType
-		sc.UserFuncCtx.Unlock()
 	}
 	return nil
 }
