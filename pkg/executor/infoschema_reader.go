@@ -1835,7 +1835,7 @@ func (e *memtableRetriever) setDataFromIndex(
 			tblCol := tb.Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
-				expression = tblCol.GeneratedExprString
+				expression = idxInfo.GetIndexColumnDisplayString(tb, col)
 			}
 			visible := "YES"
 			if idxInfo.Invisible {

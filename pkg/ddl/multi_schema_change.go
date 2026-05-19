@@ -287,7 +287,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	modifyIdx := make(map[string]struct{})
 
 	checkColumns := func(colNames []pmodel.CIStr, addToModifyCols bool) error {
-	allowedRelativeDupCols := pkdbAllowedRelativeDupColsForAutoIncrementPK(info)
+		allowedRelativeDupCols := pkdbAllowedRelativeDupColsForAutoIncrementPK(info)
 		for _, colName := range colNames {
 			name := colName.L
 			if _, ok := modifyCols[name]; ok {

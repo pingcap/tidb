@@ -1366,9 +1366,10 @@ func BuildTableInfo(
 
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
+		shardIndexVersion := model.ShardIndexVersionLegacy
 		if constr.Tp != ast.ConstraintVector {
 			// Build hidden columns if necessary.
-			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns)
+			hiddenCols, shardIndexVersion, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns, isUniqueIndexConstraint(constr.Tp))
 			if err != nil {
 				return nil, err
 			}
@@ -1539,6 +1540,7 @@ func BuildTableInfo(
 		}
 
 		if len(hiddenCols) > 0 {
+			idxInfo.ShardIndexVersion = shardIndexVersion
 			AddIndexColumnFlag(tbInfo, idxInfo)
 		}
 		_, err = validateCommentLength(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), ctx.GetSQLMode(), idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
@@ -1574,16 +1576,85 @@ func precheckBuildHiddenColumnInfo(
 	return nil
 }
 
-func buildHiddenColumnInfoWithCheck(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
-	if err := precheckBuildHiddenColumnInfo(indexPartSpecifications, indexName); err != nil {
-		return nil, err
+func isUniqueIndexConstraint(tp ast.ConstraintType) bool {
+	switch tp {
+	case ast.ConstraintPrimaryKey, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+		return true
+	default:
+		return false
 	}
-	return BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, tblInfo, existCols)
+}
+
+func detectShardIndexVersion(indexPartSpecifications []*ast.IndexPartSpecification, unique bool, existCols []*table.Column) (uint8, error) {
+	if len(indexPartSpecifications) < 2 || indexPartSpecifications[0].Expr == nil || indexPartSpecifications[1].Expr != nil || indexPartSpecifications[1].Column == nil {
+		return model.ShardIndexVersionLegacy, nil
+	}
+
+	fn, ok := indexPartSpecifications[0].Expr.(*ast.FuncCallExpr)
+	if !ok || fn.FnName.L != ast.TiDBShard {
+		return model.ShardIndexVersionLegacy, nil
+	}
+	if len(fn.Args) == 2 {
+		return 0, dbterror.ErrNotSupportedYet.GenWithStackByArgs("defining tidb_shard() with an explicit internal version")
+	}
+	if len(fn.Args) != 1 {
+		return model.ShardIndexVersionLegacy, nil
+	}
+
+	colExpr, ok := fn.Args[0].(*ast.ColumnNameExpr)
+	if !ok || colExpr.Name.Name.L != indexPartSpecifications[1].Column.Name.L {
+		return model.ShardIndexVersionLegacy, nil
+	}
+
+	colInfo := table.FindCol(existCols, colExpr.Name.Name.L)
+	if colInfo == nil || !types.IsString(colInfo.GetType()) {
+		return model.ShardIndexVersionLegacy, nil
+	}
+	if !unique {
+		return 0, dbterror.ErrNotSupportedYet.GenWithStackByArgs("creating a non-UNIQUE string tidb_shard index")
+	}
+	return model.ShardIndexVersionStringV1, nil
+}
+
+func detectShardIndexVersionFromColumnInfos(indexPartSpecifications []*ast.IndexPartSpecification, unique bool, colInfos []*model.ColumnInfo) (uint8, error) {
+	cols := make([]*table.Column, 0, len(colInfos))
+	for _, colInfo := range colInfos {
+		cols = append(cols, table.ToColumn(colInfo))
+	}
+	return detectShardIndexVersion(indexPartSpecifications, unique, cols)
+}
+
+func buildInternalShardIndexExpr(expr ast.ExprNode, shardIndexVersion uint8) ast.ExprNode {
+	if shardIndexVersion != model.ShardIndexVersionStringV1 {
+		return expr
+	}
+	fn, ok := expr.(*ast.FuncCallExpr)
+	if !ok || fn.FnName.L != ast.TiDBShard || len(fn.Args) != 1 {
+		return expr
+	}
+	return &ast.FuncCallExpr{
+		FnName: pmodel.NewCIStr(ast.TiDBShard),
+		Args: []ast.ExprNode{
+			fn.Args[0],
+			ast.NewValueExpr(int64(shardIndexVersion), "", ""),
+		},
+	}
+}
+
+func buildHiddenColumnInfoWithCheck(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column, unique bool) ([]*model.ColumnInfo, uint8, error) {
+	if err := precheckBuildHiddenColumnInfo(indexPartSpecifications, indexName); err != nil {
+		return nil, 0, err
+	}
+	return BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, tblInfo, existCols, unique)
 }
 
 // BuildHiddenColumnInfo builds hidden column info.
-func BuildHiddenColumnInfo(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+func BuildHiddenColumnInfo(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column, unique bool) ([]*model.ColumnInfo, uint8, error) {
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
+	shardIndexVersion, err := detectShardIndexVersion(indexPartSpecifications, unique, existCols)
+	if err != nil {
+		return nil, 0, err
+	}
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
 			continue
@@ -1593,7 +1664,7 @@ func BuildHiddenColumnInfo(ctx *metabuild.Context, indexPartSpecifications []*as
 		col := table.FindCol(existCols, idxPart.Column.Name.L)
 		if col != nil {
 			// TODO: Use expression index related error.
-			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.String())
+			return nil, 0, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.String())
 		}
 		idxPart.Length = types.UnspecifiedLength
 		// The index part is an expression, prepare a hidden column for it.
@@ -1603,22 +1674,29 @@ func BuildHiddenColumnInfo(ctx *metabuild.Context, indexPartSpecifications []*as
 			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 		sb.Reset()
-		err := idxPart.Expr.Restore(restoreCtx)
+		internalExpr := idxPart.Expr
+		if i == 0 {
+			internalExpr = buildInternalShardIndexExpr(idxPart.Expr, shardIndexVersion)
+		}
+		err := internalExpr.Restore(restoreCtx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 
 		exprCtx := ctx.GetExprCtx()
-		expr, err := expression.BuildSimpleExpr(exprCtx, idxPart.Expr,
-			expression.WithTableInfo(exprCtx.GetEvalCtx().CurrentDB(), tblInfo),
-			expression.WithAllowCastArray(true),
+		expr, err := expression.BuildSimpleExprForShardIndexHiddenColumn(
+			exprCtx,
+			internalExpr,
+			exprCtx.GetEvalCtx().CurrentDB(),
+			tblInfo,
+			shardIndexVersion,
 		)
 		if err != nil {
 			// TODO: refine the error message.
-			return nil, err
+			return nil, 0, err
 		}
 		if _, ok := expr.(*expression.Column); ok {
-			return nil, dbterror.ErrFunctionalIndexOnField
+			return nil, 0, dbterror.ErrFunctionalIndexOnField
 		}
 
 		colInfo := &model.ColumnInfo{
@@ -1650,17 +1728,17 @@ func BuildHiddenColumnInfo(ctx *metabuild.Context, indexPartSpecifications []*as
 			checkDependencies[colName.Name.L] = struct{}{}
 		}
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
-			return nil, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		if !ctx.EnableAutoIncrementInGenerated() {
 			if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
-				return nil, errors.Trace(err)
+				return nil, 0, errors.Trace(err)
 			}
 		}
 		idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
 	}
-	return hiddenCols, nil
+	return hiddenCols, shardIndexVersion, nil
 }
 
 // addIndexForForeignKey uses to auto create an index for the foreign key if the table doesn't have any index cover the

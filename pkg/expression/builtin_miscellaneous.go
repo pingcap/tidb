@@ -35,8 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/twmb/murmur3"
 )
 
 var (
@@ -1679,18 +1681,37 @@ func (c *tidbShardFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
-	if err != nil {
-		return nil, err
+	switch len(args) {
+	case 1:
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+
+		bf.tp.SetFlen(4) //64 bit unsigned
+		bf.tp.AddFlag(mysql.UnsignedFlag)
+		types.SetBinChsClnFlag(bf.tp)
+
+		sig := &builtinTidbShardSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_TiDBShard)
+		return sig, nil
+	case 2:
+		if !allowTiDBShardInternalVersion(ctx) {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs("calling tidb_shard() with an explicit internal version")
+		}
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETInt)
+		if err != nil {
+			return nil, err
+		}
+
+		bf.tp.SetFlen(4) //64 bit unsigned
+		bf.tp.AddFlag(mysql.UnsignedFlag)
+		types.SetBinChsClnFlag(bf.tp)
+
+		return &builtinTidbShardStringSig{bf}, nil
+	default:
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
-
-	bf.tp.SetFlen(4) //64 bit unsigned
-	bf.tp.AddFlag(mysql.UnsignedFlag)
-	types.SetBinChsClnFlag(bf.tp)
-
-	sig := &builtinTidbShardSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_TiDBShard)
-	return sig, nil
 }
 
 type builtinTidbShardSig struct {
@@ -1714,6 +1735,39 @@ func (b *builtinTidbShardSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		return 0, true, err
 	}
 	hashed = hashed % tidbShardBucketCount
+	return int64(hashed), false, nil
+}
+
+type builtinTidbShardStringSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinTidbShardStringSig) Clone() builtinFunc {
+	newSig := &builtinTidbShardStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals tidb_shard(string, version).
+func (b *builtinTidbShardStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	shardKeyString, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	version, isNull, err := b.args[1].EvalInt(ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	if version != 1 {
+		return 0, true, errIncorrectArgs.GenWithStack("unsupported internal tidb_shard version: %d", version)
+	}
+
+	collator := collate.GetCollator(b.args[0].GetType(ctx).GetCollate())
+	hashed := uint64(murmur3.Sum32(collator.Key(shardKeyString))) % tidbShardBucketCount
 	return int64(hashed), false, nil
 }
 

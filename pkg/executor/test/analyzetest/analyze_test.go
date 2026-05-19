@@ -3407,3 +3407,27 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	// For stored columns, we can collect statistics because the values are stored in TiKV
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
 }
+
+func TestAnalyzeTableWithVarcharShardIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+
+	tk.MustExec(`create table t_varchar_shard (
+		id int primary key,
+		a varchar(32) collate utf8mb4_general_ci,
+		unique key uk ((tidb_shard(a)), a)
+	)`)
+	tk.MustExec(`insert into t_varchar_shard values (1, 'FT00001')`)
+	tk.MustExec("analyze table t_varchar_shard")
+
+	h := dom.StatsHandle()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_varchar_shard"))
+	require.NoError(t, err)
+
+	tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.NotNil(t, tblStats)
+	require.True(t, tblStats.IsAnalyzed())
+	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed())
+}

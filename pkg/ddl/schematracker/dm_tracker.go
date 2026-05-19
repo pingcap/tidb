@@ -412,7 +412,7 @@ func (d *SchemaTracker) createIndex(
 		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
-	hiddenCols, err := ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols())
+	hiddenCols, shardIndexVersion, err := ddl.BuildHiddenColumnInfo(ddl.NewMetaBuildContextWithSctx(ctx), indexPartSpecifications, indexName, t.Meta(), t.Cols(), unique)
 	if err != nil {
 		return err
 	}
@@ -435,6 +435,7 @@ func (d *SchemaTracker) createIndex(
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(hiddenCols)]
 		return err
 	}
+	indexInfo.ShardIndexVersion = shardIndexVersion
 	indexInfo.ID = ddl.AllocateIndexID(tblInfo)
 	tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 

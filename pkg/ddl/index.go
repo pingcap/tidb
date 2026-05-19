@@ -722,6 +722,10 @@ func checkAndBuildIndexInfo(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	indexInfo.ShardIndexVersion, err = detectShardIndexVersionFromColumnInfos(args.IndexPartSpecifications, args.Unique, tblInfo.Columns)
+	if err != nil {
+		return nil, err
+	}
 	if isPK {
 		// In multi-schema change, the referenced column may be non-public at this moment
 		// (e.g. the column is added earlier in the same statement), so allow non-public

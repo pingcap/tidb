@@ -1110,7 +1110,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName pmodel.CIStr,
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := BuildSimpleExpr(ctx, expr, WithInputSchemaAndNames(mockSchema, names, tblInfo), WithAllowCastArray(true))
+			e, err := BuildSimpleExprForGeneratedColumn(ctx, expr, mockSchema, names, tblInfo, col)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

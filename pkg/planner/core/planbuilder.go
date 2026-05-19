@@ -4386,7 +4386,17 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		originalVal := b.allowBuildCastArray
 		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true, requireColumnPriv)
+		expr, _, err := b.rewriteWithPreprocessAndBuildCtx(
+			ctx,
+			column.GeneratedExpr.Clone(),
+			mockPlan,
+			nil,
+			nil,
+			true,
+			nil,
+			requireColumnPriv,
+			expression.WithTiDBShardInternalVersionForGeneratedColumn(b.ctx.GetExprCtx(), column.GeneratedExpr.Internal(), column.ToInfo()),
+		)
 		b.allowBuildCastArray = originalVal
 		if err != nil {
 			return igc, err

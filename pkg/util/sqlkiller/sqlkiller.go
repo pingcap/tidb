@@ -41,8 +41,8 @@ const (
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
-	Signal killSignal
-	ConnID atomic.Uint64
+	Signal    killSignal
+	ConnID    atomic.Uint64
 	killEvent struct {
 		ch chan struct{}
 		sync.Mutex

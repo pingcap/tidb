@@ -228,6 +228,19 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	preprocess func(ast.Node) ast.Node,
 	priv *checkedPrivilege,
 ) (expression.Expression, base.LogicalPlan, error) {
+	return b.rewriteWithPreprocessAndBuildCtx(ctx, exprNode, p, aggMapper, windowMapper, asScalar, preprocess, priv, b.ctx.GetExprCtx())
+}
+
+func (b *PlanBuilder) rewriteWithPreprocessAndBuildCtx(
+	ctx context.Context,
+	exprNode ast.ExprNode,
+	p base.LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int,
+	windowMapper map[*ast.WindowFuncExpr]int,
+	asScalar bool,
+	preprocess func(ast.Node) ast.Node,
+	priv *checkedPrivilege,
+	buildCtx expression.BuildContext,
+) (expression.Expression, base.LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -245,6 +258,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.asScalar = asScalar
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	rewriter.preprocess = preprocess
+	rewriter.sctx = buildCtx
 
 	expr, resultPlan, err := rewriteExprNode(rewriter, exprNode, asScalar, priv)
 	return expr, resultPlan, err

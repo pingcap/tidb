@@ -202,22 +202,22 @@ func (b *PlanBuilder) preprocessDropProcedure(node *ast.DropProcedureStmt) error
 	//
 	// Keep the schema part untouched for the unqualified DROP FUNCTION case, so the executor can
 	// decide the target consistently (see ddl.executor.DropProcedure).
-		if node.IsFunction {
-			routineSchema := node.Name.Schema.O
-			// Qualified name always targets stored routine.
-			if routineSchema == "" {
-				currentDB := b.ctx.GetSessionVars().CurrentDB
-				if currentDB != "" {
-					// If a stored function exists in current DB, treat it as stored routine; otherwise fall back to UDF.
-					exists, err := b.checkRoutineExists(currentDB, node.Name.Name.O, node.Type())
-					if err != nil {
-						return err
-					}
-					if exists {
-						routineSchema = currentDB
-					}
+	if node.IsFunction {
+		routineSchema := node.Name.Schema.O
+		// Qualified name always targets stored routine.
+		if routineSchema == "" {
+			currentDB := b.ctx.GetSessionVars().CurrentDB
+			if currentDB != "" {
+				// If a stored function exists in current DB, treat it as stored routine; otherwise fall back to UDF.
+				exists, err := b.checkRoutineExists(currentDB, node.Name.Name.O, node.Type())
+				if err != nil {
+					return err
+				}
+				if exists {
+					routineSchema = currentDB
 				}
 			}
+		}
 
 		// Unqualified & no routine found => loadable UDF (mysql.func).
 		if routineSchema == "" {

@@ -1891,9 +1891,12 @@ func ResolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 // separate "ADD PRIMARY KEY(...)" specs so that they can be executed as a multi-schema change.
 //
 // MySQL allows statements like:
-//   ALTER TABLE t ADD COLUMN id INT AUTO_INCREMENT PRIMARY KEY;
+//
+//	ALTER TABLE t ADD COLUMN id INT AUTO_INCREMENT PRIMARY KEY;
+//
 // which is equivalent to:
-//   ALTER TABLE t ADD COLUMN id INT AUTO_INCREMENT, ADD PRIMARY KEY (id);
+//
+//	ALTER TABLE t ADD COLUMN id INT AUTO_INCREMENT, ADD PRIMARY KEY (id);
 //
 // TiDB's add/modify column paths don't apply index/PK constraints embedded in column definition,
 // so we expand them here to reuse the existing multi-schema implementation.
@@ -1994,10 +1997,10 @@ func resolveAlterTableInlinePrimaryKey(specs []*ast.AlterTableSpec) ([]*ast.Alte
 			idxOpt.Global = true
 		}
 		addPKSpec := &ast.AlterTableSpec{
-			Tp:        ast.AlterTableAddConstraint,
+			Tp:         ast.AlterTableAddConstraint,
 			Constraint: &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Name: mysql.PrimaryKeyName, Keys: keys, Option: idxOpt},
-			Algorithm: spec.Algorithm,
-			LockType:  spec.LockType,
+			Algorithm:  spec.Algorithm,
+			LockType:   spec.LockType,
 		}
 		newSpecs = append(newSpecs, addPKSpec)
 	}
@@ -5139,7 +5142,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 }
 
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName pmodel.CIStr,
-	indexPartSpecifications []*ast.IndexPartSpecification, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, error) {
+	indexPartSpecifications []*ast.IndexPartSpecification, unique bool, isVector, ifNotExists bool) (pmodel.CIStr, []*model.ColumnInfo, uint8, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		colName := pmodel.NewCIStr(getAnonymousIndexPrefix(isVector))
@@ -5161,28 +5164,29 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName p
 		}
 		if ifNotExists {
 			ctx.AppendNote(err)
-			return pmodel.CIStr{}, nil, nil
+			return pmodel.CIStr{}, nil, 0, nil
 		}
-		return pmodel.CIStr{}, nil, err
+		return pmodel.CIStr{}, nil, 0, err
 	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
-		return pmodel.CIStr{}, nil, errors.Trace(err)
+		return pmodel.CIStr{}, nil, 0, errors.Trace(err)
 	}
 
 	// Build hidden columns if necessary.
 	var hiddenCols []*model.ColumnInfo
+	shardIndexVersion := model.ShardIndexVersionLegacy
 	if !isVector {
-		hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+		hiddenCols, shardIndexVersion, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols(), unique)
 		if err != nil {
-			return pmodel.CIStr{}, nil, err
+			return pmodel.CIStr{}, nil, 0, err
 		}
 	}
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
-		return pmodel.CIStr{}, nil, errors.Trace(err)
+		return pmodel.CIStr{}, nil, 0, errors.Trace(err)
 	}
 
-	return indexName, hiddenCols, nil
+	return indexName, hiddenCols, shardIndexVersion, nil
 }
 
 func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
@@ -5215,7 +5219,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, true, ifNotExists)
+	indexName, _, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, true, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5334,7 +5338,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, false, ifNotExists)
+	indexName, hiddenCols, shardIndexVersion, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, unique, false, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5376,6 +5380,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		if err != nil {
 			return err
 		}
+		indexInfo.ShardIndexVersion = shardIndexVersion
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 

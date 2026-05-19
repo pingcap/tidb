@@ -882,20 +882,40 @@ func (col *Column) InColumnArray(cols []*Column) bool {
 
 // GcColumnExprIsTidbShard check whether the expression is tidb_shard()
 func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
+	_, _, ok := ExtractTiDBShardColumnAndVersion(virtualExpr)
+	return ok
+}
+
+// ExtractTiDBShardColumnAndVersion checks whether the expression is a supported tidb_shard()
+// form and returns its base column plus the optional version constant.
+func ExtractTiDBShardColumnAndVersion(virtualExpr Expression) (*Column, *Constant, bool) {
 	if virtualExpr == nil {
-		return false
+		return nil, nil, false
 	}
 
 	f, ok := virtualExpr.(*ScalarFunction)
+	if !ok || f.FuncName.L != ast.TiDBShard {
+		return nil, nil, false
+	}
+
+	args := f.GetArgs()
+	if len(args) != 1 && len(args) != 2 {
+		return nil, nil, false
+	}
+
+	col, ok := args[0].(*Column)
 	if !ok {
-		return false
+		return nil, nil, false
+	}
+	if len(args) == 1 {
+		return col, nil, true
 	}
 
-	if f.FuncName.L != ast.TiDBShard {
-		return false
+	version, ok := args[1].(*Constant)
+	if !ok {
+		return nil, nil, false
 	}
-
-	return true
+	return col, version, true
 }
 
 const emptyColumnSize = int64(unsafe.Sizeof(Column{}))

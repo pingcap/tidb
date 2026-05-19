@@ -4839,7 +4839,17 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				var err error
 				originVal := b.allowBuildCastArray
 				b.allowBuildCastArray = true
-				expr, _, err = b.rewrite(ctx, columns[i].GeneratedExpr.Clone(), ds, nil, true, requireColumnPriv)
+				expr, _, err = b.rewriteWithPreprocessAndBuildCtx(
+					ctx,
+					columns[i].GeneratedExpr.Clone(),
+					ds,
+					nil,
+					nil,
+					true,
+					nil,
+					requireColumnPriv,
+					expression.WithTiDBShardInternalVersionForGeneratedColumn(b.ctx.GetExprCtx(), columns[i].GeneratedExpr.Internal(), columns[i].ToInfo()),
+				)
 				b.allowBuildCastArray = originVal
 				if err != nil {
 					return nil, err
@@ -6052,6 +6062,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 	// If columns in set list contains generated columns, raise error.
 	// And, fill virtualAssignments here; that's for generated columns.
 	virtualAssignments := make([]*ast.Assignment, 0)
+	virtualAssignmentCols := make([]*model.ColumnInfo, 0)
 	for _, tn := range tableList {
 		tnW := b.resolveCtx.GetTableName(tn)
 		if isCTE(tnW) || tnW.TableInfo.IsView() || tnW.TableInfo.IsSequence() {
@@ -6081,6 +6092,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
 				Expr:   tableVal.Cols()[i].GeneratedExpr.Clone(),
 			})
+			virtualAssignmentCols = append(virtualAssignmentCols, colInfo.ToInfo())
 		}
 	}
 
@@ -6145,7 +6157,21 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 
 			o := b.allowBuildCastArray
 			b.allowBuildCastArray = true
-			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, true, rewritePreprocess(assign), requireColumnPriv)
+			newExpr, np, err = b.rewriteWithPreprocessAndBuildCtx(
+				ctx,
+				assign.Expr,
+				p,
+				nil,
+				nil,
+				true,
+				rewritePreprocess(assign),
+				requireColumnPriv,
+				expression.WithTiDBShardInternalVersionForGeneratedColumn(
+					b.ctx.GetExprCtx(),
+					assign.Expr,
+					virtualAssignmentCols[i-len(list)],
+				),
+			)
 			b.allowBuildCastArray = o
 			if err != nil {
 				return nil, nil, false, err

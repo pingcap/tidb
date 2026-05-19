@@ -1468,6 +1468,8 @@ func TestTableShardIndex(t *testing.T) {
 		"unique key uk_expr((tidb_shard(a)),a,b))")
 	testKit.MustExec("create table test6(id int primary key clustered, a int, b int, c int, " +
 		"unique key uk_expr((tidb_shard(a)), a))")
+	testKit.MustExec("create table test7(id int primary key clustered, a varchar(32) collate utf8mb4_general_ci, b int, " +
+		"unique key uk_expr((tidb_shard(a)), a))")
 	testKit.MustExec("create table testx(id int primary key clustered, a int, b int, unique key a(a))")
 	testKit.MustExec("create table testy(id int primary key clustered, a int, b int, " +
 		"unique key uk_expr((tidb_shard(b)),a))")
@@ -1730,6 +1732,24 @@ func TestTableShardIndex(t *testing.T) {
 		//nolint: printexpression
 		require.Equal(t, "[test.test6.id test.test6.a tidb_shard(test.test6.a)]", fmt.Sprintf("%v", proj.Exprs))
 	})
+
+	t.Run("varchar unique shard index keeps point/batch point get and public show create", func(t *testing.T) {
+		showCreate := testKit.MustQuery("show create table test7").Rows()[0][1].(string)
+		require.Contains(t, showCreate, "UNIQUE KEY `uk_expr` ((tidb_shard(`a`)),`a`)")
+		require.NotContains(t, showCreate, "tidb_shard(`a`, 1)")
+		testKit.MustGetDBError("select tidb_shard('FT00001', 1)", expression.ErrNotSupportedYet)
+
+		eqPlan := fmt.Sprint(testKit.MustQuery("explain format='brief' select * from test7 where a = 'FT00001'").Rows())
+		require.Contains(t, eqPlan, "Point_Get")
+		require.Contains(t, eqPlan, "uk_expr")
+		require.NotContains(t, eqPlan, "TableFullScan")
+		require.NotContains(t, eqPlan, "tidb_shard(`a`, 1)")
+
+		inPlan := fmt.Sprint(testKit.MustQuery("explain format='brief' select * from test7 where a in ('FT00001', 'FT00002')").Rows())
+		require.Contains(t, inPlan, "Batch_Point_Get")
+		require.Contains(t, inPlan, "uk_expr")
+		require.NotContains(t, inPlan, "tidb_shard(`a`, 1)")
+	})
 }
 
 func TestShardIndexFuncSuites(t *testing.T) {
@@ -1741,6 +1761,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	// test IsValidShardIndex function
 	// -------------------------------------------
 	longlongType := types.NewFieldType(mysql.TypeLonglong)
+	stringType := types.NewFieldType(mysql.TypeVarString)
 	col0 := &expression.Column{UniqueID: 0, ID: 0, RetType: longlongType}
 	col1 := &expression.Column{UniqueID: 1, ID: 1, RetType: longlongType}
 	// col2 is GC column and VirtualExpr = tidb_shard(col0)
@@ -1750,6 +1771,13 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	col3 := &expression.Column{UniqueID: 3, ID: 3, RetType: longlongType}
 	col3.VirtualExpr = expression.NewFunctionInternal(sctx.GetExprCtx(), ast.Abs, col2.RetType, col0)
 	col4 := &expression.Column{UniqueID: 4, ID: 4, RetType: longlongType}
+	conVersion := &expression.Constant{Value: types.NewIntDatum(1), RetType: longlongType}
+	colString := &expression.Column{UniqueID: 5, ID: 5, RetType: stringType}
+	col5 := &expression.Column{UniqueID: 6, ID: 6, RetType: longlongType}
+	internalShardCtx := expression.WithTiDBShardInternalVersion(sctx.GetExprCtx())
+	col5Expr, err := expression.NewFunction(internalShardCtx, ast.TiDBShard, col5.RetType, colString, conVersion)
+	require.NoError(t, err)
+	col5.VirtualExpr = col5Expr
 
 	cols := []*expression.Column{col0, col1}
 
@@ -1765,6 +1793,8 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	require.False(t, ranger.IsValidShardIndex([]*expression.Column{col3, col0}))
 	// normal case
 	require.True(t, ranger.IsValidShardIndex([]*expression.Column{col2, col0}))
+	// internal two-argument form is also valid when the base column still matches.
+	require.True(t, ranger.IsValidShardIndex([]*expression.Column{col5, colString}))
 
 	// -------------------------------------------
 	// test ExtractColumnsFromExpr function

@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -59,6 +61,12 @@ const (
 	// GlobalIndexVersionV2 is the next, not yet implemented format (version 2) where partition ID
 	// is encoded in the key ONLY!
 	GlobalIndexVersionV2 uint8 = 2
+
+	// ShardIndexVersionLegacy is the legacy shard-index format with one-argument tidb_shard().
+	ShardIndexVersionLegacy uint8 = 0
+	// ShardIndexVersionStringV1 is the string-aware shard-index format persisted internally
+	// as a versioned hidden expression and rendered back to one-argument tidb_shard() for users.
+	ShardIndexVersionStringV1 uint8 = 1
 )
 
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
@@ -121,6 +129,10 @@ type IndexInfo struct {
 	// 1=v1 non-unique non-clustered with partition ID in key and value.
 	// 2=v2 non-unique non-clustered with partition ID in key only (TODO).
 	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
+	// Version of tidb_shard expression semantics for shard indexes.
+	// 0=legacy one-argument semantics.
+	// 1=string-aware semantics persisted internally as tidb_shard(col, 1).
+	ShardIndexVersion uint8 `json:"shard_index_version,omitempty"`
 }
 
 // Clone clones IndexInfo.
@@ -197,6 +209,88 @@ func (index *IndexInfo) IsPublic() bool {
 // For a TiFlash local index, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsTiFlashLocalIndex() bool {
 	return index.VectorInfo != nil
+}
+
+func parseGeneratedExpr(expr string) (ast.ExprNode, error) {
+	stmts, _, err := parser.New().ParseSQL("select " + expr)
+	if err != nil {
+		return nil, err
+	}
+	return stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr, nil
+}
+
+func restoreGeneratedExpr(expr ast.ExprNode) (string, error) {
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	if err := expr.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+// IsVersionedTiDBShardExprNode checks whether the expression node is the internal
+// versioned tidb_shard(col, version) form and returns the base column if so.
+func IsVersionedTiDBShardExprNode(exprNode ast.ExprNode) (model.CIStr, bool) {
+	fn, ok := exprNode.(*ast.FuncCallExpr)
+	if !ok || fn.FnName.L != ast.TiDBShard || len(fn.Args) != 2 {
+		return model.CIStr{}, false
+	}
+	colExpr, ok := fn.Args[0].(*ast.ColumnNameExpr)
+	if !ok {
+		return model.CIStr{}, false
+	}
+	return colExpr.Name.Name, true
+}
+
+// IsVersionedTiDBShardExpr checks whether the generated expression is the internal
+// versioned tidb_shard(col, version) form and returns the base column if so.
+func IsVersionedTiDBShardExpr(expr string) (model.CIStr, bool) {
+	exprNode, err := parseGeneratedExpr(expr)
+	if err != nil {
+		return model.CIStr{}, false
+	}
+	return IsVersionedTiDBShardExprNode(exprNode)
+}
+
+func publicGeneratedExprString(expr string, shardIndexVersion uint8) string {
+	if shardIndexVersion != ShardIndexVersionStringV1 {
+		return expr
+	}
+	exprNode, err := parseGeneratedExpr(expr)
+	if err != nil {
+		return expr
+	}
+	fn, ok := exprNode.(*ast.FuncCallExpr)
+	if !ok || fn.FnName.L != ast.TiDBShard || len(fn.Args) != 2 {
+		return expr
+	}
+	publicExpr := &ast.FuncCallExpr{
+		FnName: model.NewCIStr(ast.TiDBShard),
+		Args:   []ast.ExprNode{fn.Args[0]},
+	}
+	publicExprString, err := restoreGeneratedExpr(publicExpr)
+	if err != nil {
+		return expr
+	}
+	return publicExprString
+}
+
+// GetIndexColumnDisplayString returns the user-visible string for an index column,
+// converting hidden internal shard expressions back to their public one-argument form.
+func (index *IndexInfo) GetIndexColumnDisplayString(tblInfo *TableInfo, idxCol *IndexColumn) string {
+	if idxCol == nil {
+		return ""
+	}
+	if idxCol.Offset >= len(tblInfo.Columns) {
+		return idxCol.Name.O
+	}
+	tblCol := tblInfo.Columns[idxCol.Offset]
+	if !tblCol.Hidden {
+		return idxCol.Name.O
+	}
+	return publicGeneratedExprString(tblCol.GeneratedExprString, index.ShardIndexVersion)
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
