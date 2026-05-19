@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+// streamAggMemDeltaFlushThreshold is the threshold for flushing buffered memory delta to the tracker.
+// Consuming memory for every group is expensive due to atomic operations traversing the tracker tree.
+// We buffer deltas across groups and flush in batch to reduce Consume call frequency.
+const streamAggMemDeltaFlushThreshold = 1 << 20 // 1MB
+
 // StreamAggExec deals with all the aggregate functions.
 // It assumes all the input data is sorted by group by key.
 // When Next() is called, it will return a result for the same group.
@@ -49,6 +54,9 @@ type StreamAggExec struct {
 	// All partial results will be reset after processing one group data, and the memory usage should also be reset.
 	// We can't get memory delta from ResetPartialResult, so record the memory usage here.
 	memUsageOfInitialPartialResult int64
+	// pendingMemDelta buffers memory deltas across groups and is flushed to memTracker in batch.
+	// Cleared in appendResult2Chunk via ReplaceBytesUsed, which resets to the correct baseline.
+	pendingMemDelta int64
 }
 
 // Open implements the Executor Open interface.
@@ -180,7 +188,13 @@ func (e *StreamAggExec) consumeGroupRows() error {
 		allMemDelta += memDelta
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	e.memTracker.Consume(allMemDelta)
+	if allMemDelta != 0 {
+		e.pendingMemDelta += allMemDelta
+		if e.pendingMemDelta >= streamAggMemDeltaFlushThreshold {
+			e.memTracker.Consume(e.pendingMemDelta)
+			e.pendingMemDelta = 0
+		}
+	}
 	e.groupRows = e.groupRows[:0]
 	return nil
 }
@@ -228,7 +242,8 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 		aggFunc.ResetPartialResult(e.partialResults[i])
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	// All partial results have been reset, so reset the memory usage.
+	// All partial results have been reset. Clear pending delta and reset memory to the correct baseline.
+	e.pendingMemDelta = 0
 	e.memTracker.ReplaceBytesUsed(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
 	if len(e.AggFuncs) == 0 {
 		chk.SetNumVirtualRows(chk.NumRows() + 1)
