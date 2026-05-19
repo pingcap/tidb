@@ -105,6 +105,19 @@ func expectedRegionRange(tableID int64) ([]byte, []byte) {
 }
 
 func TestEstimateTableSizeByIDUsesMaxApproximateSizes(t *testing.T) {
+	t.Run("TiKVSpacePrecheckCapability", func(t *testing.T) {
+		ok, err := canRunTiKVSpacePrecheck(mockHelperStorage{codec: mockCodec{}})
+		require.NoError(t, err)
+		require.False(t, ok)
+
+		ok, err = canRunTiKVSpacePrecheck(mockHelperStorage{
+			codec: mockCodec{},
+			pdCli: &mockPDHTTPClient{},
+		})
+		require.NoError(t, err)
+		require.True(t, ok)
+	})
+
 	pdCli := &mockPDHTTPClient{
 		regionInfos: []*pdhttp.RegionsInfo{
 			{
