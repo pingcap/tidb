@@ -1257,6 +1257,9 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
 				args[0] = newCol
 			}
+			if con, ok := args[0].(*Constant); ok {
+				args[0] = con.Clone()
+			}
 			if args[0].GetType(ctx).GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale
