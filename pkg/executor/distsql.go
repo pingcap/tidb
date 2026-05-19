@@ -177,6 +177,9 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 	// comparisons whose index ranges only approximate the predicate). Merge them back
 	// into the access condition set so they are not lost on the correlated-access path
 	// and remain available to subsequent KV-range / filter logic as residual predicates.
+	// Defensive: today the planner's checker only admits binary-collation residuals when
+	// one operand is a Constant, so correlated forms don't reach this path. This guards
+	// future planner changes or other predicate shapes that produce remainedConds here.
 	if len(remainedConds) > 0 {
 		merged := make([]expression.Expression, 0, len(access)+len(remainedConds))
 		merged = append(merged, access...)
