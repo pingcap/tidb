@@ -16,6 +16,7 @@ package importinto
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -311,6 +311,7 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 		plan        *importer.Plan
 		finishErr   error
 		wantTaskIDs []string
+		wantWait    bool
 		wantWarn    bool
 		wantInfo    bool
 	}{
@@ -329,6 +330,7 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 			name:        "tici index finishes upload",
 			plan:        makePlan(true),
 			wantTaskIDs: []string{TaskKey(jobID)},
+			wantWait:    true,
 			wantInfo:    true,
 		},
 		{
@@ -350,9 +352,11 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 			core, recorded := observer.New(zap.DebugLevel)
 			logger := zap.New(core)
 
-			finishTiCIIndexUploadForPostProcess(context.Background(), nil, 123, jobID, tt.plan, logger)
+			gotIndexIDs, gotWait, gotSummary := finishTiCIIndexUploadForPostProcess(
+				context.Background(), nil, 123, jobID, tt.plan, logger)
 
 			require.Equal(t, tt.wantTaskIDs, gotTaskIDs)
+			require.Equal(t, tt.wantWait, gotWait)
 			warns := recorded.FilterMessage("failed to finish TiCI index upload for post process").All()
 			if tt.wantWarn {
 				require.Len(t, warns, 1)
@@ -360,8 +364,17 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 				require.Equal(t, int64(123), fields["task-id"])
 				require.Equal(t, []any{int64(101)}, fields["tici-index-ids"])
 				require.Equal(t, finishErr.Error(), fields["error"])
+				require.Equal(t, []int64{101}, gotIndexIDs)
+				require.NotNil(t, gotSummary)
+				require.True(t, gotSummary.Incomplete)
+				require.Equal(t, int64(1), gotSummary.TableID)
+				require.Equal(t, []int64{101}, gotSummary.IndexIDs)
+				require.Equal(t, []int64{101}, gotSummary.PendingIndexIDs)
+				require.Equal(t, "finish-index-upload-failed", gotSummary.Reason)
+				require.Equal(t, finishErr.Error(), gotSummary.ErrorMessage)
 			} else {
 				require.Empty(t, warns)
+				require.Nil(t, gotSummary)
 			}
 			infos := recorded.FilterMessage("finished TiCI index upload for post process").All()
 			if tt.wantInfo {
@@ -369,6 +382,7 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 				fields := infos[0].ContextMap()
 				require.Equal(t, int64(123), fields["task-id"])
 				require.Equal(t, []any{int64(101)}, fields["tici-index-ids"])
+				require.Equal(t, []int64{101}, gotIndexIDs)
 			} else {
 				require.Empty(t, infos)
 			}
@@ -376,13 +390,106 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 	}
 }
 
+func TestWaitTiCIIndexesReadyForPostProcess(t *testing.T) {
+	originCheckTiCIAddIndexProgress := checkTiCIAddIndexProgress
+	originWaitTiCIIndexProgressPollFn := waitTiCIIndexProgressPollFn
+	t.Cleanup(func() {
+		checkTiCIAddIndexProgress = originCheckTiCIAddIndexProgress
+		waitTiCIIndexProgressPollFn = originWaitTiCIIndexProgressPollFn
+	})
+
+	var gotIndexIDs []int64
+	readySeq := map[int64][]bool{
+		101: {false, true},
+		102: {true},
+	}
+	checkTiCIAddIndexProgress = func(_ context.Context, _ kv.Storage, tableID, indexID int64) (bool, error) {
+		require.Equal(t, int64(1), tableID)
+		gotIndexIDs = append(gotIndexIDs, indexID)
+		seq := readySeq[indexID]
+		require.NotEmpty(t, seq)
+		readySeq[indexID] = seq[1:]
+		return seq[0], nil
+	}
+	waitCount := 0
+	waitTiCIIndexProgressPollFn = func(context.Context) error {
+		waitCount++
+		return nil
+	}
+
+	summary, err := waitTiCIIndexesReadyForPostProcess(context.Background(), nil, 123, 1, []int64{102, 101}, zap.NewNop())
+	require.NoError(t, err)
+	require.Nil(t, summary)
+	require.Equal(t, []int64{101, 102, 101}, gotIndexIDs)
+	require.Equal(t, 1, waitCount)
+}
+
+func TestWaitTiCIIndexesReadyForPostProcessCheckError(t *testing.T) {
+	originCheckTiCIAddIndexProgress := checkTiCIAddIndexProgress
+	originWaitTiCIIndexProgressPollFn := waitTiCIIndexProgressPollFn
+	t.Cleanup(func() {
+		checkTiCIAddIndexProgress = originCheckTiCIAddIndexProgress
+		waitTiCIIndexProgressPollFn = originWaitTiCIIndexProgressPollFn
+	})
+
+	checkErr := errors.New("tici unavailable")
+	var gotIndexIDs []int64
+	checkTiCIAddIndexProgress = func(_ context.Context, _ kv.Storage, _ int64, indexID int64) (bool, error) {
+		gotIndexIDs = append(gotIndexIDs, indexID)
+		if indexID == 102 {
+			return false, checkErr
+		}
+		return true, nil
+	}
+	waitTiCIIndexProgressPollFn = func(context.Context) error {
+		require.FailNow(t, "should not wait after TiCI check error")
+		return nil
+	}
+
+	summary, err := waitTiCIIndexesReadyForPostProcess(context.Background(), nil, 123, 1, []int64{102, 101}, zap.NewNop())
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	require.True(t, summary.Incomplete)
+	require.Equal(t, int64(1), summary.TableID)
+	require.Equal(t, []int64{101, 102}, summary.IndexIDs)
+	require.Equal(t, []int64{101}, summary.ReadyIndexIDs)
+	require.Equal(t, []int64{102}, summary.PendingIndexIDs)
+	require.Equal(t, []int64{102}, summary.ErrorIndexIDs)
+	require.Equal(t, "check-add-index-progress-failed", summary.Reason)
+	require.Equal(t, checkErr.Error(), summary.ErrorMessage)
+	require.Equal(t, []int64{101, 102}, gotIndexIDs)
+}
+
+func TestWaitTiCIIndexesReadyForPostProcessContextCanceled(t *testing.T) {
+	originCheckTiCIAddIndexProgress := checkTiCIAddIndexProgress
+	t.Cleanup(func() {
+		checkTiCIAddIndexProgress = originCheckTiCIAddIndexProgress
+	})
+	checkTiCIAddIndexProgress = func(context.Context, kv.Storage, int64, int64) (bool, error) {
+		require.FailNow(t, "should not check TiCI progress after context is canceled")
+		return false, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	summary, err := waitTiCIIndexesReadyForPostProcess(ctx, nil, 123, 1, []int64{101}, zap.NewNop())
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, summary)
+}
+
 func TestPostProcessTiCIFinishFailureDoesNotAbort(t *testing.T) {
 	originFinishTiCIIndexUpload := finishTiCIIndexUpload
+	originCheckTiCIAddIndexProgress := checkTiCIAddIndexProgress
 	t.Cleanup(func() {
 		finishTiCIIndexUpload = originFinishTiCIIndexUpload
+		checkTiCIAddIndexProgress = originCheckTiCIAddIndexProgress
 	})
 	finishTiCIIndexUpload = func(_ context.Context, _ kv.Storage, _ string) error {
 		return errors.New("finish failed")
+	}
+	checkTiCIAddIndexProgress = func(context.Context, kv.Storage, int64, int64) (bool, error) {
+		require.FailNow(t, "should not check TiCI progress after FinishIndexUpload fails")
+		return false, nil
 	}
 
 	indexInfo := &model.IndexInfo{
@@ -412,23 +519,133 @@ func TestPostProcessTiCIFinishFailureDoesNotAbort(t *testing.T) {
 		logger: logger,
 	}
 
-	err := executor.postProcess(context.Background(), &PostProcessStepMeta{TooManyConflictsFromIndex: true}, logger)
+	stepMeta := &PostProcessStepMeta{TooManyConflictsFromIndex: true}
+	err := executor.postProcess(context.Background(), stepMeta, logger)
 	require.NoError(t, err)
 	require.Len(t, recorded.FilterMessage("failed to finish TiCI index upload for post process").All(), 1)
+	require.NotNil(t, stepMeta.TiCIIndexSummary)
+	require.True(t, stepMeta.TiCIIndexSummary.Incomplete)
+	require.Equal(t, "finish-index-upload-failed", stepMeta.TiCIIndexSummary.Reason)
 
 	ctrl := gomock.NewController(t)
 	taskTbl := frameworkmock.NewMockTaskTable(ctrl)
-	taskTbl.EXPECT().WithNewSession(gomock.Any()).AnyTimes().DoAndReturn(func(fn func(sessionctx.Context) error) error {
-		return fn(nil)
-	})
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/skipPostProcessAlterTableMode", "return(true)")
+	taskTbl.EXPECT().WithNewSession(gomock.Any()).AnyTimes().Return(nil)
 	core, recorded = observer.New(zap.DebugLevel)
 	logger = zap.New(core)
 	executor.taskTbl = taskTbl
 	executor.logger = logger
 	executor.taskMeta.Plan.Checksum = config.OpLevelOff
 
-	err = executor.postProcess(context.Background(), &PostProcessStepMeta{}, logger)
+	stepMeta = &PostProcessStepMeta{}
+	err = executor.postProcess(context.Background(), stepMeta, logger)
 	require.NoError(t, err)
 	require.Len(t, recorded.FilterMessage("failed to finish TiCI index upload for post process").All(), 1)
+	require.NotNil(t, stepMeta.TiCIIndexSummary)
+	require.True(t, stepMeta.TiCIIndexSummary.Incomplete)
+}
+
+func TestPostProcessWaitsTiCIIndexReadyAfterSkippedChecksum(t *testing.T) {
+	originFinishTiCIIndexUpload := finishTiCIIndexUpload
+	originCheckTiCIAddIndexProgress := checkTiCIAddIndexProgress
+	t.Cleanup(func() {
+		finishTiCIIndexUpload = originFinishTiCIIndexUpload
+		checkTiCIAddIndexProgress = originCheckTiCIAddIndexProgress
+	})
+	finishTiCIIndexUpload = func(context.Context, kv.Storage, string) error {
+		return nil
+	}
+	var checkedIndexIDs []int64
+	checkTiCIAddIndexProgress = func(_ context.Context, _ kv.Storage, tableID, indexID int64) (bool, error) {
+		require.Equal(t, int64(1), tableID)
+		checkedIndexIDs = append(checkedIndexIDs, indexID)
+		return true, nil
+	}
+
+	indexInfo := &model.IndexInfo{
+		ID:           101,
+		Name:         ast.NewCIStr("idx_fulltext"),
+		FullTextInfo: &model.FullTextIndexInfo{},
+		State:        model.StatePublic,
+	}
+	tableInfo := &model.TableInfo{
+		ID:         1,
+		Name:       ast.NewCIStr("t"),
+		PKIsHandle: true,
+		Indices:    []*model.IndexInfo{indexInfo},
+	}
+	executor := &postProcessStepExecutor{
+		taskID: 123,
+		taskMeta: &TaskMeta{
+			JobID: 456,
+			Plan: importer.Plan{
+				DBName:           "test",
+				TableInfo:        tableInfo,
+				DesiredTableInfo: tableInfo,
+			},
+		},
+		logger: zap.NewNop(),
+	}
+
+	stepMeta := &PostProcessStepMeta{TooManyConflictsFromIndex: true}
+	err := executor.postProcess(context.Background(), stepMeta, zap.NewNop())
+	require.NoError(t, err)
+	require.Equal(t, []int64{101}, checkedIndexIDs)
+	require.Nil(t, stepMeta.TiCIIndexSummary)
+}
+
+func TestPostProcessRunSubtaskPersistsTiCIIndexSummary(t *testing.T) {
+	originFinishTiCIIndexUpload := finishTiCIIndexUpload
+	originCheckTiCIAddIndexProgress := checkTiCIAddIndexProgress
+	t.Cleanup(func() {
+		finishTiCIIndexUpload = originFinishTiCIIndexUpload
+		checkTiCIAddIndexProgress = originCheckTiCIAddIndexProgress
+	})
+	finishErr := errors.New("finish failed")
+	finishTiCIIndexUpload = func(context.Context, kv.Storage, string) error {
+		return finishErr
+	}
+	checkTiCIAddIndexProgress = func(context.Context, kv.Storage, int64, int64) (bool, error) {
+		require.FailNow(t, "should not check TiCI progress after FinishIndexUpload fails")
+		return false, nil
+	}
+
+	indexInfo := &model.IndexInfo{
+		ID:           101,
+		Name:         ast.NewCIStr("idx_fulltext"),
+		FullTextInfo: &model.FullTextIndexInfo{},
+		State:        model.StatePublic,
+	}
+	tableInfo := &model.TableInfo{
+		ID:         1,
+		Name:       ast.NewCIStr("t"),
+		PKIsHandle: true,
+		Indices:    []*model.IndexInfo{indexInfo},
+	}
+	executor := &postProcessStepExecutor{
+		taskID: 123,
+		taskMeta: &TaskMeta{
+			JobID: 456,
+			Plan: importer.Plan{
+				DBName:           "test",
+				TableInfo:        tableInfo,
+				DesiredTableInfo: tableInfo,
+			},
+		},
+		logger: zap.NewNop(),
+	}
+	metaBytes, err := json.Marshal(&PostProcessStepMeta{TooManyConflictsFromIndex: true})
+	require.NoError(t, err)
+	subtask := &proto.Subtask{
+		SubtaskBase: proto.SubtaskBase{ID: 1},
+		Meta:        metaBytes,
+	}
+
+	require.NoError(t, executor.RunSubtask(context.Background(), subtask))
+	var got PostProcessStepMeta
+	require.NoError(t, json.Unmarshal(subtask.Meta, &got))
+	require.NotNil(t, got.TiCIIndexSummary)
+	require.True(t, got.TiCIIndexSummary.Incomplete)
+	require.Equal(t, []int64{101}, got.TiCIIndexSummary.PendingIndexIDs)
+	require.Equal(t, "finish-index-upload-failed", got.TiCIIndexSummary.Reason)
+	require.Equal(t, finishErr.Error(), got.TiCIIndexSummary.ErrorMessage)
 }

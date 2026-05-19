@@ -191,6 +191,8 @@ type PostProcessStepMeta struct {
 	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`
 	// MaxIDs of max all max-ids of subtasks in import step.
 	MaxIDs map[autoid.AllocatorType]int64
+	// TiCIIndexSummary records TiCI readiness warnings generated during post process.
+	TiCIIndexSummary *importer.TiCIIndexSummary `json:"tici-index-summary,omitempty"`
 }
 
 // SharedVars is the shared variables of all minimal tasks in a subtask.

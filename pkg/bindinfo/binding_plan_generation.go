@@ -406,6 +406,8 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().EnableSemiJoinRewrite = state.varValues[i].(bool)
 		case vardef.TiDBOptSelectivityFactor:
 			sctx.GetSessionVars().SelectivityFactor = state.varValues[i].(float64)
+		case vardef.TiDBOptEnableAlternativeLogicalPlans:
+			sctx.GetSessionVars().EnableAlternativeLogicalPlans = state.varValues[i].(bool)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}
@@ -507,7 +509,7 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 		}
 		// increase 0.1 each step
 		return v + 0.1, nil
-	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey, vardef.TiDBOptEnableSemiJoinRewrite: // flip the switch
+	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey, vardef.TiDBOptEnableSemiJoinRewrite, vardef.TiDBOptEnableAlternativeLogicalPlans: // flip the switch
 		return !varVal.(bool), nil
 	}
 	return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
@@ -600,6 +602,8 @@ func getStartState(vars []string, fixes []uint64, indexHintCount int) (*state, e
 			s.varValues = append(s.varValues, vardef.DefOptSelectivityFactor)
 		case vardef.TiDBOptCartesianJoinOrderThreshold:
 			s.varValues = append(s.varValues, vardef.DefOptCartesianJoinOrderThreshold)
+		case vardef.TiDBOptEnableAlternativeLogicalPlans:
+			s.varValues = append(s.varValues, vardef.DefOptEnableAlternativeLogicalPlans)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}

@@ -675,10 +675,10 @@ func (ds *DataSource) analyzeTiCIIndex() error {
 				continue
 			}
 			if reason := expression.DiagnoseUnmatchedFTSIndexReason(cond, regularFulltextCols, hybridFulltextCols); reason != "" {
-				return errors.New(reason)
+				return &base.FTSLikeFallbackError{Cause: errors.New(reason)}
 			}
 		}
-		return errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")
+		return &base.FTSLikeFallbackError{Cause: errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")}
 	}
 
 	if matchedIdx == nil {

@@ -67,6 +67,9 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		// We need to return the hint information to warn
 		joinOrderHintInfo = append(joinOrderHintInfo, join.HintInfo)
 		currentLeadingHint = join.HintInfo
+	} else if isJoin && join.InternalPreferJoinOrder {
+		joinOrderHintInfo = append(joinOrderHintInfo, join.InternalHintInfo)
+		currentLeadingHint = join.InternalHintInfo
 	}
 
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
@@ -81,6 +84,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		if joinOrderHintInfo != nil {
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.HintInfo = nil
+			join.InternalHintInfo = nil
 		}
 		return &joinGroupResult{
 			group:              []base.LogicalPlan{p},
@@ -256,6 +260,10 @@ type joinTypeWithExtMsg struct {
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+	if p.SCtx().GetSessionVars().TiDBOptEnableAdvancedJoinReorder {
+		p, err := joinorder.Optimize(p)
+		return p, false, err
+	}
 	p, err := s.optimizeRecursive(p.SCtx(), p)
 	return p, false, err
 }

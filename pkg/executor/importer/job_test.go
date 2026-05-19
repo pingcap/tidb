@@ -156,6 +156,37 @@ func TestJobHappyPath(t *testing.T) {
 	}
 }
 
+func TestJobSummaryTiCIIndexSummaryRoundTrip(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().GetSQLExecutor()
+
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", "", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepValidating))
+
+	summary := &importer.Summary{
+		ImportedRows: 100,
+		TiCIIndexSummary: &importer.TiCIIndexSummary{
+			Incomplete:      true,
+			TableID:         1,
+			IndexIDs:        []int64{101, 102},
+			ReadyIndexIDs:   []int64{101},
+			PendingIndexIDs: []int64{102},
+			ErrorIndexIDs:   []int64{102},
+			Reason:          "check-add-index-progress-failed",
+			ErrorMessage:    "tici unavailable",
+		},
+	}
+	require.NoError(t, importer.FinishJob(ctx, conn, jobID, summary))
+
+	jobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, summary, jobInfo.Summary)
+}
+
 func TestGetAndCancelJob(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
