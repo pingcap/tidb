@@ -22,6 +22,8 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"math"
+	"math/rand"
 	"os"
 	"slices"
 	"strconv"
@@ -69,9 +71,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/util/rowsize"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -3178,21 +3183,73 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
-		taskMeta := &BackfillTaskMeta{
-			Job:             *job.Clone(),
-			EleIDs:          extractElemIDs(reorgInfo),
-			EleTypeKey:      reorgInfo.currElement.TypeKey,
-			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
-			MergeTempIndex:  reorgInfo.mergingTmpIdx,
-			EstimateRowSize: rowSize,
-			Version:         BackfillTaskMetaVersion1,
-		}
-		initialUsage, err := collectTiKVStoreUsage(ctx, w.store)
-		if err != nil {
-			logutil.DDLLogger().Warn("failed to collect initial TiKV store usage for add-index task",
-				zap.Int64("jobID", job.ID), zap.String("task-key", taskKey), zap.Error(err))
+		var (
+			initialCapacity                  *TiKVClusterCapacity
+			basicPredictedTiKVIndexBytes     uint64
+			representPredictedTiKVIndexBytes uint64
+			samplePrediction                 sampleTiKVIndexPredictionResult
+		)
+		if !reorgInfo.mergingTmpIdx {
+			basicPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesBasic(w.sess.Session(), t, reorgInfo)
+			if err != nil {
+				return err
+			}
+			representPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesRepresent(w.sess.Session(), t, reorgInfo)
+			if err != nil {
+				return err
+			}
+			samplePrediction, err = w.predictTiKVIndexBytesSample(ctx, w.sess.Session(), t, reorgInfo)
+			if err != nil {
+				return err
+			}
+			initialCapacity, err = collectTiKVStoreCapacity(ctx, w.store)
+			if err != nil {
+				return err
+			}
+			if err := checkTiKVSpaceForAddIndex(initialCapacity, samplePrediction.PredictedBytes); err != nil {
+				return err
+			}
+			logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
+				zap.Int64("jobID", job.ID),
+				zap.String("task-key", taskKey),
+				zap.Uint64("basic_predicted_tikv_index_bytes", basicPredictedTiKVIndexBytes),
+				zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
+				zap.Uint64("sample_predicted_tikv_index_bytes", samplePrediction.PredictedBytes),
+				zap.Int("sample_prediction_region_count", samplePrediction.SampledRegionCount),
+				zap.Int("sample_prediction_row_count", samplePrediction.SampledRowCount),
+				zap.Int("sample_prediction_read_error_count", samplePrediction.ReadErrorCount),
+				zap.Uint64("cluster_available_bytes", initialCapacity.AvailableBytes),
+				zap.Uint64("cluster_total_bytes", initialCapacity.TotalBytes),
+				zap.Int("tikv_store_count", initialCapacity.StoreCount))
 		} else {
-			taskMeta.InitialTiKVStoreUsage = initialUsage
+			initialCapacity, err = collectTiKVStoreCapacity(ctx, w.store)
+			if err != nil {
+				logutil.DDLLogger().Warn("failed to collect initial TiKV capacity for merge-temp-index task",
+					zap.Int64("jobID", job.ID), zap.String("task-key", taskKey), zap.Error(err))
+			}
+		}
+		taskMeta := &BackfillTaskMeta{
+			Job:                              *job.Clone(),
+			EleIDs:                           extractElemIDs(reorgInfo),
+			EleTypeKey:                       reorgInfo.currElement.TypeKey,
+			CloudStorageURI:                  w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+			MergeTempIndex:                   reorgInfo.mergingTmpIdx,
+			EstimateRowSize:                  rowSize,
+			InitialTiKVCapacity:              initialCapacity,
+			BasicPredictedTiKVIndexBytes:     basicPredictedTiKVIndexBytes,
+			RepresentPredictedTiKVIndexBytes: representPredictedTiKVIndexBytes,
+			SamplePredictedTiKVIndexBytes:    samplePrediction.PredictedBytes,
+			SamplePredictionRegionCount:      samplePrediction.SampledRegionCount,
+			SamplePredictionRowCount:         samplePrediction.SampledRowCount,
+			SamplePredictionReadErrorCount:   samplePrediction.ReadErrorCount,
+			PredictedTiKVIndexBytes:          samplePrediction.PredictedBytes,
+			Version:                          BackfillTaskMetaVersion1,
+		}
+		if initialCapacity != nil {
+			taskMeta.InitialTiKVStoreUsage = &TiKVStoreUsageSnapshot{
+				UsedBytes:  initialCapacity.UsedBytes,
+				StoreCount: initialCapacity.StoreCount,
+			}
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -3466,6 +3523,17 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 }
 
 func collectTiKVStoreUsage(ctx context.Context, store kv.Storage) (*TiKVStoreUsageSnapshot, error) {
+	capacity, err := collectTiKVStoreCapacity(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	return &TiKVStoreUsageSnapshot{
+		UsedBytes:  capacity.UsedBytes,
+		StoreCount: capacity.StoreCount,
+	}, nil
+}
+
+func collectTiKVStoreCapacity(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
@@ -3482,38 +3550,60 @@ func collectTiKVStoreUsage(ctx context.Context, store kv.Storage) (*TiKVStoreUsa
 	if err != nil {
 		return nil, err
 	}
-	return sumTiKVStoreUsage(storesInfo.Stores)
+	return sumTiKVStoreCapacity(storesInfo.Stores)
 }
 
 func sumTiKVStoreUsage(stores []pdHttp.StoreInfo) (*TiKVStoreUsageSnapshot, error) {
-	usage := &TiKVStoreUsageSnapshot{}
+	capacity, err := sumTiKVStoreCapacity(stores)
+	if err != nil {
+		return nil, err
+	}
+	return &TiKVStoreUsageSnapshot{
+		UsedBytes:  capacity.UsedBytes,
+		StoreCount: capacity.StoreCount,
+	}, nil
+}
+
+func sumTiKVStoreCapacity(stores []pdHttp.StoreInfo) (*TiKVClusterCapacity, error) {
+	capacity := &TiKVClusterCapacity{}
 	for _, store := range stores {
 		if isNonTiKVStoreInfo(store) {
 			continue
 		}
-		usage.StoreCount++
-		usedBytes, err := getStoreUsedBytes(store)
+		storeCapacity, err := buildTiKVStoreCapacity(store)
 		if err != nil {
-			return nil, errors.Annotatef(err, "parse store %d used bytes", store.Store.ID)
+			return nil, errors.Annotatef(err, "parse store %d capacity", store.Store.ID)
 		}
-		usage.UsedBytes += usedBytes
+		capacity.StoreCount++
+		capacity.TotalBytes += storeCapacity.TotalBytes
+		capacity.AvailableBytes += storeCapacity.AvailableBytes
+		capacity.UsedBytes += storeCapacity.UsedBytes
+		capacity.Stores = append(capacity.Stores, *storeCapacity)
 	}
-	return usage, nil
+	return capacity, nil
 }
 
-func getStoreUsedBytes(store pdHttp.StoreInfo) (uint64, error) {
+func buildTiKVStoreCapacity(store pdHttp.StoreInfo) (*TiKVStoreCapacity, error) {
 	capacityBytes, err := units.RAMInBytes(store.Status.Capacity)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	availableBytes, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	usedBytes := int64(0)
 	if capacityBytes <= availableBytes {
-		return 0, nil
+		availableBytes = capacityBytes
+	} else {
+		usedBytes = capacityBytes - availableBytes
 	}
-	return uint64(capacityBytes - availableBytes), nil
+	return &TiKVStoreCapacity{
+		StoreID:        store.Store.ID,
+		TotalBytes:     uint64(capacityBytes),
+		AvailableBytes: uint64(availableBytes),
+		UsedBytes:      uint64(usedBytes),
+	}, nil
 }
 
 func isNonTiKVStoreInfo(store pdHttp.StoreInfo) bool {
@@ -3548,11 +3638,19 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 		return
 	}
 
-	finalUsage, err := collectTiKVStoreUsage(w.workCtx, w.store)
+	finalCapacity, err := collectTiKVStoreCapacity(w.workCtx, w.store)
 	if err != nil {
 		logutil.DDLLogger().Warn("failed to collect final TiKV store usage for add-index task",
 			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID), zap.Error(err))
 		return
+	}
+	finalUsage := &TiKVStoreUsageSnapshot{
+		UsedBytes:  finalCapacity.UsedBytes,
+		StoreCount: finalCapacity.StoreCount,
+	}
+	initialStoreCount := taskMeta.InitialTiKVStoreUsage.StoreCount
+	if taskMeta.InitialTiKVCapacity != nil {
+		initialStoreCount = taskMeta.InitialTiKVCapacity.StoreCount
 	}
 
 	subtasks, err := taskMgr.GetSubtasksWithHistory(w.workCtx, task.ID, proto.BackfillStepReadIndex)
@@ -3572,20 +3670,1043 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 	if finalUsage.UsedBytes > taskMeta.InitialTiKVStoreUsage.UsedBytes {
 		observedIncrease = int64(finalUsage.UsedBytes - taskMeta.InitialTiKVStoreUsage.UsedBytes)
 	}
+	representPredictedTiKVIndexBytes := taskMeta.RepresentPredictedTiKVIndexBytes
+	if representPredictedTiKVIndexBytes == 0 {
+		representPredictedTiKVIndexBytes = taskMeta.PredictedTiKVIndexBytes
+	}
+	samplePredictedTiKVIndexBytes := taskMeta.SamplePredictedTiKVIndexBytes
+	if samplePredictedTiKVIndexBytes == 0 {
+		samplePredictedTiKVIndexBytes = taskMeta.PredictedTiKVIndexBytes
+	}
 	logutil.DDLLogger().Info("observed TiKV capacity increase for add-index task",
 		zap.Int64("jobID", jobID),
 		zap.Int64("taskID", task.ID),
 		zap.String("task_key", taskKey),
+		zap.Uint64("basic_predicted_tikv_index_bytes", taskMeta.BasicPredictedTiKVIndexBytes),
+		zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
+		zap.Uint64("sample_predicted_tikv_index_bytes", samplePredictedTiKVIndexBytes),
+		zap.Int("sample_prediction_region_count", taskMeta.SamplePredictionRegionCount),
+		zap.Int("sample_prediction_row_count", taskMeta.SamplePredictionRowCount),
+		zap.Int("sample_prediction_read_error_count", taskMeta.SamplePredictionReadErrorCount),
 		zap.Int64("logical_index_kv_bytes", logicalIndexKVBytes),
 		zap.Int64("observed_tikv_capacity_increase_bytes", observedIncrease),
 		zap.Uint64("initial_tikv_used_bytes", taskMeta.InitialTiKVStoreUsage.UsedBytes),
 		zap.Uint64("final_tikv_used_bytes", finalUsage.UsedBytes),
-		zap.Int("initial_tikv_store_count", taskMeta.InitialTiKVStoreUsage.StoreCount),
+		zap.Int("initial_tikv_store_count", initialStoreCount),
 		zap.Int("final_tikv_store_count", finalUsage.StoreCount),
 	)
 	failpoint.InjectCall("afterLogObservedTiKVCapacityIncrease",
 		task.ID, logicalIndexKVBytes, observedIncrease,
 		int64(taskMeta.InitialTiKVStoreUsage.UsedBytes), int64(finalUsage.UsedBytes))
+}
+
+func checkTiKVSpaceForAddIndex(capacity *TiKVClusterCapacity, predictedTiKVIndexBytes uint64) error {
+	if capacity == nil {
+		return errors.New("initial TiKV capacity snapshot is nil")
+	}
+	if capacity.StoreCount == 0 {
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("no TiKV stores found for add index capacity check")
+	}
+	clusterRemaining := remainingTiKVBytes(capacity.AvailableBytes, predictedTiKVIndexBytes)
+	clusterThreshold := uint64(float64(capacity.TotalBytes) * 0.20)
+	if clusterRemaining < clusterThreshold {
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+			fmt.Sprintf("add index rejected by TiKV cluster capacity check: cluster_available_bytes=%d predict_tikv_index_bytes=%d cluster_total_bytes=%d cluster_remaining_bytes=%d cluster_threshold_bytes=%d",
+				capacity.AvailableBytes, predictedTiKVIndexBytes, capacity.TotalBytes, clusterRemaining, clusterThreshold))
+	}
+
+	perStorePredictBytes := predictedTiKVIndexBytes / uint64(capacity.StoreCount)
+	for _, store := range capacity.Stores {
+		storeRemaining := remainingTiKVBytes(store.AvailableBytes, perStorePredictBytes)
+		storeThreshold := uint64(float64(store.TotalBytes) * 0.15)
+		if storeRemaining < storeThreshold {
+			return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				fmt.Sprintf("add index rejected by TiKV store capacity check: store_id=%d store_available_bytes=%d predict_tikv_index_bytes=%d tikv_store_count=%d per_store_predict_bytes=%d store_total_bytes=%d store_remaining_bytes=%d store_threshold_bytes=%d",
+					store.StoreID, store.AvailableBytes, predictedTiKVIndexBytes, capacity.StoreCount, perStorePredictBytes, store.TotalBytes, storeRemaining, storeThreshold))
+		}
+	}
+	return nil
+}
+
+func remainingTiKVBytes(availableBytes, predictBytes uint64) uint64 {
+	if availableBytes <= predictBytes {
+		return 0
+	}
+	return availableBytes - predictBytes
+}
+
+const (
+	samplePredictionMaxRegionCount = 5
+	samplePredictionRowsPerRegion  = 10
+	samplePredictionMaxReadErrors  = 3
+	samplePredictionMaxSkipRows    = 256
+)
+
+type sampleTiKVIndexPredictionResult struct {
+	PredictedBytes     uint64
+	SampledRegionCount int
+	SampledRowCount    int
+	ReadErrorCount     int
+}
+
+type samplePredictionRegion struct {
+	StartKey        kv.Key
+	EndKey          kv.Key
+	ApproximateKeys int64
+}
+
+func (w *worker) predictTiKVIndexBytesBasic(sctx sessionctx.Context, tbl table.Table, reorgInfo *reorgInfo) (uint64, error) {
+	if reorgInfo == nil {
+		return 0, errors.New("reorg info is nil")
+	}
+	tblInfo := tbl.Meta()
+	physicalIDs := predictionPhysicalTableIDs(tblInfo)
+	targetIndexes, err := collectBackfillIndexes(tblInfo, reorgInfo)
+	if err != nil {
+		return 0, err
+	}
+	var totalBytes float64
+	for _, idx := range targetIndexes {
+		indexCols, err := buildIndexPredictionColumns(sctx, tblInfo, idx)
+		if err != nil {
+			return 0, err
+		}
+		for _, physicalID := range physicalIDs {
+			statsTbl := getPhysicalTableStatsForPrediction(physicalID, tblInfo, w.ddlCtx.statsHandle)
+			rowCount := estimatePhysicalTableRowCount(statsTbl)
+			if rowCount <= 0 {
+				continue
+			}
+			totalBytes += estimateIndexKVBytesPerRowForBasicPrediction(sctx, tblInfo, idx, statsTbl, indexCols) * float64(rowCount)
+		}
+	}
+	if totalBytes <= 0 {
+		return 0, nil
+	}
+	return uint64(totalBytes), nil
+}
+
+func (w *worker) predictTiKVIndexBytesRepresent(sctx sessionctx.Context, tbl table.Table, reorgInfo *reorgInfo) (uint64, error) {
+	if reorgInfo == nil {
+		return 0, errors.New("reorg info is nil")
+	}
+	tblInfo := tbl.Meta()
+	physicalIDs := predictionPhysicalTableIDs(tblInfo)
+	targetIndexes, err := collectBackfillIndexes(tblInfo, reorgInfo)
+	if err != nil {
+		return 0, err
+	}
+	var totalBytes float64
+	for _, idx := range targetIndexes {
+		for _, physicalID := range physicalIDs {
+			statsTbl := getPhysicalTableStatsForPrediction(physicalID, tblInfo, w.ddlCtx.statsHandle)
+			rowCount := estimatePhysicalTableRowCount(statsTbl)
+			if rowCount <= 0 {
+				continue
+			}
+			kvBytesPerRow, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idx, physicalID, statsTbl)
+			if err != nil {
+				return 0, err
+			}
+			totalBytes += kvBytesPerRow * float64(rowCount)
+		}
+	}
+	if totalBytes <= 0 {
+		return 0, nil
+	}
+	return uint64(totalBytes), nil
+}
+
+func (w *worker) predictTiKVIndexBytesSample(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tbl table.Table,
+	reorgInfo *reorgInfo,
+) (sampleTiKVIndexPredictionResult, error) {
+	result := sampleTiKVIndexPredictionResult{}
+	if reorgInfo == nil {
+		return result, errors.New("reorg info is nil")
+	}
+
+	targetIndexInfos, err := collectBackfillIndexes(tbl.Meta(), reorgInfo)
+	if err != nil {
+		return result, err
+	}
+	physicalTables, err := predictionPhysicalTables(tbl)
+	if err != nil {
+		return result, err
+	}
+	jobCtx := w.jobContext(reorgInfo.Job.ID, reorgInfo.Job.ReorgMeta)
+	currentVer, err := getValidCurrentVersion(w.store)
+	if err != nil {
+		return result, err
+	}
+
+	var totalBytes float64
+	for _, physicalTbl := range physicalTables {
+		statsTbl := getPhysicalTableStatsForPrediction(physicalTbl.GetPhysicalID(), tbl.Meta(), w.ddlCtx.statsHandle)
+		rowCount := estimatePhysicalTableRowCount(statsTbl)
+		if rowCount <= 0 {
+			continue
+		}
+
+		tableIndexes, err := buildPredictionIndexesForPhysicalTable(physicalTbl, targetIndexInfos)
+		if err != nil {
+			return result, err
+		}
+		regions, err := listSamplePredictionRegions(ctx, w.store, physicalTbl.GetPhysicalID())
+		if err != nil {
+			result.ReadErrorCount++
+			logutil.DDLLogger().Warn("failed to list sample prediction regions for add-index task",
+				zap.Int64("jobID", reorgInfo.Job.ID),
+				zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
+				zap.Error(err))
+			if result.ReadErrorCount > samplePredictionMaxReadErrors {
+				return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+					fmt.Sprintf("add index sample prediction failed after %d read errors: %v", result.ReadErrorCount, err))
+			}
+			continue
+		}
+		selectedRegions := pickSamplePredictionRegions(regions, samplePredictionSeed(reorgInfo.Job.ID, physicalTbl.GetPhysicalID()))
+		if len(selectedRegions) == 0 {
+			continue
+		}
+
+		avgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableSampleBytesPerRow(
+			jobCtx,
+			sctx,
+			physicalTbl,
+			tableIndexes,
+			selectedRegions,
+			currentVer.Ver,
+			samplePredictionSeed(reorgInfo.Job.ID, physicalTbl.GetPhysicalID())^0x9e3779b97f4a7c15,
+		)
+		result.SampledRegionCount += sampledRegions
+		result.SampledRowCount += sampledRows
+		if readErrors > 0 {
+			result.ReadErrorCount += readErrors
+			if result.ReadErrorCount > samplePredictionMaxReadErrors {
+				return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+					fmt.Sprintf("add index sample prediction failed after %d read errors", result.ReadErrorCount))
+			}
+		}
+		if err != nil {
+			return result, err
+		}
+		if avgBytesPerRow <= 0 {
+			continue
+		}
+		totalBytes += avgBytesPerRow * float64(rowCount)
+	}
+
+	if totalBytes > 0 {
+		result.PredictedBytes = uint64(totalBytes)
+	}
+	return result, nil
+}
+
+func (w *worker) estimatePhysicalTableSampleBytesPerRow(
+	jobCtx *ReorgContext,
+	sctx sessionctx.Context,
+	physicalTbl table.PhysicalTable,
+	indexes []table.Index,
+	regions []samplePredictionRegion,
+	snapshotTS uint64,
+	seed uint64,
+) (float64, int, int, int, error) {
+	if len(regions) == 0 {
+		return 0, 0, 0, 0, nil
+	}
+	rnd := rand.New(rand.NewSource(int64(seed)))
+	var (
+		totalBytes     int64
+		totalRows      int
+		sampledRegions int
+		readErrorCount int
+	)
+	for _, region := range regions {
+		skipRows := predictionRegionSkipRows(region, rnd)
+		rowCnt, bytes, err := w.sampleIndexKVBytesFromRegion(jobCtx, sctx, physicalTbl, indexes, region, snapshotTS, skipRows, samplePredictionRowsPerRegion)
+		if err != nil {
+			readErrorCount++
+			logutil.DDLLogger().Warn("failed to sample add-index prediction rows from region",
+				zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
+				zap.Int("skipRows", skipRows),
+				zap.Error(err))
+			if readErrorCount > samplePredictionMaxReadErrors {
+				return 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+					fmt.Sprintf("add index sample prediction failed after %d read errors: %v", readErrorCount, err))
+			}
+			continue
+		}
+		sampledRegions++
+		totalRows += rowCnt
+		totalBytes += bytes
+	}
+	if totalRows == 0 {
+		return 0, sampledRegions, totalRows, readErrorCount, nil
+	}
+	return float64(totalBytes) / float64(totalRows), sampledRegions, totalRows, readErrorCount, nil
+}
+
+func (w *worker) sampleIndexKVBytesFromRegion(
+	jobCtx *ReorgContext,
+	sctx sessionctx.Context,
+	physicalTbl table.PhysicalTable,
+	indexes []table.Index,
+	region samplePredictionRegion,
+	snapshotTS uint64,
+	skipRows int,
+	limit int,
+) (int, int64, error) {
+	if len(region.StartKey) == 0 || len(region.EndKey) == 0 || bytes.Compare(region.StartKey, region.EndKey) >= 0 {
+		return 0, 0, nil
+	}
+	snapshot := w.store.GetSnapshot(kv.Version{Ver: snapshotTS})
+	snapshot.SetOption(kv.Priority, kv.PriorityLow)
+	snapshot.SetOption(kv.RequestSourceInternal, true)
+	snapshot.SetOption(kv.RequestSourceType, jobCtx.ddlJobSourceType())
+	snapshot.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
+	if tagger := jobCtx.getResourceGroupTaggerForTopSQL(); tagger != nil {
+		snapshot.SetOption(kv.ResourceGroupTagger, tagger)
+	}
+	snapshot.SetOption(kv.ResourceGroupName, jobCtx.resourceGroupName)
+
+	it, err := snapshot.Iter(region.StartKey, region.EndKey)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	defer it.Close()
+
+	cols := physicalTbl.Cols()
+	skipped := 0
+	rowCount := 0
+	totalBytes := int64(0)
+	for it.Valid() && rowCount < limit {
+		if !it.Key().HasPrefix(physicalTbl.RecordPrefix()) {
+			if err := it.Next(); err != nil {
+				return rowCount, totalBytes, errors.Trace(err)
+			}
+			continue
+		}
+		if skipped < skipRows {
+			skipped++
+			if err := kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key())); err != nil {
+				return rowCount, totalBytes, errors.Trace(err)
+			}
+			continue
+		}
+		handle, err := tablecodec.DecodeRowKey(it.Key())
+		if err != nil {
+			return rowCount, totalBytes, errors.Trace(err)
+		}
+		row, _, err := tables.DecodeRawRowData(sctx.GetExprCtx(), physicalTbl.Meta(), handle, cols, it.Value())
+		if err != nil {
+			return rowCount, totalBytes, errors.Trace(err)
+		}
+		rowBytes, err := estimateIndexKVBytesForSampledRow(sctx, physicalTbl, indexes, row, handle)
+		if err != nil {
+			return rowCount, totalBytes, err
+		}
+		totalBytes += rowBytes
+		rowCount++
+		if err := kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key())); err != nil {
+			return rowCount, totalBytes, errors.Trace(err)
+		}
+	}
+	return rowCount, totalBytes, nil
+}
+
+func estimateIndexKVBytesForSampledRow(
+	sctx sessionctx.Context,
+	physicalTbl table.PhysicalTable,
+	indexes []table.Index,
+	row []types.Datum,
+	handle kv.Handle,
+) (int64, error) {
+	loc := predictionTimeLocation(sctx)
+	errCtx := sctx.GetSessionVars().StmtCtx.ErrCtx()
+	tblInfo := physicalTbl.Meta()
+	pkIdx := tables.FindPrimaryIndex(tblInfo)
+	var handleRestoreData []types.Datum
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion != 0 && pkIdx != nil {
+		handleRestoreData = extractHandleRestoreDataFromRow(tblInfo, pkIdx, row)
+	}
+
+	idxValueBuf := make([]types.Datum, 0, maxIndexColumnCount(indexes))
+	var totalBytes int64
+	for _, idx := range indexes {
+		if idx.Meta().HasCondition() {
+			match, err := idx.MeetPartialCondition(row)
+			if err != nil {
+				return 0, err
+			}
+			if !match {
+				continue
+			}
+		}
+		indexedValues, err := idx.FetchValues(row, idxValueBuf[:0])
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		actualHandle := handle
+		if idx.Meta().Global && idx.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			actualHandle = kv.NewPartitionHandle(physicalTbl.GetPhysicalID(), handle)
+		}
+		var rsData []types.Datum
+		if len(handleRestoreData) > 0 && (tables.NeedRestoredData(idx.Meta().Columns, tblInfo.Columns) || primaryIndexNeedsRestoredData(tblInfo, pkIdx)) {
+			rsData = getRestoreData(tblInfo, idx.Meta(), pkIdx, handleRestoreData)
+		}
+		iter := idx.GenIndexKVIter(errCtx, loc, indexedValues, actualHandle, rsData)
+		for iter.Valid() {
+			key, value, _, err := iter.Next(nil, nil)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			totalBytes += int64(len(key) + len(value))
+		}
+	}
+	return totalBytes, nil
+}
+
+func extractHandleRestoreDataFromRow(tblInfo *model.TableInfo, pkIdx *model.IndexInfo, row []types.Datum) []types.Datum {
+	if !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 || pkIdx == nil {
+		return nil
+	}
+	handleRestoreData := make([]types.Datum, 0, len(pkIdx.Columns))
+	for _, pkCol := range pkIdx.Columns {
+		handleRestoreData = append(handleRestoreData, *row[pkCol.Offset].Clone())
+	}
+	return handleRestoreData
+}
+
+func primaryIndexNeedsRestoredData(tblInfo *model.TableInfo, pkIdx *model.IndexInfo) bool {
+	return pkIdx != nil && tables.NeedRestoredData(pkIdx.Columns, tblInfo.Columns)
+}
+
+func buildPredictionIndexesForPhysicalTable(physicalTbl table.PhysicalTable, idxInfos []*model.IndexInfo) ([]table.Index, error) {
+	indexMap := make(map[int64]table.Index, len(physicalTbl.Indices()))
+	for _, idx := range physicalTbl.Indices() {
+		indexMap[idx.Meta().ID] = idx
+	}
+	indexes := make([]table.Index, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		idx, ok := indexMap[idxInfo.ID]
+		if !ok {
+			return nil, errors.Errorf("index not found on physical table: %d", idxInfo.ID)
+		}
+		indexes = append(indexes, idx)
+	}
+	return indexes, nil
+}
+
+func predictionPhysicalTables(tbl table.Table) ([]table.PhysicalTable, error) {
+	if partitionedTbl, ok := tbl.(table.PartitionedTable); ok {
+		physicalTables := make([]table.PhysicalTable, 0, len(tbl.Meta().GetPartitionInfo().Definitions))
+		for _, def := range tbl.Meta().GetPartitionInfo().Definitions {
+			physicalTables = append(physicalTables, partitionedTbl.GetPartition(def.ID))
+		}
+		return physicalTables, nil
+	}
+	physicalTbl, ok := tbl.(table.PhysicalTable)
+	if !ok {
+		return nil, errors.Errorf("table %d is not a physical table", tbl.Meta().ID)
+	}
+	return []table.PhysicalTable{physicalTbl}, nil
+}
+
+func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physicalID int64) ([]samplePredictionRegion, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
+	}
+	pdCli, err := helper.NewHelper(hStore).TryGetPDHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(physicalID)
+	start, end := hStore.GetCodec().EncodeRegionRange(tableStart, tableEnd)
+	regions := make([]samplePredictionRegion, 0, 16)
+	for {
+		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdHttp.NewKeyRange(start, end), 128)
+		if err != nil {
+			return nil, err
+		}
+		if len(regionInfos.Regions) == 0 {
+			break
+		}
+		for _, regionInfo := range regionInfos.Regions {
+			region, ok, err := buildSamplePredictionRegion(hStore.GetCodec(), tableStart, tableEnd, regionInfo)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				regions = append(regions, region)
+			}
+		}
+		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
+		start, err = hex.DecodeString(lastKey)
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Compare(start, end) >= 0 {
+			break
+		}
+	}
+	return regions, nil
+}
+
+func buildSamplePredictionRegion(codec tikv.Codec, tableStart, tableEnd []byte, regionInfo pdHttp.RegionInfo) (samplePredictionRegion, bool, error) {
+	var region samplePredictionRegion
+	start, err := hex.DecodeString(regionInfo.StartKey)
+	if err != nil {
+		return region, false, err
+	}
+	end, err := hex.DecodeString(regionInfo.EndKey)
+	if err != nil {
+		return region, false, err
+	}
+	start, end, err = codec.DecodeRegionRange(start, end)
+	if err != nil {
+		return region, false, err
+	}
+	start = maxKey(tableStart, start)
+	end = minKey(tableEnd, end)
+	if len(end) == 0 || bytes.Compare(start, end) >= 0 {
+		return region, false, nil
+	}
+	region = samplePredictionRegion{
+		StartKey:        kv.Key(start),
+		EndKey:          kv.Key(end),
+		ApproximateKeys: regionInfo.ApproximateKeys,
+	}
+	return region, true, nil
+}
+
+func pickSamplePredictionRegions(regions []samplePredictionRegion, seed uint64) []samplePredictionRegion {
+	if len(regions) <= samplePredictionMaxRegionCount {
+		return regions
+	}
+	rnd := rand.New(rand.NewSource(int64(seed)))
+	perm := rnd.Perm(len(regions))
+	selected := make([]samplePredictionRegion, 0, samplePredictionMaxRegionCount)
+	for _, idx := range perm[:samplePredictionMaxRegionCount] {
+		selected = append(selected, regions[idx])
+	}
+	return selected
+}
+
+func predictionRegionSkipRows(region samplePredictionRegion, rnd *rand.Rand) int {
+	if rnd == nil || region.ApproximateKeys <= 1 {
+		return 0
+	}
+	maxSkip := min(region.ApproximateKeys-1, int64(samplePredictionMaxSkipRows))
+	if maxSkip <= 0 {
+		return 0
+	}
+	return rnd.Intn(int(maxSkip) + 1)
+}
+
+func samplePredictionSeed(jobID, physicalID int64) uint64 {
+	return uint64(jobID)*0x9e3779b97f4a7c15 + uint64(physicalID)*0xbf58476d1ce4e5b9
+}
+
+func maxKey(base, candidate []byte) []byte {
+	if len(candidate) == 0 || bytes.Compare(base, candidate) >= 0 {
+		return append([]byte(nil), base...)
+	}
+	return append([]byte(nil), candidate...)
+}
+
+func minKey(base, candidate []byte) []byte {
+	if len(candidate) == 0 || bytes.Compare(base, candidate) <= 0 {
+		return append([]byte(nil), base...)
+	}
+	return append([]byte(nil), candidate...)
+}
+
+func estimateIndexKVBytesPerRowForBasicPrediction(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	statsTbl *statistics.Table,
+	indexCols []*expression.Column,
+) float64 {
+	statsColl := statsTbl.HistColl.ID2UniqueID(indexCols)
+	keyBytes := rowsize.GetIndexAvgRowSize(sctx.GetSessionVars(), statsColl, indexCols, idxInfo.Unique)
+	valueBytes := estimateIndexValueBytesPerRowForPrediction(tblInfo, idxInfo, &statsTbl.HistColl)
+	return keyBytes + valueBytes
+}
+
+func estimateIndexKVBytesPerRowForRepresentPrediction(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	physicalID int64,
+	statsTbl *statistics.Table,
+) (float64, error) {
+	indexedValues := buildRepresentativeIndexDatumsForPrediction(tblInfo, idxInfo.Columns, &statsTbl.HistColl)
+	handle, restoredData, err := buildRepresentativeHandleForPrediction(sctx, tblInfo, physicalID, idxInfo, &statsTbl.HistColl)
+	if err != nil {
+		return 0, err
+	}
+	loc := predictionTimeLocation(sctx)
+	encodedValues := cloneDatumsForPrediction(indexedValues)
+	key, distinct, err := tablecodec.GenIndexKey(loc, tblInfo, idxInfo, physicalID, encodedValues, handle, nil)
+	if err != nil {
+		return 0, err
+	}
+	needRestoredData := tables.NeedRestoredData(idxInfo.Columns, tblInfo.Columns)
+	value, err := tablecodec.GenIndexValuePortal(
+		loc,
+		tblInfo,
+		idxInfo,
+		needRestoredData,
+		distinct,
+		false,
+		encodedValues,
+		handle,
+		physicalID,
+		restoredData,
+		nil,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return float64(len(key) + len(value)), nil
+}
+
+func estimateIndexValueBytesPerRowForPrediction(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, statsColl *statistics.HistColl) float64 {
+	distinct := predictionDistinctIndexValue(tblInfo, idxInfo)
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
+		return estimateClusteredIndexValueBytesPerRowForPrediction(tblInfo, idxInfo, statsColl, distinct)
+	}
+	return estimateVersion0IndexValueBytesPerRowForPrediction(tblInfo, idxInfo, statsColl, distinct)
+}
+
+func estimateVersion0IndexValueBytesPerRowForPrediction(
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	statsColl *statistics.HistColl,
+	distinct bool,
+) float64 {
+	needRestoredData := tables.NeedRestoredData(idxInfo.Columns, tblInfo.Columns)
+	if !needRestoredData && !idxInfo.Global && (!distinct || predictionUsesIntHandle(tblInfo)) {
+		if distinct {
+			return 8
+		}
+		return 1
+	}
+
+	valueBytes := 1.0
+	if idxInfo.Global {
+		// Partition ID flag (1 byte) + partition ID (8 bytes).
+		valueBytes += 9
+	}
+	if needRestoredData {
+		valueBytes += estimateVersion0RestoredDataBytesPerRowForPrediction(tblInfo, idxInfo, statsColl)
+	}
+	if distinct {
+		if predictionUsesIntHandle(tblInfo) {
+			valueBytes += 8
+		} else {
+			valueBytes += estimateCommonHandleBytesPerRowForPrediction(tblInfo, statsColl)
+		}
+	}
+	return max(valueBytes, 10.0)
+}
+
+func estimateClusteredIndexValueBytesPerRowForPrediction(
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	statsColl *statistics.HistColl,
+	distinct bool,
+) float64 {
+	valueBytes := 3.0 // tail len + version flag + version
+	if distinct {
+		valueBytes += estimateCommonHandleBytesPerRowForPrediction(tblInfo, statsColl)
+	}
+	if idxInfo.Global {
+		valueBytes += 9
+	}
+	valueBytes += estimateClusteredRestoredDataBytesPerRowForPrediction(tblInfo, idxInfo, statsColl)
+	return valueBytes
+}
+
+func estimateVersion0RestoredDataBytesPerRowForPrediction(
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	statsColl *statistics.HistColl,
+) float64 {
+	valueBytes := 0.0
+	for _, idxCol := range idxInfo.Columns {
+		tblCol := tblInfo.Columns[idxCol.Offset]
+		valueBytes += estimateIndexColumnValueBytesPerRowForPrediction(statsColl, tblCol, idxCol)
+	}
+	return valueBytes + estimateRowcodecOverheadBytesPerRowForPrediction(len(idxInfo.Columns))
+}
+
+func estimateClusteredRestoredDataBytesPerRowForPrediction(
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	statsColl *statistics.HistColl,
+) float64 {
+	valueBytes := 0.0
+	restoredColCount := 0
+	for _, idxCol := range idxInfo.Columns {
+		tblCol := tblInfo.Columns[idxCol.Offset]
+		if mysql.HasPriKeyFlag(tblCol.GetFlag()) {
+			continue
+		}
+		if !model.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
+			continue
+		}
+		valueBytes += estimateIndexColumnValueBytesPerRowForPrediction(statsColl, tblCol, idxCol)
+		restoredColCount++
+	}
+	pkIdx := tables.FindPrimaryIndex(tblInfo)
+	if pkIdx != nil {
+		for _, pkCol := range pkIdx.Columns {
+			tblCol := tblInfo.Columns[pkCol.Offset]
+			if !model.ColumnNeedRestoredData(pkCol, tblInfo.Columns) {
+				continue
+			}
+			valueBytes += estimateIndexColumnValueBytesPerRowForPrediction(statsColl, tblCol, pkCol)
+			restoredColCount++
+		}
+	}
+	if restoredColCount == 0 {
+		return 0
+	}
+	return valueBytes + estimateRowcodecOverheadBytesPerRowForPrediction(restoredColCount)
+}
+
+func estimateCommonHandleBytesPerRowForPrediction(tblInfo *model.TableInfo, statsColl *statistics.HistColl) float64 {
+	pkIdx := tables.FindPrimaryIndex(tblInfo)
+	if pkIdx == nil {
+		return 3
+	}
+	valueBytes := 3.0 // common handle flag (1 byte) + handle len (2 bytes)
+	for _, pkCol := range pkIdx.Columns {
+		tblCol := tblInfo.Columns[pkCol.Offset]
+		valueBytes += estimateIndexColumnValueBytesPerRowForPrediction(statsColl, tblCol, pkCol)
+	}
+	return valueBytes
+}
+
+func estimateIndexColumnValueBytesPerRowForPrediction(
+	statsColl *statistics.HistColl,
+	tblCol *model.ColumnInfo,
+	idxCol *model.IndexColumn,
+) float64 {
+	if tblCol == nil {
+		return 0
+	}
+	avgBytes := 8.0
+	if statsColl != nil && !statsColl.Pseudo && statsColl.RealtimeCount > 0 {
+		if colHist := statsColl.GetCol(tblCol.ID); colHist != nil {
+			if colHist.IsHandle || colHist.TotColSize > 0 || colHist.NullCount != statsColl.RealtimeCount {
+				avgBytes = rowsize.AvgColSize(colHist, statsColl.RealtimeCount, false)
+			}
+		}
+	}
+	if idxCol.Length != types.UnspecifiedLength {
+		avgBytes = min(avgBytes, estimatePrefixIndexBytesLimit(tblCol, idxCol.Length))
+	}
+	return max(avgBytes, 0)
+}
+
+func estimatePrefixIndexBytesLimit(tblCol *model.ColumnInfo, prefixLength int) float64 {
+	if prefixLength == types.UnspecifiedLength {
+		return math.MaxFloat64
+	}
+	charsetInfo, err := charset.GetCharsetInfo(tblCol.GetCharset())
+	if err != nil || charsetInfo == nil || charsetInfo.Maxlen <= 0 {
+		return float64(prefixLength)
+	}
+	return float64(prefixLength * charsetInfo.Maxlen)
+}
+
+func estimateRowcodecOverheadBytesPerRowForPrediction(colCount int) float64 {
+	if colCount <= 0 {
+		return 0
+	}
+	// The rowcodec payload also stores row header, column IDs and offsets. A moderate
+	// per-column overhead keeps the prediction closer to the logical bytes written by
+	// add-index when restored data is required.
+	return 8 + float64(colCount)*12
+}
+
+func predictionDistinctIndexValue(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) bool {
+	if !idxInfo.Unique {
+		return false
+	}
+	for _, idxCol := range idxInfo.Columns {
+		if !mysql.HasNotNullFlag(model.GetIdxChangingFieldType(idxCol, tblInfo.Columns[idxCol.Offset]).GetFlag()) {
+			return false
+		}
+	}
+	return true
+}
+
+func predictionUsesIntHandle(tblInfo *model.TableInfo) bool {
+	return !tblInfo.IsCommonHandle
+}
+
+func buildRepresentativeIndexDatumsForPrediction(
+	tblInfo *model.TableInfo,
+	idxCols []*model.IndexColumn,
+	statsColl *statistics.HistColl,
+) []types.Datum {
+	indexedValues := make([]types.Datum, 0, len(idxCols))
+	for _, idxCol := range idxCols {
+		tblCol := tblInfo.Columns[idxCol.Offset]
+		indexedValues = append(indexedValues, buildRepresentativeDatumForPrediction(tblCol, idxCol, statsColl))
+	}
+	return indexedValues
+}
+
+func buildRepresentativeHandleForPrediction(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	physicalID int64,
+	idxInfo *model.IndexInfo,
+	statsColl *statistics.HistColl,
+) (kv.Handle, []types.Datum, error) {
+	if tblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		if pkIdx == nil {
+			return kv.IntHandle(1), nil, nil
+		}
+		pkDatums := buildRepresentativeIndexDatumsForPrediction(tblInfo, pkIdx.Columns, statsColl)
+		handle, err := BuildHandle(cloneDatumsForPrediction(pkDatums), tblInfo, pkIdx, predictionTimeLocation(sctx), errctx.StrictNoWarningContext)
+		if err != nil {
+			return nil, nil, err
+		}
+		restoredData := buildRepresentativeHandleRestoredDataForPrediction(tblInfo, pkIdx, pkDatums)
+		if idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 && !idxInfo.Unique {
+			handle = kv.NewPartitionHandle(physicalID, handle)
+		}
+		return handle, restoredData, nil
+	}
+	var handle kv.Handle = kv.IntHandle(1)
+	if tblInfo.PKIsHandle {
+		pkCol := tblInfo.GetPkColInfo()
+		if pkCol != nil {
+			handleDatum := buildRepresentativeDatumForPrediction(pkCol, &model.IndexColumn{Offset: pkCol.Offset, Length: types.UnspecifiedLength}, statsColl)
+			handle = kv.IntHandle(handleDatum.GetInt64())
+		}
+	}
+	if idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 && !idxInfo.Unique {
+		handle = kv.NewPartitionHandle(physicalID, handle)
+	}
+	return handle, nil, nil
+}
+
+func buildRepresentativeHandleRestoredDataForPrediction(
+	tblInfo *model.TableInfo,
+	pkIdx *model.IndexInfo,
+	pkDatums []types.Datum,
+) []types.Datum {
+	if !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 || pkIdx == nil {
+		return nil
+	}
+	restoredData := make([]types.Datum, 0, len(pkIdx.Columns))
+	for i, pkCol := range pkIdx.Columns {
+		if !model.ColumnNeedRestoredData(pkCol, tblInfo.Columns) {
+			continue
+		}
+		restoredData = append(restoredData, pkDatums[i])
+	}
+	return restoredData
+}
+
+func buildRepresentativeDatumForPrediction(
+	tblCol *model.ColumnInfo,
+	idxCol *model.IndexColumn,
+	statsColl *statistics.HistColl,
+) types.Datum {
+	ft := model.GetIdxChangingFieldType(idxCol, tblCol)
+	avgBytes := averageColumnValueBytesForPrediction(statsColl, tblCol)
+	stringLen := representativeStringLengthForPrediction(avgBytes, ft, idxCol)
+	switch ft.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			return types.NewUintDatum(1)
+		}
+		return types.NewIntDatum(1)
+	case mysql.TypeFloat, mysql.TypeDouble:
+		return types.NewFloat64Datum(1.25)
+	case mysql.TypeNewDecimal:
+		return types.NewDecimalDatum(types.NewDecFromStringForTest("1.25"))
+	case mysql.TypeDuration:
+		return types.NewDurationDatum(types.Duration{Duration: time.Second, Fsp: max(ft.GetDecimal(), 0)})
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		tm := types.NewTime(types.FromDate(2026, 5, 18, 15, 0, 0, 0), ft.GetType(), max(ft.GetDecimal(), 0))
+		return types.NewTimeDatum(tm)
+	case mysql.TypeBit:
+		byteLen := max(1, (max(ft.GetFlen(), 1)+7)/8)
+		return types.NewBinaryLiteralDatum(bytes.Repeat([]byte{1}, byteLen))
+	case mysql.TypeEnum:
+		if len(ft.GetElems()) == 0 {
+			return types.NewStringDatum("a")
+		}
+		e, err := types.ParseEnumValue(ft.GetElems(), 1)
+		if err != nil {
+			return types.NewStringDatum(ft.GetElems()[0])
+		}
+		var d types.Datum
+		d.SetMysqlEnum(e, ft.GetCollate())
+		return d
+	case mysql.TypeSet:
+		if len(ft.GetElems()) == 0 {
+			return types.NewStringDatum("a")
+		}
+		s, err := types.ParseSetValue(ft.GetElems(), 1)
+		if err != nil {
+			return types.NewStringDatum(ft.GetElems()[0])
+		}
+		var d types.Datum
+		d.SetMysqlSet(s, ft.GetCollate())
+		return d
+	case mysql.TypeJSON:
+		return types.NewJSONDatum(types.CreateBinaryJSON(strings.Repeat("a", stringLen)))
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		fallthrough
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		if ft.GetCharset() == charset.CharsetBin || mysql.HasBinaryFlag(ft.GetFlag()) {
+			return types.NewBytesDatum(bytes.Repeat([]byte{'a'}, stringLen))
+		}
+		return types.NewCollationStringDatum(strings.Repeat("a", stringLen), ft.GetCollate())
+	default:
+		return types.NewIntDatum(1)
+	}
+}
+
+func averageColumnValueBytesForPrediction(statsColl *statistics.HistColl, tblCol *model.ColumnInfo) float64 {
+	if tblCol == nil {
+		return 8
+	}
+	if statsColl != nil && !statsColl.Pseudo && statsColl.RealtimeCount > 0 {
+		if colHist := statsColl.GetCol(tblCol.ID); colHist != nil {
+			if colHist.IsHandle || colHist.TotColSize > 0 || colHist.NullCount != statsColl.RealtimeCount {
+				return max(rowsize.AvgColSize(colHist, statsColl.RealtimeCount, false), 1)
+			}
+		}
+	}
+	return 8
+}
+
+func representativeStringLengthForPrediction(avgBytes float64, ft *types.FieldType, idxCol *model.IndexColumn) int {
+	length := max(int(math.Ceil(avgBytes)), 1)
+	if idxCol != nil && idxCol.Length != types.UnspecifiedLength {
+		length = min(length, idxCol.Length+1)
+	}
+	if ft.GetFlen() > 0 && ft.GetFlen() != types.UnspecifiedLength {
+		length = min(length, ft.GetFlen())
+	}
+	return min(length, 4096)
+}
+
+func cloneDatumsForPrediction(datums []types.Datum) []types.Datum {
+	cloned := make([]types.Datum, 0, len(datums))
+	for i := range datums {
+		cloned = append(cloned, *datums[i].Clone())
+	}
+	return cloned
+}
+
+func predictionTimeLocation(sctx sessionctx.Context) *time.Location {
+	if sctx == nil || sctx.GetSessionVars() == nil {
+		return time.UTC
+	}
+	loc := sctx.GetSessionVars().StmtCtx.TimeZone()
+	if loc == nil {
+		return time.UTC
+	}
+	return loc
+}
+
+func collectBackfillIndexes(tblInfo *model.TableInfo, reorgInfo *reorgInfo) ([]*model.IndexInfo, error) {
+	indexes := make([]*model.IndexInfo, 0, len(reorgInfo.elements))
+	for _, elem := range reorgInfo.elements {
+		if elem == nil || !bytes.Equal(elem.TypeKey, meta.IndexElementKey) {
+			continue
+		}
+		idxInfo := model.FindIndexInfoByID(tblInfo.Indices, elem.ID)
+		if idxInfo == nil {
+			return nil, errors.Errorf("index info not found: %d", elem.ID)
+		}
+		indexes = append(indexes, idxInfo)
+	}
+	return indexes, nil
+}
+
+func buildIndexPredictionColumns(sctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) ([]*expression.Column, error) {
+	colInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns)+1)
+	seenColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns)+2)
+	appendColumn := func(col *model.ColumnInfo) {
+		if col == nil {
+			return
+		}
+		if _, ok := seenColumnIDs[col.ID]; ok {
+			return
+		}
+		seenColumnIDs[col.ID] = struct{}{}
+		colInfos = append(colInfos, col)
+	}
+	for _, idxCol := range idxInfo.Columns {
+		appendColumn(tblInfo.Columns[idxCol.Offset])
+	}
+	switch {
+	case tblInfo.PKIsHandle:
+		appendColumn(tblInfo.GetPkColInfo())
+	case tblInfo.IsCommonHandle:
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		if pkIdx != nil {
+			for _, pkCol := range pkIdx.Columns {
+				appendColumn(tblInfo.Columns[pkCol.Offset])
+			}
+		}
+	default:
+		appendColumn(model.NewExtraHandleColInfo())
+	}
+	expCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), ast.CIStr{}, tblInfo.Name, colInfos, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	return expCols, nil
+}
+
+func getPhysicalTableStatsForPrediction(physicalID int64, tblInfo *model.TableInfo, statsHandle *statshandle.Handle) *statistics.Table {
+	if statsHandle != nil {
+		return statsHandle.GetPhysicalTableStats(physicalID, tblInfo)
+	}
+	statsTbl := statistics.PseudoTable(tblInfo, false, false)
+	statsTbl.PhysicalID = physicalID
+	return statsTbl
+}
+
+func estimatePhysicalTableRowCount(statsTbl *statistics.Table) int64 {
+	if statsTbl == nil {
+		return 0
+	}
+	rowCount := statsTbl.RealtimeCount
+	if rowCount <= 0 {
+		rowCount = int64(statsTbl.GetAnalyzeRowCount())
+	}
+	return max(rowCount, 0)
+}
+
+func predictionPhysicalTableIDs(tblInfo *model.TableInfo) []int64 {
+	if tblInfo.Partition == nil {
+		return []int64{tblInfo.ID}
+	}
+	physicalIDs := make([]int64, 0, len(tblInfo.Partition.Definitions))
+	for _, def := range tblInfo.Partition.Definitions {
+		physicalIDs = append(physicalIDs, def.ID)
+	}
+	return physicalIDs
 }
 
 func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
