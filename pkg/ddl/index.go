@@ -4145,9 +4145,15 @@ func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physical
 			}
 		}
 		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
+		if len(lastKey) == 0 {
+			break
+		}
 		start, err = hex.DecodeString(lastKey)
 		if err != nil {
 			return nil, err
+		}
+		if len(start) == 0 {
+			break
 		}
 		if bytes.Compare(start, end) >= 0 {
 			break

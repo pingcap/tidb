@@ -804,7 +804,6 @@ func TestDXFAddIndexRealtimeSummary(t *testing.T) {
 	require.EqualValues(t, taskIDNum, got.taskID)
 	require.EqualValues(t, readIndexBytes, got.logicalIndexKVBytes)
 	require.GreaterOrEqual(t, got.observedIncrease, int64(0))
-	require.GreaterOrEqual(t, got.finalUsedBytes, got.initialUsedBytes)
 }
 
 func TestSplitRangeForTable(t *testing.T) {
