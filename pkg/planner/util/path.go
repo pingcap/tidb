@@ -193,8 +193,9 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 	return path.StoreType == kv.TiFlash && path.Index == nil
 }
 
-// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
-// the table scan.
+// IsFullScanRange checks whether this access path covers the full scan range without any
+// filtering that limits the scanned table or index ranges. For integer-handle table paths,
+// tableInfo is used to account for unsigned primary-key handle ranges.
 func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 	var unsignedIntHandle bool
 	if path.IsIntHandlePath && tableInfo.PKIsHandle {
