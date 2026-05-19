@@ -107,6 +107,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -2089,6 +2090,92 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 	}
 }
 
+// setSQLKillerConnectionAlive installs a connection-liveness probe on the
+// session SQLKiller and starts a background monitor for the current statement.
+// The returned cleanup is idempotent and must be called when the statement is
+// done to stop the monitor and clear the probe.
+func (cc *clientConn) setSQLKillerConnectionAlive() func() {
+	fn := func() bool {
+		if cc.bufReadConn != nil {
+			// IsAlive returns 0 only when the connection is known dead. Treat
+			// unknown states as alive so we do not interrupt queries
+			// conservatively when the liveness check itself cannot run.
+			return cc.bufReadConn.IsAlive() != 0
+		}
+		return true
+	}
+	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
+	stopMonitor := make(chan struct{})
+	doneMonitor := make(chan struct{})
+	go cc.monitorConnectionAlive(fn, stopMonitor, doneMonitor)
+
+	var clearOnce sync.Once
+	return func() {
+		clearOnce.Do(func() {
+			close(stopMonitor)
+			<-doneMonitor
+			cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
+		})
+	}
+}
+
+func (cc *clientConn) monitorConnectionAlive(isAlive func() bool, stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	checkInterval := time.Second
+	failpoint.Inject("mockConnectionAliveMonitorInterval", func(val failpoint.Value) {
+		if interval, ok := val.(int); ok {
+			checkInterval = time.Duration(interval) * time.Millisecond
+		}
+	})
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !isAlive() {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				cc.ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+				cc.cancelDispatch()
+				return
+			}
+		case <-stop:
+			return
+		}
+	}
+}
+
+func (cc *clientConn) cancelDispatch() {
+	cc.mu.RLock()
+	cancelFunc := cc.mu.cancelFunc
+	cc.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
+}
+
+func shouldMonitorConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+	if !sessVars.IsAutocommit() || sessVars.InTxn() {
+		return false
+	}
+	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
+		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
+		if err != nil || prepared.PreparedAst == nil {
+			return false
+		}
+		stmt = prepared.PreparedAst.Stmt
+	}
+	switch stmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	default:
+		return false
+	}
+}
+
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
 // Currently, the first return value is used to fall back to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(
@@ -2111,7 +2198,16 @@ func (cc *clientConn) handleStmt(
 		}
 	}
 
+	clearConnectionAlive := func() {}
+	monitoringConnectionAlive := shouldMonitorConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
+	if monitoringConnectionAlive {
+		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
+	}
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+	if rs == nil || err != nil {
+		clearConnectionAlive()
+	}
 	reg.End()
 	// - If rs is not nil, the statement tracker detachment from session tracker
 	//   is done in the `rs.Close` in most cases.
@@ -2142,22 +2238,18 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
+		if !monitoringConnectionAlive {
+			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+			defer clearConnectionAlive()
+		}
 		cc.ctx.GetSessionVars().SQLKiller.SetFinishFunc(
 			func() {
 				//nolint: errcheck
 				rs.Finish()
 			})
-		fn := func() bool {
-			if cc.bufReadConn != nil {
-				return cc.bufReadConn.IsAlive() != 0
-			}
-			return true
-		}
-		cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
 		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
 		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		defer cc.ctx.GetSessionVars().SQLKiller.ClearFinishFunc()
-		defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}
