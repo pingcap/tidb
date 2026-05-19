@@ -3183,6 +3183,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
+		runTiKVSpacePrecheck := false
 		var (
 			initialCapacity                  *TiKVClusterCapacity
 			basicPredictedTiKVIndexBytes     uint64
@@ -3190,6 +3191,15 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			samplePrediction                 sampleTiKVIndexPredictionResult
 		)
 		if !reorgInfo.mergingTmpIdx {
+			runTiKVSpacePrecheck, err = canRunTiKVSpacePrecheck(w.store)
+			if err != nil {
+				return err
+			}
+			if !runTiKVSpacePrecheck {
+				logutil.DDLLogger().Info("skip TiKV space precheck for add-index task because PD HTTP client is unavailable",
+					zap.Int64("jobID", job.ID),
+					zap.String("task-key", taskKey))
+			}
 			basicPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesBasic(w.sess.Session(), t, reorgInfo)
 			if err != nil {
 				return err
@@ -3198,29 +3208,31 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			if err != nil {
 				return err
 			}
-			samplePrediction, err = w.predictTiKVIndexBytesSample(ctx, w.sess.Session(), t, reorgInfo)
-			if err != nil {
-				return err
+			if runTiKVSpacePrecheck {
+				samplePrediction, err = w.predictTiKVIndexBytesSample(ctx, w.sess.Session(), t, reorgInfo)
+				if err != nil {
+					return err
+				}
+				initialCapacity, err = collectTiKVStoreCapacity(ctx, w.store)
+				if err != nil {
+					return err
+				}
+				if err := checkTiKVSpaceForAddIndex(initialCapacity, samplePrediction.PredictedBytes); err != nil {
+					return err
+				}
+				logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
+					zap.Int64("jobID", job.ID),
+					zap.String("task-key", taskKey),
+					zap.Uint64("basic_predicted_tikv_index_bytes", basicPredictedTiKVIndexBytes),
+					zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
+					zap.Uint64("sample_predicted_tikv_index_bytes", samplePrediction.PredictedBytes),
+					zap.Int("sample_prediction_region_count", samplePrediction.SampledRegionCount),
+					zap.Int("sample_prediction_row_count", samplePrediction.SampledRowCount),
+					zap.Int("sample_prediction_read_error_count", samplePrediction.ReadErrorCount),
+					zap.Uint64("cluster_available_bytes", initialCapacity.AvailableBytes),
+					zap.Uint64("cluster_total_bytes", initialCapacity.TotalBytes),
+					zap.Int("tikv_store_count", initialCapacity.StoreCount))
 			}
-			initialCapacity, err = collectTiKVStoreCapacity(ctx, w.store)
-			if err != nil {
-				return err
-			}
-			if err := checkTiKVSpaceForAddIndex(initialCapacity, samplePrediction.PredictedBytes); err != nil {
-				return err
-			}
-			logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
-				zap.Int64("jobID", job.ID),
-				zap.String("task-key", taskKey),
-				zap.Uint64("basic_predicted_tikv_index_bytes", basicPredictedTiKVIndexBytes),
-				zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
-				zap.Uint64("sample_predicted_tikv_index_bytes", samplePrediction.PredictedBytes),
-				zap.Int("sample_prediction_region_count", samplePrediction.SampledRegionCount),
-				zap.Int("sample_prediction_row_count", samplePrediction.SampledRowCount),
-				zap.Int("sample_prediction_read_error_count", samplePrediction.ReadErrorCount),
-				zap.Uint64("cluster_available_bytes", initialCapacity.AvailableBytes),
-				zap.Uint64("cluster_total_bytes", initialCapacity.TotalBytes),
-				zap.Int("tikv_store_count", initialCapacity.StoreCount))
 		} else {
 			initialCapacity, err = collectTiKVStoreCapacity(ctx, w.store)
 			if err != nil {
@@ -3533,6 +3545,14 @@ func collectTiKVStoreUsage(ctx context.Context, store kv.Storage) (*TiKVStoreUsa
 	}, nil
 }
 
+func canRunTiKVSpacePrecheck(store kv.Storage) (bool, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return false, fmt.Errorf("store %T does not implement helper.Storage", store)
+	}
+	return hStore.GetPDHTTPClient() != nil, nil
+}
+
 func collectTiKVStoreCapacity(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
@@ -3633,7 +3653,7 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 		return
 	}
 	if taskMeta.InitialTiKVStoreUsage == nil {
-		logutil.DDLLogger().Warn("initial TiKV store usage snapshot missing for add-index task",
+		logutil.DDLLogger().Info("skip observed TiKV capacity logging because initial snapshot is unavailable for add-index task",
 			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Int64("taskID", task.ID))
 		return
 	}
@@ -3913,16 +3933,19 @@ func (w *worker) estimatePhysicalTableSampleBytesPerRow(
 	regions []samplePredictionRegion,
 	snapshotTS uint64,
 	seed uint64,
-) (float64, int, int, int, error) {
+) (
+	avgBytesPerRow float64,
+	sampledRegions int,
+	totalRows int,
+	readErrorCount int,
+	err error,
+) {
 	if len(regions) == 0 {
 		return 0, 0, 0, 0, nil
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	var (
-		totalBytes     int64
-		totalRows      int
-		sampledRegions int
-		readErrorCount int
+		totalBytes int64
 	)
 	for _, region := range regions {
 		skipRows := predictionRegionSkipRows(region, rnd)
