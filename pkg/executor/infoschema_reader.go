@@ -4170,7 +4170,7 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 
 	dbName = s[idOffset+1]
 	tableName = s[idOffset+2]
-	if len(s) > idOffset+3 {
+	if idOffset+3 < len(s) {
 		partitionName = s[idOffset+3]
 	}
 	return
