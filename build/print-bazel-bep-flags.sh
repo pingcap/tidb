@@ -18,8 +18,8 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-git_commit="$(git rev-parse HEAD)"
-git_branch="$(git rev-parse --abbrev-ref HEAD)"
+git_commit="$(git rev-parse HEAD 2>/dev/null || true)"
+git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 ci_provider="local"
 
 if [[ -n "${JENKINS_URL:-}" || -n "${BUILD_URL:-}" || -n "${JOB_NAME:-}" ]]; then
