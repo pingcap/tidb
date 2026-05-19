@@ -374,9 +374,8 @@ def go_deps():
         urls = [
 			"%s",
 			"%s",
-			"%s",
         ],
-`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedCDNURL, expectedPublicURL)
+`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedCDNURL, expectedPublicURL)
 		} else if isMirror {
 			// We'll have to mirror our copy of the zip ourselves.
 			d := downloaded[replaced.Path]
