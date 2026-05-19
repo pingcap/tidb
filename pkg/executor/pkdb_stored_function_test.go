@@ -257,6 +257,66 @@ end`)
 	tk.MustQuery("select sf_ctx_outer_subquery(1)").Check(testkit.Rows("2"))
 }
 
+func TestStoredFunctionOnlyFullGroupByIgnoresRoutineVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop function if exists sf_only_full_group_by_vars")
+	tk.MustExec("drop table if exists t_sf_only_full_group_by_vars")
+	tk.MustExec("create table t_sf_only_full_group_by_vars(a int)")
+	tk.MustExec("insert into t_sf_only_full_group_by_vars values (1), (2), (1)")
+
+	sqlMode := "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"
+	tk.MustExec("set @@session.sql_mode = '" + sqlMode + "'")
+	tk.MustExec(`create function sf_only_full_group_by_vars(idv int, upperv int, limv int, divv int)
+returns decimal(20,4)
+begin
+	declare vrq int;
+	set vrq = upperv - 1;
+	return (
+		select sum(a.a) / divv
+		from t_sf_only_full_group_by_vars a,
+			 (select b.a as rqv
+			  from t_sf_only_full_group_by_vars b
+			  where b.a <= vrq
+			  order by b.a desc
+			  limit limv) c
+		where a.a = idv
+		  and a.a = c.rqv
+	);
+end`)
+
+	tk.MustQuery("select sf_only_full_group_by_vars(1, 2, 1, 1)").Check(testkit.Rows("2.0000"))
+}
+
+func TestStoredFunctionOnlyFullGroupByTreatsRoutineVarsAsSingleValuePredicates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop function if exists sf_only_full_group_by_single_value")
+	tk.MustExec("drop table if exists t_sf_only_full_group_by_single_value")
+	tk.MustExec("create table t_sf_only_full_group_by_single_value(a int)")
+	tk.MustExec("insert into t_sf_only_full_group_by_single_value values (1), (2), (1)")
+
+	sqlMode := "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"
+	tk.MustExec("set @@session.sql_mode = '" + sqlMode + "'")
+	tk.MustExec(`create function sf_only_full_group_by_single_value(idv int)
+returns int
+begin
+	return (
+		select a + count(*)
+		from t_sf_only_full_group_by_single_value
+		where a = idv
+	);
+end`)
+
+	tk.MustQuery("select sf_only_full_group_by_single_value(1)").Check(testkit.Rows("3"))
+}
+
 func TestStoredFunctionProjectionDoesNotRunInParallel(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
