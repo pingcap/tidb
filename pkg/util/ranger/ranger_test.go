@@ -1046,6 +1046,11 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 	testKit.MustQuery("select * from t use index (idx_a) where a > 'aa'").Check(testkit.Rows("aaa bbb"))
 	testKit.MustQuery("select * from t use index (idx_ab) where a = 'aaa' and b > 'bb' and b < 'cc'").Check(testkit.Rows("aaa bbb"))
 	testKit.MustQuery("select * from t use index (idx_a) where a > 'a' order by a").Check(testkit.Rows("aa bb", "aaa bbb"))
+	testKit.MustExec("insert into t values ('bb', 'x'), ('bba', 'y'), ('bbb', 'z')")
+	// The lower side after a short NOT IN value must include the boundary prefix.
+	// Otherwise PrefixNext("bb") can skip values such as "bba" and "bbb".
+	testKit.MustQuery("select a, b from t use index (idx_a) where a not in ('bb') order by a").Check(
+		testkit.Rows("aa bb", "aaa bbb", "bba y", "bbb z"))
 
 	testKit.MustExec("drop table if exists issue68152")
 	testKit.MustExec("create table issue68152(c0 text not null, c1 double not null, c2 char(1) not null default 'x', primary key (c2, c1, c0(128)), index prefix_idx(c0(1))) engine=InnoDB default charset=utf8mb4 collate=utf8mb4_bin")
