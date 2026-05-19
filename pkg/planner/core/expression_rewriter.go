@@ -587,7 +587,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			})
 		}
 		if len(v.List) != 1 {
-			break
+			// IN-list operands are scalar expression children. A nested IN-subquery on the left
+			// must therefore append its boolean result for this parent IN expression.
+			er.asScalar = true
+			return inNode, false
 		}
 		// For 10 in ((select * from t)), the parser won't set v.Sel.
 		// So we must process this case here.

@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -33,6 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+// in readAllData, expected concurrency less than this value will not use
+// concurrent reader.
+var readAllDataConcThreshold = uint64(4)
 
 func readAllData(
 	ctx context.Context,
@@ -73,7 +78,7 @@ func readAllData(
 
 	concurrences := make([]uint64, len(statsFiles))
 	totalFileSize := uint64(0)
-	bufSize := uint64(ConcurrentReaderBufferSizePerConc)
+	bufSize := uint64(simplesst.ConcurrentReaderBufferSizePerConc)
 	for i := range statsFiles {
 		size := estimatedEndOffsets[i] - startOffsets[i]
 		totalFileSize += size
@@ -166,7 +171,7 @@ func readOneFile(
 
 	ts := time.Now()
 
-	rd, err := NewKVReader(ctx, dataFile, storage, startOffset, 64*1024)
+	rd, err := simplesst.NewKVReader(ctx, dataFile, storage, startOffset, 64*1024)
 	if err != nil {
 		return err
 	}
@@ -174,20 +179,20 @@ func readOneFile(
 		_ = rd.Close()
 	}()
 	if concurrency > 1 {
-		rd.byteReader.enableConcurrentRead(
+		rd.EnableConcurrentRead(
 			storage,
 			dataFile,
 			int(concurrency),
-			ConcurrentReaderBufferSizePerConc,
+			simplesst.ConcurrentReaderBufferSizePerConc,
 			largeBlockBuf,
 		)
-		err = rd.byteReader.switchConcurrentMode(true)
+		err = rd.SwitchConcurrentMode(true)
 		if err != nil {
 			return err
 		}
 	}
 
-	kvs := make([]KVPair, 0, 1024)
+	kvs := make([]simplesst.KVPair, 0, 1024)
 	size := 0
 	droppedSize := 0
 
@@ -216,7 +221,7 @@ func readOneFile(
 		if err != nil {
 			return err
 		}
-		kvs = append(kvs, KVPair{Key: key, Value: value})
+		kvs = append(kvs, simplesst.KVPair{Key: key, Value: value})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
@@ -231,8 +236,8 @@ func readOneFile(
 // ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
 // to the returned channel, the channel will be closed when finish read.
 func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
-	store storeapi.Storage, files []string) chan *KVPair {
-	pairCh := make(chan *KVPair)
+	store storeapi.Storage, files []string) chan *simplesst.KVPair {
+	pairCh := make(chan *simplesst.KVPair)
 	eg.Go(func() error {
 		defer close(pairCh)
 		for _, file := range files {
@@ -245,8 +250,8 @@ func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
 	return pairCh
 }
 
-func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, outCh chan *KVPair) error {
-	reader, err := NewKVReader(ctx, file, store, 0, 3*DefaultReadBufferSize)
+func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, outCh chan *simplesst.KVPair) error {
+	reader, err := simplesst.NewKVReader(ctx, file, store, 0, 3*simplesst.DefaultReadBufferSize)
 	if err != nil {
 		return err
 	}
@@ -264,7 +269,7 @@ func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case outCh <- &KVPair{
+		case outCh <- &simplesst.KVPair{
 			Key:   bytes.Clone(key),
 			Value: bytes.Clone(val),
 		}:

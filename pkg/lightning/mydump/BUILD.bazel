@@ -21,6 +21,7 @@ go_library(
         "//pkg/dumpformat/parquetfile",
         "//pkg/dumpformat/parsedef",
         "//pkg/errno",
+        "//pkg/ingestor/simplesst",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
