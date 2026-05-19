@@ -139,6 +139,14 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 		}
 
+		// TODO: This collation-compatibility check rejects columns with binary-casted literals
+		// (e.g. f = CAST('a' AS BINARY) on a non-binary string column), which causes the EQ/IN
+		// extraction path to demote such predicates to filters. As a consequence, suffix index
+		// columns on a composite index (e.g. index on (f,g) with f = CAST('a' AS BINARY) AND g = 1)
+		// cannot be used as index equalities and are treated as filters as well. Relax this check
+		// for the CAST(... AS BINARY) / binary-collation case so binary-cast equality predicates
+		// can be treated as index-equalities, and add a regression test for the composite-index
+		// scenario above. Fix in a later release.
 		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 			return -1
 		}
