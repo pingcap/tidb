@@ -844,18 +844,25 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		sql        string
 		normalized string
 	}{
+		// The inner addition is redundant inside a function argument and can be
+		// restored without changing the expression boundary.
 		{
 			"select 1 from b where abs((x + 1)) = 2",
 			"select ? from `b` where `abs` ( `x` + ? ) = ?",
 		},
+		// Addition has lower precedence than multiplication, so the left child
+		// parentheses are semantic.
 		{
 			"select 1 from b where (x + 1) * y = 2",
 			"select ? from `b` where ( `x` + ? ) * `y` = ?",
 		},
+		// OR has lower precedence than AND and must stay grouped as the right child.
 		{
 			"select 1 from b where x = 1 and (y = 1 or y = 2)",
 			"select ? from `b` where `x` = ? and ( `y` = ? or `y` = ? )",
 		},
+		// Unary NOT keeps its operand parenthesized so the restore output does not
+		// expose a different parse boundary.
 		{
 			"select 1 from b where not (x = 1)",
 			"select ? from `b` where not ( `x` = ? )",
@@ -864,14 +871,19 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 			"select 1 from b where (not x) = 1",
 			"select ? from `b` where ( not `x` ) = ?",
 		},
+		// Bitwise XOR binds tighter than addition, so `(x + y) ^ z` must preserve
+		// the addition group.
 		{
 			"select 1 from b where (x + y) ^ z = 1",
 			"select ? from `b` where ( `x` + `y` ) ^ `z` = ?",
 		},
+		// Bitwise XOR also binds tighter than multiplication in MySQL.
 		{
 			"select 1 from b where (x * y) ^ z = 1",
 			"select ? from `b` where ( `x` * `y` ) ^ `z` = ?",
 		},
+		// The XOR child binds tighter than addition, so the right-child
+		// parentheses are redundant here.
 		{
 			"select 1 from b where x + (y ^ z) = 1",
 			"select ? from `b` where `x` + `y` ^ `z` = ?",
