@@ -112,15 +112,79 @@ function build_udfs() {
   mkdir -p "${UDF_LIB_DIR}"
 
   local inc_dir="${TIDB_ROOT}/pkg/expression/loadable_function/include/mysql"
-  local cxx="${CXX:-c++}"
 
-  for src in "${UDF_SRC_DIR}"/*.cc; do
-    local base
-    base="$(basename "${src}")"
-    local out="${UDF_LIB_DIR}/${base%.cc}.so"
-    echo "  ${base} -> $(basename "${out}")"
-    "${cxx}" -std=c++17 -O2 -fPIC -shared -I"${inc_dir}" -o "${out}" "${src}"
-  done
+  shopt -s nullglob
+  local c_sources=("${UDF_SRC_DIR}"/*.c)
+  local cpp_sources=("${UDF_SRC_DIR}"/*.cc "${UDF_SRC_DIR}"/*.cpp "${UDF_SRC_DIR}"/*.cxx)
+  shopt -u nullglob
+
+  if [ ${#c_sources[@]} -eq 0 ] && [ ${#cpp_sources[@]} -eq 0 ]; then
+    echo "no UDF sources found under: ${UDF_SRC_DIR}" >&2
+    exit 1
+  fi
+
+  local cc="${CC:-}"
+  if [ -n "${cc}" ]; then
+    if ! command -v "${cc}" >/dev/null 2>&1; then
+      echo "CC=${cc} not found in PATH" >&2
+      exit 1
+    fi
+  else
+    if command -v cc >/dev/null 2>&1; then
+      cc="cc"
+    elif command -v gcc >/dev/null 2>&1; then
+      cc="gcc"
+    elif command -v clang >/dev/null 2>&1; then
+      cc="clang"
+    else
+      echo "no C compiler found (need one of: cc/gcc/clang), please install it or set CC" >&2
+      exit 1
+    fi
+  fi
+  echo "using C compiler: ${cc}"
+
+  local cxx=""
+  if [ ${#cpp_sources[@]} -gt 0 ]; then
+    if [ -n "${CXX:-}" ]; then
+      cxx="${CXX}"
+      if ! command -v "${cxx}" >/dev/null 2>&1; then
+        echo "CXX=${cxx} not found in PATH" >&2
+        exit 1
+      fi
+    else
+      if command -v g++ >/dev/null 2>&1; then
+        cxx="g++"
+      elif command -v clang++ >/dev/null 2>&1; then
+        cxx="clang++"
+      elif command -v c++ >/dev/null 2>&1; then
+        cxx="c++"
+      else
+        echo "no C++ compiler found (need one of: g++/clang++/c++), please install it or set CXX" >&2
+        exit 1
+      fi
+    fi
+    echo "using C++ compiler: ${cxx}"
+  fi
+
+  if [ ${#c_sources[@]} -gt 0 ]; then
+    for src in "${c_sources[@]}"; do
+      local base
+      base="$(basename "${src}")"
+      local out="${UDF_LIB_DIR}/${base%.c}.so"
+      echo "  ${base} -> $(basename "${out}")"
+      "${cc}" -std=c11 -O2 -fPIC -shared -I"${inc_dir}" -o "${out}" "${src}"
+    done
+  fi
+
+  if [ ${#cpp_sources[@]} -gt 0 ]; then
+    for src in "${cpp_sources[@]}"; do
+      local base
+      base="$(basename "${src}")"
+      local out="${UDF_LIB_DIR}/${base%.*}.so"
+      echo "  ${base} -> $(basename "${out}")"
+      "${cxx}" -std=c++17 -O2 -fPIC -shared -I"${inc_dir}" -o "${out}" "${src}"
+    done
+  fi
 }
 
 while getopts "t:s:r:b:h" opt; do

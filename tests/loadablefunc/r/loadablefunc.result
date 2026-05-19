@@ -30,4 +30,3 @@ drop function word_count;
 drop function plus_one;
 select name from mysql.func where name in ('word_count', 'plus_one') order by name;
 name
-

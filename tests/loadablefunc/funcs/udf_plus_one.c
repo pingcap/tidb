@@ -17,19 +17,17 @@
 
 #include "udf_registration_types.h"
 
-extern "C" {
-
 bool plus_one_init(UDF_INIT *initid, UDF_ARGS *args, char *message) {
   (void)initid;
-  if (args == nullptr || args->arg_count != 1) {
-    if (message != nullptr) {
+  if (args == NULL || args->arg_count != 1) {
+    if (message != NULL) {
       const char *msg = "plus_one() requires exactly one argument";
       strncpy(message, msg, 255);
       message[255] = 0;
     }
     return true;
   }
-  if (args->arg_type != nullptr) {
+  if (args->arg_type != NULL) {
     args->arg_type[0] = INT_RESULT;
   }
   return false;
@@ -40,16 +38,16 @@ void plus_one_deinit(UDF_INIT *initid) { (void)initid; }
 long long plus_one(UDF_INIT *initid, UDF_ARGS *args, unsigned char *is_null,
                    unsigned char *error) {
   (void)initid;
-  if (is_null != nullptr) {
+  if (is_null != NULL) {
     *is_null = 0;
   }
-  if (error != nullptr) {
+  if (error != NULL) {
     *error = 0;
   }
 
-  if (args == nullptr || args->arg_count != 1 || args->args == nullptr ||
-      args->args[0] == nullptr) {
-    if (is_null != nullptr) {
+  if (args == NULL || args->arg_count != 1 || args->args == NULL ||
+      args->args[0] == NULL) {
+    if (is_null != NULL) {
       *is_null = 1;
     }
     return 0;
@@ -58,5 +56,3 @@ long long plus_one(UDF_INIT *initid, UDF_ARGS *args, unsigned char *is_null,
   // For INT_RESULT args, TiDB passes a pointer to long long.
   return *((long long *)args->args[0]) + 1;
 }
-
-}  // extern "C"
