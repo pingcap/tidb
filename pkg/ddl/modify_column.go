@@ -518,7 +518,7 @@ func finishModifyColumnWithoutReorg(
 		return ver, errors.Trace(err)
 	}
 
-	mvRelatedInfos, err := buildMaterializedViewRelatedTableInfoForModifyColumn(jobCtx, job, tblInfo, oldCol, newCol)
+	mvRelatedInfos, err := buildMaterializedViewRelatedTableInfoForModifyColumn(jobCtx, tblInfo, oldCol, newCol)
 	if err != nil {
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
@@ -540,7 +540,6 @@ func finishModifyColumnWithoutReorg(
 
 func buildMaterializedViewRelatedTableInfoForModifyColumn(
 	jobCtx *jobContext,
-	job *model.Job,
 	baseTblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
 	newCol *model.ColumnInfo,
