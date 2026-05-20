@@ -146,6 +146,11 @@ func TestRangeDerivation(t *testing.T) {
 			"Update root  N/A",
 			"└─IndexReader root  index:IndexRangeScan",
 			"  └─IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo"))
+		testKit.MustExec("insert into issue68055 values (1, 1), (2, 2)")
+		testKit.MustContainErrMsg("delete /* issue:68055 */ from issue68055 where id = (select '2a')",
+			"Truncated incorrect DOUBLE value: '2a'")
+		testKit.MustExec("update ignore issue68055 set id = 1 where id = (select '2a')")
+		testKit.MustQuery("show warnings").CheckContain("Truncated incorrect DOUBLE value: '2a'")
 	})
 }
 

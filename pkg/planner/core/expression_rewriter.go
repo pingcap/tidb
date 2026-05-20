@@ -481,7 +481,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 }
 
 func (er *expressionRewriter) shouldIgnoreTruncateForDMLWhereCompareRefine(l, r expression.Expression, op string) bool {
-	if er.planCtx == nil || er.planCtx.builder == nil || er.planCtx.curClause != whereClause {
+	if er.planCtx == nil || er.planCtx.builder == nil {
+		return false
+	}
+	// Only WHERE predicates can feed DML access-path range derivation. HAVING is evaluated after grouping,
+	// so relaxing truncation there would only change scalar comparison semantics without improving access paths.
+	if er.planCtx.curClause != whereClause {
 		return false
 	}
 	if !er.planCtx.builder.inUpdateStmt && !er.planCtx.builder.inDeleteStmt {
@@ -492,8 +497,34 @@ func (er *expressionRewriter) shouldIgnoreTruncateForDMLWhereCompareRefine(l, r 
 	default:
 		return false
 	}
+	if !er.hasDirectDMLWhereCompareRefineLiteral() {
+		return false
+	}
 	return isIntNonConstant(er.sctx, l) && isNonIntConstant(er.sctx, r) ||
 		isIntNonConstant(er.sctx, r) && isNonIntConstant(er.sctx, l)
+}
+
+func (er *expressionRewriter) hasDirectDMLWhereCompareRefineLiteral() bool {
+	if len(er.astNodeStack) == 0 {
+		return false
+	}
+	binOp, ok := er.astNodeStack[len(er.astNodeStack)-1].(*ast.BinaryOperationExpr)
+	if !ok {
+		return false
+	}
+	return isDMLWhereCompareRefineLiteral(binOp.L) || isDMLWhereCompareRefineLiteral(binOp.R)
+}
+
+func isDMLWhereCompareRefineLiteral(expr ast.ExprNode) bool {
+	for {
+		parenExpr, ok := expr.(*ast.ParenthesesExpr)
+		if !ok {
+			break
+		}
+		expr = parenExpr.Expr
+	}
+	_, ok := expr.(*driver.ValueExpr)
+	return ok
 }
 
 func isIntNonConstant(ctx expression.BuildContext, expr expression.Expression) bool {
