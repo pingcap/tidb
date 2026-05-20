@@ -163,7 +163,18 @@ func TestMatchIdentityWithVariantsStarter(t *testing.T) {
 			},
 		},
 	})
-	_, err = cc.matchIdentityWithVariants(context.Background(), "localhost", "NO")
+	_, err = cc.matchIdentityWithVariants(context.Background(), "localhost")
+	require.Equal(t, unexpectedErr, errors.Cause(err))
+
+	cc = &clientConn{user: "test_user", peerHost: "localhost"}
+	cc.SetCtx(&TiDBContext{
+		Session: matchIdentitySession{
+			matchIdentity: func(context.Context, string, string) (*auth.UserIdentity, error) {
+				return nil, unexpectedErr
+			},
+		},
+	})
+	_, err = cc.checkAuthPlugin(context.Background(), &resp)
 	require.Equal(t, unexpectedErr, errors.Cause(err))
 }
 
@@ -244,6 +255,22 @@ func TestReadHandshakeGatewayTLSAttrStarter(t *testing.T) {
 	connInfo := cc.connectInfo()
 	require.Equal(t, variable.ConnTypeTLS, connInfo.ConnectionType)
 	require.Equal(t, "TLSv1.2", connInfo.SSLVersion)
+
+	ctx.SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+	srv.rwlock.Lock()
+	srv.clients[cc.connectionID] = cc
+	srv.rwlock.Unlock()
+	statusVars := srv.GetStatusVars()
+	require.Equal(t, tlsutil.CipherSuiteName(cc.tlsConnState.CipherSuite), statusVars[cc.connectionID]["Ssl_cipher"])
+	require.Equal(t, tlsutil.VersionName(cc.tlsConnState.Version), statusVars[cc.connectionID]["Ssl_version"])
+
+	tlsVersion := tlsutil.VersionName(cc.tlsConnState.Version)
+	tlsCipher := tlsutil.CipherSuiteName(cc.tlsConnState.CipherSuite)
+	versionBefore := promtestutils.ToFloat64(metrics.TLSVersion.WithLabelValues(tlsVersion))
+	cipherBefore := promtestutils.ToFloat64(metrics.TLSCipher.WithLabelValues(tlsCipher))
+	cc.addConnMetrics()
+	require.Equal(t, versionBefore+1, promtestutils.ToFloat64(metrics.TLSVersion.WithLabelValues(tlsVersion)))
+	require.Equal(t, cipherBefore+1, promtestutils.ToFloat64(metrics.TLSCipher.WithLabelValues(tlsCipher)))
 }
 
 type Issue33699CheckType struct {

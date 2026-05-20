@@ -903,7 +903,7 @@ func (*clientConn) checkUserVariantMismatch(ctx context.Context, user string) er
 	return nil
 }
 
-func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPassword string) (*auth.UserIdentity, error) {
+func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host string) (*auth.UserIdentity, error) {
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(cc.user) {
 		identity, err := cc.ctx.MatchIdentity(ctx, variant, host)
 		if err != nil {
@@ -925,7 +925,7 @@ func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPa
 	if mismatchErr := cc.checkUserVariantMismatch(ctx, cc.user); mismatchErr != nil {
 		return nil, mismatchErr
 	}
-	return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+	return nil, errors.Wrapf(sessionapi.ErrIdentityNotFound, "could not find matching username variant: %s, %s", cc.user, host)
 }
 
 // mockOSUserForAuthSocketTest should only be used in test
@@ -958,9 +958,11 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 	// Find the identity of the user based on username and peer host.
 	var identity *auth.UserIdentity
 	if deploymode.IsStarter() {
-		identity, err = cc.matchIdentityWithVariants(ctx, host, hasPassword)
-		if err != nil && errors.ErrorEqual(err, servererr.ErrUserPrefixMismatch) {
-			return nil, err
+		identity, err = cc.matchIdentityWithVariants(ctx, host)
+		if err != nil {
+			if errors.Cause(err) != sessionapi.ErrIdentityNotFound {
+				return nil, err
+			}
 		}
 	}
 	if identity == nil {
@@ -1358,8 +1360,7 @@ func errStrForLog(err error, redactMode string) string {
 
 // Per connection metrics
 func (cc *clientConn) addConnMetrics() {
-	if cc.tlsConn != nil {
-		connState := cc.tlsConn.ConnectionState()
+	if connState := cc.getTLSState(); connState != nil {
 		metrics.TLSVersion.WithLabelValues(
 			tlsutil.VersionName(connState.Version),
 		).Inc()

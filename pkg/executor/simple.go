@@ -1770,7 +1770,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if alterCurrentUser && alterPassword {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
-		} else {
+		}
+		needAdminPrivCheck := !(alterCurrentUser && alterPassword)
+		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
 			// The MySQL manual states:
 			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
@@ -1790,12 +1792,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
-			}
-			if sem.IsEnabled() && !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
-			}
 		}
 
 		exists, currentAuthPlugin, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
@@ -1806,6 +1802,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
 			continue
+		}
+		if needAdminPrivCheck {
+			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+			}
+			if sem.IsEnabled() && !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
+			}
 		}
 
 		type AuthTokenOptionHandler int
@@ -2471,6 +2475,8 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 	return len(rows) > 0, nil
 }
 
+// userExistsWithRetryVariants reports whether (*name, host) exists in mysql.user.
+// If a username policy variant matches, it rewrites *name to the resolved variant.
 func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, name *string, host string) (bool, error) {
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
 		exists, err := userExists(ctx, sctx, variant, host)
@@ -2488,6 +2494,8 @@ func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, n
 	return userExists(ctx, sctx, *name, host)
 }
 
+// userExistsInternalWithRetryVariants behaves like userExistsWithRetryVariants
+// using the supplied SQL executor and also returns the resolved auth plugin.
 func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (bool, string, error) {
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
 		exists, authPlugin, err := userExistsInternal(ctx, sqlExecutor, variant, host)

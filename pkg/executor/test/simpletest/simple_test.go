@@ -91,6 +91,15 @@ func TestStarterUsernamePolicyInSimpleExec(t *testing.T) {
 	tk.MustExec("alter user `keao.yang`@`%` identified by 'pwd3'")
 	tk.MustQuery("select authentication_string from mysql.user where user='SYSTEM.keao.yang' and host='%'").Check(testkit.Rows(auth.EncodePassword("pwd3")))
 
+	tk.MustExec("create user if not exists `SYSTEM.admin`@`%`")
+	tk.MustExec("grant create user on *.* to `SYSTEM.admin`@`%`")
+	tk.MustExec("create user if not exists `SYSTEM.u_sys`@`%`")
+	tk.MustExec("grant system_user on *.* to `SYSTEM.u_sys`@`%`")
+	adminTk := testkit.NewTestKit(t, store)
+	require.NoError(t, adminTk.Session().Auth(&auth.UserIdentity{Username: "SYSTEM.admin", Hostname: "localhost", AuthUsername: "SYSTEM.admin", AuthHostname: "%"}, nil, nil, nil))
+	adminTk.MustContainErrMsg("alter user u_sys identified by 'pwd4'", "SYSTEM_USER or SUPER")
+	tk.MustQuery("select authentication_string from mysql.user where user='SYSTEM.u_sys' and host='%'").Check(testkit.Rows(auth.EncodePassword("")))
+
 	tk.MustExec("set sql_mode=''")
 	tk.MustContainErrMsg("grant select on *.* to u_auto@'%'", "User name must start with `SYSTEM.`")
 	tk.MustQuery("select User from mysql.user where User='u_auto' and Host='%'").Check(testkit.Rows())
