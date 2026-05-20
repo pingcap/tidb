@@ -1615,6 +1615,67 @@ func TestMaterializedViewFastRefreshRejectsHazardousPurgeHist(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).
 		Check(testkit.Rows(fmt.Sprintf("%d", lastSuccessReadTSO)))
+
+	const afterBeginFailpoint = "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterBegin"
+	pauseCh := make(chan struct{})
+	hitCh := make(chan struct{})
+	require.NoError(t, failpoint.EnableCall(afterBeginFailpoint, func() {
+		select {
+		case <-hitCh:
+		default:
+			close(hitCh)
+		}
+		<-pauseCh
+	}))
+	defer func() {
+		select {
+		case <-pauseCh:
+		default:
+			close(pauseCh)
+		}
+		require.NoError(t, failpoint.Disable(afterBeginFailpoint))
+	}()
+
+	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = %d where MLOG_ID = %d", lastSuccessReadTSO, mlogID))
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_refresh_purge_guard fast")
+	}()
+
+	select {
+	case <-hitCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh to reach failpoint")
+	}
+
+	tkConcurrent := testkit.NewTestKit(t, store)
+	tkConcurrent.MustExec("use test")
+	tkConcurrent.MustExec(fmt.Sprintf(
+		`insert into mysql.tidb_mlog_purge_hist (
+			PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
+			PURGE_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_AT
+		) values (
+			%[1]d, %[2]d, 'test', 't_refresh_purge_guard', 'manual',
+			now(6), 0, 'running', %[3]d, now(6)
+		)`,
+		lastSuccessReadTSO+2000,
+		mlogID,
+		lastSuccessReadTSO+1,
+	))
+
+	close(pauseCh)
+
+	select {
+	case err = <-refreshDone:
+		require.Error(t, err)
+		require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh to finish")
+	}
 }
 
 func TestMaterializedViewRefreshFailedAlertByAttribute(t *testing.T) {

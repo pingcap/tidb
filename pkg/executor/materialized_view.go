@@ -3373,13 +3373,26 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
 		return nil
 	}
+	histSctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(releaseCtx, histSctx)
+	histSQLExec := histSctx.GetSQLExecutor()
+
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
 		!lockedReadTSONull &&
 		targetRefreshReadTSO > 0 &&
 		targetRefreshReadTSO > lockedReadTSO
 	if refreshMode == ast.RefreshMaterializedViewModeFast && !lockedReadTSONull {
+		// Read purge metadata through an internal session so this precheck sees latest committed state
+		// instead of the refresh transaction's repeatable-read startTS snapshot.
+		//
+		// This is still a best-effort guard rather than a strict serialization point with future purge.
+		// In theory, a concurrently-started purge should still be safe because purge computes safePurgeTSO
+		// from persisted LAST_SUCCESS_READ_TSO, which does not advance until this refresh commits.
 		is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
-		if err := checkFastRefreshMLogIntegrity(kctx, sqlExec, is, schemaName, tblInfo, lockedReadTSO); err != nil {
+		if err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, schemaName, tblInfo, lockedReadTSO); err != nil {
 			return err
 		}
 	}
@@ -3393,13 +3406,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return errors.New("refresh materialized view: invalid transaction start tso")
 	}
 	refreshJobID = startTS
-
-	histSctx, err := e.GetSysSession()
-	if err != nil {
-		return err
-	}
-	defer e.ReleaseSysSession(releaseCtx, histSctx)
-	histSQLExec := histSctx.GetSQLExecutor()
 
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
 		return insertRefreshHistRunning(
