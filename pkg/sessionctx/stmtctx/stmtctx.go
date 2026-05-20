@@ -495,12 +495,10 @@ type StatementContext struct {
 	// Round 1 always runs with this flag false. The "fts-like-fallback"
 	// alternative round flips it to true (via its setup/cleanup) while it
 	// builds a competing ILIKE-based plan; the cost-cheapest plan wins via the
-	// normal alt-rounds cost comparison. If round 1's build records a
-	// predicate-context MATCH that cannot be served natively (no FTS index on a
-	// matched column / no TiFlash replica / modifier not pushdown-supported),
-	// optimize.go additionally invalidates round 1's plan and forces this flag
-	// true outside the round so any intervening rounds (correlate, etc.) also
-	// produce executable LIKE-based plans.
+	// normal alt-rounds cost comparison. If round 1's real native planning path
+	// fails with a fallbackable FTS error, optimize.go additionally forces this
+	// flag true outside the round so any intervening rounds (correlate, etc.)
+	// also produce executable LIKE-based plans.
 	AlternativeLogicalPlanFTSLikeFallback bool
 	// AlternativeLogicalPlanHasPredicateContextMatch indicates that round 1
 	// encountered a direct-boolean-context MATCH...AGAINST. The round driver

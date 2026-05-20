@@ -580,3 +580,24 @@ func TestTiCIJoinWithNonTiCITable(t *testing.T) {
 		tk.MustQuery(sql).CheckNotContain("mpp[tiflash]")
 	})
 }
+
+func TestTiCIAlternativeLogicalPlansKeepNativePrefixPlan(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table amazon_review(
+			id bigint primary key,
+			review_body text,
+			review_headline text,
+			product_title text,
+			fulltext index review_body(review_body, review_headline, product_title)
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "amazon_review")
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 1")
+
+		sql := `explain format='brief' select count(*) from amazon_review
+			where match(review_body, review_headline, product_title)
+			against('stainles*' in boolean mode)`
+		tk.MustQuery(sql).CheckContain(`search func:fts_match_prefix("stainles", test.amazon_review.review_body, test.amazon_review.review_headline, test.amazon_review.product_title)`)
+		tk.MustQuery(sql).CheckContain("index:review_body(review_body, review_headline, product_title)")
+	})
+}
