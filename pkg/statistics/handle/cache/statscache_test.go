@@ -128,20 +128,18 @@ func TestUpdateSkipsOlderTableVersion(t *testing.T) {
 		c: newMockStatsCacheInner(current),
 	}
 
-	// Pin the current behavior: the older snapshot overwrites the newer cached entry on both the
-	// Update and CopyAndUpdate paths. The next commit adds the guard and flips these expectations.
 	cache.Update([]*statistics.Table{stale}, nil, false)
 
 	got, ok := cache.c.Get(current.PhysicalID)
 	require.True(t, ok)
-	require.Equal(t, uint64(1), got.Version)
-	require.Equal(t, int64(640), got.RealtimeCount)
+	require.Equal(t, uint64(2), got.Version)
+	require.Equal(t, int64(1280), got.RealtimeCount)
 
 	copied := cache.CopyAndUpdate([]*statistics.Table{stale}, nil)
 	got, ok = copied.c.Get(current.PhysicalID)
 	require.True(t, ok)
-	require.Equal(t, uint64(1), got.Version)
-	require.Equal(t, int64(640), got.RealtimeCount)
+	require.Equal(t, uint64(2), got.Version)
+	require.Equal(t, int64(1280), got.RealtimeCount)
 }
 
 func TestPutSkipsOlderTableVersion(t *testing.T) {
@@ -155,14 +153,14 @@ func TestPutSkipsOlderTableVersion(t *testing.T) {
 	}
 
 	// Put is the path used by targeted InitStats/InitStatsLite (e.g. REFRESH STATS) to publish a
-	// freshly read table into the live cache. Pin the current behavior: the older snapshot
-	// overwrites the newer analyze result for the same physical table. The next commit guards it.
+	// freshly read table into the live cache. A stale snapshot must not overwrite a newer analyze
+	// result for the same physical table.
 	cache.Put(stale.PhysicalID, stale)
 
 	got, ok := cache.c.Get(current.PhysicalID)
 	require.True(t, ok)
-	require.Equal(t, uint64(1), got.Version)
-	require.Equal(t, int64(640), got.RealtimeCount)
+	require.Equal(t, uint64(2), got.Version)
+	require.Equal(t, int64(1280), got.RealtimeCount)
 }
 
 func newMockTable(t *testing.T, physicalID int64, pseudo bool, realtimeCount, modifyCount int64, analyzeVersion uint64) *statistics.Table {
