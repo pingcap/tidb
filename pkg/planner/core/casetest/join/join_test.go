@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -182,6 +183,42 @@ func TestJoinSimplifyCondition(t *testing.T) {
 		require.Contains(t, plan, "Selection(Probe) root")
 		require.Contains(t, plan, "or(eq(test.t2.b, 1), in(test.t2.c")
 		require.NotContains(t, plan, "Selection(Probe) cop[tikv]  or(eq(test.t2.b, 1), in(test.t2.c")
+	})
+}
+
+func TestIndexJoinWithOrderedWindowInner(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		if cascades == "on" {
+			t.Skip("cascades planner does not support index join inner multi-pattern yet")
+		}
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(a int, key(a))")
+		tk.MustExec("create table t2(a int, b int, c int, key idx_abc(a, b, c))")
+		tk.MustExec("insert into t1 values (1), (2), (3)")
+		tk.MustExec("insert into t2 values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23), (3, 4, 34)")
+		tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=1")
+		tk.MustExec("set @@tidb_opt_index_join_cost_factor=0.1")
+		tk.MustExec("set @@tidb_opt_hash_join_cost_factor=100")
+		tk.MustExec("set @@tidb_opt_merge_join_cost_factor=100")
+		tk.Session().GetSessionVars().InitChunkSize = 1
+		tk.Session().GetSessionVars().MaxChunkSize = 1
+
+		var input []string
+		var output []struct {
+			Plan   []string
+			Result []string
+		}
+		suiteData := getJoinSuiteData()
+		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			testdata.OnRecord(func() {
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Rows())
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Sort().Rows())
+			})
+			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery(sql).Sort().Check(testkit.Rows(output[i].Result...))
+		}
 	})
 }
 

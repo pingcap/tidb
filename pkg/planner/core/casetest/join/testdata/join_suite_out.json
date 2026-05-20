@@ -1,0 +1,115 @@
+[
+  {
+    "Name": "TestIndexJoinWithOrderedWindowInner",
+    "Cases": [
+      {
+        "Plan": [
+          "Shuffle root  execution info: concurrency:5, data sources:[IndexReader]",
+          "└─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "  └─ShuffleReceiver root  ",
+          "    └─IndexReader root  index:IndexFullScan",
+          "      └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11 1",
+          "1 2 12 2",
+          "2 1 21 1",
+          "2 3 23 2",
+          "3 4 34 1"
+        ]
+      },
+      {
+        "Plan": [
+          "Selection root  eq(Column, 1)",
+          "└─Shuffle root  execution info: concurrency:5, data sources:[IndexReader]",
+          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "    └─ShuffleReceiver root  ",
+          "      └─IndexReader root  index:IndexFullScan",
+          "        └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11 1",
+          "2 1 21 1",
+          "3 4 34 1"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) root  eq(Column, 1)",
+          "│ └─Shuffle root  execution info: concurrency:5, data sources:[IndexReader]",
+          "│   └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│     └─ShuffleReceiver root  ",
+          "│       └─IndexReader root  index:IndexFullScan",
+          "│         └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) root  index:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11",
+          "2 1 21",
+          "3 4 34"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) root  eq(Column, 2)",
+          "│ └─Shuffle root  execution info: concurrency:5, data sources:[IndexReader]",
+          "│   └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│     └─ShuffleReceiver root  ",
+          "│       └─IndexReader root  index:IndexFullScan",
+          "│         └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) root  index:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 12",
+          "2 3 23"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) root  lt(Column, 2)",
+          "│ └─Shuffle root  execution info: concurrency:5, data sources:[IndexReader]",
+          "│   └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│     └─ShuffleReceiver root  ",
+          "│       └─IndexReader root  index:IndexFullScan",
+          "│         └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) root  index:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11",
+          "2 1 21",
+          "3 4 34"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) root  le(Column, 2)",
+          "│ └─Shuffle root  execution info: concurrency:5, data sources:[IndexReader]",
+          "│   └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│     └─ShuffleReceiver root  ",
+          "│       └─IndexReader root  index:IndexFullScan",
+          "│         └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) root  index:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11",
+          "1 2 12",
+          "2 1 21",
+          "2 3 23",
+          "3 4 34"
+        ]
+      }
+    ]
+  }
+]

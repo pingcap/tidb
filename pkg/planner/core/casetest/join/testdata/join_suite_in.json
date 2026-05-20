@@ -1,0 +1,13 @@
+[
+  {
+    "name": "TestIndexJoinWithOrderedWindowInner",
+    "cases": [
+      "select a, b, c, row_number() over(partition by a order by b) as rn from t2",
+      "select * from (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp where rn = 1",
+      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 1",
+      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 2",
+      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn < 2",
+      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn <= 2"
+    ]
+  }
+]
