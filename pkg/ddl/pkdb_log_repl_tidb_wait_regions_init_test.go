@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -27,15 +28,19 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
+const testStandbyInitClusterID = uint64(1001)
+
 type scriptedStandbyInitPDHTTPClient struct {
 	pdhttp.Client
 
 	t *testing.T
 
-	count int
+	count      int
+	storeInfos []pdhttp.StoreInfo
 
-	mu    sync.Mutex
-	calls int
+	mu         sync.Mutex
+	calls      int
+	storeCalls int
 }
 
 func (c *scriptedStandbyInitPDHTTPClient) GetRegionStatusByKeyRange(
@@ -58,6 +63,53 @@ func (c *scriptedStandbyInitPDHTTPClient) callCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.calls
+}
+
+func (c *scriptedStandbyInitPDHTTPClient) setStores(stores ...pdhttp.StoreInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.storeInfos = stores
+}
+
+func (c *scriptedStandbyInitPDHTTPClient) GetStores(context.Context) (*pdhttp.StoresInfo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.storeCalls++
+	return &pdhttp.StoresInfo{
+		Count:  len(c.storeInfos),
+		Stores: append([]pdhttp.StoreInfo{}, c.storeInfos...),
+	}, nil
+}
+
+func (c *scriptedStandbyInitPDHTTPClient) storeCallCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.storeCalls
+}
+
+func newTestStandbyInitStore(
+	storeID int64,
+	engine string,
+	replicaClusterID uint64,
+	learnerCount int,
+) pdhttp.StoreInfo {
+	return pdhttp.StoreInfo{
+		Store: pdhttp.MetaStore{
+			ID: storeID,
+			Labels: []pdhttp.StoreLabel{
+				{Key: "engine", Value: engine},
+				{Key: replicaClusterIDLabelKey, Value: strconv.FormatUint(replicaClusterID, 10)},
+			},
+		},
+		Status: pdhttp.StoreStatus{RegionCount: int64(learnerCount)},
+	}
+}
+
+func newTestStandbyInitProgressTracker(
+	pdHTTPCli *scriptedStandbyInitPDHTTPClient,
+	etcd clientv3.KV,
+) *standbyInitProgressTracker {
+	return newStandbyInitProgressTracker(pdHTTPCli, etcd, testStandbyInitClusterID)
 }
 
 type scriptedStandbyInitEtcdPutter struct {
@@ -96,8 +148,9 @@ func (p *scriptedStandbyInitEtcdPutter) lastPut() (key, val string) {
 
 func TestStandbyInitProgressStateScanAndResume(t *testing.T) {
 	pdHTTPCli := &scriptedStandbyInitPDHTTPClient{t: t, count: 4}
+	pdHTTPCli.setStores(newTestStandbyInitStore(10, "replicator", testStandbyInitClusterID, 2))
 	etcd := &scriptedStandbyInitEtcdPutter{}
-	tracker := newStandbyInitProgressTracker(pdHTTPCli, etcd)
+	tracker := newTestStandbyInitProgressTracker(pdHTTPCli, etcd)
 	estRegionCnt, err := tracker.estimateTotalRegionCnt(context.Background())
 	require.NoError(t, err)
 
@@ -116,13 +169,13 @@ func TestStandbyInitProgressStateScanAndResume(t *testing.T) {
 	require.False(t, finished)
 	kvCli1.assertDone()
 
-	require.Equal(t, 2, tracker.doneStateCnt)
 	require.True(t, bytes.Equal([]byte("d"), tracker.resumeKey))
 	key, val := etcd.lastPut()
 	require.Equal(t, constants.PkdbInitPercentage, key)
 	require.Equal(t, "50", val)
 
 	// Second call: extend one more state and resume scanning from "d".
+	pdHTTPCli.setStores(newTestStandbyInitStore(10, "replicator", testStandbyInitClusterID, 3))
 	s3 := newTestReplState(3, "d", "f", 1, 1)
 	keys3, values3 := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{s3})
 	kvCli2 := &scriptedRawKVScanClient{
@@ -136,7 +189,6 @@ func TestStandbyInitProgressStateScanAndResume(t *testing.T) {
 	require.False(t, finished)
 	kvCli2.assertDone()
 
-	require.Equal(t, 3, tracker.doneStateCnt)
 	require.True(t, bytes.Equal([]byte("f"), tracker.resumeKey))
 	key, val = etcd.lastPut()
 	require.Equal(t, constants.PkdbInitPercentage, key)
@@ -144,17 +196,18 @@ func TestStandbyInitProgressStateScanAndResume(t *testing.T) {
 
 	// Region count should be fetched only once.
 	require.Equal(t, 1, pdHTTPCli.callCount())
+	require.Equal(t, 2, pdHTTPCli.storeCallCount())
 }
 
 func TestStandbyInitProgressReverseScanWhenMerged(t *testing.T) {
 	pdHTTPCli := &scriptedStandbyInitPDHTTPClient{t: t, count: 10}
+	pdHTTPCli.setStores(newTestStandbyInitStore(10, "replicator", testStandbyInitClusterID, 4))
 	etcd := &scriptedStandbyInitEtcdPutter{}
-	tracker := newStandbyInitProgressTracker(pdHTTPCli, etcd)
+	tracker := newTestStandbyInitProgressTracker(pdHTTPCli, etcd)
 	estRegionCnt, err := tracker.estimateTotalRegionCnt(context.Background())
 	require.NoError(t, err)
 
 	// Simulate resuming from a previous gap at "d".
-	tracker.doneStateCnt = 2
 	tracker.resumeKey = []byte("d")
 
 	merge := newTestReplState(100, "c", "f", 1, 1)
@@ -176,7 +229,6 @@ func TestStandbyInitProgressReverseScanWhenMerged(t *testing.T) {
 	require.False(t, finished)
 	kvCli.assertDone()
 
-	require.Equal(t, 4, tracker.doneStateCnt)
 	require.True(t, bytes.Equal([]byte("g"), tracker.resumeKey))
 	key, val := etcd.lastPut()
 	require.Equal(t, constants.PkdbInitPercentage, key)
@@ -185,8 +237,9 @@ func TestStandbyInitProgressReverseScanWhenMerged(t *testing.T) {
 
 func TestStandbyInitProgressClampToBelow100(t *testing.T) {
 	pdHTTPCli := &scriptedStandbyInitPDHTTPClient{t: t, count: 2}
+	pdHTTPCli.setStores(newTestStandbyInitStore(10, "replicator", testStandbyInitClusterID, 3))
 	etcd := &scriptedStandbyInitEtcdPutter{}
-	tracker := newStandbyInitProgressTracker(pdHTTPCli, etcd)
+	tracker := newTestStandbyInitProgressTracker(pdHTTPCli, etcd)
 	estRegionCnt, err := tracker.estimateTotalRegionCnt(context.Background())
 	require.NoError(t, err)
 
@@ -208,7 +261,7 @@ func TestStandbyInitProgressClampToBelow100(t *testing.T) {
 
 	key, val := etcd.lastPut()
 	require.Equal(t, constants.PkdbInitPercentage, key)
-	require.Equal(t, "75", val)
+	require.Equal(t, "50", val)
 }
 
 func TestStandbyInitProgressInitedWrites100(t *testing.T) {
@@ -226,7 +279,7 @@ func TestStandbyInitProgressInitedWrites100(t *testing.T) {
 
 	pdHTTPCli := &scriptedStandbyInitPDHTTPClient{t: t, count: 42}
 	etcd := &scriptedStandbyInitEtcdPutter{}
-	tracker := newStandbyInitProgressTracker(pdHTTPCli, etcd)
+	tracker := newTestStandbyInitProgressTracker(pdHTTPCli, etcd)
 
 	finished, err := tracker.checkInitedAndUpdateProgress(context.Background(), kvCli, 0)
 	require.NoError(t, err)
@@ -239,6 +292,38 @@ func TestStandbyInitProgressInitedWrites100(t *testing.T) {
 
 	// Should not talk to PD when already inited.
 	require.Equal(t, 0, pdHTTPCli.callCount())
+	require.Equal(t, 0, pdHTTPCli.storeCallCount())
+}
+
+func TestStandbyInitProgressFiltersStores(t *testing.T) {
+	pdHTTPCli := &scriptedStandbyInitPDHTTPClient{t: t, count: 10}
+	pdHTTPCli.setStores(
+		newTestStandbyInitStore(10, "replicator", testStandbyInitClusterID, 3),
+		newTestStandbyInitStore(11, "replicator", testStandbyInitClusterID+1, 4),
+		newTestStandbyInitStore(12, "tikv", testStandbyInitClusterID, 5),
+	)
+	etcd := &scriptedStandbyInitEtcdPutter{}
+	tracker := newTestStandbyInitProgressTracker(pdHTTPCli, etcd)
+	estRegionCnt, err := tracker.estimateTotalRegionCnt(context.Background())
+	require.NoError(t, err)
+
+	state := newTestReplState(1, "", "b", 1, 1)
+	keys, values := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{state})
+	kvCli := &scriptedRawKVScanClient{
+		t: t,
+		scanSteps: []rawKVScanStep{
+			{startKey: nil, endKey: nil, keys: keys, values: values},
+		},
+	}
+
+	finished, err := tracker.checkInitedAndUpdateProgress(context.Background(), kvCli, estRegionCnt)
+	require.NoError(t, err)
+	require.False(t, finished)
+	kvCli.assertDone()
+
+	key, val := etcd.lastPut()
+	require.Equal(t, constants.PkdbInitPercentage, key)
+	require.Equal(t, "30", val)
 }
 
 func TestStandbyInitCheckInitedReportsGapAtBeginning(t *testing.T) {
@@ -253,10 +338,9 @@ func TestStandbyInitCheckInitedReportsGapAtBeginning(t *testing.T) {
 		},
 	}
 
-	allDone, advanced, resumeKey, err := checkInited(context.Background(), kvCli, nil)
+	allDone, resumeKey, err := checkInited(context.Background(), kvCli, nil)
 	require.NoError(t, err)
 	require.False(t, allDone)
-	require.Equal(t, 0, advanced)
 	require.Len(t, resumeKey, 0)
 	kvCli.assertDone()
 }
@@ -274,10 +358,9 @@ func TestStandbyInitCheckInitedStopsAtInternalGap(t *testing.T) {
 		},
 	}
 
-	allDone, advanced, resumeKey, err := checkInited(context.Background(), kvCli, nil)
+	allDone, resumeKey, err := checkInited(context.Background(), kvCli, nil)
 	require.NoError(t, err)
 	require.False(t, allDone)
-	require.Equal(t, 1, advanced)
 	require.True(t, bytes.Equal([]byte("b"), resumeKey))
 	kvCli.assertDone()
 }
@@ -297,10 +380,9 @@ func TestStandbyInitCheckInitedReverseScanEmptyReportsGap(t *testing.T) {
 		},
 	}
 
-	allDone, advanced, resumeKey, err := checkInited(context.Background(), kvCli, []byte("d"))
+	allDone, resumeKey, err := checkInited(context.Background(), kvCli, []byte("d"))
 	require.NoError(t, err)
 	require.False(t, allDone)
-	require.Equal(t, 0, advanced)
 	require.True(t, bytes.Equal([]byte("d"), resumeKey))
 	kvCli.assertDone()
 }
@@ -322,10 +404,9 @@ func TestStandbyInitCheckInitedReverseScanNotCoveringReportsGap(t *testing.T) {
 		},
 	}
 
-	allDone, advanced, resumeKey, err := checkInited(context.Background(), kvCli, []byte("d"))
+	allDone, resumeKey, err := checkInited(context.Background(), kvCli, []byte("d"))
 	require.NoError(t, err)
 	require.False(t, allDone)
-	require.Equal(t, 0, advanced)
 	require.True(t, bytes.Equal([]byte("d"), resumeKey))
 	kvCli.assertDone()
 }
@@ -347,10 +428,9 @@ func TestStandbyInitCheckInitedReverseScanCoveringReportsGap(t *testing.T) {
 		},
 	}
 
-	allDone, advanced, resumeKey, err := checkInited(context.Background(), kvCli, []byte("d"))
+	allDone, resumeKey, err := checkInited(context.Background(), kvCli, []byte("d"))
 	require.NoError(t, err)
 	require.False(t, allDone)
-	require.Equal(t, 1, advanced)
 	require.True(t, bytes.Equal([]byte("e"), resumeKey))
 	kvCli.assertDone()
 }
