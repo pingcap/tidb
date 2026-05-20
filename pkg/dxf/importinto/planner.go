@@ -56,7 +56,11 @@ type LogicalPlan struct {
 	Stmt              string
 	EligibleInstances []*serverinfo.ServerInfo
 	ChunkMap          map[int32][]importer.Chunk
-	Logger            *zap.Logger
+	PrepareMode       proto.PrepareMode
+	// PreparedChunkMapExternalPath points to externally persisted chunk
+	// metadata produced during framework prepare stage.
+	PreparedChunkMapExternalPath string
+	Logger                       *zap.Logger
 
 	// summary for next step
 	summary importer.StepSummary
@@ -66,17 +70,19 @@ type LogicalPlan struct {
 func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
 	return proto.ExtraParams{
 		ManualRecovery: p.Plan.ManualRecovery,
+		PrepareMode:    p.PrepareMode,
 	}
 }
 
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 	taskMeta := TaskMeta{
-		JobID:             p.JobID,
-		Plan:              p.Plan,
-		Stmt:              p.Stmt,
-		EligibleInstances: p.EligibleInstances,
-		ChunkMap:          p.ChunkMap,
+		JobID:                        p.JobID,
+		Plan:                         p.Plan,
+		Stmt:                         p.Stmt,
+		EligibleInstances:            p.EligibleInstances,
+		ChunkMap:                     p.ChunkMap,
+		PreparedChunkMapExternalPath: p.PreparedChunkMapExternalPath,
 	}
 	return json.Marshal(taskMeta)
 }
@@ -92,6 +98,7 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 	p.Stmt = taskMeta.Stmt
 	p.EligibleInstances = taskMeta.EligibleInstances
 	p.ChunkMap = taskMeta.ChunkMap
+	p.PreparedChunkMapExternalPath = taskMeta.PreparedChunkMapExternalPath
 	return nil
 }
 
@@ -362,7 +369,13 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 
 func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	var chunkMap map[int32][]importer.Chunk
-	if len(p.ChunkMap) > 0 {
+	if p.PreparedChunkMapExternalPath != "" {
+		var err error
+		chunkMap, err = readPreparedChunkMap(pCtx.Ctx, &p.Plan, p.PreparedChunkMapExternalPath)
+		if err != nil {
+			return nil, err
+		}
+	} else if len(p.ChunkMap) > 0 {
 		chunkMap = p.ChunkMap
 	} else {
 		controller, err2 := buildControllerForPlan(p)
@@ -400,6 +413,27 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 		importSpecs = append(importSpecs, importSpec)
 	}
 	return importSpecs, nil
+}
+
+func readPreparedChunkMap(
+	ctx context.Context,
+	plan *importer.Plan,
+	externalPath string,
+) (map[int32][]importer.Chunk, error) {
+	store, err := importer.GetSortStore(ctx, plan.CloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	data, err := store.ReadFile(ctx, externalPath)
+	if err != nil {
+		return nil, err
+	}
+	var chunkMap map[int32][]importer.Chunk
+	if err := json.Unmarshal(data, &chunkMap); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return chunkMap, nil
 }
 
 func skipMergeSort(kvGroup string, stats []simplesst.MultipleFilesStat, concurrency int) bool {

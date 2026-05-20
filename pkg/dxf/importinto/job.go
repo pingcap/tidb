@@ -64,6 +64,12 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
 }
 
+// ShouldUseScopedPrepareIntegration enables framework prepare integration only
+// for nextgen + global-sort path.
+func ShouldUseScopedPrepareIntegration(plan *importer.Plan) bool {
+	return plan != nil && kerneltype.IsNextGen() && plan.IsGlobalSort()
+}
+
 func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	var instances []*serverinfo.ServerInfo
 	if instance != nil {
@@ -87,6 +93,11 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		TaskType:   proto.ImportInto,
 		ThreadCnt:  plan.ThreadCnt,
 		MaxNodeCnt: plan.MaxNodeCnt,
+	}
+	if ShouldUseScopedPrepareIntegration(plan) {
+		logicalPlan.PrepareMode = proto.PrepareModeRequired
+		planCtx.ThreadCnt = 1
+		planCtx.MaxNodeCnt = 1
 	}
 	var (
 		jobID, taskID int64
