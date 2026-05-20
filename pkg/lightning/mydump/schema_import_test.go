@@ -70,7 +70,7 @@ func TestSchemaImporter(t *testing.T) {
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}))
 		dbMetas := make([]*MDDatabaseMeta, 0, 10)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			mock.ExpectExec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `test%02d`", i)).
 				WillReturnResult(sqlmock.NewResult(0, 0))
 			dbMetas = append(dbMetas, &MDDatabaseMeta{Name: fmt.Sprintf("test%02d", i)})
@@ -422,7 +422,7 @@ func TestSchemaImporterManyTables(t *testing.T) {
 	mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 		sqlmock.NewRows([]string{"SCHEMA_NAME"}))
 	dbMetas := make([]*MDDatabaseMeta, 0, 30)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		dbName := fmt.Sprintf("test%02d", i)
 		dbMeta := &MDDatabaseMeta{Name: dbName, Tables: make([]*MDTableMeta, 0, 100)}
 		mock.ExpectExec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", dbName)).
