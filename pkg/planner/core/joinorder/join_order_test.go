@@ -47,14 +47,6 @@ func TestChooseBestGreedyStart(t *testing.T) {
 		require.Equal(t, 1, startIdx)
 		require.Equal(t, float64(10), best.cumCost)
 	})
-
-	t.Run("relax only real non-eq candidates in second round", func(t *testing.T) {
-		penalty := noEQPenaltyFactor(0, true, &CheckConnectionResult{})
-		require.Equal(t, float64(1), penalty)
-
-		penalty = noEQPenaltyFactor(0, true, &CheckConnectionResult{syntheticCartesian: true})
-		require.Equal(t, float64(0), penalty)
-	})
 }
 
 func TestCloneNodesForGreedyStartIsolation(t *testing.T) {

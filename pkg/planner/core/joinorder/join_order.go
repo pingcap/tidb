@@ -669,7 +669,7 @@ func moveGreedyStartToFront(nodes []*Node, startIdx int) []*Node {
 func (j *joinOrderGreedy) optimizeWithStart(detector *ConflictDetector, nodes []*Node, startIdx int, cartesianFactor float64, allowNoEQ bool) (*Node, error) {
 	nodes = moveGreedyStartToFront(cloneNodesForGreedyStart(nodes), startIdx)
 	var err error
-	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ, false); err != nil {
+	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
 		return nil, err
 	}
 
@@ -681,10 +681,11 @@ func (j *joinOrderGreedy) optimizeWithStart(detector *ConflictDetector, nodes []
 		// and the first round of greedy enumeration is not allowed to use non-eq edges.
 		// So we got here and we need to the second round of enumeration with `allowNoEQ` as true.
 		befLen := len(nodes)
-		// The second round needs to allow real non-eq joins even when cartesian
-		// joins are disabled, but detector-created cartesian fallback candidates
-		// should still keep the original cartesian penalty.
-		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true, true); err != nil {
+		// Clamp to 1 to avoid cumCost*0=0 making non-EQ joins appear free.
+		if cartesianFactor <= 0 {
+			cartesianFactor = 1
+		}
+		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
 			return nil, err
 		}
 		if len(nodes) != befLen {
@@ -721,7 +722,7 @@ func (j *joinOrderGreedy) optimizeWithStart(detector *ConflictDetector, nodes []
 	return root, nil
 }
 
-func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool, relaxNoEQPenalty bool) ([]*Node, error) {
+func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
 	// Outer loop: keep trying while we have multiple nodes and made progress in the last iteration.
 	// This handles cases where conflict rules block some joins until other joins are completed.
 	for len(nodes) > 1 {
@@ -751,8 +752,7 @@ func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHin
 					// and we might generate a tree with cartesian edge.
 					// For non INNER JOIN, the logic in extractJoinGroup ensures we will not reach here,
 					// check the comment in extractJoinGroup for more details.
-					penaltyFactor := noEQPenaltyFactor(cartesianFactor, relaxNoEQPenalty, checkResult)
-					newNode.cumCost, err = applyCartesianFactor(newNode.cumCost, penaltyFactor)
+					newNode.cumCost, err = applyCartesianFactor(newNode.cumCost, cartesianFactor)
 					if err != nil {
 						return nil, err
 					}
@@ -776,13 +776,6 @@ func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHin
 		}
 	}
 	return nodes, nil
-}
-
-func noEQPenaltyFactor(cartesianFactor float64, relaxNoEQPenalty bool, checkResult *CheckConnectionResult) float64 {
-	if !relaxNoEQPenalty || checkResult == nil || checkResult.SyntheticCartesian() || cartesianFactor > 0 {
-		return cartesianFactor
-	}
-	return 1
 }
 
 func collectUsedEdges(nodes []*Node) map[uint64]struct{} {
