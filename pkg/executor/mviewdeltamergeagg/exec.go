@@ -207,6 +207,8 @@ type Exec struct {
 }
 
 type mergeWorkerData struct {
+	// minMaxRecomputeRowsByMapping[mappingIdx] stores recompute row indexes for one mapping.
+	// Each inner slice must be strictly increasing and in chunk row range.
 	minMaxRecomputeRowsByMapping [][]int
 	minMaxRecomputeOverrides     []*mappingRecomputeOverride
 	minMaxBatchMappings          []int
@@ -218,10 +220,10 @@ type mergeWorkerData struct {
 	batchEncodedKeyToKeyPos      map[hack.MutableString]int
 	batchRefsByLookupKey         [][]batchRowRef
 	batchLookupKeyDatums         []types.Datum
-	batchInputEncodedKeys        [][]byte
-	batchResultEncodedKeys       [][]byte
 	batchInputNullByRow          []bool
+	batchInputEncodedKeys        [][]byte
 	batchResultNullByRow         []bool
+	batchResultEncodedKeys       [][]byte
 	// For building update operations.
 	updateRows      []int
 	updateOpIndexes []int
@@ -1316,7 +1318,8 @@ func (e *Exec) recomputeMinMaxBatch(
 
 		inputRow := input.GetRow(rowIdx)
 		base := rowPos * keyColCnt
-		keyDatums := flatLookupKeyDatums[base : base+keyColCnt]
+		// Defensive for robustness: cap=len prevents append from mutating adjacent key slices.
+		keyDatums := flatLookupKeyDatums[base : base+keyColCnt : base+keyColCnt]
 		for keyPos, keyColID := range keyColIDs {
 			keyDatums[keyPos] = types.Datum{}
 			inputRow.DatumWithBuffer(keyColID, keyTypes[keyPos], &keyDatums[keyPos])
@@ -1375,8 +1378,21 @@ func (e *Exec) recomputeMinMaxBatch(
 		if resultRowCnt == 0 {
 			break
 		}
-		resultRows := buildContiguousRowIdxes(workerData.batchResultRows, resultRowCnt)
-		workerData.batchResultRows = resultRows
+		var resultRows []int
+		if resultRowCnt <= len(globalContiguousRowIdxes) {
+			resultRows = globalContiguousRowIdxes[:resultRowCnt]
+		} else {
+			resultRows = workerData.batchResultRows
+			if cap(resultRows) < resultRowCnt {
+				resultRows = make([]int, resultRowCnt)
+			} else {
+				resultRows = resultRows[:resultRowCnt]
+			}
+			for i := range resultRowCnt {
+				resultRows[i] = i
+			}
+			workerData.batchResultRows = resultRows
+		}
 		encodedResultKeys, nullByResultRow, err := encodeChunkKeyRows(
 			typeCtx,
 			resultChk,
@@ -1397,10 +1413,10 @@ func (e *Exec) recomputeMinMaxBatch(
 			encodedKey := encodedResultKeys[rowIdx]
 			lookupKeyPos, exists := encodedKeyToKeyPos[hack.String(encodedKey)]
 			if !exists {
-				return errors.Errorf("min/max batch recompute returns an unexpected key at result row %d", rowIdx)
+				return errors.Errorf("min/max batch recompute returns a key outside lookup set at result row %d", rowIdx)
 			}
 			if seen[lookupKeyPos] {
-				return errors.Errorf("min/max batch recompute has duplicate result for lookup key idx %d", lookupKeyPos)
+				return errors.Errorf("min/max batch recompute returns duplicate key at result row %d", rowIdx)
 			}
 			seen[lookupKeyPos] = true
 			seenResultKeyCnt++
@@ -1427,21 +1443,6 @@ func (e *Exec) recomputeMinMaxBatch(
 		)
 	}
 	return nil
-}
-
-func buildContiguousRowIdxes(buf []int, rowCnt int) []int {
-	if rowCnt <= len(globalContiguousRowIdxes) {
-		return globalContiguousRowIdxes[:rowCnt]
-	}
-	if cap(buf) < rowCnt {
-		buf = make([]int, rowCnt)
-	} else {
-		buf = buf[:rowCnt]
-	}
-	for i := 0; i < rowCnt; i++ {
-		buf[i] = i
-	}
-	return buf
 }
 
 // encodeChunkKeyRows encodes key columns for each used row into keyBuf.
@@ -1603,44 +1604,28 @@ func (e *Exec) applyMinMaxRecomputeOverrides(
 	childTypes []*types.FieldType,
 	overrides []*mappingRecomputeOverride,
 ) error {
+	if len(childTypes) != len(computedByColID) {
+		return errors.Errorf(
+			"min/max override child/computed column count mismatch: child_types=%d computed_cols=%d",
+			len(childTypes),
+			len(computedByColID),
+		)
+	}
 	for mappingIdx, override := range overrides {
 		if override == nil || len(override.rowIdxes) == 0 {
 			continue
 		}
 		mapping := e.AggMappings[mappingIdx]
-		if len(override.valuesByOutput) != len(mapping.ColID) {
-			return errors.Errorf(
-				"min/max override output count mismatch for mapping %d: override=%d mapping=%d",
-				mappingIdx,
-				len(override.valuesByOutput),
-				len(mapping.ColID),
-			)
-		}
 		for colPos, outputColID := range mapping.ColID {
 			if outputColID < 0 || outputColID >= len(computedByColID) {
 				return errors.Errorf("min/max override output col id %d out of range [0,%d)", outputColID, len(computedByColID))
 			}
-			if outputColID < 0 || outputColID >= len(childTypes) {
-				return errors.Errorf("min/max override output col id %d out of field type range [0,%d)", outputColID, len(childTypes))
-			}
-			if len(override.valuesByOutput[colPos]) != len(override.rowIdxes) {
-				return errors.Errorf(
-					"min/max override row/value count mismatch for mapping %d output position %d: rows=%d values=%d",
-					mappingIdx,
-					colPos,
-					len(override.rowIdxes),
-					len(override.valuesByOutput[colPos]),
-				)
-			}
-			oldCol := computedByColID[outputColID]
-			if oldCol == nil {
-				return errors.Errorf("min/max override target output col %d is nil", outputColID)
-			}
-			ft := childTypes[outputColID]
-			if ft == nil {
-				return errors.Errorf("min/max override output col %d type is unavailable", outputColID)
-			}
-			newCol, err := rebuildColumnWithOverrides(oldCol, ft, override.rowIdxes, override.valuesByOutput[colPos])
+			newCol, err := rebuildColumnWithOverrides(
+				computedByColID[outputColID],
+				childTypes[outputColID],
+				override.rowIdxes,
+				override.valuesByOutput[colPos],
+			)
 			if err != nil {
 				return err
 			}
@@ -1651,6 +1636,7 @@ func (e *Exec) applyMinMaxRecomputeOverrides(
 }
 
 type mappingRecomputeOverride struct {
+	// rowIdxes must be strictly increasing.
 	rowIdxes       []int
 	valuesByOutput [][]types.Datum
 }
@@ -1698,44 +1684,31 @@ func ensureMappingOverride(
 	return override, nil
 }
 
+// TODO: For fixed-size columns, patch in place instead of rebuilding a new column.
 func rebuildColumnWithOverrides(
 	oldCol *chunk.Column,
 	ft *types.FieldType,
 	rowIdxes []int,
 	values []types.Datum,
 ) (*chunk.Column, error) {
-	if oldCol == nil {
-		return nil, errors.New("cannot rebuild nil column")
-	}
 	if len(rowIdxes) != len(values) {
 		return nil, errors.Errorf("override row/value count mismatch: rows=%d values=%d", len(rowIdxes), len(values))
 	}
 	rowCnt := oldCol.Rows()
 	newCol := chunk.NewColumn(ft, rowCnt)
-	overridePos := 0
-	prevOverrideRow := -1
-	for rowIdx := 0; rowIdx < rowCnt; rowIdx++ {
-		if overridePos < len(rowIdxes) {
-			overrideRow := rowIdxes[overridePos]
-			if overrideRow < prevOverrideRow {
-				return nil, errors.Errorf("override rows are not in ascending order: prev=%d curr=%d", prevOverrideRow, overrideRow)
-			}
-			if overrideRow < rowIdx {
-				return nil, errors.Errorf("override row %d repeats or is out of order", overrideRow)
-			}
-			if overrideRow == rowIdx {
-				if err := appendDatumToColumn(newCol, &values[overridePos], ft); err != nil {
-					return nil, err
-				}
-				prevOverrideRow = overrideRow
-				overridePos++
-				continue
-			}
+	copyStart := 0
+	for overridePos, rowIdx := range rowIdxes {
+		newCol.AppendCellRange(oldCol, copyStart, rowIdx)
+		if err := appendDatumToColumn(newCol, &values[overridePos], ft); err != nil {
+			return nil, err
 		}
-		newCol.AppendCellNTimes(oldCol, rowIdx, 1)
+		copyStart = rowIdx + 1
 	}
-	if overridePos != len(rowIdxes) {
-		return nil, errors.Errorf("override rows out of range: consumed=%d total=%d rows=%d", overridePos, len(rowIdxes), rowCnt)
+	if copyStart < rowCnt {
+		newCol.AppendCellRange(oldCol, copyStart, rowCnt)
+	}
+	if newCol.Rows() != rowCnt {
+		return nil, errors.Errorf("override row apply row count mismatch: expected=%d actual=%d", rowCnt, newCol.Rows())
 	}
 	return newCol, nil
 }

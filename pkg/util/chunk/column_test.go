@@ -152,6 +152,173 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 	}
 }
 
+func TestColumnAppendCellRangeFixed(t *testing.T) {
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	src := NewColumn(ft, 16)
+	type fixedRow struct {
+		isNull bool
+		val    int64
+	}
+	srcRows := []fixedRow{
+		{isNull: false, val: 11},
+		{isNull: true},
+		{isNull: false, val: 22},
+		{isNull: false, val: 33},
+		{isNull: true},
+		{isNull: false, val: 44},
+		{isNull: false, val: 55},
+		{isNull: false, val: 66},
+		{isNull: true},
+		{isNull: false, val: 77},
+	}
+	for _, row := range srcRows {
+		if row.isNull {
+			src.AppendNull()
+		} else {
+			src.AppendInt64(row.val)
+		}
+	}
+
+	dst := NewColumn(ft, 16)
+	dst.AppendInt64(100)
+	dst.AppendNull()
+	dst.AppendInt64(200)
+	dst.AppendCellRange(src, 1, 9)
+
+	require.Equal(t, 11, dst.Rows())
+	require.False(t, dst.IsNull(0))
+	require.Equal(t, int64(100), dst.GetInt64(0))
+	require.True(t, dst.IsNull(1))
+	require.False(t, dst.IsNull(2))
+	require.Equal(t, int64(200), dst.GetInt64(2))
+
+	for i, srcIdx := 3, 1; srcIdx < 9; i, srcIdx = i+1, srcIdx+1 {
+		expected := srcRows[srcIdx]
+		require.Equal(t, expected.isNull, dst.IsNull(i))
+		if !expected.isNull {
+			require.Equal(t, expected.val, dst.GetInt64(i))
+		}
+	}
+
+	selfCol := NewColumn(ft, 16)
+	selfRows := []fixedRow{
+		{isNull: false, val: 1},
+		{isNull: true},
+		{isNull: false, val: 2},
+		{isNull: false, val: 3},
+		{isNull: true},
+		{isNull: false, val: 4},
+	}
+	for _, row := range selfRows {
+		if row.isNull {
+			selfCol.AppendNull()
+		} else {
+			selfCol.AppendInt64(row.val)
+		}
+	}
+	begin, end := 1, 5
+	expectedSelfRows := append([]fixedRow(nil), selfRows[begin:end]...)
+
+	selfCol.AppendCellRange(selfCol, begin, end)
+
+	require.Equal(t, len(selfRows)+(end-begin), selfCol.Rows())
+	for i, row := range selfRows {
+		require.Equal(t, row.isNull, selfCol.IsNull(i))
+		if !row.isNull {
+			require.Equal(t, row.val, selfCol.GetInt64(i))
+		}
+	}
+	for i, row := range expectedSelfRows {
+		rowIdx := len(selfRows) + i
+		require.Equal(t, row.isNull, selfCol.IsNull(rowIdx))
+		if !row.isNull {
+			require.Equal(t, row.val, selfCol.GetInt64(rowIdx))
+		}
+	}
+}
+
+func TestColumnAppendCellRangeVarLen(t *testing.T) {
+	ft := types.NewFieldType(mysql.TypeVarString)
+	src := NewColumn(ft, 16)
+	type strRow struct {
+		isNull bool
+		val    string
+	}
+	srcRows := []strRow{
+		{isNull: false, val: "a"},
+		{isNull: false, val: "bb"},
+		{isNull: true},
+		{isNull: false, val: "ccc"},
+		{isNull: false, val: ""},
+		{isNull: true},
+		{isNull: false, val: "dddd"},
+		{isNull: false, val: "ee"},
+		{isNull: false, val: "f"},
+		{isNull: true},
+	}
+	for _, row := range srcRows {
+		if row.isNull {
+			src.AppendNull()
+		} else {
+			src.AppendString(row.val)
+		}
+	}
+
+	dst := NewColumn(ft, 16)
+	dst.AppendString("head")
+	dst.AppendNull()
+	dst.AppendCellRange(src, 2, 10)
+
+	require.Equal(t, 10, dst.Rows())
+	require.False(t, dst.IsNull(0))
+	require.Equal(t, "head", dst.GetString(0))
+	require.True(t, dst.IsNull(1))
+
+	for i, srcIdx := 2, 2; srcIdx < 10; i, srcIdx = i+1, srcIdx+1 {
+		expected := srcRows[srcIdx]
+		require.Equal(t, expected.isNull, dst.IsNull(i))
+		if !expected.isNull {
+			require.Equal(t, expected.val, dst.GetString(i))
+		}
+	}
+
+	selfCol := NewColumn(ft, 16)
+	selfRows := []strRow{
+		{isNull: false, val: "ab"},
+		{isNull: true},
+		{isNull: false, val: "c"},
+		{isNull: false, val: "def"},
+		{isNull: true},
+		{isNull: false, val: "gh"},
+	}
+	for _, row := range selfRows {
+		if row.isNull {
+			selfCol.AppendNull()
+		} else {
+			selfCol.AppendString(row.val)
+		}
+	}
+	begin, end := 0, 6
+	expectedSelfRows := append([]strRow(nil), selfRows[begin:end]...)
+
+	selfCol.AppendCellRange(selfCol, begin, end)
+
+	require.Equal(t, len(selfRows)+(end-begin), selfCol.Rows())
+	for i, row := range selfRows {
+		require.Equal(t, row.isNull, selfCol.IsNull(i))
+		if !row.isNull {
+			require.Equal(t, row.val, selfCol.GetString(i))
+		}
+	}
+	for i, row := range expectedSelfRows {
+		rowIdx := len(selfRows) + i
+		require.Equal(t, row.isNull, selfCol.IsNull(rowIdx))
+		if !row.isNull {
+			require.Equal(t, row.val, selfCol.GetString(rowIdx))
+		}
+	}
+}
+
 func TestLargeStringColumnOffset(t *testing.T) {
 	numRows := 1
 	col := newVarLenColumn(numRows)

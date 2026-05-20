@@ -1222,7 +1222,7 @@ func TestRejectMaxBatchRecomputeUnexpectedKey(t *testing.T) {
 	require.NoError(t, mergeExec.Open(context.Background()))
 	outChk := exec.NewFirstChunk(mergeExec)
 	err = mergeExec.Next(context.Background(), outChk)
-	require.ErrorContains(t, err, "returns an unexpected key")
+	require.ErrorContains(t, err, "returns a key outside lookup set")
 	require.NoError(t, mergeExec.Close())
 }
 

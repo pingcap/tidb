@@ -269,6 +269,51 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	c.length += times
 }
 
+// AppendCellRange appends cells in [begin, end) from the source column.
+func (c *Column) AppendCellRange(src *Column, begin, end int) {
+	srcRows := src.Rows()
+	if begin < 0 || begin >= end || end > srcRows {
+		return
+	}
+	appendedRows := end - begin
+	oldLen := c.length
+	newLen := oldLen + appendedRows
+	sizeNulls := (newLen + 7) >> 3
+	if cap(c.nullBitmap) >= sizeNulls {
+		c.nullBitmap = c.nullBitmap[:sizeNulls]
+	} else {
+		oldNullBitmap := c.nullBitmap
+		c.nullBitmap = make([]byte, sizeNulls)
+		copy(c.nullBitmap, oldNullBitmap)
+	}
+	for i := range appendedRows {
+		dstRowIdx := oldLen + i
+		srcRowIdx := begin + i
+		byteIdx := dstRowIdx >> 3
+		bitMask := byte(1 << uint(dstRowIdx&7))
+		if src.IsNull(srcRowIdx) {
+			c.nullBitmap[byteIdx] &^= bitMask
+		} else {
+			c.nullBitmap[byteIdx] |= bitMask
+		}
+	}
+	if c.isFixed() {
+		elemLen := len(src.elemBuf)
+		beginOffset, endOffset := begin*elemLen, end*elemLen
+		c.data = append(c.data, src.data[beginOffset:endOffset]...)
+		c.length = newLen
+		return
+	}
+	beginOffset, endOffset := src.offsets[begin], src.offsets[end]
+	dstDataStart := int64(len(c.data))
+	srcDataStart := src.offsets[begin]
+	c.data = append(c.data, src.data[beginOffset:endOffset]...)
+	for rowIdx := begin + 1; rowIdx <= end; rowIdx++ {
+		c.offsets = append(c.offsets, dstDataStart+(src.offsets[rowIdx]-srcDataStart))
+	}
+	c.length = newLen
+}
+
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
 // notNull means not null.
 // num means the number of bits that should be appended.
