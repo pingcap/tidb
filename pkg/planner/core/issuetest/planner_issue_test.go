@@ -970,6 +970,19 @@ FROM (
 WHERE ref1`
 		tk.MustQuery(havingQuery).Check(testkit.Rows("0.36490944"))
 		tk.MustQuery(derivedQuery).Check(testkit.Rows("0.36490944"))
+
+		mixedPredicatePlan := fmt.Sprint(tk.MustQuery(`
+EXPLAIN FORMAT='brief'
+SELECT /* issue:68052 */ ref0
+FROM (
+    SELECT CONCAT(IFNULL(t0.c2, '__NULL__')) AS ref0,
+        (((BIT_OR(t0.c2)) > (AVG(t0.c2))) OR ((t0.c2) > ((CAST(TRIM((CASE t0.c2 WHEN t0.c2 THEN t0.c2 ELSE 1923309721 END)) AS CHAR)) >= (t0.c2)))) AS ref1,
+        t0.c2 AS ref2
+    FROM t0
+    GROUP BY t0.c2
+) AS s
+WHERE ref1 AND ref2 > 0`).Rows())
+		require.Contains(t, mixedPredicatePlan, "cop[tikv]  gt(test.t0.c2, 0)")
 	})
 }
 

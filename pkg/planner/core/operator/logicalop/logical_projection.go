@@ -96,14 +96,17 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		_, child, err := p.BaseLogicalPlan.PredicatePushDown(nil)
 		return predicates, child, err
 	}
-	// Keep type-sensitive HAVING predicates above Projection -> Aggregation.
-	// Rebuilding control-function comparisons below this projection can change
-	// coercion against pre-aggregation columns and filter rows that should
-	// survive HAVING.
-	if _, ok := p.Children()[0].(*LogicalAggregation); ok &&
-		hasTypeSensitiveProjectionPredicate(p.Schema(), p.Exprs, predicates) {
-		_, child, err := p.BaseLogicalPlan.PredicatePushDown(nil)
-		return predicates, child, err
+	if _, ok := p.Children()[0].(*LogicalAggregation); ok {
+		ordinaryPredicates, sensitivePredicates := splitTypeSensitiveProjectionPredicates(p.Schema(), p.Exprs, predicates)
+		if len(sensitivePredicates) > 0 {
+			// Keep type-sensitive HAVING predicates above Projection -> Aggregation.
+			// Rebuilding control-function comparisons below this projection can change
+			// coercion against pre-aggregation columns and filter rows that should
+			// survive HAVING. Ordinary predicates can still use the normal pushdown path.
+			canBePushed, canNotBePushed := breakDownPredicates(p, ordinaryPredicates)
+			remained, child, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed)
+			return append(append(remained, canNotBePushed...), sensitivePredicates...), child, err
+		}
 	}
 	canBePushed, canNotBePushed := breakDownPredicates(p, predicates)
 	remained, child, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed)
@@ -669,16 +672,27 @@ func breakDownPredicates(p *LogicalProjection, predicates []expression.Expressio
 	return canBePushed, canNotBePushed
 }
 
-func hasTypeSensitiveProjectionPredicate(schema *expression.Schema, projectionExprs, predicates []expression.Expression) bool {
+func splitTypeSensitiveProjectionPredicates(schema *expression.Schema, projectionExprs, predicates []expression.Expression) (ordinary, sensitive []expression.Expression) {
+	ordinary = make([]expression.Expression, 0, len(predicates))
+	sensitive = make([]expression.Expression, 0, len(predicates))
 	for _, predicate := range predicates {
-		if hasTypeSensitiveProjectionPredicateExpr(predicate) {
-			return true
+		if isTypeSensitiveProjectionPredicate(schema, projectionExprs, predicate) {
+			sensitive = append(sensitive, predicate)
+			continue
 		}
-		for _, col := range expression.ExtractColumns(predicate) {
-			idx := schema.ColumnIndex(col)
-			if idx >= 0 && hasTypeSensitiveProjectionPredicateExpr(projectionExprs[idx]) {
-				return true
-			}
+		ordinary = append(ordinary, predicate)
+	}
+	return ordinary, sensitive
+}
+
+func isTypeSensitiveProjectionPredicate(schema *expression.Schema, projectionExprs []expression.Expression, predicate expression.Expression) bool {
+	if hasTypeSensitiveProjectionPredicateExpr(predicate) {
+		return true
+	}
+	for _, col := range expression.ExtractColumns(predicate) {
+		idx := schema.ColumnIndex(col)
+		if idx >= 0 && hasTypeSensitiveProjectionPredicateExpr(projectionExprs[idx]) {
+			return true
 		}
 	}
 	return false
