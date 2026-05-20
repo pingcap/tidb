@@ -88,6 +88,7 @@ const (
 	purgeHistStatusRunning          = "running"
 	purgeHistStatusSuccess          = "success"
 	purgeHistStatusFailed           = "failed"
+	purgeHistStatusOrphaned         = "orphaned"
 	mvRefreshAdvisoryLockTimeoutSec = int64(1)
 	mvRefreshShadowTablePrefix      = "__mv_shadow_"
 	mvRefreshImportIntoStoreName    = "TiKV"
@@ -1781,6 +1782,22 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	purgeStartTS := txn.StartTS()
 	safePurgeTSO = purgeStartTS
 	purgeJobID = purgeStartTS
+	publicMVIDs, buildingMVIDs, err := collectDependentMViewIDsForMLogPurge(kctx, sqlExec, baseTableMeta, mlogID)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	safePurgeTSO, err = calcMaterializedViewLogSafePurgeTSO(
+		kctx,
+		sqlExec,
+		schemaName.O,
+		s.Table.Name.O,
+		purgeStartTS,
+		publicMVIDs,
+		buildingMVIDs,
+	)
+	if err != nil {
+		return finalizeFailure(err)
+	}
 	if err := insertMLogPurgeHistRunning(
 		kctx,
 		histSQLExec,
@@ -1789,6 +1806,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		schemaName.O,
 		baseTableMeta.Name.O,
 		purgeMethod,
+		safePurgeTSO,
 		histTime(purgeStart),
 	); err != nil {
 		return errors.Trace(err)
@@ -1813,23 +1831,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		return finalizeFailure(err)
 	}
 	failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
-
-	publicMVIDs, buildingMVIDs, err := collectDependentMViewIDsForMLogPurge(kctx, sqlExec, baseTableMeta, mlogID)
-	if err != nil {
-		return finalizeFailure(err)
-	}
-	safePurgeTSO, err = calcMaterializedViewLogSafePurgeTSO(
-		kctx,
-		sqlExec,
-		schemaName.O,
-		s.Table.Name.O,
-		purgeStartTS,
-		publicMVIDs,
-		buildingMVIDs,
-	)
-	if err != nil {
-		return finalizeFailure(err)
-	}
 	skipDeleteByCheckpoint := lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
 	if !skipDeleteByCheckpoint && safePurgeTSO > 0 {
 		throttlePlan = tryBuildMLogPurgeThrottlePlanBestEffort(
@@ -2720,6 +2721,7 @@ func insertMLogPurgeHistRunning(
 	baseTableSchema string,
 	baseTableName string,
 	purgeMethod string,
+	purgeCutoffTSO uint64,
 	purgeStartAt time.Time,
 ) error {
 	insertSQL := `INSERT INTO mysql.tidb_mlog_purge_hist (
@@ -2731,8 +2733,10 @@ func insertMLogPurgeHistRunning(
 		PURGE_TIME,
 		PURGE_ROWS,
 		PURGE_STATUS,
+		PURGE_CUTOFF_TSO,
 		LAST_HEARTBEAT_AT
 	) VALUES (
+		%?,
 		%?,
 		%?,
 		%?,
@@ -2754,6 +2758,7 @@ func insertMLogPurgeHistRunning(
 		purgeStartAt,
 		int64(0),
 		purgeHistStatusRunning,
+		purgeCutoffTSO,
 		purgeStartAt,
 	)
 	if err != nil {
@@ -3372,6 +3377,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		!lockedReadTSONull &&
 		targetRefreshReadTSO > 0 &&
 		targetRefreshReadTSO > lockedReadTSO
+	if refreshMode == ast.RefreshMaterializedViewModeFast && !lockedReadTSONull {
+		is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+		if err := checkFastRefreshMLogIntegrity(kctx, sqlExec, is, schemaName, tblInfo, lockedReadTSO); err != nil {
+			return err
+		}
+	}
 
 	txn, err := refreshSctx.Txn(true)
 	if err != nil {
@@ -4245,6 +4256,38 @@ func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
 	return schemaName, tblInfo, nil
 }
 
+func resolveRefreshMaterializedViewLogInfo(
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+	tblInfo *model.TableInfo,
+) (int64, error) {
+	if tblInfo == nil || tblInfo.MaterializedView == nil {
+		return 0, errors.New("refresh materialized view: target is not a materialized view")
+	}
+	if len(tblInfo.MaterializedView.BaseTableIDs) != 1 {
+		return 0, errors.New("refresh materialized view: fast refresh requires exactly one base table")
+	}
+
+	baseTableID := tblInfo.MaterializedView.BaseTableIDs[0]
+	baseTable, ok := is.TableByID(context.Background(), baseTableID)
+	if !ok {
+		return 0, errors.Errorf("refresh materialized view: cannot resolve base table %d for materialized view %s.%s", baseTableID, schemaName.O, tblInfo.Name.O)
+	}
+	baseTableInfo := baseTable.Meta()
+	if baseTableInfo.MaterializedViewBase == nil {
+		return 0, errors.Errorf("refresh materialized view: base table %d is missing materialized view base metadata", baseTableID)
+	}
+	mlogID := baseTableInfo.MaterializedViewBase.MLogID
+	if mlogID == 0 {
+		return 0, errors.Errorf(
+			"refresh materialized view: materialized view log does not exist for base table %s.%s",
+			schemaName.O,
+			baseTableInfo.Name.O,
+		)
+	}
+	return mlogID, nil
+}
+
 func checkRefreshMaterializedViewReady(schemaName pmodel.CIStr, tblInfo *model.TableInfo) error {
 	if tblInfo == nil || tblInfo.MaterializedView == nil {
 		return nil
@@ -4380,6 +4423,109 @@ func readRefreshInfoReadTSO(
 		readTSO = recheckRow.GetUint64(0)
 	}
 	return readTSO, readTSONull, nil
+}
+
+func readMLogPurgeInfoLastPurgedTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mlogID int64,
+) (lastPurgedTSO uint64, hasLastPurgedTSO bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		"SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?",
+		mlogID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return 0, false, errors.New("refresh materialized view: required system table mysql.tidb_mlog_purge_info does not exist")
+		}
+		return 0, false, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return 0, false, errors.Errorf("refresh materialized view: mlog purge info row missing for mlog id %d", mlogID)
+	}
+	if rows[0].IsNull(0) {
+		return 0, false, nil
+	}
+	return rows[0].GetUint64(0), true, nil
+}
+
+func readLatestHazardousMLogPurgeCutoffTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mlogID int64,
+) (purgeCutoffTSO uint64, hasHazard bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT PURGE_CUTOFF_TSO
+FROM mysql.tidb_mlog_purge_hist
+WHERE MLOG_ID = %?
+  AND (
+    PURGE_STATUS = %?
+    OR PURGE_STATUS = %?
+    OR PURGE_ROWS > 0
+  )
+ORDER BY PURGE_JOB_ID DESC
+LIMIT 1`,
+		mlogID,
+		purgeHistStatusRunning,
+		purgeHistStatusOrphaned,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return 0, false, errors.New("refresh materialized view: required system table mysql.tidb_mlog_purge_hist does not exist")
+		}
+		return 0, false, errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return 0, false, nil
+	}
+	return rows[0].GetUint64(0), true, nil
+}
+
+func checkFastRefreshMLogIntegrity(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+	tblInfo *model.TableInfo,
+	lastSuccessfulRefreshReadTSO uint64,
+) error {
+	if lastSuccessfulRefreshReadTSO == 0 {
+		return nil
+	}
+
+	mlogID, err := resolveRefreshMaterializedViewLogInfo(is, schemaName, tblInfo)
+	if err != nil {
+		return err
+	}
+
+	lastPurgedTSO, hasLastPurgedTSO, err := readMLogPurgeInfoLastPurgedTSO(kctx, sqlExec, mlogID)
+	if err != nil {
+		return err
+	}
+	latestHazardCutoffTSO, hasLatestHazardCutoffTSO, err := readLatestHazardousMLogPurgeCutoffTSO(kctx, sqlExec, mlogID)
+	if err != nil {
+		return err
+	}
+
+	hazardTSO := uint64(0)
+	if hasLastPurgedTSO {
+		hazardTSO = lastPurgedTSO
+	}
+	if hasLatestHazardCutoffTSO && latestHazardCutoffTSO > hazardTSO {
+		hazardTSO = latestHazardCutoffTSO
+	}
+	if hazardTSO > lastSuccessfulRefreshReadTSO {
+		return errors.Errorf(
+			"refresh materialized view fast: materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO (hazard tso %d, LAST_SUCCESS_READ_TSO %d)",
+			hazardTSO,
+			lastSuccessfulRefreshReadTSO,
+		)
+	}
+	return nil
 }
 
 func executeRefreshMaterializedViewDataChanges(

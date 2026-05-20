@@ -1131,6 +1131,11 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 			"from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("success 5 1 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select PURGE_CUTOFF_TSO is not null, PURGE_CUTOFF_TSO >= %d from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		maxCommitTS,
+		mlogID,
+	)).Check(testkit.Rows("1 1"))
 	tk.MustQuery(fmt.Sprintf("select BASE_TABLE_SCHEMA, BASE_TABLE_NAME from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("test t_purge_batch_delete"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where BASE_TABLE_SCHEMA = 'TEST' and BASE_TABLE_NAME = 'T_PURGE_BATCH_DELETE' and MLOG_ID = %d", mlogID)).

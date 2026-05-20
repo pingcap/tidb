@@ -826,6 +826,7 @@ const (
 		PURGE_DURATION_SEC decimal(18,6) DEFAULT NULL,
 		PURGE_ROWS bigint NOT NULL,
 		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PURGE_CUTOFF_TSO bigint unsigned DEFAULT NULL,
 		PURGE_FAILED_REASON text DEFAULT NULL,
 		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
 		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
@@ -1310,12 +1311,16 @@ const (
 	// Add REFRESH_FAILED and allow NULL ALERT_LEVEL in MV refresh alert table.
 	version227 = 227
 
-	// next version should start with 228
+	// version 228
+	// Add PURGE_CUTOFF_TSO to MV log purge history table.
+	version228 = 228
+
+	// next version should start with 229
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version227
+var currentBootstrapVersion int64 = version228
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1498,6 +1503,7 @@ var (
 		upgradeToVer225,
 		upgradeToVer226,
 		upgradeToVer227,
+		upgradeToVer228,
 	}
 )
 
@@ -3443,6 +3449,13 @@ func upgradeToVer227(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_alert MODIFY COLUMN `ALERT_LEVEL` varchar(16) DEFAULT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_alert ADD COLUMN `REFRESH_FAILED` varchar(3) DEFAULT NULL AFTER `ALERT_LEVEL`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer228(s sessiontypes.Session, ver int64) {
+	if ver >= version228 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `PURGE_CUTOFF_TSO` bigint unsigned DEFAULT NULL AFTER `PURGE_STATUS`", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
