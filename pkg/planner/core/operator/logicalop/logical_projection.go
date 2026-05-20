@@ -96,13 +96,13 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		_, child, err := p.BaseLogicalPlan.PredicatePushDown(nil)
 		return predicates, child, err
 	}
-	if _, ok := p.Children()[0].(*LogicalAggregation); ok {
-		ordinaryPredicates, sensitivePredicates := splitTypeSensitiveProjectionPredicates(p.Schema(), p.Exprs, predicates)
+	if agg, ok := p.Children()[0].(*LogicalAggregation); ok {
+		ordinaryPredicates, sensitivePredicates := splitTypeSensitiveProjectionPredicates(p, agg, predicates)
 		if len(sensitivePredicates) > 0 {
-			// Keep type-sensitive HAVING predicates above Projection -> Aggregation.
-			// Rebuilding control-function comparisons below this projection can change
-			// coercion against pre-aggregation columns and filter rows that should
-			// survive HAVING. Ordinary predicates can still use the normal pushdown path.
+			// Keep type-sensitive HAVING predicates above Projection -> Aggregation
+			// only when a single CNF item still depends on aggregate results after
+			// projection substitution. CNF items that use only grouping columns should
+			// continue through aggregation so they match direct HAVING pushdown.
 			canBePushed, canNotBePushed := breakDownPredicates(p, ordinaryPredicates)
 			remained, child, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed)
 			return append(append(remained, canNotBePushed...), sensitivePredicates...), child, err
@@ -672,11 +672,11 @@ func breakDownPredicates(p *LogicalProjection, predicates []expression.Expressio
 	return canBePushed, canNotBePushed
 }
 
-func splitTypeSensitiveProjectionPredicates(schema *expression.Schema, projectionExprs, predicates []expression.Expression) (ordinary, sensitive []expression.Expression) {
+func splitTypeSensitiveProjectionPredicates(p *LogicalProjection, agg *LogicalAggregation, predicates []expression.Expression) (ordinary, sensitive []expression.Expression) {
 	ordinary = make([]expression.Expression, 0, len(predicates))
 	sensitive = make([]expression.Expression, 0, len(predicates))
 	for _, predicate := range predicates {
-		if isTypeSensitiveProjectionPredicate(schema, projectionExprs, predicate) {
+		if isTypeSensitiveProjectionPredicate(p, agg, predicate) {
 			sensitive = append(sensitive, predicate)
 			continue
 		}
@@ -685,13 +685,36 @@ func splitTypeSensitiveProjectionPredicates(schema *expression.Schema, projectio
 	return ordinary, sensitive
 }
 
-func isTypeSensitiveProjectionPredicate(schema *expression.Schema, projectionExprs []expression.Expression, predicate expression.Expression) bool {
+func isTypeSensitiveProjectionPredicate(p *LogicalProjection, agg *LogicalAggregation, predicate expression.Expression) bool {
+	substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(p.SCtx().GetExprCtx(), predicate, p.Schema(), p.Exprs, true)
+	if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
+		return hasTypeSensitiveAggCNFItem(newFilter, agg)
+	}
 	if hasTypeSensitiveProjectionPredicateExpr(predicate) {
 		return true
 	}
 	for _, col := range expression.ExtractColumns(predicate) {
-		idx := schema.ColumnIndex(col)
-		if idx >= 0 && hasTypeSensitiveProjectionPredicateExpr(projectionExprs[idx]) {
+		idx := p.Schema().ColumnIndex(col)
+		if idx >= 0 && hasTypeSensitiveProjectionPredicateExpr(p.Exprs[idx]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTypeSensitiveAggCNFItem(predicate expression.Expression, agg *LogicalAggregation) bool {
+	for _, cnfItem := range expression.SplitCNFItems(predicate) {
+		if hasTypeSensitiveProjectionPredicateExpr(cnfItem) && hasRealAggFuncColumn(cnfItem, agg) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRealAggFuncColumn(expr expression.Expression, agg *LogicalAggregation) bool {
+	for _, col := range expression.ExtractColumns(expr) {
+		idx := agg.Schema().ColumnIndex(col)
+		if idx >= 0 && idx < len(agg.AggFuncs) && agg.AggFuncs[idx].Name != ast.AggFuncFirstRow {
 			return true
 		}
 	}
