@@ -560,7 +560,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		}
 	}
 
-	s.pruneViewPlaceholders()
+	s.pruneViewPlaceholders(ctx)
 
 	// Sql file for restore data
 	for _, fileInfo := range s.tableDatas {
@@ -860,7 +860,7 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, viewExists
 	return dbExists, false
 }
 
-func (s *mdLoaderSetup) pruneViewPlaceholders() {
+func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
 	if len(s.viewIndexMap) == 0 || len(s.tableIndexMap) == 0 {
 		return
 	}
@@ -868,15 +868,28 @@ func (s *mdLoaderSetup) pruneViewPlaceholders() {
 	// Dumpling emits a table schema file for each view before the dedicated view
 	// schema file is discovered. Once the view list is complete, drop those
 	// placeholder tables so schema restore only sees the real table objects.
+	const maxPrunedTableLogSamples = 20
+	prunedCount := 0
+	prunedTables := make([]string, 0, maxPrunedTableLogSamples)
 	for _, dbMeta := range s.loader.dbs {
 		filtered := dbMeta.Tables[:0]
 		for _, tableMeta := range dbMeta.Tables {
 			if _, ok := s.viewIndexMap[filterTableName(tableMeta.DB, tableMeta.Name)]; ok {
+				prunedCount++
+				if len(prunedTables) < maxPrunedTableLogSamples {
+					prunedTables = append(prunedTables, common.UniqueTable(tableMeta.DB, tableMeta.Name))
+				}
 				continue
 			}
 			filtered = append(filtered, tableMeta)
 		}
 		dbMeta.Tables = filtered
+	}
+	if prunedCount > 0 {
+		logutil.Logger(ctx).Info("pruned view placeholder tables",
+			zap.String("category", "loader"),
+			zap.Int("count", prunedCount),
+			zap.Strings("tables", prunedTables))
 	}
 
 	s.tableIndexMap = make(map[filter.Table]int)
