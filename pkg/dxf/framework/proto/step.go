@@ -28,6 +28,9 @@ type Step int64
 const (
 	StepInit Step = -1
 	StepDone Step = -2
+	// StepPrepared marks that framework prepare logic has finished while task
+	// state is still pending.
+	StepPrepared Step = -3
 
 	unknownStepPrefix = "unknown step"
 )
@@ -35,11 +38,14 @@ const (
 // Step2Str converts step to string.
 // it's too bad that we define step as int 🙃.
 func Step2Str(t TaskType, s Step) string {
-	// StepInit and StepDone are special steps, we don't check task type for them.
+	// StepInit, StepDone and StepPrepared are special steps, we don't check task
+	// type for them.
 	if s == StepInit {
 		return "init"
 	} else if s == StepDone {
 		return "done"
+	} else if s == StepPrepared {
+		return "prepared"
 	}
 	switch t {
 	case Backfill:
@@ -187,4 +193,15 @@ func backfillStep2Str(s Step) string {
 
 func unknownStepStr(s Step) string {
 	return fmt.Sprintf("%s %d", unknownStepPrefix, s)
+}
+
+// FrameworkStep2BusinessStep converts framework-only marker steps to the
+// business-step view used by scheduler next-step resolution.
+// StepPrepared means "prepare finished", so it should continue business-step
+// progression from StepInit.
+func FrameworkStep2BusinessStep(s Step) Step {
+	if s == StepPrepared {
+		return StepInit
+	}
+	return s
 }

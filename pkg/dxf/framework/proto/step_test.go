@@ -26,6 +26,7 @@ func TestStep(t *testing.T) {
 	require.Equal(t, "read-index", Step2Str(Backfill, BackfillStepReadIndex))
 	require.Equal(t, "merge-sort", Step2Str(Backfill, BackfillStepMergeSort))
 	require.Equal(t, "ingest", Step2Str(Backfill, BackfillStepWriteAndIngest))
+	require.Equal(t, "prepared", Step2Str(Backfill, StepPrepared))
 	require.Equal(t, "done", Step2Str(Backfill, StepDone))
 	require.Equal(t, "unknown step 111", Step2Str(Backfill, 111))
 
@@ -38,6 +39,7 @@ func TestStep(t *testing.T) {
 	require.Equal(t, "ingest", Step2Str(ImportInto, ImportStepWriteAndIngest))
 	require.Equal(t, "collect-conflicts", Step2Str(ImportInto, ImportStepCollectConflicts))
 	require.Equal(t, "conflict-resolution", Step2Str(ImportInto, ImportStepConflictResolution))
+	require.Equal(t, "prepared", Step2Str(ImportInto, StepPrepared))
 	require.Equal(t, "done", Step2Str(ImportInto, StepDone))
 	require.Equal(t, "unknown step 123", Step2Str(ImportInto, 123))
 
@@ -45,16 +47,24 @@ func TestStep(t *testing.T) {
 	require.Equal(t, "init", Step2Str(TaskTypeExample, StepInit))
 	require.Equal(t, "one", Step2Str(TaskTypeExample, StepOne))
 	require.Equal(t, "two", Step2Str(TaskTypeExample, StepTwo))
+	require.Equal(t, "prepared", Step2Str(TaskTypeExample, StepPrepared))
 	require.Equal(t, "done", Step2Str(TaskTypeExample, StepDone))
 	require.Equal(t, "unknown step 333", Step2Str(TaskTypeExample, 333))
 
 	// unknown type
 	require.Equal(t, "unknown type 123", Step2Str(TaskType("123"), 123))
+
+	// framework -> business step mapping
+	require.Equal(t, StepInit, FrameworkStep2BusinessStep(StepPrepared))
+	require.Equal(t, StepInit, FrameworkStep2BusinessStep(StepInit))
+	require.Equal(t, StepDone, FrameworkStep2BusinessStep(StepDone))
+	require.Equal(t, StepOne, FrameworkStep2BusinessStep(StepOne))
 }
 
 func TestIsValidStep(t *testing.T) {
 	require.True(t, IsValidStep(Backfill, BackfillStepReadIndex))
 	require.False(t, IsValidStep(Backfill, 123))
+	require.True(t, IsValidStep(Backfill, StepPrepared))
 	require.True(t, IsValidStep(ImportInto, ImportStepWriteAndIngest))
 	require.False(t, IsValidStep(ImportInto, 456))
 }
