@@ -907,7 +907,8 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	numRanges := getNumberOfRanges(probe)
 	seekingCost := indexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
 
-	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost,
+		costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)

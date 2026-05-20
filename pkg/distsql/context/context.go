@@ -83,6 +83,11 @@ type DistSQLContext struct {
 	RUConsumptionReporter         resourcegroup.ConsumptionReporter
 	TiKVClientReadTimeout         uint64
 	MaxExecutionTime              uint64
+	MaxKeysRead                   uint64
+	// MaxKeysReadCounter, when non-nil, is the shared atomic accumulator used by
+	// copIterator to enforce a statement-wide max_keys_read budget across all
+	// coprocessor iterators belonging to the same statement. nil when MaxKeysRead == 0.
+	MaxKeysReadCounter *atomic.Uint64
 
 	ReplicaClosestReadThreshold int64
 	ConnectionID                uint64
@@ -119,5 +124,8 @@ func (dctx *DistSQLContext) Detach() *DistSQLContext {
 	newCtx.KVVars = new(tikvstore.Variables)
 	*newCtx.KVVars = *dctx.KVVars
 	newCtx.KVVars.Killed = &newCtx.SQLKiller.Signal
+	if dctx.MaxKeysReadCounter != nil {
+		newCtx.MaxKeysReadCounter = new(atomic.Uint64)
+	}
 	return &newCtx
 }

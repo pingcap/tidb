@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
 	"github.com/pingcap/tidb/lightning/pkg/progress"
 	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -1046,8 +1046,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 		maxDBFiles := topNTotalSize / int64(cfg.TikvImporter.LocalWriterMemCacheSize) * 2
 		// the pebble db and all import routine need upto maxDBFiles fds for read and write.
 		maxOpenDBFiles := maxDBFiles * (1 + int64(cfg.TikvImporter.RangeConcurrency))
-		estimateMaxFiles := local.RlimT(cfg.App.RegionConcurrency) + local.RlimT(maxOpenDBFiles)
-		if err := local.VerifyRLimit(estimateMaxFiles); err != nil {
+		estimateMaxFiles := ingestctrl.RlimT(cfg.App.RegionConcurrency) + ingestctrl.RlimT(maxOpenDBFiles)
+		if err := ingestctrl.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}
 	}

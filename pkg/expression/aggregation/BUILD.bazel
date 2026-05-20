@@ -74,6 +74,7 @@ go_test(
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/parser/ast",
+        "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/planner/cascades/base",
         "//pkg/planner/util",

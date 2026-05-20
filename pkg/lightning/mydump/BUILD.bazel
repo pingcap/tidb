@@ -27,7 +27,6 @@ go_library(
         "//pkg/config",
         "//pkg/errno",
         "//pkg/ingestor/globalsort",
-        "//pkg/lightning/backend/external",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",

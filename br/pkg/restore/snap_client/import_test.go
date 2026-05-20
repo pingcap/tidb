@@ -32,6 +32,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/opt"
 )
 
@@ -242,6 +243,10 @@ func (c *flowControlSplitClient) ScanRegions(
 			},
 		},
 	}, nil
+}
+
+func (*flowControlSplitClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }
 
 func TestSnapImporterPDScanRequestFlowControl(t *testing.T) {

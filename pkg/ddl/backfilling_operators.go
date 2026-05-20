@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -159,7 +159,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
-	onClose external.OnWriterCloseFunc,
+	onClose globalsort.OnWriterCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
@@ -647,7 +647,7 @@ func NewWriteExternalStoreOperator(
 	store storeapi.Storage,
 	srcChunkPool *sync.Pool,
 	concurrency int,
-	onClose external.OnWriterCloseFunc,
+	onClose globalsort.OnWriterCloseFunc,
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
@@ -659,7 +659,7 @@ func NewWriteExternalStoreOperator(
 	})
 
 	totalCount := new(atomic.Int64)
-	blockSize := external.GetAdjustedBlockSize(memoryQuota, external.DefaultBlockSize)
+	blockSize := globalsort.GetAdjustedBlockSize(memoryQuota, globalsort.DefaultBlockSize)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -667,7 +667,7 @@ func NewWriteExternalStoreOperator(
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
-				builder := external.NewWriterBuilder().
+				builder := globalsort.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetMemorySizeLimit(memoryQuota).
 					SetTiKVCodec(tikvCodec).
@@ -879,7 +879,7 @@ func (w *indexIngestWorker) Close() error {
 	var gerr error
 
 	for i, writer := range w.writers {
-		ew, ok := writer.(*external.Writer)
+		ew, ok := writer.(*globalsort.Writer)
 		if !ok {
 			break
 		}
