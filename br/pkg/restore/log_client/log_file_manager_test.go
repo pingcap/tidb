@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -569,6 +571,30 @@ func encodekv(prefix string, ts uint64, emptyV bool) []byte {
 	return stream.EncodeKVEntry(kts, []byte(v))
 }
 
+// encodekvWriteCF constructs an encoded KV entry with a valid WriteCF Put value.
+// Used when entries will be processed as WriteCF (rawWrite.ParseFrom must succeed).
+func encodekvWriteCF(prefix string, ts uint64, emptyV bool) []byte {
+	k := fmt.Sprintf("%s_%d", prefix, ts)
+	kts := codec.EncodeUintDesc([]byte(k), ts)
+	if emptyV {
+		return stream.EncodeKVEntry(kts, []byte(""))
+	}
+	return stream.EncodeKVEntry(kts, encodeWriteCFValue(stream.WriteTypePut))
+}
+
+// encodekvWriteCFEntryWithTS returns the expected KvEntryWithTS for a WriteCF entry.
+func encodekvWriteCFEntryWithTS(prefix string, ts uint64) *logclient.KvEntryWithTS {
+	k := fmt.Sprintf("%s_%d", prefix, ts)
+	kts := codec.EncodeUintDesc([]byte(k), ts)
+	return &logclient.KvEntryWithTS{
+		E: kv.Entry{
+			Key:   kts,
+			Value: encodeWriteCFValue(stream.WriteTypePut),
+		},
+		Ts: ts,
+	}
+}
+
 func encodekvEntryWithTS(prefix string, ts uint64) *logclient.KvEntryWithTS {
 	k := fmt.Sprintf("%s_%d", prefix, ts)
 	v := "any value"
@@ -582,31 +608,34 @@ func encodekvEntryWithTS(prefix string, ts uint64) *logclient.KvEntryWithTS {
 	}
 }
 
-func generateKvData() ([]byte, logclient.Log) {
+// generateKvDataWith builds the standard test key layout using the provided encode
+// function. Use encodekv for DefaultCF and encodekvWriteCF for WriteCF (which requires
+// valid WriteCF-encoded Put values because ReadFilteredEntriesFromFiles calls
+// rawWrite.ParseFrom on WriteCF entries).
+func generateKvDataWith(encode func(prefix string, ts uint64, emptyV bool) []byte) ([]byte, logclient.Log) {
 	buff := make([]byte, 0)
-	rangeLength := uint64(0)
-	buff = append(buff, encodekv("mDDLHistory", 10, false)...)
-	buff = append(buff, encodekv("mDDLHistory", 10, true)...)
+	buff = append(buff, encode("mDDLHistory", 10, false)...)
+	buff = append(buff, encode("mDDLHistory", 10, true)...)
 	rangeOffset := uint64(len(buff))
-	buff = append(buff, encodekv("mDDLHistory", 21, false)...)
-	buff = append(buff, encodekv("mDDLHistory", 22, true)...)
-	buff = append(buff, encodekv("mDDL", 27, false)...)
-	buff = append(buff, encodekv("mDDL", 28, true)...)
-	buff = append(buff, encodekv("mDDL", 37, false)...)
-	buff = append(buff, encodekv("mDDL", 38, true)...)
-	buff = append(buff, encodekv("mDDLHistory", 45, false)...)
-	buff = append(buff, encodekv("mDDLHistory", 45, true)...)
-	buff = append(buff, encodekv("mDDL", 50, false)...)
-	buff = append(buff, encodekv("mDDL", 50, true)...)
-	buff = append(buff, encodekv("mTable", 52, false)...)
-	buff = append(buff, encodekv("mTable", 52, true)...)
-	buff = append(buff, encodekv("mDDL", 65, false)...)
-	buff = append(buff, encodekv("mDDL", 65, true)...)
-	buff = append(buff, encodekv("mDDLHistory", 80, false)...)
-	buff = append(buff, encodekv("mDDLHistory", 80, true)...)
-	rangeLength = uint64(len(buff)) - rangeOffset
-	buff = append(buff, encodekv("mDDL", 90, false)...)
-	buff = append(buff, encodekv("mDDL", 90, true)...)
+	buff = append(buff, encode("mDDLHistory", 21, false)...)
+	buff = append(buff, encode("mDDLHistory", 22, true)...)
+	buff = append(buff, encode("mDDL", 27, false)...)
+	buff = append(buff, encode("mDDL", 28, true)...)
+	buff = append(buff, encode("mDDL", 37, false)...)
+	buff = append(buff, encode("mDDL", 38, true)...)
+	buff = append(buff, encode("mDDLHistory", 45, false)...)
+	buff = append(buff, encode("mDDLHistory", 45, true)...)
+	buff = append(buff, encode("mDDL", 50, false)...)
+	buff = append(buff, encode("mDDL", 50, true)...)
+	buff = append(buff, encode("mTable", 52, false)...)
+	buff = append(buff, encode("mTable", 52, true)...)
+	buff = append(buff, encode("mDDL", 65, false)...)
+	buff = append(buff, encode("mDDL", 65, true)...)
+	buff = append(buff, encode("mDDLHistory", 80, false)...)
+	buff = append(buff, encode("mDDLHistory", 80, true)...)
+	rangeLength := uint64(len(buff)) - rangeOffset
+	buff = append(buff, encode("mDDL", 90, false)...)
+	buff = append(buff, encode("mDDL", 90, true)...)
 
 	sha256 := sha256.Sum256(buff[rangeOffset : rangeOffset+rangeLength])
 	return buff, &backuppb.DataFileInfo{
@@ -614,6 +643,14 @@ func generateKvData() ([]byte, logclient.Log) {
 		RangeOffset: rangeOffset,
 		RangeLength: rangeLength,
 	}
+}
+
+func generateKvData() ([]byte, logclient.Log) {
+	return generateKvDataWith(encodekv)
+}
+
+func generateKvDataWriteCF() ([]byte, logclient.Log) {
+	return generateKvDataWith(encodekvWriteCF)
 }
 
 // encodemdbkv constructs an encoded KV entry whose logical key (key with TS stripped)
@@ -639,6 +676,28 @@ func encodeddljobkv(jobID int, ts uint64) []byte {
 // mdbkvEntry returns the expected KvEntryWithTS for a deduplicated mDB entry.
 func mdbkvEntry(logicalKeyPrefix string, ts uint64) *logclient.KvEntryWithTS {
 	key := codec.EncodeUintDesc([]byte(logicalKeyPrefix), ts)
+	return &logclient.KvEntryWithTS{
+		E:  kv.Entry{Key: key, Value: []byte("mdb value")},
+		Ts: ts,
+	}
+}
+
+// encodeAutoIDMetaKV constructs an encoded KV entry for an auto-increment ID
+// meta key (field "IID:<tableID>") inside a DB hash (key "DB:<dbID>"). The
+// resulting key is a properly encoded txn meta key that IsMetaAutoIDKey
+// recognises as an auto-ID field, exercising the dedup path.
+func encodeAutoIDMetaKV(dbID, tableID int64, ts uint64, emptyV bool) []byte {
+	key := utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.AutoIncrementIDKey(tableID), ts)
+	v := "mdb value"
+	if emptyV {
+		v = ""
+	}
+	return stream.EncodeKVEntry(key, []byte(v))
+}
+
+// autoIDkvEntry returns the expected KvEntryWithTS for a deduped auto-ID entry.
+func autoIDkvEntry(dbID, tableID int64, ts uint64) *logclient.KvEntryWithTS {
+	key := utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.AutoIncrementIDKey(tableID), ts)
 	return &logclient.KvEntryWithTS{
 		E:  kv.Entry{Key: key, Value: []byte("mdb value")},
 		Ts: ts,
@@ -673,35 +732,31 @@ func buildTestBuffer(cf string, entries ...[]byte) ([]byte, *backuppb.DataFileIn
 }
 
 // TestReadFilteredEntries_DedupMDBKeys verifies that multiple MVCC versions of the same
-// logical mDB key are deduplicated, keeping only the highest-TS version.
+// auto-ID meta key are deduplicated, keeping only the highest-TS version.
 func TestReadFilteredEntries_DedupMDBKeys(t *testing.T) {
 	ctx := context.Background()
 	data, file := buildTestBuffer(consts.DefaultCF,
-		// Three MVCC versions of the same logical key "mDB:1:IID:5".
-		encodemdbkv("mDB:1:IID:5", 40, false),
-		encodemdbkv("mDB:1:IID:5", 60, false),
-		encodemdbkv("mDB:1:IID:5", 50, false),
-		// Two MVCC versions of a second logical key.
-		encodemdbkv("mDB:1:Table:3", 45, false),
-		encodemdbkv("mDB:1:Table:3", 70, false),
+		// Three MVCC versions of the same auto-ID meta key DB:1/IID:5.
+		encodeAutoIDMetaKV(1, 5, 40, false),
+		encodeAutoIDMetaKV(1, 5, 60, false),
+		encodeAutoIDMetaKV(1, 5, 50, false),
 	)
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 
-	// filterTS=55: winners ts=60 and ts=70 both land in filteredOutKvEntries.
+	// filterTS=55: winner ts=60 lands in filteredOutKvEntries.
 	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 55)
 	require.NoError(t, err)
 	require.Empty(t, kvEntries)
-	// Output follows first-seen insertion order of logical keys.
 	require.Equal(t, []*logclient.KvEntryWithTS{
-		mdbkvEntry("mDB:1:IID:5", 60),
-		mdbkvEntry("mDB:1:Table:3", 70),
+		autoIDkvEntry(1, 5, 60),
 	}, filteredOutKvEntries)
 }
 
 // TestReadFilteredEntries_DDLJobHistoryBypassesDedup verifies that keys with the
 // "mDDLJobHistory" prefix are copied immediately without deduplication, so all
-// entries survive regardless of shared logical-key collisions. It also checks that
-// DDL entries appear before dedup entries in the output slices.
+// entries survive regardless of shared logical-key collisions. It also checks
+// output ordering: DDL entries and non-auto-ID mDB entries are all appended
+// during iteration in encounter order.
 func TestReadFilteredEntries_DDLJobHistoryBypassesDedup(t *testing.T) {
 	ctx := context.Background()
 	// DDL job history entries are only processed for DefaultCF.
@@ -717,7 +772,7 @@ func TestReadFilteredEntries_DDLJobHistoryBypassesDedup(t *testing.T) {
 	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
 	require.NoError(t, err)
 	require.Empty(t, filteredOutKvEntries)
-	// DDL entries are appended during iteration; dedup entries are appended after.
+	// All entries appended during iteration in encounter order.
 	require.Equal(t, []*logclient.KvEntryWithTS{
 		ddljobkvEntry(100, 40),
 		ddljobkvEntry(101, 50),
@@ -726,15 +781,15 @@ func TestReadFilteredEntries_DDLJobHistoryBypassesDedup(t *testing.T) {
 }
 
 // TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys verifies correct routing when a
-// single file contains both DDL job history keys and regular mDB keys.
+// single file contains both DDL job history keys and auto-ID meta keys.
 func TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys(t *testing.T) {
 	ctx := context.Background()
 	// DDL job history entries are only processed for DefaultCF.
 	data, file := buildTestBuffer(consts.DefaultCF,
 		encodeddljobkv(200, 40),
-		encodemdbkv("mDB:mixed:1", 42, false),
+		encodeAutoIDMetaKV(2, 1, 42, false),
 		encodeddljobkv(201, 60),
-		encodemdbkv("mDB:mixed:1", 55, false), // higher TS wins dedup
+		encodeAutoIDMetaKV(2, 1, 55, false), // higher TS wins dedup
 	)
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 
@@ -746,10 +801,10 @@ func TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys(t *testing.T) {
 		ddljobkvEntry(200, 40),
 	}, kvEntries)
 	// DDL job 201 (ts=60 >= 50) is appended to filteredOutKvEntries during iteration;
-	// mDB:mixed:1 winner (ts=55 >= 50) is appended after iteration ends.
+	// auto-ID winner (ts=55 >= 50) is appended after iteration ends.
 	require.Equal(t, []*logclient.KvEntryWithTS{
 		ddljobkvEntry(201, 60),
-		mdbkvEntry("mDB:mixed:1", 55),
+		autoIDkvEntry(2, 1, 55),
 	}, filteredOutKvEntries)
 }
 
@@ -759,8 +814,8 @@ func TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys(t *testing.T) {
 func TestReadFilteredEntries_DedupFilterTSSplit(t *testing.T) {
 	ctx := context.Background()
 	data, file := buildTestBuffer(consts.DefaultCF,
-		encodemdbkv("mDB:splitkey", 40, false), // loses dedup; would land in kvEntries
-		encodemdbkv("mDB:splitkey", 60, false), // wins dedup; lands in filteredOutKvEntries
+		encodeAutoIDMetaKV(3, 7, 40, false), // loses dedup; would land in kvEntries
+		encodeAutoIDMetaKV(3, 7, 60, false), // wins dedup; lands in filteredOutKvEntries
 	)
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 
@@ -769,7 +824,7 @@ func TestReadFilteredEntries_DedupFilterTSSplit(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, kvEntries)
 	require.Equal(t, []*logclient.KvEntryWithTS{
-		mdbkvEntry("mDB:splitkey", 60),
+		autoIDkvEntry(3, 7, 60),
 	}, filteredOutKvEntries)
 }
 
@@ -806,8 +861,8 @@ func TestReadFilteredEntries_CopySemantics(t *testing.T) {
 func TestReadFilteredEntries_DedupEmptyValueSkipped(t *testing.T) {
 	ctx := context.Background()
 	data, file := buildTestBuffer(consts.DefaultCF,
-		encodemdbkv("mDB:emptytest", 60, true),  // highest TS but empty value → discarded
-		encodemdbkv("mDB:emptytest", 40, false), // lower TS, non-empty → dedup winner
+		encodeAutoIDMetaKV(4, 9, 60, true),  // highest TS but empty value → discarded
+		encodeAutoIDMetaKV(4, 9, 40, false), // lower TS, non-empty → dedup winner
 	)
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 
@@ -815,7 +870,7 @@ func TestReadFilteredEntries_DedupEmptyValueSkipped(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, filteredOutKvEntries)
 	require.Equal(t, []*logclient.KvEntryWithTS{
-		mdbkvEntry("mDB:emptytest", 40),
+		autoIDkvEntry(4, 9, 40),
 	}, kvEntries)
 }
 
@@ -844,12 +899,19 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 	rollbackValue := encodeWriteCFValue(stream.WriteTypeRollback)
 	lockValue := encodeWriteCFValue(stream.WriteTypeLock)
 
+	// encodeAutoIDWithValue creates a properly encoded auto-ID meta key entry with an
+	// explicit WriteCF value (put/rollback/lock/delete).
+	encodeAutoIDWithValue := func(dbID, tableID int64, ts uint64, value []byte) []byte {
+		key := utils.EncodeTxnMetaKey(meta.DBkey(dbID), meta.AutoIncrementIDKey(tableID), ts)
+		return stream.EncodeKVEntry(key, value)
+	}
+
 	t.Run("RollbackDoesNotEvictPut", func(t *testing.T) {
 		data, file := buildTestBuffer(consts.WriteCF,
 			// Committed Put at ts=40.
-			encodemdbkvWithValue("mDB:1:IID:5", 40, putValue),
+			encodeAutoIDWithValue(1, 5, 40, putValue),
 			// Rollback at ts=60 — higher TS but must NOT evict the Put.
-			encodemdbkvWithValue("mDB:1:IID:5", 60, rollbackValue),
+			encodeAutoIDWithValue(1, 5, 60, rollbackValue),
 		)
 		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
@@ -858,40 +920,40 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 		// Only the committed Put@40 should survive.
 		require.Len(t, kvEntries, 1)
 		require.Equal(t, uint64(40), kvEntries[0].Ts)
-		require.Equal(t, putValue, []byte(kvEntries[0].E.Value))
+		require.Equal(t, putValue, kvEntries[0].E.Value)
 	})
 
 	t.Run("LockDoesNotEvictPut", func(t *testing.T) {
 		data, file := buildTestBuffer(consts.WriteCF,
-			encodemdbkvWithValue("mDB:1:IID:5", 40, putValue),
+			encodeAutoIDWithValue(1, 5, 40, putValue),
 			// Lock at ts=55 — must NOT evict the Put.
-			encodemdbkvWithValue("mDB:1:IID:5", 55, lockValue),
+			encodeAutoIDWithValue(1, 5, 55, lockValue),
 		)
 		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
 		require.NoError(t, err)
 		require.Len(t, kvEntries, 1)
 		require.Equal(t, uint64(40), kvEntries[0].Ts)
-		require.Equal(t, putValue, []byte(kvEntries[0].E.Value))
+		require.Equal(t, putValue, kvEntries[0].E.Value)
 	})
 
 	t.Run("RollbackDoesNotEvictDelete", func(t *testing.T) {
 		data, file := buildTestBuffer(consts.WriteCF,
-			encodemdbkvWithValue("mDB:1:Table:3", 45, deleteValue),
-			encodemdbkvWithValue("mDB:1:Table:3", 70, rollbackValue),
+			encodeAutoIDWithValue(1, 3, 45, deleteValue),
+			encodeAutoIDWithValue(1, 3, 70, rollbackValue),
 		)
 		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
 		require.NoError(t, err)
 		require.Len(t, kvEntries, 1)
 		require.Equal(t, uint64(45), kvEntries[0].Ts)
-		require.Equal(t, deleteValue, []byte(kvEntries[0].E.Value))
+		require.Equal(t, deleteValue, kvEntries[0].E.Value)
 	})
 
 	t.Run("OnlyRollbacksProduceNoOutput", func(t *testing.T) {
 		data, file := buildTestBuffer(consts.WriteCF,
-			encodemdbkvWithValue("mDB:1:IID:5", 40, rollbackValue),
-			encodemdbkvWithValue("mDB:1:IID:5", 60, rollbackValue),
+			encodeAutoIDWithValue(1, 5, 40, rollbackValue),
+			encodeAutoIDWithValue(1, 5, 60, rollbackValue),
 		)
 		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
@@ -903,51 +965,81 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 	t.Run("CommittedPutAfterRollbackSurvives", func(t *testing.T) {
 		data, file := buildTestBuffer(consts.WriteCF,
 			// Rollback arrives first at ts=50 — skipped.
-			encodemdbkvWithValue("mDB:1:IID:5", 50, rollbackValue),
-			// Put arrives later at ts=40 — should be the dedup winner (only committed entry).
-			encodemdbkvWithValue("mDB:1:IID:5", 40, putValue),
+			encodeAutoIDWithValue(1, 5, 50, rollbackValue),
+			// Put arrives later at ts=40 — only committed entry, survives as dedup winner.
+			encodeAutoIDWithValue(1, 5, 40, putValue),
 		)
 		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
 		require.NoError(t, err)
 		require.Len(t, kvEntries, 1)
 		require.Equal(t, uint64(40), kvEntries[0].Ts)
-		require.Equal(t, putValue, []byte(kvEntries[0].E.Value))
+		require.Equal(t, putValue, kvEntries[0].E.Value)
 	})
 
 	t.Run("DefaultCFIgnoresWriteTypeFiltering", func(t *testing.T) {
 		// In DefaultCF, values are not WriteCF-encoded — all entries pass through.
+		// Use a real auto-ID key so dedup applies and highest TS wins.
 		data, file := buildTestBuffer(consts.DefaultCF,
-			encodemdbkv("mDB:1:IID:5", 40, false),
-			encodemdbkv("mDB:1:IID:5", 60, false),
+			encodeAutoIDMetaKV(1, 5, 40, false),
+			encodeAutoIDMetaKV(1, 5, 60, false),
 		)
 		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
 		require.NoError(t, err)
-		// Normal dedup: highest TS wins regardless of value content.
+		// Dedup: highest TS wins regardless of value content.
 		require.Len(t, kvEntries, 1)
 		require.Equal(t, uint64(60), kvEntries[0].Ts)
 	})
 }
 
+// TestReadFilteredEntries_NonAutoIDNotDeduped is a regression test verifying that
+// non-auto-ID mDB:* keys (e.g. DBInfo, TableInfo) are preserved verbatim with all
+// MVCC versions intact. Dedup must not collapse them because they may carry DefaultCF
+// cross-references that per-CF TS-based dedup could break.
+func TestReadFilteredEntries_NonAutoIDNotDeduped(t *testing.T) {
+	ctx := context.Background()
+	// Use a properly encoded txn meta key with field "Table:3" — a non-auto-ID field.
+	tableKeyV1 := utils.EncodeTxnMetaKey(meta.DBkey(1), meta.TableKey(3), 40)
+	tableKeyV2 := utils.EncodeTxnMetaKey(meta.DBkey(1), meta.TableKey(3), 70)
+	data, file := buildTestBuffer(consts.DefaultCF,
+		stream.EncodeKVEntry(tableKeyV1, []byte("tableinfo-v1")),
+		stream.EncodeKVEntry(tableKeyV2, []byte("tableinfo-v2")),
+	)
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
+
+	// filterTS=50: ts=40 → kvEntries, ts=70 → filteredOutKvEntries; both preserved.
+	kvEntries, filteredOutKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
+	require.NoError(t, err)
+	require.Len(t, kvEntries, 1)
+	require.Equal(t, uint64(40), kvEntries[0].Ts)
+	require.Equal(t, []byte("tableinfo-v1"), kvEntries[0].E.Value)
+	require.Len(t, filteredOutKvEntries, 1)
+	require.Equal(t, uint64(70), filteredOutKvEntries[0].Ts)
+	require.Equal(t, []byte("tableinfo-v2"), filteredOutKvEntries[0].E.Value)
+}
+
 func TestReadAllEntries(t *testing.T) {
 	ctx := context.Background()
-	data, file := generateKvData()
-	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 	{
+		// WriteCF: entries must have valid WriteCF-encoded values for ParseFrom.
+		data, file := generateKvDataWriteCF()
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		file.Cf = consts.WriteCF
 		kvEntries, nextKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
 		require.NoError(t, err)
 		require.Equal(t, []*logclient.KvEntryWithTS{
-			encodekvEntryWithTS("mDDL", 37),
-			encodekvEntryWithTS("mDDLHistory", 45),
+			encodekvWriteCFEntryWithTS("mDDL", 37),
+			encodekvWriteCFEntryWithTS("mDDLHistory", 45),
 		}, kvEntries)
 		require.Equal(t, []*logclient.KvEntryWithTS{
-			encodekvEntryWithTS("mDDL", 50),
-			encodekvEntryWithTS("mDDL", 65),
+			encodekvWriteCFEntryWithTS("mDDL", 50),
+			encodekvWriteCFEntryWithTS("mDDL", 65),
 		}, nextKvEntries)
 	}
 	{
+		data, file := generateKvData()
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		file.Cf = consts.DefaultCF
 		kvEntries, nextKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
 		require.NoError(t, err)

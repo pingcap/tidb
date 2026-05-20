@@ -556,19 +556,28 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 			continue
 		}
 
-		// For all other mDB:* keys, deduplicate by logical key (key without TS suffix).
-		// Keep only the highest-TS version; copies are deferred until after iteration so
-		// that only the surviving entry is copied (not every MVCC version).
-		logicalKey := string(restoreutils.TruncateTS(txnEntry.Key))
-		if existing, ok := dedupMap[logicalKey]; ok {
-			if ts > existing.Ts {
-				// Replace with higher-ts version; position in dedupOrder is unchanged.
+		// Deduplicate auto-ID meta keys (IID/TID/TARID/SID) by logical key, keeping
+		// only the highest-TS version. These keys hold a single int64 counter that
+		// fits entirely in the WriteCF shortValue payload and have no DefaultCF
+		// cross-reference, so per-CF TS-based dedup is safe.
+		//
+		// All other mDB:* keys (DBInfo, TableInfo, etc.) are copied verbatim:
+		// their volume is negligible (DDL-rate writes only) and they may carry
+		// DefaultCF cross-references that cross-CF dedup could break.
+		if utils.IsMetaAutoIDKey(txnEntry.Key) {
+			logicalKey := string(restoreutils.TruncateTS(txnEntry.Key))
+			if existing, ok := dedupMap[logicalKey]; ok {
+				if ts > existing.Ts {
+					// Replace with higher-ts version; position in dedupOrder is unchanged.
+					dedupMap[logicalKey] = &KvEntryWithTS{E: txnEntry, Ts: ts}
+				}
+			} else {
 				dedupMap[logicalKey] = &KvEntryWithTS{E: txnEntry, Ts: ts}
+				dedupOrder = append(dedupOrder, logicalKey)
 			}
-		} else {
-			dedupMap[logicalKey] = &KvEntryWithTS{E: txnEntry, Ts: ts}
-			dedupOrder = append(dedupOrder, logicalKey)
+			continue
 		}
+		copyAndAppend(txnEntry.Key, txnEntry.Value, ts)
 	}
 
 	// Copy surviving dedup entries (buff is still live here, but after return the
