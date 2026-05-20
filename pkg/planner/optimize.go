@@ -561,6 +561,26 @@ func buildAndOptimizeLogicalPlanRound(
 		return nil, nil, false, err
 	}
 
+	// Record predicate-context MATCH for cost competition. The fts-like-fallback
+	// alternative round reads this signal to decide whether to build a competing
+	// ILIKE-based plan alongside round 1's native plan, so the cheaper of the
+	// two wins via the normal alt-rounds cost comparison.
+	if builder.HasPredicateMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
+	}
+
+	// If this round saw a predicate-context MATCH that cannot be served by the
+	// native FTSMysqlMatchAgainst builtin, the produced plan would fail at
+	// execution. Discard it and arm AlternativeLogicalPlanFTSLikeFallback so
+	// any intervening rounds (correlate, etc.) re-rewrite with ILIKE too. The
+	// fts-like-fallback round below also forces this flag during setup; this
+	// outer assignment covers the non-viable case where the flag must stay
+	// true across all subsequent rounds, not just inside the LIKE round.
+	if builder.HasNonViableFTSMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		return p, names, false, nil
+	}
+
 	if *bestPlan == nil || cost < *bestCost {
 		*bestCost = cost
 		*bestPlan = finalPlan
@@ -608,6 +628,12 @@ type alternativeRound struct {
 // wrapper. Safe because optimize is single-threaded per session.
 var savedEnableCorrelateSubquery bool
 
+// savedFTSLikeFallback holds the pre-round value of
+// AlternativeLogicalPlanFTSLikeFallback so the fts-like-fallback round's
+// setup/cleanup can restore it after running with the flag forced on. Safe
+// because optimize is single-threaded per session.
+var savedFTSLikeFallback bool
+
 var alternativeRounds = [...]alternativeRound{
 	{
 		name:       "non-decorrelate",
@@ -629,6 +655,34 @@ var alternativeRounds = [...]alternativeRound{
 		},
 		cleanup: func(sv *variable.SessionVars) {
 			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+		},
+	},
+	{
+		// fts-like-fallback: rebuild the plan rewriting predicate-context
+		// MATCH...AGAINST to ILIKE so it can compete with round 1's native plan
+		// on cost (and serve as the only valid plan when native is non-viable).
+		// Round 1 always uses the native builtin (same as Alt-disabled). This
+		// round fires whenever round 1 saw a direct-boolean-context MATCH
+		// (HasPredicateContextMatch) — both plans then compete via the strict-`<`
+		// cost comparison in buildAndOptimizeLogicalPlanRound — or whenever
+		// round 1 saw a MATCH whose native form cannot execute
+		// (FTSLikeFallback, set by the round driver after discarding round 1).
+		// In the discard case, round 1's plan is unavailable and this round's
+		// plan wins by default.
+		name: "fts-like-fallback",
+		enabled: func(sv *variable.SessionVars) bool {
+			if !sv.EnableAlternativeLogicalPlans {
+				return false
+			}
+			return sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback ||
+				sv.StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch
+		},
+		setup: func(sv *variable.SessionVars) {
+			savedFTSLikeFallback = sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = savedFTSLikeFallback
 		},
 	},
 }
@@ -676,6 +730,18 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if needRestoreLogicalPlanCtx {
 		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
 		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
+		// Round 1 always uses the native FTSMysqlMatchAgainst builtin — same as
+		// the Alt-disabled default. The build records two signals on the
+		// planBuilder when MATCH...AGAINST is seen:
+		//   * HasPredicateMatch: any direct-boolean-context MATCH. The round
+		//     driver propagates this into stmtctx to trigger the
+		//     fts-like-fallback alternative round, which builds a competing
+		//     ILIKE-based plan; the cheaper of the two wins.
+		//   * HasNonViableFTSMatch: a predicate-context MATCH whose native form
+		//     cannot execute (no FTS index / no TiFlash replica / unsupported
+		//     modifier). The round driver discards round 1's plan and forces
+		//     AlternativeLogicalPlanFTSLikeFallback true so all subsequent
+		//     rounds (correlate, etc.) re-rewrite with ILIKE.
 	}
 
 	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
@@ -714,6 +780,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			enabledRounds = append(enabledRounds, round)
 		}
 	}
+	var lastAltRoundErr error
 	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
@@ -749,10 +816,15 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		}()
 		if err != nil {
 			// Alternative rounds are optional optimizations. If one fails,
-			// log and continue — the first round's plan is still valid.
+			// log and continue — the first round's plan is still valid in
+			// the general case. fts-like-fallback is the exception: the
+			// first round's plan may have been discarded as non-executable,
+			// so we remember the last alt-round error in case bestPlan
+			// remains nil after the loop.
 			logutil.BgLogger().Warn("alternative logical plan round failed",
 				zap.String("round", round.name),
 				zap.Error(err))
+			lastAltRoundErr = err
 			continue
 		}
 		if nonLogical {
@@ -760,6 +832,13 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		}
 	}
 	if bestPlan == nil {
+		if lastAltRoundErr != nil {
+			// No valid plan from any round. Surface the most recent alt-round
+			// error rather than the generic sentinel — typically this is the
+			// fts-like-fallback round reporting why MATCH...AGAINST cannot be
+			// rewritten (unsupported search string, etc.).
+			return nil, nil, 0, lastAltRoundErr
+		}
 		return nil, nil, 0, errors.New("failed to build logical plan")
 	}
 	if needRestoreLogicalPlanCtx {

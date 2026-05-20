@@ -99,6 +99,7 @@ type infoSchema struct {
 	// Used for snapshot-aware lazy loading of masking policies.
 	ts uint64
 
+
 	r autoid.Requirement
 }
 
@@ -936,6 +937,7 @@ func maskingPolicyStatusFromString(status string) (model.MaskingPolicyStatus, er
 		return model.MaskingPolicyStatusDisable, errors.Errorf("unknown masking policy status: %s", status)
 	}
 }
+
 
 func maskingPolicyTypeFromString(tp string) (model.MaskingPolicyType, error) {
 	normalized := model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))

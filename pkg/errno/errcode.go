@@ -1171,6 +1171,7 @@ const (
 	ErrStorageClassInvalidSpec                  = 8271
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrMaxKeysReadExceeded                      = 8274
 
 	// [8800, 8900) are reserved for a downstream fork
 

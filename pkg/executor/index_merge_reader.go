@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -110,7 +111,14 @@ type IndexMergeReaderExecutor struct {
 	// fields about accessing partition tables
 	partitionTableMode bool                  // if this IndexMerge is accessing a partition table
 	prunedPartitions   []table.PhysicalTable // pruned partition tables need to access
-	partitionKeyRanges [][][]kv.KeyRange     // [partialIndex][partitionIdx][ranges]
+
+	// partialWorkerKVRanges stores the pre-built kv ranges for each partial worker. This field unifies the previous
+	// keyRanges and partitionKeyRanges fields.
+	// partialWorkerKVRanges[i] is for the i-th partial path, and consists of one or multiple grouped kv ranges (which
+	// may come from partitions, grouped ranges from IN conditions, or both). Each group is a kvRangesWithPhysicalTblID.
+	// Note that IndexMergeReaderExecutor only uses this for partial index paths and doesn't rely on this field for
+	// partial table paths, but memIndexMergeReader needs this, so we still build this field for all partial paths.
+	partialWorkerKVRanges [][]*kvRangesWithPhysicalTblID // partial paths -> grouped kv ranges -> kv ranges
 
 	// All fields above are immutable.
 
@@ -120,7 +128,6 @@ type IndexMergeReaderExecutor struct {
 	finished        chan struct{}
 
 	workerStarted bool
-	keyRanges     [][]kv.KeyRange
 
 	resultCh   chan *indexMergeTableTask
 	resultCurr *indexMergeTableTask
@@ -165,7 +172,6 @@ func (e *IndexMergeReaderExecutor) Table() table.Table {
 
 // Open implements the Executor Open interface
 func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
-	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
 	if e.isCorColInTableFilter {
 		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetBuildPBCtx(), e.tblPlans)
@@ -177,29 +183,10 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 		return err
 	}
 
-	if !e.partitionTableMode {
-		if e.keyRanges, err = e.buildKeyRangesForTable(e.table); err != nil {
-			return err
-		}
-	} else {
-		e.partitionKeyRanges = make([][][]kv.KeyRange, len(e.indexes))
-		tmpPartitionKeyRanges := make([][][]kv.KeyRange, len(e.prunedPartitions))
-		for i, p := range e.prunedPartitions {
-			if tmpPartitionKeyRanges[i], err = e.buildKeyRangesForTable(p); err != nil {
-				return err
-			}
-		}
-		for i, idx := range e.indexes {
-			if idx != nil && idx.Global {
-				keyRange, _ := distsql.IndexRangesToKVRanges(e.sctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[i])
-				e.partitionKeyRanges[i] = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
-			} else {
-				for _, pKeyRanges := range tmpPartitionKeyRanges {
-					e.partitionKeyRanges[i] = append(e.partitionKeyRanges[i], pKeyRanges[i])
-				}
-			}
-		}
+	if err = e.buildPartialWorkerKVRanges(); err != nil {
+		return err
 	}
+
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *indexMergeTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
 	if e.memTracker != nil {
@@ -222,8 +209,26 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 			switch x := plan[0].(type) {
 			case *physicalop.PhysicalIndexScan:
 				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
+				if err != nil {
+					return err
+				}
+				if len(x.GroupByColIdxs) > 0 {
+					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs)
+					if err != nil {
+						return err
+					}
+				}
 			case *physicalop.PhysicalTableScan:
 				e.ranges[i], err = x.ResolveCorrelatedColumns()
+				if err != nil {
+					return err
+				}
+				if len(x.GroupByColIdxs) > 0 {
+					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs)
+					if err != nil {
+						return err
+					}
+				}
 			default:
 				err = errors.Errorf("unsupported plan type %T", plan[0])
 			}
@@ -235,37 +240,84 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (ranges [][]kv.KeyRange, err error) {
+// buildPartialWorkerKVRanges builds the unified partialWorkerKVRanges for all partial workers,
+// handling partition mode and grouped ranges (from IN conditions with merge sort) in a unified way.
+func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 	dctx := e.Ctx().GetDistSQLCtx()
+	e.partialWorkerKVRanges = make([][]*kvRangesWithPhysicalTblID, len(e.partialPlans))
+
 	for i, plan := range e.partialPlans {
-		_, ok := plan[0].(*physicalop.PhysicalIndexScan)
-		if !ok {
-			firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(e.ranges[i], false, e.descs[i], tbl.Meta().IsCommonHandle)
-			firstKeyRanges, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, firstPartRanges)
-			if err != nil {
-				return nil, err
-			}
-			secondKeyRanges, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{getPhysicalTableID(tbl)}, tbl.Meta().IsCommonHandle, secondPartRanges)
-			if err != nil {
-				return nil, err
-			}
-			keyRanges := append(firstKeyRanges.FirstPartitionRange(), secondKeyRanges.FirstPartitionRange()...)
-			ranges = append(ranges, keyRanges)
-			continue
+		// Determine grouped ranges: use GroupedRanges from the physical plan if available,
+		// otherwise wrap the flat ranges as a single group.
+		var (
+			groupedRanges [][]*ranger.Range
+			isIdxScan     bool
+		)
+		switch x := plan[0].(type) {
+		case *physicalop.PhysicalIndexScan:
+			isIdxScan = true
+			groupedRanges = x.GroupedRanges
+		case *physicalop.PhysicalTableScan:
+			groupedRanges = x.GroupedRanges
 		}
-		keyRange, err := distsql.IndexRangesToKVRanges(dctx, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i])
-		if err != nil {
-			return nil, err
+		if len(groupedRanges) == 0 {
+			groupedRanges = [][]*ranger.Range{e.ranges[i]}
 		}
-		ranges = append(ranges, keyRange.FirstPartitionRange())
+
+		// Determine the physical tables to scan.
+		type tblInfo struct {
+			physTblID   int64
+			isCommonHdl bool
+		}
+		tables := make([]tblInfo, 0, max(len(e.prunedPartitions), 1))
+		if isIdxScan && e.partitionTableMode && e.indexes[i] != nil && e.indexes[i].Global {
+			tables = []tblInfo{{physTblID: e.table.Meta().ID, isCommonHdl: e.table.Meta().IsCommonHandle}}
+		} else if e.partitionTableMode {
+			for _, p := range e.prunedPartitions {
+				tables = append(tables, tblInfo{physTblID: p.GetPhysicalID(), isCommonHdl: p.Meta().IsCommonHandle})
+			}
+		} else {
+			tables = []tblInfo{{physTblID: getPhysicalTableID(e.table), isCommonHdl: e.table.Meta().IsCommonHandle}}
+		}
+
+		// Build kv ranges for each group × table.
+		for _, ranges := range groupedRanges {
+			for _, t := range tables {
+				if isIdxScan {
+					kvRange, err := distsql.IndexRangesToKVRanges(dctx, t.physTblID, e.indexes[i].ID, ranges)
+					if err != nil {
+						return err
+					}
+					e.partialWorkerKVRanges[i] = append(e.partialWorkerKVRanges[i], &kvRangesWithPhysicalTblID{
+						PhysicalTableID: t.physTblID,
+						KeyRanges:       kvRange.FirstPartitionRange(),
+					})
+				} else {
+					firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, false, e.descs[i], t.isCommonHdl)
+					firstKV, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{t.physTblID}, t.isCommonHdl, firstPartRanges)
+					if err != nil {
+						return err
+					}
+					secondKV, err := distsql.TableHandleRangesToKVRanges(dctx, []int64{t.physTblID}, t.isCommonHdl, secondPartRanges)
+					if err != nil {
+						return err
+					}
+					combined := append(firstKV.FirstPartitionRange(), secondKV.FirstPartitionRange()...)
+					e.partialWorkerKVRanges[i] = append(e.partialWorkerKVRanges[i], &kvRangesWithPhysicalTblID{
+						PhysicalTableID: t.physTblID,
+						KeyRanges:       combined,
+					})
+				}
+			}
+		}
 	}
-	return ranges, nil
+	return nil
 }
 
 func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	exitCh := make(chan struct{})
 	workCh := make(chan *indexMergeTableTask, 1)
-	fetchCh := make(chan *indexMergeTableTask, len(e.keyRanges))
+	fetchCh := make(chan *indexMergeTableTask, len(e.partialPlans))
 
 	e.startIndexMergeProcessWorker(ctx, workCh, fetchCh)
 
@@ -337,11 +389,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
 	}
 
-	var keyRanges [][]kv.KeyRange
-	if e.partitionTableMode {
-		keyRanges = e.partitionKeyRanges[workID]
-	} else {
-		keyRanges = [][]kv.KeyRange{e.keyRanges[workID]}
+	keyRanges := make([][]kv.KeyRange, 0, len(e.partialWorkerKVRanges[workID]))
+	for _, pkr := range e.partialWorkerKVRanges[workID] {
+		keyRanges = append(keyRanges, pkr.KeyRanges)
 	}
 	failpoint.Inject("startPartialIndexWorkerErr", func() error {
 		return errors.New("inject an error before start partialIndexWorker")
@@ -504,6 +554,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					netDataSize:                e.partialNetDataSizes[workID],
 					keepOrder:                  ts.KeepOrder,
 					byItems:                    ts.ByItems,
+					groupedRanges:              ts.GroupedRanges,
+					groupByColIdxs:             ts.GroupByColIdxs,
 				}
 
 				worker := &partialTableWorker{
