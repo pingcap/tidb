@@ -27,10 +27,10 @@ import (
 func TestPreserveUnderscoreTokenize(t *testing.T) {
 	tokens := PreserveUnderscoreTokenize("abc_def,ghi 你好-world")
 	require.Equal(t, []Token{
-		{Text: "abc_def", Position: 0, OffsetFrom: 0, OffsetTo: 7, PositionLength: 1},
-		{Text: "ghi", Position: 1, OffsetFrom: 8, OffsetTo: 11, PositionLength: 1},
-		{Text: "你好", Position: 2, OffsetFrom: 12, OffsetTo: 18, PositionLength: 1},
-		{Text: "world", Position: 3, OffsetFrom: 19, OffsetTo: 24, PositionLength: 1},
+		{Text: "abc_def", Position: 0},
+		{Text: "ghi", Position: 1},
+		{Text: "你好", Position: 2},
+		{Text: "world", Position: 3},
 	}, tokens)
 }
 
@@ -40,15 +40,15 @@ func TestAnalyzeStandardV1(t *testing.T) {
 	tokens, err := AnalyzeStandardV1(sctx, "The foo_bar, a 好")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
-		{Text: "foo_bar", Position: 1, OffsetFrom: 4, OffsetTo: 11, PositionLength: 1},
+		{Text: "foo_bar", Position: 1},
 	}, tokens)
 
 	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.InnodbFtEnableStopword, vardef.Off))
 	tokens, err = AnalyzeStandardV1(sctx, "The cat")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
-		{Text: "the", Position: 0, OffsetFrom: 0, OffsetTo: 3, PositionLength: 1},
-		{Text: "cat", Position: 1, OffsetFrom: 4, OffsetTo: 7, PositionLength: 1},
+		{Text: "the", Position: 0},
+		{Text: "cat", Position: 1},
 	}, tokens)
 }
 
@@ -60,9 +60,9 @@ func TestAnalyzeStandardV1ReadsTokenSizesFromSessionContext(t *testing.T) {
 	tokens, err := AnalyzeStandardV1(sctx, "A 好 xy")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
-		{Text: "a", Position: 0, OffsetFrom: 0, OffsetTo: 1, PositionLength: 1},
-		{Text: "好", Position: 1, OffsetFrom: 2, OffsetTo: 5, PositionLength: 1},
-		{Text: "xy", Position: 2, OffsetFrom: 6, OffsetTo: 8, PositionLength: 1},
+		{Text: "a", Position: 0},
+		{Text: "好", Position: 1},
+		{Text: "xy", Position: 2},
 	}, tokens)
 }
 
@@ -72,13 +72,13 @@ func TestAnalyzeNgramV1(t *testing.T) {
 	tokens, err := AnalyzeNgramV1(sctx, "Hi世界 foo-bar")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
-		{Text: "hi", Position: 0, OffsetFrom: 0, OffsetTo: 2, PositionLength: 1},
-		{Text: "i世", Position: 1, OffsetFrom: 1, OffsetTo: 5, PositionLength: 1},
-		{Text: "世界", Position: 2, OffsetFrom: 2, OffsetTo: 8, PositionLength: 1},
-		{Text: "fo", Position: 3, OffsetFrom: 9, OffsetTo: 11, PositionLength: 1},
-		{Text: "oo", Position: 4, OffsetFrom: 10, OffsetTo: 12, PositionLength: 1},
-		{Text: "ba", Position: 5, OffsetFrom: 13, OffsetTo: 15, PositionLength: 1},
-		{Text: "ar", Position: 6, OffsetFrom: 14, OffsetTo: 16, PositionLength: 1},
+		{Text: "hi", Position: 0},
+		{Text: "i世", Position: 1},
+		{Text: "世界", Position: 2},
+		{Text: "fo", Position: 3},
+		{Text: "oo", Position: 4},
+		{Text: "ba", Position: 5},
+		{Text: "ar", Position: 6},
 	}, tokens)
 }
 
@@ -88,10 +88,10 @@ func TestAnalyzeNgramV1ShortTokenAdvancesPositionBase(t *testing.T) {
 	tokens, err := AnalyzeNgramV1(sctx, "abc x def")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
-		{Text: "ab", Position: 0, OffsetFrom: 0, OffsetTo: 2, PositionLength: 1},
-		{Text: "bc", Position: 1, OffsetFrom: 1, OffsetTo: 3, PositionLength: 1},
-		{Text: "de", Position: 2, OffsetFrom: 6, OffsetTo: 8, PositionLength: 1},
-		{Text: "ef", Position: 3, OffsetFrom: 7, OffsetTo: 9, PositionLength: 1},
+		{Text: "ab", Position: 0},
+		{Text: "bc", Position: 1},
+		{Text: "de", Position: 2},
+		{Text: "ef", Position: 3},
 	}, tokens)
 }
 
@@ -102,8 +102,8 @@ func TestAnalyzeNgramV1ReadsTokenSizeFromSessionContext(t *testing.T) {
 	tokens, err := AnalyzeNgramV1(sctx, "abcd")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
-		{Text: "abc", Position: 0, OffsetFrom: 0, OffsetTo: 3, PositionLength: 1},
-		{Text: "bcd", Position: 1, OffsetFrom: 1, OffsetTo: 4, PositionLength: 1},
+		{Text: "abc", Position: 0},
+		{Text: "bcd", Position: 1},
 	}, tokens)
 }
 
@@ -114,8 +114,8 @@ func TestAnalyzeStandardV1CustomStopwords(t *testing.T) {
 		stopwords:            stopwordSet("foo"),
 	})
 	require.Equal(t, []Token{
-		{Text: "the", Position: 1, OffsetFrom: 4, OffsetTo: 7, PositionLength: 1},
-		{Text: "bar", Position: 2, OffsetFrom: 8, OffsetTo: 11, PositionLength: 1},
+		{Text: "the", Position: 1},
+		{Text: "bar", Position: 2},
 	}, tokens)
 }
 

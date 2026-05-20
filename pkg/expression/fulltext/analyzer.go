@@ -27,14 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
-// Token is the analyzed fulltext token. OffsetFrom and OffsetTo are UTF-8 byte
-// offsets in the original input text.
+// Token is the analyzed fulltext token.
 type Token struct {
-	Text           string
-	Position       int
-	OffsetFrom     int
-	OffsetTo       int
-	PositionLength int
+	Text     string
+	Position int
 }
 
 // PreserveUnderscoreTokenize tokenizes text with TiCI's PreserveUnderscore
@@ -60,11 +56,8 @@ func PreserveUnderscoreTokenize(text string) []Token {
 			j = next
 		}
 		tokens = append(tokens, Token{
-			Text:           text[start:j],
-			Position:       pos,
-			OffsetFrom:     start,
-			OffsetTo:       j,
-			PositionLength: 1,
+			Text:     text[start:j],
+			Position: pos,
 		})
 		pos++
 		i = j
@@ -276,11 +269,8 @@ func ngramFilter(tokens []Token, minGram, maxGram int) []Token {
 				startByte := spans[startIdx].byteStart
 				endByte := spans[endIdx-1].byteEnd
 				out = append(out, Token{
-					Text:           token.Text[startByte:endByte],
-					Position:       basePosition + startIdx,
-					OffsetFrom:     token.OffsetFrom + startByte,
-					OffsetTo:       token.OffsetFrom + endByte,
-					PositionLength: token.PositionLength,
+					Text:     token.Text[startByte:endByte],
+					Position: basePosition + startIdx,
 				})
 			}
 		}
