@@ -49,6 +49,15 @@ func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager,
 	return sch
 }
 
+type extensionWithPrepare struct {
+	Extension
+	onPrepare func(context.Context, storage.TaskHandle, *proto.Task) error
+}
+
+func (e *extensionWithPrepare) OnPrepare(ctx context.Context, h storage.TaskHandle, task *proto.Task) error {
+	return e.onPrepare(ctx, h, task)
+}
+
 func TestSchedulerOnNextStage(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -478,6 +487,70 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
+	})
+
+	t.Run("test onPending prepare mode required", func(t *testing.T) {
+		taskWithPrepare := task
+		taskWithPrepare.ExtraParams.PrepareMode = proto.PrepareModeRequired
+		scheduler.task.Store(&taskWithPrepare)
+		scheduler.Extension = schExt
+
+		require.ErrorContains(t, scheduler.onPending(), "scheduler does not implement PrepareExtension")
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		prepareExt := schmock.NewMockExtension(ctrl)
+		scheduler.Extension = &extensionWithPrepare{
+			Extension: prepareExt,
+			onPrepare: func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
+				inTask.Meta = []byte(`{"prepare":"done"}`)
+				return nil
+			},
+		}
+		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStatePending, proto.StepPrepared, gomock.Any()).
+			DoAndReturn(func(_ context.Context, inTask *proto.Task, _ proto.TaskState, _ proto.Step, subtasks []*proto.Subtask) error {
+				require.Empty(t, subtasks)
+				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
+				return nil
+			})
+		require.NoError(t, scheduler.onPending())
+		taskWithPrepare.Step = proto.StepPrepared
+		taskWithPrepare.Meta = []byte(`{"prepare":"done"}`)
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+		scheduler.Extension = schExt
+	})
+
+	t.Run("test StepPrepared mapping in next-step resolution", func(t *testing.T) {
+		taskWithPrepared := task
+		taskWithPrepared.Step = proto.StepPrepared
+		taskWithPrepared.ExtraParams.PrepareMode = proto.PrepareModeRequired
+		scheduler.task.Store(&taskWithPrepared)
+
+		nextStepExt := schmock.NewMockExtension(ctrl)
+		nextStepExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(func(base *proto.TaskBase) proto.Step {
+			require.Equal(t, proto.StepInit, base.Step)
+			return proto.StepOne
+		})
+		nextStepExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{":4000"}, nil)
+		nextStepExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, nil)
+		scheduler.Extension = &extensionWithPrepare{
+			Extension: nextStepExt,
+			onPrepare: func(context.Context, storage.TaskHandle, *proto.Task) error {
+				t.Fatalf("prepare hook should not run for StepPrepared")
+				return nil
+			},
+		}
+
+		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
+		require.NoError(t, scheduler.switch2NextStep())
+		taskWithPrepared.Step = proto.StepOne
+		taskWithPrepared.State = proto.TaskStateRunning
+		require.Equal(t, taskWithPrepared, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+		scheduler.Extension = schExt
 	})
 
 	t.Run("test revertTask", func(t *testing.T) {

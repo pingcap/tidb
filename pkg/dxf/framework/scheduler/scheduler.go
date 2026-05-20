@@ -378,9 +378,24 @@ func (s *BaseScheduler) onReverting() error {
 
 // handle task in pending state, schedule subtasks.
 func (s *BaseScheduler) onPending() error {
-	task := s.GetTask()
+	task := s.getTaskClone()
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
+		prepareExt, ok := s.Extension.(PrepareExtension)
+		if !ok {
+			return errors.New("prepare mode required but scheduler does not implement PrepareExtension")
+		}
+		if err := prepareExt.OnPrepare(s.ctx, s, task); err != nil {
+			return errors.Trace(err)
+		}
+		if err := s.taskMgr.SwitchTaskStep(s.ctx, task, proto.TaskStatePending, proto.StepPrepared, nil); err != nil {
+			return errors.Trace(err)
+		}
+		task.Step = proto.StepPrepared
+		s.task.Store(task)
+		return nil
+	}
 	return s.switch2NextStep()
 }
 
@@ -471,7 +486,9 @@ func (s *BaseScheduler) onFinished() {
 
 func (s *BaseScheduler) switch2NextStep() error {
 	task := s.getTaskClone()
-	nextStep := s.GetNextStep(&task.TaskBase)
+	taskBase4Next := task.TaskBase
+	taskBase4Next.Step = proto.FrameworkStep2BusinessStep(taskBase4Next.Step)
+	nextStep := s.GetNextStep(&taskBase4Next)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),

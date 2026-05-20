@@ -156,6 +156,15 @@ type Extension interface {
 	ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error)
 }
 
+// PrepareExtension is an optional extension for tasks that require a framework
+// prepare phase before business-step subtask scheduling.
+type PrepareExtension interface {
+	// OnPrepare is called when task is in pending+init and prepare mode is
+	// required. The implementation may update task fields (for example task
+	// meta), and the framework will persist step transition afterwards.
+	OnPrepare(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
+}
+
 // Param is used to pass parameters when creating scheduler.
 type Param struct {
 	taskMgr        TaskManager
