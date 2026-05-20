@@ -1040,14 +1040,14 @@ func GetTiFlashStoresStat(ctx context.Context) (*pdhttp.StoresInfo, error) {
 }
 
 // GetTiFlashProgressStores groups PD store stats into TiFlash write stores and TiKV stores.
-func GetTiFlashProgressStores(ctx context.Context) (map[int64]pdhttp.StoreInfo, map[int64]pdhttp.StoreInfo, error) {
+func GetTiFlashProgressStores(ctx context.Context) (tiFlashStores map[int64]pdhttp.StoreInfo, tikvStores map[int64]pdhttp.StoreInfo, err error) {
 	tikvStats, err := GetTiFlashStoresStat(ctx)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
-	tikvStores := make(map[int64]pdhttp.StoreInfo)
+	tiFlashStores = make(map[int64]pdhttp.StoreInfo)
+	tikvStores = make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
 		if engine.IsTiFlashHTTPResp(&store.Store) {
 			// Ignore TiFlash compute nodes under the NextGen kernel.
