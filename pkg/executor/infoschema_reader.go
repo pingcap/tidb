@@ -2799,8 +2799,11 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx
 		rows    [][]types.Datum
 	)
 	enableColumnarStore := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
-	tiFlashStores, tikvStores, storesErr := infosync.GetTiFlashProgressStores(context.Background())
-	if storesErr == nil && !enableColumnarStore {
+	tiFlashStores, tikvStores, storesErr := infosync.GetTiFlashProgressStores(ctx)
+	if storesErr != nil {
+		return storesErr
+	}
+	if !enableColumnarStore {
 		tikvStores = nil
 	}
 	var globalCircuitBreakerTriggered bool
@@ -2820,9 +2823,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx
 				logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
 				progress = circuitBreakerProgress
 			} else {
-				if storesErr != nil {
-					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(storesErr))
-				} else if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 					for _, p := range pi.Definitions {
 						progressOfPartition, circuitBreakerTriggered, err := infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, p.ID, tbl.TiFlashReplica.Count, tiFlashStores, tikvStores)
 						if err != nil {
