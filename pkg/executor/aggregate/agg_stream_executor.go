@@ -191,6 +191,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	if allMemDelta != 0 {
 		e.pendingMemDelta += allMemDelta
 		if e.pendingMemDelta >= streamAggMemDeltaFlushThreshold {
+			failpoint.Inject("streamAggMemDeltaFlushForTest", nil)
 			e.memTracker.Consume(e.pendingMemDelta)
 			e.pendingMemDelta = 0
 		}
