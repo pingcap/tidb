@@ -45,3 +45,20 @@ Test and verification:
 - Add SQL-only case to `predicate_pushdown_suite_in.json`; keep DDL in the test setup, otherwise `explain` will try to run `DROP/CREATE`.
 - Record with: `go test ./pkg/planner/core/casetest/rule -run TestConstantPropagateWithCollation --tags=intest -record`.
 - Add integration test to `tests/integrationtest/t/select.test` and record via `./run-tests.sh -r select` (integration tests use `-r`, not `-record`).
+
+## 2026-05-19 - FTS alt-plan heuristic invalidated native TiCI plans
+
+Background:
+- `MATCH ... AGAINST` in direct-boolean predicate context can run through the alternative logical-plan framework, where round 1 keeps the native TiCI/TiFlash path and a later round may try the LIKE fallback.
+- A planner-side heuristic (`ftsNativeViable`) was used during expression rewrite to pre-mark round 1 as non-viable before the real TiCI planning path ran.
+- That heuristic drifted from the native implementation and could reject executable native TiCI plans, causing round 1 to be discarded and unsupported LIKE fallback errors (for example BOOLEAN prefix queries like `stainles*`) to leak to users.
+
+Implementation choice:
+- Remove the `nonViableFTSMatch` build-time invalidation signal.
+- Keep `HasPredicateMatch` only for cost competition / fallback-round eligibility.
+- Let the real native planning path (`DoOptimize` / TiCI analysis) decide when fallback should take over via `FTSLikeFallbackError`.
+
+Test and verification:
+- Add a TiCI regression test covering `@@tidb_opt_enable_alternative_logical_plans = 1` with a native multi-column prefix query that must keep the TiCI plan.
+- Run with failpoints enabled:
+  `make failpoint-enable && (go test ./pkg/planner/core/casetest/tici -run TestTiCIAlternativeLogicalPlansKeepNativePrefixPlan --tags=intest; rc=$?; make failpoint-disable; exit $rc)`
