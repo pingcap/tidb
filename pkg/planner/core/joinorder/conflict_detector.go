@@ -170,10 +170,11 @@ func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *Che
 	}
 	cartesianEdge := d.makeEdge(base.InnerJoin, []expression.Expression{}, left.bitSet, right.bitSet, nil, nil)
 	return &CheckConnectionResult{
-		node1:             left,
-		node2:             right,
-		appliedInnerEdges: []*edge{cartesianEdge},
-		hasEQCond:         false,
+		node1:              left,
+		node2:              right,
+		appliedInnerEdges:  []*edge{cartesianEdge},
+		hasEQCond:          false,
+		syntheticCartesian: true,
 	}
 }
 
@@ -566,6 +567,7 @@ type CheckConnectionResult struct {
 	appliedInnerEdges   []*edge
 	appliedNonInnerEdge *edge
 	hasEQCond           bool
+	syntheticCartesian  bool
 }
 
 // Connected checks if two nodes are connected.
@@ -576,6 +578,12 @@ func (r *CheckConnectionResult) Connected() bool {
 // NoEQEdge checks if there is no EQ edge between two nodes.
 func (r *CheckConnectionResult) NoEQEdge() bool {
 	return !r.hasEQCond
+}
+
+// SyntheticCartesian checks if the result comes from the cartesian fallback
+// path instead of a real join edge in the original join graph.
+func (r *CheckConnectionResult) SyntheticCartesian() bool {
+	return r.syntheticCartesian
 }
 
 // CheckConnection tests whether any edge can validly connect node1 and node2.

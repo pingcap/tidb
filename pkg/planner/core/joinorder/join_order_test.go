@@ -23,33 +23,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChooseBestGreedySeed(t *testing.T) {
+func TestChooseBestGreedyStart(t *testing.T) {
 	t.Run("pick lowest cost", func(t *testing.T) {
-		best, seedIdx, err := chooseBestGreedySeed(2, func(seedIdx int) (*Node, error) {
+		best, startIdx, err := chooseBestGreedyStart(2, func(startIdx int) (*Node, error) {
 			costs := []float64{100, 10}
-			return &Node{cumCost: costs[seedIdx]}, nil
+			return &Node{cumCost: costs[startIdx]}, nil
 		})
 		require.NoError(t, err)
 		require.NotNil(t, best)
-		require.Equal(t, 1, seedIdx)
+		require.Equal(t, 1, startIdx)
 		require.Equal(t, float64(10), best.cumCost)
 	})
 
 	t.Run("skip nil candidate", func(t *testing.T) {
-		best, seedIdx, err := chooseBestGreedySeed(2, func(seedIdx int) (*Node, error) {
-			if seedIdx == 0 {
+		best, startIdx, err := chooseBestGreedyStart(2, func(startIdx int) (*Node, error) {
+			if startIdx == 0 {
 				return nil, nil
 			}
 			return &Node{cumCost: 10}, nil
 		})
 		require.NoError(t, err)
 		require.NotNil(t, best)
-		require.Equal(t, 1, seedIdx)
+		require.Equal(t, 1, startIdx)
 		require.Equal(t, float64(10), best.cumCost)
+	})
+
+	t.Run("keep cartesian penalty for synthetic candidate when relaxing second round", func(t *testing.T) {
+		penalty := noEQPenaltyFactor(0, true, &CheckConnectionResult{})
+		require.Equal(t, float64(1), penalty)
+
+		penalty = noEQPenaltyFactor(0, true, &CheckConnectionResult{syntheticCartesian: true})
+		require.Equal(t, float64(0), penalty)
 	})
 }
 
-func TestCloneNodesForGreedySeedIsolation(t *testing.T) {
+func TestCloneNodesForGreedyStartIsolation(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	t.Cleanup(func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -59,7 +67,7 @@ func TestCloneNodesForGreedySeedIsolation(t *testing.T) {
 		cumCost:   7,
 		usedEdges: map[uint64]struct{}{1: {}},
 	}}
-	cloned := cloneNodesForGreedySeed(original)
+	cloned := cloneNodesForGreedyStart(original)
 	require.Len(t, cloned, 1)
 	require.NotSame(t, original[0], cloned[0])
 

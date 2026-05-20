@@ -586,42 +586,42 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
-	var seedResult *Node
+	var startResult *Node
 	if nodeWithHint != nil || len(nodes) < 2 {
-		seedResult, err = j.optimizeWithSeed(detector, nodes, 0, cartesianFactor, allowNoEQ)
+		startResult, err = j.optimizeWithStart(detector, nodes, 0, cartesianFactor, allowNoEQ)
 		if err != nil {
 			return nil, err
 		}
-		if seedResult == nil {
+		if startResult == nil {
 			return group.root, nil
 		}
-		return seedResult.p, nil
+		return startResult.p, nil
 	}
 
-	bestSeedIdx := 0
-	seedResult, bestSeedIdx, err = chooseBestGreedySeed(2, func(seedIdx int) (*Node, error) {
-		return j.optimizeWithSeed(detector, nodes, seedIdx, cartesianFactor, allowNoEQ)
+	bestStartIdx := 0
+	startResult, bestStartIdx, err = chooseBestGreedyStart(2, func(startIdx int) (*Node, error) {
+		return j.optimizeWithStart(detector, nodes, startIdx, cartesianFactor, allowNoEQ)
 	})
 	if err != nil {
 		return nil, err
 	}
-	if seedResult == nil {
+	if startResult == nil {
 		return group.root, nil
 	}
-	logutil.BgLogger().Debug("greedy join reorder picked multi-seed candidate",
+	logutil.BgLogger().Debug("greedy join reorder picked multi-start candidate",
 		zap.Int("rootID", group.root.ID()),
-		zap.Int("seedIdx", bestSeedIdx),
-		zap.Float64("cumCost", seedResult.cumCost),
+		zap.Int("startIdx", bestStartIdx),
+		zap.Float64("cumCost", startResult.cumCost),
 		zap.Int("nodeCount", len(nodes)))
-	return seedResult.p, nil
+	return startResult.p, nil
 }
 
-func cloneNodeForGreedySeed(node *Node) *Node {
+func cloneNodeForGreedyStart(node *Node) *Node {
 	if node == nil {
 		return nil
 	}
 	cloned := &Node{
-		bitSet:  node.bitSet,
+		bitSet:  node.bitSet.Copy(),
 		p:       node.p,
 		cumCost: node.cumCost,
 	}
@@ -631,45 +631,45 @@ func cloneNodeForGreedySeed(node *Node) *Node {
 	return cloned
 }
 
-func cloneNodesForGreedySeed(nodes []*Node) []*Node {
+func cloneNodesForGreedyStart(nodes []*Node) []*Node {
 	cloned := make([]*Node, len(nodes))
 	for i, node := range nodes {
-		cloned[i] = cloneNodeForGreedySeed(node)
+		cloned[i] = cloneNodeForGreedyStart(node)
 	}
 	return cloned
 }
 
-func chooseBestGreedySeed(seedCount int, runner func(seedIdx int) (*Node, error)) (*Node, int, error) {
+func chooseBestGreedyStart(startCount int, runner func(startIdx int) (*Node, error)) (*Node, int, error) {
 	var best *Node
-	bestSeedIdx := -1
-	for seedIdx := 0; seedIdx < seedCount; seedIdx++ {
-		candidate, err := runner(seedIdx)
+	bestStartIdx := -1
+	for startIdx := 0; startIdx < startCount; startIdx++ {
+		candidate, err := runner(startIdx)
 		if err != nil {
 			return nil, -1, err
 		}
 		if candidate != nil && (best == nil || candidate.cumCost < best.cumCost) {
 			best = candidate
-			bestSeedIdx = seedIdx
+			bestStartIdx = startIdx
 		}
 	}
-	return best, bestSeedIdx, nil
+	return best, bestStartIdx, nil
 }
 
-func moveGreedySeedToFront(nodes []*Node, seedIdx int) []*Node {
-	if seedIdx <= 0 || seedIdx >= len(nodes) {
+func moveGreedyStartToFront(nodes []*Node, startIdx int) []*Node {
+	if startIdx <= 0 || startIdx >= len(nodes) {
 		return nodes
 	}
 	reordered := make([]*Node, 0, len(nodes))
-	reordered = append(reordered, nodes[seedIdx])
-	reordered = append(reordered, nodes[:seedIdx]...)
-	reordered = append(reordered, nodes[seedIdx+1:]...)
+	reordered = append(reordered, nodes[startIdx])
+	reordered = append(reordered, nodes[:startIdx]...)
+	reordered = append(reordered, nodes[startIdx+1:]...)
 	return reordered
 }
 
-func (j *joinOrderGreedy) optimizeWithSeed(detector *ConflictDetector, nodes []*Node, seedIdx int, cartesianFactor float64, allowNoEQ bool) (*Node, error) {
-	nodes = moveGreedySeedToFront(cloneNodesForGreedySeed(nodes), seedIdx)
+func (j *joinOrderGreedy) optimizeWithStart(detector *ConflictDetector, nodes []*Node, startIdx int, cartesianFactor float64, allowNoEQ bool) (*Node, error) {
+	nodes = moveGreedyStartToFront(cloneNodesForGreedyStart(nodes), startIdx)
 	var err error
-	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
+	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ, false); err != nil {
 		return nil, err
 	}
 
@@ -681,11 +681,10 @@ func (j *joinOrderGreedy) optimizeWithSeed(detector *ConflictDetector, nodes []*
 		// and the first round of greedy enumeration is not allowed to use non-eq edges.
 		// So we got here and we need to the second round of enumeration with `allowNoEQ` as true.
 		befLen := len(nodes)
-		// Clamp to 1 to avoid cumCost*0=0 making non-EQ joins appear free.
-		if cartesianFactor <= 0 {
-			cartesianFactor = 1
-		}
-		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
+		// The second round needs to allow real non-eq joins even when cartesian
+		// joins are disabled, but detector-created cartesian fallback candidates
+		// should still keep the original cartesian penalty.
+		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true, true); err != nil {
 			return nil, err
 		}
 		if len(nodes) != befLen {
@@ -697,7 +696,7 @@ func (j *joinOrderGreedy) optimizeWithSeed(detector *ConflictDetector, nodes []*
 		totalEdges, usedEdgeCount, missingEdges, missingDetail, nodeSets := summarizeEdges(detector, usedEdges, nodes, 4)
 		logutil.BgLogger().Warn("join reorder skipped because not all edges are used",
 			zap.Int("rootID", j.group.root.ID()),
-			zap.Int("seedIdx", seedIdx),
+			zap.Int("startIdx", startIdx),
 			zap.Int("nodes", len(nodes)),
 			zap.Int("totalEdges", totalEdges),
 			zap.Int("usedEdges", usedEdgeCount),
@@ -714,7 +713,7 @@ func (j *joinOrderGreedy) optimizeWithSeed(detector *ConflictDetector, nodes []*
 		return nil, errors.New("internal error: bushy join tree nodes is empty")
 	}
 	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins.
-	// We need the returned Node metadata to compare seed alternatives by cumCost.
+	// We need the returned Node metadata to compare start alternatives by cumCost.
 	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, false)
 	if err != nil {
 		return nil, err
@@ -722,7 +721,7 @@ func (j *joinOrderGreedy) optimizeWithSeed(detector *ConflictDetector, nodes []*
 	return root, nil
 }
 
-func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
+func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool, relaxNoEQPenalty bool) ([]*Node, error) {
 	// Outer loop: keep trying while we have multiple nodes and made progress in the last iteration.
 	// This handles cases where conflict rules block some joins until other joins are completed.
 	for len(nodes) > 1 {
@@ -752,7 +751,8 @@ func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHin
 					// and we might generate a tree with cartesian edge.
 					// For non INNER JOIN, the logic in extractJoinGroup ensures we will not reach here,
 					// check the comment in extractJoinGroup for more details.
-					newNode.cumCost, err = applyCartesianFactor(newNode.cumCost, cartesianFactor)
+					penaltyFactor := noEQPenaltyFactor(cartesianFactor, relaxNoEQPenalty, checkResult)
+					newNode.cumCost, err = applyCartesianFactor(newNode.cumCost, penaltyFactor)
 					if err != nil {
 						return nil, err
 					}
@@ -776,6 +776,13 @@ func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHin
 		}
 	}
 	return nodes, nil
+}
+
+func noEQPenaltyFactor(cartesianFactor float64, relaxNoEQPenalty bool, checkResult *CheckConnectionResult) float64 {
+	if !relaxNoEQPenalty || checkResult == nil || checkResult.SyntheticCartesian() || cartesianFactor > 0 {
+		return cartesianFactor
+	}
+	return 1
 }
 
 func collectUsedEdges(nodes []*Node) map[uint64]struct{} {
