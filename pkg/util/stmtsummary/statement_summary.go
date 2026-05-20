@@ -124,9 +124,6 @@ type stmtSummaryByDigest struct {
 	isInternal    bool
 	bindingSQL    string
 	bindingDigest string
-	// user is populated when group_by_user is enabled at creation time.
-	// When disabled, it is empty and not part of the grouping key.
-	user string
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -362,14 +359,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		historySize = ssMap.historySize()
 	}
 
-	userForKey := ""
-	if ssMap.optGroupByUser.Load() {
-		userForKey = sei.User
-	}
-
 	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
-	// Init hash value in advance, to reduce the time holding the lock.
-	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName, userForKey)
 
 	var exist bool
 
@@ -382,6 +372,15 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// performance in this specific case.
 	ssMap.Lock()
 	defer ssMap.Unlock()
+
+	// Decide userForKey under the lock so SetGroupByUser's flag flip + Clear
+	// is atomic w.r.t. AddStatement; otherwise a post-clear insert could land
+	// under the wrong grouping mode.
+	userForKey := ""
+	if ssMap.optGroupByUser.Load() {
+		userForKey = sei.User
+	}
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName, userForKey)
 
 	// Check again. Statements could be added before disabling the flag and after Clear().
 	if !ssMap.Enabled() {
@@ -405,7 +404,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	if !exist {
 		// Lazy initialize it to release ssMap.mutex ASAP.
 		summary = new(stmtSummaryByDigest)
-		summary.user = userForKey
 		ssMap.summaryMap.Put(key, summary)
 	} else {
 		summary = value.(*stmtSummaryByDigest)
@@ -536,11 +534,20 @@ func (ssMap *stmtSummaryByDigestMap) historySize() int {
 // executing user. Switching the flag clears existing data because existing
 // rows were aggregated under a different grouping key.
 func (ssMap *stmtSummaryByDigestMap) SetGroupByUser(value bool) error {
+	// Hold ssMap.Lock across the flag flip and clear so AddStatement (which
+	// reads the flag under the same lock) cannot insert a record with the
+	// old grouping mode after Clear() completes.
+	ssMap.Lock()
+	defer ssMap.Unlock()
 	if ssMap.optGroupByUser.Load() == value {
 		return nil
 	}
 	ssMap.optGroupByUser.Store(value)
-	ssMap.Clear()
+	ssMap.summaryMap.DeleteAll()
+	ssMap.other.Clear()
+	ssMap.beginTimeForCurInterval = 0
+	ssMap.currentWindowEvictedCount = 0
+	ssMap.updateMetricsLocked()
 	return nil
 }
 

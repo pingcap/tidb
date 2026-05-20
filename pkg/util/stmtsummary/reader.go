@@ -266,7 +266,6 @@ const (
 	TableNamesStr                              = "TABLE_NAMES"
 	IndexNamesStr                              = "INDEX_NAMES"
 	SampleUserStr                              = "SAMPLE_USER"
-	UserStr                                    = "USER"
 	ExecCountStr                               = "EXEC_COUNT"
 	SumErrorsStr                               = "SUM_ERRORS"
 	SumWarningsStr                             = "SUM_WARNINGS"
@@ -489,9 +488,6 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 			break
 		}
 		return convertEmptyToNil(sampleUser)
-	},
-	UserStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
-		return convertEmptyToNil(ssbd.user)
 	},
 	ExecCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.execCount

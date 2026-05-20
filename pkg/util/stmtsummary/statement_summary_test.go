@@ -1713,20 +1713,30 @@ func TestAddStatementGroupByUser(t *testing.T) {
 	ssMap.AddStatement(info1)
 	require.Equal(t, 2, ssMap.summaryMap.Size())
 
+	// With grouping ON, each record's authUsers must hold exactly one user —
+	// the one that groups it — so SAMPLE_USER naturally reflects the grouping
+	// dimension without a dedicated column.
 	seen := map[string]bool{}
 	for _, v := range ssMap.summaryMap.Values() {
 		ssbd := v.(*stmtSummaryByDigest)
-		seen[ssbd.user] = true
+		elem := ssbd.history.Front().Value.(*stmtSummaryByDigestElement)
+		require.Len(t, elem.authUsers, 1)
+		for u := range elem.authUsers {
+			seen[u] = true
+		}
 	}
 	require.True(t, seen["alice"])
 	require.True(t, seen["bob"])
 
-	// Flipping back off clears again, and new records keep user empty.
+	// Flipping back off clears again, and re-emitted records merge users.
 	require.NoError(t, ssMap.SetGroupByUser(false))
 	require.Equal(t, 0, ssMap.summaryMap.Size())
 	ssMap.AddStatement(info1)
+	ssMap.AddStatement(info2)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	for _, v := range ssMap.summaryMap.Values() {
-		require.Empty(t, v.(*stmtSummaryByDigest).user)
+		ssbd := v.(*stmtSummaryByDigest)
+		elem := ssbd.history.Front().Value.(*stmtSummaryByDigestElement)
+		require.Len(t, elem.authUsers, 2)
 	}
 }

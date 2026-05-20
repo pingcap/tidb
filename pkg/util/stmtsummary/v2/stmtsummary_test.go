@@ -101,12 +101,16 @@ func TestStmtSummaryGroupByUser(t *testing.T) {
 	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
 	require.Equal(t, 2, ss.window.lru.Size())
 
-	// Each record should remember the User that groups it so the USER column
-	// can be emitted without scanning AuthUsers.
+	// When grouping by user, each record's AuthUsers must hold exactly one
+	// user — the one that groups it — so SAMPLE_USER naturally reflects the
+	// grouping dimension without a dedicated column.
 	users := map[string]int64{}
 	for _, v := range ss.window.lru.Values() {
 		r := v.(*lockedStmtRecord)
-		users[r.User] = r.ExecCount
+		require.Len(t, r.AuthUsers, 1)
+		for u := range r.AuthUsers {
+			users[u] = r.ExecCount
+		}
 	}
 	require.Equal(t, int64(2), users["alice"])
 	require.Equal(t, int64(1), users["bob"])
@@ -118,7 +122,7 @@ func TestStmtSummaryGroupByUser(t *testing.T) {
 	require.Equal(t, 1, ss.window.lru.Size())
 	for _, v := range ss.window.lru.Values() {
 		r := v.(*lockedStmtRecord)
-		require.Empty(t, r.User) // group_by_user OFF leaves User empty
+		require.Len(t, r.AuthUsers, 2) // both users merged when grouping is off
 	}
 }
 

@@ -248,11 +248,16 @@ func (s *StmtSummary) GroupByUser() bool {
 // the in-memory window because existing records were aggregated under a
 // different grouping key; persisted records are unaffected.
 func (s *StmtSummary) SetGroupByUser(v bool) error {
+	// Hold windowLock across the flag flip and clear so Add (which reads
+	// the flag under the same lock) cannot insert a record with the old
+	// grouping mode after the window is cleared.
+	s.windowLock.Lock()
+	defer s.windowLock.Unlock()
 	if s.optGroupByUser.Load() == v {
 		return nil
 	}
 	s.optGroupByUser.Store(v)
-	s.Clear()
+	s.window.clear()
 	return nil
 }
 
@@ -265,26 +270,24 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		return
 	}
 
+	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
+
+	// Add info to the current statistics window.
+	s.windowLock.Lock()
+	// Decide userForKey under windowLock so SetGroupByUser's flag flip + clear
+	// is atomic w.r.t. Add; otherwise a post-clear insert could land under the
+	// wrong grouping mode.
 	userForKey := ""
 	if s.optGroupByUser.Load() {
 		userForKey = info.User
 	}
-
-	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
-	// Init hash value in advance, to reduce the time holding the lock.
 	k.Init(info.SchemaName, info.Digest, info.PrevSQLDigest, info.PlanDigest, info.ResourceGroupName, userForKey)
-
-	// Add info to the current statistics window.
-	s.windowLock.Lock()
 	var record *lockedStmtRecord
 	v, exist := s.window.lru.Get(k)
 	if exist {
 		record = v.(*lockedStmtRecord)
 	} else {
 		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
-		// Populate User only when user is part of the grouping key; this
-		// keeps "" in records created before the flag was flipped.
-		record.User = userForKey
 		s.window.lru.Put(k, record)
 	}
 	s.windowLock.Unlock()

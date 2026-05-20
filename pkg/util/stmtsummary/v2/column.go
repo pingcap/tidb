@@ -42,7 +42,6 @@ const (
 	TableNamesStr                              = "TABLE_NAMES"
 	IndexNamesStr                              = "INDEX_NAMES"
 	SampleUserStr                              = "SAMPLE_USER"
-	UserStr                                    = "USER"
 	ExecCountStr                               = "EXEC_COUNT"
 	SumErrorsStr                               = "SUM_ERRORS"
 	SumWarningsStr                             = "SUM_WARNINGS"
@@ -214,9 +213,6 @@ var columnFactoryMap = map[string]columnFactory{
 			break
 		}
 		return convertEmptyToNil(sampleUser)
-	},
-	UserStr: func(_ columnInfo, record *StmtRecord) any {
-		return convertEmptyToNil(record.User)
 	},
 	ExecCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.ExecCount
