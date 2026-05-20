@@ -186,7 +186,7 @@
         "Warn": null
       },
       {
-        "SQL": "select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t",
+        "SQL": "select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t order by a, b",
         "Plan": [
           "1 1 1",
           "1 2 2",

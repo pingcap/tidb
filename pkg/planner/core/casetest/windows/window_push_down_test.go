@@ -38,7 +38,10 @@ func testWithData(t *testing.T, tk *testkit.TestKit, input Input, output Output)
 			output[i].SQL = tt
 		})
 		stmt := strings.ToLower(strings.TrimSpace(tt))
-		if !strings.HasPrefix(stmt, "select") && !strings.HasPrefix(stmt, "explain") {
+		isQuery := strings.HasPrefix(stmt, "select") ||
+			strings.HasPrefix(stmt, "explain") ||
+			strings.HasPrefix(stmt, "with")
+		if !isQuery {
 			tk.MustExec(tt)
 			continue
 		}

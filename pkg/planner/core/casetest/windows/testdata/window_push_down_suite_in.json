@@ -19,7 +19,7 @@
       "insert into ordered_window_t values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23)",
       "explain format = 'plan_tree' select a, row_number() over(partition by a) as rn from ordered_window_t",
       "explain format = 'plan_tree' select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t",
-      "select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t",
+      "select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t order by a, b",
       "explain format = 'plan_tree' select a, b, rank() over(partition by a order by b) as rk from ordered_window_t",
       "explain format = 'plan_tree' select a, c, row_number() over(partition by a order by c) as rn from ordered_window_t"
     ]
