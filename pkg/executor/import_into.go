@@ -106,13 +106,16 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return e.importFromSelect(ctx)
 	}
 
-	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
-		return err2
-	}
-	if kerneltype.IsNextGen() {
-		ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
-		if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+	useScopedPrepareIntegration := importinto.ShouldUseScopedPrepareIntegration(e.controller.Plan)
+	if !useScopedPrepareIntegration {
+		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 			return err2
+		}
+		if kerneltype.IsNextGen() {
+			ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
+			if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+				return err2
+			}
 		}
 	}
 
@@ -122,8 +125,10 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
-	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
-		return err2
+	if !useScopedPrepareIntegration {
+		if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
+			return err2
+		}
 	}
 
 	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
@@ -217,12 +222,16 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", vardef.EnableDistTask.Load()))
+	useScopedPrepareIntegration := importinto.ShouldUseScopedPrepareIntegration(e.controller.Plan)
 	if importFromServer {
-		chunkMap, err2 := e.controller.PopulateChunks(ctx)
-		if err2 != nil {
-			return 0, nil, err2
+		if !useScopedPrepareIntegration {
+			chunkMap, err2 := e.controller.PopulateChunks(ctx)
+			if err2 != nil {
+				return 0, nil, err2
+			}
+			return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
 		}
-		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
+		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if vardef.EnableDistTask.Load() {

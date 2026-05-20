@@ -166,6 +166,30 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("0"))
 		userKSTK.MustQuery("select count(1) from mysql.tidb_global_task where id = ?", task.ID).Check(testkit.Rows("0"))
 	})
+
+	t.Run("submit global-sort task uses scoped prepare integration", func(t *testing.T) {
+		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = keyspace.System
+		})
+		manuallyInitFn(t, sysKSStore, sysKSStore)
+
+		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
+			TableInfo:       &model.TableInfo{},
+			Parameters:      &importer.ImportParameters{},
+			ThreadCnt:       16,
+			MaxNodeCnt:      8,
+			CloudStorageURI: "local:///tmp/prepare-mode-sort",
+		}, "import into t from 's3://bucket/test.csv'")
+		require.NoError(t, err)
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
+		sysKSTK.MustQuery(
+			"select concurrency, max_node_count, json_extract(extra_params, '$.prepare_mode') "+
+				"from mysql.tidb_global_task where id = ?",
+			task.ID,
+		).Check(testkit.Rows("1 1 1"))
+	})
 }
 
 func TestGetTaskImportedRows(t *testing.T) {

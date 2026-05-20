@@ -53,6 +53,9 @@ type TaskMeta struct {
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
 	// so need to split them into engines before passing to scheduler.
 	ChunkMap map[int32][]importer.Chunk
+	// PreparedChunkMapExternalPath points to external chunk metadata prepared by
+	// framework OnPrepare for nextgen global-sort path.
+	PreparedChunkMapExternalPath string `json:"prepared_chunk_map_external_path,omitempty"`
 }
 
 // ImportStepMeta is the meta of import step.

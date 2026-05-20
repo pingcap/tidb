@@ -19,10 +19,12 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"path"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -62,10 +64,11 @@ const (
 	// the target table, it's known to be slow to import in this case.
 	// the value if chosen as most tables have less than 32 indexes, we can adjust
 	// it later if needed.
-	warningIndexCount      = 32
-	registerTaskTTL        = 10 * time.Minute
-	refreshTaskTTLInterval = 3 * time.Minute
-	registerTimeout        = 5 * time.Second
+	warningIndexCount            = 32
+	registerTaskTTL              = 10 * time.Minute
+	refreshTaskTTLInterval       = 3 * time.Minute
+	registerTimeout              = 5 * time.Second
+	preparedChunkMetaPathPurpose = "prepare-chunk-map"
 )
 
 var (
@@ -164,6 +167,7 @@ type importScheduler struct {
 }
 
 var _ scheduler.Extension = (*importScheduler)(nil)
+var _ scheduler.PrepareExtension = (*importScheduler)(nil)
 
 // NewImportScheduler creates a new import scheduler.
 func NewImportScheduler(
@@ -286,6 +290,114 @@ func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta 
 		}
 		return nil
 	})
+}
+
+func (sch *importScheduler) checkActiveImportJobs(ctx context.Context, taskMeta *TaskMeta) error {
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
+	return taskManager.WithNewSession(func(se sessionctx.Context) error {
+		exec := se.GetSQLExecutor()
+		activeCnt, err := importer.GetActiveJobCnt(ctx, exec, taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
+		if err != nil {
+			return err
+		}
+		// The current prepare-enabled job is already in pending state, so we only
+		// fail when there are other active jobs on the same table.
+		if activeCnt > 1 {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
+		}
+		return nil
+	})
+}
+
+func (sch *importScheduler) writePreparedChunkMap(
+	ctx context.Context,
+	taskID int64,
+	cloudStorageURI string,
+	chunkMap map[int32][]importer.Chunk,
+) (string, error) {
+	store, err := importer.GetSortStore(ctx, cloudStorageURI)
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+	externalPath := path.Join(
+		strconv.FormatInt(taskID, 10),
+		preparedChunkMetaPathPurpose,
+		uuid.NewString(),
+		"meta.json",
+	)
+	data, err := json.Marshal(chunkMap)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if err = store.WriteFile(ctx, externalPath, data); err != nil {
+		return "", err
+	}
+	return externalPath, nil
+}
+
+// OnPrepare implements scheduler.PrepareExtension.
+func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
+	taskMeta := &TaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+	if !ShouldUseScopedPrepareIntegration(&taskMeta.Plan) {
+		return nil
+	}
+
+	logicalPlan := &LogicalPlan{
+		Plan:   taskMeta.Plan,
+		Stmt:   taskMeta.Stmt,
+		Logger: sch.GetLogger(),
+	}
+	controller, err := buildControllerForPlan(logicalPlan)
+	if err != nil {
+		return err
+	}
+	defer controller.Close()
+
+	if err = controller.InitDataFiles(ctx); err != nil {
+		return err
+	}
+	if controller.TotalFileSize == 0 {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(
+			"No file matched, or the file is empty. Please provide a valid file location.",
+		)
+	}
+	if err = sch.checkActiveImportJobs(ctx, taskMeta); err != nil {
+		return err
+	}
+	if err = sch.checkImportTableEmpty(ctx, taskMeta); err != nil {
+		return err
+	}
+	if err = controller.CalResourceParams(ctx, sch.TaskStore.GetCodec().GetKeyspace()); err != nil {
+		return err
+	}
+	controller.SetExecuteNodeCnt(controller.MaxNodeCnt)
+	chunkMap, err := controller.PopulateChunks(ctx)
+	if err != nil {
+		return err
+	}
+	chunkMapPath, err := sch.writePreparedChunkMap(ctx, task.ID, controller.Plan.CloudStorageURI, chunkMap)
+	if err != nil {
+		return err
+	}
+
+	taskMeta.Plan = *controller.Plan
+	taskMeta.ChunkMap = nil
+	taskMeta.PreparedChunkMapExternalPath = chunkMapPath
+	metaBytes, err := json.Marshal(taskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.Meta = metaBytes
+	task.RequiredSlots = controller.ThreadCnt
+	task.MaxNodeCount = controller.MaxNodeCnt
+	return nil
 }
 
 // OnNextSubtasksBatch generate batch of next stage's plan.
