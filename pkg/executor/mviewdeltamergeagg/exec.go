@@ -1684,7 +1684,11 @@ func ensureMappingOverride(
 	return override, nil
 }
 
-// TODO: For fixed-size columns, patch in place instead of rebuilding a new column.
+// Rebuild one output column by applying override values at selected row indexes.
+// Contract:
+// 1. rowIdxes is strictly increasing.
+// 2. every row index in rowIdxes is in [0, oldCol.Rows()).
+// TODO: For fixed-size columns, override in place instead of rebuilding a new column.
 func rebuildColumnWithOverrides(
 	oldCol *chunk.Column,
 	ft *types.FieldType,
