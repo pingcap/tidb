@@ -169,9 +169,6 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 	if event.UpstreamCheckpoint > 0 {
 		s.snapshot.LastUpstreamCheckpoint = event.UpstreamCheckpoint
 	}
-	if event.SafeCheckpoint > 0 {
-		s.snapshot.SafeCheckpoint = event.SafeCheckpoint
-	}
 	if event.SyncedTS > 0 {
 		s.snapshot.SyncedTS = event.SyncedTS
 	}
