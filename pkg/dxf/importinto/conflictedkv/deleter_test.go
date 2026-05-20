@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/table"
@@ -60,8 +61,8 @@ func TestDeleter(t *testing.T) {
 		return tbl
 	}
 
-	gatherTargetKVFn := func(t *testing.T, tbl table.Table, kvGroup string, endID int) []globalsort.KVPair {
-		targetKVs := make([]globalsort.KVPair, 0, endID)
+	gatherTargetKVFn := func(t *testing.T, tbl table.Table, kvGroup string, endID int) []simplesst.KVPair {
+		targetKVs := make([]simplesst.KVPair, 0, endID)
 		localEncoder := getEncoder(t, tbl)
 		for i := range endID {
 			dupID := i + 1
@@ -71,7 +72,7 @@ func TestDeleter(t *testing.T) {
 			for _, pair := range dupPairs.Pairs {
 				if kvGroup == globalsort.DataKVGroup {
 					if tablecodec.IsRecordKey(pair.Key) {
-						targetKVs = append(targetKVs, globalsort.KVPair{Key: bytes.Clone(pair.Key), Value: bytes.Clone(pair.Val)})
+						targetKVs = append(targetKVs, simplesst.KVPair{Key: bytes.Clone(pair.Key), Value: bytes.Clone(pair.Val)})
 					}
 				} else {
 					indexID, err2 := globalsort.KVGroup2IndexID(kvGroup)
@@ -80,7 +81,7 @@ func TestDeleter(t *testing.T) {
 						gotID, err2 := tablecodec.DecodeIndexID(pair.Key)
 						require.NoError(t, err2)
 						if gotID == indexID {
-							targetKVs = append(targetKVs, globalsort.KVPair{Key: bytes.Clone(pair.Key), Value: bytes.Clone(pair.Val)})
+							targetKVs = append(targetKVs, simplesst.KVPair{Key: bytes.Clone(pair.Key), Value: bytes.Clone(pair.Val)})
 						}
 					}
 				}
@@ -112,7 +113,7 @@ func TestDeleter(t *testing.T) {
 		trafficRec := &mockTrafficRecorder{}
 		deleter := conflictedkv.NewDeleter(tbl, logger, store, kvGroup, encoder, nil, trafficRec)
 		eg := util.NewErrorGroupWithRecover()
-		ch := make(chan *globalsort.KVPair)
+		ch := make(chan *simplesst.KVPair)
 		eg.Go(func() error {
 			return deleter.Run(ctx, ch)
 		})
@@ -123,7 +124,7 @@ func TestDeleter(t *testing.T) {
 			})
 			for _, kv := range conflictedKVs {
 				encodedKey := store.GetCodec().EncodeKey(kv.Key)
-				encodedKV := globalsort.KVPair{Key: encodedKey, Value: kv.Value}
+				encodedKV := simplesst.KVPair{Key: encodedKey, Value: kv.Value}
 				// sending the conflicted KV twice
 				for range 2 {
 					kvCopy := encodedKV

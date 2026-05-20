@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/sessionctx/sessionstates",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/deploymode",
         "//pkg/errno",
         "//pkg/meta/model",
         "//pkg/parser/types",
@@ -31,7 +32,7 @@ go_test(
     ],
     embed = [":sessionstates"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",

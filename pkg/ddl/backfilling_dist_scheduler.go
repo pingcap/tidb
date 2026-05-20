@@ -36,8 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -239,11 +240,11 @@ func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-func skipMergeSort(stats []globalsort.MultipleFilesStat, concurrency int) bool {
+func skipMergeSort(stats []simplesst.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return globalsort.GetMaxOverlappingTotal(stats) <= globalsort.GetAdjustedMergeSortOverlapThreshold(concurrency)
+	return simplesst.GetMaxOverlappingTotal(stats) <= simplesst.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 // OnDone implements scheduler.Extension interface.
@@ -642,7 +643,7 @@ func generateMergeSortPlan(
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
 	var (
-		multiStatsGroup [][]globalsort.MultipleFilesStat
+		multiStatsGroup [][]simplesst.MultipleFilesStat
 		kvMetaGroups    []*globalsort.SortedKVMeta
 		eleIDs          []int64
 	)
@@ -657,13 +658,13 @@ func generateMergeSortPlan(
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*globalsort.SortedKVMeta, len(subtask.MetaGroups))
-				multiStatsGroup = make([][]globalsort.MultipleFilesStat, len(subtask.MetaGroups))
+				multiStatsGroup = make([][]simplesst.MultipleFilesStat, len(subtask.MetaGroups))
 				eleIDs = subtask.EleIDs
 			}
 			for i, g := range subtask.MetaGroups {
 				if kvMetaGroups[i] == nil {
 					kvMetaGroups[i] = &globalsort.SortedKVMeta{}
-					multiStatsGroup[i] = make([]globalsort.MultipleFilesStat, 0, 100)
+					multiStatsGroup[i] = make([]simplesst.MultipleFilesStat, 0, 100)
 				}
 				kvMetaGroups[i].Merge(g)
 				multiStatsGroup[i] = append(multiStatsGroup[i], g.MultipleFilesStats...)
@@ -743,7 +744,7 @@ func getRangeSplitter(
 	cloudStorageURI string,
 	totalSize int64,
 	instanceCnt int64,
-	multiFileStat []globalsort.MultipleFilesStat,
+	multiFileStat []simplesst.MultipleFilesStat,
 	logger *zap.Logger,
 ) (*globalsort.RangeSplitter, error) {
 	backend, err := objstore.ParseBackend(cloudStorageURI, nil)
@@ -763,7 +764,7 @@ func getRangeSplitter(
 		pdCli := store.GetPDClient()
 		tls, err := ingest.NewDDLTLS()
 		if err == nil {
-			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+			size, keys, err := ingestctrl.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 			if err == nil {
 				regionSplitSize = max(regionSplitSize, size)
 				regionSplitKeys = max(regionSplitKeys, keys)

@@ -62,9 +62,9 @@ import (
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -115,6 +115,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -1146,7 +1147,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		logger := logutil.BgLogger()
-		return local.InitializeRateLimiterParam(m, logger)
+		return ingestctrl.InitializeRateLimiterParam(m, logger)
 	}); err != nil {
 		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}
@@ -1267,7 +1268,7 @@ func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
 // GetPDClient returns the PD client.
 func (do *Domain) GetPDClient() pd.Client {
 	if store, ok := do.store.(kv.StorageWithPD); ok {
-		return store.GetPDClient()
+		return store.GetPDClient().WithCallerComponent(caller.GetComponent(1))
 	}
 	return nil
 }
@@ -2508,7 +2509,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 
 		for {
 			select {
-			case <-time.After(sessionstates.LoadCertInterval):
+			case <-time.After(sessionstates.GetLoadCertInterval()):
 				sessionstates.ReloadSigningCert()
 			case <-do.exit:
 				return

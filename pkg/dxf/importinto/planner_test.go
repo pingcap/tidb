@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -150,7 +151,7 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []globalsort.MultipleFilesStat{
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{prefix + "/1", prefix + "/1.stat"},
@@ -163,7 +164,7 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 					StartKey:    []byte(idxPrefix + "a"),
 					EndKey:      []byte(idxPrefix + "c"),
 					TotalKVSize: 12,
-					MultipleFilesStats: []globalsort.MultipleFilesStat{
+					MultipleFilesStats: []simplesst.MultipleFilesStat{
 						{
 							Filenames: [][2]string{
 								{idxPrefix + "/1", idxPrefix + "/1.stat"},
@@ -181,10 +182,10 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 }
 
 func TestGenerateMergeSortSpecs(t *testing.T) {
-	stepBak := globalsort.MaxMergeSortFileCountStep
-	globalsort.MaxMergeSortFileCountStep = 2
+	stepBak := simplesst.MaxMergeSortFileCountStep
+	simplesst.MaxMergeSortFileCountStep = 2
 	t.Cleanup(func() {
-		globalsort.MaxMergeSortFileCountStep = stepBak
+		simplesst.MaxMergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/dxf/importinto/forceMergeSort", `return("data")`))
@@ -264,7 +265,7 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []globalsort.MultipleFilesStat{
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{prefix + "/1", prefix + "/1.stat"},
@@ -335,13 +336,13 @@ func TestSplitForOneSubtask(t *testing.T) {
 		values[i] = largeValue
 	}
 
-	var multiFileStat []globalsort.MultipleFilesStat
-	writer := globalsort.NewWriterBuilder().
+	var multiFileStat []simplesst.MultipleFilesStat
+	writer := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(40*1024*1024).
 		SetBlockSize(20*1024*1024).
 		SetPropSizeDistance(5*1024*1024).
 		SetPropKeysDistance(5).
-		SetOnCloseFunc(func(s *globalsort.WriterSummary) {
+		SetOnCloseFunc(func(s *simplesst.WriterSummary) {
 			multiFileStat = s.MultipleFilesStats
 		}).
 		Build(store, "/mock-test", "0")

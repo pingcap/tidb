@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -84,6 +85,9 @@ const (
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
 	flagPartitions               = "partitions"
+	flagParquetCompress          = "parquet-compress"
+	flagParquetPageSize          = "parquet-page-size"
+	flagParquetRowGroupSize      = "parquet-row-group-size"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -208,6 +212,14 @@ type Config struct {
 	ClusterSSLCA   string
 	ClusterSSLCert string
 	ClusterSSLKey  string
+
+	// ParquetCompressType is the parquet row-group compression type.
+	ParquetCompressType compressedio.CompressType
+	// ParquetPageSize is the parquet data page size in bytes.
+	ParquetPageSize int64
+	// ParquetRowGroupSize is the parquet row-group flush threshold by accounted
+	// in-memory bytes.
+	ParquetRowGroupSize int64
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -265,6 +277,9 @@ func DefaultConfig() *Config {
 		ClusterSSLCA:             "",
 		ClusterSSLCert:           "",
 		ClusterSSLKey:            "",
+		ParquetCompressType:      parquetfile.DefaultCompressionType,
+		ParquetPageSize:          units.MiB,
+		ParquetRowGroupSize:      parquetfile.DefaultRowGroupMemoryLimitBytes,
 	}
 }
 
@@ -354,7 +369,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
+	flags.String(flagFiletype, "", "The type of export file (sql/csv/parquet)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
@@ -387,6 +402,13 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
+	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
+	flags.String(flagParquetPageSize, units.BytesSize(float64(units.MiB)), "Parquet page size in bytes, accepts human-readable units")
+	flags.String(
+		flagParquetRowGroupSize,
+		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
+		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
+	)
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -637,6 +659,23 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	parquetCompressType, err := flags.GetString(flagParquetCompress)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetCompressType, err = parseParquetCompressType(parquetCompressType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetPageSize, err = parseSizeFlag(flags, flagParquetPageSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetRowGroupSize, err = parseSizeFlag(flags, flagParquetRowGroupSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	conf.PDAddr, err = flags.GetString(flagPDAddr)
 	if err != nil {
 		return errors.Trace(err)
@@ -738,6 +777,27 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
+func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
+	size, err := flags.GetString(flagName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	bytes, err := units.RAMInBytes(size)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to parse --%s", flagName)
+	}
+	return bytes, nil
+}
+
+// parseParquetCompressType parses the parquet compression flag value.
+// Empty means the flag is not configured, so Dumpling uses the parquet default.
+func parseParquetCompressType(compressType string) (compressedio.CompressType, error) {
+	if compressType == "" {
+		return parquetfile.DefaultCompressionType, nil
+	}
+	return compressedio.ParseCompressType(compressType)
+}
+
 func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
@@ -829,6 +889,10 @@ func adjustFileFormat(conf *Config) error {
 			return errors.Errorf("unsupported config.FileType '%s' when we specify --sql, please unset --filetype or set it to 'csv'", conf.FileType)
 		}
 	case FileFormatCSVString:
+	case FileFormatParquetString:
+		if conf.CompressType != compressedio.NoCompression {
+			return errors.Errorf("parquet does not support --compress, please unset it or use --parquet-compress instead")
+		}
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}

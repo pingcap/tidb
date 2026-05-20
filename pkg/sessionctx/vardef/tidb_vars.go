@@ -1645,7 +1645,7 @@ const (
 	DefTiDBOptExplainEvaledSubquery                   = false
 	DefTiDBReadStaleness                              = 0
 	DefTiDBGCMaxWaitTime                              = 24 * 60 * 60
-	DefMaxAllowedPacket                        uint64 = 67108864
+	DefMaxAllowedPacket                        uint64 = config.DefMaxAllowedPacket
 	DefTiDBEnableBatchDML                             = false
 	DefTiDBMemQuotaQuery                              = memory.DefMemQuotaQuery // 1GB
 	DefTiDBStatsCacheMemQuota                         = 0

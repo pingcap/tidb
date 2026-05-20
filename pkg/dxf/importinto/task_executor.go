@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -160,8 +161,8 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.dataBlockSize = globalsort.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
-	s.indexBlockSize = globalsort.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, globalsort.DefaultBlockSize)
+	s.dataBlockSize = simplesst.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
+	s.indexBlockSize = simplesst.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, simplesst.DefaultBlockSize)
 	s.concurrency = int(s.GetResource().CPU.Capacity())
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
@@ -448,8 +449,8 @@ var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
 func (m *mergeSortStepExecutor) Init(context.Context) error {
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
-	m.dataKVPartSize = max(globalsort.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/globalsort.MaxUploadPartCount))
-	m.indexKVPartSize = max(globalsort.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/globalsort.MaxUploadPartCount))
+	m.dataKVPartSize = max(simplesst.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount))
+	m.indexKVPartSize = max(simplesst.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount))
 
 	m.logger.Info("merge sort partSize",
 		zap.String("data-kv", units.BytesSize(float64(m.dataKVPartSize))),
@@ -492,7 +493,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	var mu sync.Mutex
 	m.subtaskSortedKVMeta = &globalsort.SortedKVMeta{}
-	onWriterClose := func(summary *globalsort.WriterSummary) {
+	onWriterClose := func(summary *simplesst.WriterSummary) {
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
@@ -519,7 +520,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		objStore,
 		partSize,
 		prefix,
-		globalsort.DefaultOneWriterBlockSize,
+		simplesst.DefaultOneWriterBlockSize,
 		onWriterClose,
 		globalsort.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),

@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -376,6 +377,9 @@ func WriteInsertInCsv(
 
 	for fileRowIter.HasNext() {
 		lastBfSize := bf.Len()
+		// When all table columns are generated, selectedFields is empty.
+		// Dumpling still iterates source rows via SELECT '' and emits only
+		// line terminators here.
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
@@ -589,7 +593,110 @@ func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
 }
 
-// FileFormat is the format that output to file. Currently we support SQL text and CSV file format.
+type wrappedWriter struct {
+	ctx context.Context
+	w   objectio.Writer
+}
+
+func (w *wrappedWriter) Write(p []byte) (n int, err error) {
+	return w.w.Write(w.ctx, p)
+}
+
+// WriteInsertInParquet writes table rows to parquet format.
+func WriteInsertInParquet(
+	pCtx *tcontext.Context,
+	cfg *Config,
+	meta TableMeta,
+	tblIR TableDataIR,
+	w objectio.Writer,
+	metrics *metrics,
+) (n uint64, err error) {
+	fileRowIter := tblIR.Rows()
+	if !fileRowIter.HasNext() {
+		return 0, fileRowIter.Error()
+	}
+
+	// parquet need to get more information from tableMeta
+	opts := []parquetfile.WriterOption{
+		parquetfile.WithCompression(parquetfile.CompressionCodec(cfg.ParquetCompressType)),
+		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
+		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
+	}
+	writer, err := parquetfile.NewParquetWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, meta.ColumnInfos(), opts...)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	var (
+		row            = MakeRowReceiver(meta.ColumnTypes())
+		counter        uint64
+		lastCounter    uint64
+		finishedSize   uint64
+		selectedFields = meta.SelectedField()
+	)
+
+	defer func() {
+		if err != nil {
+			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics and start a retry if possible",
+				zap.String("database", meta.DatabaseName()),
+				zap.String("table", meta.TableName()),
+				zap.Uint64("finished rows", lastCounter),
+				zap.Uint64("finished size", finishedSize),
+				log.ShortError(err))
+			SubGauge(metrics.finishedRowsGauge, float64(lastCounter))
+			SubGauge(metrics.finishedSizeGauge, float64(finishedSize))
+		} else {
+			pCtx.L().Debug("finish dumping table(chunk)",
+				zap.String("database", meta.DatabaseName()),
+				zap.String("table", meta.TableName()),
+				zap.Uint64("finished rows", counter),
+				zap.Uint64("finished size", finishedSize))
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, finishedSize)
+			summary.CollectSuccessUnit("total rows", 1, counter)
+		}
+	}()
+
+	// Add rows to parquet writer; it flushes when accounted in-memory bytes reach
+	// the configured row-group memory limit.
+	for fileRowIter.HasNext() {
+		// When all table columns are generated, selectedFields is empty.
+		// Dumpling still iterates source rows via SELECT '' and writes no parquet
+		// rows in this branch.
+		if selectedFields != "" {
+			if err = fileRowIter.Decode(row); err != nil {
+				return counter, errors.Trace(err)
+			}
+			err = writer.Write((*row).GetRawBytes())
+			if err != nil {
+				return counter, errors.Trace(err)
+			}
+		}
+		counter++
+		if counter%1000 == 0 {
+			AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
+			lastCounter = counter
+		}
+		fileRowIter.Next()
+		if cfg.FileSize != UnspecifiedSize && writer.EstimateFileSize() >= cfg.FileSize {
+			break
+		}
+	}
+	AddGauge(metrics.finishedRowsGauge, float64(counter-lastCounter))
+	lastCounter = counter
+
+	// write remain data and meta file
+	if err = writer.Close(); err != nil {
+		return counter, errors.Trace(err)
+	}
+	finishedSize = writer.EstimateFileSize()
+	AddGauge(metrics.finishedSizeGauge, float64(finishedSize))
+	if err = fileRowIter.Error(); err != nil {
+		return counter, errors.Trace(err)
+	}
+	return counter, nil
+}
+
+// FileFormat is the format that output to file, including SQL text, CSV, and parquet.
 type FileFormat int32
 
 const (
@@ -599,6 +706,8 @@ const (
 	FileFormatSQLText
 	// FileFormatCSV indicates the given file type is csv type
 	FileFormatCSV
+	// FileFormatParquet indicates the given file type is parquet type
+	FileFormatParquet
 )
 
 const (
@@ -606,6 +715,8 @@ const (
 	FileFormatSQLTextString = "sql"
 	// FileFormatCSVString indicates the string/suffix of csv type file
 	FileFormatCSVString = "csv"
+	// FileFormatParquetString indicates the string/suffix of parquet type file
+	FileFormatParquetString = "parquet"
 )
 
 // String implement Stringer.String method.
@@ -615,6 +726,8 @@ func (f FileFormat) String() string {
 		return strings.ToUpper(FileFormatSQLTextString)
 	case FileFormatCSV:
 		return strings.ToUpper(FileFormatCSVString)
+	case FileFormatParquet:
+		return strings.ToUpper(FileFormatParquetString)
 	default:
 		return "unknown"
 	}
@@ -624,18 +737,21 @@ func (f FileFormat) String() string {
 //
 //	text -> "sql"
 //	csv  -> "csv"
+//	parquet -> "parquet"
 func (f FileFormat) Extension() string {
 	switch f {
 	case FileFormatSQLText:
 		return FileFormatSQLTextString
 	case FileFormatCSV:
 		return FileFormatCSVString
+	case FileFormatParquet:
+		return FileFormatParquetString
 	default:
 		return "unknown_format"
 	}
 }
 
-// WriteInsert writes TableDataIR to a objectio.Writer in sql/csv type
+// WriteInsert writes TableDataIR to objectio.Writer in SQL/CSV/parquet type.
 func (f FileFormat) WriteInsert(
 	pCtx *tcontext.Context,
 	cfg *Config,
@@ -649,6 +765,8 @@ func (f FileFormat) WriteInsert(
 		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics)
 	case FileFormatCSV:
 		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics)
+	case FileFormatParquet:
+		return WriteInsertInParquet(pCtx, cfg, meta, tblIR, w, metrics)
 	default:
 		return 0, errors.Errorf("unknown file format")
 	}

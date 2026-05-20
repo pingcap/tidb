@@ -352,6 +352,10 @@ func (o genHistSQLOptions) assert() {
 // We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
 func genInitStatsHistogramsSQL(options genHistSQLOptions) string {
 	options.assert()
+	// Keep the ORDER_INDEX(tbl) hint: `tbl` still exists on clusters bootstrapped
+	// before stats_histograms moved to a clustered PRIMARY KEY. On fresh clusters
+	// it is inapplicable but harmless: the clustered PK scan is already ordered by
+	// table_id.
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 
@@ -588,6 +592,7 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 // Returns a map where keys are table IDs that have bucket entries.
 func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
 	// Query to find table_ids that have buckets in the given range
+	// Keep the USE_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
 	// TODO: Figure out if HIGH_PRIORITY is working as intended here.
 	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
 		" where is_index = 1" +
@@ -732,6 +737,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 // We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
 // The stats of the column is not loaded during the bootstrap process.
 func genInitStatsBucketsSQLForIndexes(isPaging bool, tableRange [2]int64) string {
+	// Keep the ORDER_INDEX(tbl) hint for upgraded clusters; see genInitStatsHistogramsSQL.
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1"
 	orderSuffix := " order by table_id"
 	if !isPaging {

@@ -580,8 +580,14 @@ func TestTiDBReplicaRead(t *testing.T) {
 	sv := GetSysVar(vardef.TiDBReplicaRead)
 	vars := NewSessionVars(nil)
 	val, err := sv.Validate(vars, "follower", vardef.ScopeGlobal)
-	require.Equal(t, val, "follower")
-	require.NoError(t, err)
+	if kerneltype.IsNextGen() {
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+		require.Equal(t, "leader", val)
+	} else {
+		require.Equal(t, val, "follower")
+		require.NoError(t, err)
+	}
 }
 
 func TestSQLAutoIsNull(t *testing.T) {

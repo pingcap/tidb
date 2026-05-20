@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/felixge/fgprof"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -274,7 +275,7 @@ func createEvenlyDistributedFiles(
 	kvCnt := 0
 	var minKey, maxKey kv.Key
 	for i := range fileCount {
-		builder := NewWriterBuilder().
+		builder := simplesst.NewWriterBuilder().
 			SetBlockSize(10 * 1024 * 1024).
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
@@ -320,7 +321,7 @@ func createAscendingFiles(
 	kvCnt := 0
 	var minKey, maxKey kv.Key
 	for i := range fileCount {
-		builder := NewWriterBuilder().
+		builder := simplesst.NewWriterBuilder().
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
 		writer := builder.Build(
 			store,

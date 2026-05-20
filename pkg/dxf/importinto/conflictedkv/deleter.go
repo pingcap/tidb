@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -95,7 +96,7 @@ func NewDeleter(
 }
 
 // Run starts the deleter.
-func (d *Deleter) Run(ctx context.Context, ch chan *globalsort.KVPair) error {
+func (d *Deleter) Run(ctx context.Context, ch chan *simplesst.KVPair) error {
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	eg.Go(func() error {

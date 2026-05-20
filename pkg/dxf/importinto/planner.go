@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -401,14 +402,14 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 	return importSpecs, nil
 }
 
-func skipMergeSort(kvGroup string, stats []globalsort.MultipleFilesStat, concurrency int) bool {
+func skipMergeSort(kvGroup string, stats []simplesst.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
 		in := val.(string)
 		if in == kvGroup || in == "*" {
 			failpoint.Return(false)
 		}
 	})
-	return globalsort.GetMaxOverlappingTotal(stats) <= globalsort.GetAdjustedMergeSortOverlapThreshold(concurrency)
+	return simplesst.GetMaxOverlappingTotal(stats) <= simplesst.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {

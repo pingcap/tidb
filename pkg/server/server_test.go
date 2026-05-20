@@ -18,15 +18,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net/http"
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/arena"
@@ -34,6 +37,20 @@ import (
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 )
+
+type testStandbyController struct{}
+
+func (*testStandbyController) WaitForActivate() {}
+
+func (*testStandbyController) EndStandby(error) {}
+
+func (*testStandbyController) Handler(*Server) (string, *http.ServeMux) {
+	return "/test-standby/", http.NewServeMux()
+}
+
+func (*testStandbyController) OnConnActive() {}
+
+func (*testStandbyController) OnServerCreated(*Server) {}
 
 func TestIssue46197(t *testing.T) {
 	ctx := context.Background()
@@ -129,6 +146,40 @@ func TestGetConAttrs(t *testing.T) {
 	attrs = server.GetConAttrs(userB)
 	_, hasClientName = attrs[1]
 	require.False(t, hasClientName)
+
+	newConn := func(connID uint64, gwConnID string) *clientConn {
+		tk := testkit.NewTestKit(t, store)
+		cc := &clientConn{
+			connectionID: connID,
+			server:       server,
+			alloc:        arena.NewAllocator(1024),
+			chunkAlloc:   chunk.NewAllocator(),
+			pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			attrs: map[string]string{
+				tidbGatewayAttrsConnKey: gwConnID,
+			},
+		}
+		cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+		require.True(t, server.registerConn(cc))
+		return cc
+	}
+
+	const normalCloseMsg = sessmgr.NormalCloseMsgKillStmt
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
+	noStandbyConn := newConn(100, "gw-no-standby")
+	server.KillWithNormalCloseMsg(noStandbyConn.connectionID, false, false, false, normalCloseMsg)
+	require.Empty(t, server.GetNormalClosedConn(keyspaceName, "gw-no-standby"))
+
+	server.StandbyController = &testStandbyController{}
+	killConn := newConn(101, "gw-kill-connection")
+	require.Empty(t, server.GetNormalClosedConn(keyspaceName, "gw-kill-connection"))
+	server.KillWithNormalCloseMsg(killConn.connectionID, false, false, false, normalCloseMsg)
+	require.Equal(t, normalCloseMsg, server.GetNormalClosedConn(keyspaceName, "gw-kill-connection"))
+	require.Equal(t, int32(connStatusWaitShutdown), killConn.getStatus())
+
+	queryConn := newConn(102, "gw-kill-query")
+	server.KillWithNormalCloseMsg(queryConn.connectionID, true, false, false, normalCloseMsg)
+	require.Empty(t, server.GetNormalClosedConn(keyspaceName, "gw-kill-query"))
 }
 
 func TestSeverHealth(t *testing.T) {

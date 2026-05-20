@@ -1199,7 +1199,7 @@ func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables
 			}
 			// Use Reset() to set ID, RuleType, Data, Index, and add/update db/table labels
 			// Reset() uses the NEW table ID (after restore)
-			rule.Reset(dbName, tableName, "", newTableInfo.ID)
+			rule.Reset(rc.dom.Store().GetCodec(), dbName, tableName, "", newTableInfo.ID)
 
 			rulesToSet = append(rulesToSet, rule)
 		}
@@ -1237,7 +1237,7 @@ func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables
 					}
 					// Use Reset() to set ID, RuleType, Data, Index, and add/update db/table/partition labels
 					// Reset() uses the NEW partition ID (after restore)
-					rule.Reset(dbName, tableName, partitionName, newDef.ID)
+					rule.Reset(rc.dom.Store().GetCodec(), dbName, tableName, partitionName, newDef.ID)
 
 					rulesToSet = append(rulesToSet, rule)
 				}

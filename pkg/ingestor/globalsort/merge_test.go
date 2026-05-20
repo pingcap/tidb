@@ -15,16 +15,27 @@
 package globalsort
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/rand"
 )
 
 func TestSplitDataFiles(t *testing.T) {
@@ -206,4 +217,193 @@ func TestMergeOperator(t *testing.T) {
 
 		cancel()
 	}
+}
+
+func TestMergeOverlappingFilesInternal(t *testing.T) {
+	changePropDist(t, simplesst.DefaultPropSizeDist, 2)
+	// 1. Write to 3 files.
+	// 2. merge 3 files into one file.
+	// 3. read one file and check result.
+	// 4. check duplicate key.
+	var kvAndStats [][2]string
+	ctx := context.Background()
+	memStore := objstore.NewMemStorage()
+	writer := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(1000).
+		SetOnCloseFunc(func(summary *simplesst.WriterSummary) { kvAndStats = summary.MultipleFilesStats[0].Filenames }).
+		Build(memStore, "/test", "0")
+
+	kvCount := 2000000
+	kvSize := 0
+	for i := range kvCount {
+		v := i
+		if v == kvCount/2 {
+			v-- // insert a duplicate key.
+		}
+		key, val := []byte{byte(v)}, []byte{byte(v)}
+		kvSize += len(key) + len(val)
+		require.NoError(t, writer.WriteRow(ctx, key, val, kv.IntHandle(i)))
+	}
+	require.NoError(t, writer.Close(ctx))
+	readBufSizeBak := simplesst.DefaultReadBufferSize
+	memLimitBak := simplesst.DefaultOneWriterMemSizeLimit
+	t.Cleanup(func() {
+		simplesst.DefaultReadBufferSize = readBufSizeBak
+		simplesst.DefaultOneWriterMemSizeLimit = memLimitBak
+	})
+	simplesst.DefaultReadBufferSize = 100
+	simplesst.DefaultOneWriterMemSizeLimit = 1000
+
+	collector := &execute.TestCollector{}
+
+	dataFiles := make([]string, 0, len(kvAndStats))
+	for _, f := range kvAndStats {
+		dataFiles = append(dataFiles, f[0])
+	}
+	var onefile [2]string
+	require.NoError(t, mergeOverlappingFilesInternal(
+		ctx,
+		dataFiles,
+		memStore,
+		int64(5*size.MB),
+		"/test2",
+		"mergeID",
+		1000,
+		func(summary *simplesst.WriterSummary) { onefile = summary.MultipleFilesStats[0].Filenames[0] },
+		collector,
+		true,
+		engineapi.OnDuplicateKeyIgnore,
+		1,
+	))
+
+	require.EqualValues(t, kvCount, collector.Rows.Load())
+	require.EqualValues(t, kvSize, collector.ProcessedCnt.Load())
+
+	kvs := make([]simplesst.KVPair, 0, kvCount)
+
+	kvReader, err := simplesst.NewKVReader(ctx, onefile[0], memStore, 0, 100)
+	require.NoError(t, err)
+	for range kvCount {
+		key, value, err := kvReader.NextKV()
+		require.NoError(t, err)
+		clonedKey := make([]byte, len(key))
+		copy(clonedKey, key)
+		clonedVal := make([]byte, len(value))
+		copy(clonedVal, value)
+		kvs = append(kvs, simplesst.KVPair{Key: clonedKey, Value: clonedVal})
+	}
+	_, _, err = kvReader.NextKV()
+	require.ErrorIs(t, err, io.EOF)
+	require.NoError(t, kvReader.Close())
+
+	data := &MemoryIngestData{
+		kvs: kvs,
+		ts:  123,
+	}
+	pool := membuf.NewPool()
+	defer pool.Destroy()
+	iter := data.NewIter(ctx, nil, nil, pool)
+
+	for iter.First(); iter.Valid(); iter.Next() {
+	}
+	err = iter.Error()
+	require.NoError(t, err)
+}
+
+func TestOnefileWriterManyRows(t *testing.T) {
+	changePropDist(t, simplesst.DefaultPropSizeDist, 2)
+	// 1. write into one file with sorted order.
+	// 2. merge one file.
+	// 3. read kv file and check the result.
+	// 4. check the writeSummary.
+	var kvAndStat [2]string
+	ctx := context.Background()
+	memStore := objstore.NewMemStorage()
+	writer := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(1000).
+		SetOnCloseFunc(func(summary *simplesst.WriterSummary) { kvAndStat = summary.MultipleFilesStats[0].Filenames[0] }).
+		BuildOneFile(memStore, "/test", "0")
+
+	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
+
+	kvCnt := 100000
+	expectedTotalSize := 0
+	kvs := make([]common.KvPair, kvCnt)
+	for i := range kvCnt {
+		randLen := rand.Intn(10) + 1
+		kvs[i].Key = make([]byte, randLen)
+		_, err := rand.Read(kvs[i].Key)
+		expectedTotalSize += randLen
+
+		require.NoError(t, err)
+		randLen = rand.Intn(10) + 1
+		kvs[i].Val = make([]byte, randLen)
+		_, err = rand.Read(kvs[i].Val)
+		require.NoError(t, err)
+		expectedTotalSize += randLen
+	}
+
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
+	for _, item := range kvs {
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
+	}
+	require.NoError(t, writer.Close(ctx))
+
+	var resSummary *simplesst.WriterSummary
+	onClose := func(summary *simplesst.WriterSummary) {
+		resSummary = summary
+	}
+	readBufSizeBak := simplesst.DefaultReadBufferSize
+	memLimitBak := simplesst.DefaultOneWriterMemSizeLimit
+	t.Cleanup(func() {
+		simplesst.DefaultReadBufferSize = readBufSizeBak
+		simplesst.DefaultOneWriterMemSizeLimit = memLimitBak
+	})
+	simplesst.DefaultReadBufferSize = 100
+	simplesst.DefaultOneWriterMemSizeLimit = 1000
+	require.NoError(t, mergeOverlappingFilesInternal(
+		ctx,
+		[]string{kvAndStat[0]},
+		memStore,
+		int64(5*size.MB),
+		"/test2",
+		"mergeID",
+		1000,
+		onClose,
+		nil,
+		true,
+		engineapi.OnDuplicateKeyIgnore,
+		1,
+	))
+
+	bufSize := rand.Intn(100) + 1
+	kvAndStat2 := resSummary.MultipleFilesStats[0].Filenames[0]
+	kvReader, err := simplesst.NewKVReader(ctx, kvAndStat2[0], memStore, 0, bufSize)
+	require.NoError(t, err)
+	for i := range kvCnt {
+		key, value, err := kvReader.NextKV()
+		require.NoError(t, err)
+		require.Equal(t, kvs[i].Key, key)
+		require.Equal(t, kvs[i].Val, value)
+	}
+	_, _, err = kvReader.NextKV()
+	require.ErrorIs(t, err, io.EOF)
+	require.NoError(t, kvReader.Close())
+
+	// check writerSummary.
+	expected := simplesst.MultipleFilesStat{
+		MinKey:            kvs[0].Key,
+		MaxKey:            kvs[len(kvs)-1].Key,
+		Filenames:         [][2]string{kvAndStat2},
+		MaxOverlappingNum: 1,
+	}
+	require.EqualValues(t, expected.MinKey, resSummary.Min)
+	require.EqualValues(t, expected.MaxKey, resSummary.Max)
+	require.Equal(t, expected.Filenames, resSummary.MultipleFilesStats[0].Filenames)
+	require.Equal(t, expected.MaxOverlappingNum, resSummary.MultipleFilesStats[0].MaxOverlappingNum)
+	require.EqualValues(t, expectedTotalSize, resSummary.TotalSize)
+	require.EqualValues(t, kvCnt, resSummary.TotalCnt)
 }

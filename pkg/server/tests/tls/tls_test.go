@@ -558,7 +558,9 @@ func TestReloadTLS(t *testing.T) {
 
 	// try reload a valid cert.
 	tlsCfg := server.GetTLSConfig()
-	cert, err := x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
+	tlsCert, err := tlsCfg.GetCertificate(nil)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
 	require.NoError(t, err)
 	oldExpireTime := cert.NotAfter
 	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key-reload2.pem", "/tmp/server-cert-reload2.pem", func(c *x509.Certificate) {
@@ -582,7 +584,9 @@ func TestReloadTLS(t *testing.T) {
 	require.NoError(t, err)
 
 	tlsCfg = server.GetTLSConfig()
-	cert, err = x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
+	tlsCert, err = tlsCfg.GetCertificate(nil)
+	require.NoError(t, err)
+	cert, err = x509.ParseCertificate(tlsCert.Certificate[0])
 	require.NoError(t, err)
 	newExpireTime := cert.NotAfter
 	require.True(t, newExpireTime.After(oldExpireTime))

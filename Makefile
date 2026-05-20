@@ -556,7 +556,7 @@ mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/common ChunkFlushStatus > br/pkg/mock/common.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
-	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
+	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/ingestor/ingestctrl DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/dxf/framework/mock/task_executor_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/dxf/framework/mock/scheduler_mock.go

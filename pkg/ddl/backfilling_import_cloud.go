@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
@@ -51,7 +51,7 @@ type cloudImportExecutor struct {
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
 	backendCtx    ingest.BackendCtx
-	backend       *local.Backend
+	backend       *ingestctrl.Backend
 	metric        *lightningmetric.Common
 	engine        atomic.Pointer[globalsort.Engine]
 	summary       *execute.SubtaskSummary
