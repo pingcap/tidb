@@ -17,10 +17,14 @@ package infosync
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -28,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/goleak"
 )
 
@@ -130,6 +135,42 @@ func TestTiFlashManager(t *testing.T) {
 	stats, err := GetTiFlashStoresStat(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Count)
+
+	t.Run("circuitBreakerCancelsProgressCollection", func(t *testing.T) {
+		restore := config.RestoreFunc()
+		defer restore()
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.CSE.ColumnarCollectTimeout = 50 * time.Millisecond
+		})
+
+		requestCanceled := make(chan struct{}, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done()
+			requestCanceled <- struct{}{}
+		}))
+		defer server.Close()
+
+		tikvStores := map[int64]pdhttp.StoreInfo{
+			1: {
+				Store: pdhttp.MetaStore{
+					ID:            1,
+					StatusAddress: strings.TrimPrefix(server.URL, "http://"),
+					StateName:     "Up",
+				},
+			},
+		}
+
+		progress, circuitBreakerTriggered, err := MustGetTiFlashProgressWithCircuitBreaker(context.Background(), 1024, 1, nil, tikvStores)
+		require.NoError(t, err)
+		require.True(t, circuitBreakerTriggered)
+		require.Equal(t, 1.0, progress)
+
+		select {
+		case <-requestCanceled:
+		case <-time.After(time.Second):
+			t.Fatal("expected progress collection request to be canceled")
+		}
+	})
 
 	// DeleteTiFlashPlacementRules
 	require.NoError(t, DeleteTiFlashPlacementRules(ctx, []int64{1}))

@@ -900,9 +900,9 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 	return nil
 }
 
-// CollectTiFlashStatus query sync status of one table from TiFlash store.
-// `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
-func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+// CollectTiFlashStatusWithCtx queries sync status of one table from a TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash replicas in this region.
+func CollectTiFlashStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
 	// The new query schema is like: http://<host>/tiflash/sync-status/keyspace/<keyspaceID>/table/<tableID>.
 	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
 	// The query URL is like: http://<host>/sync-status/keyspace/<NullspaceID>/table/<tableID>
@@ -914,7 +914,11 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 		keyspaceID,
 		tableID,
 	)
-	resp, err := util.InternalHTTPClient().Get(statURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -931,6 +935,12 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// CollectTiFlashStatus queries sync status of one table from a TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash replicas in this region.
+func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+	return CollectTiFlashStatusWithCtx(context.Background(), statusAddress, keyspaceID, tableID, regionReplica)
 }
 
 // SyncTableSchemaToTiFlash query sync schema of one table to TiFlash store.
@@ -963,8 +973,8 @@ type ColumnarStatusResp struct {
 	Total            uint `json:"total"`
 }
 
-// CollectColumnarStatus collects the columnar status from the TiKV's status API
-func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
+// CollectColumnarStatusWithCtx collects the columnar status from the TiKV status API.
+func CollectColumnarStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
 	statURL := fmt.Sprintf("%s://%s/kvengine/columnar_status?keyspace_id=%d&table_id=%d",
 		util.InternalHTTPSchema(),
 		statusAddress,
@@ -975,7 +985,11 @@ func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tab
 		statURL += fmt.Sprintf("&index_id=%d", *indexID)
 	}
 	var columnarStatus ColumnarStatusResp
-	resp, err := util.InternalHTTPClient().Get(statURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return columnarStatus, errors.Trace(err)
 	}
@@ -1005,4 +1019,9 @@ func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tab
 	}
 
 	return columnarStatus, nil
+}
+
+// CollectColumnarStatus collects the columnar status from the TiKV status API.
+func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
+	return CollectColumnarStatusWithCtx(context.Background(), statusAddress, keyspaceID, tableID, indexID)
 }

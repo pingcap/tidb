@@ -2794,15 +2794,12 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx sessionctx.Context) error {
 	var (
-		checker       = privilege.GetPrivilegeManager(sctx)
-		rows          [][]types.Datum
-		tiFlashStores map[int64]pd.StoreInfo
+		checker = privilege.GetPrivilegeManager(sctx)
+		rows    [][]types.Datum
 	)
-	var tikvStores *map[int64]pd.StoreInfo
 	enableColumnarStore := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
-	if enableColumnarStore {
-		tikvStores = &map[int64]pd.StoreInfo{}
-	} else {
+	tiFlashStores, tikvStores, storesErr := infosync.GetTiFlashProgressStores(context.Background())
+	if storesErr == nil && !enableColumnarStore {
 		tikvStores = nil
 	}
 	var globalCircuitBreakerTriggered bool
@@ -2822,9 +2819,11 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx
 				logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
 				progress = circuitBreakerProgress
 			} else {
-				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+				if storesErr != nil {
+					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(storesErr))
+				} else if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 					for _, p := range pi.Definitions {
-						progressOfPartition, circuitBreakerTriggered, err := infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, p.ID, tbl.TiFlashReplica.Count, &tiFlashStores, tikvStores)
+						progressOfPartition, circuitBreakerTriggered, err := infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, p.ID, tbl.TiFlashReplica.Count, tiFlashStores, tikvStores)
 						if err != nil {
 							logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
 						}
@@ -2843,7 +2842,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx
 					}
 				} else {
 					var err error
-					progress, globalCircuitBreakerTriggered, err = infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores, tikvStores)
+					progress, globalCircuitBreakerTriggered, err = infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, tbl.ID, tbl.TiFlashReplica.Count, tiFlashStores, tikvStores)
 					if err != nil {
 						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
 					}
