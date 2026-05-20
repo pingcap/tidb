@@ -312,6 +312,61 @@ func TestSwitchTaskStep(t *testing.T) {
 	// start time should not change
 	require.Equal(t, taskStartTime, task.StartTime)
 	checkAfterSwitchStep(t, startTime, task, subtasksStepTwo, proto.StepTwo)
+
+	t.Run("prepare transition persists fields and exposes zero-row CAS", func(t *testing.T) {
+		prepareTaskID, err := tm.CreateTask(ctx, "prepare-key", "test", "", 1, "", 1, proto.ExtraParams{}, []byte("init-meta"))
+		require.NoError(t, err)
+		prepareTask, err := tm.GetTaskByID(ctx, prepareTaskID)
+		require.NoError(t, err)
+		checkTaskStateStep(t, prepareTask, proto.TaskStatePending, proto.StepInit)
+
+		prepareTask.Meta = []byte(`{"prepare":"done"}`)
+		prepareTask.RequiredSlots = 8
+		prepareTask.MaxNodeCount = 6
+		prepareTask.ExtraParams = proto.ExtraParams{
+			ManualRecovery: true,
+			PrepareMode:    proto.PrepareModeRequired,
+		}
+		switchTime := time.Unix(time.Now().Unix(), 0)
+		switched, err := tm.SwitchTaskStepAfterPrepare(ctx, prepareTask)
+		require.NoError(t, err)
+		require.True(t, switched)
+
+		persistedTask, err := tm.GetTaskByID(ctx, prepareTaskID)
+		require.NoError(t, err)
+		checkTaskStateStep(t, persistedTask, proto.TaskStatePending, proto.StepPrepared)
+		require.Equal(t, []byte(`{"prepare":"done"}`), persistedTask.Meta)
+		require.Equal(t, 8, persistedTask.RequiredSlots)
+		require.Equal(t, 6, persistedTask.MaxNodeCount)
+		require.Equal(t, proto.ExtraParams{
+			ManualRecovery: true,
+			PrepareMode:    proto.PrepareModeRequired,
+		}, persistedTask.ExtraParams)
+		require.Zero(t, persistedTask.StartTime)
+		require.GreaterOrEqual(t, persistedTask.StateUpdateTime, switchTime)
+		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.tidb_background_subtask where task_key = %d", prepareTaskID)).
+			Check(testkit.Rows("0"))
+
+		prepareTask.Meta = []byte(`{"prepare":"stale-owner"}`)
+		prepareTask.RequiredSlots = 99
+		prepareTask.MaxNodeCount = 99
+		prepareTask.ExtraParams = proto.ExtraParams{
+			PrepareMode: proto.PrepareModeDisabled,
+		}
+		switched, err = tm.SwitchTaskStepAfterPrepare(ctx, prepareTask)
+		require.NoError(t, err)
+		require.False(t, switched)
+
+		persistedTask, err = tm.GetTaskByID(ctx, prepareTaskID)
+		require.NoError(t, err)
+		require.Equal(t, []byte(`{"prepare":"done"}`), persistedTask.Meta)
+		require.Equal(t, 8, persistedTask.RequiredSlots)
+		require.Equal(t, 6, persistedTask.MaxNodeCount)
+		require.Equal(t, proto.ExtraParams{
+			ManualRecovery: true,
+			PrepareMode:    proto.PrepareModeRequired,
+		}, persistedTask.ExtraParams)
+	})
 }
 
 func TestGetSubtaskSummaries(t *testing.T) {

@@ -81,6 +81,11 @@ type TaskManager interface {
 	// And each subtask of this step must be different, to handle the network
 	// partition or owner change.
 	SwitchTaskStepInBatch(ctx context.Context, task *proto.Task, nextState proto.TaskState, nextStep proto.Step, subtasks []*proto.Subtask) error
+	// SwitchTaskStepAfterPrepare atomically persists prepare completion when task
+	// is still pending+init. It updates task to pending+prepared and persists
+	// prepare-computed fields.
+	// Return switched=false means the CAS matched zero rows (benign owner/state race).
+	SwitchTaskStepAfterPrepare(ctx context.Context, task *proto.Task) (switched bool, err error)
 	// GetUsedSlotsOnNodes returns the used slots on nodes that have subtask scheduled.
 	// subtasks of each task on one node is only accounted once as we don't support
 	// running them concurrently.

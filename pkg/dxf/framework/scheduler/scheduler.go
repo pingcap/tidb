@@ -389,8 +389,12 @@ func (s *BaseScheduler) onPending() error {
 		if err := prepareExt.OnPrepare(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
 		}
-		if err := s.taskMgr.SwitchTaskStep(s.ctx, task, proto.TaskStatePending, proto.StepPrepared, nil); err != nil {
+		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)
+		if err != nil {
 			return errors.Trace(err)
+		}
+		if !switched {
+			return s.refreshTaskIfNeeded()
 		}
 		task.Step = proto.StepPrepared
 		s.task.Store(task)

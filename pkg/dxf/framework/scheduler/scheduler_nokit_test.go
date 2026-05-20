@@ -507,16 +507,32 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 				return nil
 			},
 		}
-		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStatePending, proto.StepPrepared, gomock.Any()).
-			DoAndReturn(func(_ context.Context, inTask *proto.Task, _ proto.TaskState, _ proto.Step, subtasks []*proto.Subtask) error {
-				require.Empty(t, subtasks)
+		taskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, inTask *proto.Task) (bool, error) {
 				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
-				return nil
+				return true, nil
 			})
 		require.NoError(t, scheduler.onPending())
 		taskWithPrepare.Step = proto.StepPrepared
 		taskWithPrepare.Meta = []byte(`{"prepare":"done"}`)
 		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		taskWithPrepare.Step = proto.StepInit
+		taskWithPrepare.Meta = []byte(`{"prepare":"init"}`)
+		scheduler.task.Store(&taskWithPrepare)
+		taskPreparedByOtherOwner := taskWithPrepare
+		taskPreparedByOtherOwner.Step = proto.StepPrepared
+		taskPreparedByOtherOwner.Meta = []byte(`{"prepare":"by-other-owner"}`)
+		taskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, inTask *proto.Task) (bool, error) {
+				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
+				return false, nil
+			})
+		taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), taskWithPrepare.ID).Return(&taskPreparedByOtherOwner.TaskBase, nil)
+		taskMgr.EXPECT().GetTaskByID(gomock.Any(), taskWithPrepare.ID).Return(&taskPreparedByOtherOwner, nil)
+		require.NoError(t, scheduler.onPending())
+		require.Equal(t, taskPreparedByOtherOwner, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
 		scheduler.Extension = schExt
 	})

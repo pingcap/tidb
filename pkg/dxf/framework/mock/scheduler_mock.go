@@ -667,6 +667,21 @@ func (mr *MockTaskManagerMockRecorder) SucceedTask(arg0, arg1 any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SucceedTask", reflect.TypeOf((*MockTaskManager)(nil).SucceedTask), arg0, arg1)
 }
 
+// SwitchTaskStepAfterPrepare mocks base method.
+func (m *MockTaskManager) SwitchTaskStepAfterPrepare(arg0 context.Context, arg1 *proto.Task) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwitchTaskStepAfterPrepare", arg0, arg1)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SwitchTaskStepAfterPrepare indicates an expected call of SwitchTaskStepAfterPrepare.
+func (mr *MockTaskManagerMockRecorder) SwitchTaskStepAfterPrepare(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStepAfterPrepare", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStepAfterPrepare), arg0, arg1)
+}
+
 // SwitchTaskStep mocks base method.
 func (m *MockTaskManager) SwitchTaskStep(arg0 context.Context, arg1 *proto.Task, arg2 proto.TaskState, arg3 proto.Step, arg4 []*proto.Subtask) error {
 	m.ctrl.T.Helper()
