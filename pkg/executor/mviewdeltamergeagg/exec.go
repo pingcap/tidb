@@ -1297,9 +1297,13 @@ func (e *Exec) recomputeMinMaxBatch(
 	totalLookupKeyDatums := len(uniqueRows) * keyColCnt
 	flatLookupKeyDatums := workerData.batchLookupKeyDatums
 	if len(flatLookupKeyDatums) < totalLookupKeyDatums {
-		flatLookupKeyDatums = append(flatLookupKeyDatums, make([]types.Datum, totalLookupKeyDatums-len(flatLookupKeyDatums))...)
-		workerData.batchLookupKeyDatums = flatLookupKeyDatums
+		if cap(flatLookupKeyDatums) < totalLookupKeyDatums {
+			flatLookupKeyDatums = make([]types.Datum, totalLookupKeyDatums)
+		} else {
+			flatLookupKeyDatums = flatLookupKeyDatums[:totalLookupKeyDatums]
+		}
 	}
+	workerData.batchLookupKeyDatums = flatLookupKeyDatums
 
 	for rowPos, rowIdx := range uniqueRows {
 		encodedKey := encodedInputKeys[rowPos]
