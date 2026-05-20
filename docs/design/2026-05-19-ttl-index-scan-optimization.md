@@ -106,7 +106,7 @@ When splitting index scan ranges by the TTL column, the implementation uses type
 - **TIMESTAMP**: `1970-01-01 00:00:00` (the physical minimum for the TIMESTAMP type)
 - **DATETIME / DATE**: `0001-01-01 00:00:00` (the type minimum)
 
-Previously, the code hardcoded `1970-01-01` as the universal minimum, which silently skipped valid pre-1970 data for DATETIME and DATE columns.
+Initially, the implementation used a hardcoded `1970-01-01` as the universal minimum, which silently skipped valid pre-1970 data for DATETIME and DATE columns.
 
 ## Compatibility
 
