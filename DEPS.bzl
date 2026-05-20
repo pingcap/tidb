@@ -3484,22 +3484,22 @@ def go_deps():
         name = "com_github_grafana_pyroscope_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/grafana/pyroscope-go",
-        sha256 = "c859197dbd086d81480d2a62e468ef6ebfb1a1a24e76f2f96e6712f7dc85f466",
-        strip_prefix = "github.com/grafana/pyroscope-go@v1.2.7",
+        sha256 = "d92401f3f7c1363b5e6b2c7813469a94d71ded882811f0e15e553e873f986274",
+        strip_prefix = "github.com/grafana/pyroscope-go@v1.3.0",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.2.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.3.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/grafana/pyroscope-go/com_github_grafana_pyroscope_go-v1.3.0.zip",
         ],
     )
     go_repository(
         name = "com_github_grafana_pyroscope_go_godeltaprof",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/grafana/pyroscope-go/godeltaprof",
-        sha256 = "321ee0302404a98f253d95ed06f7c911b15e2607cb7c2a9b3697e5517b1ea086",
-        strip_prefix = "github.com/grafana/pyroscope-go/godeltaprof@v0.1.9",
+        sha256 = "c4633b25e162c86c28f58717813b0f117b94382fea8e56f47ff1cc59300151c9",
+        strip_prefix = "github.com/grafana/pyroscope-go/godeltaprof@v0.1.10",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/grafana/pyroscope-go/godeltaprof/com_github_grafana_pyroscope_go_godeltaprof-v0.1.9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/grafana/pyroscope-go/godeltaprof/com_github_grafana_pyroscope_go_godeltaprof-v0.1.9.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/grafana/pyroscope-go/godeltaprof/com_github_grafana_pyroscope_go_godeltaprof-v0.1.10.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/grafana/pyroscope-go/godeltaprof/com_github_grafana_pyroscope_go_godeltaprof-v0.1.10.zip",
         ],
     )
     go_repository(
@@ -4296,11 +4296,11 @@ def go_deps():
         name = "com_github_klauspost_compress",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/klauspost/compress",
-        sha256 = "c4679e4cbc820a21758199d985be754abf5eb2a38e6f1de95cd70b2e7ef06905",
-        strip_prefix = "github.com/klauspost/compress@v1.18.0",
+        sha256 = "61b417d2d3b6b7f5b5f4179f311fb156bd5bcea040353150c41111dc1777f11a",
+        strip_prefix = "github.com/klauspost/compress@v1.18.6",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/klauspost/compress/com_github_klauspost_compress-v1.18.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/klauspost/compress/com_github_klauspost_compress-v1.18.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/klauspost/compress/com_github_klauspost_compress-v1.18.6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/klauspost/compress/com_github_klauspost_compress-v1.18.6.zip",
         ],
     )
     go_repository(
