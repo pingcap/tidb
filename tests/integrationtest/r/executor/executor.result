@@ -3944,6 +3944,7 @@ id	id
 0	0
 1	1
 2	2
+3	3
 drop table if exists catalog_sales, store_sales, date_dim;
 create table catalog_sales
 (

@@ -3570,7 +3570,7 @@ a
 {"id": "ish"}
 explain format='plan_tree' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__integration.t.a, planner__core__integration.t.a)]
+HashJoin	root		CARTESIAN inner join, other cond:eq(planner__core__integration.t.a, planner__core__integration.t.a)
 ├─TableReader(Build)	root		data:Selection
 │ └─Selection	cop[tikv]		eq(json_extract(planner__core__integration.t.a, "$.id"), cast("ish", json BINARY)), not(isnull(cast(planner__core__integration.t.a, var_string(4294967295))))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
