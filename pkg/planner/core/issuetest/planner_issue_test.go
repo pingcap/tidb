@@ -872,6 +872,18 @@ ORDER BY field1`).Check(testkit.Rows())
 		tk.MustExec("rollback")
 	}
 
+	// issue-64854-in-subquery-inside-not-in-list
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t0(c1 float8, c2 double, unique(c2, c1))")
+
+		tk.MustQuery(`select /* issue:64854 */ t0.c1 as ca1, t0.c1 as ca2, t0.c2 as ca3
+			from t0
+			where ((t0.c2) in (select t0.c1 as ca4 from t0)) not in
+				(((t0.c1 is false)),
+				((((binary (null ^ true)) not regexp ((binary bit_length((default(t0.c2))) >> 17))) is not true)))`).Check(testkit.Rows())
+	})
+
 	// issue-67802-mutable-user-var-join-cond-should-not-become-inner-side-filter
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		resetTestDB(t, tk)

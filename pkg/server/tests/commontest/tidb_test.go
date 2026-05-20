@@ -3869,3 +3869,111 @@ func TestIssue62673(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadDataLocalRetryDesync reproduces a protocol desync bug where TiDB's
+// optimistic transaction retry re-executes LOAD DATA LOCAL INFILE from
+// StmtHistory, sending a second 0xfb LOCAL_INFILE_REQUEST to a client that
+// is waiting for OK/ERR. This corrupts the MySQL protocol framing.
+//
+// Root cause: LOAD DATA LOCAL is incorrectly added to StmtHistory (in
+// finishStmt) because it is not excluded from the CouldRetry path. File
+// data is a one-shot network resource and cannot be replayed.
+func TestLoadDataLocalRetryDesync(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		filePath := filepath.Join(t.TempDir(), "retry_desync.csv")
+		mysql.RegisterLocalFile(filePath)
+		err := os.WriteFile(filePath, []byte("1\n2\n3\n"), os.ModePerm)
+		require.NoError(t, err)
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+
+		testserverclient.MustExec(ctx, t, conn, "create table t_retry_desync (a int)")
+
+		// Must use optimistic txn mode — pessimistic skips the retry path.
+		testserverclient.MustExec(ctx, t, conn, "SET tidb_txn_mode = 'optimistic'")
+
+		// Inject kv.ErrTxnRetryable during txn commit to trigger optimistic
+		// transaction retry. Fire once so the retry's commit can succeed.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942",
+			`1*return(true)->return(false)`)
+
+		// Execute LOAD DATA LOCAL INFILE.
+		// Before fix: session.retry() re-executes the statement from StmtHistory,
+		// calling LoadDataExec.Open() again which sends a second 0xfb
+		// LOCAL_INFILE_REQUEST → client gets ErrMalformPkt → protocol desync.
+		// After fix: CouldRetry is set to false for LOAD DATA LOCAL, so the
+		// commit error is returned to the client without retry attempt.
+		_, loadErr := conn.ExecContext(ctx, fmt.Sprintf(
+			"LOAD DATA LOCAL INFILE '%s' INTO TABLE t_retry_desync", filePath))
+		// The commit error should propagate to the client.
+		require.Error(t, loadErr, "LOAD DATA should return commit error instead of retrying")
+		t.Logf("LOAD DATA result: %v", loadErr)
+
+		// The connection must remain usable — no protocol desync.
+		var val int
+		err = conn.QueryRowContext(ctx, "SELECT 1").Scan(&val)
+		require.NoError(t, err, "connection should be usable after LOAD DATA commit error")
+		require.Equal(t, 1, val)
+	})
+}
+
+// TestLoadDataLocalRetryDesyncExplicitTxn is the explicit-transaction variant
+// of TestLoadDataLocalRetryDesync. It verifies that in a multi-statement
+// optimistic transaction (BEGIN; INSERT; LOAD DATA LOCAL; COMMIT), the
+// CouldRetry=false set by LOAD DATA LOCAL correctly prevents retry and that
+// neither the INSERT nor the LOAD DATA rows are committed.
+func TestLoadDataLocalRetryDesyncExplicitTxn(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTests(t, func(c *mysql.Config) {
+		c.AllowAllFiles = true
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		filePath := filepath.Join(t.TempDir(), "retry_desync_txn.csv")
+		mysql.RegisterLocalFile(filePath)
+		err := os.WriteFile(filePath, []byte("10\n20\n30\n"), os.ModePerm)
+		require.NoError(t, err)
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+
+		testserverclient.MustExec(ctx, t, conn, "create table t_retry_txn (a int)")
+		testserverclient.MustExec(ctx, t, conn, "SET tidb_txn_mode = 'optimistic'")
+		// Enable retry for explicit transactions.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+		// Inject one retryable commit error.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942",
+			`1*return(true)->return(false)`)
+
+		// Explicit transaction: INSERT then LOAD DATA LOCAL.
+		testserverclient.MustExec(ctx, t, conn, "BEGIN")
+		testserverclient.MustExec(ctx, t, conn, "INSERT INTO t_retry_txn VALUES (1)")
+		_, loadErr := conn.ExecContext(ctx, fmt.Sprintf(
+			"LOAD DATA LOCAL INFILE '%s' INTO TABLE t_retry_txn", filePath))
+		require.NoError(t, loadErr, "LOAD DATA should succeed within the transaction")
+
+		// COMMIT should fail because CouldRetry=false prevents retry.
+		_, commitErr := conn.ExecContext(ctx, "COMMIT")
+		require.Error(t, commitErr, "COMMIT should return error since retry is disabled for LOAD DATA LOCAL")
+		require.Contains(t, commitErr.Error(), "8022", "should be kv.ErrTxnRetryable (error code 8022)")
+		t.Logf("COMMIT result: %v", commitErr)
+
+		// Neither INSERT nor LOAD DATA rows should be committed.
+		var count int
+		err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM t_retry_txn").Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, 0, count, "no rows should be committed after failed transaction")
+
+		// Connection must remain usable.
+		var val int
+		err = conn.QueryRowContext(ctx, "SELECT 1").Scan(&val)
+		require.NoError(t, err, "connection should be usable after failed explicit txn")
+		require.Equal(t, 1, val)
+	})
+}

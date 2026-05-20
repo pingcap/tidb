@@ -1028,7 +1028,9 @@ func TestNextGenMetering(t *testing.T) {
 			items["index_kv_bytes"].(int64) == 153 &&
 			items[metering.RequiredSlotsField].(int) == task.RequiredSlots &&
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
-			items[metering.DurationSecondsField].(int64) > 0
+			// duration_seconds uses integer seconds; tasks finishing in <1s
+			// are truncated to 0.
+			items[metering.DurationSecondsField].(int64) >= 0
 	}, 30*time.Second, 100*time.Millisecond)
 }
 

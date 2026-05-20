@@ -450,16 +450,19 @@ func TestMemtableInfoschemaExtractorPart2(t *testing.T) {
 			memTableName: infoschema.TableKeyColumn,
 			prepareData:  prepareDataKeyColumnUsage,
 			cleanData:    cleanDataKeyColumnUsage,
+			buildConds:   buildRepresentativeConditions,
 		},
 		{
 			memTableName: infoschema.TableConstraints,
 			prepareData:  prepareDataKeyColumnUsage,
 			cleanData:    cleanDataKeyColumnUsage,
+			buildConds:   buildRepresentativeConditions,
 		},
 		{
 			memTableName: infoschema.TablePartitions,
 			prepareData:  prepareDataPartitions,
 			cleanData:    cleanDataPartitions,
+			buildConds:   buildRepresentativeConditions,
 		},
 	}
 	testMemtableInfoschemaExtractor(t, tcs)
