@@ -325,51 +325,34 @@ func (si *SchemaImporter) loadExistingViewDependencies(
 	ctx context.Context,
 	plan *viewRestorePlan,
 ) (existingTables tableNameSet, existingViews tableNameSet, err error) {
-	uniqueObjects := make(map[filter.Table]filter.Table)
-	addObject := func(tbl filter.Table) {
-		normalized := normalizeTableName(tbl.Schema, tbl.Name)
-		if _, ok := uniqueObjects[normalized]; ok {
-			return
-		}
-		uniqueObjects[normalized] = tbl
-	}
-
+	schemas := make(set.StringSet)
 	for _, node := range plan.nodes {
-		addObject(node.key)
+		schemas.Insert(strings.ToLower(node.key.Schema))
 		for _, dep := range node.deps {
-			addObject(dep)
+			schemas.Insert(strings.ToLower(dep.Schema))
 		}
 	}
 
 	existingTables = make(tableNameSet)
 	existingViews = make(tableNameSet)
-	objectKeys := make([]filter.Table, 0, len(uniqueObjects))
-	for normalized := range uniqueObjects {
-		objectKeys = append(objectKeys, normalized)
+	schemaNames := make([]string, 0, len(schemas))
+	for schema := range schemas {
+		schemaNames = append(schemaNames, schema)
 	}
-	sort.Slice(objectKeys, func(i, j int) bool {
-		if objectKeys[i].Schema != objectKeys[j].Schema {
-			return objectKeys[i].Schema < objectKeys[j].Schema
-		}
-		return objectKeys[i].Name < objectKeys[j].Name
-	})
-
-	for _, normalized := range objectKeys {
-		object := uniqueObjects[normalized]
-		var isView bool
-		var exists bool
-		isView, exists, err = si.getExistingObjectType(ctx, object.Schema, object.Name)
+	sort.Strings(schemaNames)
+	for _, schema := range schemaNames {
+		var objectTypes map[string]bool
+		objectTypes, err = si.getExistingObjectTypes(ctx, schema)
 		if err != nil {
 			return nil, nil, err
 		}
-		if !exists {
-			continue
+		for objectName, isView := range objectTypes {
+			if isView {
+				existingViews.add(filter.Table{Schema: schema, Name: objectName})
+				continue
+			}
+			existingTables.add(filter.Table{Schema: schema, Name: objectName})
 		}
-		if isView {
-			existingViews.add(normalized)
-			continue
-		}
-		existingTables.add(normalized)
 	}
 	return existingTables, existingViews, nil
 }
@@ -440,23 +423,36 @@ func (si *SchemaImporter) isTableExist(ctx context.Context, dbName, tableName st
 	return true, nil
 }
 
-func (si *SchemaImporter) getExistingObjectType(ctx context.Context, dbName, tableName string) (isView bool, exists bool, err error) {
+func (si *SchemaImporter) getExistingObjectTypes(ctx context.Context, dbName string) (map[string]bool, error) {
 	sb := new(strings.Builder)
-	sqlescape.MustFormatSQL(sb, `SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = %? AND TABLE_NAME = %?`, dbName, tableName)
-	tableTypes, err := si.getExistingSchemas(ctx, sb.String())
+	sqlescape.MustFormatSQL(sb, `SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = %?`, dbName)
+	rows, err := si.queryStringRows(ctx, sb.String())
 	if err != nil {
-		return false, false, err
+		return nil, err
 	}
-	if len(tableTypes) == 0 {
-		return false, false, nil
+	objectTypes := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		objectTypes[strings.ToLower(row[0])] = strings.EqualFold(row[1], "VIEW")
 	}
-	return tableTypes.Exist("view"), true, nil
+	return objectTypes, nil
 }
 
 // get existing databases/tables/views using the given query, the first column of
 // the query result should be the name.
 // The returned names are convert to lower case.
 func (si *SchemaImporter) getExistingSchemas(ctx context.Context, query string) (set.StringSet, error) {
+	stringRows, err := si.queryStringRows(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	res := make(set.StringSet, len(stringRows))
+	for _, row := range stringRows {
+		res.Insert(strings.ToLower(row[0]))
+	}
+	return res, nil
+}
+
+func (si *SchemaImporter) queryStringRows(ctx context.Context, query string) ([][]string, error) {
 	conn, err := si.db.Conn(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -472,11 +468,7 @@ func (si *SchemaImporter) getExistingSchemas(ctx context.Context, query string) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	res := make(set.StringSet, len(stringRows))
-	for _, row := range stringRows {
-		res.Insert(strings.ToLower(row[0]))
-	}
-	return res, nil
+	return stringRows, nil
 }
 
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {

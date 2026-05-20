@@ -234,7 +234,7 @@ func TestSchemaImporter(t *testing.T) {
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte("create view v as select 1;"), 0o644))
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01").AddRow("test02"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test02' AND TABLE_NAME = 'v'").
+		mock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = 'test02'$").
 			WillReturnError(errors.New("non retryable error"))
 		dbMetas := []*MDDatabaseMeta{
 			{Name: "test01"},
@@ -271,12 +271,10 @@ func TestSchemaImporter(t *testing.T) {
 		}
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01").AddRow("test02"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test02' AND TABLE_NAME = 't'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}).AddRow("BASE TABLE"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test02' AND TABLE_NAME = 'v1'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}).AddRow("VIEW"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test02' AND TABLE_NAME = 'V2'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}))
+		mock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = 'test02'$").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE"}).
+				AddRow("t", "BASE TABLE").
+				AddRow("v1", "VIEW"))
 		mock.ExpectExec("VIEW `test02`.`V2` AS SELECT").
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		require.NoError(t, importer.Run(ctx, validViews))
@@ -300,10 +298,10 @@ func TestSchemaImporter(t *testing.T) {
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test03"))
 		mock.ExpectQuery("SHOW CREATE TABLE `test03`.`t`").
 			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t", "CREATE TABLE `t` (a int);"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test03' AND TABLE_NAME = 't'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}).AddRow("BASE TABLE"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test03' AND TABLE_NAME = 'V2'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}).AddRow("VIEW"))
+		mock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = 'test03'$").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE"}).
+				AddRow("t", "BASE TABLE").
+				AddRow("V2", "VIEW"))
 
 		require.NoError(t, importer.Run(ctx, dbMetas))
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -603,12 +601,9 @@ CREATE ALGORITHM=UNDEFINED DEFINER=`+"`root`@`%`"+` SQL SECURITY DEFINER VIEW v2
 		sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test"))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test`.`t`").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 't'").
-		WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}).AddRow("BASE TABLE"))
-	mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'v1'").
-		WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}))
-	mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'v2'").
-		WillReturnRows(sqlmock.NewRows([]string{"TABLE_TYPE"}))
+	mock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = 'test'$").
+		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE"}).
+			AddRow("t", "BASE TABLE"))
 	mock.ExpectExec("CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`%` SQL SECURITY DEFINER VIEW `test`.`v1`").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`%` SQL SECURITY DEFINER VIEW `test`.`v2`").
