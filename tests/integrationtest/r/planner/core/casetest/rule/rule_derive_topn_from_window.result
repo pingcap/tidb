@@ -17,44 +17,44 @@ Projection	root		Column
 explain format='plan_tree' select * from (select b, row_number() over () as rownumber from t) DT where rownumber <= 3 and b > 5 -- pattern is not applicable with complex filter on top of window;
 id	task	access object	operator info
 Selection	root		gt(planner__core__casetest__rule__rule_derive_topn_from_window.t.b, 5), le(Column, 3)
-└─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+└─Window	root		row_number()->Column over(rows between current row and current row)
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format='plan_tree' select * from (select b, row_number() over () as rownumber from t) DT where rownumber > 3  -- pattern is not applicable with filter is not < or <=;
 id	task	access object	operator info
 Selection	root		gt(Column, 3)
-└─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+└─Window	root		row_number()->Column over(rows between current row and current row)
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format='plan_tree' select * from (select a,b, row_number() over () as rownumber from t) DT where  a > b  -- pattern is not applicable with filter is not < or <=;
 id	task	access object	operator info
 Selection	root		gt(planner__core__casetest__rule__rule_derive_topn_from_window.t.a, planner__core__casetest__rule__rule_derive_topn_from_window.t.b)
-└─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+└─Window	root		row_number()->Column over(rows between current row and current row)
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format='plan_tree' select * from (select a,b, row_number() over () as rownumber from t) DT where  a <= 3 -- pattern is not applicable with filter is not on row number;
 id	task	access object	operator info
 Selection	root		le(planner__core__casetest__rule__rule_derive_topn_from_window.t.a, 3)
-└─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+└─Window	root		row_number()->Column over(rows between current row and current row)
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format='plan_tree' select * from (select a,b, row_number() over () as rownumber from t) DT where 3 >= rownumber  -- pattern is not applicable with filter is not < or <=;
 id	task	access object	operator info
 Selection	root		ge(3, Column)
-└─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+└─Window	root		row_number()->Column over(rows between current row and current row)
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format='plan_tree' select * from (select a,b, row_number() over () as rownumber from t) DT where rownumber <= -4   -- pattern is not applicable with filter constant negative;
 id	task	access object	operator info
 Selection	root		le(Column, -4)
-└─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+└─Window	root		row_number()->Column over(rows between current row and current row)
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format='plan_tree' select * from (select row_number() over () as rownumber from t) DT where rownumber <= 3 and rownumber >= 2 -- pattern is not applicable with complex filter;
 id	task	access object	operator info
 Projection	root		Column
 └─Selection	root		ge(Column, 2), le(Column, 3)
-  └─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+  └─Window	root		row_number()->Column over(rows between current row and current row)
     └─IndexReader	root		index:IndexFullScan
       └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
 explain format='plan_tree' select row_number() over (partition by a) from t -- pattern missing filter on row number;
@@ -70,7 +70,7 @@ explain format='plan_tree' select * from (select row_number() over () as rownumb
 id	task	access object	operator info
 Projection	root		Column, Column
 └─Selection	root		le(Column, 3)
-  └─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+  └─Window	root		row_number()->Column over(rows between current row and current row)
     └─Shuffle	root		execution info: concurrency:5, data sources:[IndexReader]
       └─Window	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
         └─Sort	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
@@ -121,7 +121,7 @@ explain format='plan_tree' with agg_t as (select count(*) cnt, a from t group by
 id	task	access object	operator info
 Projection	root		Column
 └─Selection	root		le(Column, 3)
-  └─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+  └─Window	root		row_number()->Column over(rows between current row and current row)
     └─HashAgg	root		group by:planner__core__casetest__rule__rule_derive_topn_from_window.t.a, funcs:count(Column)->Column
       └─IndexReader	root		index:HashAgg
         └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_derive_topn_from_window.t.a, funcs:count(1)->Column
@@ -200,7 +200,7 @@ explain format='plan_tree' select * from (select row_number() over(rows between 
 id	task	access object	operator info
 Projection	root		Column
 └─Selection	root		le(Column, 3)
-  └─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+  └─Window	root		row_number()->Column over(rows between current row and current row)
     └─Limit	root		offset:0, count:3
       └─IndexReader	root		index:Limit
         └─Limit	cop[tikv]		offset:0, count:3
@@ -277,7 +277,7 @@ explain format='plan_tree' select * from (select row_number() over () as rownumb
 id	task	access object	operator info
 Projection	root		Column
 └─Selection	root		le(Column, 3)
-  └─OrderedWindow	root		row_number()->Column over(rows between current row and current row)
+  └─Window	root		row_number()->Column over(rows between current row and current row)
     └─Limit	root		offset:0, count:3
       └─IndexReader	root		index:Limit
         └─Limit	cop[tikv]		offset:0, count:3

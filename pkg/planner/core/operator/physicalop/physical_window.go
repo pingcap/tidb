@@ -511,8 +511,9 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	}
 	// Prefer OrderedWindow only when the child naturally satisfies the full
 	// partition/order requirement. Once a Sort enforcer is needed, the plan must
-	// fall back to the regular window path.
-	if CanUseOrderedWindow(lw) && prop.IsPrefix(orderedChildProperty) {
+	// fall back to the regular window path. If there is no partition/order
+	// requirement, use the regular window path to avoid implying ordered input.
+	if len(byItems) > 0 && CanUseOrderedWindow(lw) && prop.IsPrefix(orderedChildProperty) {
 		orderedWindow := PhysicalOrderedWindow{
 			PhysicalWindow: PhysicalWindow{
 				WindowFuncDescs: lw.WindowFuncDescs,
