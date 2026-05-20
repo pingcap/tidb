@@ -1303,8 +1303,9 @@ func TestDBAStmt(t *testing.T) {
 		{"show materialized views in test like 'mv%'", true, "SHOW MATERIALIZED VIEWS IN `test` LIKE _UTF8MB4'mv%'"},
 		{"show materialized views where mview_id = 1", true, "SHOW MATERIALIZED VIEWS WHERE `mview_id`=1"},
 		// for show materialized view
-		{"show materialized view mv", true, "SHOW MATERIALIZED VIEW `mv`"},
-		{"show materialized view test.mv", true, "SHOW MATERIALIZED VIEW `test`.`mv`"},
+		{"show materialized view mv remain_logs", true, "SHOW MATERIALIZED VIEW `mv` REMAIN_LOGS"},
+		{"show materialized view test.mv remain_logs", true, "SHOW MATERIALIZED VIEW `test`.`mv` REMAIN_LOGS"},
+		{"show materialized view mv", false, ""},
 		{"show materialized view mv like 'mv%'", false, ""},
 		{"show materialized view mv where mview_id = 1", false, ""},
 		// for show materialized view logs
@@ -1314,8 +1315,9 @@ func TestDBAStmt(t *testing.T) {
 		{"show materialized view logs in test like '$mlog$%'", true, "SHOW MATERIALIZED VIEW LOGS IN `test` LIKE _UTF8MB4'$mlog$%'"},
 		{"show materialized view logs where mlog_id = 1", true, "SHOW MATERIALIZED VIEW LOGS WHERE `mlog_id`=1"},
 		// for show materialized view log
-		{"show materialized view log on t", true, "SHOW MATERIALIZED VIEW LOG ON `t`"},
-		{"show materialized view log on test.t", true, "SHOW MATERIALIZED VIEW LOG ON `test`.`t`"},
+		{"show materialized view log on t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `t` WAIT_PURGE"},
+		{"show materialized view log on test.t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `test`.`t` WAIT_PURGE"},
+		{"show materialized view log on t", false, ""},
 		{"show materialized view log on t like '$mlog$%'", false, ""},
 		{"show materialized view log on t where mlog_id = 1", false, ""},
 		// for show create database

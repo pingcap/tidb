@@ -52,7 +52,7 @@ grant select, insert, update, delete on mview_privilege_test.* to 'u_dml'@'%';
 
 connect (u_show_mv, localhost, u_show_mv,,mview_privilege_test);
 connection u_show_mv;
-show materialized view mv;
+show materialized view mv remain_logs;
 -- error 1142
 show create materialized view mv;
 disconnect u_show_mv;
@@ -67,7 +67,7 @@ revoke select on mview_privilege_test.mv from 'u_show_create'@'%';
 show grants for 'u_show_create'@'%';
 connect (u_show_create, localhost, u_show_create,,mview_privilege_test);
 connection u_show_create;
-show materialized view mv;
+show materialized view mv remain_logs;
 -- error 1142
 show create materialized view mv;
 disconnect u_show_create;
@@ -79,7 +79,7 @@ show grants for 'u_show_create'@'%';
 connect (u_show_create, localhost, u_show_create,,mview_privilege_test);
 connection u_show_create;
 -- error 1142
-show materialized view mv;
+show materialized view mv remain_logs;
 -- error 1142
 show create materialized view mv;
 disconnect u_show_create;
@@ -89,10 +89,10 @@ connection u_show_log;
 show materialized view logs from mview_privilege_test;
 show materialized view logs from mview_privilege_test like '$mlog$%';
 show materialized view logs from mview_privilege_test like 'mview_privilege_test.$mlog$%';
-show materialized view log on t;
+show materialized view log on t wait_purge;
 show create materialized view log on t;
 -- error 1142
-show materialized view log on t_hidden;
+show materialized view log on t_hidden wait_purge;
 disconnect u_show_log;
 
 connection default;
@@ -102,7 +102,7 @@ connect (u_show_log, localhost, u_show_log,,);
 connection u_show_log;
 show materialized view logs from mview_privilege_test;
 -- error 1142
-show materialized view log on mview_privilege_test.t;
+show materialized view log on mview_privilege_test.t wait_purge;
 -- error 1142
 show create materialized view log on mview_privilege_test.t;
 disconnect u_show_log;

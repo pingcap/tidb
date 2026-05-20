@@ -602,34 +602,34 @@ func TestShowMaterializedViewStatusPrivilege(t *testing.T) {
 		)
 	}
 
-	tk.MustQuery("show materialized view test.mv_show_status").Check(testkit.Rows(mvExpected(0)))
-	tk.MustQuery("show materialized view log on test.t_show_mv_status").Check(testkit.Rows(mlogExpected(1)))
+	tk.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(0)))
+	tk.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(1)))
 
 	tk.MustExec("insert into t_show_mv_status values (2, 20)")
-	tk.MustQuery("show materialized view test.mv_show_status").Check(testkit.Rows(mvExpected(1)))
-	tk.MustQuery("show materialized view log on test.t_show_mv_status").Check(testkit.Rows(mlogExpected(1)))
+	tk.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(1)))
+	tk.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(1)))
 
 	tk.MustExec("refresh materialized view mv_show_status complete delta apply")
-	tk.MustQuery("show materialized view test.mv_show_status").Check(testkit.Rows(mvExpected(0)))
-	tk.MustQuery("show materialized view log on test.t_show_mv_status").Check(testkit.Rows(mlogExpected(2)))
+	tk.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(0)))
+	tk.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(2)))
 
 	tk.MustExec("create user 'show_mv_status_u'@'%' identified by ''")
 	defer tk.MustExec("drop user 'show_mv_status_u'@'%'")
 	tkUser := testkit.NewTestKit(t, store)
 	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "show_mv_status_u", Hostname: "%"}, nil, nil, nil))
 
-	err = tkUser.ExecToErr("show materialized view test.mv_show_status")
+	err = tkUser.ExecToErr("show materialized view test.mv_show_status remain_logs")
 	require.ErrorContains(t, err, "SHOW VIEW command denied")
-	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status")
+	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status wait_purge")
 	require.ErrorContains(t, err, "SELECT command denied")
 
 	tk.MustExec("grant show view on test.mv_show_status to 'show_mv_status_u'@'%'")
-	tkUser.MustQuery("show materialized view test.mv_show_status").Check(testkit.Rows(mvExpected(0)))
-	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status")
+	tkUser.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(0)))
+	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status wait_purge")
 	require.ErrorContains(t, err, "SELECT command denied")
 
 	tk.MustExec("grant select on test.t_show_mv_status to 'show_mv_status_u'@'%'")
-	tkUser.MustQuery("show materialized view log on test.t_show_mv_status").Check(testkit.Rows(mlogExpected(2)))
+	tkUser.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(2)))
 }
 
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
