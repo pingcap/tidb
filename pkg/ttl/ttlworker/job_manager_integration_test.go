@@ -408,6 +408,58 @@ func TestTriggerTTLJob(t *testing.T) {
 	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
 }
 
+func TestTriggerTTLJobWithIndexScan(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/scan-split-cnt", "return(4)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/scan-split-cnt"))
+	}()
+
+	defer boostJobScheduleForTest(t)()
+
+	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Minute)
+	defer cancel()
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(id int primary key, t timestamp, index idx_t(t)) TTL=`t` + INTERVAL 1 DAY")
+	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblID := tbl.Meta().ID
+
+	timerStore := timertable.NewTableTimerStore(0, do.AdvancedSysSessionPool(), "mysql", "tidb_timers", nil)
+	defer timerStore.Close()
+	timerCli := timerapi.NewDefaultTimerClient(timerStore)
+
+	// make sure the table had run a job one time to make the test stable
+	waitTTLJobFinished(t, tk, tblID, timerCli)
+
+	now := time.Now()
+	nowDateStr := now.Format("2006-01-02 15:04:05.999999")
+	expire := now.Add(-time.Hour * 48)
+	expireDateStr := expire.Format("2006-01-02 15:04:05.999999")
+	tk.MustExec("insert into t values(1, ?)", expireDateStr)
+	tk.MustExec("insert into t values(2, ?)", nowDateStr)
+	tk.MustExec("insert into t values(3, ?)", expireDateStr)
+	tk.MustExec("insert into t values(4, ?)", nowDateStr)
+
+	cli := do.TTLJobManager().GetCommandCli()
+	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(res.TableResult))
+	tableResult := res.TableResult[0]
+	require.Equal(t, tblID, tableResult.TableID)
+	require.NotEmpty(t, tableResult.JobID)
+	require.Equal(t, "test", tableResult.DBName)
+	require.Equal(t, "t", tableResult.TableName)
+	require.Equal(t, "", tableResult.ErrorMessage)
+	require.Equal(t, "", tableResult.PartitionName)
+
+	waitTTLJobFinished(t, tk, tblID, timerCli)
+	tk.MustQuery("select id from t order by id asc").Check(testkit.Rows("2", "4"))
+}
+
 func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
 	defer boostJobScheduleForTest(t)()
 

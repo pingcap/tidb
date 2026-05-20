@@ -558,7 +558,7 @@ func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*ca
 
 	allTasks := make([]*cache.TTLTask, 0, len(rows))
 	for _, r := range rows {
-		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r, m.infoSchemaCache)
 		if err != nil {
 			logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", jobID))
 			return nil, err

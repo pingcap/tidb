@@ -47,7 +47,7 @@ func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 	rows, err := session.GetRows4Test(context.Background(), tg.tk.Session(), rs)
 	require.NoError(tg.t, err)
 	require.Len(tg.t, rows, 1)
-	task, err := cache.RowToTTLTask(tg.tk.Session().GetSessionVars().Location(), rows[0])
+	task, err := cache.RowToTTLTask(tg.tk.Session().GetSessionVars().Location(), rows[0], nil)
 	require.NoError(tg.t, err)
 	return task
 }
