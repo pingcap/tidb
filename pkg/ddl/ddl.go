@@ -1331,19 +1331,30 @@ var (
 	RunInGoTest bool
 )
 
+// GetRecoverSnapshotTS returns the snapshot timestamp for reconstructing
+// metadata from a finished drop/truncate table or drop schema job.
+func GetRecoverSnapshotTS(job *model.Job) uint64 {
+	if job.RealStartTS != 0 {
+		return job.RealStartTS
+	}
+	return job.StartTS
+}
+
 // GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
 func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
-		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
-		if err != nil {
-			return false, err
-		}
 		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
 			continue
 		}
 
-		tbl, err := getTable(job.StartTS, job.SchemaID, job.TableID)
+		snapshotTS := GetRecoverSnapshotTS(job)
+		// Check GC safe point for getting snapshot infoSchema.
+		err := gcutil.ValidateSnapshotWithGCSafePoint(snapshotTS, gcSafePoint)
+		if err != nil {
+			return false, err
+		}
+
+		tbl, err := getTable(snapshotTS, job.SchemaID, job.TableID)
 		if err != nil {
 			if meta.ErrDBNotExists.Equal(err) {
 				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,

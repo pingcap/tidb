@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -57,7 +57,7 @@ type BackfillTaskMeta struct {
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
-	external.BaseExternalMeta
+	globalsort.BaseExternalMeta
 
 	PhysicalTableID int64 `json:"physical_table_id"`
 
@@ -74,7 +74,7 @@ type BackfillSubTaskMeta struct {
 	// TODO(tangenta): support local sort.
 	TS uint64 `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
-	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty" external:"true"`
+	MetaGroups []*globalsort.SortedKVMeta `json:"meta_groups,omitempty" external:"true"`
 	// EleIDs stands for the index/column IDs to backfill with distributed framework.
 	// After the subtask is finished, EleIDs should have the same length as
 	// MetaGroups, and they are in the same order.
@@ -82,7 +82,7 @@ type BackfillSubTaskMeta struct {
 
 	// Only used for adding one single index.
 	// Keep this for compatibility with v7.5.
-	external.SortedKVMeta `json:",inline" external:"true"`
+	globalsort.SortedKVMeta `json:",inline" external:"true"`
 }
 
 // Marshal marshals the backfill subtask meta to JSON.
@@ -111,7 +111,7 @@ func decodeBackfillSubTaskMeta(ctx context.Context, extStore storeapi.Storage, r
 	}
 	if len(subtask.MetaGroups) == 0 {
 		m := subtask.SortedKVMeta
-		subtask.MetaGroups = []*external.SortedKVMeta{&m}
+		subtask.MetaGroups = []*globalsort.SortedKVMeta{&m}
 	}
 	return &subtask, nil
 }
