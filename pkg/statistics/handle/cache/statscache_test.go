@@ -118,6 +118,53 @@ func TestUpdateStatsHealthyMetrics(t *testing.T) {
 	}
 }
 
+func TestUpdateSkipsOlderTableVersion(t *testing.T) {
+	current := newMockTable(t, 1, false, 1280, 0, 1)
+	current.Version = 2
+	stale := newMockTable(t, 1, false, 640, 0, 1)
+	stale.Version = 1
+
+	cache := &StatsCache{
+		c: newMockStatsCacheInner(current),
+	}
+
+	// Pin the current behavior: the older snapshot overwrites the newer cached entry on both the
+	// Update and CopyAndUpdate paths. The next commit adds the guard and flips these expectations.
+	cache.Update([]*statistics.Table{stale}, nil, false)
+
+	got, ok := cache.c.Get(current.PhysicalID)
+	require.True(t, ok)
+	require.Equal(t, uint64(1), got.Version)
+	require.Equal(t, int64(640), got.RealtimeCount)
+
+	copied := cache.CopyAndUpdate([]*statistics.Table{stale}, nil)
+	got, ok = copied.c.Get(current.PhysicalID)
+	require.True(t, ok)
+	require.Equal(t, uint64(1), got.Version)
+	require.Equal(t, int64(640), got.RealtimeCount)
+}
+
+func TestPutSkipsOlderTableVersion(t *testing.T) {
+	current := newMockTable(t, 1, false, 1280, 0, 1)
+	current.Version = 2
+	stale := newMockTable(t, 1, false, 640, 0, 1)
+	stale.Version = 1
+
+	cache := &StatsCache{
+		c: newMockStatsCacheInner(current),
+	}
+
+	// Put is the path used by targeted InitStats/InitStatsLite (e.g. REFRESH STATS) to publish a
+	// freshly read table into the live cache. Pin the current behavior: the older snapshot
+	// overwrites the newer analyze result for the same physical table. The next commit guards it.
+	cache.Put(stale.PhysicalID, stale)
+
+	got, ok := cache.c.Get(current.PhysicalID)
+	require.True(t, ok)
+	require.Equal(t, uint64(1), got.Version)
+	require.Equal(t, int64(640), got.RealtimeCount)
+}
+
 func newMockTable(t *testing.T, physicalID int64, pseudo bool, realtimeCount, modifyCount int64, analyzeVersion uint64) *statistics.Table {
 	hist := statistics.NewHistColl(physicalID, realtimeCount, modifyCount, 0, 0)
 	table := &statistics.Table{
@@ -162,15 +209,17 @@ func (m *mockStatsCacheInner) Values() []*statistics.Table {
 }
 
 func (m *mockStatsCacheInner) Get(id int64) (*statistics.Table, bool) {
-	panic("not implemented")
+	tbl, ok := m.items[id]
+	return tbl, ok
 }
 
 func (m *mockStatsCacheInner) Put(id int64, tbl *statistics.Table) bool {
-	panic("not implemented")
+	m.items[id] = tbl
+	return true
 }
 
 func (m *mockStatsCacheInner) Del(id int64) {
-	panic("not implemented")
+	delete(m.items, id)
 }
 
 func (m *mockStatsCacheInner) Cost() int64 {
@@ -178,11 +227,15 @@ func (m *mockStatsCacheInner) Cost() int64 {
 }
 
 func (m *mockStatsCacheInner) Len() int {
-	panic("not implemented")
+	return len(m.items)
 }
 
 func (m *mockStatsCacheInner) Copy() internal.StatsCacheInner {
-	panic("not implemented")
+	copied := make(map[int64]*statistics.Table, len(m.items))
+	for id, tbl := range m.items {
+		copied[id] = tbl
+	}
+	return &mockStatsCacheInner{items: copied}
 }
 
 func (*mockStatsCacheInner) SetCapacity(int64) {
