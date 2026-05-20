@@ -21,7 +21,7 @@
 // Go timestamp tables store microseconds.
 // Spark date rebase data stores switch points and diffs in days.
 
-package mydump
+package parquetfile
 
 import "sync"
 

@@ -19,6 +19,8 @@ go_library(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/util",
+        "//pkg/dumpformat/parquetfile",
+        "//pkg/dumpformat/parsedef",
         "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -101,7 +102,7 @@ type Chunk struct {
 	Type         mydump.SourceType
 	Compression  mydump.Compression
 	Timestamp    int64
-	ParquetMeta  mydump.ParquetFileMeta
+	ParquetMeta  parquetfile.FileMeta
 }
 
 // GetKey returns the chunk key used in logs and encode errors.
@@ -332,7 +333,7 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 
 // EstimateParquetReaderMemory estimates parser memory for the parquet file path.
 func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string) (int64, error) {
-	return mydump.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
+	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
 }
 
 func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {

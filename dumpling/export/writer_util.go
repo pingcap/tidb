@@ -622,7 +622,7 @@ func WriteInsertInParquet(
 		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
 		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
 	}
-	writer, err := parquetfile.NewParquetWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, meta.ColumnInfos(), opts...)
+	writer, err := parquetfile.NewWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, meta.ColumnInfos(), opts...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
