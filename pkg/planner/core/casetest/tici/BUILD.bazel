@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "tici_test",
@@ -10,7 +10,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//pkg/config",
         "//pkg/ddl/ingest/testutil",
