@@ -68,6 +68,19 @@ const (
 	MinMaxRecomputeBatch
 )
 
+// The default max_chunk_size is 1024, so 4 * 1024 = 4096 is enough for most cases.
+const globalContiguousRowIdxCap = 4096
+
+var globalContiguousRowIdxes = initContiguousRowIdxes(globalContiguousRowIdxCap)
+
+func initContiguousRowIdxes(rowCnt int) []int {
+	rowIdxes := make([]int, rowCnt)
+	for i := 0; i < rowCnt; i++ {
+		rowIdxes[i] = i
+	}
+	return rowIdxes
+}
+
 // MinMaxBatchLookupContent is one batch lookup key.
 type MinMaxBatchLookupContent struct {
 	// Keys are group-key datums in planner-defined key order.
@@ -202,6 +215,7 @@ type mergeWorkerData struct {
 	batchSeen                    []bool
 	batchRowToLookupKeyIdx       []int
 	batchLookupKeyContents       []MinMaxBatchLookupContent
+	batchEncodedKeyToKeyPos      map[hack.MutableString]int
 	batchRefsByLookupKey         [][]batchRowRef
 	batchLookupKeyDatums         []types.Datum
 	batchInputEncodedKeys        [][]byte
@@ -1196,6 +1210,9 @@ func (e *Exec) recomputeMinMaxBatch(
 		}
 		mapping := e.AggMappings[mappingIdx]
 		for _, rowIdx := range rows {
+			if rowIdx < 0 || rowIdx >= rowCnt {
+				return errors.Errorf("min/max batch recompute row idx %d out of range [0,%d)", rowIdx, rowCnt)
+			}
 			if !seen[rowIdx] {
 				uniqueRows = append(uniqueRows, rowIdx)
 				seen[rowIdx] = true
@@ -1253,12 +1270,8 @@ func (e *Exec) recomputeMinMaxBatch(
 	workerData.batchRefsByLookupKey = refsByLookupKey
 
 	keyColCnt := len(keyColIDs)
-	flatLookupKeyDatums := workerData.batchLookupKeyDatums[:0]
-	if cap(flatLookupKeyDatums) < len(uniqueRows)*keyColCnt {
-		flatLookupKeyDatums = make([]types.Datum, 0, len(uniqueRows)*keyColCnt)
-	}
 	typeCtx := e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
-	encodedInputKeys, nullByInputRow, err := encodeChunkKeyRowsColumnar(
+	encodedInputKeys, nullByInputRow, err := encodeChunkKeyRows(
 		typeCtx,
 		input,
 		keyColIDs,
@@ -1273,34 +1286,40 @@ func (e *Exec) recomputeMinMaxBatch(
 	workerData.batchInputEncodedKeys = encodedInputKeys
 	workerData.batchInputNullByRow = nullByInputRow
 
-	keyIdxByEncoded := make(map[hack.MutableString]int, len(uniqueRows))
+	encodedKeyToKeyPos := workerData.batchEncodedKeyToKeyPos
+	if encodedKeyToKeyPos == nil {
+		encodedKeyToKeyPos = make(map[hack.MutableString]int, len(uniqueRows))
+	} else {
+		clear(encodedKeyToKeyPos)
+	}
+	workerData.batchEncodedKeyToKeyPos = encodedKeyToKeyPos
+
+	totalLookupKeyDatums := len(uniqueRows) * keyColCnt
+	flatLookupKeyDatums := workerData.batchLookupKeyDatums
+	if len(flatLookupKeyDatums) < totalLookupKeyDatums {
+		flatLookupKeyDatums = append(flatLookupKeyDatums, make([]types.Datum, totalLookupKeyDatums-len(flatLookupKeyDatums))...)
+		workerData.batchLookupKeyDatums = flatLookupKeyDatums
+	}
+
 	for rowPos, rowIdx := range uniqueRows {
 		encodedKey := encodedInputKeys[rowPos]
-		if _, exists := keyIdxByEncoded[hack.String(encodedKey)]; exists {
+		if _, exists := encodedKeyToKeyPos[hack.String(encodedKey)]; exists {
 			return errors.Errorf("duplicate lookup key for min/max batch recompute at input")
 		}
 
-		// hack.String does not copy. encodedInputKeys is scratch-backed and reusable,
-		// so copy bytes before storing the map key.
-		stableEncodedKey := make([]byte, len(encodedKey))
-		copy(stableEncodedKey, encodedKey)
-		keyIdxByEncoded[hack.String(stableEncodedKey)] = rowPos
+		encodedKeyToKeyPos[hack.String(encodedKey)] = rowPos
 		rowToLookupKeyIdx[rowIdx] = rowPos
 
 		inputRow := input.GetRow(rowIdx)
-		base := len(flatLookupKeyDatums)
-		flatLookupKeyDatums = flatLookupKeyDatums[:base+keyColCnt]
+		base := rowPos * keyColCnt
 		keyDatums := flatLookupKeyDatums[base : base+keyColCnt]
-		var keyDatum types.Datum
 		for keyPos, keyColID := range keyColIDs {
-			keyDatum = types.Datum{}
-			inputRow.DatumWithBuffer(keyColID, keyTypes[keyPos], &keyDatum)
-			keyDatum.Copy(&keyDatums[keyPos])
+			keyDatums[keyPos] = types.Datum{}
+			inputRow.DatumWithBuffer(keyColID, keyTypes[keyPos], &keyDatums[keyPos])
 		}
 		lookupKeyContents[rowPos] = MinMaxBatchLookupContent{Keys: keyDatums}
 		refsByLookupKey[rowPos] = refsByLookupKey[rowPos][:0]
 	}
-	workerData.batchLookupKeyDatums = flatLookupKeyDatums
 
 	for _, mappingIdx := range batchMappings {
 		override := overrides[mappingIdx]
@@ -1308,7 +1327,6 @@ func (e *Exec) recomputeMinMaxBatch(
 			keyIdx := rowToLookupKeyIdx[rowIdx]
 			refsByLookupKey[keyIdx] = append(refsByLookupKey[keyIdx], batchRowRef{
 				mappingIdx: mappingIdx,
-				rowIdx:     rowIdx,
 				rowPos:     rowPos,
 			})
 		}
@@ -1349,12 +1367,13 @@ func (e *Exec) recomputeMinMaxBatch(
 		if retErr = exec.Next(ctx, batchExec, resultChk); retErr != nil {
 			return retErr
 		}
-		if resultChk.NumRows() == 0 {
+		resultRowCnt := resultChk.NumRows()
+		if resultRowCnt == 0 {
 			break
 		}
-		resultRows := buildContiguousRowIdxes(workerData.batchResultRows, resultChk.NumRows())
+		resultRows := buildContiguousRowIdxes(workerData.batchResultRows, resultRowCnt)
 		workerData.batchResultRows = resultRows
-		encodedResultKeys, nullByResultRow, err := encodeChunkKeyRowsColumnar(
+		encodedResultKeys, nullByResultRow, err := encodeChunkKeyRows(
 			typeCtx,
 			resultChk,
 			resultKeyColIdxes,
@@ -1369,20 +1388,20 @@ func (e *Exec) recomputeMinMaxBatch(
 		workerData.batchResultEncodedKeys = encodedResultKeys
 		workerData.batchResultNullByRow = nullByResultRow
 
-		for logicalPos, rowIdx := range resultRows {
+		for rowIdx := range resultRowCnt {
 			resultRow := resultChk.GetRow(rowIdx)
-			encodedKey := encodedResultKeys[logicalPos]
-			keyIdx, exists := keyIdxByEncoded[hack.String(encodedKey)]
+			encodedKey := encodedResultKeys[rowIdx]
+			lookupKeyPos, exists := encodedKeyToKeyPos[hack.String(encodedKey)]
 			if !exists {
 				return errors.Errorf("min/max batch recompute returns an unexpected key at result row %d", rowIdx)
 			}
-			if seen[keyIdx] {
-				return errors.Errorf("min/max batch recompute has duplicate result for lookup key idx %d", keyIdx)
+			if seen[lookupKeyPos] {
+				return errors.Errorf("min/max batch recompute has duplicate result for lookup key idx %d", lookupKeyPos)
 			}
-			seen[keyIdx] = true
+			seen[lookupKeyPos] = true
 			seenResultKeyCnt++
 
-			refs := refsByLookupKey[keyIdx]
+			refs := refsByLookupKey[lookupKeyPos]
 			for _, ref := range refs {
 				override := overrides[ref.mappingIdx]
 				recomputeMeta := e.AggMappings[ref.mappingIdx].MinMaxRecompute
@@ -1407,6 +1426,9 @@ func (e *Exec) recomputeMinMaxBatch(
 }
 
 func buildContiguousRowIdxes(buf []int, rowCnt int) []int {
+	if rowCnt <= len(globalContiguousRowIdxes) {
+		return globalContiguousRowIdxes[:rowCnt]
+	}
 	if cap(buf) < rowCnt {
 		buf = make([]int, rowCnt)
 	} else {
@@ -1418,7 +1440,12 @@ func buildContiguousRowIdxes(buf []int, rowCnt int) []int {
 	return buf
 }
 
-func encodeChunkKeyRowsColumnar(
+// encodeChunkKeyRows encodes key columns for each used row into keyBuf.
+// Contract:
+// 1. len(keyColIdxes) == len(keyTypes).
+// 2. Every used row index is in [0, chk.NumRows()).
+// 3. Every key column index is in [0, chk.NumCols()).
+func encodeChunkKeyRows(
 	typeCtx types.Context,
 	chk *chunk.Chunk,
 	keyColIdxes []int,
@@ -1427,9 +1454,6 @@ func encodeChunkKeyRowsColumnar(
 	nullByPhysicalRow []bool,
 	keyBuf [][]byte,
 ) ([][]byte, []bool, error) {
-	if len(keyColIdxes) != len(keyTypes) {
-		return nil, nullByPhysicalRow, errors.Errorf("key column/type count mismatch: cols=%d types=%d", len(keyColIdxes), len(keyTypes))
-	}
 	if cap(keyBuf) < len(usedRows) {
 		keyBuf = make([][]byte, len(usedRows))
 	} else {
@@ -1443,11 +1467,6 @@ func encodeChunkKeyRowsColumnar(
 	}
 
 	rowCnt := chk.NumRows()
-	for _, physicalRow := range usedRows {
-		if physicalRow < 0 || physicalRow >= rowCnt {
-			return nil, nullByPhysicalRow, errors.Errorf("physical row idx %d out of chunk row range [0,%d)", physicalRow, rowCnt)
-		}
-	}
 	if cap(nullByPhysicalRow) < rowCnt {
 		nullByPhysicalRow = make([]bool, rowCnt)
 	} else {
@@ -1455,9 +1474,6 @@ func encodeChunkKeyRowsColumnar(
 	}
 
 	for keyPos, keyColIdx := range keyColIdxes {
-		if keyColIdx < 0 || keyColIdx >= chk.NumCols() {
-			return nil, nullByPhysicalRow, errors.Errorf("key col idx %d out of chunk range [0,%d)", keyColIdx, chk.NumCols())
-		}
 		col := chk.Column(keyColIdx)
 		for logicalPos, physicalRow := range usedRows {
 			isNull := col.IsNull(physicalRow)
@@ -1637,7 +1653,6 @@ type mappingRecomputeOverride struct {
 
 type batchRowRef struct {
 	mappingIdx int
-	rowIdx     int
 	rowPos     int
 }
 
