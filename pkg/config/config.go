@@ -1343,6 +1343,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 		}
 	}
 	enforceCmdArgs(cfg, fset)
+	applyKeyspaceNameEnvFallback(cfg)
 
 	if err := cfg.Valid(); err != nil {
 		if !filepath.IsAbs(confPath) {
@@ -1359,6 +1360,16 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 		os.Exit(0)
 	}
 	StoreGlobalConfig(cfg)
+}
+
+// KEYSPACE_NAME is a supported config source only for nextgen starter deployments.
+// The config object is normalized before validation so every later caller sees the
+// same keyspace source of truth.
+func applyKeyspaceNameEnvFallback(cfg *Config) {
+	if cfg.KeyspaceName != "" || !kerneltype.IsNextGen() || cfg.DeployMode != deploymode.Starter {
+		return
+	}
+	cfg.KeyspaceName = os.Getenv(EnvVarKeyspaceName)
 }
 
 // RemovedVariableCheck checks if the config file contains any items

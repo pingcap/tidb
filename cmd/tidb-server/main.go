@@ -289,6 +289,16 @@ func initDeployMode(cfg *config.Config) error {
 	return deploymode.Set(cfg.DeployMode)
 }
 
+func validateKeyspaceModeConflict(cfg *config.Config, keyspaceName string) error {
+	if kerneltype.IsNextGen() && len(keyspaceName) == 0 && !cfg.Standby.StandByMode {
+		return errors.New("invalid config: keyspace name or standby mode is required for nextgen TiDB")
+	}
+	if kerneltype.IsClassic() && (len(keyspaceName) > 0 || cfg.Standby.StandByMode) {
+		return errors.New("invalid config: keyspace name or standby mode is not supported for classic TiDB")
+	}
+	return nil
+}
+
 func main() {
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
@@ -312,11 +322,8 @@ func main() {
 	}
 	// we cannot add this check inside config.Valid(), as previous '-V' also relies
 	// on initialized global config.
-	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 && !config.GetGlobalConfig().Standby.StandByMode {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is required for nextgen TiDB")
-		os.Exit(0)
-	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().Standby.StandByMode) {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is not supported for classic TiDB")
+	if err := validateKeyspaceModeConflict(config.GetGlobalConfig(), keyspace.GetKeyspaceNameBySettings()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(0)
 	}
 

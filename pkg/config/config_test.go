@@ -17,6 +17,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/user"
@@ -1483,6 +1484,26 @@ func TestStatsLoadLimit(t *testing.T) {
 }
 
 func TestGetGlobalKeyspaceName(t *testing.T) {
+	savedConfig := *GetGlobalConfig()
+	t.Cleanup(func() {
+		StoreGlobalConfig(&savedConfig)
+	})
+
+	runInitializeConfig := func(t *testing.T, configBody string) {
+		t.Helper()
+
+		StoreGlobalConfig(NewConfig())
+
+		confPath := ""
+		if configBody != "" {
+			confPath = filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(confPath, []byte(configBody), 0o644))
+		}
+
+		fset := flag.NewFlagSet("tidb-config-test", flag.ContinueOnError)
+		InitializeConfig(confPath, false, false, func(*Config, *flag.FlagSet) {}, fset)
+	}
+
 	conf := NewConfig()
 	require.Empty(t, conf.KeyspaceName)
 
@@ -1494,6 +1515,32 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 
 	UpdateGlobal(func(conf *Config) {
 		conf.KeyspaceName = ""
+	})
+
+	t.Run("initialize config applies env for starter nextgen", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("only for nextgen kernel")
+		}
+
+		t.Setenv(EnvVarKeyspaceName, "starter_env")
+		runInitializeConfig(t, `deploy-mode = "starter"`)
+		require.Equal(t, "starter_env", GetGlobalKeyspaceName())
+	})
+
+	t.Run("initialize config keeps explicit keyspace over env", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("only for nextgen kernel")
+		}
+
+		t.Setenv(EnvVarKeyspaceName, "starter_env")
+		runInitializeConfig(t, "deploy-mode = \"starter\"\nkeyspace-name = \"config_keyspace\"\n")
+		require.Equal(t, "config_keyspace", GetGlobalKeyspaceName())
+	})
+
+	t.Run("initialize config ignores env outside starter", func(t *testing.T) {
+		t.Setenv(EnvVarKeyspaceName, "starter_env")
+		runInitializeConfig(t, "")
+		require.Empty(t, GetGlobalKeyspaceName())
 	})
 }
 

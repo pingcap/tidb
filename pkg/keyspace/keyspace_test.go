@@ -19,14 +19,18 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSetKeyspaceNameInConf(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = ""
+	savedConfig := *config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			*conf = savedConfig
+		})
+		keyspaceNameBytes = nil
+		genKeyspaceNameOnce = sync.Once{}
 	})
 
 	keyspaceNameInCfg := "test_keyspace_cfg"
@@ -56,19 +60,6 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	resetKeyspaceNameCache := func() {
 		keyspaceNameBytes = nil
 		genKeyspaceNameOnce = sync.Once{}
-	}
-	setDeployMode := func(t *testing.T, mode deploymode.Mode) {
-		t.Helper()
-
-		if !kerneltype.IsNextGen() {
-			t.Skip("deploy mode only applies to nextgen")
-		}
-
-		original := deploymode.Get()
-		require.NoError(t, deploymode.Set(mode))
-		t.Cleanup(func() {
-			require.NoError(t, deploymode.Set(original))
-		})
 	}
 	restoreGlobalConfigAndCache := func(t *testing.T) {
 		t.Helper()
@@ -106,21 +97,20 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 		const keyspaceNameInEnv = "test_keyspace_env"
 
 		restoreGlobalConfigAndCache(t)
-		setDeployMode(t, deploymode.Starter)
 		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = ""
 		})
 
 		getKeyspaceName := GetKeyspaceNameBySettings()
-		require.Equal(t, keyspaceNameInEnv, getKeyspaceName)
-		require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
-		require.Equal(t, keyspaceNameInEnv, config.GetGlobalKeyspaceName())
+		require.Empty(t, getKeyspaceName)
+		require.True(t, IsKeyspaceNameEmpty(getKeyspaceName))
+		require.Empty(t, config.GetGlobalKeyspaceName())
 
 		resetKeyspaceNameCache()
 		getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
 		if kerneltype.IsNextGen() {
-			require.Equal(t, []byte(keyspaceNameInEnv), getKeyspaceNameByte)
+			require.Equal(t, []byte(""), getKeyspaceNameByte)
 		} else {
 			require.Nil(t, getKeyspaceNameByte)
 		}
@@ -150,51 +140,24 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 		}
 	})
 
-	t.Run("bytes getter falls back to env before string getter", func(t *testing.T) {
+	t.Run("bytes getter does not fall back to env before string getter", func(t *testing.T) {
 		const keyspaceNameInEnv = "test_keyspace_env_first"
 
 		restoreGlobalConfigAndCache(t)
-		setDeployMode(t, deploymode.Starter)
 		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = ""
 		})
-
-		resetKeyspaceNameCache()
-		getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
-		if kerneltype.IsNextGen() {
-			require.Equal(t, []byte(keyspaceNameInEnv), getKeyspaceNameByte)
-			require.Equal(t, keyspaceNameInEnv, config.GetGlobalKeyspaceName())
-		} else {
-			require.Nil(t, getKeyspaceNameByte)
-		}
-		require.Equal(t, keyspaceNameInEnv, GetKeyspaceNameBySettings())
-	})
-
-	t.Run("does not fallback to env when not starter", func(t *testing.T) {
-		const keyspaceNameInEnv = "test_keyspace_env_non_starter"
-
-		restoreGlobalConfigAndCache(t)
-		if kerneltype.IsNextGen() {
-			setDeployMode(t, deploymode.Premium)
-		}
-		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = ""
-		})
-
-		getKeyspaceName := GetKeyspaceNameBySettings()
-		require.Empty(t, getKeyspaceName)
-		require.True(t, IsKeyspaceNameEmpty(getKeyspaceName))
-		require.Empty(t, config.GetGlobalKeyspaceName())
 
 		resetKeyspaceNameCache()
 		getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
 		if kerneltype.IsNextGen() {
 			require.Equal(t, []byte(""), getKeyspaceNameByte)
+			require.Empty(t, config.GetGlobalKeyspaceName())
 		} else {
 			require.Nil(t, getKeyspaceNameByte)
 		}
+		require.Empty(t, GetKeyspaceNameBySettings())
 	})
 }
 
@@ -206,6 +169,13 @@ func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = "benchmark_keyspace"
+	})
+	b.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = ""
+		})
+		keyspaceNameBytes = nil
+		genKeyspaceNameOnce = sync.Once{}
 	})
 
 	var result []byte

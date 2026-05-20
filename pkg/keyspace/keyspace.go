@@ -16,12 +16,10 @@ package keyspace
 
 import (
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -57,22 +55,7 @@ func MakeKeyspaceEtcdNamespaceSlash(c tikv.Codec) string {
 
 // GetKeyspaceNameBySettings is used to get Keyspace name setting.
 func GetKeyspaceNameBySettings() (keyspaceName string) {
-	keyspaceName = config.GetGlobalKeyspaceName()
-
-	if !IsKeyspaceNameEmpty(keyspaceName) {
-		return keyspaceName
-	}
-
-	if !deploymode.IsStarter() {
-		return ""
-	}
-
-	keyspaceName = os.Getenv(config.EnvVarKeyspaceName)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = keyspaceName
-	})
-
-	return keyspaceName
+	return config.GetGlobalKeyspaceName()
 }
 
 var keyspaceNameBytes []byte

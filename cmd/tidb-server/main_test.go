@@ -15,7 +15,9 @@
 package main
 
 import (
+	"flag"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 
@@ -132,6 +134,48 @@ func TestInitDeployMode(t *testing.T) {
 
 	cfg.DeployMode = deploymode.Mode(100)
 	require.ErrorContains(t, initDeployMode(cfg), "invalid deploy mode")
+
+	t.Run("starter env keyspace passes startup validation after config normalization", func(t *testing.T) {
+		confPath := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(t, os.WriteFile(confPath, []byte(`deploy-mode = "starter"`), 0o644))
+		t.Setenv(config.EnvVarKeyspaceName, "starter_env")
+
+		savedConfig := *config.GetGlobalConfig()
+		t.Cleanup(func() {
+			config.StoreGlobalConfig(&savedConfig)
+		})
+
+		config.StoreGlobalConfig(config.NewConfig())
+		fset := flag.NewFlagSet("tidb-server-test", flag.ContinueOnError)
+		config.InitializeConfig(confPath, false, false, func(*config.Config, *flag.FlagSet) {}, fset)
+
+		require.NoError(t, validateKeyspaceModeConflict(config.GetGlobalConfig(), config.GetGlobalKeyspaceName()))
+		require.Equal(t, "starter_env", config.GetGlobalKeyspaceName())
+	})
+
+	t.Run("non starter nextgen still rejects env only", func(t *testing.T) {
+		cfg := config.NewConfig()
+		cfg.DeployMode = deploymode.Premium
+
+		require.ErrorContains(t, validateKeyspaceModeConflict(cfg, ""), "keyspace name or standby mode is required")
+	})
+
+	t.Run("startup validation uses keyspace settings instead of raw config field", func(t *testing.T) {
+		savedConfig := *config.GetGlobalConfig()
+		t.Cleanup(func() {
+			config.StoreGlobalConfig(&savedConfig)
+		})
+
+		config.StoreGlobalConfig(config.NewConfig())
+		if kerneltype.IsNextGen() {
+			require.ErrorContains(t, validateKeyspaceModeConflict(config.GetGlobalConfig(), ""), "keyspace name or standby mode is required")
+			require.NoError(t, validateKeyspaceModeConflict(config.GetGlobalConfig(), "starter_env"))
+			return
+		}
+
+		require.NoError(t, validateKeyspaceModeConflict(config.GetGlobalConfig(), ""))
+		require.ErrorContains(t, validateKeyspaceModeConflict(config.GetGlobalConfig(), "starter_env"), "keyspace name or standby mode is not supported")
+	})
 }
 
 func TestSetVersionByConfigInNextGen(t *testing.T) {
