@@ -328,6 +328,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpReader(v)
 	case *physicalop.PhysicalWindow:
 		return b.buildWindow(v)
+	case *physicalop.PhysicalOrderedWindow:
+		return b.buildOrderedWindow(v)
 	case *physicalop.PhysicalShuffle:
 		return b.buildShuffle(v)
 	case *physicalop.PhysicalShuffleReceiverStub:
@@ -5566,6 +5568,19 @@ func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executo
 		return nil
 	}
 	exec, err := windowexec.Build(b.sctx, v, childExec, false)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return exec
+}
+
+func (b *executorBuilder) buildOrderedWindow(v *physicalop.PhysicalOrderedWindow) exec.Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	exec, err := windowexec.BuildOrdered(b.sctx, &v.PhysicalWindow, childExec)
 	if err != nil {
 		b.err = err
 		return nil

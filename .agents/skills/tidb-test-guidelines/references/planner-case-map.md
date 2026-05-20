@@ -476,7 +476,7 @@
 ### Tests
 - `pkg/planner/core/casetest/windows/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/planner/core/casetest/windows/widow_with_exist_subquery_test.go` - planner/core/casetest/windows: Tests window functions with correlated EXISTS subqueries.
-- `pkg/planner/core/casetest/windows/window_push_down_test.go` - planner/core/casetest/windows: Tests TiFlash window pushdown plans, warnings, and merged issue regressions.
+- `pkg/planner/core/casetest/windows/window_push_down_test.go` - planner/core/casetest/windows: Tests TiFlash window pushdown plans, ordered-input window plans, warnings, and merged issue regressions.
 
 ### Testdata
 - `pkg/planner/core/casetest/windows/testdata/window_push_down_suite_in.json`
