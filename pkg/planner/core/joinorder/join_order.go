@@ -642,7 +642,7 @@ func cloneNodesForGreedyStart(nodes []*Node) []*Node {
 func chooseBestGreedyStart(startCount int, runner func(startIdx int) (*Node, error)) (*Node, int, error) {
 	var best *Node
 	bestStartIdx := -1
-	for startIdx := 0; startIdx < startCount; startIdx++ {
+	for startIdx := range startCount {
 		candidate, err := runner(startIdx)
 		if err != nil {
 			return nil, -1, err
