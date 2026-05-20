@@ -101,28 +101,9 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalWindow)
 	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
+	if err := clonePhysicalWindowWithSelf(p, cloned, newCtx, cloned); err != nil {
 		return nil, err
 	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
-	for _, it := range p.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
-	for _, it := range p.OrderBy {
-		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
-	}
-	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
-	for _, it := range p.WindowFuncDescs {
-		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
-	}
-	if p.Frame != nil {
-		cloned.Frame = p.Frame.Clone()
-	}
-
 	return cloned, nil
 }
 
@@ -130,28 +111,35 @@ func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 func (p *PhysicalOrderedWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalOrderedWindow)
 	*cloned = *p
-	cloned.SetSCtx(newCtx)
-	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, cloned)
-	if err != nil {
+	if err := clonePhysicalWindowWithSelf(&p.PhysicalWindow, &cloned.PhysicalWindow, newCtx, cloned); err != nil {
 		return nil, err
 	}
-	cloned.PhysicalSchemaProducer = *base
-	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
-	for _, it := range p.PartitionBy {
-		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
-	}
-	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
-	for _, it := range p.OrderBy {
-		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
-	}
-	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
-	for _, it := range p.WindowFuncDescs {
-		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
-	}
-	if p.Frame != nil {
-		cloned.Frame = p.Frame.Clone()
-	}
 	return cloned, nil
+}
+
+func clonePhysicalWindowWithSelf(src, dst *PhysicalWindow, newCtx base.PlanContext, newSelf base.PhysicalPlan) error {
+	dst.SetSCtx(newCtx)
+	base, err := src.PhysicalSchemaProducer.CloneWithSelf(newCtx, newSelf)
+	if err != nil {
+		return err
+	}
+	dst.PhysicalSchemaProducer = *base
+	dst.PartitionBy = make([]property.SortItem, 0, len(src.PartitionBy))
+	for _, it := range src.PartitionBy {
+		dst.PartitionBy = append(dst.PartitionBy, it.Clone())
+	}
+	dst.OrderBy = make([]property.SortItem, 0, len(src.OrderBy))
+	for _, it := range src.OrderBy {
+		dst.OrderBy = append(dst.OrderBy, it.Clone())
+	}
+	dst.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(src.WindowFuncDescs))
+	for _, it := range src.WindowFuncDescs {
+		dst.WindowFuncDescs = append(dst.WindowFuncDescs, it.Clone())
+	}
+	if src.Frame != nil {
+		dst.Frame = src.Frame.Clone()
+	}
+	return nil
 }
 
 // MemoryUsage return the memory usage of PhysicalWindow
