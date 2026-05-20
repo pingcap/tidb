@@ -535,16 +535,49 @@ type TableSource struct {
 
 	// AsName is the alias name of the table source.
 	AsName CIStr
+
+	// Lateral indicates whether this is a LATERAL derived table.
+	// MySQL 8.0+ syntax: FROM t1, LATERAL (SELECT ...) AS dt
+	// LATERAL allows the derived table to reference columns from tables to its left.
+	Lateral bool
+
+	// ColumnNames is the optional column alias list for derived tables.
+	// e.g. LATERAL (SELECT ...) AS dt(c1, c2)
+	ColumnNames []CIStr
 }
 
 func (*TableSource) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
+	// Validate AST invariants before emitting any SQL.
+	// Source can be TableName, SelectStmt, SetOprStmt, or JoinNode (parenthesized join).
+	// LATERAL and ColumnNames are only valid on derived tables (SelectStmt, SetOprStmt);
+	// TableName and JoinNode are both excluded.
+	isDerived := false
+	switch n.Source.(type) {
+	case *SelectStmt, *SetOprStmt:
+		isDerived = true
+	}
+	if n.Lateral && !isDerived {
+		return errors.New("LATERAL cannot be applied to a table name, only to derived tables")
+	}
+	if len(n.ColumnNames) > 0 && !isDerived {
+		return errors.New("column alias list cannot be applied to a table name")
+	}
+	if len(n.ColumnNames) > 0 && n.AsName.String() == "" {
+		return errors.New("column list provided without alias for derived table")
+	}
+
 	needParen := false
 	switch n.Source.(type) {
 	case *SelectStmt, *SetOprStmt:
 		needParen = true
+	}
+
+	// Output LATERAL keyword if this is a LATERAL derived table
+	if n.Lateral {
+		ctx.WriteKeyWord("LATERAL ")
 	}
 
 	if tn, tnCase := n.Source.(*TableName); tnCase {
@@ -592,6 +625,16 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 		if asName := n.AsName.String(); asName != "" {
 			ctx.WriteKeyWord(" AS ")
 			ctx.WriteName(asName)
+			if len(n.ColumnNames) > 0 {
+				ctx.WritePlain("(")
+				for i, col := range n.ColumnNames {
+					if i > 0 {
+						ctx.WritePlain(", ")
+					}
+					ctx.WriteName(col.String())
+				}
+				ctx.WritePlain(")")
+			}
 		}
 	}
 
@@ -823,6 +866,18 @@ func (n *FieldList) Restore(ctx *format.RestoreCtx) error {
 		}
 		if err := v.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore FieldList.Fields[%d]", i)
+		}
+	}
+	return nil
+}
+
+func restoreReturningFields(ctx *format.RestoreCtx, fields []*SelectField) error {
+	for i, field := range fields {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := field.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore Returning[%d]", i)
 		}
 	}
 	return nil
@@ -2358,6 +2413,8 @@ type InsertStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints     []*TableOptimizerHint
 	PartitionNames []CIStr
+	// Returning represents the RETURNING select_expr list for INSERT statement.
+	Returning []*SelectField
 }
 
 // Restore implements Node interface.
@@ -2483,6 +2540,12 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	}
+	if len(n.Returning) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := restoreReturningFields(ctx, n.Returning); err != nil {
+			return errors.Annotate(err, "An error occurred while restore InsertStmt.Returning")
+		}
+	}
 
 	return nil
 }
@@ -2531,6 +2594,13 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.OnDuplicate[i] = node.(*Assignment)
+	}
+	for i, field := range n.Returning {
+		node, ok := field.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning[i] = node.(*SelectField)
 	}
 	return v.Leave(n)
 }
@@ -2591,6 +2661,8 @@ type DeleteStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints []*TableOptimizerHint
 	With       *WithClause
+	// Returning represents the RETURNING select_expr list for DELETE statement.
+	Returning []*SelectField
 }
 
 // Restore implements Node interface.
@@ -2680,6 +2752,12 @@ func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore DeleteStmt.Limit")
 		}
 	}
+	if len(n.Returning) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := restoreReturningFields(ctx, n.Returning); err != nil {
+			return errors.Annotate(err, "An error occurred while restore DeleteStmt.Returning")
+		}
+	}
 
 	return nil
 }
@@ -2733,6 +2811,13 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Limit = node.(*Limit)
+	}
+	for i, field := range n.Returning {
+		node, ok = field.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning[i] = node.(*SelectField)
 	}
 	return v.Leave(n)
 }
@@ -2843,6 +2928,8 @@ type UpdateStmt struct {
 	MultipleTable bool
 	TableHints    []*TableOptimizerHint
 	With          *WithClause
+	// Returning represents the RETURNING select_expr list for UPDATE statement.
+	Returning []*SelectField
 }
 
 // Restore implements Node interface.
@@ -2921,6 +3008,12 @@ func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occur while restore UpdateStmt.Limit")
 		}
 	}
+	if len(n.Returning) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := restoreReturningFields(ctx, n.Returning); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UpdateStmt.Returning")
+		}
+	}
 
 	return nil
 }
@@ -2971,6 +3064,13 @@ func (n *UpdateStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Limit = node.(*Limit)
+	}
+	for i, field := range n.Returning {
+		node, ok = field.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning[i] = node.(*SelectField)
 	}
 	return v.Leave(n)
 }
@@ -3162,7 +3262,8 @@ type ShowStmt struct {
 
 	ShowGroupKey string // Used for `SHOW IMPORT GROUP <GROUP_KEY>` syntax
 
-	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+	ImportJobID  *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+	ImportJobRaw bool   // Used for `SHOW RAW IMPORT JOB(S)` syntax
 
 	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
@@ -3387,6 +3488,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
 	case ShowImportJobs:
+		if n.ImportJobRaw {
+			ctx.WriteKeyWord("RAW ")
+		}
 		if n.ImportJobID != nil {
 			ctx.WriteKeyWord("IMPORT JOB ")
 			ctx.WritePlainf("%d", *n.ImportJobID)

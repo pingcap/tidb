@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -96,6 +97,8 @@ type stmtSummaryByDigestMap struct {
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
+	// currentWindowEvictedCount counts LRU evictions observed in the current interval.
+	currentWindowEvictedCount int64
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -289,6 +292,7 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+	TotalRUV2         float64
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
@@ -329,6 +333,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		newSsMap.currentWindowEvictedCount++
 		historySize := newSsMap.historySize()
 		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
@@ -390,6 +395,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
 		// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
 		ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+		ssMap.currentWindowEvictedCount = 0
 	}
 
 	beginTime := ssMap.beginTimeForCurInterval
@@ -411,6 +417,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	if exist {
 		StmtDigestKeyPool.Put(key)
 	}
+	ssMap.updateMetricsLocked()
 }
 
 // Clear removes all statement summaries.
@@ -421,6 +428,8 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.summaryMap.DeleteAll()
 	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
+	ssMap.currentWindowEvictedCount = 0
+	ssMap.updateMetricsLocked()
 }
 
 // clearInternal removes all statement summaries which are internal summaries.
@@ -437,6 +446,7 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 			ssMap.summaryMap.Delete(key)
 		}
 	}
+	ssMap.updateMetricsLocked()
 }
 
 // clearHistory removes history for all statement summaries, leaving only the current interval.
@@ -546,13 +556,23 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
 
 	ssMap.Lock()
 	defer ssMap.Unlock()
-	return ssMap.summaryMap.SetCapacity(value)
+	err := ssMap.summaryMap.SetCapacity(value)
+	ssMap.updateMetricsLocked()
+	return err
 }
 
 // Used by tests
 // nolint: unused
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
 	return int(ssMap.optMaxStmtCount.Load())
+}
+
+func (ssMap *stmtSummaryByDigestMap) updateMetricsLocked() {
+	metrics.SetStmtSummaryWindowMetrics(
+		metrics.StmtSummaryTypeV1,
+		float64(ssMap.summaryMap.Size()),
+		float64(ssMap.currentWindowEvictedCount),
+	)
 }
 
 // SetHistorySize sets the history size for all summaries.
@@ -954,7 +974,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	ssStats.StmtNetworkTrafficSummary.Add(sei.TiKVExecDetails)
 
 	// request-units
-	ssStats.StmtRUSummary.Add(sei.RUDetail)
+	ssStats.StmtRUSummary.Add(sei.RUDetail, sei.TotalRUV2)
 
 	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
 	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
@@ -1050,10 +1070,12 @@ type StmtRUSummary struct {
 	MaxRRU            float64       `json:"max_rru"`
 	MaxWRU            float64       `json:"max_wru"`
 	MaxRUWaitDuration time.Duration `json:"max_ru_wait_duration"`
+	SumRUV2           float64       `json:"sum_ruv2"`
+	MaxRUV2           float64       `json:"max_ruv2"`
 }
 
 // Add add a new sample value to the ru summary record.
-func (s *StmtRUSummary) Add(info *util.RUDetails) {
+func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 float64) {
 	if info != nil {
 		rru := info.RRU()
 		s.SumRRU += rru
@@ -1071,6 +1093,10 @@ func (s *StmtRUSummary) Add(info *util.RUDetails) {
 			s.MaxRUWaitDuration = ruWaitDur
 		}
 	}
+	s.SumRUV2 += totalRUV2
+	if s.MaxRUV2 < totalRUV2 {
+		s.MaxRUV2 = totalRUV2
+	}
 }
 
 // Merge merges the value of 2 ru summary records.
@@ -1086,6 +1112,10 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
+	}
+	s.SumRUV2 += other.SumRUV2
+	if s.MaxRUV2 < other.MaxRUV2 {
+		s.MaxRUV2 = other.MaxRUV2
 	}
 }
 
@@ -1119,13 +1149,14 @@ func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
 // Add add a new sample value to the ru summary record.
 func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
 	if info != nil {
-		s.UnpackedBytesSentTiKVTotal += info.UnpackedBytesSentKVTotal
-		s.UnpackedBytesReceivedTiKVTotal += info.UnpackedBytesReceivedKVTotal
-		s.UnpackedBytesSentTiKVCrossZone += info.UnpackedBytesSentKVCrossZone
-		s.UnpackedBytesReceivedTiKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
-		s.UnpackedBytesSentTiFlashTotal += info.UnpackedBytesSentMPPTotal
-		s.UnpackedBytesReceivedTiFlashTotal += info.UnpackedBytesReceivedMPPTotal
-		s.UnpackedBytesSentTiFlashCrossZone += info.UnpackedBytesSentMPPCrossZone
-		s.UnpackedBytesReceivedTiFlashCrossZone += info.UnpackedBytesReceivedMPPCrossZone
+		snapshot := execdetails.LoadTiKVExecDetails(info)
+		s.UnpackedBytesSentTiKVTotal += snapshot.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedTiKVTotal += snapshot.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentTiKVCrossZone += snapshot.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedTiKVCrossZone += snapshot.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentTiFlashTotal += snapshot.UnpackedBytesSentMPPTotal
+		s.UnpackedBytesReceivedTiFlashTotal += snapshot.UnpackedBytesReceivedMPPTotal
+		s.UnpackedBytesSentTiFlashCrossZone += snapshot.UnpackedBytesSentMPPCrossZone
+		s.UnpackedBytesReceivedTiFlashCrossZone += snapshot.UnpackedBytesReceivedMPPCrossZone
 	}
 }

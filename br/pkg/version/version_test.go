@@ -332,6 +332,27 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
+		// BR v26.x and TiKV v8.x: major version difference > 2, should fail
+		build.ReleaseVersion = "v26.3.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v8.5.4"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.Error(t, err)
+		require.Regexp(t, "major version mismatch", err.Error())
+	}
+
+	{
+		// nightly-dirty (test build) skips all version checks
+		build.ReleaseVersion = build.ReleaseVersionForTest
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v8.5.4"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
+		require.NoError(t, err)
+	}
+
+	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.4.0"}}
 		}
@@ -502,37 +523,55 @@ func TestNormalizeBackupVersion(t *testing.T) {
 	}
 }
 
+type detectServerInfoCase struct {
+	tag            int
+	versionStr     string
+	expectedType   ServerType
+	expectedSemVer *semver.Version
+}
+
+func commonDetectServerInfoCases() []detectServerInfoCase {
+	mkVer := makeVersion
+	return []detectServerInfoCase{
+		{1, "8.0.18", ServerTypeMySQL, mkVer(8, 0, 18, "")},
+		{2, "10.4.10-MariaDB-1:10.4.10+maria~bionic", ServerTypeMariaDB, mkVer(10, 4, 10, "MariaDB-1")},
+		{6, "invalid version", ServerTypeUnknown, mkVer(0, 0, 0, "")},
+		{9, "5.7.25-TiDB-5584f12", ServerTypeTiDB, mkVer(0, 0, 0, "")},
+	}
+}
+
+func tidbDetectServerInfoCases() []detectServerInfoCase {
+	mkVer := makeVersion
+	return []detectServerInfoCase{
+		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
+		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
+		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(3, 0, 6, "")},
+		{7, "Release Version: v5.2.1\nEdition: Community\nGit Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445", ServerTypeTiDB, mkVer(5, 2, 1, "")},
+		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(5, 4, 0, "alpha-21-g86caab907")},
+		{10, "8.0.11-TiDB-CLOUD.202603.0", ServerTypeTiDB, mkVer(26, 3, 0, "")},
+		{11, "8.0.11-TiDB-CLOUD.202603.3-1c7827b003-dirty", ServerTypeTiDB, mkVer(26, 3, 3, "1c7827b003-dirty")},
+		{12, "Release Version: CLOUD.202603.2\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 2, "")},
+		{12, "Release Version: CLOUD.202603.5-1c7827b003-dirty\nEdition: Community", ServerTypeTiDB, mkVer(26, 3, 5, "1c7827b003-dirty")},
+		{13, "8.0.11-TiDB-X-CLOUD.202603.0", ServerTypeTiDB, mkVer(0, 0, 0, "")},
+	}
+}
+
 func TestDetectServerInfo(t *testing.T) {
+	t.Helper()
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
 
-	mkVer := makeVersion
-	data := [][]any{
-		{1, "8.0.18", ServerTypeMySQL, mkVer(8, 0, 18, "")},
-		{2, "10.4.10-MariaDB-1:10.4.10+maria~bionic", ServerTypeMariaDB, mkVer(10, 4, 10, "MariaDB-1")},
-		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
-		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
-		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(3, 0, 6, "")},
-		{6, "invalid version", ServerTypeUnknown, mkVer(0, 0, 0, "")},
-		{7, "Release Version: v5.2.1\nEdition: Community\nGit Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445", ServerTypeTiDB, mkVer(5, 2, 1, "")},
-		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(5, 4, 0, "alpha-21-g86caab907")},
-		{9, "5.7.25-TiDB-5584f12", ServerTypeTiDB, mkVer(0, 0, 0, "")},
-	}
-	dec := func(d []any) (tag int, verStr string, tp ServerType, v *semver.Version) {
-		return d[0].(int), d[1].(string), d[2].(ServerType), d[3].(*semver.Version)
-	}
-
-	for _, datum := range data {
-		tag, r, serverTp, expectVer := dec(datum)
-		cmt := fmt.Sprintf("test case number: %d", tag)
+	for _, tc := range append(commonDetectServerInfoCases(), tidbDetectServerInfoCases()...) {
+		cmt := fmt.Sprintf("test case number: %d", tc.tag)
 
 		tidbVersionQuery := mock.ExpectQuery("SELECT tidb_version\\(\\);")
-		if strings.HasPrefix(r, "Release Version:") {
-			tidbVersionQuery.WillReturnRows(sqlmock.NewRows([]string{"tidb_version"}).AddRow(r))
+		if strings.HasPrefix(tc.versionStr, "Release Version:") {
+			tidbVersionQuery.WillReturnRows(sqlmock.NewRows([]string{"tidb_version"}).AddRow(tc.versionStr))
 		} else {
 			tidbVersionQuery.WillReturnError(errors.New("mock error"))
-			rows := sqlmock.NewRows([]string{"version"}).AddRow(r)
+			rows := sqlmock.NewRows([]string{"version"}).AddRow(tc.versionStr)
 			mock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(rows)
 		}
 
@@ -540,17 +579,17 @@ func TestDetectServerInfo(t *testing.T) {
 		require.NoError(t, err, cmt)
 
 		info := ParseServerInfo(verStr)
-		require.Equal(t, serverTp, info.ServerType, cmt)
-		require.Equal(t, expectVer == nil, info.ServerVersion == nil, cmt)
+		require.Equal(t, tc.expectedType, info.ServerType, cmt)
+		require.Equal(t, tc.expectedSemVer == nil, info.ServerVersion == nil, cmt)
 		if info.ServerVersion == nil {
-			require.Nil(t, expectVer, cmt)
+			require.Nil(t, tc.expectedSemVer, cmt)
 		} else {
-			fmt.Printf("%v, %v\n", *info.ServerVersion, *expectVer)
-			require.True(t, info.ServerVersion.Equal(*expectVer))
+			require.True(t, info.ServerVersion.Equal(*tc.expectedSemVer), cmt)
 		}
 		require.NoError(t, mock.ExpectationsWereMet(), cmt)
 	}
 }
+
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
 	return &semver.Version{
 		Major:      major,

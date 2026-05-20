@@ -523,12 +523,12 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 	progress := float64(0)
 	if addedRowCount != 0 {
-		totalCount := getTableTotalCount(w, tblInfo)
-		if totalCount > 0 {
+		totalCount := getTableEstimatedCount(w, tblInfo)
+		if totalCount > 0 && totalCount != statistics.PseudoRowCount {
+			// Only update progress when totalCount is relatively precise
 			progress = float64(addedRowCount) / float64(totalCount)
-		} else {
-			progress = 0
 		}
+		// float compare is in-accurate
 		if progress > 1 {
 			progress = 1
 		}
@@ -537,43 +537,41 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if rc != nil {
 			progress = rc.setMaxProgress(progress)
 		}
-		logutil.DDLLogger().Debug("update progress",
+		logutil.DDLLogger().Debug("update backfill progress",
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
-			zap.Int64("totalCount", totalCount))
+			zap.Int64("estimated totalCount", totalCount))
 	}
+	label := backfillProgressLabel(reorgInfo.Type, reorgInfo.mergingTmpIdx)
+	if label == "" {
+		return
+	}
+
+	colOrIdxName := ""
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		var label string
-		if reorgInfo.mergingTmpIdx {
-			label = metrics.LblAddIndexMerge
-		} else {
-			label = metrics.LblAddIndex
-		}
-		idxNames := ""
 		args, err := model.GetModifyIndexArgs(reorgInfo.Job)
 		if err != nil {
 			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.Error(err))
 		} else {
-			idxNames = getIdxNamesFromArgs(args)
+			colOrIdxName = getIdxNamesFromArgs(args)
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
-		colName := ""
 		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
 		if err != nil {
 			logutil.DDLLogger().Error("Fail to get ModifyColumnArgs", zap.Error(err))
 		} else {
-			colName = args.OldColumnName.O
+			colOrIdxName = args.OldColumnName.O
 		}
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 	}
+	// Partition reorg progress/rate metrics are keyed by logical table ID so cleanup
+	// can always reach them after DroppingDefinitions is cleared.
+	metricTableID := backfillMetricsTableID(reorgInfo, label)
+	getBackfillProgressByTableID(metricTableID, label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
 }
 
-func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+func getTableEstimatedCount(w *worker, tblInfo *model.TableInfo) int64 {
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.Get()
 	if err != nil {
@@ -601,7 +599,11 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if len(rows) != 1 {
 		return statistics.PseudoRowCount
 	}
-	return rows[0].GetInt64(0)
+	count := rows[0].GetInt64(0)
+	if count == 0 {
+		return statistics.PseudoRowCount
+	}
+	return count
 }
 
 func (dc *ddlCtx) isReorgRunnable(ctx context.Context, isDistReorg bool) error {
@@ -1166,6 +1168,15 @@ func cleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	if err != nil {
 		// ignore error, cleanup is not that critical
 		logutil.DDLLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.Stringer("job", job), zap.Error(err))
+	}
+
+	// Clean up backfill metrics registered by tableID.
+	// For non-partitioned tables and partition DDL operations (reorganize, etc.),
+	// the metric is registered under job.TableID (the logical table ID).
+	// For add-index on partitioned tables, metrics are registered per partition ID;
+	// those are cleaned up later when applyCreateTable rebuilds the infoschema.
+	if job != nil {
+		metrics.DDLClearBackfillMetrics(job.TableID)
 	}
 }
 

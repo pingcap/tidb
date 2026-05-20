@@ -1463,8 +1463,12 @@ func (b *builtinWeekWithModeSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 	}
 
 	mode, isNull, err := b.args[1].EvalInt(ctx, row)
-	if isNull || err != nil {
+	if err != nil {
 		return 0, isNull, err
+	}
+	if isNull {
+		// MySQL treats a NULL week mode as mode 0 for WEEK(date, mode).
+		mode = 0
 	}
 
 	week := date.Week(int(mode))
@@ -6476,6 +6480,9 @@ func (b *builtinTimeFormatSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	formatMask, isNull, err := b.args[1].EvalString(ctx, row)
 	if err != nil || isNull {
 		return "", isNull, err
+	}
+	if len(formatMask) == 0 {
+		return "", true, nil
 	}
 	res, err := b.formatTime(dur, formatMask)
 	return res, isNull, err

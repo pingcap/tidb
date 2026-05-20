@@ -18,6 +18,8 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"math"
+	"math/bits"
 	"slices"
 	"strings"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -50,6 +53,10 @@ type joinGroup struct {
 
 	// All leading hints for this join group.
 	leadingHints []*hint.PlanHints
+	// Whether this join group contains any user-provided LEADING hint. Internal
+	// ordered-leading preferences reuse the same builder path but should not emit
+	// user-facing hint warnings.
+	hasUserLeadingHint bool
 	// Join method hints for each vertex in this join group.
 	// Key is the planID of the vertex.
 	// This is for restore join method hints after join reorder.
@@ -67,6 +74,7 @@ type joinGroup struct {
 func (g *joinGroup) merge(other *joinGroup) {
 	g.vertexes = append(g.vertexes, other.vertexes...)
 	g.leadingHints = append(g.leadingHints, other.leadingHints...)
+	g.hasUserLeadingHint = g.hasUserLeadingHint || other.hasUserLeadingHint
 	if len(other.vertexHints) > 0 {
 		if g.vertexHints == nil {
 			g.vertexHints = make(map[int]*JoinMethodHint, len(other.vertexHints))
@@ -110,12 +118,17 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	}
 
 	var curLeadingHint *hint.PlanHints
+	var curLeadingHintFromUser bool
 	if join.PreferJoinOrder {
 		curLeadingHint = join.HintInfo
+		curLeadingHintFromUser = true
+	} else if join.InternalPreferJoinOrder {
+		curLeadingHint = join.InternalHintInfo
 	}
 	defer func() {
 		if curLeadingHint != nil {
 			resJoinGroup.leadingHints = append(resJoinGroup.leadingHints, curLeadingHint)
+			resJoinGroup.hasUserLeadingHint = resJoinGroup.hasUserLeadingHint || curLeadingHintFromUser
 		}
 	}()
 
@@ -247,7 +260,7 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 		}
 		p.SetChildren(newChildren...)
 
-		if len(joinGroup.leadingHints) > 0 {
+		if joinGroup.hasUserLeadingHint && len(joinGroup.leadingHints) > 0 {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check the join type or the join algorithm hint")
 		}
 		return p, nil
@@ -303,10 +316,9 @@ func replaceJoinGroupVertexes(root base.LogicalPlan, vertexMap map[int]base.Logi
 func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
-	// TODO impl DP OR merge the old DP impl with the new CD-C impl.
-	// Make sure there is no behavior change since some users already rely on the old DP impl.
-	// useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
-	useGreedy := true
+	// Use DP for any join group under the configured threshold. ConflictDetector
+	// is responsible for validating both inner and non-inner join transitions.
+	useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 	if useGreedy {
 		joinOrderGreedy := newJoinOrderGreedy(ctx, group)
 		if p, err = joinOrderGreedy.optimize(); err != nil {
@@ -335,12 +347,128 @@ type joinOrderDP struct {
 	JoinOrder
 }
 
-func newJoinOrderDP(_ base.PlanContext, _ *joinGroup) *joinOrderDP {
-	panic("not implement yet")
+func newJoinOrderDP(ctx base.PlanContext, group *joinGroup) *joinOrderDP {
+	return &joinOrderDP{
+		JoinOrder: JoinOrder{
+			ctx:   ctx,
+			group: group,
+		},
+	}
 }
 
-func (*joinOrderDP) optimize() (base.LogicalPlan, error) {
-	panic("not implement yet")
+func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
+	if len(j.group.leadingHints) > 0 {
+		// TODO: Old join reorder doesn't support leading hint either,
+		// we can consider supporting leading hint in DP join reorder in the future, but for now we just return a warning.
+		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable for the DP join reorder algorithm")
+	}
+
+	detector := newConflictDetector(j.ctx)
+	nodes, err := detector.Build(j.group)
+	if err != nil {
+		return nil, err
+	}
+
+	plan, ok, err := j.optimizeWithDetector(detector, nodes)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("no valid join order found, the original join order will be used")
+		return j.group.root, nil
+	}
+	return plan, nil
+}
+
+func (j *joinOrderDP) optimizeWithDetector(detector *ConflictDetector, nodes []*Node) (base.LogicalPlan, bool, error) {
+	if len(nodes) == 0 {
+		return nil, false, errors.New("internal error: join group has no nodes")
+	}
+	if len(nodes) == 1 {
+		return nodes[0].p, true, nil
+	}
+
+	nodeCount := len(nodes)
+	if nodeCount >= 63 {
+		// Sanity check: TiDBOptJoinReorderThreshold should prevent this from happening, but we check it here just in case.
+		// And 63 for TiDBOptJoinReorderThreshold is too large, we need to decrease it later.
+		return nil, false, errors.Errorf("DP join reorder supports at most 62 nodes, got %d", nodeCount)
+	}
+
+	bestPlan := make([]*Node, 1<<uint(nodeCount))
+	for _, node := range nodes {
+		// NOTE: Because hints are currently not effective in DP, the node here must be a single leaf vertex(i.e., only one bit is set to 1 and the rest are 0).
+		// Therefore, we can directly use node.bitSet as the mask. If hint support is added in the future, this part must be updated accordingly.
+		mask, err := node.bitSet.GetSmallUInt64()
+		if err != nil {
+			return nil, false, err
+		}
+		bestPlan[mask] = node
+	}
+
+	cartesianFactor := j.ctx.GetSessionVars().CartesianJoinOrderThreshold
+	fullMask := (uint64(1) << uint(nodeCount)) - 1
+	for subset := uint64(1); subset <= fullMask; subset++ {
+		if bits.OnesCount64(subset) == 1 {
+			continue
+		}
+		for left := (subset - 1) & subset; left > 0; left = (left - 1) & subset {
+			right := subset ^ left
+			if left > right {
+				// We only need to consider one direction of the partition (left, right) and skip the other (right, left) to avoid duplicate work,
+				// because the join order (A join B) and (B join A) will be considered in the same iteration when left and right are swapped,
+				// check ConflictDetector.CheckConnection() for more details.
+				continue
+			}
+			leftPlan := bestPlan[left]
+			rightPlan := bestPlan[right]
+			if leftPlan == nil || rightPlan == nil {
+				// leftPlan or rightPlan will be nil if there is no valid join order for the corresponding subset,
+				// for example, when the subset contains two nodes but they cannot be joined together.
+				continue
+			}
+
+			checkResult, newNode, err := checkConnectionAndMakeJoin(detector, leftPlan, rightPlan, j.group.vertexHints, true)
+			if err != nil {
+				return nil, false, err
+			}
+			if newNode == nil {
+				continue
+			}
+			if checkResult.NoEQEdge() {
+				newNode.cumCost, err = applyCartesianFactor(newNode.cumCost, cartesianFactor)
+				if err != nil {
+					return nil, false, err
+				}
+			}
+			if bestPlan[subset] == nil || newNode.cumCost < bestPlan[subset].cumCost {
+				bestPlan[subset] = newNode
+			}
+		}
+	}
+
+	finalPlan := bestPlan[fullMask]
+	// Example: for (t1 ⋈ t2), (t3 ⋈ t4) with cartesianFactor <= 0, every full plan
+	// needs one cartesian edge and therefore has +Inf cost. Returning the first
+	// non-nil fullMask plan directly could keep a shape like (t1 × (t3 ⋈ t4)) ⋈ t2.
+	// We only return finite full plans here; +Inf full plans go through
+	// buildBushyTreeFromDP() so cartesian joins are pushed to the final stitch.
+	if finalPlan != nil && !math.IsInf(finalPlan.cumCost, 1) && !detector.HasRemainingEdges(finalPlan.usedEdges) {
+		return finalPlan.p, true, nil
+	}
+
+	bushyPlan, err := buildBushyTreeFromDP(j.ctx, detector, nodes, bestPlan, j.group.vertexHints)
+	if err != nil {
+		return nil, false, err
+	}
+	if bushyPlan != nil && !detector.HasRemainingEdges(bushyPlan.usedEdges) {
+		return bushyPlan.p, true, nil
+	}
+
+	if finalPlan != nil && math.IsInf(finalPlan.cumCost, 1) && !detector.HasRemainingEdges(finalPlan.usedEdges) {
+		return finalPlan.p, true, nil
+	}
+	return nil, false, nil
 }
 
 type joinOrderGreedy struct {
@@ -363,7 +491,7 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 	}
 
 	leadingHint, hasDifferent := CheckAndGenerateLeadingHint(j.group.leadingHints)
-	if hasDifferent {
+	if hasDifferent && j.group.hasUserLeadingHint {
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
 	}
@@ -388,7 +516,9 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		return newNode, true, nil
 	}
 	warn := func() {
-		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+		if j.group.hasUserLeadingHint {
+			j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+		}
 	}
 
 	// BuildLeadingTreeFromList may modify nodes slice, so we need to clone it first.
@@ -399,7 +529,9 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		return nil, nil, err
 	}
 	if !ok {
-		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
+		if j.group.hasUserLeadingHint {
+			j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
+		}
 		return nil, nodes, nil
 	}
 	return nodeWithHint, nodesAfterHint, nil
@@ -499,7 +631,11 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	}
 	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins,
 	// It handles situations where there is no edges between different subgraphs,
-	return makeBushyTree(j.ctx, nodes, j.group.vertexHints)
+	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, true)
+	if err != nil {
+		return nil, err
+	}
+	return root.p, nil
 }
 
 func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
@@ -532,7 +668,10 @@ func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHin
 					// and we might generate a tree with cartesian edge.
 					// For non INNER JOIN, the logic in extractJoinGroup ensures we will not reach here,
 					// check the comment in extractJoinGroup for more details.
-					newNode.cumCost = newNode.cumCost * cartesianFactor
+					newNode.cumCost, err = applyCartesianFactor(newNode.cumCost, cartesianFactor)
+					if err != nil {
+						return nil, err
+					}
 				}
 				if bestNode == nil || newNode.cumCost < bestNode.cumCost {
 					bestNode = newNode
@@ -610,22 +749,157 @@ func summarizeEdges(detector *ConflictDetector, usedEdges map[uint64]struct{}, n
 	return total, used, missing, detail, nodeSets
 }
 
-func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
+func applyCartesianFactor(cost, cartesianFactor float64) (float64, error) {
+	if err := validateCumCost(cost); err != nil {
+		return 0, err
+	}
+	if cartesianFactor <= 0 {
+		return math.Inf(1), nil
+	}
+	if math.IsNaN(cartesianFactor) || math.IsInf(cartesianFactor, 0) {
+		return 0, errors.Errorf("invalid cartesian factor: %v", cartesianFactor)
+	}
+	adjustedCost := cost * cartesianFactor
+	if err := validateCumCost(adjustedCost); err != nil {
+		return 0, err
+	}
+	return adjustedCost, nil
+}
+
+type dpSubsetCandidate struct {
+	mask uint64
+	node *Node
+}
+
+// buildBushyTreeFromDP reconstructs a valid forest from the DP table and then
+// stitches that forest into the final bushy tree.
+//
+// Why this is needed:
+//   - The single DP pass may fail to produce a finite full-mask plan even though
+//     some large subsets were optimized successfully.
+//   - bestPlan contains many overlapping subset candidates, and not every
+//     candidate is safe to reuse as a final subtree. In particular, a subset may
+//     exist only because cartesian/no-EQ joins were introduced early, while that
+//     subset still has real edges inside it that were never consumed.
+//
+// The reconstruction therefore does three things:
+//  1. Keep only finite, subset-complete candidates (no remaining real edges
+//     whose TES is fully inside the subset).
+//  2. Greedily pick a disjoint set of the largest/cheapest candidates to form
+//     forest roots.
+//  3. Add any uncovered leaf back into the forest so every base relation is
+//     represented before the final bushy-tree stitch.
+func buildBushyTreeFromDP(ctx base.PlanContext, detector *ConflictDetector, leaves []*Node, bestPlan []*Node, vertexHints map[int]*JoinMethodHint) (*Node, error) {
+	candidates := make([]dpSubsetCandidate, 0, len(bestPlan))
+	for mask, node := range bestPlan {
+		if node == nil || math.IsInf(node.cumCost, 1) {
+			continue
+		}
+		if detector.HasRemainingEdgesInSubset(node.bitSet, node.usedEdges) {
+			continue
+		}
+		candidates = append(candidates, dpSubsetCandidate{
+			mask: uint64(mask),
+			node: node,
+		})
+	}
+	slices.SortFunc(candidates, func(a, b dpSubsetCandidate) int {
+		if cmpVal := cmp.Compare(bits.OnesCount64(b.mask), bits.OnesCount64(a.mask)); cmpVal != 0 {
+			return cmpVal
+		}
+		if cmpVal := cmp.Compare(a.node.cumCost, b.node.cumCost); cmpVal != 0 {
+			return cmpVal
+		}
+		return cmp.Compare(a.mask, b.mask)
+	})
+
+	forest := make([]*Node, 0, len(candidates))
+	var covered intset.FastIntSet
+	for _, candidate := range candidates {
+		if candidate.node.bitSet.Intersects(covered) {
+			continue
+		}
+		forest = append(forest, candidate.node)
+		covered.UnionWith(candidate.node.bitSet)
+	}
+	for _, leaf := range leaves {
+		if leaf.bitSet.Intersects(covered) {
+			continue
+		}
+		forest = append(forest, leaf)
+		covered.UnionWith(leaf.bitSet)
+	}
+	if len(forest) == 0 {
+		return nil, nil
+	}
+	if len(forest) == 1 {
+		return forest[0], nil
+	}
+	return makeBushyTree(ctx, detector, forest, vertexHints, false)
+}
+
+// makeJoinWithDetector is for the final bushy-tree stitching stage.
+//
+// We keep it separate from checkConnectionAndMakeJoin() because that helper is
+// designed for search-time candidate enumeration, where nil means "skip this
+// candidate". Here we are no longer searching: we must connect the remaining
+// groups deterministically, preferring real edges and otherwise creating an
+// explicit cartesian edge through ConflictDetector.
+func makeJoinWithDetector(detector *ConflictDetector, left, right *Node, vertexHints map[int]*JoinMethodHint) (*Node, error) {
+	checkResult, err := detector.CheckConnection(left, right)
+	if err != nil {
+		return nil, err
+	}
+	if !checkResult.Connected() {
+		checkResult = detector.TryCreateCartesianCheckResult(left, right)
+		if checkResult == nil {
+			return nil, errors.New("failed to construct bushy tree: no valid join edge found")
+		}
+	}
+
+	return detector.MakeJoin(checkResult, vertexHints)
+}
+
+// makeBushyTree connects the remaining nodes into a bushy tree.
+//
+// `fastPath` controls how each pairwise merge is performed:
+//   - true: build a pure cartesian join directly with newCartesianJoin(),
+//     without consulting the ConflictDetector. In this mode, only Node.p is
+//     valid; the other fields are not initialized. This should be used only
+//     in the final step of bushy-tree construction.
+//   - false: use makeJoinWithDetector(), which prefers a real edge selected
+//     through the ConflictDetector and falls back to an explicit cartesian
+//     edge only if no real edge exists. This path returns a fully initialized
+//     *Node.
+//
+// NOTE: The `true` branch currently serves only the greedy algorithm's final
+// stitching step, where the caller reads only root.p. It does not populate
+// metadata such as usedEdges. If future callers need bitSet/cumCost/usedEdges,
+// this branch must be extended to build a fully initialized Node.
+func makeBushyTree(ctx base.PlanContext, detector *ConflictDetector, cartesianNodes []*Node, vertexHints map[int]*JoinMethodHint, fastPath bool) (*Node, error) {
 	var iterNodes []*Node
+	var err error
 	for len(cartesianNodes) > 1 {
 		for i := 0; i < len(cartesianNodes); i += 2 {
 			if i+1 >= len(cartesianNodes) {
 				iterNodes = append(iterNodes, cartesianNodes[i])
 				break
 			}
-			newJoin, err := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, vertexHints)
+			var newJoin *Node
+			if fastPath {
+				p, err1 := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, vertexHints)
+				newJoin = &Node{p: p}
+				err = err1
+			} else {
+				newJoin, err = makeJoinWithDetector(detector, cartesianNodes[i], cartesianNodes[i+1], vertexHints)
+			}
 			if err != nil {
 				return nil, err
 			}
-			iterNodes = append(iterNodes, &Node{p: newJoin})
+			iterNodes = append(iterNodes, newJoin)
 		}
 		cartesianNodes = iterNodes
 		iterNodes = iterNodes[:0]
 	}
-	return cartesianNodes[0].p, nil
+	return cartesianNodes[0], nil
 }

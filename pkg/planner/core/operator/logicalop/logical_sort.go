@@ -111,12 +111,22 @@ func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logic
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, infos ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiFlash := false
+	if len(infos) > 0 && infos[0] != nil {
+		hasTiFlash = infos[0].HasTiFlash
+	}
+	ls.hasTiFlash = hasTiFlash
 	propCols := getPossiblePropertyFromByItems(ls.ByItems)
 	if len(propCols) == 0 {
-		return nil
+		return &base.PossiblePropertiesInfo{
+			HasTiFlash: ls.hasTiFlash,
+		}
 	}
-	return [][]*expression.Column{propCols}
+	return &base.PossiblePropertiesInfo{
+		Orders:     [][]*expression.Column{propCols},
+		HasTiFlash: ls.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

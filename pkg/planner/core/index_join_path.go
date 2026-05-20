@@ -544,6 +544,8 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	indexJoinResult *indexJoinPathResult) string {
 	buffer := bytes.NewBufferString("[")
 	isFirst := true
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	redact := ectx.GetTiDBRedactLog()
 	for idxOff, keyOff := range indexJoinResult.idxOff2KeyOff {
 		if keyOff == -1 {
 			continue
@@ -553,11 +555,9 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "eq(%v, %v)", indexJoinResult.chosenPath.IdxCols[idxOff], outerJoinKeys[keyOff])
+		fmt.Fprintf(buffer, "eq(%v, %v)", indexJoinResult.chosenPath.IdxCols[idxOff].StringWithCtx(ectx, redact), outerJoinKeys[keyOff].StringWithCtx(ectx, redact))
 	}
-	ectx := sctx.GetExprCtx().GetEvalCtx()
 	// It is to build the range info which is used in explain. It is necessary to redact the range info.
-	redact := ectx.GetTiDBRedactLog()
 	for _, access := range indexJoinResult.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -55,8 +56,9 @@ func ExhaustPhysicalPlans4LogicalLimit(p *logicalop.LogicalLimit, prop *property
 	}
 
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	sessionVars := p.SCtx().GetSessionVars()
 	// lift the recursive check of canPushToCop(tiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+	if util.ShouldCheckTiFlashPushDown(p.SCtx(), logicalop.GetHasTiFlash(p)) && sessionVars.IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
@@ -158,6 +160,16 @@ func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (
 	executorID := ""
 	for _, item := range p.PartitionBy {
 		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(), item.Desc))
+	}
+	// init partial order params
+	if p.PrefixCol != nil {
+		truncateKeyExprs := make([]expression.Expression, 0, 1)
+		truncateKeyExprs = append(truncateKeyExprs, p.PrefixCol)
+		truncateKeyExprsPB, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), truncateKeyExprs, client)
+		if err != nil {
+			return nil, err
+		}
+		limitExec.TruncateKeyExpr = truncateKeyExprsPB
 	}
 	if storeType == kv.TiFlash {
 		var err error

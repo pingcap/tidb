@@ -436,17 +436,18 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	} else {
 		r.MinResultRows = 0
 	}
-	r.SumKVTotal += time.Duration(info.TiKVExecDetails.WaitKVRespDuration)
-	r.SumPDTotal += time.Duration(info.TiKVExecDetails.WaitPDRespDuration)
-	r.SumBackoffTotal += time.Duration(info.TiKVExecDetails.BackoffDuration)
+	tikvExecDetails := execdetails.LoadTiKVExecDetails(info.TiKVExecDetails)
+	r.SumKVTotal += time.Duration(tikvExecDetails.WaitKVRespDuration)
+	r.SumPDTotal += time.Duration(tikvExecDetails.WaitPDRespDuration)
+	r.SumBackoffTotal += time.Duration(tikvExecDetails.BackoffDuration)
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
 	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
 	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
 
 	// Networks
-	r.StmtNetworkTrafficSummary.Add(info.TiKVExecDetails)
+	r.StmtNetworkTrafficSummary.Add(&tikvExecDetails)
 	// RU
-	r.StmtRUSummary.Add(info.RUDetail)
+	r.StmtRUSummary.Add(info.RUDetail, info.TotalRUV2)
 
 	r.StorageKV = info.StmtCtx.IsTiKV.Load()
 	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
@@ -714,6 +715,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
+		TotalRUV2:         12345,
 		TiKVExecDetails:   &util.ExecDetails{},
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
 		LazyInfo:          &mockLazyInfo{},

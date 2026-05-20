@@ -5,26 +5,26 @@
       {
         "SQL": "select /*+ use_index(t) */ * from t",
         "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "PartitionUnion root  ",
+          "├─TableReader root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ use_index(t partition(p0, p1) b, c) */ * from t partition(p1,p2)",
         "Plan": [
-          "PartitionUnion 20000.00 root  ",
-          "├─IndexLookUp 10000.00 root  ",
-          "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "PartitionUnion root  ",
+          "├─IndexLookUp root  ",
+          "│ ├─IndexFullScan(Build) cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan(Probe) cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Warning 1105 unknown partitions (p0) in optimizer hint /*+ USE_INDEX(t PARTITION(p0, p1) b, c) */"
@@ -33,13 +33,13 @@
       {
         "SQL": "select /*+ use_index(t partition(p_non_exist)) */ * from t partition(p1,p2)",
         "Plan": [
-          "PartitionUnion 20000.00 root  ",
-          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "PartitionUnion root  ",
+          "├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Warning 1105 unknown partitions (p_non_exist) in optimizer hint /*+ USE_INDEX(t PARTITION(p_non_exist)) */"
@@ -48,59 +48,59 @@
       {
         "SQL": "select /*+ use_index(t partition(p0, p1) b, c) */ * from t",
         "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─IndexLookUp 10000.00 root  ",
-          "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p0, index:b(b) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─IndexLookUp 10000.00 root  ",
-          "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "PartitionUnion root  ",
+          "├─IndexLookUp root  ",
+          "│ ├─IndexFullScan(Build) cop[tikv] table:t, partition:p0, index:b(b) keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan(Probe) cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+          "├─IndexLookUp root  ",
+          "│ ├─IndexFullScan(Build) cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan(Probe) cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ ignore_index(t partition(p0, p1) b, c) */ * from t",
         "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "PartitionUnion root  ",
+          "├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
         "Plan": [
-          "HashJoin 37500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─PartitionUnion(Build) 30000.00 root  ",
-          "│ ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "│ │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ │   └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "│ ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "│ │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│ │   └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "│ └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "│   └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│     └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p2 keep order:false, stats:pseudo",
-          "└─PartitionUnion(Probe) 30000.00 root  ",
-          "  ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
-          "  └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"
+          "HashJoin root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─PartitionUnion(Build) root  ",
+          "│ ├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "│ │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│ │   └─TableFullScan mpp[tiflash] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "│ ├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "│ │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│ │   └─TableFullScan mpp[tiflash] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "│ └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "│   └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│     └─TableFullScan mpp[tiflash] table:t2, partition:p2 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) root  ",
+          "  ├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─TableFullScan mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─TableFullScan mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
+          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TableFullScan mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Warning 1105 Optimizer Hint /*+ HASH_JOIN(t1, t2 PARTITION(p0)) */ is inapplicable on specified partitions"
@@ -109,48 +109,48 @@
       {
         "SQL": "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
         "Plan": [
-          "PartitionUnion 59.97 root  ",
-          "├─IndexMerge 19.99 root  type: union",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 19.99 root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender 19.99 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan 19.99 mpp[tiflash] table:t, partition:p1 pushed down filter:or(eq(test.t.b, 1), eq(test.t.c, \"8\")), keep order:false, stats:pseudo",
-          "└─TableReader 19.99 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 19.99 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 19.99 mpp[tiflash] table:t, partition:p2 pushed down filter:or(eq(test.t.b, 1), eq(test.t.c, \"8\")), keep order:false, stats:pseudo"
+          "PartitionUnion root  ",
+          "├─IndexMerge root  type: union",
+          "│ ├─IndexRangeScan(Build) cop[tikv] table:t, partition:p0, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "│ ├─IndexRangeScan(Build) cop[tikv] table:t, partition:p0, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan(Probe) cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan mpp[tiflash] table:t, partition:p1 pushed down filter:or(eq(test.t.b, 1), eq(test.t.c, \"8\")), keep order:false, stats:pseudo",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t, partition:p2 pushed down filter:or(eq(test.t.b, 1), eq(test.t.c, \"8\")), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
         "Plan": [
-          "PartitionUnion 33.00 root  ",
-          "├─IndexMerge 11.00 root  type: union",
-          "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p0 range:[1,1], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[2,2], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─IndexMerge 11.00 root  type: union",
-          "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p1 range:[1,1], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 11.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 11.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 11.00 mpp[tiflash] table:t, partition:p2 pushed down filter:or(eq(test.t.a, 1), eq(test.t.b, 2)), keep order:false, stats:pseudo"
+          "PartitionUnion root  ",
+          "├─IndexMerge root  type: union",
+          "│ ├─TableRangeScan(Build) cop[tikv] table:t, partition:p0 range:[1,1], keep order:false, stats:pseudo",
+          "│ ├─IndexRangeScan(Build) cop[tikv] table:t, partition:p0, index:b(b) range:[2,2], keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan(Probe) cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+          "├─IndexMerge root  type: union",
+          "│ ├─TableRangeScan(Build) cop[tikv] table:t, partition:p1 range:[1,1], keep order:false, stats:pseudo",
+          "│ ├─IndexRangeScan(Build) cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan(Probe) cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t, partition:p2 pushed down filter:or(eq(test.t.a, 1), eq(test.t.b, 2)), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
         "Plan": [
-          "PartitionUnion 20000.00 root  ",
-          "├─IndexLookUp 10000.00 root  ",
-          "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p0, index:b(b) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
+          "PartitionUnion root  ",
+          "├─IndexLookUp root  ",
+          "│ ├─IndexFullScan(Build) cop[tikv] table:t, partition:p0, index:b(b) keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan(Probe) cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -1859,7 +1859,7 @@
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN mpp[tiflash]  Column, offset:0, count:1",
-          "      └─TableFullScan mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#6"
+          "      └─TableFullScan mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column"
         ],
         "Warn": null
       },
@@ -1870,7 +1870,7 @@
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN mpp[tiflash]  Column, offset:0, count:1",
-          "      └─TableFullScan mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column#6"
+          "      └─TableFullScan mpp[tiflash] table:t, index:idx_vec(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,2,3], limit:1)->Column"
         ],
         "Warn": null
       },
@@ -1894,32 +1894,32 @@
       {
         "SQL": "select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3",
         "Plan": [
-          "Union 3000000000000.00 root  ",
-          "├─HashJoin 1000000000000.00 root  CARTESIAN inner join",
-          "│ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "│ └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
-          "│   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│   │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "├─Projection 1000000000000.00 root  test.t1.a->Column#28, test.t2.a->Column#29, test.t3.a->Column#30",
-          "│ └─HashJoin 1000000000000.00 root  CARTESIAN inner join",
-          "│   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│   │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "│   └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
-          "│     ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│     │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│     └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "│       └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─HashJoin 1000000000000.00 root  CARTESIAN inner join",
-          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
-          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Union root  ",
+          "├─HashJoin root  CARTESIAN inner join",
+          "│ ├─TableReader(Build) root  data:TableFullScan",
+          "│ │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) root  CARTESIAN inner join",
+          "│   ├─TableReader(Build) root  data:TableFullScan",
+          "│   │ └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) root  data:TableFullScan",
+          "│     └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "├─Projection root  test.t1.a->Column, test.t2.a->Column, test.t3.a->Column",
+          "│ └─HashJoin root  CARTESIAN inner join",
+          "│   ├─TableReader(Build) root  data:TableFullScan",
+          "│   │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│   └─HashJoin(Probe) root  CARTESIAN inner join",
+          "│     ├─TableReader(Build) root  data:TableFullScan",
+          "│     │ └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│     └─TableReader(Probe) root  data:TableFullScan",
+          "│       └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin root  CARTESIAN inner join",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  CARTESIAN inner join",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
@@ -1929,13 +1929,13 @@
     "Name": "TestQBHintHandlerDuplicateObjects",
     "Cases": [
       {
-        "SQL": "EXPLAIN WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;",
+        "SQL": "explain format = 'plan_tree' WITH t AS (SELECT /*+ inl_join(e) */ em.* FROM t_employees em JOIN t_employees e WHERE em.store_id = e.department_id) SELECT * FROM t;",
         "Plan": [
-          "IndexJoin_18 12500.00 root  inner join, inner:IndexReader_34, outer key:test.t_employees.store_id, inner key:test.t_employees.department_id, equal cond:eq(test.t_employees.store_id, test.t_employees.department_id)",
-          "├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31",
-          "│ └─TableFullScan_31 10000.00 cop[tikv] table:em keep order:false, stats:pseudo",
-          "└─IndexReader_34(Probe) 12500.00 root  index:IndexRangeScan_33",
-          "  └─IndexRangeScan_33 12500.00 cop[tikv] table:e, index:idx(department_id) range: decided by [eq(test.t_employees.department_id, test.t_employees.store_id)], keep order:false, stats:pseudo"
+          "IndexJoin root  inner join, inner:IndexReader, outer key:test.t_employees.store_id, inner key:test.t_employees.department_id, equal cond:eq(test.t_employees.store_id, test.t_employees.department_id)",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:em keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) root  index:IndexRangeScan",
+          "  └─IndexRangeScan cop[tikv] table:e, index:idx(department_id) range: decided by [eq(test.t_employees.department_id, test.t_employees.store_id)], keep order:false, stats:pseudo"
         ],
         "Warn": null
       }

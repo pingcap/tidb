@@ -22,8 +22,8 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	"github.com/pingcap/tidb/lightning/pkg/server"
-	"github.com/pingcap/tidb/lightning/pkg/web"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -85,7 +85,7 @@ func main() {
 		return
 	}
 	if len(globalCfg.App.StatusAddr) > 0 {
-		web.EnableCurrentProgress()
+		progress.EnableCurrentProgress()
 	}
 
 	err = func() error {

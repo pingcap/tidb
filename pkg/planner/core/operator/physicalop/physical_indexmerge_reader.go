@@ -49,7 +49,8 @@ type PhysicalIndexMergeReader struct {
 
 	// PartialPlansRaw are the partial plans that have not been flatted. The type of each element is permitted PhysicalIndexScan or PhysicalTableScan.
 	PartialPlansRaw []base.PhysicalPlan
-	// TablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
+	// TablePlan is a PhysicalTableScan to get the table tuples.
+	// It can be nil for index-only index-merge plans that are not executable yet.
 	TablePlan base.PhysicalPlan
 	// PartialPlans flats the PartialPlansRaw to construct executor pb.
 	PartialPlans [][]base.PhysicalPlan
@@ -108,6 +109,9 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 
 // GetAvgTableRowSize return the average row size of table plan.
 func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
+	if len(p.TablePlans) == 0 {
+		return 0
+	}
 	return cardinality.GetAvgRowSize(p.SCtx(), GetTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
 }
 
@@ -170,12 +174,18 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
+	if len(p.TablePlans) == 0 {
+		return
+	}
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	stats.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
 }
 
 // AccessObject implements PartitionAccesser interface.
 func (p *PhysicalIndexMergeReader) AccessObject(sctx base.PlanContext) base.AccessObject {
+	if len(p.TablePlans) == 0 {
+		return access.DynamicPartitionAccessObjects(nil)
+	}
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return access.DynamicPartitionAccessObjects(nil)
 	}
@@ -211,7 +221,11 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 
 // ResolveIndices implements Plan interface.
 func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
-	err = ResolveIndicesForVirtualColumn(p.TablePlan.Schema().Columns, p.Schema())
+	resolveSource := p.Schema().Columns
+	if p.TablePlan != nil {
+		resolveSource = p.TablePlan.Schema().Columns
+	}
+	err = ResolveIndicesForVirtualColumn(resolveSource, p.Schema())
 	if err != nil {
 		return err
 	}
