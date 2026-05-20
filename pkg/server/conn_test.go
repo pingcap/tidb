@@ -126,6 +126,12 @@ func TestMatchIdentityWithVariantsStarter(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "SYSTEM.test_user", cc.user)
 
+	tk.MustExec("create user if not exists `SYSTEM.keao.yang`@`%`")
+	cc = newClientConn("keao.yang", 2)
+	_, err = cc.checkAuthPlugin(context.Background(), &resp)
+	require.NoError(t, err)
+	require.Equal(t, "SYSTEM.keao.yang", cc.user)
+
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceName = "OTHER"
 	})
@@ -134,7 +140,7 @@ func TestMatchIdentityWithVariantsStarter(t *testing.T) {
 		conf.KeyspaceName = "SYSTEM"
 	})
 
-	cc = newClientConn("OTHER.test_user", 2)
+	cc = newClientConn("OTHER.test_user", 3)
 	_, err = cc.checkAuthPlugin(context.Background(), &resp)
 	require.True(t, errors.ErrorEqual(err, servererr.ErrUserPrefixMismatch), "%v", err)
 }

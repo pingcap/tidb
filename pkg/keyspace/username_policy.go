@@ -67,7 +67,7 @@ type prefixPolicy struct {
 }
 
 func (prefixPolicy) ValidateUsernameFormat(username string) bool {
-	return strings.Contains(username, ".")
+	return strings.Count(username, ".") == 1
 }
 
 func (p prefixPolicy) ValidateUsername(username string) error {
@@ -78,7 +78,7 @@ func (p prefixPolicy) ValidateUsername(username string) error {
 }
 
 func (p prefixPolicy) GetUsernameVariants(username string) []string {
-	if p.userPrefix == "" || strings.HasPrefix(username, p.userPrefix+".") || p.ValidateUsernameFormat(username) {
+	if p.userPrefix == "" || strings.HasPrefix(username, p.userPrefix+".") {
 		return nil
 	}
 	return []string{p.userPrefix + "." + username}

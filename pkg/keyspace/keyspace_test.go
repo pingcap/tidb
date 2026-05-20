@@ -101,12 +101,12 @@ func TestUsernamePolicy(t *testing.T) {
 	policy = GetUsernamePolicy()
 	require.NoError(t, policy.ValidateUsername("ks.user"))
 	require.True(t, policy.ValidateUsernameFormat("other.user"))
-	require.True(t, policy.ValidateUsernameFormat("other.user.extra"))
+	require.False(t, policy.ValidateUsernameFormat("other.user.extra"))
 	require.True(t, terror.ErrorEqual(policy.ValidateUsername("user"), exeerrors.ErrUserNameNeedPrefix))
 	require.Equal(t, []string{"ks.user"}, policy.GetUsernameVariants("user"))
 	require.Empty(t, policy.GetUsernameVariants("ks.user"))
-	require.Empty(t, policy.GetUsernameVariants("other.user"))
-	require.Empty(t, policy.GetUsernameVariants("other.user.extra"))
+	require.Equal(t, []string{"ks.other.user"}, policy.GetUsernameVariants("other.user"))
+	require.Equal(t, []string{"ks.other.user.extra"}, policy.GetUsernameVariants("other.user.extra"))
 	require.Equal(t, "user", policy.GetOriginalUsername("ks.user"))
 }
 

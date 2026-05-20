@@ -71,11 +71,30 @@ func TestStarterUsernamePolicyInSimpleExec(t *testing.T) {
 	tk.MustExec("grant r1 to u1")
 	tk.MustQuery("select TO_USER from mysql.role_edges where FROM_USER='SYSTEM.r1' and TO_USER='SYSTEM.u1' and TO_HOST='%'").Check(testkit.Rows("SYSTEM.u1"))
 
-	tk.MustExec("revoke `SYSTEM.r1` from `SYSTEM.u1`")
+	tk.MustExec("set default role r1 to u1")
+	tk.MustQuery("select USER, DEFAULT_ROLE_USER from mysql.default_roles where USER='SYSTEM.u1' and DEFAULT_ROLE_USER='SYSTEM.r1'").Check(testkit.Rows("SYSTEM.u1 SYSTEM.r1"))
+
+	tk.MustExec("set default role none to u1")
+	tk.MustQuery("select USER from mysql.default_roles where USER='SYSTEM.u1'").Check(testkit.Rows())
+
+	tk.MustExec("set default role all to u1")
+	tk.MustQuery("select USER, DEFAULT_ROLE_USER from mysql.default_roles where USER='SYSTEM.u1' and DEFAULT_ROLE_USER='SYSTEM.r1'").Check(testkit.Rows("SYSTEM.u1 SYSTEM.r1"))
+
+	tk.MustExec("revoke r1 from u1")
 	tk.MustQuery("select TO_USER from mysql.role_edges where FROM_USER='SYSTEM.r1' and TO_USER='SYSTEM.u1' and TO_HOST='%'").Check(testkit.Rows())
+	tk.MustQuery("select USER from mysql.default_roles where USER='SYSTEM.u1'").Check(testkit.Rows())
 
 	tk.MustExec("alter user u1 identified by 'pwd2'")
 	tk.MustQuery("select authentication_string from mysql.user where user='SYSTEM.u1' and host='%'").Check(testkit.Rows(auth.EncodePassword("pwd2")))
+
+	tk.MustExec("create user if not exists `SYSTEM.keao.yang`@`%`")
+	tk.MustExec("alter user `keao.yang`@`%` identified by 'pwd3'")
+	tk.MustQuery("select authentication_string from mysql.user where user='SYSTEM.keao.yang' and host='%'").Check(testkit.Rows(auth.EncodePassword("pwd3")))
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustContainErrMsg("grant select on *.* to u_auto@'%'", "User name must start with `SYSTEM.`")
+	tk.MustQuery("select User from mysql.user where User='u_auto' and Host='%'").Check(testkit.Rows())
+	tk.MustExec("set sql_mode=default")
 }
 
 func TestUserWithSetNames(t *testing.T) {

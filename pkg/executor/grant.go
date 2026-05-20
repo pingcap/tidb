@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -184,6 +185,9 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if !exists {
 			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
 				return exeerrors.ErrCantCreateUserWithGrant
+			}
+			if err := keyspace.GetUsernamePolicy().ValidateUsername(user.User.Username); err != nil {
+				return err
 			}
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0

@@ -904,9 +904,6 @@ func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPa
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(cc.user) {
 		identity, err := cc.ctx.MatchIdentity(ctx, variant, host)
 		if err != nil {
-			if mismatchErr := cc.checkUserVariantMismatch(ctx, cc.user); mismatchErr != nil {
-				return nil, mismatchErr
-			}
 			continue
 		}
 
@@ -919,6 +916,9 @@ func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPa
 		return identity, nil
 	}
 
+	if mismatchErr := cc.checkUserVariantMismatch(ctx, cc.user); mismatchErr != nil {
+		return nil, mismatchErr
+	}
 	return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 }
 
@@ -949,20 +949,18 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 	if err != nil {
 		return nil, err
 	}
+	// Find the identity of the user based on username and peer host.
+	var identity *auth.UserIdentity
 	if deploymode.IsStarter() {
-		if err := cc.checkUserVariantMismatch(ctx, cc.user); err != nil {
+		identity, err = cc.matchIdentityWithVariants(ctx, host, hasPassword)
+		if err != nil && errors.ErrorEqual(err, servererr.ErrUserPrefixMismatch) {
 			return nil, err
 		}
 	}
-	// Find the identity of the user based on username and peer host.
-	identity, err := cc.ctx.MatchIdentity(ctx, cc.user, host)
-	if err != nil {
-		if !deploymode.IsStarter() {
-			return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
-		}
-		identity, err = cc.matchIdentityWithVariants(ctx, host, hasPassword)
+	if identity == nil {
+		identity, err = cc.ctx.MatchIdentity(ctx, cc.user, host)
 		if err != nil {
-			return nil, err
+			return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 		}
 	}
 	// Get the plugin for the identity.
