@@ -40,6 +40,7 @@ func TestAnalyzeStandardV1(t *testing.T) {
 	tokens, err := AnalyzeStandardV1(sctx, "The foo_bar, a 好")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
+		{Text: "the", Position: 0},
 		{Text: "foo_bar", Position: 1},
 	}, tokens)
 

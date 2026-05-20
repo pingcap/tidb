@@ -130,15 +130,7 @@ func parserInfoFromSessionContext(sctx sessionctx.Context) (parserInfo, error) {
 	if err != nil {
 		return parserInfo{}, err
 	}
-	serverStopwordTable, err := getFulltextSysVar(sessVars, vardef.InnodbFtServerStopwordTable)
-	if err != nil {
-		return parserInfo{}, err
-	}
-	userStopwordTable, err := getFulltextSysVar(sessVars, vardef.InnodbFtUserStopwordTable)
-	if err != nil {
-		return parserInfo{}, err
-	}
-	stopwords := stopwordSetFromSysVars(enableStopword, serverStopwordTable, userStopwordTable)
+	stopwords := stopwordSetFromSysVar(enableStopword)
 
 	return parserInfo{
 		innodbFtMinTokenSize: minTokenSize,
@@ -148,14 +140,12 @@ func parserInfoFromSessionContext(sctx sessionctx.Context) (parserInfo, error) {
 	}, nil
 }
 
-func stopwordSetFromSysVars(enableStopword, serverStopwordTable, userStopwordTable string) map[string]struct{} {
+func stopwordSetFromSysVar(enableStopword string) map[string]struct{} {
 	if !variable.TiDBOptOn(enableStopword) {
 		return nil
 	}
-	if strings.TrimSpace(serverStopwordTable) != "" || strings.TrimSpace(userStopwordTable) != "" {
-		return map[string]struct{}{}
-	}
-	return builtinInnoDBEnglishStopwords
+	// TiDB does not resolve InnoDB stopword table contents on this path yet.
+	return map[string]struct{}{}
 }
 
 func getFulltextSysVar(sessVars *variable.SessionVars, name string) (string, error) {
@@ -297,14 +287,4 @@ func utf8CharSpans(text string) []charSpan {
 		})
 	}
 	return spans
-}
-
-// builtinInnoDBEnglishStopwords is used by the STANDARD analyzer when
-// innodb_ft_enable_stopword is ON and no custom stopword table is configured.
-var builtinInnoDBEnglishStopwords = map[string]struct{}{
-	"a": {}, "an": {}, "and": {}, "are": {}, "as": {}, "at": {}, "be": {}, "but": {},
-	"by": {}, "for": {}, "if": {}, "in": {}, "into": {}, "is": {}, "it": {}, "no": {},
-	"not": {}, "of": {}, "on": {}, "or": {}, "such": {}, "that": {}, "the": {},
-	"their": {}, "then": {}, "there": {}, "these": {}, "they": {}, "this": {}, "to": {},
-	"was": {}, "will": {}, "with": {},
 }
