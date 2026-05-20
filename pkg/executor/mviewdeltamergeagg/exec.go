@@ -17,6 +17,7 @@ package mviewdeltamergeagg
 import (
 	"bytes"
 	"context"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -193,15 +194,12 @@ type Exec struct {
 }
 
 type mergeWorkerData struct {
-	updateRows                   []int
-	updateOpIndexes              []int
-	updateChanged                []bool
 	minMaxRecomputeRowsByMapping [][]int
 	minMaxRecomputeOverrides     []*mappingRecomputeOverride
 	minMaxBatchMappings          []int
 	batchUniqueRows              []int
 	batchResultRows              []int
-	batchRowSeenByMapping        []int
+	batchSeen                    []bool
 	batchRowToLookupKeyIdx       []int
 	batchLookupKeyContents       []MinMaxBatchLookupContent
 	batchRefsByLookupKey         [][]batchRowRef
@@ -210,6 +208,10 @@ type mergeWorkerData struct {
 	batchResultEncodedKeys       [][]byte
 	batchInputNullByRow          []bool
 	batchResultNullByRow         []bool
+	// For building update operations.
+	updateRows      []int
+	updateOpIndexes []int
+	updateChanged   []bool
 }
 
 type mergeRuntimeStats struct {
@@ -1049,9 +1051,6 @@ func (e *Exec) recomputeMinMaxSingleRow(
 	recomputeRows []int,
 	overrides []*mappingRecomputeOverride,
 ) error {
-	if mappingIdx < 0 || mappingIdx >= len(e.AggMappings) {
-		return errors.Errorf("single-row MinMaxRecompute mapping idx %d out of range [0,%d)", mappingIdx, len(e.AggMappings))
-	}
 	recomputeMeta := e.AggMappings[mappingIdx].MinMaxRecompute
 	if recomputeMeta == nil || recomputeMeta.SingleRow == nil {
 		return errors.Errorf("single-row MinMaxRecompute metadata is missing for mapping %d", mappingIdx)
@@ -1180,43 +1179,27 @@ func (e *Exec) recomputeMinMaxBatch(
 	}
 	rowCnt := input.NumRows()
 
-	rowSeenByMapping := workerData.batchRowSeenByMapping
-	if cap(rowSeenByMapping) < rowCnt {
-		rowSeenByMapping = make([]int, rowCnt)
+	seen := workerData.batchSeen
+	if cap(seen) < rowCnt {
+		seen = make([]bool, rowCnt)
 	} else {
-		rowSeenByMapping = rowSeenByMapping[:rowCnt]
-		clear(rowSeenByMapping)
+		seen = seen[:rowCnt]
+		clear(seen)
 	}
-	workerData.batchRowSeenByMapping = rowSeenByMapping
+	workerData.batchSeen = seen
 
 	uniqueRows := workerData.batchUniqueRows[:0]
-
 	for _, mappingIdx := range batchMappings {
-		if mappingIdx < 0 || mappingIdx >= len(workerData.minMaxRecomputeRowsByMapping) || mappingIdx >= len(e.AggMappings) {
-			return errors.Errorf(
-				"min/max batch recompute mapping idx %d out of range (rows=%d mappings=%d)",
-				mappingIdx,
-				len(workerData.minMaxRecomputeRowsByMapping),
-				len(e.AggMappings),
-			)
-		}
 		rows := workerData.minMaxRecomputeRowsByMapping[mappingIdx]
 		if len(rows) == 0 {
 			continue
 		}
 		mapping := e.AggMappings[mappingIdx]
-		duplicateCheckToken := mappingIdx + 1
 		for _, rowIdx := range rows {
-			if rowIdx < 0 || rowIdx >= rowCnt {
-				return errors.Errorf("min/max batch recompute row idx %d out of range [0,%d)", rowIdx, rowCnt)
-			}
-			if rowSeenByMapping[rowIdx] == duplicateCheckToken {
-				return errors.Errorf("min/max batch recompute has duplicate row %d for mapping %d", rowIdx, mappingIdx)
-			}
-			if rowSeenByMapping[rowIdx] == 0 {
+			if !seen[rowIdx] {
 				uniqueRows = append(uniqueRows, rowIdx)
+				seen[rowIdx] = true
 			}
-			rowSeenByMapping[rowIdx] = duplicateCheckToken
 		}
 		override := overrides[mappingIdx]
 		if override == nil {
@@ -1238,6 +1221,7 @@ func (e *Exec) recomputeMinMaxBatch(
 			}
 		}
 	}
+	sort.Ints(uniqueRows)
 	workerData.batchUniqueRows = uniqueRows
 
 	if len(uniqueRows) == 0 {
@@ -1330,7 +1314,7 @@ func (e *Exec) recomputeMinMaxBatch(
 		}
 	}
 
-	clear(rowSeenByMapping)
+	clear(seen)
 	seenResultKeyCnt := 0
 
 	batchExec, err := e.MinMaxRecompute.BatchBuilder.Build(ctx, &MinMaxBatchBuildRequest{LookupKeys: lookupKeyContents})
@@ -1392,10 +1376,10 @@ func (e *Exec) recomputeMinMaxBatch(
 			if !exists {
 				return errors.Errorf("min/max batch recompute returns an unexpected key at result row %d", rowIdx)
 			}
-			if rowSeenByMapping[keyIdx] != 0 {
+			if seen[keyIdx] {
 				return errors.Errorf("min/max batch recompute has duplicate result for lookup key idx %d", keyIdx)
 			}
-			rowSeenByMapping[keyIdx] = 1
+			seen[keyIdx] = true
 			seenResultKeyCnt++
 
 			refs := refsByLookupKey[keyIdx]
