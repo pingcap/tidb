@@ -471,6 +471,81 @@ func TestIndexJoinRowModeWithInnerTopNOuterJoin(t *testing.T) {
 	})
 }
 
+func TestIndexJoinWithOrderedWindowInner(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		if cascades == "on" {
+			t.Skip("cascades planner does not support index join inner multi-pattern yet")
+		}
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists ordered_window_outer, ordered_window_inner")
+		tk.MustExec("create table ordered_window_outer(a int primary key)")
+		tk.MustExec("create table ordered_window_inner(a int, b int, key idx_ab(a, b))")
+
+		tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern=1")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=0.1")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=100")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=100")
+
+		sql := `select /*+ INL_JOIN(s) */ o.a, s.rn
+			from ordered_window_outer o
+			join (
+				select a, row_number() over(partition by a order by b) as rn
+				from ordered_window_inner
+			) s on o.a = s.a`
+		stmt, err := parser.New().ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+
+		nodeW := resolve.NewNodeW(stmt)
+		tk.Session().GetSessionVars().StmtCtx.OriginalSQL = sql
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, domain.GetDomain(tk.Session()).InfoSchema())
+		require.NoError(t, err)
+
+		pp, ok := p.(base.PhysicalPlan)
+		require.True(t, ok)
+		foundIndexJoin := false
+		foundOrderedWindow := false
+		indexJoinInnerHasWindow := false
+
+		var hasWindow func(base.PhysicalPlan) bool
+		hasWindow = func(plan base.PhysicalPlan) bool {
+			switch plan.(type) {
+			case *physicalop.PhysicalWindow, *physicalop.PhysicalOrderedWindow:
+				return true
+			}
+			for _, child := range plan.Children() {
+				if hasWindow(child) {
+					return true
+				}
+			}
+			return false
+		}
+
+		var walk func(base.PhysicalPlan)
+		walk = func(plan base.PhysicalPlan) {
+			switch p := plan.(type) {
+			case *physicalop.PhysicalOrderedWindow:
+				foundOrderedWindow = true
+			case *physicalop.PhysicalIndexHashJoin:
+				foundIndexJoin = true
+				indexJoinInnerHasWindow = indexJoinInnerHasWindow || hasWindow(p.Children()[p.InnerChildIdx])
+			case *physicalop.PhysicalIndexMergeJoin:
+				foundIndexJoin = true
+				indexJoinInnerHasWindow = indexJoinInnerHasWindow || hasWindow(p.Children()[p.InnerChildIdx])
+			case *physicalop.PhysicalIndexJoin:
+				foundIndexJoin = true
+				indexJoinInnerHasWindow = indexJoinInnerHasWindow || hasWindow(p.Children()[p.InnerChildIdx])
+			}
+			for _, child := range plan.Children() {
+				walk(child)
+			}
+		}
+		walk(pp)
+		require.True(t, foundOrderedWindow, "expected ordered window in the chosen plan")
+		require.True(t, foundIndexJoin, "expected index join in the chosen plan")
+		require.False(t, indexJoinInnerHasWindow, "expected no index join whose inner child contains window")
+	})
+}
+
 func TestIndexJoinHintInSubquery(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
