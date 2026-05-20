@@ -70,6 +70,26 @@ func (s *stmtLogStorage) sync() error {
 	return s.logger.Sync()
 }
 
+// logEvicted writes a single evicted record to the stmt log with an
+// `"evicted":true` marker so downstream consumers can distinguish per-record
+// eviction events from rotated-window records.
+func (s *stmtLogStorage) logEvicted(r *StmtRecord) {
+	b, err := json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
+	if err != nil {
+		logutil.BgLogger().Warn("failed to marshal evicted statement summary", zap.Error(err))
+		return
+	}
+	s.logger.Info(string(b))
+}
+
+// evictedStmtRecord embeds *StmtRecord and adds an "evicted" JSON tag.
+// Keeping the embedded pointer means the JSON field order matches StmtRecord
+// and parsers tolerant of the extra field work unchanged.
+type evictedStmtRecord struct {
+	*StmtRecord
+	Evicted bool `json:"evicted"`
+}
+
 func (s *stmtLogStorage) log(r *StmtRecord) {
 	b, err := json.Marshal(r)
 	if err != nil {
