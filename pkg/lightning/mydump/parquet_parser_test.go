@@ -35,8 +35,10 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -331,6 +333,151 @@ func TestParquetVariousTypes(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, expectedDatum, row[i])
 		}
+	})
+
+	t.Run("logical_timestamp_adjustment", func(t *testing.T) {
+		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+
+		const timestampMillis = int64(1603963672356)
+		const timestampMicros = int64(1603963672356956)
+		pc := []ParquetColumn{
+			{
+				Name:    "timestamp_millis_instant",
+				Type:    parquet.Types.Int64,
+				Logical: schema.NewTimestampLogicalType(true, schema.TimeUnitMillis),
+				Gen: func(_ int) (any, []int16) {
+					return []int64{timestampMillis}, []int16{1}
+				},
+			},
+			{
+				Name:    "timestamp_micros_instant",
+				Type:    parquet.Types.Int64,
+				Logical: schema.NewTimestampLogicalType(true, schema.TimeUnitMicros),
+				Gen: func(_ int) (any, []int16) {
+					return []int64{timestampMicros}, []int16{1}
+				},
+			},
+			{
+				Name:    "timestamp_millis_local",
+				Type:    parquet.Types.Int64,
+				Logical: schema.NewTimestampLogicalType(false, schema.TimeUnitMillis),
+				Gen: func(_ int) (any, []int16) {
+					return []int64{timestampMillis}, []int16{1}
+				},
+			},
+			{
+				Name:    "timestamp_micros_local",
+				Type:    parquet.Types.Int64,
+				Logical: schema.NewTimestampLogicalType(false, schema.TimeUnitMicros),
+				Gen: func(_ int) (any, []int16) {
+					return []int64{timestampMicros}, []int16{1}
+				},
+			},
+		}
+
+		dir := t.TempDir()
+		name := "logical-timestamps.parquet"
+		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: asiaShanghai})
+		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[0].converted)
+		require.Equal(t, schema.ConvertedTypes.TimestampMicros, reader.colTypes[1].converted)
+		require.Equal(t, schema.ConvertedTypes.TimestampMillis, reader.colTypes[2].converted)
+		require.Equal(t, schema.ConvertedTypes.TimestampMicros, reader.colTypes[3].converted)
+		require.True(t, reader.colTypes[0].IsAdjustedToUTC)
+		require.True(t, reader.colTypes[1].IsAdjustedToUTC)
+		require.False(t, reader.colTypes[2].IsAdjustedToUTC)
+		require.False(t, reader.colTypes[3].IsAdjustedToUTC)
+
+		require.NoError(t, reader.ReadRow())
+		row := reader.lastRow.Row
+		require.Len(t, row, 4)
+		expected := []time.Time{
+			time.Date(2020, 10, 29, 17, 27, 52, 356000000, time.UTC),
+			time.Date(2020, 10, 29, 17, 27, 52, 356956000, time.UTC),
+			time.Date(2020, 10, 29, 9, 27, 52, 356000000, time.UTC),
+			time.Date(2020, 10, 29, 9, 27, 52, 356956000, time.UTC),
+		}
+		for i, want := range expected {
+			got, err := row[i].GetMysqlTime().GoTime(time.UTC)
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+		}
+	})
+
+	t.Run("logical_time_local_semantics", func(t *testing.T) {
+		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+
+		const timeMillis = int32(123456)
+		const timeMicros = int64(123456789)
+		pc := []ParquetColumn{
+			{
+				Name:    "time_millis_local",
+				Type:    parquet.Types.Int32,
+				Logical: schema.NewTimeLogicalType(false, schema.TimeUnitMillis),
+				Gen: func(_ int) (any, []int16) {
+					return []int32{timeMillis}, []int16{1}
+				},
+			},
+			{
+				Name:    "time_micros_local",
+				Type:    parquet.Types.Int64,
+				Logical: schema.NewTimeLogicalType(false, schema.TimeUnitMicros),
+				Gen: func(_ int) (any, []int16) {
+					return []int64{timeMicros}, []int16{1}
+				},
+			},
+		}
+
+		dir := t.TempDir()
+		name := "logical-time-local.parquet"
+		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: asiaShanghai})
+		require.Equal(t, schema.ConvertedTypes.TimeMillis, reader.colTypes[0].converted)
+		require.Equal(t, schema.ConvertedTypes.TimeMicros, reader.colTypes[1].converted)
+		require.False(t, reader.colTypes[0].IsAdjustedToUTC)
+		require.False(t, reader.colTypes[1].IsAdjustedToUTC)
+
+		require.NoError(t, reader.ReadRow())
+		row := reader.lastRow.Row
+		require.Len(t, row, 2)
+		expected := []time.Time{
+			time.Date(1970, 1, 1, 0, 2, 3, 456000000, time.UTC),
+			time.Date(1970, 1, 1, 0, 2, 3, 456789000, time.UTC),
+		}
+		for i, want := range expected {
+			got, err := row[i].GetMysqlTime().GoTime(time.UTC)
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+		}
+	})
+
+	t.Run("unsupported_logical_timestamp_nanos", func(t *testing.T) {
+		pc := []ParquetColumn{
+			{
+				Name:    "timestamp_nanos",
+				Type:    parquet.Types.Int64,
+				Logical: schema.NewTimestampLogicalType(false, schema.TimeUnitNanos),
+				Gen: func(_ int) (any, []int16) {
+					return []int64{1603963672356956000}, []int16{1}
+				},
+			},
+		}
+
+		dir := t.TempDir()
+		name := "logical-timestamp-nanos.parquet"
+		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
+
+		store, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		r, err := store.Open(context.Background(), name, nil)
+		require.NoError(t, err)
+		parser, err := NewParquetParser(context.Background(), store, r, name, ParquetFileMeta{Loc: time.UTC})
+		require.ErrorContains(t, err, "unsupported timestamp time unit")
+		require.Nil(t, parser)
 	})
 
 	t.Run("int96_rounds_sub_microsecond_precision", func(t *testing.T) {
@@ -1113,6 +1260,85 @@ func TestParquetParserWrapper(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("k%07d", i), gotFixedInMemory[i])
 		require.Equal(t, int64(i), gotIntInMemory[i])
 	}
+}
+
+// ctxAwareReader returns the context error from Read/Seek when ctx is canceled.
+type ctxAwareReader struct {
+	objectio.Reader
+	ctx context.Context
+}
+
+func (r *ctxAwareReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Read(p)
+}
+
+func (r *ctxAwareReader) Seek(offset int64, whence int) (int64, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Seek(offset, whence)
+}
+
+func TestEstimateParquetReaderMemoryCtxLifetime(t *testing.T) {
+	// Force the non-in-memory path; only that branch was affected.
+	origThreshold := rowGroupInMemoryThreshold
+	rowGroupInMemoryThreshold = 1
+	t.Cleanup(func() { rowGroupInMemoryThreshold = origThreshold })
+
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/lightning/mydump/interceptParquetReader",
+		func(r *objectio.Reader, ctx context.Context) {
+			*r = &ctxAwareReader{Reader: *r, ctx: ctx}
+		},
+	)
+
+	pc := []ParquetColumn{
+		{
+			Name:      "k",
+			Type:      parquet.Types.FixedLenByteArray,
+			Converted: schema.ConvertedTypes.None,
+			TypeLen:   8,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]parquet.FixedLenByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					vals[i] = parquet.FixedLenByteArray(fmt.Sprintf("k%07d", i))
+					defLevels[i] = 1
+				}
+				return vals, defLevels
+			},
+		},
+		{
+			Name:      "v",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				vals := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					vals[i] = int64(i)
+					defLevels[i] = 1
+				}
+				return vals, defLevels
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	fileName := "ctx-lifetime.parquet"
+	require.NoError(t, WriteParquetFile(dir, fileName, pc, 50,
+		parquet.WithMaxRowGroupLength(10),
+	))
+
+	store, err := objstore.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	peak, err := EstimateParquetReaderMemory(context.Background(), store, fileName)
+	require.NoError(t, err)
+	require.Greater(t, peak, int64(0))
 }
 
 // getStringFromParquetByteOld is the previous implementation used to convert

@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -1900,6 +1902,38 @@ func TestMaxAllowedPacket(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)), string(readBytes))
 	require.Equal(t, uint8(2), pkt.Sequence())
+
+	if kerneltype.IsNextGen() {
+		originalMode := deploymode.Get()
+		originalMaxAllowedPacket := config.GetGlobalConfig().MaxAllowedPacket
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originalMode))
+			config.UpdateGlobal(func(c *config.Config) {
+				c.MaxAllowedPacket = originalMaxAllowedPacket
+			})
+		})
+
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		config.UpdateGlobal(func(c *config.Config) {
+			c.MaxAllowedPacket = maxAllowedPacket
+		})
+
+		store := testkit.CreateMockStore(t)
+		tc, err := NewTiDBDriver(store).OpenCtx(1, 0, mysql.DefaultCollationID, "", nil, nil)
+		require.NoError(t, err)
+		require.False(t, tc.GetSessionVars().CommonGlobalLoaded)
+		require.Equal(t, uint64(maxAllowedPacket), tc.GetSessionVars().MaxAllowedPacket)
+
+		inBuffer.Reset()
+		bytes = append([]byte{0x00, 0x08, 0x00, 0x00}, strings.Repeat("a", 2048)...)
+		_, err = inBuffer.Write(bytes)
+		require.NoError(t, err)
+		brc = serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+		cc := &clientConn{pkt: internal.NewPacketIO(brc)}
+		cc.SetCtx(tc)
+		_, err = cc.readPacket()
+		require.ErrorContains(t, err, "Got a packet bigger than 'max_allowed_packet' bytes")
+	}
 }
 
 func TestOkEof(t *testing.T) {

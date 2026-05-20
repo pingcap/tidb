@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -89,6 +90,17 @@ const (
 	idxTask
 )
 
+// runningUnderGoTest reports whether the current process is a Go test binary
+// (`go test`, including `make bench-daily`) rather than a real tidb-server
+// produced by `go build` of cmd/tidb-server. Test binaries register in-process
+// TiDB domains without binding a TiDB RPC listener, so a FLUSH STATS_DELTA
+// CLUSTER broadcast would hit a mock ":10080" and burn the TiKV RPC backoff
+// budget before analyze starts. testing.Testing() is set by the linker only
+// for binaries built via `go test`, so the gate is a no-op in production.
+func runningUnderGoTest() bool {
+	return testing.Testing()
+}
+
 // flushStatsDeltaForAnalyze flushes pending stats deltas for the tables whose column-analyze
 // tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
 // pre-analyze delta can be applied later and double count rows or modifications.
@@ -97,13 +109,12 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 	if len(flushObjects) == 0 {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	// HACK: Some tests register in-process TiDB domains but do not start TiDB RPC
-	// endpoints. Broadcasting FLUSH STATS_DELTA CLUSTER to those mock endpoints can
-	// spend the TiKV RPC backoff budget before analyze really starts. When the test
-	// topology cannot receive TiDB broadcast requests, dumping local deltas is the
-	// only viable approximation.
-	if intest.InTest {
+	// HACK: test binaries have no real RPC peer to broadcast to; dump locally instead.
+	if runningUnderGoTest() {
 		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
 		if err != nil {
 			return err

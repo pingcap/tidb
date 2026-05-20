@@ -38,6 +38,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
@@ -137,6 +138,44 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	require.Equal(t, conc, 4)
 	require.Equal(t, smallConc, 0)
 	require.Equal(t, rateLimit.GetCapacity(), 4)
+}
+
+func TestBuildCopIteratorWithSharedRequestRateLimit(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer require.NoError(t, store.Close())
+
+	copClient := store.GetClient().(*copr.CopClient)
+	ctx := context.Background()
+	killed := uint32(0)
+	vars := kv.NewVariables(&killed)
+	opt := &kv.ClientSendOption{}
+	ranges := copr.BuildKeyRanges("a", "z")
+
+	testCases := []struct {
+		name      string
+		keepOrder bool
+	}{
+		{name: "keep-order", keepOrder: true},
+		{name: "non-keep-order", keepOrder: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			shared := tikvutil.NewRateLimit(7)
+			req := &kv.Request{
+				Tp:                   kv.ReqTypeDAG,
+				KeyRanges:            kv.NewNonPartitionedKeyRanges(ranges),
+				Concurrency:          15,
+				KeepOrder:            tc.keepOrder,
+				CoprRequestRateLimit: shared,
+			}
+			it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
+			require.Nil(t, errRes)
+			require.Same(t, shared, it.GetRequestRateLimit())
+			require.Equal(t, 7, it.GetRequestRateLimit().GetCapacity())
+		})
+	}
 }
 
 func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {

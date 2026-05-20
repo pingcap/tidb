@@ -1,0 +1,101 @@
+# tidb_max_keys_read — session variable and end-to-end cap enforcement.
+
+# Default value is 0 (unlimited).
+select @@session.tidb_max_keys_read;
+select @@global.tidb_max_keys_read;
+
+# Set session value.
+set @@session.tidb_max_keys_read = 100;
+select @@session.tidb_max_keys_read;
+
+# Global set does not affect already-open sessions.
+set @@global.tidb_max_keys_read = 200;
+select @@global.tidb_max_keys_read;
+select @@session.tidb_max_keys_read;
+
+# Reset to default.
+set @@session.tidb_max_keys_read = 0;
+select @@session.tidb_max_keys_read;
+set @@global.tidb_max_keys_read = 0;
+select @@global.tidb_max_keys_read;
+
+# Negative values clip to 0.
+set @@session.tidb_max_keys_read = -1;
+select @@session.tidb_max_keys_read;
+
+# SET_VAR hint only affects the hinted statement.
+select /*+ SET_VAR(tidb_max_keys_read=999) */ @@tidb_max_keys_read;
+select @@session.tidb_max_keys_read;
+
+# SET_VAR with 0 disables the limit for one statement.
+set @@session.tidb_max_keys_read = 50;
+select /*+ SET_VAR(tidb_max_keys_read=0) */ @@tidb_max_keys_read;
+select @@session.tidb_max_keys_read;
+set @@session.tidb_max_keys_read = 0;
+
+drop table if exists t_mrs;
+create table t_mrs (id int primary key auto_increment, val int, extra int);
+insert into t_mrs (val, extra) values (1, 100),(2, 100),(3, 100),(4, 100),(5, 100),(6, 100),(7, 100),(8, 100),(9, 100),(10, 100);
+insert into t_mrs (val, extra) values (11, 100),(12, 100),(13, 100),(14, 100),(15, 100),(16, 100),(17, 100),(18, 100),(19, 100),(20, 100);
+
+# Under limit: 20 rows, limit=100 — succeeds.
+set @@session.tidb_max_keys_read = 100;
+select count(*) from t_mrs;
+
+# Hint override: limit=2 on 20-row scan — exceeds limit.
+-- error 8274
+select /*+ SET_VAR(tidb_max_keys_read=2) */ * from t_mrs;
+
+# Hint disables the session limit for one statement.
+set @@session.tidb_max_keys_read = 2;
+select /*+ SET_VAR(tidb_max_keys_read=0) */ count(*) from t_mrs;
+
+# Precedence: hint wins over session.
+set @@session.tidb_max_keys_read = 100;
+-- error 8274
+select /*+ SET_VAR(tidb_max_keys_read=5) */ * from t_mrs;
+
+# IndexLookUp splits into two cop iterators (index side + table side).
+# tidb_max_keys_read must be a statement-wide budget, not per-iterator —
+# otherwise a regression in the shared-counter plumbing would let
+# IndexLookUp consume up to 2x the configured limit silently.
+create index idx_val on t_mrs (val);
+
+# Project `extra` (not covered by idx_val) so the plan must do a table lookup.
+# 20 rows total: index scan reads 20, table lookup reads 20 (= 40 total).
+# Shared-counter (correct): 40 > 25 → errors at 8274.
+# Per-iterator (regression): each side 20 < 25 → would pass silently.
+-- error 8274
+select /*+ SET_VAR(tidb_max_keys_read=25), USE_INDEX(t_mrs, idx_val) */ extra from t_mrs where val >= 1;
+
+# Sanity: limit comfortably above combined total — IndexLookUp succeeds.
+# sum(extra) forces a table lookup (count(*) / count(id) would be index-only).
+select /*+ SET_VAR(tidb_max_keys_read=50), USE_INDEX(t_mrs, idx_val) */ sum(extra) from t_mrs where val >= 1;
+
+# DML statements are exempt from tidb_max_keys_read.
+# Use a full-table UPDATE under limit=1 to prove exemption: if DML were
+# subject to the cap it would fail after the first row read.
+set @@session.tidb_max_keys_read = 1;
+update t_mrs set val = val + 1;
+update t_mrs set val = val - 1;
+insert into t_mrs (val) values (21);
+delete from t_mrs where id = 21;
+set @@session.tidb_max_keys_read = 0;
+
+# Aggregation counts scanned keys, not result rows.
+-- error 8274
+select /*+ SET_VAR(tidb_max_keys_read=5) */ count(*) from t_mrs;
+
+# tidb_keys_examined accumulates examined keys across statements; FLUSH STATUS resets it.
+flush status;
+select count(*) from t_mrs;
+show status like 'tidb_keys_examined';
+select count(*) from t_mrs;
+show status like 'tidb_keys_examined';
+flush status;
+show status like 'tidb_keys_examined';
+
+# Cleanup.
+set @@session.tidb_max_keys_read = 0;
+set @@global.tidb_max_keys_read = 0;
+drop table t_mrs;

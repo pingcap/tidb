@@ -220,7 +220,7 @@ func (killer *SQLKiller) HandleSignal() error {
 		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
 			killer.lastCheckTime.Store(&now)
 			if !(*fn)() {
-				atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
+				killer.sendKillSignal(QueryInterrupted)
 			}
 		}
 	}
@@ -232,6 +232,14 @@ func (killer *SQLKiller) HandleSignal() error {
 			zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	return err
+}
+
+// CheckConnectionAlive checks whether the connection is alive immediately.
+func (killer *SQLKiller) CheckConnectionAlive() {
+	fn := killer.IsConnectionAlive.Load()
+	if fn != nil && !(*fn)() {
+		killer.sendKillSignal(QueryInterrupted)
+	}
 }
 
 // Reset resets the SqlKiller.
