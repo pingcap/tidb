@@ -844,10 +844,10 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, viewExists
 		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
 	}
 	dbMeta, dbExists := s.insertDB(dbFileInfo)
-	if _, ok := s.viewIndexMap[fileInfo.TableName]; ok {
-		return dbExists, true
+	_, viewExists = s.viewIndexMap[fileInfo.TableName]
+	if !viewExists {
+		s.viewIndexMap[fileInfo.TableName] = len(dbMeta.Views)
 	}
-	s.viewIndexMap[fileInfo.TableName] = len(dbMeta.Views)
 	meta := &MDTableMeta{
 		DB:           fileInfo.TableName.Schema,
 		Name:         fileInfo.TableName.Name,
@@ -857,7 +857,7 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, viewExists
 		IsRowOrdered: true,
 	}
 	dbMeta.Views = append(dbMeta.Views, meta)
-	return dbExists, false
+	return dbExists, viewExists
 }
 
 func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
