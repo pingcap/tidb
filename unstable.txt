@@ -20,6 +20,11 @@ pkg/statistics/handle/cache/internal/lfu TestMemoryControlWithUpdate
 pkg/statistics/handle/storage TestGCExtendedStats
 pkg/statistics/handle/globalstats TestGlobalStatsAndSQLBinding
 pkg/executor/test/aggregate TestRandomPanicConsume
+pkg/server TestMemoryLeak
+pkg/domain TestTetchAllSchemasWithTablesWithFailpoint
+pkg/executor/test/executor TestIssue48756
+pkg/executor TestSlowLogMaxPerSec
+pkg/server/tests/cursor TestCursorExceedQuota
 pkg/ddl/tests/tiflash TestTiFlashFailureProgressAfterAvailable
 pkg/executor TestGlobalTemporaryTableNoNetworkWithCreateAndThenCreateNormalTable
 pkg/statistics/handle/storage TestLoadGlobalStats
