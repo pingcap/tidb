@@ -1004,9 +1004,11 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	if b.enableV2 {
 		b.infoschemaV2.ts = schemaTS
+		b.infoschemaV2.infoSchema.ts = schemaTS
 		updateInfoSchemaBundles(b)
 		return &b.infoschemaV2
 	}
+	b.infoSchema.ts = schemaTS
 	updateInfoSchemaBundles(b)
 	return b.infoSchema
 }
@@ -1022,9 +1024,15 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {
 		b.infoschemaV2.ts = schemaV2.ts
+		// Ensure the embedded infoSchema.ts is set even if the old v2 schema
+		// was built before the ts field was added to infoSchema.
+		if schemaV2.ts > 0 && schemaV2.infoSchema.ts == 0 {
+			schemaV2.infoSchema.ts = schemaV2.ts
+		}
 	}
 	oldIS := oldSchema.base()
 	b.initBundleInfoBuilder()
+	b.infoSchema.ts = oldIS.ts
 	b.infoSchema.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.infoSchema.schemaMap = maps.Clone(oldIS.schemaMap)
 	b.infoSchema.schemaID2Name = maps.Clone(oldIS.schemaID2Name)

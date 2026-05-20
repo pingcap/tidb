@@ -135,6 +135,11 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			logutil.DDLLogger().Error("failed to delete affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
 		}
 
+		// Clean up masking policies associated with the dropped table.
+		if err := w.dropMaskingPoliciesOnTable(jobCtx, tblInfo.ID); err != nil {
+			logutil.DDLLogger().Error("failed to drop masking policies on table", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
+		}
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)

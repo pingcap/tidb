@@ -95,6 +95,9 @@ type infoSchema struct {
 	maskingPolicyMutex sync.RWMutex
 	// factory is used to execute SQL for delayed loading of masking policies.
 	factory func() (pools.Resource, error)
+	// ts is the timestamp at which this InfoSchema was loaded.
+	// Used for snapshot-aware lazy loading of masking policies.
+	ts uint64
 
 	r autoid.Requirement
 }
@@ -709,7 +712,7 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded() {
 		is.maskingPoliciesLoadCh = loadCh
 		is.maskingPolicyMutex.Unlock()
 
-		policies, err := LoadMaskingPolicies(is.factory)
+		policies, err := LoadMaskingPolicies(is.factory, is.ts)
 
 		is.maskingPolicyMutex.Lock()
 		if err != nil {
@@ -739,13 +742,15 @@ func (is *infoSchema) loadMaskingPoliciesIfNeeded() {
 }
 
 // LoadMaskingPolicies loads all masking policy metadata through mysql.tidb_masking_policy.
-func LoadMaskingPolicies(factory func() (pools.Resource, error)) ([]*model.MaskingPolicyInfo, error) {
-	return loadMaskingPoliciesWithTableIDs(factory, nil)
+func LoadMaskingPolicies(factory func() (pools.Resource, error), snapshotTS uint64) ([]*model.MaskingPolicyInfo, error) {
+	return loadMaskingPoliciesWithTableIDs(factory, nil, snapshotTS)
 }
 
 // loadMaskingPoliciesWithTableIDs loads masking policy metadata through mysql.tidb_masking_policy.
 // If tableIDs is empty, all policies are loaded.
-func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tableIDs []int64) ([]*model.MaskingPolicyInfo, error) {
+// snapshotTS is used for snapshot-aware loading: when non-zero, the query runs at that timestamp
+// to preserve stale-read semantics.
+func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tableIDs []int64, snapshotTS uint64) ([]*model.MaskingPolicyInfo, error) {
 	const maxBatchSize = 1024
 
 	resource, err := factory()
@@ -769,9 +774,13 @@ func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tab
 	loadBatch := func(batchIDs []int64, policies []*model.MaskingPolicyInfo) ([]*model.MaskingPolicyInfo, error) {
 		query, args := buildLoadMaskingPoliciesQuery(batchIDs)
 		internalCtx := kv.WithInternalSourceType(stdctx.Background(), kv.InternalTxnDDL)
+		opts := []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
+		if snapshotTS > 0 {
+			opts = append(opts, sqlexec.ExecOptionWithSnapshot(snapshotTS))
+		}
 		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 			internalCtx,
-			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			opts,
 			query,
 			args...,
 		)

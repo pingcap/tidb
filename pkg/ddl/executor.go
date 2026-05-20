@@ -1854,6 +1854,18 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				break
 			}
 			err = e.DropMaskingPolicy(sctx, ident, spec)
+		case ast.AlterTableModifyMaskingPolicyExpression:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
+			err = e.ModifyMaskingPolicyExpression(sctx, ident, spec)
+		case ast.AlterTableModifyMaskingPolicyRestrictOn:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
+			err = e.ModifyMaskingPolicyRestrictOn(sctx, ident, spec)
 		case ast.AlterTableModifyColumn:
 			err = e.ModifyColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableChangeColumn:
@@ -6568,6 +6580,102 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 	args := &model.MaskingPolicyArgs{
 		PolicyName: policy.Name,
 		PolicyID:   policy.ID,
+	}
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+// ModifyMaskingPolicyExpression modifies the expression of an existing masking policy.
+func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if !ok {
+		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+	}
+
+	// Validate and restore the new expression.
+	exprStr, err := restoreMaskingExpression(spec.MaskingPolicyExpr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := validateMaskingPolicyExpression(ctx, tbl.Meta(), table.FindCol(tbl.Cols(), policy.ColumnName.L).ColumnInfo, exprStr); err != nil {
+		return errors.Trace(err)
+	}
+
+	newPolicy := policy.Clone()
+	newPolicy.Expression = exprStr
+	newPolicy.MaskingType = maskingPolicyTypeFromExpr(spec.MaskingPolicyExpr)
+	newPolicy.UpdatedAt = time.Now()
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     schema.Name.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionAlterMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:   newPolicy,
+		PolicyID: policy.ID,
+	}
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+// ModifyMaskingPolicyRestrictOn modifies the restrict-on settings of an existing masking policy.
+func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if !ok {
+		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+	}
+
+	newPolicy := policy.Clone()
+	newPolicy.RestrictOps = spec.MaskingPolicyRestrictOps
+	newPolicy.UpdatedAt = time.Now()
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionAlterMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:   newPolicy,
+		PolicyID: policy.ID,
 	}
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
