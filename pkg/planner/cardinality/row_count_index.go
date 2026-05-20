@@ -189,6 +189,7 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (totalCount statistics.RowEstimate, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	isSingleColIdx := len(idx.Info.Columns) == 1
+	var allTopNMissPointCount statistics.RowEstimate
 	for _, indexRange := range indexRanges {
 		var count statistics.RowEstimate
 		var lb, rb []byte
@@ -218,10 +219,15 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					totalCount = statistics.DefaultRowEst(float64(idx.NullCount))
 					continue
 				}
-				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
+				var allTopNMiss bool
+				count, allTopNMiss = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count.MultiplyAll(idx.GetIncreaseFactor(realtimeRowCount))
-				totalCount.Add(count)
+				if allTopNMiss {
+					allTopNMissPointCount.Add(count)
+				} else {
+					totalCount.Add(count)
+				}
 				continue
 			}
 		}
@@ -314,6 +320,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 		totalCount.Add(count)
 	}
+	totalCount.Add(capAllTopNMissPointEstimate(allTopNMissPointCount, idx.TotalRowCount(), realtimeRowCount, modifyCount))
 	totalCount.Clamp(1.0, float64(realtimeRowCount))
 	return totalCount, nil
 }
@@ -389,31 +396,49 @@ func estimateRowCountWithUniformDistribution(
 	return statistics.DefaultRowEst(avgRowEstimate)
 }
 
+func capAllTopNMissPointEstimate(pointCount statistics.RowEstimate, analyzedRowCount float64, realtimeRowCount, modifyCount int64) statistics.RowEstimate {
+	if pointCount.Est <= 0 {
+		return pointCount
+	}
+	upperLimit := float64(realtimeRowCount) - analyzedRowCount
+	if upperLimit <= 0 && modifyCount > 0 {
+		// The searched values are absent from TopN when TopN already represents all analyzed NDVs.
+		// Only rows changed after analyze can contain those newly emerging point values, so a large IN list
+		// should not accumulate more rows than the post-analyze change window.
+		upperLimit = min(float64(modifyCount), float64(realtimeRowCount))
+	}
+	if upperLimit <= 0 {
+		return statistics.DefaultRowEst(0)
+	}
+	pointCount.Clamp(0, upperLimit)
+	return pointCount
+}
+
 // equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
-func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate) {
+func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate, allTopNMiss bool) {
 	if len(idx.Info.Columns) == 1 {
 		if bytes.Equal(b, nullKeyBytes) {
-			return statistics.DefaultRowEst(float64(idx.Histogram.NullCount))
+			return statistics.DefaultRowEst(float64(idx.Histogram.NullCount)), false
 		}
 	}
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < statistics.Version2 {
 		if idx.Histogram.NDV > 0 && outOfRangeOnIndex(idx, val) {
 			outOfRangeCnt := outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
-			return statistics.DefaultRowEst(outOfRangeCnt)
+			return statistics.DefaultRowEst(outOfRangeCnt), false
 		}
 		if idx.CMSketch != nil {
-			return statistics.DefaultRowEst(float64(idx.QueryBytes(sctx, b)))
+			return statistics.DefaultRowEst(float64(idx.QueryBytes(sctx, b))), false
 		}
 		histRowCount, _ := idx.Histogram.EqualRowCount(sctx, val, false)
-		return statistics.DefaultRowEst(histRowCount)
+		return statistics.DefaultRowEst(histRowCount), false
 	}
 	// stats version == 2
 	// 1. try to find this value in TopN
 	if idx.TopN != nil {
 		count, found := idx.TopN.QueryTopN(sctx, b)
 		if found {
-			return statistics.DefaultRowEst(float64(count))
+			return statistics.DefaultRowEst(float64(count)), false
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
@@ -423,14 +448,14 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// also check if this last bucket end value is underrepresented
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
 		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
-		return statistics.DefaultRowEst(histCnt)
+		return statistics.DefaultRowEst(histCnt), false
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
+	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount), histNDV <= 0
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.

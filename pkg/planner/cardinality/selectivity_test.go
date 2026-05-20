@@ -2226,6 +2226,44 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	}
 }
 
+func TestLargeInListAllTopNMissCapsAtStatsDelta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("create table t(a varchar(20), key ia(a))")
+	values := []string{"Active", "Archived", "Deleted", "Inactive", "Pending"}
+	for _, value := range values {
+		rows := make([]string, 0, 20)
+		for range 20 {
+			rows = append(rows, fmt.Sprintf("('%s')", value))
+		}
+		tk.MustExec("insert into t values " + strings.Join(rows, ","))
+	}
+	tk.MustExec("analyze table t all columns with 5 topn, 1 buckets")
+
+	rows := make([]string, 0, 9)
+	for range 9 {
+		rows = append(rows, "('Active')")
+	}
+	tk.MustExec("insert into t values " + strings.Join(rows, ","))
+	tk.MustExec("flush stats_delta *.*")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	inItems := make([]string, 0, 101)
+	for i := 1; i <= 201; i += 2 {
+		inItems = append(inItems, fmt.Sprintf("'%d'", i))
+	}
+	inList := strings.Join(inItems, ",")
+	require.Contains(t,
+		tk.MustQuery("explain format='brief' select * from t use index(ia) where a in ("+inList+")").String(),
+		"IndexReader 9.00 root")
+	require.Contains(t,
+		tk.MustQuery("explain format='brief' select /*+ ignore_index(t, ia) */ * from t where a in ("+inList+")").String(),
+		"Selection 9.00")
+}
+
 func TestRiskEqSkewRatio(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
