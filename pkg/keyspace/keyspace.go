@@ -55,7 +55,8 @@ func MakeKeyspaceEtcdNamespaceSlash(c tikv.Codec) string {
 
 // GetKeyspaceNameBySettings is used to get Keyspace name setting.
 func GetKeyspaceNameBySettings() (keyspaceName string) {
-	return config.GetGlobalKeyspaceName()
+	keyspaceName = config.GetGlobalKeyspaceName()
+	return keyspaceName
 }
 
 var keyspaceNameBytes []byte
