@@ -40,6 +40,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	goerr "errors"
 	"fmt"
 	"io"
@@ -94,6 +95,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -651,9 +653,10 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		if deploymode.IsStarter() {
 			if attrKey := os.Getenv("GATEWAY_SECURECONN_ATTR_KEY"); attrKey != "" {
 				if attrValue := resp.Attrs[attrKey]; attrValue != "" {
-					tlsState := &tls.ConnectionState{}
-					if _, scanErr := fmt.Sscanf(attrValue, `{"Version":%d,"CipherSuite":%d}`, &tlsState.Version, &tlsState.CipherSuite); scanErr == nil {
-						cc.tlsConnState = tlsState
+					var tlsState tls.ConnectionState
+					if jsonErr := json.Unmarshal([]byte(attrValue), &tlsState); jsonErr == nil &&
+						tlsState.Version != 0 && tlsState.CipherSuite != 0 {
+						cc.tlsConnState = &tlsState
 						gatewaySecureConn = true
 					}
 				}
@@ -904,6 +907,9 @@ func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPa
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(cc.user) {
 		identity, err := cc.ctx.MatchIdentity(ctx, variant, host)
 		if err != nil {
+			if errors.Cause(err) != sessionapi.ErrIdentityNotFound {
+				return nil, err
+			}
 			continue
 		}
 

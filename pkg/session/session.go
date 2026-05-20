@@ -3945,7 +3945,7 @@ func (s *session) MatchIdentity(ctx context.Context, username, remoteHost string
 		return user, nil
 	}
 	// This error will not be returned to the user, access denied will be instead
-	return nil, fmt.Errorf("could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
+	return nil, errors.Wrapf(sessionapi.ErrIdentityNotFound, "could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
