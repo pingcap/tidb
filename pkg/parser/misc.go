@@ -600,6 +600,7 @@ var tokenMap = map[string]int{
 	"ONLINE":                   online,
 	"ONLY":                     only,
 	"OPEN":                     open,
+	"OPERATE":                  operate,
 	"OPT_RULE_BLACKLIST":       optRuleBlacklist,
 	"OPTIMISTIC":               optimistic,
 	"OPTIMIZE":                 optimize,

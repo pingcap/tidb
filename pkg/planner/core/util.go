@@ -441,6 +441,29 @@ func CheckMViewUpdatable(
 	return plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(aliasName, op)
 }
 
+// CheckMViewShadowReadable checks whether a user statement can directly read a materialized view
+// shadow table. Shadow tables are internal maintenance objects and are only visible to MV
+// maintenance sessions.
+func CheckMViewShadowReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
+	if tableInfo.MaterializedViewShadow == nil {
+		return nil
+	}
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
+		return nil
+	}
+	if sv.User == nil {
+		return nil
+	}
+	if aliasName == "" {
+		aliasName = tableInfo.Name.O
+	}
+	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, aliasName)
+}
+
 func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
 	if !sv.InMaterializedViewMaintenance {
 		return false, nil

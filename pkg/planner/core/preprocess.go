@@ -1687,6 +1687,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 	tableInfo := table.Meta()
 	dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
+	if p.stmtTp == TypeSelect {
+		if err := CheckMViewShadowReadable(p.sctx.GetSessionVars(), tableInfo, tn.Name.O); err != nil {
+			p.err = err
+			return
+		}
+	}
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {

@@ -22,10 +22,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -273,6 +275,18 @@ func (e *RefreshMaterializedViewDryRunExec) generateRows(ctx context.Context) ([
 	}
 	mode, _, err := validateRefreshMaterializedViewStmt(e.stmt, e.Ctx().GetSessionVars().InRestrictedSQL)
 	if err != nil {
+		return nil, err
+	}
+	is := domain.GetDomain(e.Ctx()).InfoSchema()
+	dbName := e.stmt.ViewName.Schema.L
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	mvTable, err := is.TableByName(ctx, pmodel.NewCIStr(dbName), e.stmt.ViewName.Name)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), is, mvTable.Meta().MaterializedView); err != nil {
 		return nil, err
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
