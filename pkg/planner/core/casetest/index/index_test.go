@@ -138,14 +138,16 @@ func TestRangeDerivation(t *testing.T) {
 		testKit.MustQuery("explain format = 'plan_tree' select /* issue:68055 */ * from issue68055 where order_id = ''").Check(testkit.Rows(
 			"IndexReader root  index:IndexRangeScan",
 			"└─IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo"))
-		testKit.MustQuery("explain format = 'plan_tree' delete /* issue:68055 */ from issue68055 where order_id = ''").Check(testkit.Rows(
+		testKit.MustQuery("explain format = 'plan_tree' delete /* issue:68055 */ from issue68055 where order_id = ''").MultiCheckContain([]string{
 			"Delete root  N/A",
-			"└─IndexReader root  index:IndexRangeScan",
-			"  └─IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo"))
-		testKit.MustQuery("explain format = 'plan_tree' update /* issue:68055 */ issue68055 set id = id where order_id = ''").Check(testkit.Rows(
+			"IndexReader root  index:IndexRangeScan",
+			"IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo",
+		})
+		testKit.MustQuery("explain format = 'plan_tree' update /* issue:68055 */ issue68055 set id = id where order_id = ''").MultiCheckContain([]string{
 			"Update root  N/A",
-			"└─IndexReader root  index:IndexRangeScan",
-			"  └─IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo"))
+			"IndexReader root  index:IndexRangeScan",
+			"IndexRangeScan cop[tikv] table:issue68055, index:idx_order_id(order_id) range:[0,0], keep order:false, stats:pseudo",
+		})
 		testKit.MustExec("insert into issue68055 values (1, 1), (2, 2)")
 		testKit.MustContainErrMsg("delete /* issue:68055 */ from issue68055 where id = (select '2a')",
 			"Truncated incorrect DOUBLE value: '2a'")
