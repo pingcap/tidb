@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -426,7 +427,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		return nil, err
 	}
 
-	onWriterClose := func(summary *globalsort.WriterSummary) {
+	onWriterClose := func(summary *simplesst.WriterSummary) {
 		sum, _ := r.summaryMap.Load(subtaskID)
 		s := sum.(*readIndexSummary)
 		s.mu.Lock()

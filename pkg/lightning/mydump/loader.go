@@ -21,11 +21,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -94,12 +93,6 @@ type MDTableMeta struct {
 	IsRowOrdered bool
 }
 
-// ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
-type ParquetFileMeta struct {
-	allocator memory.Allocator
-	Loc       *time.Location
-}
-
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
 type SourceFileMeta struct {
 	Path        string
@@ -118,7 +111,7 @@ type SourceFileMeta struct {
 	Rows     int64
 
 	// ParquetMeta store meta only used for parquet
-	ParquetMeta ParquetFileMeta
+	ParquetMeta parquetfile.FileMeta
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -663,7 +656,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 		// Only sample once for each table
 		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, parquetInfo{})
 		if !loaded {
-			rows, rowSize, err := SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
+			rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),

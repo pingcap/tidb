@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -37,14 +38,14 @@ import (
 )
 
 func changePropDist(t *testing.T, sizeDist, keysDist uint64) {
-	sizeDistBak := defaultPropSizeDist
-	keysDistBak := defaultPropKeysDist
+	sizeDistBak := simplesst.DefaultPropSizeDist
+	keysDistBak := simplesst.DefaultPropKeysDist
 	t.Cleanup(func() {
-		defaultPropSizeDist = sizeDistBak
-		defaultPropKeysDist = keysDistBak
+		simplesst.DefaultPropSizeDist = sizeDistBak
+		simplesst.DefaultPropKeysDist = keysDistBak
 	})
-	defaultPropSizeDist = sizeDist
-	defaultPropKeysDist = keysDist
+	simplesst.DefaultPropSizeDist = sizeDist
+	simplesst.DefaultPropKeysDist = keysDist
 }
 
 func TestGlobalSortLocalBasic(t *testing.T) {
@@ -59,7 +60,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
 
-	onWriterClose := func(s *WriterSummary) {
+	onWriterClose := func(s *simplesst.WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
@@ -74,7 +75,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 		endKey = BytesMax(endKey, s.Max.Clone().Next())
 	}
 
-	w := NewWriterBuilder().
+	w := simplesst.NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(uint64(memSizeLimit)).
@@ -82,7 +83,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 		SetOnCloseFunc(onWriterClose).
 		Build(memStore, "/test", "0")
 
-	writer := NewEngineWriter(w)
+	writer := simplesst.NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := range kvCnt {
@@ -113,12 +114,12 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 
-	w := NewWriterBuilder().
+	w := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		SetBlockSize(memSizeLimit).
 		Build(memStore, "/test", "0")
 
-	writer := NewEngineWriter(w)
+	writer := simplesst.NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvSize := 0
 	kvs := make([]common.KvPair, kvCnt)
@@ -152,7 +153,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 
 	collector := &execute.TestCollector{}
 
-	onWriterClose := func(s *WriterSummary) {
+	onWriterClose := func(s *simplesst.WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
@@ -169,14 +170,14 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	mergeMemSize := (rand.Intn(10) + 1) * 100
 	// use random mergeMemSize to test different memLimit of writer.
 	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
-	bufSizeBak := DefaultReadBufferSize
-	memLimitBak := defaultOneWriterMemSizeLimit
+	bufSizeBak := simplesst.DefaultReadBufferSize
+	memLimitBak := simplesst.DefaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
-		DefaultReadBufferSize = bufSizeBak
-		defaultOneWriterMemSizeLimit = memLimitBak
+		simplesst.DefaultReadBufferSize = bufSizeBak
+		simplesst.DefaultOneWriterMemSizeLimit = memLimitBak
 	})
-	DefaultReadBufferSize = 100
-	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
+	simplesst.DefaultReadBufferSize = 100
+	simplesst.DefaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 
 	for _, group := range dataGroup {
 		wctx := workerpool.NewContext(ctx)
@@ -216,7 +217,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	ctx := context.Background()
 	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
-	multiStats := make([]MultipleFilesStat, 0, 100)
+	multiStats := make([]simplesst.MultipleFilesStat, 0, 100)
 	randomSize := (rand.Intn(500) + 1) * 1000
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/globalsort/mockRangesGroupSize",
@@ -227,7 +228,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	datas := make([]string, 0, 100)
 	stats := make([]string, 0, 100)
 	// prepare meta for merge step.
-	closeFn := func(s *WriterSummary) {
+	closeFn := func(s *simplesst.WriterSummary) {
 		multiStats = append(multiStats, s.MultipleFilesStats...)
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
@@ -237,7 +238,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 		}
 	}
 
-	w := NewWriterBuilder().
+	w := simplesst.NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(uint64(memSizeLimit)).
@@ -245,7 +246,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 		SetOnCloseFunc(closeFn).
 		Build(memStore, "/test", "0")
 
-	writer := NewEngineWriter(w)
+	writer := simplesst.NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := range kvCnt {
@@ -268,7 +269,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	var startKey, endKey dbkv.Key
 
 	// prepare meta for last step.
-	closeFn1 := func(s *WriterSummary) {
+	closeFn1 := func(s *simplesst.WriterSummary) {
 		for _, stat := range s.MultipleFilesStats {
 			for i := range stat.Filenames {
 				lastStepDatas = append(lastStepDatas, stat.Filenames[i][0])
@@ -304,4 +305,52 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 
 	// 3. read and sort step
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
+}
+
+// split data and stat files into groups for merge step.
+// like scheduler code for merge sort step in add index and import into.
+func splitDataAndStatFiles(datas []string, stats []string) ([][]string, [][]string) {
+	dataGroup := make([][]string, 0, 10)
+	statGroup := make([][]string, 0, 10)
+
+	start := 0
+	step := 10
+	for start < len(datas) {
+		end := min(start+step, len(datas))
+		dataGroup = append(dataGroup, datas[start:end])
+		statGroup = append(statGroup, stats[start:end])
+		start = end
+	}
+	return dataGroup, statGroup
+}
+
+// split data&stat files, startKeys and endKeys into groups for new merge step.
+func splitDataStatAndKeys(datas []string, stats []string, multiStats []simplesst.MultipleFilesStat) ([][]string, [][]string, []dbkv.Key, []dbkv.Key) {
+	startKeys := make([]dbkv.Key, 0, 10)
+	endKeys := make([]dbkv.Key, 0, 10)
+	i := 0
+	for ; i < len(multiStats)-1; i += 2 {
+		startKey := BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
+		endKey := BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
+		endKey = dbkv.Key(endKey).Next().Clone()
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
+	if i == len(multiStats)-1 {
+		startKeys = append(startKeys, multiStats[i].MinKey.Clone())
+		endKeys = append(endKeys, multiStats[i].MaxKey.Next().Clone())
+	}
+
+	dataGroup := make([][]string, 0, 10)
+	statGroup := make([][]string, 0, 10)
+
+	start := 0
+	step := 2 * simplesst.MultiFileStatNum
+	for start < len(datas) {
+		end := min(start+step, len(datas))
+		dataGroup = append(dataGroup, datas[start:end])
+		statGroup = append(statGroup, stats[start:end])
+		start = end
+	}
+	return dataGroup, statGroup, startKeys, endKeys
 }
