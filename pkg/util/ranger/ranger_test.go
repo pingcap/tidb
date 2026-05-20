@@ -1057,6 +1057,11 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 	testKit.MustExec("insert into issue68152(c0, c1, c2) values (' ^kAI[[_', 428.1106320573271, 'x'), ('V', 343.2264651012424, 'a'), ('E6', 109.27778225906448, 'a'), ('8', 0.8593559742149127, '2'), ('x}', 109.27778225906448, 'i')")
 	testKit.MustQuery("select c0, c2 from issue68152 use index (prefix_idx) where c0 > '' order by c0").
 		Check(testkit.Rows(" ^kAI[[_ x", "8 2", "E6 a", "V a", "x} i"))
+	testKit.MustExec("drop table if exists prefix_pk")
+	testKit.MustExec("create table prefix_pk(a blob, primary key (a(4)) clustered)")
+	testKit.MustExec("insert into prefix_pk values ('4'), ('4abc'), ('Q!~M')")
+	testKit.MustQuery("select hex(a) from prefix_pk where a > '4' order by a").
+		Check(testkit.Rows("34616263", "51217E4D"))
 
 	tests := []struct {
 		indexPos    int
