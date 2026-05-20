@@ -48,7 +48,7 @@ func TestChooseBestGreedyStart(t *testing.T) {
 		require.Equal(t, float64(10), best.cumCost)
 	})
 
-	t.Run("keep cartesian penalty for synthetic candidate when relaxing second round", func(t *testing.T) {
+	t.Run("relax only real non-eq candidates in second round", func(t *testing.T) {
 		penalty := noEQPenaltyFactor(0, true, &CheckConnectionResult{})
 		require.Equal(t, float64(1), penalty)
 
