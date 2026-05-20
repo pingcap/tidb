@@ -38,9 +38,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -102,6 +102,21 @@ type Chunk struct {
 	Compression  mydump.Compression
 	Timestamp    int64
 	ParquetMeta  mydump.ParquetFileMeta
+}
+
+// GetKey returns the chunk key used in logs and encode errors.
+func (c *Chunk) GetKey() string {
+	return c.Path + ":" + strconv.FormatInt(c.Offset, 10)
+}
+
+func (c *Chunk) toSourceFileMeta() mydump.SourceFileMeta {
+	return mydump.SourceFileMeta{
+		Path:        c.Path,
+		Type:        c.Type,
+		Compression: c.Compression,
+		FileSize:    c.FileSize,
+		ParquetMeta: c.ParquetMeta,
+	}
 }
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
@@ -209,7 +224,7 @@ func NewTableImporter(
 		id:                 id,
 		backend:            localBackend,
 		kvStore:            kvStore,
-		tableInfo: &checkpoints.TidbTableInfo{
+		tableInfo: &importdef.TableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
@@ -237,7 +252,7 @@ type TableImporter struct {
 	id        string
 	backend   *local.Backend
 	kvStore   tidbkv.Storage
-	tableInfo *checkpoints.TidbTableInfo
+	tableInfo *importdef.TableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
 	encTable table.Table
 	dbID     int64
@@ -292,7 +307,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
-		tableInfo: &checkpoints.TidbTableInfo{
+		tableInfo: &importdef.TableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
@@ -320,10 +335,11 @@ func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path s
 	return mydump.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
 }
 
-func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
+func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {
+	fileMeta := chunk.toSourceFileMeta()
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, e.dataStore, compressedio.DecompressConfig{
+			reader, err := mydump.OpenReader(ctx, &fileMeta, e.dataStore, compressedio.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 			if err != nil {
@@ -331,7 +347,7 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.C
 			}
 			return reader, nil
 		},
-		Remote: &chunk.FileMeta,
+		Remote: &fileMeta,
 	}
 	parser, err := e.GetParser(ctx, info)
 	if err != nil {
@@ -346,16 +362,16 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.C
 			e.logger.Warn("close parser failed", zap.Error(err2))
 		}
 	}()
-	if chunk.Chunk.Offset == 0 {
+	if chunk.Offset == 0 {
 		// if data file is split, only the first chunk need to do skip.
 		// see check in initOptions.
 		if err = HandleSkipNRows(parser, e.IgnoreLines); err != nil {
 			return nil, err
 		}
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
+		parser.SetRowID(chunk.PrevRowIDMax)
 	} else {
 		// if we reached here, the file must be an uncompressed CSV file.
-		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
+		if err = parser.SetPos(chunk.Offset, chunk.PrevRowIDMax); err != nil {
 			return nil, err
 		}
 	}
@@ -363,21 +379,21 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.C
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
+func (ti *TableImporter) getKVEncoder(chunk *Chunk) (*TableKVEncoder, error) {
 	return ti.LoadDataController.getKVEncoder(ti.logger, chunk, ti.encTable)
 }
 
-func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *checkpoints.ChunkCheckpoint, encTable table.Table) (*TableKVEncoder, error) {
+func (e *LoadDataController) getKVEncoder(logger *zap.Logger, chunk *Chunk, encTable table.Table) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        e.SQLMode,
 			Timestamp:      chunk.Timestamp,
 			SysVars:        e.ImportantSysVars,
-			AutoRandomSeed: chunk.Chunk.PrevRowIDMax,
+			AutoRandomSeed: chunk.PrevRowIDMax,
 		},
-		Path:   chunk.FileMeta.Path,
+		Path:   chunk.Path,
 		Table:  encTable,
-		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.FileMeta.Path))},
+		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
 	}
 	return NewTableKVEncoder(cfg, e)
 }
@@ -509,7 +525,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 	return engineChunks, nil
 }
 
-// a simplified version of EstimateCompactionThreshold
+// a simplified version of the compaction threshold estimate.
 func (ti *TableImporter) getTotalRawFileSize(indexCnt int64) int64 {
 	var totalSize int64
 	for _, file := range ti.dataFiles {
@@ -729,14 +745,14 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for range ti.ThreadCnt {
 		eg.Go(func() error {
-			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
+			chunk := Chunk{}
 			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 			defer func() {
 				mu.Lock()
 				defer mu.Unlock()
 				checksum.Add(chunkChecksum)
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
+			return ProcessChunk(egCtx, &chunk, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
 		})
 	}
 	if err = eg.Wait(); err != nil {

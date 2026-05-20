@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -219,11 +218,12 @@ func (s *kvSizeSampler) generateCSVConfig() *config.CSVConfig {
 
 func (s *kvSizeSampler) getParser(
 	ctx context.Context,
-	chunk *checkpoints.ChunkCheckpoint,
+	chunk *Chunk,
 ) (mydump.Parser, error) {
+	fileMeta := chunk.toSourceFileMeta()
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, s.dataStore, compressedio.DecompressConfig{
+			reader, err := mydump.OpenReader(ctx, &fileMeta, s.dataStore, compressedio.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 			if err != nil {
@@ -231,7 +231,7 @@ func (s *kvSizeSampler) getParser(
 			}
 			return reader, nil
 		},
-		Remote: &chunk.FileMeta,
+		Remote: &fileMeta,
 	}
 	parser, err := newLoadDataParser(
 		ctx,
@@ -255,13 +255,13 @@ func (s *kvSizeSampler) getParser(
 			s.logger.Warn("close parser failed", zap.Error(err2))
 		}
 	}()
-	if chunk.Chunk.Offset == 0 {
+	if chunk.Offset == 0 {
 		if err = HandleSkipNRows(parser, s.cfg.IgnoreLines); err != nil {
 			return nil, err
 		}
-		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
+		parser.SetRowID(chunk.PrevRowIDMax)
 	} else {
-		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
+		if err = parser.SetPos(chunk.Offset, chunk.PrevRowIDMax); err != nil {
 			return nil, err
 		}
 	}
@@ -271,7 +271,7 @@ func (s *kvSizeSampler) getParser(
 
 func (s *kvSizeSampler) getKVEncoder(
 	logger *zap.Logger,
-	chunk *checkpoints.ChunkCheckpoint,
+	chunk *Chunk,
 	encTable table.Table,
 ) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
@@ -279,11 +279,11 @@ func (s *kvSizeSampler) getKVEncoder(
 			SQLMode:        s.cfg.SQLMode,
 			Timestamp:      chunk.Timestamp,
 			SysVars:        s.cfg.ImportantSysVars,
-			AutoRandomSeed: chunk.Chunk.PrevRowIDMax,
+			AutoRandomSeed: chunk.PrevRowIDMax,
 		},
-		Path:   chunk.FileMeta.Path,
+		Path:   chunk.Path,
 		Table:  encTable,
-		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.FileMeta.Path))},
+		Logger: log.Logger{Logger: logger.With(zap.String("path", chunk.Path))},
 	}
 	return newTableKVEncoderInner(cfg, s, s.fieldMappings, s.insertColumns)
 }
@@ -321,11 +321,14 @@ func (s *kvSizeSampler) sampleOneFile(
 	ksCodec []byte,
 	maxRowCount int,
 ) (sourceSize int64, dataKVSize, indexKVSize uint64, err error) {
-	chunk := &checkpoints.ChunkCheckpoint{
-		Key:       checkpoints.ChunkCheckpointKey{Path: file.Path},
-		FileMeta:  *file,
-		Chunk:     mydump.Chunk{EndOffset: maxSampleFileSize},
-		Timestamp: time.Now().Unix(),
+	chunk := &Chunk{
+		Path:        file.Path,
+		FileSize:    file.FileSize,
+		EndOffset:   maxSampleFileSize,
+		Type:        file.Type,
+		Compression: file.Compression,
+		Timestamp:   time.Now().Unix(),
+		ParquetMeta: file.ParquetMeta,
 	}
 	idAlloc := kv.NewPanickingAllocators(s.table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, s.table.Meta())
@@ -354,7 +357,7 @@ func (s *kvSizeSampler) sampleOneFile(
 	var (
 		count        int
 		readRowCache []types.Datum
-		readFn       = parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey())
+		readFn       = parserEncodeReader(parser, chunk.EndOffset, chunk.GetKey())
 		kvBatch      = newEncodedKVGroupBatch(ksCodec, maxRowCount)
 	)
 	for count < maxRowCount {

@@ -25,7 +25,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -94,10 +95,10 @@ func TestNormalOperations(t *testing.T) {
 
 	s.mock.MatchExpectationsInOrder(false)
 	cfg := newTestConfig()
-	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+	err := cpdb.Initialize(ctx, cfg, map[string]*importdef.DBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"t2": {
 					Name: "t2",
 					ID:   2,
@@ -228,10 +229,10 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 	s.mock.MatchExpectationsInOrder(false)
 	cfg := newTestConfig()
 	cfg.TikvImporter.AddIndexBySQL = true
-	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+	err = cpdb.Initialize(ctx, cfg, map[string]*importdef.DBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"t1": {
 					Name: "t1",
 					ID:   1,
@@ -250,7 +251,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 		},
 		"db2": {
 			Name: "db2",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"t3": {
 					Name: "t3",
 					ID:   3,
