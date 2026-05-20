@@ -170,22 +170,18 @@
       {
         "SQL": "explain format = 'plan_tree' select a, row_number() over(partition by a) as rn from ordered_window_t",
         "Plan": [
-          "Shuffle root  execution info: concurrency:5, data sources:[IndexReader]",
-          "└─OrderedWindow root  row_number()->Column over(partition by test.ordered_window_t.a rows between current row and current row)",
-          "  └─ShuffleReceiver root  ",
-          "    └─IndexReader root  index:IndexFullScan",
-          "      └─IndexFullScan cop[tikv] table:ordered_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
+          "OrderedWindow root  row_number()->Column over(partition by test.ordered_window_t.a rows between current row and current row)",
+          "└─IndexReader root  index:IndexFullScan",
+          "  └─IndexFullScan cop[tikv] table:ordered_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t",
         "Plan": [
-          "Shuffle root  execution info: concurrency:5, data sources:[IndexReader]",
-          "└─OrderedWindow root  row_number()->Column over(partition by test.ordered_window_t.a order by test.ordered_window_t.b rows between current row and current row)",
-          "  └─ShuffleReceiver root  ",
-          "    └─IndexReader root  index:IndexFullScan",
-          "      └─IndexFullScan cop[tikv] table:ordered_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
+          "OrderedWindow root  row_number()->Column over(partition by test.ordered_window_t.a order by test.ordered_window_t.b rows between current row and current row)",
+          "└─IndexReader root  index:IndexFullScan",
+          "  └─IndexFullScan cop[tikv] table:ordered_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
         ],
         "Warn": null
       },

@@ -48,10 +48,6 @@ func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
-	case *physicalop.PhysicalOrderedWindow:
-		if shuffle := optimizeByShuffle4OrderedWindow(p, ctx); shuffle != nil {
-			return shuffle.Attach2Task(tsk)
-		}
 	case *physicalop.PhysicalMergeJoin:
 		if shuffle := optimizeByShuffle4MergeJoin(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
@@ -79,18 +75,6 @@ func optimizeByShuffle4Window(pp *physicalop.PhysicalWindow, ctx base.PlanContex
 	tail, dataSource := sort, sort.Children()[0]
 
 	return buildShuffleForWindow(pp, tail, dataSource, concurrency, ctx)
-}
-
-func optimizeByShuffle4OrderedWindow(pp *physicalop.PhysicalOrderedWindow, ctx base.PlanContext) *physicalop.PhysicalShuffle {
-	concurrency := ctx.GetSessionVars().WindowConcurrency()
-	if concurrency <= 1 || len(pp.PartitionBy) == 0 {
-		return nil
-	}
-	// PhysicalOrderedWindow's child already satisfies the window ordering.
-	// ShuffleExec preserves the relative input order inside each receiver, and
-	// hash-splitting by the partition keys keeps every partition in one worker.
-	dataSource := pp.Children()[0]
-	return buildShuffleForWindow(&pp.PhysicalWindow, pp, dataSource, concurrency, ctx)
 }
 
 func buildShuffleForWindow(pp *physicalop.PhysicalWindow, tail, dataSource base.PhysicalPlan, concurrency int, ctx base.PlanContext) *physicalop.PhysicalShuffle {
