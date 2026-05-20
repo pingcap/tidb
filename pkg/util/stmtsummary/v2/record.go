@@ -50,6 +50,10 @@ type StmtRecord struct {
 	IsInternal    bool   `json:"is_internal"`
 	BindingSQL    string `json:"binding_sql"`
 	BindingDigest string `json:"binding_digest"`
+	// User is populated from StmtExecInfo.User at record creation when
+	// group_by_user is enabled; otherwise empty. Once set it never changes,
+	// because records with different users live in different grouping buckets.
+	User string `json:"user,omitempty"`
 	// Basic
 	SampleSQL        string   `json:"sample_sql"`
 	Charset          string   `json:"charset"`

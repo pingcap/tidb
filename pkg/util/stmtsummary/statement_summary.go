@@ -52,8 +52,10 @@ type StmtDigestKey struct {
 }
 
 // Init initialize the hash key.
-func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
-	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
+// When group_by_user is disabled, callers should pass an empty string for user,
+// so the hash matches pre-user-dimension behavior.
+func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName, user string) {
+	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName) + len(user)
 	if cap(key.hash) < length {
 		key.hash = make([]byte, 0, length)
 	} else {
@@ -64,6 +66,7 @@ func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resou
 	key.hash = append(key.hash, hack.Slice(prevDigest)...)
 	key.hash = append(key.hash, hack.Slice(planDigest)...)
 	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
+	key.hash = append(key.hash, hack.Slice(user)...)
 }
 
 // Hash implements SimpleLRUCache.Key.
@@ -89,6 +92,7 @@ type stmtSummaryByDigestMap struct {
 	optRefreshInterval     *atomic2.Int64
 	optHistorySize         *atomic2.Int32
 	optMaxSQLLength        *atomic2.Int32
+	optGroupByUser         *atomic2.Bool
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
@@ -117,6 +121,9 @@ type stmtSummaryByDigest struct {
 	isInternal    bool
 	bindingSQL    string
 	bindingDigest string
+	// user is populated when group_by_user is enabled at creation time.
+	// When disabled, it is empty and not part of the grouping key.
+	user string
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -318,6 +325,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		optRefreshInterval:     atomic2.NewInt64(1800),
 		optHistorySize:         atomic2.NewInt32(24),
 		optMaxSQLLength:        atomic2.NewInt32(32768),
+		optGroupByUser:         atomic2.NewBool(false),
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
@@ -349,9 +357,14 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		historySize = ssMap.historySize()
 	}
 
+	userForKey := ""
+	if ssMap.optGroupByUser.Load() {
+		userForKey = sei.User
+	}
+
 	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
 	// Init hash value in advance, to reduce the time holding the lock.
-	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName, userForKey)
 
 	var exist bool
 
@@ -386,6 +399,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	if !exist {
 		// Lazy initialize it to release ssMap.mutex ASAP.
 		summary = new(stmtSummaryByDigest)
+		summary.user = userForKey
 		ssMap.summaryMap.Put(key, summary)
 	} else {
 		summary = value.(*stmtSummaryByDigest)
@@ -506,6 +520,23 @@ func (ssMap *stmtSummaryByDigestMap) SetHistorySize(value int) error {
 // historySize gets the history size for summaries.
 func (ssMap *stmtSummaryByDigestMap) historySize() int {
 	return int(ssMap.optHistorySize.Load())
+}
+
+// SetGroupByUser enables or disables grouping statement summaries by the
+// executing user. Switching the flag clears existing data because existing
+// rows were aggregated under a different grouping key.
+func (ssMap *stmtSummaryByDigestMap) SetGroupByUser(value bool) error {
+	if ssMap.optGroupByUser.Load() == value {
+		return nil
+	}
+	ssMap.optGroupByUser.Store(value)
+	ssMap.Clear()
+	return nil
+}
+
+// GroupByUser reports whether statement summaries are grouped by user.
+func (ssMap *stmtSummaryByDigestMap) GroupByUser() bool {
+	return ssMap.optGroupByUser.Load()
 }
 
 // SetHistorySize sets the history size for all summaries.

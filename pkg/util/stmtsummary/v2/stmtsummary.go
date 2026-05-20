@@ -85,6 +85,7 @@ type StmtSummary struct {
 	optMaxStmtCount        *atomic2.Uint32
 	optMaxSQLLength        *atomic2.Uint32
 	optRefreshInterval     *atomic2.Uint32
+	optGroupByUser         *atomic2.Bool
 
 	window     *stmtWindow
 	windowLock sync.Mutex
@@ -112,6 +113,7 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
+		optGroupByUser:         atomic2.NewBool(false),
 		window:                 newStmtWindow(timeNow(), uint(defaultMaxStmtCount)),
 		storage: newStmtLogStorage(&log.Config{
 			File: log.FileLogConfig{
@@ -145,6 +147,7 @@ func NewStmtSummary4Test(maxStmtCount uint) *StmtSummary {
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(60 * 60 * 24 * 365), // 1 year
+		optGroupByUser:         atomic2.NewBool(false),
 		window:                 newStmtWindow(timeNow(), maxStmtCount),
 		storage:                &mockStmtStorage{},
 	}
@@ -234,6 +237,24 @@ func (s *StmtSummary) SetRefreshInterval(v uint32) error {
 	return nil
 }
 
+// GroupByUser reports whether statement summaries are grouped by the
+// executing user in addition to the usual digest/schema/plan tuple.
+func (s *StmtSummary) GroupByUser() bool {
+	return s.optGroupByUser.Load()
+}
+
+// SetGroupByUser toggles user-dimension grouping. Switching the flag clears
+// the in-memory window because existing records were aggregated under a
+// different grouping key; persisted records are unaffected.
+func (s *StmtSummary) SetGroupByUser(v bool) error {
+	if s.optGroupByUser.Load() == v {
+		return nil
+	}
+	s.optGroupByUser.Store(v)
+	s.Clear()
+	return nil
+}
+
 // Add adds a single stmtsummary.StmtExecInfo to the current statistics window
 // of StmtSummary. Before adding, it will check whether the current window has
 // expired, and if it has expired, the window will be persisted asynchronously
@@ -243,9 +264,14 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		return
 	}
 
+	userForKey := ""
+	if s.optGroupByUser.Load() {
+		userForKey = info.User
+	}
+
 	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
 	// Init hash value in advance, to reduce the time holding the lock.
-	k.Init(info.SchemaName, info.Digest, info.PrevSQLDigest, info.PlanDigest, info.ResourceGroupName)
+	k.Init(info.SchemaName, info.Digest, info.PrevSQLDigest, info.PlanDigest, info.ResourceGroupName, userForKey)
 
 	// Add info to the current statistics window.
 	s.windowLock.Lock()
@@ -255,6 +281,9 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		record = v.(*lockedStmtRecord)
 	} else {
 		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
+		// Populate User only when user is part of the grouping key; this
+		// keeps "" in records created before the flag was flipped.
+		record.User = userForKey
 		s.window.lru.Put(k, record)
 	}
 	s.windowLock.Unlock()
@@ -528,4 +557,16 @@ func SetMaxSQLLength(v int) error {
 		return GlobalStmtSummary.SetMaxSQLLength(uint32(v))
 	}
 	return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(v)
+}
+
+// SetGroupByUser toggles the user dimension on both v1 and v2 so the sysvar
+// setter can call one entry point regardless of which backend is active.
+func SetGroupByUser(v bool) error {
+	if err := stmtsummary.StmtSummaryByDigestMap.SetGroupByUser(v); err != nil {
+		return err
+	}
+	if GlobalStmtSummary != nil {
+		return GlobalStmtSummary.SetGroupByUser(v)
+	}
+	return nil
 }
