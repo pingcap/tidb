@@ -17,12 +17,14 @@ package showtest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1110,7 +1112,7 @@ func TestShowLimitReturnRow(t *testing.T) {
 		"gbk Chinese Internal Code Specification gbk_chinese_ci 2"))
 
 	tk.MustQuery("Show Variables where variable_name ='max_allowed_packet'").Check(testkit.RowsWithSep("|", ""+
-		"max_allowed_packet 67108864"))
+		"max_allowed_packet "+strconv.FormatUint(config.GetMaxAllowedPacket(), 10)))
 
 	result = tk.MustQuery("SHOW status where variable_name ='server_id'")
 	rows = result.Rows()

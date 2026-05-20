@@ -824,6 +824,10 @@ type SessionVars struct {
 	SysErrorCount uint16
 	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
 	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
+	// prepareStmtDedupCache caches PlanCacheStmt templates keyed by SQL text +
+	// charset + collation + currentDB to skip redundant Parse+Preprocess+Build
+	// on repeated COM_STMT_PREPARE for the same SQL within a session.
+	prepareStmtDedupCache *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]any
 	PreparedStmtNameToID map[string]uint32
@@ -1135,6 +1139,7 @@ type SessionVars struct {
 	MergeJoinCostFactor        float64
 	HashJoinCostFactor         float64
 	IndexJoinCostFactor        float64
+	IndexJoinMaxScanRowsRatio  float64
 	SelectivityFactor          float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
@@ -1225,6 +1230,9 @@ type SessionVars struct {
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
+	// EnableStrictNotNullCheck enables strict not-null check for single-row insert in non-strict mode.
+	EnableStrictNotNullCheck bool
+
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
 
@@ -1269,6 +1277,9 @@ type SessionVars struct {
 	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
 	TiDBOptEnableAdvancedJoinReorder bool
 
+	// TiDBOptJoinReorderThroughProj enables join reorder to look through projections.
+	TiDBOptJoinReorderThroughProj bool
+
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
 	TiDBOptJoinReorderThroughSel bool
@@ -1294,6 +1305,14 @@ type SessionVars struct {
 	// If the value is 0, timeouts are not enabled.
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
+
+	// MaxKeysRead is the maximum number of storage engine keys that a SELECT statement
+	// may examine. 0 means unlimited. Only applies to SELECT statements.
+	MaxKeysRead uint64
+
+	// KeysExamined is the cumulative number of storage engine keys examined across all
+	// statements (SELECT, UPDATE, DELETE, etc.) in this session. Reset by FLUSH STATUS.
+	KeysExamined uint64
 
 	// LoadBindingTimeout is the timeout for loading the bind info.
 	LoadBindingTimeout uint64
@@ -1888,6 +1907,9 @@ type SessionVars struct {
 
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
+
+	// EnableCachePrepareStmt indicates whether to cache prepare stmt in plan cache.
+	EnableCachePrepareStmt bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -2392,12 +2414,14 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		MergeJoinCostFactor:              vardef.DefOptMergeJoinCostFactor,
 		HashJoinCostFactor:               vardef.DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:              vardef.DefOptIndexJoinCostFactor,
+		IndexJoinMaxScanRowsRatio:        vardef.DefOptIndexJoinMaxScanRowsRatio,
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
+		TiDBOptJoinReorderThroughProj:    vardef.DefTiDBOptJoinReorderThroughProj,
 		TiDBOptJoinReorderThroughSel:     vardef.DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                    config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:            vardef.DefTiDBWaitSplitRegionFinish,
@@ -2469,6 +2493,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
+		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -2896,6 +2921,37 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	}
 	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
 	return stmt
+}
+
+// PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
+// Including charset, collation, currentDB and sqlMode ensures that the cached
+// PlanCacheStmt is only reused when the session context that affects parsing,
+// name-resolution and cacheability decisions is identical. sqlMode is included
+// because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
+// IsASTCacheable (which computes StmtCacheable) runs on that AST.
+func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+	var modeBuf [8]byte
+	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+}
+
+// GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
+// or nil when the cache is empty or the key is not found.
+func (s *SessionVars) GetPrepareStmtDedupCache(key string) any {
+	if s.prepareStmtDedupCache == nil {
+		return nil
+	}
+	v, _ := s.prepareStmtDedupCache.Get(planCacheStmtKey(key))
+	return v
+}
+
+// SetPrepareStmtDedupCache stores a PrepareStmtCacheEntry under the given key.
+// The cache is lazily initialized and bounded by SessionPlanCacheSize (LRU eviction).
+func (s *SessionVars) SetPrepareStmtDedupCache(key string, val any) {
+	if s.prepareStmtDedupCache == nil {
+		s.prepareStmtDedupCache = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
+	}
+	s.prepareStmtDedupCache.Put(planCacheStmtKey(key), val)
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
@@ -3687,6 +3743,15 @@ func (s *SessionVars) GetMaxExecutionTime() uint64 {
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
 func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 	return s.TiKVClientReadTimeout
+}
+
+// GetMaxKeysRead returns the max keys read limit for SELECT statements.
+// Returns 0 (unlimited) when not in a SELECT statement.
+func (s *SessionVars) GetMaxKeysRead() uint64 {
+	if !s.StmtCtx.InSelectStmt {
+		return 0
+	}
+	return s.MaxKeysRead
 }
 
 // SetDiskFullOpt sets the session variable DiskFullOpt

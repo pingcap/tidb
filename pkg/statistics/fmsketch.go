@@ -121,24 +121,41 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 
 // InsertValue inserts a value into the FM sketch.
 func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) error {
+	hashVal, err := hashDatum(sc, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.insertHashValue(hashVal)
+	return nil
+}
+
+// InsertRowValue inserts multi-column values to the sketch.
+func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
+	hashVal, err := hashRow(sc, values)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.insertHashValue(hashVal)
+	return nil
+}
+
+func hashDatum(sc *stmtctx.StatementContext, value types.Datum) (uint64, error) {
 	bytes, err := codec.EncodeValue(sc.TimeZone(), nil, value)
 	err = sc.HandleError(err)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, err
 	}
 	hashFunc := murmur3Pool.Get().(hash.Hash64)
 	hashFunc.Reset()
 	defer murmur3Pool.Put(hashFunc)
 	_, err = hashFunc.Write(bytes)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, err
 	}
-	s.insertHashValue(hashFunc.Sum64())
-	return nil
+	return hashFunc.Sum64(), nil
 }
 
-// InsertRowValue inserts multi-column values to the sketch.
-func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
+func hashRow(sc *stmtctx.StatementContext, values []types.Datum) (uint64, error) {
 	b := make([]byte, 0, 8)
 	hashFunc := murmur3Pool.Get().(hash.Hash64)
 	hashFunc.Reset()
@@ -150,15 +167,14 @@ func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.D
 		b, err := codec.EncodeValue(sc.TimeZone(), b, v)
 		err = errCtx.HandleError(err)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		_, err = hashFunc.Write(b)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
-	s.insertHashValue(hashFunc.Sum64())
-	return nil
+	return hashFunc.Sum64(), nil
 }
 
 // MergeFMSketch merges two FM Sketch.

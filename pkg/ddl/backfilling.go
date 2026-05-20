@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -213,6 +213,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 	}
 
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
+	metricTableID := backfillMetricsTableID(rInfo, label)
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
@@ -224,10 +225,10 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 		table:      tbl,
 		batchCnt:   batchCnt,
 		jobContext: jobCtx,
-		metricCounter: metrics.GetBackfillTotalByLabel(
-			label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
-		conflictCounter: metrics.GetBackfillTotalByLabel(
-			fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		metricCounter: getBackfillTotalByTableID(
+			metricTableID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		conflictCounter: getBackfillTotalByTableID(
+			metricTableID, fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
 }
 
@@ -775,8 +776,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	}
 
 	var (
-		cfg *local.BackendConfig
-		bd  *local.Backend
+		cfg *ingestctrl.BackendConfig
+		bd  *ingestctrl.Backend
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
@@ -798,7 +799,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	rowCntListener := &localRowCntCollector{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
-		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
+		counter:            getBackfillTotalByTableID(reorgInfo.PhysicalTableID, metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
 	}
 
 	sctx, err := sessPool.Get()

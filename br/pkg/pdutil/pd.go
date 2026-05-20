@@ -161,7 +161,7 @@ func NewPdController(
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
 	}
 	pdClient, err := pd.NewClientWithAPIContext(
-		ctx, keyspace.BuildAPIContext(keyspaceName), caller.Component("br-pd-controller"), pdAddrs, securityOption,
+		ctx, keyspace.BuildAPIContext(keyspaceName), caller.GetComponent(1), pdAddrs, securityOption,
 		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.

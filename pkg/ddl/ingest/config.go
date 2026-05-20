@@ -21,11 +21,11 @@ import (
 	"strconv"
 
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -47,13 +47,13 @@ func genConfig(
 	concurrency int,
 	maxWriteSpeed int,
 	globalSort bool,
-) *local.BackendConfig {
+) *ingestctrl.BackendConfig {
 	workerConcurrency := int32(concurrency * 2)
 	if ImporterRangeConcurrencyForTest != nil {
 		workerConcurrency = ImporterRangeConcurrencyForTest.Load() * 2
 	}
 
-	cfg := &local.BackendConfig{
+	cfg := &ingestctrl.BackendConfig{
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
@@ -125,14 +125,14 @@ func generateLocalEngineConfig(ts uint64) *backend.EngineConfig {
 			CompactConcurrency: compactConcurrency,
 			BlockSize:          16 * 1024, // using default for DDL
 		},
-		TableInfo:   &checkpoints.TidbTableInfo{},
+		TableInfo:   &importdef.TableInfo{},
 		KeepSortDir: true,
 		TS:          ts,
 	}
 }
 
 // adjustImportMemory adjusts the lightning memory parameters according to the memory root's max limitation.
-func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *local.BackendConfig) {
+func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.BackendConfig) {
 	var scale int64
 	// Try aggressive resource usage successful.
 	if tryAggressiveMemory(ctx, memRoot, cfg) {
@@ -163,7 +163,7 @@ func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *local.Backend
 }
 
 // tryAggressiveMemory lightning memory parameters according memory root's max limitation.
-func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *local.BackendConfig) bool {
+func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.BackendConfig) bool {
 	var defaultMemSize int64
 	defaultMemSize = int64(int(cfg.LocalWriterMemCacheSize) * cfg.GetWorkerConcurrency() / 2)
 	defaultMemSize += int64(cfg.MemTableSize)

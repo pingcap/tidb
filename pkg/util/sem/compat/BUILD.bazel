@@ -27,6 +27,7 @@ go_test(
     embed = [":compat"],
     flaky = True,
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/objstore/s3like",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
