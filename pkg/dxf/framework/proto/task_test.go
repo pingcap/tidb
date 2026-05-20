@@ -15,6 +15,7 @@
 package proto
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -25,6 +26,29 @@ func TestTaskStep(t *testing.T) {
 	// make sure we don't change the value of StepInit accidentally
 	require.Equal(t, int64(-1), int64(StepInit))
 	require.Equal(t, int64(-2), int64(StepDone))
+	// make sure we don't change prepare mode constants accidentally.
+	require.Equal(t, 0, int(PrepareModeDisabled))
+	require.Equal(t, 1, int(PrepareModeRequired))
+
+	// default prepare mode should be omitted for backward-compatible json payload.
+	data, err := json.Marshal(ExtraParams{})
+	require.NoError(t, err)
+	require.JSONEq(t, `{}`, string(data))
+
+	// existing fields should keep old payload shape when prepare mode is default.
+	data, err = json.Marshal(ExtraParams{ManualRecovery: true})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"manual_recovery":true}`, string(data))
+
+	data, err = json.Marshal(ExtraParams{PrepareMode: PrepareModeRequired})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"prepare_mode":1}`, string(data))
+
+	var extraParams ExtraParams
+	require.NoError(t, json.Unmarshal([]byte(`{}`), &extraParams))
+	require.Equal(t, PrepareModeDisabled, extraParams.PrepareMode)
+	require.NoError(t, json.Unmarshal([]byte(`{"prepare_mode":1}`), &extraParams))
+	require.Equal(t, PrepareModeRequired, extraParams.PrepareMode)
 }
 
 func TestTaskIsDone(t *testing.T) {
