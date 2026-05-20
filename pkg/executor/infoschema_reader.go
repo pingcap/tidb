@@ -2798,6 +2798,18 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx
 		checker = privilege.GetPrivilegeManager(sctx)
 		rows    [][]types.Datum
 	)
+	rs := e.is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
+	hasTiFlashReplicaTable := false
+	for _, schema := range rs {
+		if len(schema.TableInfos) > 0 {
+			hasTiFlashReplicaTable = true
+			break
+		}
+	}
+	if !hasTiFlashReplicaTable {
+		e.rows = rows
+		return nil
+	}
 	enableColumnarStore := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
 	tiFlashStores, tikvStores, storesErr := infosync.GetTiFlashProgressStores(ctx)
 	if storesErr != nil {
@@ -2807,7 +2819,6 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx
 		tikvStores = nil
 	}
 	var globalCircuitBreakerTriggered bool
-	rs := e.is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.DBName.L, tbl.Name.L, "", mysql.AllPrivMask) {
