@@ -240,11 +240,9 @@ explain format='plan_tree' select * from (select row_number() over (partition by
 id	task	access object	operator info
 Projection	root		Column
 └─Selection	root		le(Column, 1)
-  └─Shuffle	root		execution info: concurrency:5, data sources:[IndexReader]
-    └─OrderedWindow	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b rows between current row and current row)
-      └─ShuffleReceiver	root		
-        └─IndexReader	root		index:IndexFullScan
-          └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+  └─OrderedWindow	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b rows between current row and current row)
+    └─IndexReader	root		index:IndexFullScan
+      └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
 select * from (select row_number() over (partition by b) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key;
 rownumber
 1
@@ -253,11 +251,9 @@ explain format='plan_tree' select * from (select row_number() over (partition by
 id	task	access object	operator info
 Projection	root		Column
 └─Selection	root		le(Column, 1)
-  └─Shuffle	root		execution info: concurrency:5, data sources:[IndexReader]
-    └─OrderedWindow	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
-      └─ShuffleReceiver	root		
-        └─IndexReader	root		index:IndexFullScan
-          └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+  └─OrderedWindow	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+    └─IndexReader	root		index:IndexFullScan
+      └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
 select * from (select row_number() over (partition by b order by a) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with order by, partition by prefix;
 rownumber
 1
@@ -267,12 +263,10 @@ id	task	access object	operator info
 Sort	root		Column
 └─Projection	root		Column
   └─Selection	root		le(Column, 3)
-    └─Shuffle	root		execution info: concurrency:5, data sources:[IndexReader]
-      └─OrderedWindow	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b rows between current row and current row)
-        └─ShuffleReceiver	root		
-          └─IndexReader	root		index:Selection
-            └─Selection	cop[tikv]		ge(planner__core__casetest__rule__rule_derive_topn_from_window.t.a, 2)
-              └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+    └─OrderedWindow	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b rows between current row and current row)
+      └─IndexReader	root		index:Selection
+        └─Selection	cop[tikv]		ge(planner__core__casetest__rule__rule_derive_topn_from_window.t.a, 2)
+          └─IndexFullScan	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
 select * from (select row_number() over (partition by b) as rownumber from t where a >= 2) DT where rownumber <= 3 order by rownumber  -- pattern is applicable with partition by prefix and filter on data source;
 rownumber
 1
@@ -309,11 +303,9 @@ explain format='plan_tree' select * from (select row_number() over (partition by
 id	task	access object	operator info
 Projection	root		Column
 └─Selection	root		le(Column, 1)
-  └─Shuffle	root		execution info: concurrency:5, data sources:[IndexReader]
-    └─OrderedWindow	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.td.b rows between current row and current row)
-      └─ShuffleReceiver	root		
-        └─IndexReader	root		index:IndexFullScan
-          └─IndexFullScan	cop[tikv]	table:td, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+  └─OrderedWindow	root		row_number()->Column over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.td.b rows between current row and current row)
+    └─IndexReader	root		index:IndexFullScan
+      └─IndexFullScan	cop[tikv]	table:td, index:PRIMARY(b, a)	keep order:true, stats:pseudo
 select * from (select row_number() over (partition by b) as rownumber from td) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key;
 rownumber
 1
