@@ -18,6 +18,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -92,6 +93,15 @@ func (p *LogicalProjection) HashCode() []byte {
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	if slices.ContainsFunc(p.Exprs, expression.HasAssignSetVarFunc) {
+		_, child, err := p.BaseLogicalPlan.PredicatePushDown(nil)
+		return predicates, child, err
+	}
+	// Keep type-sensitive HAVING predicates above Projection -> Aggregation.
+	// Rebuilding control-function comparisons below this projection can change
+	// coercion against pre-aggregation columns and filter rows that should
+	// survive HAVING.
+	if _, ok := p.Children()[0].(*LogicalAggregation); ok &&
+		hasTypeSensitiveProjectionPredicate(p.Schema(), p.Exprs, predicates) {
 		_, child, err := p.BaseLogicalPlan.PredicatePushDown(nil)
 		return predicates, child, err
 	}
@@ -657,6 +667,33 @@ func breakDownPredicates(p *LogicalProjection, predicates []expression.Expressio
 		}
 	}
 	return canBePushed, canNotBePushed
+}
+
+func hasTypeSensitiveProjectionPredicate(schema *expression.Schema, projectionExprs, predicates []expression.Expression) bool {
+	for _, predicate := range predicates {
+		if hasTypeSensitiveProjectionPredicateExpr(predicate) {
+			return true
+		}
+		for _, col := range expression.ExtractColumns(predicate) {
+			idx := schema.ColumnIndex(col)
+			if idx >= 0 && hasTypeSensitiveProjectionPredicateExpr(projectionExprs[idx]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasTypeSensitiveProjectionPredicateExpr(expr expression.Expression) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch sf.FuncName.L {
+	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull:
+		return true
+	}
+	return slices.ContainsFunc(sf.GetArgs(), hasTypeSensitiveProjectionPredicateExpr)
 }
 
 // todo: merge with rule_eliminate_projection.go

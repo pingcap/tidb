@@ -947,6 +947,30 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// issue-68052-having-derived-where-equivalence
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("CREATE TABLE t0(c0 NUMERIC UNSIGNED, c1 FLOAT UNSIGNED, c2 FLOAT UNSIGNED)")
+		tk.MustExec("INSERT INTO t0 VALUES (1443408820, 0.34189489665228545, 0.36490945335401803)")
+
+		havingQuery := `
+SELECT /* issue:68052 */ CONCAT(IFNULL(t0.c2, '__NULL__'))
+FROM t0
+GROUP BY t0.c2
+HAVING (((BIT_OR(t0.c2)) > (AVG(t0.c2))) OR ((t0.c2) > ((CAST(TRIM((CASE t0.c2 WHEN t0.c2 THEN t0.c2 ELSE 1923309721 END)) AS CHAR)) >= (t0.c2))))`
+		derivedQuery := `
+SELECT /* issue:68052 */ ref0
+FROM (
+    SELECT CONCAT(IFNULL(t0.c2, '__NULL__')) AS ref0,
+        (((BIT_OR(t0.c2)) > (AVG(t0.c2))) OR ((t0.c2) > ((CAST(TRIM((CASE t0.c2 WHEN t0.c2 THEN t0.c2 ELSE 1923309721 END)) AS CHAR)) >= (t0.c2)))) AS ref1
+    FROM t0
+    GROUP BY t0.c2
+) AS s
+WHERE ref1`
+		tk.MustQuery(havingQuery).Check(testkit.Rows("0.36490944"))
+		tk.MustQuery(derivedQuery).Check(testkit.Rows("0.36490944"))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
