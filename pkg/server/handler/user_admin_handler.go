@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -442,7 +442,7 @@ func (h UserRolesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func listUserHosts(ctx context.Context, se sessiontypes.Session, username string) ([]string, error) {
+func listUserHosts(ctx context.Context, se sessionapi.Session, username string) ([]string, error) {
 	rs, err := se.ExecuteInternal(ctx, "SELECT Host FROM mysql.user WHERE User = %?", username)
 	if err != nil {
 		return nil, err
@@ -468,7 +468,7 @@ func listUserHosts(ctx context.Context, se sessiontypes.Session, username string
 	return hosts, nil
 }
 
-func countUserEntries(ctx context.Context, se sessiontypes.Session) (int, error) {
+func countUserEntries(ctx context.Context, se sessionapi.Session) (int, error) {
 	rs, err := se.ExecuteInternal(ctx, "SELECT COUNT(*) FROM mysql.user")
 	if err != nil {
 		return 0, err
