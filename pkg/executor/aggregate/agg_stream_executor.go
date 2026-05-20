@@ -29,7 +29,7 @@ import (
 // streamAggMemDeltaFlushThreshold is the threshold for flushing buffered memory delta to the tracker.
 // Consuming memory for every group is expensive due to atomic operations traversing the tracker tree.
 // We buffer deltas across groups and flush in batch to reduce Consume call frequency.
-const streamAggMemDeltaFlushThreshold = 1 << 20 // 1MB
+const streamAggMemDeltaFlushThreshold = 1 << 10 // 1KB
 
 // StreamAggExec deals with all the aggregate functions.
 // It assumes all the input data is sorted by group by key.

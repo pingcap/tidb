@@ -474,3 +474,87 @@ func TestIssue50849(t *testing.T) {
 	// Check the error contains stack information
 	require.True(t, errors.HasStack(err))
 }
+
+// TestStreamAggPendingMemDeltaBatching verifies that the pendingMemDelta batching
+// optimization in StreamAggExec correctly tracks and releases memory across two paths:
+//  1. No-flush path: per-group delta stays below the flush threshold; memory is cleaned
+//     up entirely by ReplaceBytesUsed in appendResult2Chunk.
+//  2. Flush path: per-group delta exceeds the flush threshold and an explicit Consume is
+//     triggered mid-execution; the tracker must still reach zero after the query.
+//
+// Both cases assert BytesConsumed==0 (no leak) and MaxConsumed>0 (tracking was active).
+func TestStreamAggPendingMemDeltaBatching(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_track_aggregate_memory_usage=ON")
+	tk.MustExec("set tidb_init_chunk_size=1")
+	tk.MustExec("set tidb_max_chunk_size=32")
+
+	// Use an index on the group-by column so the planner can choose stream agg directly
+	// without adding an extra sort operator.
+	tk.MustExec("drop table if exists t_stream_agg_mem")
+	tk.MustExec("create table t_stream_agg_mem(a int, b varchar(4096), key idx_a(a))")
+
+	// --- Path 1: no-flush ---
+	// 200 groups × 1 row, each with a 5-byte string.  GROUP_CONCAT buffer capacity
+	// growth per group is a few dozen bytes — well below the 1KB flush threshold.
+	// pendingMemDelta accumulates across all groups and is cleared only by
+	// ReplaceBytesUsed in appendResult2Chunk.
+	var sb strings.Builder
+	const nSmallGroups = 200
+	for i := range nSmallGroups {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(fmt.Sprintf("(%d,'%s')", i, strings.Repeat("x", 5)))
+	}
+	tk.MustExec("insert into t_stream_agg_mem values " + sb.String())
+
+	rows := tk.MustQuery(
+		"select /*+ stream_agg() use_index(t_stream_agg_mem, idx_a) */ a, count(b), group_concat(b) " +
+			"from t_stream_agg_mem group by a",
+	).Rows()
+	require.Len(t, rows, nSmallGroups)
+	for _, row := range rows {
+		require.Equal(t, "1", row[1].(string), "each group should have exactly one row")
+	}
+
+	memTracker := tk.Session().GetSessionVars().StmtCtx.MemTracker
+	require.Equal(t, int64(0), memTracker.BytesConsumed(),
+		"no-flush path: all partial-result memory must be released after query")
+	require.Greater(t, memTracker.MaxConsumed(), int64(0),
+		"no-flush path: memory must have been tracked during GROUP_CONCAT execution")
+
+	// --- Path 2: flush triggered ---
+	// 10 groups × 1 row, each with a 2KB string.  GROUP_CONCAT buffer capacity growth
+	// per group exceeds the 1KB flush threshold, so Consume is called mid-execution.
+	// group_concat_max_len is raised so the 2KB value is not truncated.
+	tk.MustExec("set group_concat_max_len = 65536")
+	tk.MustExec("delete from t_stream_agg_mem")
+
+	sb.Reset()
+	const nLargeGroups = 10
+	for i := range nLargeGroups {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(fmt.Sprintf("(%d,'%s')", i, strings.Repeat("y", 2048)))
+	}
+	tk.MustExec("insert into t_stream_agg_mem values " + sb.String())
+
+	rows = tk.MustQuery(
+		"select /*+ stream_agg() use_index(t_stream_agg_mem, idx_a) */ a, count(b), group_concat(b) " +
+			"from t_stream_agg_mem group by a",
+	).Rows()
+	require.Len(t, rows, nLargeGroups)
+	for _, row := range rows {
+		require.Equal(t, "1", row[1].(string), "each group should have exactly one row")
+	}
+
+	memTracker = tk.Session().GetSessionVars().StmtCtx.MemTracker
+	require.Equal(t, int64(0), memTracker.BytesConsumed(),
+		"flush path: all partial-result memory must be released after query")
+	require.Greater(t, memTracker.MaxConsumed(), int64(0),
+		"flush path: memory must have been tracked during GROUP_CONCAT execution")
+}
