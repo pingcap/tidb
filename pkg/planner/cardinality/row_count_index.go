@@ -402,6 +402,8 @@ func capAllTopNMissPointEstimate(pointCount statistics.RowEstimate, analyzedRowC
 	}
 	upperLimit := float64(realtimeRowCount) - analyzedRowCount
 	if upperLimit <= 0 && modifyCount > 0 {
+		// upperLimit <= 0 covers update/delete-only stale stats, where the table did
+		// not grow or even shrank while modified rows may contain values absent from TopN.
 		// The searched values are absent from TopN when TopN already represents all analyzed NDVs.
 		// Only rows changed after analyze can contain those newly emerging point values, so a large IN list
 		// should not accumulate more rows than the post-analyze change window.
