@@ -155,7 +155,7 @@ func stopwordSetFromSysVars(enableStopword, serverStopwordTable, userStopwordTab
 	if strings.TrimSpace(serverStopwordTable) != "" || strings.TrimSpace(userStopwordTable) != "" {
 		return map[string]struct{}{}
 	}
-	return englishStopwords
+	return builtinInnoDBEnglishStopwords
 }
 
 func getFulltextSysVar(sessVars *variable.SessionVars, name string) (string, error) {
@@ -299,7 +299,9 @@ func utf8CharSpans(text string) []charSpan {
 	return spans
 }
 
-var englishStopwords = map[string]struct{}{
+// builtinInnoDBEnglishStopwords is used by the STANDARD analyzer when
+// innodb_ft_enable_stopword is ON and no custom stopword table is configured.
+var builtinInnoDBEnglishStopwords = map[string]struct{}{
 	"a": {}, "an": {}, "and": {}, "are": {}, "as": {}, "at": {}, "be": {}, "but": {},
 	"by": {}, "for": {}, "if": {}, "in": {}, "into": {}, "is": {}, "it": {}, "no": {},
 	"not": {}, "of": {}, "on": {}, "or": {}, "such": {}, "that": {}, "the": {},
