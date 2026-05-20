@@ -68,7 +68,7 @@ func GetKeyspaceNameBytesBySettings() []byte {
 			return
 		}
 
-		keyspaceName := GetKeyspaceNameBySettings()
+		keyspaceName := config.GetGlobalKeyspaceName()
 		keyspaceNameBytes = []byte(keyspaceName)
 	})
 	return keyspaceNameBytes
