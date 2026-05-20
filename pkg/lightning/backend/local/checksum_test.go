@@ -196,13 +196,9 @@ func TestDoChecksumWithTikv(t *testing.T) {
 			checksumTS = req.StartTs
 		}
 		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient, lightningServicePrefix), client: kvClient}
-<<<<<<< HEAD
 		physicalTS, logicalTS, err := pdClient.GetTS(ctx)
 		require.NoError(t, err)
-		_, err = checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
-=======
-		_, err := checksumExec.Checksum(ctx, &importdef.TableInfo{DB: "test", Name: "t", Core: tableInfo})
->>>>>>> b628c220ad0 (lightning, importinto: move Lightning-specific import code (#67947))
+		_, err = checksumExec.Checksum(ctx, &importdef.TableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
 			checksumExec.Close()

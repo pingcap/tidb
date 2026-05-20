@@ -68,15 +68,9 @@ func (e *importMinimalTaskExecutor) Run(
 	failpoint.InjectCall("syncBeforeSortChunk")
 	sharedVars := e.mTtask.SharedVars
 
-<<<<<<< HEAD
-	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
-	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
-		Loc: sharedVars.TableImporter.ParquetLocation(),
-=======
 	chunk := e.mTtask.Chunk
 	chunk.ParquetMeta = mydump.ParquetFileMeta{
-		Loc: sharedVars.TableImporter.Location,
->>>>>>> b628c220ad0 (lightning, importinto: move Lightning-specific import code (#67947))
+		Loc: sharedVars.TableImporter.ParquetLocation(),
 	}
 
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())

@@ -357,20 +357,15 @@ func (s *kvSizeSampler) sampleOneFile(
 	var (
 		count        int
 		readRowCache []types.Datum
-		readFn       = parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey())
+		readFn       = parserEncodeReader(parser, chunk.EndOffset, chunk.GetKey())
 		kvBatch      = newEncodedKVGroupBatch(ksCodec, maxRowCount)
 	)
 	for count < maxRowCount {
-<<<<<<< HEAD
 		row, closed, readErr := readFn(ctx, readRowCache)
 		if readErr != nil {
 			return 0, 0, 0, readErr
 		}
 		if closed {
-=======
-		startPos, _ := parser.Pos()
-		if s.cfg.Format != DataFormatParquet && startPos >= chunk.EndOffset {
->>>>>>> b628c220ad0 (lightning, importinto: move Lightning-specific import code (#67947))
 			break
 		}
 		readRowCache = row.row
