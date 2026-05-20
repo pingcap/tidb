@@ -148,6 +148,11 @@
         "Warn": null
       },
       {
+        "SQL": "set @@tidb_enforce_mpp=0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
         "SQL": "drop table if exists ordered_window_t",
         "Plan": null,
         "Warn": null
@@ -169,9 +174,7 @@
           "└─IndexReader root  index:IndexFullScan",
           "  └─IndexFullScan cop[tikv] table:ordered_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because there aren't tiflash replicas of table `ordered_window_t`."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t",
@@ -180,9 +183,7 @@
           "└─IndexReader root  index:IndexFullScan",
           "  └─IndexFullScan cop[tikv] table:ordered_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because there aren't tiflash replicas of table `ordered_window_t`."
-        ]
+        "Warn": null
       },
       {
         "SQL": "select a, b, row_number() over(partition by a order by b) as rn from ordered_window_t",
@@ -201,9 +202,7 @@
           "└─IndexReader root  index:IndexFullScan",
           "  └─IndexFullScan cop[tikv] table:ordered_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because there aren't tiflash replicas of table `ordered_window_t`."
-        ]
+        "Warn": null
       },
       {
         "SQL": "explain format = 'plan_tree' select a, c, row_number() over(partition by a order by c) as rn from ordered_window_t",
@@ -215,9 +214,7 @@
           "      └─TableReader root  data:TableFullScan",
           "        └─TableFullScan cop[tikv] table:ordered_window_t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because there aren't tiflash replicas of table `ordered_window_t`."
-        ]
+        "Warn": null
       }
     ]
   },

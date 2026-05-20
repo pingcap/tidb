@@ -13,6 +13,7 @@
       "explain format = 'plan_tree' select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
       "explain format = 'plan_tree' select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
       "explain format = 'plan_tree' select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;",
+      "set @@tidb_enforce_mpp=0",
       "drop table if exists ordered_window_t",
       "create table ordered_window_t(a int, b int, c int, key idx_ab(a, b))",
       "insert into ordered_window_t values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23)",
