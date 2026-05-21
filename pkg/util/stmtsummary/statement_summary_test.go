@@ -1756,12 +1756,12 @@ func TestStmtDigestKeyBoundary(t *testing.T) {
 	require.NotEqual(t, k1.Hash(), k2.Hash(), "user segment must have an unambiguous boundary")
 
 	// user="" leaves the hash equal to the legacy 5-field layout.
-	kOff := &StmtDigestKey{}
-	kOff.Init("schema", "digest", "prev", "plan", "rg", "")
+	off := &StmtDigestKey{}
+	off.Init("schema", "digest", "prev", "plan", "rg", "")
 	legacy := append([]byte{}, hack.Slice("digest")...)
 	legacy = append(legacy, hack.Slice("schema")...)
 	legacy = append(legacy, hack.Slice("prev")...)
 	legacy = append(legacy, hack.Slice("plan")...)
 	legacy = append(legacy, hack.Slice("rg")...)
-	require.Equal(t, legacy, kOff.Hash())
+	require.Equal(t, legacy, off.Hash())
 }
