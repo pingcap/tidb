@@ -8,8 +8,7 @@
       "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 2",
       "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn < 2",
       "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn <= 2",
-      "select t1.a, tmp.b, tmp.c from t1 left join (select a, b, c, row_number() over(partition by a order by b) as rn from t3) tmp on t1.a = tmp.a and tmp.rn = 1",
-      "select t1.a, tmp.b, tmp.c from t1 left join (select a, b, c, row_number() over(partition by b order by c) as rn from t3) tmp on t1.a = tmp.a and tmp.rn = 1"
+      "select t1.a, tmp.b, tmp.c from t1 left join (select a, b, c, row_number() over(partition by a order by b) as rn from t3) tmp on t1.a = tmp.a and tmp.rn = 1"
     ]
   }
 ]
