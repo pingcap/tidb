@@ -510,6 +510,26 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 		tk.MustExec(`create table tx (a int, b json, key k(a, (cast(b as date array))))`)
 		tk.MustQuery(`select /* issue:49438 */ 1 from tx where a in (1)`).Check(testkit.Rows())
 
+		// issue:67009
+		for _, notNull := range []bool{true, false} {
+			tk.MustExec("drop table if exists t_issue67009")
+			if notNull {
+				tk.MustExec("create table t_issue67009(c0 char unique not null)")
+			} else {
+				tk.MustExec("create table t_issue67009(c0 char unique)")
+			}
+			tk.MustExec("insert into t_issue67009 values (1)")
+			tk.MustQuery(`select /* issue:67009 */ ceil(max(b'101010')) as c0
+				from t_issue67009
+				group by c0
+				having convert_tz('2025-12-31 14:30:00', 'Europe/Amsterdam', '+00:00')`).Check(testkit.Rows("42"))
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+			if !notNull {
+				tk.MustHavePlan("select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0", "HashAgg")
+				tk.MustNotHavePlan("select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0", "Projection")
+			}
+		}
+
 		// issue:52023
 		tk.MustExec(`CREATE TABLE t_issue52023 (
 			a binary(1) NOT NULL,
