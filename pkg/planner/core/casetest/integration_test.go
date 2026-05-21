@@ -522,11 +522,18 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 			tk.MustQuery(`select /* issue:67009 */ ceil(max(b'101010')) as c0
 				from t_issue67009
 				group by c0
+				having convert_tz('2025-12-31 14:30:00', 'Europe/Amsterdam', '+00:00')`).Check(testkit.Rows("0"))
+			tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: '*'"))
+			tk.MustQuery(`select /* issue:67009 constant */ max(42) as c0
+				from t_issue67009
+				group by c0
 				having convert_tz('2025-12-31 14:30:00', 'Europe/Amsterdam', '+00:00')`).Check(testkit.Rows("42"))
 			tk.MustQuery("show warnings").Check(testkit.Rows())
 			if !notNull {
 				tk.MustHavePlan("select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0", "HashAgg")
 				tk.MustNotHavePlan("select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0", "Projection")
+				tk.MustHavePlan("select /* issue:67009 constant */ max(42) from t_issue67009 group by c0", "HashAgg")
+				tk.MustHavePlan("select /* issue:67009 constant */ max(42) from t_issue67009 group by c0", "Projection")
 			}
 		}
 

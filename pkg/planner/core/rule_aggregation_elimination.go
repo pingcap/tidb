@@ -143,6 +143,10 @@ func (*aggregationEliminateChecker) tryToProjectConstMaxMin(agg *logicalop.Logic
 			proj.Exprs = append(proj.Exprs, agg.Schema().Columns[i].Clone())
 			continue
 		}
+		if expression.IsBinaryLiteral(af.Args[0]) {
+			proj.Exprs = append(proj.Exprs, agg.Schema().Columns[i].Clone())
+			continue
+		}
 		if af.Args[0].ConstLevel() < expression.ConstOnlyInContext {
 			proj.Exprs = append(proj.Exprs, agg.Schema().Columns[i].Clone())
 			continue
