@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"container/list"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"slices"
@@ -53,10 +54,16 @@ type StmtDigestKey struct {
 }
 
 // Init initialize the hash key.
-// When group_by_user is disabled, callers should pass an empty string for user,
-// so the hash matches pre-user-dimension behavior.
+// When user is empty (group_by_user disabled), the hash is byte-identical to
+// the pre-user-dimension layout. When user is non-empty, it is prefixed with
+// a 4-byte length so the boundary between resourceGroupName and user is
+// unambiguous and pairs like ("rg", "alice") and ("rga", "lice") cannot
+// collide.
 func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName, user string) {
 	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName) + len(user)
+	if len(user) > 0 {
+		length += 4
+	}
 	if cap(key.hash) < length {
 		key.hash = make([]byte, 0, length)
 	} else {
@@ -67,7 +74,12 @@ func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resou
 	key.hash = append(key.hash, hack.Slice(prevDigest)...)
 	key.hash = append(key.hash, hack.Slice(planDigest)...)
 	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
-	key.hash = append(key.hash, hack.Slice(user)...)
+	if len(user) > 0 {
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], uint32(len(user)))
+		key.hash = append(key.hash, buf[:]...)
+		key.hash = append(key.hash, hack.Slice(user)...)
+	}
 }
 
 // Hash implements SimpleLRUCache.Key.

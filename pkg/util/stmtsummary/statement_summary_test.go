@@ -1740,3 +1740,28 @@ func TestAddStatementGroupByUser(t *testing.T) {
 		require.Len(t, elem.authUsers, 2)
 	}
 }
+
+// TestStmtDigestKeyBoundary guards against two regressions:
+//  1. Adjacent string fields must not collide across boundary, e.g.
+//     (resourceGroupName, user) = ("rg", "alice") vs ("rga", "lice"); without
+//     a boundary marker on user, both produce the same hash.
+//  2. With user empty (group_by_user OFF), the hash must stay byte-identical
+//     to the pre-user-dimension encoding so persisted/in-memory rows from
+//     older versions match.
+func TestStmtDigestKeyBoundary(t *testing.T) {
+	k1 := &StmtDigestKey{}
+	k1.Init("schema", "digest", "prev", "plan", "rg", "alice")
+	k2 := &StmtDigestKey{}
+	k2.Init("schema", "digest", "prev", "plan", "rga", "lice")
+	require.NotEqual(t, k1.Hash(), k2.Hash(), "user segment must have an unambiguous boundary")
+
+	// user="" leaves the hash equal to the legacy 5-field layout.
+	kOff := &StmtDigestKey{}
+	kOff.Init("schema", "digest", "prev", "plan", "rg", "")
+	legacy := append([]byte{}, hack.Slice("digest")...)
+	legacy = append(legacy, hack.Slice("schema")...)
+	legacy = append(legacy, hack.Slice("prev")...)
+	legacy = append(legacy, hack.Slice("plan")...)
+	legacy = append(legacy, hack.Slice("rg")...)
+	require.Equal(t, legacy, kOff.Hash())
+}
