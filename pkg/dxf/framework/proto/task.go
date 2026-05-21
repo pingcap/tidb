@@ -60,6 +60,17 @@ func (s TaskState) String() string {
 	return string(s)
 }
 
+func (m PrepareMode) String() string {
+	switch m {
+	case PrepareModeDisabled:
+		return "disabled"
+	case PrepareModeRequired:
+		return "required"
+	default:
+		return fmt.Sprintf("unknown(%d)", m)
+	}
+}
+
 // CanMoveToModifying checks if current state can move to 'modifying' state.
 func (s TaskState) CanMoveToModifying() bool {
 	return s == TaskStatePending || s == TaskStateRunning || s == TaskStatePaused

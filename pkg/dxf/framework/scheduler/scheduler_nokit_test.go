@@ -49,15 +49,6 @@ func createScheduler(task *proto.Task, allocatedSlots bool, taskMgr TaskManager,
 	return sch
 }
 
-type extensionWithPrepare struct {
-	Extension
-	onPrepare func(context.Context, storage.TaskHandle, *proto.Task) error
-}
-
-func (e *extensionWithPrepare) OnPrepare(ctx context.Context, h storage.TaskHandle, task *proto.Task) error {
-	return e.onPrepare(ctx, h, task)
-}
-
 func TestSchedulerOnNextStage(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -495,46 +486,58 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		scheduler.task.Store(&taskWithPrepare)
 		scheduler.Extension = schExt
 
-		require.ErrorContains(t, scheduler.onPending(), "scheduler does not implement PrepareExtension")
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("prepare err"))
+		require.ErrorContains(t, scheduler.onPending(), "prepare err")
 		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
 
-		prepareExt := schmock.NewMockExtension(ctrl)
-		scheduler.Extension = &extensionWithPrepare{
-			Extension: prepareExt,
-			onPrepare: func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
 				inTask.Meta = []byte(`{"prepare":"done"}`)
+				inTask.RequiredSlots = 8
+				inTask.MaxNodeCount = 6
 				return nil
-			},
-		}
+			})
 		taskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, inTask *proto.Task) (bool, error) {
 				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
+				require.Equal(t, 8, inTask.RequiredSlots)
+				require.Equal(t, 6, inTask.MaxNodeCount)
 				return true, nil
 			})
 		require.NoError(t, scheduler.onPending())
 		taskWithPrepare.Step = proto.StepPrepared
 		taskWithPrepare.Meta = []byte(`{"prepare":"done"}`)
+		taskWithPrepare.RequiredSlots = 8
+		taskWithPrepare.MaxNodeCount = 6
 		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
 
 		taskWithPrepare.Step = proto.StepInit
 		taskWithPrepare.Meta = []byte(`{"prepare":"init"}`)
+		taskWithPrepare.RequiredSlots = task.RequiredSlots
+		taskWithPrepare.MaxNodeCount = task.MaxNodeCount
 		scheduler.task.Store(&taskWithPrepare)
 		taskPreparedByOtherOwner := taskWithPrepare
 		taskPreparedByOtherOwner.Step = proto.StepPrepared
 		taskPreparedByOtherOwner.Meta = []byte(`{"prepare":"by-other-owner"}`)
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
+				inTask.Meta = []byte(`{"prepare":"done"}`)
+				inTask.RequiredSlots = 8
+				inTask.MaxNodeCount = 6
+				return nil
+			})
 		taskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, inTask *proto.Task) (bool, error) {
 				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
+				require.Equal(t, 8, inTask.RequiredSlots)
+				require.Equal(t, 6, inTask.MaxNodeCount)
 				return false, nil
 			})
-		taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), taskWithPrepare.ID).Return(&taskPreparedByOtherOwner.TaskBase, nil)
-		taskMgr.EXPECT().GetTaskByID(gomock.Any(), taskWithPrepare.ID).Return(&taskPreparedByOtherOwner, nil)
 		require.NoError(t, scheduler.onPending())
-		require.Equal(t, taskPreparedByOtherOwner, *scheduler.GetTask())
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
-		scheduler.Extension = schExt
 	})
 
 	t.Run("test StepPrepared mapping in next-step resolution", func(t *testing.T) {
@@ -551,13 +554,8 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		nextStepExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{":4000"}, nil)
 		nextStepExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(nil, nil)
-		scheduler.Extension = &extensionWithPrepare{
-			Extension: nextStepExt,
-			onPrepare: func(context.Context, storage.TaskHandle, *proto.Task) error {
-				t.Fatalf("prepare hook should not run for StepPrepared")
-				return nil
-			},
-		}
+		nextStepExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+		scheduler.Extension = nextStepExt
 
 		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)

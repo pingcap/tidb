@@ -338,10 +338,7 @@ func TestSwitchTaskStep(t *testing.T) {
 		require.Equal(t, []byte(`{"prepare":"done"}`), persistedTask.Meta)
 		require.Equal(t, 8, persistedTask.RequiredSlots)
 		require.Equal(t, 6, persistedTask.MaxNodeCount)
-		require.Equal(t, proto.ExtraParams{
-			ManualRecovery: true,
-			PrepareMode:    proto.PrepareModeRequired,
-		}, persistedTask.ExtraParams)
+		require.Equal(t, proto.ExtraParams{}, persistedTask.ExtraParams)
 		require.Zero(t, persistedTask.StartTime)
 		require.GreaterOrEqual(t, persistedTask.StateUpdateTime, switchTime)
 		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.tidb_background_subtask where task_key = %d", prepareTaskID)).
@@ -362,10 +359,7 @@ func TestSwitchTaskStep(t *testing.T) {
 		require.Equal(t, []byte(`{"prepare":"done"}`), persistedTask.Meta)
 		require.Equal(t, 8, persistedTask.RequiredSlots)
 		require.Equal(t, 6, persistedTask.MaxNodeCount)
-		require.Equal(t, proto.ExtraParams{
-			ManualRecovery: true,
-			PrepareMode:    proto.PrepareModeRequired,
-		}, persistedTask.ExtraParams)
+		require.Equal(t, proto.ExtraParams{}, persistedTask.ExtraParams)
 	})
 }
 

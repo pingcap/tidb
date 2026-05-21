@@ -869,22 +869,17 @@ func (mgr *TaskManager) SwitchTaskStepAfterPrepare(ctx context.Context, task *pr
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return false, err
 	}
-	extraParamsBytes, err := json.Marshal(task.ExtraParams)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
 	switched := false
-	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_global_task
 			set step = %?,
 				state_update_time = CURRENT_TIMESTAMP(),
 				meta = %?,
 				concurrency = %?,
-				max_node_count = %?,
-				extra_params = %?
+				max_node_count = %?
 			where id = %? and state = %? and step = %?`,
-			proto.StepPrepared, task.Meta, task.RequiredSlots, task.MaxNodeCount, json.RawMessage(extraParamsBytes),
+			proto.StepPrepared, task.Meta, task.RequiredSlots, task.MaxNodeCount,
 			task.ID, proto.TaskStatePending, proto.StepInit)
 		if err != nil {
 			return err

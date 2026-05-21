@@ -153,21 +153,20 @@ type Extension interface {
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step
+	// OnPrepare is called when task is in pending+init and prepare mode is
+	// required.
+	// The implementation is allowed to update:
+	//   - task.Meta
+	//   - task.RequiredSlots
+	//   - task.MaxNodeCount
+	// and should not modify other task fields.
+	OnPrepare(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
 	// ModifyMeta is used to modify the task meta when the task is in modifying
 	// state, it should return new meta after applying the modifications to the
 	// old meta.
 	// Note: the application side only need to modify meta, no need to do notify,
 	// task executor will do it later.
 	ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error)
-}
-
-// PrepareExtension is an optional extension for tasks that require a framework
-// prepare phase before business-step subtask scheduling.
-type PrepareExtension interface {
-	// OnPrepare is called when task is in pending+init and prepare mode is
-	// required. The implementation may update task fields (for example task
-	// meta), and the framework will persist step transition afterwards.
-	OnPrepare(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
 }
 
 // Param is used to pass parameters when creating scheduler.

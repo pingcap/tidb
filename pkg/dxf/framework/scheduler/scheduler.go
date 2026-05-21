@@ -132,8 +132,14 @@ func (s *BaseScheduler) Init() error {
 // ScheduleTask implements the Scheduler interface.
 func (s *BaseScheduler) ScheduleTask() {
 	task := s.GetTask()
-	s.logger.Info("schedule task",
-		zap.Stringer("state", task.State), zap.Int("requiredSlots", task.RequiredSlots))
+	logFields := []zap.Field{
+		zap.Stringer("state", task.State),
+		zap.Int("requiredSlots", task.RequiredSlots),
+	}
+	if task.Step == proto.StepInit || task.Step == proto.StepPrepared {
+		logFields = append(logFields, zap.Stringer("prepare-mode", task.ExtraParams.PrepareMode))
+	}
+	s.logger.Info("schedule task", logFields...)
 	s.scheduleTask()
 }
 
@@ -145,6 +151,11 @@ func (s *BaseScheduler) Close() {
 // GetTask implements the Scheduler interface.
 func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()
+}
+
+// OnPrepare implements Extension with a no-op default.
+func (*BaseScheduler) OnPrepare(context.Context, storage.TaskHandle, *proto.Task) error {
+	return nil
 }
 
 // getTaskClone returns a clone of the task.
@@ -382,11 +393,7 @@ func (s *BaseScheduler) onPending() error {
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
-		prepareExt, ok := s.Extension.(PrepareExtension)
-		if !ok {
-			return errors.New("prepare mode required but scheduler does not implement PrepareExtension")
-		}
-		if err := prepareExt.OnPrepare(s.ctx, s, task); err != nil {
+		if err := s.Extension.OnPrepare(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
 		}
 		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)
@@ -394,7 +401,7 @@ func (s *BaseScheduler) onPending() error {
 			return errors.Trace(err)
 		}
 		if !switched {
-			return s.refreshTaskIfNeeded()
+			return nil
 		}
 		task.Step = proto.StepPrepared
 		s.task.Store(task)
@@ -493,12 +500,17 @@ func (s *BaseScheduler) switch2NextStep() error {
 	taskBase4Next := task.TaskBase
 	taskBase4Next.Step = proto.FrameworkStep2BusinessStep(taskBase4Next.Step)
 	nextStep := s.GetNextStep(&taskBase4Next)
-	s.logger.Info("switch to next step",
+	logFields := []zap.Field{
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 		zap.Int("required-slots", task.RequiredSlots),
 		zap.Int("runtime-slots", task.GetRuntimeSlots()),
-	)
+	}
+	if task.State == proto.TaskStatePending &&
+		(task.Step == proto.StepInit || task.Step == proto.StepPrepared) {
+		logFields = append(logFields, zap.Stringer("prepare-mode", task.ExtraParams.PrepareMode))
+	}
+	s.logger.Info("switch to next step", logFields...)
 
 	if nextStep == proto.StepDone {
 		if err := s.OnDone(s.ctx, s, task); err != nil {

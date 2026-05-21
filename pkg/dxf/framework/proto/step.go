@@ -40,11 +40,12 @@ const (
 func Step2Str(t TaskType, s Step) string {
 	// StepInit, StepDone and StepPrepared are special steps, we don't check task
 	// type for them.
-	if s == StepInit {
+	switch s {
+	case StepInit:
 		return "init"
-	} else if s == StepDone {
+	case StepDone:
 		return "done"
-	} else if s == StepPrepared {
+	case StepPrepared:
 		return "prepared"
 	}
 	switch t {

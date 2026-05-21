@@ -29,6 +29,9 @@ func TestTaskStep(t *testing.T) {
 	// make sure we don't change prepare mode constants accidentally.
 	require.Equal(t, 0, int(PrepareModeDisabled))
 	require.Equal(t, 1, int(PrepareModeRequired))
+	require.Equal(t, "disabled", PrepareModeDisabled.String())
+	require.Equal(t, "required", PrepareModeRequired.String())
+	require.Equal(t, "unknown(123)", PrepareMode(123).String())
 
 	// default prepare mode should be omitted for backward-compatible json payload.
 	data, err := json.Marshal(ExtraParams{})
