@@ -31,6 +31,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
+	"github.com/cockroachdb/pebble/sstable"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -3217,7 +3220,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 				if err != nil {
 					return err
 				}
-				if err := checkTiKVSpaceForAddIndex(initialCapacity, samplePrediction.PredictedBytes); err != nil {
+				if err := checkTiKVSpaceForAddIndex(initialCapacity, samplePrediction.NewEncodingPredictedBytes); err != nil {
 					return err
 				}
 				logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
@@ -3225,7 +3228,8 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					zap.String("task-key", taskKey),
 					zap.Uint64("basic_predicted_tikv_index_bytes", basicPredictedTiKVIndexBytes),
 					zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
-					zap.Uint64("sample_predicted_tikv_index_bytes", samplePrediction.PredictedBytes),
+					zap.Uint64("sample_all_encoding_predicted_tikv_index_bytes", samplePrediction.AllEncodingPredictedBytes),
+					zap.Uint64("sample_new_encoding_tikv_index_bytes", samplePrediction.NewEncodingPredictedBytes),
 					zap.Int("sample_prediction_region_count", samplePrediction.SampledRegionCount),
 					zap.Int("sample_prediction_row_count", samplePrediction.SampledRowCount),
 					zap.Int("sample_prediction_read_error_count", samplePrediction.ReadErrorCount),
@@ -3241,21 +3245,22 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			}
 		}
 		taskMeta := &BackfillTaskMeta{
-			Job:                              *job.Clone(),
-			EleIDs:                           extractElemIDs(reorgInfo),
-			EleTypeKey:                       reorgInfo.currElement.TypeKey,
-			CloudStorageURI:                  w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
-			MergeTempIndex:                   reorgInfo.mergingTmpIdx,
-			EstimateRowSize:                  rowSize,
-			InitialTiKVCapacity:              initialCapacity,
-			BasicPredictedTiKVIndexBytes:     basicPredictedTiKVIndexBytes,
-			RepresentPredictedTiKVIndexBytes: representPredictedTiKVIndexBytes,
-			SamplePredictedTiKVIndexBytes:    samplePrediction.PredictedBytes,
-			SamplePredictionRegionCount:      samplePrediction.SampledRegionCount,
-			SamplePredictionRowCount:         samplePrediction.SampledRowCount,
-			SamplePredictionReadErrorCount:   samplePrediction.ReadErrorCount,
-			PredictedTiKVIndexBytes:          samplePrediction.PredictedBytes,
-			Version:                          BackfillTaskMetaVersion1,
+			Job:                                      *job.Clone(),
+			EleIDs:                                   extractElemIDs(reorgInfo),
+			EleTypeKey:                               reorgInfo.currElement.TypeKey,
+			CloudStorageURI:                          w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+			MergeTempIndex:                           reorgInfo.mergingTmpIdx,
+			EstimateRowSize:                          rowSize,
+			InitialTiKVCapacity:                      initialCapacity,
+			BasicPredictedTiKVIndexBytes:             basicPredictedTiKVIndexBytes,
+			RepresentPredictedTiKVIndexBytes:         representPredictedTiKVIndexBytes,
+			SampleAllEncodingPredictedTiKVIndexBytes: samplePrediction.AllEncodingPredictedBytes,
+			SampleNewEncodingPredictedTiKVIndexBytes: samplePrediction.NewEncodingPredictedBytes,
+			SamplePredictionRegionCount:              samplePrediction.SampledRegionCount,
+			SamplePredictionRowCount:                 samplePrediction.SampledRowCount,
+			SamplePredictionReadErrorCount:           samplePrediction.ReadErrorCount,
+			PredictedTiKVIndexBytes:                  samplePrediction.NewEncodingPredictedBytes,
+			Version:                                  BackfillTaskMetaVersion1,
 		}
 		if initialCapacity != nil {
 			taskMeta.InitialTiKVStoreUsage = &TiKVStoreUsageSnapshot{
@@ -3694,9 +3699,9 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 	if representPredictedTiKVIndexBytes == 0 {
 		representPredictedTiKVIndexBytes = taskMeta.PredictedTiKVIndexBytes
 	}
-	samplePredictedTiKVIndexBytes := taskMeta.SamplePredictedTiKVIndexBytes
-	if samplePredictedTiKVIndexBytes == 0 {
-		samplePredictedTiKVIndexBytes = taskMeta.PredictedTiKVIndexBytes
+	sampleNewEncodingPredictedTiKVIndexBytes := taskMeta.SampleNewEncodingPredictedTiKVIndexBytes
+	if sampleNewEncodingPredictedTiKVIndexBytes == 0 {
+		sampleNewEncodingPredictedTiKVIndexBytes = taskMeta.PredictedTiKVIndexBytes
 	}
 	logutil.DDLLogger().Info("observed TiKV capacity increase for add-index task",
 		zap.Int64("jobID", jobID),
@@ -3704,7 +3709,8 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 		zap.String("task_key", taskKey),
 		zap.Uint64("basic_predicted_tikv_index_bytes", taskMeta.BasicPredictedTiKVIndexBytes),
 		zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
-		zap.Uint64("sample_predicted_tikv_index_bytes", samplePredictedTiKVIndexBytes),
+		zap.Uint64("sample_all_encoding_predicted_tikv_index_bytes", taskMeta.SampleAllEncodingPredictedTiKVIndexBytes),
+		zap.Uint64("sample_new_encoding_tikv_index_bytes", sampleNewEncodingPredictedTiKVIndexBytes),
 		zap.Int("sample_prediction_region_count", taskMeta.SamplePredictionRegionCount),
 		zap.Int("sample_prediction_row_count", taskMeta.SamplePredictionRowCount),
 		zap.Int("sample_prediction_read_error_count", taskMeta.SamplePredictionReadErrorCount),
@@ -3763,10 +3769,11 @@ const (
 )
 
 type sampleTiKVIndexPredictionResult struct {
-	PredictedBytes     uint64
-	SampledRegionCount int
-	SampledRowCount    int
-	ReadErrorCount     int
+	AllEncodingPredictedBytes uint64
+	NewEncodingPredictedBytes uint64
+	SampledRegionCount        int
+	SampledRowCount           int
+	ReadErrorCount            int
 }
 
 type samplePredictionRegion struct {
@@ -3862,7 +3869,10 @@ func (w *worker) predictTiKVIndexBytesSample(
 		return result, err
 	}
 
-	var totalBytes float64
+	var (
+		totalAllEncodingBytes float64
+		totalNewEncodingBytes float64
+	)
 	for _, physicalTbl := range physicalTables {
 		statsTbl := getPhysicalTableStatsForPrediction(physicalTbl.GetPhysicalID(), tbl.Meta(), w.ddlCtx.statsHandle)
 		rowCount := estimatePhysicalTableRowCount(statsTbl)
@@ -3892,7 +3902,7 @@ func (w *worker) predictTiKVIndexBytesSample(
 			continue
 		}
 
-		avgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableSampleBytesPerRow(
+		allEncodingAvgBytesPerRow, newEncodingAvgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableSampleBytesPerRow(
 			jobCtx,
 			sctx,
 			physicalTbl,
@@ -3913,14 +3923,18 @@ func (w *worker) predictTiKVIndexBytesSample(
 		if err != nil {
 			return result, err
 		}
-		if avgBytesPerRow <= 0 {
+		if allEncodingAvgBytesPerRow <= 0 && newEncodingAvgBytesPerRow <= 0 {
 			continue
 		}
-		totalBytes += avgBytesPerRow * float64(rowCount)
+		totalAllEncodingBytes += allEncodingAvgBytesPerRow * float64(rowCount)
+		totalNewEncodingBytes += newEncodingAvgBytesPerRow * float64(rowCount)
 	}
 
-	if totalBytes > 0 {
-		result.PredictedBytes = uint64(totalBytes)
+	if totalAllEncodingBytes > 0 {
+		result.AllEncodingPredictedBytes = uint64(totalAllEncodingBytes)
+	}
+	if totalNewEncodingBytes > 0 {
+		result.NewEncodingPredictedBytes = uint64(totalNewEncodingBytes)
 	}
 	return result, nil
 }
@@ -3934,22 +3948,24 @@ func (w *worker) estimatePhysicalTableSampleBytesPerRow(
 	snapshotTS uint64,
 	seed uint64,
 ) (
-	avgBytesPerRow float64,
+	allEncodingAvgBytesPerRow float64,
+	newEncodingAvgBytesPerRow float64,
 	sampledRegions int,
 	totalRows int,
 	readErrorCount int,
 	err error,
 ) {
 	if len(regions) == 0 {
-		return 0, 0, 0, 0, nil
+		return 0, 0, 0, 0, 0, nil
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	var (
-		totalBytes int64
+		totalLogicalBytes int64
+		sampledKVs        []sampledIndexKV
 	)
 	for _, region := range regions {
 		skipRows := predictionRegionSkipRows(region, rnd)
-		rowCnt, bytes, err := w.sampleIndexKVBytesFromRegion(jobCtx, sctx, physicalTbl, indexes, region, snapshotTS, skipRows, samplePredictionRowsPerRegion)
+		rowCnt, logicalBytes, kvs, err := w.sampleIndexKVsFromRegion(jobCtx, sctx, physicalTbl, indexes, region, snapshotTS, skipRows, samplePredictionRowsPerRegion)
 		if err != nil {
 			readErrorCount++
 			logutil.DDLLogger().Warn("failed to sample add-index prediction rows from region",
@@ -3957,22 +3973,46 @@ func (w *worker) estimatePhysicalTableSampleBytesPerRow(
 				zap.Int("skipRows", skipRows),
 				zap.Error(err))
 			if readErrorCount > samplePredictionMaxReadErrors {
-				return 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				return 0, 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
 					fmt.Sprintf("add index sample prediction failed after %d read errors: %v", readErrorCount, err))
 			}
 			continue
 		}
 		sampledRegions++
 		totalRows += rowCnt
-		totalBytes += bytes
+		totalLogicalBytes += logicalBytes
+		sampledKVs = append(sampledKVs, kvs...)
 	}
 	if totalRows == 0 {
-		return 0, sampledRegions, totalRows, readErrorCount, nil
+		return 0, 0, sampledRegions, totalRows, readErrorCount, nil
 	}
-	return float64(totalBytes) / float64(totalRows), sampledRegions, totalRows, readErrorCount, nil
+	estimatedBytes := estimateSampledIndexKVPredictionBytes(sampledKVs)
+	if estimatedBytes.AllEncodingErr != nil {
+		logutil.DDLLogger().Warn("failed to estimate all-encoding physical TiKV bytes from sampled add-index KVs; fallback to logical bytes for this physical table",
+			zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
+			zap.Int("sampled_rows", totalRows),
+			zap.Int("sampled_kv_count", len(sampledKVs)),
+			zap.Error(estimatedBytes.AllEncodingErr))
+	}
+	if estimatedBytes.NewEncodingErr != nil {
+		logutil.DDLLogger().Warn("failed to estimate new-encoding physical TiKV bytes from sampled add-index KVs; fallback to logical bytes for this physical table",
+			zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
+			zap.Int("sampled_rows", totalRows),
+			zap.Int("sampled_kv_count", len(sampledKVs)),
+			zap.Error(estimatedBytes.NewEncodingErr))
+	}
+	if estimatedBytes.AllEncodingBytes <= 0 {
+		estimatedBytes.AllEncodingBytes = totalLogicalBytes
+	}
+	if estimatedBytes.NewEncodingBytes <= 0 {
+		estimatedBytes.NewEncodingBytes = totalLogicalBytes
+	}
+	return float64(estimatedBytes.AllEncodingBytes) / float64(totalRows),
+		float64(estimatedBytes.NewEncodingBytes) / float64(totalRows),
+		sampledRegions, totalRows, readErrorCount, nil
 }
 
-func (w *worker) sampleIndexKVBytesFromRegion(
+func (w *worker) sampleIndexKVsFromRegion(
 	jobCtx *ReorgContext,
 	sctx sessionctx.Context,
 	physicalTbl table.PhysicalTable,
@@ -3981,9 +4021,9 @@ func (w *worker) sampleIndexKVBytesFromRegion(
 	snapshotTS uint64,
 	skipRows int,
 	limit int,
-) (int, int64, error) {
+) (int, int64, []sampledIndexKV, error) {
 	if len(region.StartKey) == 0 || len(region.EndKey) == 0 || bytes.Compare(region.StartKey, region.EndKey) >= 0 {
-		return 0, 0, nil
+		return 0, 0, nil, nil
 	}
 	snapshot := w.store.GetSnapshot(kv.Version{Ver: snapshotTS})
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
@@ -3997,7 +4037,7 @@ func (w *worker) sampleIndexKVBytesFromRegion(
 
 	it, err := snapshot.Iter(region.StartKey, region.EndKey)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, nil, errors.Trace(err)
 	}
 	defer it.Close()
 
@@ -4005,39 +4045,41 @@ func (w *worker) sampleIndexKVBytesFromRegion(
 	skipped := 0
 	rowCount := 0
 	totalBytes := int64(0)
+	kvs := make([]sampledIndexKV, 0, limit*len(indexes))
 	for it.Valid() && rowCount < limit {
 		if !it.Key().HasPrefix(physicalTbl.RecordPrefix()) {
 			if err := it.Next(); err != nil {
-				return rowCount, totalBytes, errors.Trace(err)
+				return rowCount, totalBytes, kvs, errors.Trace(err)
 			}
 			continue
 		}
 		if skipped < skipRows {
 			skipped++
 			if err := kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key())); err != nil {
-				return rowCount, totalBytes, errors.Trace(err)
+				return rowCount, totalBytes, kvs, errors.Trace(err)
 			}
 			continue
 		}
 		handle, err := tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
-			return rowCount, totalBytes, errors.Trace(err)
+			return rowCount, totalBytes, kvs, errors.Trace(err)
 		}
 		row, _, err := tables.DecodeRawRowData(sctx.GetExprCtx(), physicalTbl.Meta(), handle, cols, it.Value())
 		if err != nil {
-			return rowCount, totalBytes, errors.Trace(err)
+			return rowCount, totalBytes, kvs, errors.Trace(err)
 		}
-		rowBytes, err := estimateIndexKVBytesForSampledRow(sctx, physicalTbl, indexes, row, handle)
+		rowKVs, rowBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
 		if err != nil {
-			return rowCount, totalBytes, err
+			return rowCount, totalBytes, kvs, err
 		}
+		kvs = append(kvs, rowKVs...)
 		totalBytes += rowBytes
 		rowCount++
 		if err := kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key())); err != nil {
-			return rowCount, totalBytes, errors.Trace(err)
+			return rowCount, totalBytes, kvs, errors.Trace(err)
 		}
 	}
-	return rowCount, totalBytes, nil
+	return rowCount, totalBytes, kvs, nil
 }
 
 func estimateIndexKVBytesForSampledRow(
@@ -4047,6 +4089,23 @@ func estimateIndexKVBytesForSampledRow(
 	row []types.Datum,
 	handle kv.Handle,
 ) (int64, error) {
+	_, totalBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
+	return totalBytes, err
+}
+
+type sampledIndexKV struct {
+	key             []byte
+	value           []byte
+	usesNewEncoding bool
+}
+
+func collectIndexKVsForSampledRow(
+	sctx sessionctx.Context,
+	physicalTbl table.PhysicalTable,
+	indexes []table.Index,
+	row []types.Datum,
+	handle kv.Handle,
+) ([]sampledIndexKV, int64, error) {
 	loc := predictionTimeLocation(sctx)
 	errCtx := sctx.GetSessionVars().StmtCtx.ErrCtx()
 	tblInfo := physicalTbl.Meta()
@@ -4057,12 +4116,13 @@ func estimateIndexKVBytesForSampledRow(
 	}
 
 	idxValueBuf := make([]types.Datum, 0, maxIndexColumnCount(indexes))
+	kvs := make([]sampledIndexKV, 0, len(indexes))
 	var totalBytes int64
 	for _, idx := range indexes {
 		if idx.Meta().HasCondition() {
 			match, err := idx.MeetPartialCondition(row)
 			if err != nil {
-				return 0, err
+				return nil, 0, err
 			}
 			if !match {
 				continue
@@ -4070,7 +4130,7 @@ func estimateIndexKVBytesForSampledRow(
 		}
 		indexedValues, err := idx.FetchValues(row, idxValueBuf[:0])
 		if err != nil {
-			return 0, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		actualHandle := handle
 		if idx.Meta().Global && idx.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
@@ -4080,16 +4140,129 @@ func estimateIndexKVBytesForSampledRow(
 		if len(handleRestoreData) > 0 && (tables.NeedRestoredData(idx.Meta().Columns, tblInfo.Columns) || primaryIndexNeedsRestoredData(tblInfo, pkIdx)) {
 			rsData = getRestoreData(tblInfo, idx.Meta(), pkIdx, handleRestoreData)
 		}
+		usesNewEncoding := usesNewEncodingForSamplePrediction(tblInfo, idx.Meta())
 		iter := idx.GenIndexKVIter(errCtx, loc, indexedValues, actualHandle, rsData)
 		for iter.Valid() {
 			key, value, _, err := iter.Next(nil, nil)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return nil, 0, errors.Trace(err)
 			}
+			kvs = append(kvs, sampledIndexKV{
+				key:             slices.Clone(key),
+				value:           slices.Clone(value),
+				usesNewEncoding: usesNewEncoding,
+			})
 			totalBytes += int64(len(key) + len(value))
 		}
 	}
-	return totalBytes, nil
+	return kvs, totalBytes, nil
+}
+
+type sampleTiKVIndexPredictionBytes struct {
+	AllEncodingBytes int64
+	NewEncodingBytes int64
+	AllEncodingErr   error
+	NewEncodingErr   error
+}
+
+func estimateSampledIndexKVPredictionBytes(kvs []sampledIndexKV) sampleTiKVIndexPredictionBytes {
+	result := sampleTiKVIndexPredictionBytes{}
+	if len(kvs) == 0 {
+		return result
+	}
+	var (
+		totalLogicalBytes int64
+		oldEncodingBytes  int64
+		newEncodingKVs    = make([]sampledIndexKV, 0, len(kvs))
+	)
+	for _, kv := range kvs {
+		logicalBytes := int64(len(kv.key) + len(kv.value))
+		totalLogicalBytes += logicalBytes
+		if kv.usesNewEncoding {
+			newEncodingKVs = append(newEncodingKVs, kv)
+			continue
+		}
+		oldEncodingBytes += logicalBytes
+	}
+	allEncodingBytes, allEncodingErr := estimateSampledIndexKVPhysicalBytes(kvs)
+	if allEncodingErr != nil {
+		result.AllEncodingBytes = totalLogicalBytes
+		result.AllEncodingErr = allEncodingErr
+	} else {
+		result.AllEncodingBytes = allEncodingBytes
+	}
+	if len(newEncodingKVs) == 0 {
+		result.NewEncodingBytes = oldEncodingBytes
+		return result
+	}
+	newEncodingPhysicalBytes, newEncodingErr := estimateSampledIndexKVPhysicalBytes(newEncodingKVs)
+	if newEncodingErr != nil {
+		result.NewEncodingBytes = totalLogicalBytes
+		result.NewEncodingErr = newEncodingErr
+		return result
+	}
+	result.NewEncodingBytes = oldEncodingBytes + newEncodingPhysicalBytes
+	return result
+}
+
+func estimateSampledIndexKVPhysicalBytes(kvs []sampledIndexKV) (int64, error) {
+	if len(kvs) == 0 {
+		return 0, nil
+	}
+	sortedKVs := slices.Clone(kvs)
+	slices.SortFunc(sortedKVs, func(a, b sampledIndexKV) int {
+		if c := bytes.Compare(a.key, b.key); c != 0 {
+			return c
+		}
+		return bytes.Compare(a.value, b.value)
+	})
+
+	memFS := vfs.NewMem()
+	const sampleSSTName = "ddl-sample-prediction.sst"
+	f, err := memFS.Create(sampleSSTName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	writer := sstable.NewWriter(objstorageprovider.NewFileWritable(f), sstable.WriterOptions{
+		BlockSize: litconfig.DefaultBlockSize,
+	})
+	internalKey := sstable.InternalKey{
+		Trailer: uint64(sstable.InternalKeyKindSet),
+	}
+	var lastKey []byte
+	for _, kvPair := range sortedKVs {
+		if lastKey != nil && bytes.Equal(kvPair.key, lastKey) {
+			continue
+		}
+		internalKey.UserKey = kvPair.key
+		if err := writer.Add(internalKey, kvPair.value); err != nil {
+			_ = writer.Close()
+			return 0, errors.Trace(err)
+		}
+		lastKey = kvPair.key
+	}
+	if err := writer.Close(); err != nil {
+		return 0, errors.Trace(err)
+	}
+	meta, err := writer.Metadata()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	physicalBytes := int64(meta.Properties.DataSize + meta.Properties.IndexSize + meta.Properties.FilterSize)
+	if physicalBytes <= 0 {
+		physicalBytes = int64(meta.Size)
+	}
+	return physicalBytes, nil
+}
+
+func usesNewEncodingForSamplePrediction(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) bool {
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion != 0 {
+		return true
+	}
+	if idxInfo.Global && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		return true
+	}
+	return tables.NeedRestoredData(idxInfo.Columns, tblInfo.Columns)
 }
 
 func extractHandleRestoreDataFromRow(tblInfo *model.TableInfo, pkIdx *model.IndexInfo, row []types.Datum) []types.Datum {
