@@ -4629,12 +4629,13 @@ func (b *PlanBuilder) tryMoveSortBelowSetVarProjection(p base.LogicalPlan) base.
 
 	// SELECT-list variable assignments should observe the ORDER BY result order.
 	// Move the sort below the assignment projection only when the sort keys can
-	// be evaluated from the projection child without reading or assigning variables.
+	// be safely re-evaluated from the projection child.
 	exprCtx := b.ctx.GetExprCtx()
 	byItems := make([]*util.ByItems, 0, len(sort.ByItems))
 	for _, item := range sort.ByItems {
 		_, failed, expr := expression.ColumnSubstituteImpl(exprCtx, item.Expr, proj.Schema(), proj.Exprs, true)
-		if failed || expression.HasGetSetVarFunc(expr) {
+		if failed || expression.HasGetSetVarFunc(expr) || expression.CheckNonDeterministic(expr) ||
+			expression.IsMutableEffectsExpr(expr) {
 			return p
 		}
 		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})

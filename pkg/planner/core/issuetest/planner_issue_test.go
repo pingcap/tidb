@@ -132,6 +132,13 @@ order by id, version desc`).MultiCheckContain([]string{
 			"Projection root  test.t58129.id, test.t58129.version, setvar(row_num",
 			"└─Sort root  test.t58129.id, test.t58129.version:desc",
 		})
+
+		tk.MustQuery(`explain format='plan_tree' select rand() as r, @row_num := @row_num + 1 as rn
+from t58129, (select @row_num := 0) r
+order by r`).MultiCheckContain([]string{
+			"Sort root  Column",
+			"└─Projection root  rand()->Column, setvar(row_num",
+		})
 	}
 
 	// inl-join-inner-multi-pattern
