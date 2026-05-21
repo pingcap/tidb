@@ -803,7 +803,7 @@ func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *z
 					exec,
 					taskMeta.JobID,
 					taskMeta.Plan.TotalFileSize,
-					taskMeta.Plan.Parameters,
+					taskMeta.Plan.Format,
 				)
 			})
 		},

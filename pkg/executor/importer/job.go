@@ -272,19 +272,43 @@ func UpdateJobPreparedInfo(
 	conn sqlexec.SQLExecutor,
 	jobID int64,
 	sourceFileSize int64,
-	parameters *ImportParameters,
+	format string,
 ) error {
-	if parameters == nil {
-		parameters = &ImportParameters{}
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+	rs, err := conn.ExecuteInternal(ctx, `SELECT parameters FROM mysql.tidb_import_jobs
+		WHERE id = %? AND status = %?;`,
+		jobID, JobStatusRunning)
+	if err != nil {
+		return err
 	}
+	defer terror.Call(rs.Close)
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return err
+	}
+	// no matched running job, keep historical behavior: no-op.
+	if len(rows) == 0 {
+		return nil
+	}
+
+	parameters := &ImportParameters{}
+	parametersStr := rows[0].GetString(0)
+	if len(parametersStr) > 0 {
+		if err = json.Unmarshal([]byte(parametersStr), parameters); err != nil {
+			return err
+		}
+	}
+	if format != "" {
+		parameters.Format = format
+	}
+
 	paramsBytes, err := json.Marshal(parameters)
 	if err != nil {
 		return err
 	}
-	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-			SET update_time = CURRENT_TIMESTAMP(6), source_file_size = %?, parameters = %?
-			WHERE id = %? AND status = %?;`,
+				SET update_time = CURRENT_TIMESTAMP(6), source_file_size = %?, parameters = %?
+				WHERE id = %? AND status = %?;`,
 		sourceFileSize, paramsBytes, jobID, JobStatusRunning)
 	return err
 }
