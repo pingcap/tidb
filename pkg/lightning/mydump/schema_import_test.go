@@ -390,14 +390,17 @@ func TestLoaderBuildsSchemaImportPlan(t *testing.T) {
 
 	mdl, err := NewLoaderWithStore(ctx, cfg, store)
 	require.NoError(t, err)
-	require.NotNil(t, mdl.schemaImportPlan)
-	require.Len(t, mdl.schemaImportPlan.dbMetas, 1)
-	require.Len(t, mdl.schemaImportPlan.dbMetas[0].Tables, 1)
-	require.Len(t, mdl.schemaImportPlan.dbMetas[0].Views, 2)
-	require.NotNil(t, mdl.schemaImportPlan.viewPlan)
-	require.Len(t, mdl.schemaImportPlan.viewPlan.ordered, 2)
-	require.Equal(t, "v1", mdl.schemaImportPlan.viewPlan.ordered[0].key.Name)
-	require.Equal(t, "v2", mdl.schemaImportPlan.viewPlan.ordered[1].key.Name)
+
+	plan, err := mdl.GetSchemaImportPlan(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.Len(t, plan.dbMetas, 1)
+	require.Len(t, plan.dbMetas[0].Tables, 1)
+	require.Len(t, plan.dbMetas[0].Views, 2)
+	require.NotNil(t, plan.viewPlan)
+	require.Len(t, plan.viewPlan.ordered, 2)
+	require.Equal(t, "v1", plan.viewPlan.ordered[0].key.Name)
+	require.Equal(t, "v2", plan.viewPlan.ordered[1].key.Name)
 }
 
 func TestSchemaImporterManyTables(t *testing.T) {

@@ -562,12 +562,6 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		tableMeta.TotalSize += fileInfo.FileMeta.RealSize
 	}
 
-	schemaImportPlan, err := NewSchemaImportPlan(ctx, s.loader.store, s.loader.sqlMode, s.loader.dbs)
-	if err != nil {
-		return err
-	}
-	s.loader.schemaImportPlan = schemaImportPlan
-
 	for _, dbMeta := range s.loader.dbs {
 		// Put the small table in the front of the slice which can avoid large table
 		// take a long time to import and block small table to release index worker.
@@ -897,9 +891,19 @@ func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
 }
 
-// GetSchemaImportPlan gets the schema import plan prepared during loader setup.
-func (l *MDLoader) GetSchemaImportPlan() *SchemaImportPlan {
-	return l.schemaImportPlan
+// GetSchemaImportPlan lazily builds and returns the schema import plan.
+// The plan is constructed on first access so that scan-only callers (precheck,
+// size estimation, etc.) are not affected by view SQL parsing errors.
+func (l *MDLoader) GetSchemaImportPlan(ctx context.Context) (*SchemaImportPlan, error) {
+	if l.schemaImportPlan != nil {
+		return l.schemaImportPlan, nil
+	}
+	plan, err := NewSchemaImportPlan(ctx, l.store, l.sqlMode, l.dbs)
+	if err != nil {
+		return nil, err
+	}
+	l.schemaImportPlan = plan
+	return plan, nil
 }
 
 // GetStore gets the external storage used by the loader.

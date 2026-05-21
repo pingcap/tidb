@@ -508,7 +508,10 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		}
 
 		dbMetas = mdl.GetDatabases()
-		schemaImportPlan = mdl.GetSchemaImportPlan()
+		schemaImportPlan, err = mdl.GetSchemaImportPlan(ctx)
+		if err != nil {
+			return err
+		}
 		progress.BroadcastInitProgress(dbMetas)
 	}
 

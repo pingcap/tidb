@@ -129,7 +129,11 @@ func (s *fileScanner) CreateSchemasAndTables(ctx context.Context) error {
 		s.config.concurrency,
 	)
 
-	err := importer.RunWithPlan(ctx, s.loader.GetSchemaImportPlan())
+	plan, planErr := s.loader.GetSchemaImportPlan(ctx)
+	if planErr != nil {
+		return errors.Annotatef(ErrCreateSchema, "source=%s, err=%v", s.redactedSourcePath, planErr)
+	}
+	err := importer.RunWithPlan(ctx, plan)
 	if err != nil {
 		return errors.Annotatef(ErrCreateSchema, "source=%s, db_count=%d, err=%v", s.redactedSourcePath, len(dbMetas), err)
 	}
