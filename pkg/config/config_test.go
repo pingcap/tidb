@@ -1606,6 +1606,18 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 		require.Equal(t, "starter_env", GetGlobalKeyspaceName())
 	})
 
+	t.Run("initialize config ignores empty env for starter nextgen", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("only for nextgen kernel")
+		}
+
+		t.Setenv(EnvVarKeyspaceName, "")
+		runInitializeConfig(t, `deploy-mode = "starter"
+keyspace-name = "config_keyspace"
+`)
+		require.Equal(t, "config_keyspace", GetGlobalKeyspaceName())
+	})
+
 	t.Run("initialize config keeps explicit keyspace over env", func(t *testing.T) {
 		if kerneltype.IsClassic() {
 			t.Skip("only for nextgen kernel")

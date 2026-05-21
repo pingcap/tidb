@@ -1394,7 +1394,9 @@ func applyKeyspaceNameEnvFallback(cfg *Config) {
 	if cfg.KeyspaceName != "" || !kerneltype.IsNextGen() || cfg.DeployMode != deploymode.Starter {
 		return
 	}
-	cfg.KeyspaceName = os.Getenv(EnvVarKeyspaceName)
+	if keyspaceName := os.Getenv(EnvVarKeyspaceName); keyspaceName != "" {
+		cfg.KeyspaceName = keyspaceName
+	}
 }
 
 // AdjustStarterConfig applies starter-only security overrides.
