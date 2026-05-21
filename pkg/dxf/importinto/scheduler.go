@@ -65,11 +65,12 @@ const (
 	// the target table, it's known to be slow to import in this case.
 	// the value if chosen as most tables have less than 32 indexes, we can adjust
 	// it later if needed.
-	warningIndexCount            = 32
-	registerTaskTTL              = 10 * time.Minute
-	refreshTaskTTLInterval       = 3 * time.Minute
-	registerTimeout              = 5 * time.Second
-	preparedChunkMetaPathPurpose = "prepare-chunk-map"
+	warningIndexCount         = 32
+	registerTaskTTL           = 10 * time.Minute
+	refreshTaskTTLInterval    = 3 * time.Minute
+	registerTimeout           = 5 * time.Second
+	preparedChunkMapPathStep  = "prepare-chunk-map"
+	preparedChunkMapMetaIndex = 1
 )
 
 var (
@@ -303,14 +304,15 @@ func (sch *importScheduler) writePreparedChunkMap(
 		return "", err
 	}
 	defer store.Close()
-	externalPath := path.Join(
-		strconv.FormatInt(taskID, 10),
-		preparedChunkMetaPathPurpose,
-		uuid.NewString(),
-		"meta.json",
+	externalPath := globalsort.PlanMetaPath(
+		taskID,
+		path.Join(preparedChunkMapPathStep, uuid.NewString()),
+		preparedChunkMapMetaIndex,
 	)
 	baseMeta := globalsort.BaseExternalMeta{ExternalPath: externalPath}
-	if err = baseMeta.WriteJSONToExternalStorage(ctx, store, chunkMap); err != nil {
+	if err = baseMeta.WriteJSONToExternalStorage(ctx, store, PreparedChunkMapMeta{
+		ChunkMap: chunkMap,
+	}); err != nil {
 		return "", err
 	}
 	return externalPath, nil
@@ -322,13 +324,8 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
-	if task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
-		if err := sch.startJob(ctx, sch.GetLogger(), taskMeta, importer.JobStepPreparing); err != nil {
-			return err
-		}
-	}
-	if !ShouldUseAsyncPrepareForImportInto(&taskMeta.Plan) {
-		return nil
+	if err := sch.startJob(ctx, sch.GetLogger(), taskMeta, importer.JobStepPreparing); err != nil {
+		return err
 	}
 
 	logicalPlan := &LogicalPlan{

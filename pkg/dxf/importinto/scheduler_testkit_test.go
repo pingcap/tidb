@@ -196,6 +196,10 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.Equal(t, "cancelled", gotJobInfo.Status)
 
 	t.Run("prepare-enabled job transitions from preparing to first business phase", func(t *testing.T) {
+		if !importinto.ShouldUseAsyncPrepare(&logicalPlan.Plan) {
+			t.Skip("prepare mode only applies when async prepare is enabled")
+		}
+
 		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
 			"root", "", &importer.ImportParameters{}, 123)
 		require.NoError(t, err)

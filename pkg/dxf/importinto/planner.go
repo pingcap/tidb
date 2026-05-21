@@ -425,12 +425,26 @@ func readPreparedChunkMap(
 		return nil, err
 	}
 	defer store.Close()
-	baseMeta := globalsort.BaseExternalMeta{ExternalPath: externalPath}
-	var chunkMap map[int32][]importer.Chunk
-	if err := baseMeta.ReadJSONFromExternalStorage(ctx, store, &chunkMap); err != nil {
+	data, err := store.ReadFile(ctx, externalPath)
+	if err != nil {
 		return nil, err
 	}
-	return chunkMap, nil
+
+	var preparedChunkMapMeta PreparedChunkMapMeta
+	if err := json.Unmarshal(data, &preparedChunkMapMeta); err != nil {
+		return nil, err
+	}
+	if preparedChunkMapMeta.ChunkMap != nil {
+		return preparedChunkMapMeta.ChunkMap, nil
+	}
+
+	// Compatible with legacy format where the external file stored chunkMap
+	// directly as the top-level JSON object.
+	var legacyChunkMap map[int32][]importer.Chunk
+	if err := json.Unmarshal(data, &legacyChunkMap); err != nil {
+		return nil, err
+	}
+	return legacyChunkMap, nil
 }
 
 func skipMergeSort(kvGroup string, stats []simplesst.MultipleFilesStat, concurrency int) bool {
