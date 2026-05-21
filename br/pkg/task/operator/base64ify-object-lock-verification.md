@@ -1,6 +1,6 @@
 # base64ify Object Lock Manual Verification
 
-Date: 2026-04-30
+Date: 2026-05-20
 
 This records the manual verification for `br operator base64ify` object-lock encoding. No unit test was added because the check depends on a live MinIO/S3-compatible service.
 
@@ -21,7 +21,7 @@ This records the manual verification for `br operator base64ify` object-lock enc
 2. Create a fresh bucket with object lock enabled:
 
    ```bash
-   bucket=br-base64ify-objlock-1777545500
+   bucket=br-base64ify-objlock-1779287829
    /workspace/ext-bin/mc mb --with-lock "base64ify-local/${bucket}"
    /workspace/ext-bin/mc stat --json "base64ify-local/${bucket}"
    ```
@@ -42,13 +42,13 @@ This records the manual verification for `br operator base64ify` object-lock enc
 4. Decode the generated base64 into `brpb.StorageBackend`. The decoded S3 backend contained:
 
    ```text
-   bucket=br-base64ify-objlock-1777545500 prefix=prefix endpoint=http://127.0.0.1:9000 provider=minio object_lock_enabled=true access_key="minioadmin" secret_access_key="minioadmin"
+   bucket=br-base64ify-objlock-1779287829 prefix=prefix endpoint=http://127.0.0.1:9000 provider=minio object_lock_enabled=true access_key="" secret_access_key=""
    ```
 
 5. Repeat with `--load-creds`. The decoded S3 backend contained:
 
    ```text
-   bucket=br-base64ify-objlock-1777545500 prefix=prefix endpoint=http://127.0.0.1:9000 provider=minio object_lock_enabled=true access_key="minioadmin" secret_access_key="minioadmin"
+   bucket=br-base64ify-objlock-1779287829 prefix=prefix endpoint=http://127.0.0.1:9000 provider=minio object_lock_enabled=true access_key="minioadmin" secret_access_key="minioadmin"
    ```
 
 6. Remove the temporary bucket:
