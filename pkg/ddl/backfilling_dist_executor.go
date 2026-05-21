@@ -47,19 +47,20 @@ type BackfillTaskMeta struct {
 	// For now, only index type is supported.
 	EleTypeKey []byte `json:"ele_type_key"`
 
-	CloudStorageURI                  string                  `json:"cloud_storage_uri"`
-	EstimateRowSize                  int                     `json:"estimate_row_size"`
-	MergeTempIndex                   bool                    `json:"merge_temp_index"`
-	InitialTiKVStoreUsage            *TiKVStoreUsageSnapshot `json:"initial_tikv_store_usage,omitempty"`
-	InitialTiKVCapacity              *TiKVClusterCapacity    `json:"initial_tikv_capacity,omitempty"`
-	BasicPredictedTiKVIndexBytes     uint64                  `json:"basic_predicted_tikv_index_bytes,omitempty"`
-	RepresentPredictedTiKVIndexBytes uint64                  `json:"represent_predicted_tikv_index_bytes,omitempty"`
-	SamplePredictedTiKVIndexBytes    uint64                  `json:"sample_predicted_tikv_index_bytes,omitempty"`
-	SamplePredictionRegionCount      int                     `json:"sample_prediction_region_count,omitempty"`
-	SamplePredictionRowCount         int                     `json:"sample_prediction_row_count,omitempty"`
-	SamplePredictionReadErrorCount   int                     `json:"sample_prediction_read_error_count,omitempty"`
+	CloudStorageURI                          string                  `json:"cloud_storage_uri"`
+	EstimateRowSize                          int                     `json:"estimate_row_size"`
+	MergeTempIndex                           bool                    `json:"merge_temp_index"`
+	InitialTiKVStoreUsage                    *TiKVStoreUsageSnapshot `json:"initial_tikv_store_usage,omitempty"`
+	InitialTiKVCapacity                      *TiKVClusterCapacity    `json:"initial_tikv_capacity,omitempty"`
+	BasicPredictedTiKVIndexBytes             uint64                  `json:"basic_predicted_tikv_index_bytes,omitempty"`
+	RepresentPredictedTiKVIndexBytes         uint64                  `json:"represent_predicted_tikv_index_bytes,omitempty"`
+	SampleAllEncodingPredictedTiKVIndexBytes uint64                  `json:"sample_all_encoding_predicted_tikv_index_bytes,omitempty"`
+	SampleNewEncodingPredictedTiKVIndexBytes uint64                  `json:"sample_new_encoding_tikv_index_bytes,omitempty"`
+	SamplePredictionRegionCount              int                     `json:"sample_prediction_region_count,omitempty"`
+	SamplePredictionRowCount                 int                     `json:"sample_prediction_row_count,omitempty"`
+	SamplePredictionReadErrorCount           int                     `json:"sample_prediction_read_error_count,omitempty"`
 	// PredictedTiKVIndexBytes is kept for compatibility with task metadata written by
-	// earlier builds. New task submissions store the sample-model prediction here.
+	// earlier builds. New task submissions store the sample-new-encoding prediction here.
 	PredictedTiKVIndexBytes uint64 `json:"predicted_tikv_index_bytes,omitempty"`
 
 	Version int `json:"version,omitempty"`

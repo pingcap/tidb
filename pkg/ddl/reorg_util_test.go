@@ -16,6 +16,8 @@ package ddl
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -531,6 +533,111 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		}
 		selected := pickSamplePredictionRegions(regions, 12345)
 		require.Len(t, selected, samplePredictionMaxRegionCount)
+	})
+
+	t.Run("sample prediction splits all-encoding and new-encoding estimates", func(t *testing.T) {
+		sctx := mock.NewContext()
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		intType.AddFlag(mysql.NotNullFlag)
+		binStringType := types.NewFieldType(mysql.TypeVarString)
+		binStringType.SetCharset(charset.CharsetUTF8MB4)
+		binStringType.SetCollate(charset.CollationBin)
+		restoredStringType := types.NewFieldType(mysql.TypeVarString)
+		restoredStringType.SetCharset(charset.CharsetUTF8MB4)
+		restoredStringType.SetCollate("utf8mb4_general_ci")
+
+		numericTblInfo := &model.TableInfo{
+			ID:    300,
+			State: model.StatePublic,
+			Columns: []*model.ColumnInfo{
+				{ID: 1, Offset: 0, State: model.StatePublic, FieldType: *intType},
+				{ID: 2, Offset: 1, State: model.StatePublic, FieldType: *intType},
+				{ID: 3, Offset: 2, State: model.StatePublic, FieldType: *binStringType},
+			},
+			Indices: []*model.IndexInfo{
+				{
+					ID:    30,
+					State: model.StatePublic,
+					Columns: []*model.IndexColumn{
+						{Name: ast.NewCIStr("k1"), Offset: 0, Length: types.UnspecifiedLength},
+						{Name: ast.NewCIStr("k2"), Offset: 1, Length: types.UnspecifiedLength},
+					},
+				},
+			},
+		}
+		numericTbl := tables.MockTableFromMeta(numericTblInfo).(table.PhysicalTable)
+		numericIdx := numericTbl.Indices()
+		var numericKVs []sampledIndexKV
+		var numericLogicalBytes int64
+		for i := 0; i < 1024; i++ {
+			row := []types.Datum{
+				types.NewIntDatum(int64(i + 1)),
+				types.NewIntDatum(int64((i + 1) * 10)),
+				types.NewCollationStringDatum(strings.Repeat("x", 32), charset.CollationBin),
+			}
+			rowKVs, rowBytes, err := collectIndexKVsForSampledRow(sctx, numericTbl, numericIdx, row, kv.IntHandle(i+1))
+			require.NoError(t, err)
+			numericKVs = append(numericKVs, rowKVs...)
+			numericLogicalBytes += rowBytes
+		}
+		numericPrediction := estimateSampledIndexKVPredictionBytes(numericKVs)
+		require.NoError(t, numericPrediction.AllEncodingErr)
+		require.NoError(t, numericPrediction.NewEncodingErr)
+		require.Greater(t, numericLogicalBytes, numericPrediction.AllEncodingBytes)
+		require.Equal(t, numericLogicalBytes, numericPrediction.NewEncodingBytes)
+		numericRatio := float64(numericPrediction.AllEncodingBytes) / float64(numericLogicalBytes)
+		require.Less(t, numericRatio, float64(0.6))
+
+		restoredTblInfo := &model.TableInfo{
+			ID:    301,
+			State: model.StatePublic,
+			Columns: []*model.ColumnInfo{
+				{ID: 1, Offset: 0, State: model.StatePublic, FieldType: *intType},
+				{ID: 2, Offset: 1, State: model.StatePublic, FieldType: *restoredStringType},
+			},
+			Indices: []*model.IndexInfo{
+				{
+					ID:    31,
+					State: model.StatePublic,
+					Columns: []*model.IndexColumn{
+						{Name: ast.NewCIStr("k"), Offset: 0, Length: types.UnspecifiedLength},
+						{Name: ast.NewCIStr("pad"), Offset: 1, Length: 32},
+					},
+				},
+			},
+		}
+		restoredTbl := tables.MockTableFromMeta(restoredTblInfo).(table.PhysicalTable)
+		restoredIdx := restoredTbl.Indices()
+		var restoredKVs []sampledIndexKV
+		var restoredLogicalBytes int64
+		for i := 0; i < 1024; i++ {
+			row := []types.Datum{
+				types.NewIntDatum(int64(((i + 1) * 17) % 1000003)),
+				types.NewCollationStringDatum(
+					fmt.Sprintf("payload-%09d-%s", i+1, strings.Repeat("x", 96)),
+					"utf8mb4_general_ci",
+				),
+			}
+			rowKVs, rowBytes, err := collectIndexKVsForSampledRow(sctx, restoredTbl, restoredIdx, row, kv.IntHandle(i+1))
+			require.NoError(t, err)
+			restoredKVs = append(restoredKVs, rowKVs...)
+			restoredLogicalBytes += rowBytes
+		}
+		restoredPrediction := estimateSampledIndexKVPredictionBytes(restoredKVs)
+		require.NoError(t, restoredPrediction.AllEncodingErr)
+		require.NoError(t, restoredPrediction.NewEncodingErr)
+		require.Greater(t, restoredLogicalBytes, restoredPrediction.AllEncodingBytes)
+		require.Equal(t, restoredPrediction.AllEncodingBytes, restoredPrediction.NewEncodingBytes)
+		restoredRatio := float64(restoredPrediction.AllEncodingBytes) / float64(restoredLogicalBytes)
+		require.Less(t, restoredRatio, float64(1))
+
+		mixedKVs := append(slices.Clone(numericKVs), restoredKVs...)
+		mixedPrediction := estimateSampledIndexKVPredictionBytes(mixedKVs)
+		require.NoError(t, mixedPrediction.AllEncodingErr)
+		require.NoError(t, mixedPrediction.NewEncodingErr)
+		require.Equal(t, numericLogicalBytes+restoredPrediction.NewEncodingBytes, mixedPrediction.NewEncodingBytes)
+		require.Less(t, mixedPrediction.AllEncodingBytes, mixedPrediction.NewEncodingBytes)
+		require.Less(t, mixedPrediction.NewEncodingBytes, numericLogicalBytes+restoredLogicalBytes)
 	})
 }
 
