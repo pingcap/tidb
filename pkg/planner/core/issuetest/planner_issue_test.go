@@ -477,12 +477,13 @@ GROUP BY field1;`).Check(testkit.Rows("HashJoin root  CARTESIAN left outer semi 
 			"├─HashAgg(Build) root  group by:Column, Column, funcs:firstrow(1)->Column",
 			"│ └─TableDual root  rows:0",
 			"└─HashAgg(Probe) root  group by:Column, funcs:firstrow(1)->Column",
-			"  └─HashJoin root  CARTESIAN left outer semi join, left side:TableReader",
+			"  └─HashJoin root  CARTESIAN left outer semi join, left side:Selection",
 			"    ├─HashAgg(Build) root  group by:Column, Column, funcs:firstrow(1)->Column",
 			"    │ └─TableDual root  rows:0",
-			"    └─TableReader(Probe) root  data:TableFullScan",
-			"      └─TableFullScan cop[tikv] table:table1 keep order:false, stats:pseudo",
-			"ScalarSubQuery root  Output: ScalarQueryCol#16, ScalarQueryCol#17, ScalarQueryCol#18, ScalarQueryCol#19",
+			"    └─Selection(Probe) root  or(ScalarQueryCol#16, ge(test.t1.b1, 55))",
+			"      └─TableReader root  data:TableFullScan",
+			"        └─TableFullScan cop[tikv] table:table1 keep order:false, stats:pseudo",
+			"ScalarSubQuery root  Output: ScalarQueryCol#16",
 			"└─TableReader root  data:TableFullScan",
 			"  └─TableFullScan cop[tikv] table:SUBQUERY2_t1 keep order:false, stats:pseudo"))
 		tk.MustQuery(`SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
