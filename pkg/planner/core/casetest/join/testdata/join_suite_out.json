@@ -31,14 +31,14 @@
       },
       {
         "Plan": [
-          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
-          "├─Selection(Build) root  eq(Column, 1)",
-          "│ └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
-          "│   └─IndexReader root  index:IndexFullScan",
-          "│     └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
-          "└─IndexReader(Probe) root  index:Selection",
-          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+          "IndexJoin root  inner join, inner:Selection, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexReader(Build) root  index:IndexFullScan",
+          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection(Probe) root  eq(Column, 1)",
+          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "    └─IndexReader root  index:Selection",
+          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
+          "        └─IndexRangeScan cop[tikv] table:t2, index:idx_abc(a, b, c) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 1 11",
@@ -48,14 +48,14 @@
       },
       {
         "Plan": [
-          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
-          "├─Selection(Build) root  eq(Column, 2)",
-          "│ └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
-          "│   └─IndexReader root  index:IndexFullScan",
-          "│     └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
-          "└─IndexReader(Probe) root  index:Selection",
-          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+          "IndexJoin root  inner join, inner:Selection, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexReader(Build) root  index:IndexFullScan",
+          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection(Probe) root  eq(Column, 2)",
+          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "    └─IndexReader root  index:Selection",
+          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
+          "        └─IndexRangeScan cop[tikv] table:t2, index:idx_abc(a, b, c) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 2 12",
@@ -64,14 +64,14 @@
       },
       {
         "Plan": [
-          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
-          "├─Selection(Build) root  lt(Column, 2)",
-          "│ └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
-          "│   └─IndexReader root  index:IndexFullScan",
-          "│     └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
-          "└─IndexReader(Probe) root  index:Selection",
-          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+          "IndexJoin root  inner join, inner:Selection, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexReader(Build) root  index:IndexFullScan",
+          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection(Probe) root  lt(Column, 2)",
+          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "    └─IndexReader root  index:Selection",
+          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
+          "        └─IndexRangeScan cop[tikv] table:t2, index:idx_abc(a, b, c) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 1 11",
@@ -81,19 +81,58 @@
       },
       {
         "Plan": [
-          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
-          "├─Selection(Build) root  le(Column, 2)",
-          "│ └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
-          "│   └─IndexReader root  index:IndexFullScan",
-          "│     └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
-          "└─IndexReader(Probe) root  index:Selection",
-          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+          "IndexJoin root  inner join, inner:Selection, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexReader(Build) root  index:IndexFullScan",
+          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection(Probe) root  le(Column, 2)",
+          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "    └─IndexReader root  index:Selection",
+          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
+          "        └─IndexRangeScan cop[tikv] table:t2, index:idx_abc(a, b, c) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 1 11",
           "1 2 12",
           "2 1 21",
+          "2 3 23",
+          "3 4 34"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin root  left outer join, inner:Selection, left side:IndexReader, outer key:test.t1.a, inner key:test.t3.a, equal cond:eq(test.t1.a, test.t3.a)",
+          "├─IndexReader(Build) root  index:IndexFullScan",
+          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection(Probe) root  eq(Column, 1)",
+          "  └─Window root  row_number()->Column over(partition by test.t3.a order by test.t3.b rows between current row and current row)",
+          "    └─Sort root  test.t3.a, test.t3.b",
+          "      └─IndexLookUp root  ",
+          "        ├─Selection(Build) cop[tikv]  not(isnull(test.t3.a))",
+          "        │ └─IndexRangeScan cop[tikv] table:t3, index:idx_a(a) range: decided by [eq(test.t3.a, test.t1.a)], keep order:false, stats:pseudo",
+          "        └─TableRowIDScan(Probe) cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11",
+          "2 1 21",
+          "3 4 34"
+        ]
+      },
+      {
+        "Plan": [
+          "HashJoin root  left outer join, left side:IndexReader, equal:[eq(test.t1.a, test.t3.a)]",
+          "├─Selection(Build) root  eq(Column, 1), not(isnull(test.t3.a))",
+          "│ └─Shuffle root  execution info: concurrency:5, data sources:[TableReader]",
+          "│   └─Window root  row_number()->Column over(partition by test.t3.b order by test.t3.c rows between current row and current row)",
+          "│     └─Sort root  test.t3.b, test.t3.c",
+          "│       └─ShuffleReceiver root  ",
+          "│         └─TableReader root  data:TableFullScan",
+          "│           └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) root  index:IndexFullScan",
+          "  └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11",
+          "1 2 12",
           "2 3 23",
           "3 4 34"
         ]

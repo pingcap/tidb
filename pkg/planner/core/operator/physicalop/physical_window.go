@@ -508,6 +508,7 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 		CanAddEnforcer:    false,
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,
+		IndexJoinProp:     prop.IndexJoinProp,
 	}
 	// Prefer OrderedWindow only when the child naturally satisfies the full
 	// partition/order requirement. Once a Sort enforcer is needed, the plan must
@@ -526,7 +527,7 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 		windows = append(windows, orderedWindow)
 	}
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems,
-		CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+		CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown, IndexJoinProp: prop.IndexJoinProp}
 	if !prop.IsPrefix(childProperty) {
 		return windows, true, nil
 	}
