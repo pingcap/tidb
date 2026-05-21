@@ -849,6 +849,21 @@ func TestMLogTrackedReferenceTypes(t *testing.T) {
 	err := tk.ExecToErr("alter table t modify column s varchar(5)")
 	require.ErrorContains(t, err, "only supports no-reorg compatible type changes for tracked columns")
 }
+
+func TestMLogTrackedNullToNotNullChangeRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, g int not null, c int)")
+	tk.MustExec("create materialized view log on t (g, c)")
+
+	tk.MustExec("insert into t values (1, 1, null)")
+	tk.MustExec("update t set c = 10 where id = 1")
+
+	err := tk.ExecToErr("alter table t modify column c bigint not null")
+	require.ErrorContains(t, err, "does not support changing tracked columns from NULL to NOT NULL")
+}
 func TestMLogPrunedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

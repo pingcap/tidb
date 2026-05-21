@@ -1893,6 +1893,21 @@ func isAlterTiFlashReplica(specs []*ast.AlterTableSpec) bool {
 	return len(specs) == 1 && specs[0].Tp == ast.AlterTableSetTiFlashReplica
 }
 
+func isAlterTableOnlyAddColumnsAtEnd(specs []*ast.AlterTableSpec) bool {
+	if len(specs) == 0 {
+		return false
+	}
+	for _, spec := range specs {
+		if spec.Tp != ast.AlterTableAddColumns {
+			return false
+		}
+		if spec.Position != nil && spec.Position.Tp != ast.ColumnPositionNone {
+			return false
+		}
+	}
+	return true
+}
+
 func isAlterTableOnlyIndexOperations(specs []*ast.AlterTableSpec) bool {
 	if len(specs) == 0 {
 		return false
@@ -1976,6 +1991,11 @@ func checkAlterTableBaseTableMLogColumnConstraints(
 				fmt.Sprintf("%s on base table columns referenced by materialized view log", op),
 			)
 		}
+		// Tracked MLog columns may be modified via MODIFY/CHANGE COLUMN; detailed validation and
+		// related table schema updates are handled in GetModifiableColumnJob.
+		if spec.Tp == ast.AlterTableModifyColumn || spec.Tp == ast.AlterTableChangeColumn {
+			continue
+		}
 		for _, colName := range collectAlterTableSpecAffectedColumns(spec) {
 			if _, ok := mlogCols[colName]; !ok {
 				continue
@@ -2034,9 +2054,13 @@ func checkAlterTableMaterializedViewConstraints(
 		return err
 	}
 
-	// Base table with dependent MV: only allow restricted MODIFY/CHANGE COLUMN here.
-	// Detailed MV/MLog validation (including no-reorg compatibility) is done in GetModifiableColumnJob.
+	// Base table with dependent MV:
+	// allow safe ADD COLUMN at end, index operations, and TiFlash replica.
+	// For MODIFY/CHANGE COLUMN, detailed MV/MLog validation (including no-reorg compatibility) is done in GetModifiableColumnJob.
 	if tblInfo.MaterializedViewBase != nil && len(tblInfo.MaterializedViewBase.MViewIDs) > 0 {
+		if isAlterTiFlashReplica(specs) || isAlterTableOnlyIndexOperations(specs) || isAlterTableOnlyAddColumnsAtEnd(specs) {
+			return nil
+		}
 		if len(specs) != 1 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes", op),

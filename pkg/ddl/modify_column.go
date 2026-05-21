@@ -2047,6 +2047,15 @@ func validateMaterializedViewBaseModifyColumn(
 		return nil
 	}
 
+	// NULL -> NOT NULL on tracked MLog columns is unsafe because historical rows already stored in the
+	// materialized view log can still contain NULL values (for example, old row images of UPDATE).
+	// Changing the log column metadata to NOT NULL would break SQL NULL semantics on those existing rows.
+	if columnIsTrackedByMLog && isNullToNotNullChange(oldCol, newCol) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL", op),
+		)
+	}
+
 	// Base table with dependent MV: only allow no-reorg compatible type changes.
 	// Base table with only MLog: keep existing behavior for untracked columns; tracked columns require no-reorg in phase 1.
 	if mayNeedChangeColData {
