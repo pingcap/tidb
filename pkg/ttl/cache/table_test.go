@@ -388,9 +388,9 @@ func TestSplitIndexScanRanges(t *testing.T) {
 	for i := 0; i < splitCnt-1; i++ {
 		startTime := ranges[i].Start[0].GetMysqlTime()
 		endTime := ranges[i].End[0].GetMysqlTime()
-		startGo := time.Date(startTime.Year(), time.Month(startTime.Month()), int(startTime.Day()),
+		startGo := time.Date(startTime.Year(), time.Month(startTime.Month()), startTime.Day(),
 			startTime.Hour(), startTime.Minute(), startTime.Second(), 0, time.UTC)
-		endGo := time.Date(endTime.Year(), time.Month(endTime.Month()), int(endTime.Day()),
+		endGo := time.Date(endTime.Year(), time.Month(endTime.Month()), endTime.Day(),
 			endTime.Hour(), endTime.Minute(), endTime.Second(), 0, time.UTC)
 		actualInterval := endGo.Unix() - startGo.Unix()
 		require.Equal(t, expectedInterval, actualInterval,
