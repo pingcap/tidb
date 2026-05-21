@@ -1375,6 +1375,87 @@ func TestCreateBindingForPrepareFromHistory(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
 
+func TestCreateBindingFromHistoryWithDerivedTableLeadingAlias(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
+	tk.MustExec("create table t3(a int, b int, key(a, b))")
+
+	sql := "select * from t1 join t2 on t1.a = t2.a join (select a, b, row_number() over(partition by a order by b desc) as rn from t3) dt on t2.a = dt.a where dt.rn = 1"
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		fmt.Sprintf("Warning 1105 auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding. Plan Digest: %s", planDigest[0][0]),
+	))
+
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Len(t, showRes, 1)
+	require.Equal(t, planDigest[0][0], showRes[0][10])
+	require.Contains(t, showRes[0][1], "leading(")
+	require.Contains(t, showRes[0][1], "`test`.`dt`")
+
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
+func TestCreateBindingFromHistoryWithMultipleLeadingQueryBlocks(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7")
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
+	tk.MustExec("create table t3(a int, b int, key(a))")
+	tk.MustExec("create table t4(a int, b int, key(a))")
+	tk.MustExec("create table t5(a int, b int, key(a))")
+	tk.MustExec("create table t6(a int, b int, key(a))")
+	tk.MustExec("create table t7(a int, b int, key(a))")
+
+	sql := "with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select * from t1 join channel on t1.a = channel.a"
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(sql)
+	planDigest := tk.MustQuery(fmt.Sprintf("select plan_digest from information_schema.statements_summary where query_sample_text = '%s'", sql)).Rows()
+	tk.MustExec(fmt.Sprintf("create session binding from history using plan digest '%s'", planDigest[0][0]))
+
+	warnings := tk.MustQuery("show warnings").Rows()
+	for _, warning := range warnings {
+		text := fmt.Sprint(warning[2])
+		require.NotContains(t, text, "multiple leading hints invalid")
+		require.NotContains(t, text, "planner:1815")
+		require.NotContains(t, text, "MERGE_JOIN")
+	}
+
+	showRes := tk.MustQuery("show bindings").Rows()
+	require.Len(t, showRes, 1)
+	require.Equal(t, planDigest[0][0], showRes[0][10])
+	require.Contains(t, showRes[0][1], "leading(@`sel_2`")
+	require.Contains(t, showRes[0][1], "leading(@`sel_3`")
+
+	tk.MustExec(sql)
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+}
+
 func TestErrorCasesCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)

@@ -390,6 +390,100 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
 }
 
+func TestExplainFormatHintGeneratesLeadingForDerivedTableAlias(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
+	tk.MustExec("create table t3(a int, b int, key(a, b))")
+
+	hints := tk.MustQuery(`explain format='hint'
+select *
+from t1
+join t2 on t1.a = t2.a
+join (
+    select a, b, row_number() over(partition by a order by b desc) as rn
+    from t3
+) dt on t2.a = dt.a
+where dt.rn = 1`).Rows()[0][0]
+
+	require.Contains(t, hints, "leading(")
+	require.Contains(t, hints, "leading(`test`.`t1`, `test`.`t2`, `test`.`dt`)")
+}
+
+func TestExplainFormatHintRecoverableForMultipleLeadingQueryBlocks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7")
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
+	tk.MustExec("create table t3(a int, b int, key(a))")
+	tk.MustExec("create table t4(a int, b int, key(a))")
+	tk.MustExec("create table t5(a int, b int, key(a))")
+	tk.MustExec("create table t6(a int, b int, key(a))")
+	tk.MustExec("create table t7(a int, b int, key(a))")
+
+	sql := `with channel as (
+	select t2.a
+	from t2
+	join t3 on t2.a = t3.a
+	join t6 on t3.a = t6.a
+	union
+	select t4.a
+	from t4
+	join t5 on t4.a = t5.a
+	join t7 on t5.a = t7.a
+)
+select *
+from t1
+join channel on t1.a = channel.a`
+
+	hints := tk.MustQuery("explain format='hint' " + sql).Rows()[0][0]
+	require.Contains(t, hints, "leading(@`sel_2` `test`.`t2`@`sel_2`, `test`.`t3`@`sel_2`, `test`.`t6`@`sel_2`)")
+	require.Contains(t, hints, "leading(@`sel_3` `test`.`t4`@`sel_3`, `test`.`t5`@`sel_3`, `test`.`t7`@`sel_3`)")
+
+	replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' with channel as (select t2.a from t2 join t3 on t2.a = t3.a join t6 on t3.a = t6.a union select t4.a from t4 join t5 on t4.a = t5.a join t7 on t5.a = t7.a) select /*+ %s */ * from t1 join channel on t1.a = channel.a", hints)).Rows()[0][0]
+	require.Contains(t, replayedHints, "leading(@`sel_2` `test`.`t2`@`sel_2`, `test`.`t3`@`sel_2`, `test`.`t6`@`sel_2`)")
+	require.Contains(t, replayedHints, "leading(@`sel_3` `test`.`t4`@`sel_3`, `test`.`t5`@`sel_3`, `test`.`t7`@`sel_3`)")
+	require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+}
+
+// NOTE: The equivalent CTE form is intentionally not covered in this PR.
+// Exporting a replayable outer LEADING hint across merged CTE operands still
+// needs a separate fix, so this regression test is temporarily kept on the
+// derived-subquery form and the CTE-specific case will be restored later.
+func TestExplainFormatHintDoesNotLeakDerivedTableBaseTableIntoOuterLeading(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1(a int, b int, key(a))")
+	tk.MustExec("create table t2(a int, b int, key(a))")
+	tk.MustExec("create table t3(a int, b int, key(a))")
+	tk.MustExec("create table t4(a int, b int, key(a))")
+
+	sql := `select *
+from t1
+join t3 on t1.a = t3.a
+join t4 on t3.a = t4.a
+left join (
+	select a, sum(b) as s
+	from t2
+	group by a
+) pm on t4.a = pm.a`
+
+	hints := tk.MustQuery("explain format='hint' " + sql).Rows()[0][0]
+	require.Contains(t, hints, "leading(`test`.`t1`, `test`.`t3`, `test`.`t4`, `test`.`pm`)")
+	require.NotContains(t, hints, "leading(`test`.`t1`, `test`.`t3`, `test`.`t4`, `test`.`t2`@`sel_2`)")
+
+	replayedHints := tk.MustQuery(fmt.Sprintf("explain format='hint' select /*+ %s */ * from t1 join t3 on t1.a = t3.a join t4 on t3.a = t4.a left join (select a, sum(b) as s from t2 group by a) pm on t4.a = pm.a", hints)).Rows()[0][0]
+	require.Contains(t, replayedHints, "leading(`test`.`t1`, `test`.`t3`, `test`.`t4`, `test`.`pm`)")
+	require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+}
+
 func BenchmarkDecodePlan(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)
