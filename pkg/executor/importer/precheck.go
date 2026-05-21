@@ -47,6 +47,16 @@ var GetEtcdClient = store.NewEtcdCli
 //
 // we check them one by one, and return the first error we meet.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionctx.Context) error {
+	return e.checkRequirements(ctx, se, true)
+}
+
+// CheckRequirementsBeforeInitDataFiles checks requirements that don't depend on
+// discovered data files, and is used by async-prepare submit path.
+func (e *LoadDataController) CheckRequirementsBeforeInitDataFiles(ctx context.Context, se sessionctx.Context) error {
+	return e.checkRequirements(ctx, se, false)
+}
+
+func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionctx.Context, checkTotalFileSize bool) error {
 	conn := se.GetSQLExecutor()
 	if e.DataSourceType == DataSourceTypeFile {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
@@ -56,8 +66,10 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionct
 		if cnt > 0 {
 			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
 		}
-		if err := e.checkTotalFileSize(); err != nil {
-			return err
+		if checkTotalFileSize {
+			if err := e.checkTotalFileSize(); err != nil {
+				return err
+			}
 		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {

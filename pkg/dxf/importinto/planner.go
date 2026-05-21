@@ -425,13 +425,10 @@ func readPreparedChunkMap(
 		return nil, err
 	}
 	defer store.Close()
-	data, err := store.ReadFile(ctx, externalPath)
-	if err != nil {
-		return nil, err
-	}
+	baseMeta := globalsort.BaseExternalMeta{ExternalPath: externalPath}
 	var chunkMap map[int32][]importer.Chunk
-	if err := json.Unmarshal(data, &chunkMap); err != nil {
-		return nil, errors.Trace(err)
+	if err := baseMeta.ReadJSONFromExternalStorage(ctx, store, &chunkMap); err != nil {
+		return nil, err
 	}
 	return chunkMap, nil
 }

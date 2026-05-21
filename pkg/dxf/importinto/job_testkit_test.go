@@ -167,7 +167,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		userKSTK.MustQuery("select count(1) from mysql.tidb_global_task where id = ?", task.ID).Check(testkit.Rows("0"))
 	})
 
-	t.Run("submit global-sort task uses scoped prepare integration", func(t *testing.T) {
+	t.Run("submit global-sort task uses async prepare mode", func(t *testing.T) {
 		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
 		sysKSTK.MustExec("delete from mysql.tidb_global_task")
 		config.UpdateGlobal(func(conf *config.Config) {
