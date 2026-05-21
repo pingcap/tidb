@@ -1208,8 +1208,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 				scalarSubqueryColID: newColID,
 				evalCtx:             subqueryCtx,
 			}
-			scalarSubQ.RetType = np.Schema().Columns[0].GetType(er.sctx.GetEvalCtx())
-			scalarSubQ.SetCoercibility(np.Schema().Columns[0].Coercibility())
+			scalarSubQ.RetType = types.NewFieldType(mysql.TypeTiny)
+			scalarSubQ.SetCoercibility(expression.CoercibilityNumeric)
 			b.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
 			if v.Not {
 				notWrapped, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), scalarSubQ)

@@ -4583,6 +4583,7 @@ create table t7(a int, b int, key(a));
 create table t8(a int, b int, key(a));
 insert into t3 values(1, 1), (2, 2), (3, 3);
 analyze table t3 all columns;
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 0;
 explain format='plan_tree' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -5944,6 +5945,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#18
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 1;
 drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -6783,6 +6785,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__
           └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 0;
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
@@ -7478,6 +7481,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#18
 Level	Code	Message
 Warning	1815	There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 1;
 drop table if exists t1, t2, t3, t4, t5;
 create table t1(a int, b int, key(a));
 create table t2(a int, b int, key(a));
