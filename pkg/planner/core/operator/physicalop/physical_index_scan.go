@@ -227,11 +227,6 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 			partitionName := pi.GetNameByID(p.PhysicalTableID)
 			res.Partitions = []string{partitionName}
 		}
-	} else if p.PlanPartInfo != nil && p.SCtx() != nil {
-		dynamicPartitionAccess := GetDynamicAccessPartition(p.SCtx(), p.Table, p.PlanPartInfo, tblName)
-		if dynamicPartitionAccess != nil && !dynamicPartitionAccess.AllPartitions && dynamicPartitionAccess.Err == "" {
-			res.Partitions = dynamicPartitionAccess.Partitions
-		}
 	}
 	if len(p.Index.Columns) > 0 {
 		index := access.IndexAccess{

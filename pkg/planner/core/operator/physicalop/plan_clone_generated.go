@@ -359,7 +359,7 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 	}
 	cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)
 	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
-	if op.TableScanAndPartitionInfos != nil {
+	if op.ScanAndPartitionInfos != nil {
 		return nil, false
 	}
 	return cloned, true
