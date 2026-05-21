@@ -499,32 +499,35 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 	if prop.TaskTp == property.MppTaskType {
 		return windows, true, nil
 	}
-	var byItems []property.SortItem
-	byItems = append(byItems, lw.PartitionBy...)
-	byItems = append(byItems, lw.OrderBy...)
-	orderedChildProperty := &property.PhysicalProperty{
-		ExpectedCnt:       math.MaxFloat64,
-		SortItems:         byItems,
-		CanAddEnforcer:    false,
-		CTEProducerStatus: prop.CTEProducerStatus,
-		NoCopPushDown:     prop.NoCopPushDown,
-		IndexJoinProp:     prop.IndexJoinProp,
-	}
 	// Prefer OrderedWindow only when the child naturally satisfies the full
 	// partition/order requirement. Once a Sort enforcer is needed, the plan must
 	// fall back to the regular window path. If there is no partition/order
 	// requirement, use the regular window path to avoid implying ordered input.
-	if len(byItems) > 0 && CanUseOrderedWindow(lw) && prop.IsPrefix(orderedChildProperty) {
-		orderedWindow := PhysicalOrderedWindow{
-			PhysicalWindow: PhysicalWindow{
-				WindowFuncDescs: lw.WindowFuncDescs,
-				PartitionBy:     lw.PartitionBy,
-				OrderBy:         lw.OrderBy,
-				Frame:           lw.Frame,
-			},
-		}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), orderedChildProperty)
-		orderedWindow.SetSchema(lw.Schema())
-		windows = append(windows, orderedWindow)
+	byItems := buildWindowChildSortItems(lw.PartitionBy, lw.OrderBy)
+	if len(byItems) > 0 && CanUseOrderedWindow(lw) {
+		for _, orderedByItems := range buildOrderedWindowChildSortItems(byItems, lw.PartitionBy, lw.OrderBy) {
+			orderedChildProperty := &property.PhysicalProperty{
+				ExpectedCnt:       math.MaxFloat64,
+				SortItems:         orderedByItems,
+				CanAddEnforcer:    false,
+				CTEProducerStatus: prop.CTEProducerStatus,
+				NoCopPushDown:     prop.NoCopPushDown,
+				IndexJoinProp:     prop.IndexJoinProp,
+			}
+			if !prop.IsPrefix(orderedChildProperty) {
+				continue
+			}
+			orderedWindow := PhysicalOrderedWindow{
+				PhysicalWindow: PhysicalWindow{
+					WindowFuncDescs: lw.WindowFuncDescs,
+					PartitionBy:     lw.PartitionBy,
+					OrderBy:         lw.OrderBy,
+					Frame:           lw.Frame,
+				},
+			}.Init(lw.SCtx(), lw.StatsInfo().ScaleByExpectCnt(lw.SCtx().GetSessionVars(), prop.ExpectedCnt), lw.QueryBlockOffset(), orderedChildProperty)
+			orderedWindow.SetSchema(lw.Schema())
+			windows = append(windows, orderedWindow)
+		}
 	}
 	if prop.IndexJoinProp != nil {
 		return windows, true, nil
@@ -544,6 +547,39 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 
 	windows = append(windows, window)
 	return windows, true, nil
+}
+
+func buildWindowChildSortItems(partitionBy, orderBy []property.SortItem) []property.SortItem {
+	byItems := make([]property.SortItem, 0, len(partitionBy)+len(orderBy))
+	byItems = append(byItems, partitionBy...)
+	byItems = append(byItems, orderBy...)
+	return byItems
+}
+
+// Partition key direction does not affect window partition boundaries. When all
+// order keys are DESC, also try DESC partition keys so a backward index scan can
+// satisfy the whole ordered-window property.
+func buildOrderedWindowChildSortItems(byItems, partitionBy, orderBy []property.SortItem) [][]property.SortItem {
+	candidates := [][]property.SortItem{byItems}
+	if len(partitionBy) == 0 || len(orderBy) == 0 {
+		return candidates
+	}
+	orderDesc := orderBy[0].Desc
+	if !orderDesc {
+		return candidates
+	}
+	for _, item := range orderBy[1:] {
+		if item.Desc != orderDesc {
+			return candidates
+		}
+	}
+	alignedByItems := make([]property.SortItem, 0, len(byItems))
+	for _, item := range partitionBy {
+		alignedByItems = append(alignedByItems, property.SortItem{Col: item.Col, Desc: orderDesc})
+	}
+	alignedByItems = append(alignedByItems, orderBy...)
+	candidates = append(candidates, alignedByItems)
+	return candidates
 }
 
 // CanUseOrderedWindow reports whether the logical window belongs to the subset

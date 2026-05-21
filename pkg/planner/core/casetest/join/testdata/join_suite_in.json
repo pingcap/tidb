@@ -7,7 +7,8 @@
       "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 1",
       "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 2",
       "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn < 2",
-      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn <= 2"
+      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn <= 2",
+      "select m.bill_code, case when f.apply_type_code = 4 and f.status = 2 then 1 else 0 end as is_refund, f.receiver_name from delivery_monitor m left join (select * from (select e.waybill_no, e.apply_type_code, e.status, e.receiver_name, e.apply_time, row_number() over(partition by e.waybill_no order by e.apply_time desc) as rn from transfer_event e) ranked where rn = 1) f on m.bill_code = f.waybill_no where m.scan_time > '2026-02-04 00:00:00' and m.scan_time <= '2026-02-05 00:00:00' and m.courier_code = 'courier_001' and ifnull(m.sign_flag, 0) = 0 and ifnull(m.remark3, 0) = 0 and ifnull(m.remark6, 0) = 0"
     ]
   }
 ]

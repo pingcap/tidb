@@ -544,6 +544,39 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 		}
 	}
 
+	if prop.IndexJoinProp != nil {
+		indexJoinProp, ok := p.tryTransformIndexJoinProp(prop.IndexJoinProp)
+		if !ok {
+			return nil, false
+		}
+		newProp.IndexJoinProp = indexJoinProp
+	}
+
+	return newProp, true
+}
+
+func (p *LogicalProjection) tryTransformIndexJoinProp(prop *property.IndexJoinRuntimeProp) (*property.IndexJoinRuntimeProp, bool) {
+	newProp := prop.CloneEssentialFields()
+	newProp.InnerJoinKeys = make([]*expression.Column, 0, len(prop.InnerJoinKeys))
+	for _, key := range prop.InnerJoinKeys {
+		idx := p.Schema().ColumnIndex(key)
+		if idx == -1 {
+			newProp.InnerJoinKeys = append(newProp.InnerJoinKeys, key)
+			continue
+		}
+		col, ok := p.Exprs[idx].(*expression.Column)
+		if !ok {
+			return nil, false
+		}
+		newProp.InnerJoinKeys = append(newProp.InnerJoinKeys, col)
+	}
+	if len(prop.OtherConditions) > 0 {
+		newProp.OtherConditions = make([]expression.Expression, 0, len(prop.OtherConditions))
+		for _, cond := range prop.OtherConditions {
+			newProp.OtherConditions = append(newProp.OtherConditions,
+				expression.ColumnSubstitute(p.SCtx().GetExprCtx(), cond, p.Schema(), p.Exprs))
+		}
+	}
 	return newProp, true
 }
 

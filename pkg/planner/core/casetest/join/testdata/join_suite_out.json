@@ -97,6 +97,27 @@
           "2 3 23",
           "3 4 34"
         ]
+      },
+      {
+        "Plan": [
+          "Projection root  test.delivery_monitor.bill_code, case(and(eq(test.transfer_event.apply_type_code, 4), eq(test.transfer_event.status, 2)), 1, 0)->Column, test.transfer_event.receiver_name",
+          "└─IndexHashJoin root  left outer join, inner:Selection, left side:IndexLookUp, outer key:test.delivery_monitor.bill_code, inner key:test.transfer_event.waybill_no, equal cond:eq(test.delivery_monitor.bill_code, test.transfer_event.waybill_no)",
+          "  ├─IndexLookUp(Build) root  ",
+          "  │ ├─Selection(Build) cop[tikv]  eq(ifnull(test.delivery_monitor.remark3, 0), 0), eq(ifnull(test.delivery_monitor.remark6, 0), 0), eq(ifnull(test.delivery_monitor.sign_flag, 0), 0)",
+          "  │ │ └─IndexRangeScan cop[tikv] table:m, index:idx_courier_scan(courier_code, scan_time, sign_flag, remark3, remark6) range:(\"courier_001\" 2026-02-04 00:00:00,\"courier_001\" 2026-02-05 00:00:00], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) cop[tikv] table:m keep order:false, stats:pseudo",
+          "  └─Selection(Probe) root  eq(Column, 1)",
+          "    └─OrderedWindow root  row_number()->Column over(partition by test.transfer_event.waybill_no order by test.transfer_event.apply_time desc rows between current row and current row)",
+          "      └─Projection root  test.transfer_event.waybill_no, test.transfer_event.apply_time, test.transfer_event.apply_type_code, test.transfer_event.status, test.transfer_event.receiver_name",
+          "        └─IndexLookUp root  ",
+          "          ├─IndexRangeScan(Build) cop[tikv] table:e, index:idx_waybill_apply_time(waybill_no, apply_time) range: decided by [eq(test.transfer_event.waybill_no, test.delivery_monitor.bill_code)], keep order:true, desc, stats:pseudo",
+          "          └─TableRowIDScan(Probe) cop[tikv] table:e keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "WB001 1 new_receiver_1",
+          "WB002 0 new_receiver_2",
+          "WB003 0 <nil>"
+        ]
       }
     ]
   }
