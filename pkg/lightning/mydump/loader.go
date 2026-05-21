@@ -265,14 +265,13 @@ func NewLoaderCfg(cfg *config.Config) LoaderConfig {
 
 // MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
-	store            storeapi.Storage
-	dbs              []*MDDatabaseMeta
-	filter           filter.Filter
-	router           *regexprrouter.RouteTable
-	fileRouter       FileRouter
-	charSet          string
-	sqlMode          mysql.SQLMode
-	schemaImportPlan *SchemaImportPlan
+	store      storeapi.Storage
+	dbs        []*MDDatabaseMeta
+	filter     filter.Filter
+	router     *regexprrouter.RouteTable
+	fileRouter FileRouter
+	charSet    string
+	sqlMode    mysql.SQLMode
 }
 
 // RawFile store the path and size of a file.
@@ -889,21 +888,6 @@ func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
 // GetDatabases gets the list of scanned MDDatabaseMeta for the loader.
 func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
-}
-
-// GetSchemaImportPlan lazily builds and returns the schema import plan.
-// The plan is constructed on first access so that scan-only callers (precheck,
-// size estimation, etc.) are not affected by view SQL parsing errors.
-func (l *MDLoader) GetSchemaImportPlan(ctx context.Context) (*SchemaImportPlan, error) {
-	if l.schemaImportPlan != nil {
-		return l.schemaImportPlan, nil
-	}
-	plan, err := NewSchemaImportPlan(ctx, l.store, l.sqlMode, l.dbs)
-	if err != nil {
-		return nil, err
-	}
-	l.schemaImportPlan = plan
-	return plan, nil
 }
 
 // GetStore gets the external storage used by the loader.

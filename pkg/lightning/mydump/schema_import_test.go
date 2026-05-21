@@ -368,18 +368,14 @@ func TestNewSchemaImportPlanRejectsEmptyViewSchema(t *testing.T) {
 	require.ErrorContains(t, err, "empty schema for view test.v1")
 }
 
-func TestLoaderBuildsSchemaImportPlan(t *testing.T) {
+func TestLoaderSetupDefersInvalidViewSQLUntilRun(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	store, err := objstore.NewLocalStorage(tempDir)
 	require.NoError(t, err)
 
 	require.NoError(t, os.WriteFile(path.Join(tempDir, "db-schema-create.sql"), []byte("CREATE DATABASE db;"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "db.t-schema.sql"), []byte("CREATE TABLE t(id INT PRIMARY KEY);"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "db.v1-schema.sql"), []byte("CREATE TABLE v1(id INT);"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "db.v2-schema.sql"), []byte("CREATE TABLE v2(id INT);"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "db.v1-schema-view.sql"), []byte("CREATE VIEW v1 AS SELECT id FROM t;"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, "db.v2-schema-view.sql"), []byte("CREATE VIEW v2 AS SELECT id FROM v1;"), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tempDir, "db.v1-schema-view.sql"), nil, 0o644))
 
 	cfg := LoaderConfig{
 		SourceURL:        "file://" + filepath.ToSlash(tempDir),
@@ -391,16 +387,16 @@ func TestLoaderBuildsSchemaImportPlan(t *testing.T) {
 	mdl, err := NewLoaderWithStore(ctx, cfg, store)
 	require.NoError(t, err)
 
-	plan, err := mdl.GetSchemaImportPlan(ctx)
+	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	require.NotNil(t, plan)
-	require.Len(t, plan.dbMetas, 1)
-	require.Len(t, plan.dbMetas[0].Tables, 1)
-	require.Len(t, plan.dbMetas[0].Views, 2)
-	require.NotNil(t, plan.viewPlan)
-	require.Len(t, plan.viewPlan.ordered, 2)
-	require.Equal(t, "v1", plan.viewPlan.ordered[0].key.Name)
-	require.Equal(t, "v2", plan.viewPlan.ordered[1].key.Name)
+	t.Cleanup(func() {
+		require.NoError(t, mock.ExpectationsWereMet())
+		_ = db.Close()
+	})
+	importer := NewSchemaImporter(log.Logger{Logger: zap.NewExample()}, mysql.SQLMode(0), db, store, 1)
+
+	err = importer.Run(ctx, mdl.GetDatabases())
+	require.ErrorContains(t, err, "empty schema for view db.v1")
 }
 
 func TestSchemaImporterManyTables(t *testing.T) {
@@ -616,5 +612,5 @@ CREATE ALGORITHM=UNDEFINED DEFINER=`+"`root`@`%`"+` SQL SECURITY DEFINER VIEW v2
 	require.NoError(t, err)
 	dbMetas[0].Tables = []*MDTableMeta{dbMetas[0].Tables[0]}
 	dbMetas[0].Views = nil
-	require.NoError(t, importer.RunWithPlan(ctx, plan))
+	require.NoError(t, importer.runWithPlan(ctx, plan))
 }

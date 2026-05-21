@@ -92,11 +92,11 @@ func (si *SchemaImporter) Run(ctx context.Context, dbMetas []*MDDatabaseMeta) (e
 	if err != nil {
 		return err
 	}
-	return si.RunWithPlan(ctx, plan)
+	return si.runWithPlan(ctx, plan)
 }
 
-// RunWithPlan imports all schemas from the given prebuilt schema import plan.
-func (si *SchemaImporter) RunWithPlan(ctx context.Context, plan *SchemaImportPlan) (err error) {
+// runWithPlan imports all schemas from the given prebuilt schema import plan.
+func (si *SchemaImporter) runWithPlan(ctx context.Context, plan *SchemaImportPlan) (err error) {
 	logTask := si.logger.Begin(zap.InfoLevel, "restore all schema")
 	defer func() {
 		logTask.End(zap.ErrorLevel, err)
