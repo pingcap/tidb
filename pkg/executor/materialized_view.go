@@ -1581,7 +1581,7 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 }
 
 // Next implements the Executor Next interface.
-func (e *CompareMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+func (e *CompareMaterializedViewExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
