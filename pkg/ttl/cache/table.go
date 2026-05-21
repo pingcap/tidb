@@ -766,7 +766,7 @@ func (t *PhysicalTable) SplitIndexScanRanges(expireTime time.Time, splitCnt int)
 
 	ft := t.TimeColumn.FieldType
 	ranges := make([]ScanRange, 0, splitCnt)
-	for i := 0; i < splitCnt; i++ {
+	for i := range splitCnt {
 		startSec := minUnix + int64(i)*intervalSeconds
 		endSec := minUnix + int64(i+1)*intervalSeconds
 		if i == splitCnt-1 {
