@@ -132,14 +132,12 @@ func (s *BaseScheduler) Init() error {
 // ScheduleTask implements the Scheduler interface.
 func (s *BaseScheduler) ScheduleTask() {
 	task := s.GetTask()
-	logFields := []zap.Field{
+	s.logger.Info("schedule task",
 		zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 		zap.Int("requiredSlots", task.RequiredSlots),
-	}
-	if task.Step == proto.StepInit || task.Step == proto.StepPrepared {
-		logFields = append(logFields, zap.Stringer("prepare-mode", task.ExtraParams.PrepareMode))
-	}
-	s.logger.Info("schedule task", logFields...)
+		zap.Stringer("prepare-mode", task.ExtraParams.PrepareMode),
+	)
 	s.scheduleTask()
 }
 
@@ -500,17 +498,12 @@ func (s *BaseScheduler) switch2NextStep() error {
 	taskBase4Next := task.TaskBase
 	taskBase4Next.Step = proto.FrameworkStep2BusinessStep(taskBase4Next.Step)
 	nextStep := s.GetNextStep(&taskBase4Next)
-	logFields := []zap.Field{
+	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 		zap.Int("required-slots", task.RequiredSlots),
 		zap.Int("runtime-slots", task.GetRuntimeSlots()),
-	}
-	if task.State == proto.TaskStatePending &&
-		(task.Step == proto.StepInit || task.Step == proto.StepPrepared) {
-		logFields = append(logFields, zap.Stringer("prepare-mode", task.ExtraParams.PrepareMode))
-	}
-	s.logger.Info("switch to next step", logFields...)
+	)
 
 	if nextStep == proto.StepDone {
 		if err := s.OnDone(s.ctx, s, task); err != nil {
