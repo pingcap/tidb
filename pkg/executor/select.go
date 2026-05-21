@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	stderrors "errors"
-	"reflect"
 	"runtime/pprof"
 	"strings"
 	"sync/atomic"
@@ -346,7 +345,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.InShareMode = inSharedMode
-	setSharedLockUpgradeIfSupported(lockCtx, seVars.EnableSharedLockUpgrade)
+	lockCtx.AllowSharedLockUpgrade = seVars.EnableSharedLockUpgrade
 
 	// Set max_execution_time deadline for SELECT statements
 	maxExectionTime := seVars.GetMaxExecutionTime()
@@ -390,18 +389,6 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShar
 		lockCtx.InitCheckExistence(numKeys)
 	}
 	return lockCtx, nil
-}
-
-func setSharedLockUpgradeIfSupported(lockCtx any, allow bool) {
-	value := reflect.ValueOf(lockCtx)
-	if !value.IsValid() || value.Kind() != reflect.Ptr || value.IsNil() {
-		return
-	}
-	field := value.Elem().FieldByName("AllowSharedLockUpgrade")
-	if !field.IsValid() || !field.CanSet() || field.Kind() != reflect.Bool {
-		return
-	}
-	field.SetBool(allow)
 }
 
 // doLockKeys is the main entry for pessimistic lock keys
