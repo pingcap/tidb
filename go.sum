@@ -828,6 +828,8 @@ github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
 github.com/tikv/client-go/v2 v2.0.8-0.20260113054240-c88e82cf2927 h1:lCRKPcF7jYgovVZ2f+DYqOlS4gtVmj6O7bG4J/KXjC4=
 github.com/tikv/client-go/v2 v2.0.8-0.20260113054240-c88e82cf2927/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
+github.com/tikv/client-go/v2 v2.0.8-0.20260521081957-89590887ebb9 h1:XQNPOukNv/Jg3vWxOawuAoEK1a+e61yclyk06Bx574g=
+github.com/tikv/client-go/v2 v2.0.8-0.20260521081957-89590887ebb9/go.mod h1:DrneTzlX66kdfl59PMdaHpeJWzyXXNClNqzhi71AvXc=
 github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286 h1:TBrJ7eyjLfI6xc7rr348sTKPUa96ZUWmfSonqLP0vVM=
 github.com/tikv/pd/client v0.0.0-20250901062501-1646b924d286/go.mod h1:kuIEDRLck7LGHiqKYrQR3fNiK06trLmmK02s4r99iWU=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
