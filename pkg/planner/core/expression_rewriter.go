@@ -54,6 +54,13 @@ import (
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
 var EvalSubqueryFirstRow func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, sctx base.PlanContext) (row []types.Datum, err error)
 
+func shouldExplainNonEvaledScalarSubQuery(vars *variable.SessionVars) bool {
+	return vars.StmtCtx.InExplainStmt &&
+		!vars.StmtCtx.InExplainAnalyzeStmt &&
+		vars.ExplainNonEvaledSubQuery &&
+		vars.StmtCtx.ExplainFormat != types.ExplainFormatBrief
+}
+
 // evalAstExprWithPlanCtx evaluates ast expression with plan context.
 // Different with expression.EvalSimpleAst, it uses planner context and is more powerful to build some special expressions
 // like subquery, window function, etc.
@@ -1196,7 +1203,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			er.err = err
 			return v, true
 		}
-		if b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt && b.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
+		if shouldExplainNonEvaledScalarSubQuery(b.ctx.GetSessionVars()) {
 			newColID := b.ctx.GetSessionVars().AllocPlanColumnID()
 			subqueryCtx := ScalarSubqueryEvalCtx{
 				scalarSubQuery: physicalPlan,
@@ -1559,7 +1566,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		er.err = err
 		return v, true
 	}
-	if planCtx.builder.ctx.GetSessionVars().StmtCtx.InExplainStmt && !planCtx.builder.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt && planCtx.builder.ctx.GetSessionVars().ExplainNonEvaledSubQuery {
+	if shouldExplainNonEvaledScalarSubQuery(planCtx.builder.ctx.GetSessionVars()) {
 		subqueryCtx := ScalarSubqueryEvalCtx{
 			scalarSubQuery: physicalPlan,
 			ctx:            ctx,

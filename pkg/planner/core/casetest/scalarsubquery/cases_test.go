@@ -46,6 +46,9 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 		testKit.MustExec("create table t1(a int, b int, c int)")
 		testKit.MustExec("create table t2(a int, b int, c int)")
 		testKit.MustExec("create table t3(a varchar(5), b varchar(5), c varchar(5))")
+		testKit.MustExec("create table brief_t1(a int)")
+		testKit.MustExec("create table brief_t2(b blob, key b(b(100)))")
+		testKit.MustExec("insert into brief_t2 values ('1'), ('2'), ('3')")
 		testKit.MustQuery("select @@tidb_opt_enable_non_eval_scalar_subquery").Check(testkit.Rows("1"))
 
 		planContains := func(rows [][]any, substr string) (bool, []string) {
@@ -76,6 +79,16 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 		require.True(t, hasScalarSubQuery, "plan should keep the scalar subquery visible: %v", planRows)
 		require.True(t, hasSleepFunc, "plan should keep sleep(0.3) visible: %v", planRows)
 		require.False(t, hasEvaluatedScalarColumn, "plan should not embed the evaluated scalar subquery result: %v", planRows)
+
+		testKit.Session().GetSessionVars().RewritePhaseInfo.Reset()
+		rows = testKit.MustQuery("explain format = 'brief' select * from t1 where a = (select sleep(0.3))").Rows()
+		require.Greater(t, testKit.Session().GetSessionVars().RewritePhaseInfo.PreprocessSubQueries, 0)
+		hasEvaluatedScalarColumn, planRows = planContainsEvaluatedScalarColumn(rows)
+		require.True(t, hasEvaluatedScalarColumn, "brief explain should keep the legacy scalar subquery evaluation behavior: %v", planRows)
+
+		rows = testKit.MustQuery(`explain format = 'brief' select 1 from brief_t1 where a = (select 1 from brief_t1 t join brief_t2 where b <= 1 and t.a)`).Rows()
+		hasOuterTableDual, planRows := planContains(rows, "TableDual")
+		require.True(t, hasOuterTableDual, "brief explain should keep the legacy outer TableDual shape: %v", planRows)
 
 		testKit.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=0")
 		testKit.Session().GetSessionVars().RewritePhaseInfo.Reset()
