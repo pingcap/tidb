@@ -1142,9 +1142,11 @@ func canRestoreBinaryChildWithoutParentheses(parentOp, childOp opcode.Op, side i
 // restoreBinaryPrecedence follows MySQL operator precedence: larger values bind
 // tighter, and 0 means unknown so parentheses must be kept. Binary operators are
 // left-associative, so same-precedence right children can drop parentheses only
-// for associative operators. Subtraction, division, integer division, and modulo
-// are intentionally excluded because a - (b - c) and a / (b / c) are not
-// equivalent to their unparenthesized forms.
+// for operators that preserve SQL evaluation semantics after regrouping.
+// Arithmetic operators are intentionally excluded: subtraction, division,
+// integer division, and modulo are not associative, while addition and
+// multiplication can still produce different finite-precision numeric results
+// after reassociation.
 //
 // Examples: `(a + b) * c` must keep parentheses, while `a + (b * c)` can
 // become `a + b * c`; `(a BETWEEN b AND c) = d` must keep parentheses because
@@ -1187,7 +1189,7 @@ func isAssociativeRestoreOp(parentOp, childOp opcode.Op) bool {
 		return false
 	}
 	switch parentOp {
-	case opcode.LogicAnd, opcode.LogicOr, opcode.Plus, opcode.Mul, opcode.And, opcode.Or, opcode.Xor:
+	case opcode.LogicAnd, opcode.LogicOr, opcode.And, opcode.Or, opcode.Xor:
 		return true
 	default:
 		return false

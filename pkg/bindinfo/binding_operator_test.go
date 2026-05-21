@@ -855,6 +855,11 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 			"select 1 from b where (x + 1) * y = 2",
 			"select ? from `b` where ( `x` + ? ) * `y` = ?",
 		},
+		// The same precedence rule applies to the right child of multiplication.
+		{
+			"select 1 from b where x * (y + z) = 2",
+			"select ? from `b` where `x` * ( `y` + `z` ) = ?",
+		},
 		// OR has lower precedence than AND and must stay grouped as the right child.
 		{
 			"select 1 from b where x = 1 and (y = 1 or y = 2)",
@@ -948,6 +953,31 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		{
 			"select 1 from b where (x between y and z) = 1",
 			"select ? from `b` where ( `x` between `y` and `z` ) = ?",
+		},
+		// Arithmetic operators are not safe to reassociate in binding
+		// normalization because finite-precision SQL evaluation can differ by
+		// grouping, for example with floating-point values.
+		{
+			"select 1 from b where x + (y + z) = 1",
+			"select ? from `b` where `x` + ( `y` + `z` ) = ?",
+		},
+		{
+			"select 1 from b where x * (y * z) = 1",
+			"select ? from `b` where `x` * ( `y` * `z` ) = ?",
+		},
+		// The outer parentheses are required because subtraction binds weaker
+		// than multiplication. The left addition can be restored without its own
+		// parentheses because the surrounding subtraction is left-associative,
+		// while the right addition must keep its grouping.
+		{
+			"select 1 from b where x * ((y + z) - (u + v)) = 1",
+			"select ? from `b` where `x` * ( `y` + `z` - ( `u` + `v` ) ) = ?",
+		},
+		// Function-call arguments can drop the redundant outer parentheses, but
+		// the right side of subtraction must still keep its addition group.
+		{
+			"select 1 from b where abs(((y + z) - (u + v))) = 1",
+			"select ? from `b` where `abs` ( `y` + `z` - ( `u` + `v` ) ) = ?",
 		},
 	}
 	for _, test := range parenthesesTests {

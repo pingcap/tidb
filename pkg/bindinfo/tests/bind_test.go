@@ -509,6 +509,12 @@ func TestSimplifiedCreateBinding(t *testing.T) {
 	tk.MustQuery(`select * from t where abs(a + 1) = 2 and b = 1`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 	tk.MustExec(`drop binding for select * from t where abs(a + 1) = 2 and b = 1`)
+	tk.MustExec(`create binding for select * from t where a + (b + 1) > 0 using select /*+ use_index(t, b) */ * from t where a + (b + 1) > 0`)
+	tk.MustQuery(`select * from t where a + (b + 1) > 0`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from t where (a + b) + 1 > 0`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`drop binding for select * from t where a + (b + 1) > 0`)
 }
 
 func TestDropBindBySQLDigest(t *testing.T) {
