@@ -183,13 +183,7 @@ func NewSchemaImportPlan(ctx context.Context, store storeapi.Storage, sqlMode my
 	parsedViews := make([]*parsedViewSchema, 0)
 	for _, dbMeta := range dbMetas {
 		for _, viewMeta := range dbMeta.Views {
-			schemaMeta := viewMeta
-			if schemaMeta.charSet == "" {
-				cloned := *schemaMeta
-				cloned.charSet = "auto"
-				schemaMeta = &cloned
-			}
-			sqlStr, err := schemaMeta.GetSchema(ctx, store)
+			sqlStr, err := viewMeta.GetSchema(ctx, store)
 			if err != nil {
 				return nil, err
 			}
