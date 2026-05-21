@@ -782,6 +782,35 @@ end`)
 	}
 }
 
+func TestExplainAnalyzeRoutineNestedFunctionKeepsOuterSelectBlockNames(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec(`create function f_explain_routine_zb_helper(p int) returns decimal(10,2)
+begin
+	return cast(p as decimal(10,2));
+end`)
+	tk.MustExec(`create function f_explain_routine_outer(id int) returns decimal(10,2)
+begin
+	declare v decimal(10,2);
+	set v = (
+		select sum(a.zb - ifnull(b.zb, 0))
+		from (
+			select cast(b as decimal(10,2)) / f_explain_routine_zb_helper(id) as zb, b
+			from t_explain_routine
+			where a <= id
+		) a
+		left join (
+			select cast(b as decimal(10,2)) / f_explain_routine_zb_helper(id) as zb, b
+			from t_explain_routine
+			where a <= id
+		) b on a.b = b.b
+	);
+	return v;
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_outer(2)").Rows())
+	require.NotEmpty(t, rows)
+}
+
 func TestExplainAnalyzeRoutineNestedReadOnlyCall(t *testing.T) {
 	tk := setupExplainRoutineTestKit(t)
 	tk.MustExec(`create procedure p_explain_routine_nested_helper(id int)

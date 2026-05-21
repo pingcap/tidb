@@ -1099,6 +1099,11 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	}
 
 	vars := e.Ctx().GetSessionVars()
+	// Routine statements may recursively optimize stored function calls with the
+	// same session context. Keep the current statement's QB-name bookkeeping from
+	// being replaced by the nested optimization.
+	originPlannerSelectBlockAsName := vars.PlannerSelectBlockAsName.Load()
+	defer vars.PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
 	originalStmtCtx := vars.StmtCtx
 	restoreStmtCtx := resetStmtCtx(e.Ctx(), stmtForStmtCtx)
 	defer restoreStmtCtx()
