@@ -130,6 +130,8 @@ var (
 	DDLJobTableDuration   *prometheus.HistogramVec
 	DDLRunningJobCount    *prometheus.GaugeVec
 	AddIndexScanRate      *prometheus.HistogramVec
+	// AddIndexReadIndexChunkStageSeconds records read-index pipeline stage latency.
+	AddIndexReadIndexChunkStageSeconds *prometheus.HistogramVec
 )
 
 // InitDDLMetrics initializes defines DDL metrics.
@@ -243,6 +245,14 @@ func InitDDLMetrics() {
 		Help:      "scan rate",
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
+
+	AddIndexReadIndexChunkStageSeconds = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "tidb",
+		Subsystem: "ddl",
+		Name:      "add_index_read_index_chunk_stage_seconds",
+		Help:      "Latency of add-index read-index pipeline stages observed per chunk.",
+		Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 22), // 0.1ms ~ 7min
+	}, []string{"stage"})
 
 	RetryableErrorCount = metricscommon.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",

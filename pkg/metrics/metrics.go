@@ -320,6 +320,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalSortIngestWorkerCnt)
 	prometheus.MustRegister(GlobalSortUploadWorkerCount)
 	prometheus.MustRegister(AddIndexScanRate)
+	prometheus.MustRegister(AddIndexReadIndexChunkStageSeconds)
 	prometheus.MustRegister(RetryableErrorCount)
 	prometheus.MustRegister(MergeSortWriteBytes)
 	prometheus.MustRegister(MergeSortReadBytes)

@@ -256,6 +256,8 @@ type IndexRecordChunk struct {
 	Err   error
 	Done  bool
 
+	fetchedAt time.Time
+
 	// tableScanRowCount is the number of rows scanned by the corresponding TableScanTask.
 	// If the index is a partial index, the number of rows in the Chunk may be less than tableScanRowCount.
 	tableScanRowCount int64
@@ -537,7 +539,12 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	// still open, so only the global-sort path can stream results immediately.
 	enableStreaming := w.reorgMeta.UseCloudStorage
 	sendResult := func(idxResult IndexRecordChunk) {
+		if !idxResult.fetchedAt.IsZero() {
+			metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("scan_buffer").Observe(time.Since(idxResult.fetchedAt).Seconds())
+		}
+		sendStart := time.Now()
 		sender(idxResult)
+		metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("scan_send").Observe(time.Since(sendStart).Seconds())
 		if w.cpOp != nil {
 			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), idxResult.Done)
 		}
@@ -575,7 +582,10 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for !done {
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
+			fetchStart := time.Now()
 			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
+			fetchEnd := time.Now()
+			metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("scan_fetch").Observe(fetchEnd.Sub(fetchStart).Seconds())
 			failpoint.Inject("mockScanRecordPartialError", func(val failpoint.Value) {
 				if shouldFail, _ := val.(bool); shouldFail {
 					err = errors.New("mock partial scan error")
@@ -590,7 +600,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
+			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, fetchedAt: fetchEnd, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
 			if enableStreaming {
 				sendResult(idxResult)
@@ -913,6 +923,7 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		indexConditionCheckers = nil
 	}
 	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
+	metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("write_chunk").Observe(time.Since(oprStartTime).Seconds())
 	if err != nil || cnt == 0 {
 		return 0, 0, err
 	}
