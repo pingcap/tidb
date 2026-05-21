@@ -581,7 +581,7 @@ func buildAndOptimizeLogicalPlanRound(
 		optFlag = optFlagAdjust(optFlag)
 	}
 	// when we are sure about we can have a ILIKE fallback for FTS function, we can
-	// directly ignore the error from AnalyzeTICIIndex phase.
+	// directly ignore the error from AnalyzeTICIIndex phase at first round.
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
 	if err != nil {
 		if discard, fallbackErr := maybeArmFTSLikeFallback(sctx.GetSessionVars(), builder, err); discard {
@@ -597,17 +597,6 @@ func buildAndOptimizeLogicalPlanRound(
 	// two wins via the normal alt-rounds cost comparison.
 	if builder.HasPredicateMatch() {
 		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
-	}
-	// If this round saw a predicate-context MATCH that cannot be served by the
-	// native FTSMysqlMatchAgainst builtin, the produced plan would fail at
-	// execution. Discard it and arm AlternativeLogicalPlanFTSLikeFallback so
-	// any intervening rounds (correlate, etc.) re-rewrite with ILIKE too. The
-	// fts-like-fallback round below also forces this flag during setup; this
-	// outer assignment covers the non-viable case where the flag must stay
-	// true across all subsequent rounds, not just inside the LIKE round.
-	if builder.HasNonViableFTSMatch() {
-		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
-		return p, names, false, nil
 	}
 
 	if *bestPlan == nil || cost < *bestCost {
@@ -741,17 +730,14 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
 		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
 		// Round 1 always uses the native FTSMysqlMatchAgainst builtin — same as
-		// the Alt-disabled default. The build records two signals on the
+		// the Alt-disabled default. The build records one signal on the
 		// planBuilder when MATCH...AGAINST is seen:
 		//   * HasPredicateMatch: any direct-boolean-context MATCH. The round
 		//     driver propagates this into stmtctx to trigger the
 		//     fts-like-fallback alternative round, which builds a competing
-		//     ILIKE-based plan; the cheaper of the two wins.
-		//   * HasNonViableFTSMatch: a predicate-context MATCH whose native form
-		//     cannot execute (no FTS index / no TiFlash replica / unsupported
-		//     modifier). The round driver discards round 1's plan and forces
-		//     AlternativeLogicalPlanFTSLikeFallback true so all subsequent
-		//     rounds (correlate, etc.) re-rewrite with ILIKE.
+		//     ILIKE-based plan; the cheaper of the two wins. If the real native
+		//     planning path later fails, maybeArmFTSLikeFallback forces the LIKE
+		//     round from the native error.
 	}
 
 	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(

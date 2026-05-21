@@ -936,6 +936,9 @@ const (
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
 
+	// TiDBEnableTiCIEstimate indicates whether to call TiCI to estimate full-text search row counts.
+	TiDBEnableTiCIEstimate = "tidb_enable_tici_estimate"
+
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
 	TiDBEnablePrepPlanCache = "tidb_enable_prepared_plan_cache"
 	// TiDBPrepPlanCacheSize indicates the number of cached statements.
@@ -1651,6 +1654,7 @@ const (
 	DefTiDBEnableDDLAnalyze                           = false
 	DefEnableTiDBGCAwareMemoryTrack                   = false
 	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBEnableTiCIEstimate                         = true
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
 	DefTiFlashFastScan                                = false
@@ -1913,6 +1917,7 @@ var (
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	EnableBindingUsage         = atomic.NewBool(DefTiDBEnableBindingUsage)
+	EnableTiCIEstimate         = atomic.NewBool(DefTiDBEnableTiCIEstimate)
 )
 
 func serverMemoryLimitDefaultValue() string {
