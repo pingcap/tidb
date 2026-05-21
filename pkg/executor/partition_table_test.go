@@ -2247,11 +2247,19 @@ func TestSelectLockWithStaticPruneAndPartitionProcessorBlacklist(t *testing.T) {
 		balance2 decimal(10,2) generated always as (-balance) virtual,
 		created_at timestamp
 	) partition by hash (id) partitions 8`)
+	tk.MustExec(`create table t_non_partitioned (
+		id int primary key,
+		balance decimal(10,2),
+		created_at timestamp
+	)`)
 	tk.MustExec("insert into t (id, balance, created_at) values (1, 100, '2021-06-17 22:35:20')")
+	tk.MustExec("insert into t_non_partitioned values (1, 100, '2021-06-17 22:35:20')")
 	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
 
 	tk.MustExec(`insert into mysql.opt_rule_blacklist values ("predicate_push_down"), ("partition_processor")`)
 	tk.MustExec("admin reload opt_rule_blacklist")
+	tk.MustQuery("select * from t_non_partitioned where id = 1 for update").Check(testkit.Rows("1 100.00 2021-06-17 22:35:20"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 partition_processor in mysql.opt_rule_blacklist is ignored because static partition pruning requires it for correctness"))
 }

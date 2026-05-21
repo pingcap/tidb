@@ -1043,13 +1043,26 @@ func isLogicalRuleDisabled(r base.LogicalOptRule, logic base.LogicalPlan) bool {
 	if !disabled {
 		return false
 	}
-	if _, ok := r.(*rule.PartitionProcessor); ok && !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+	if _, ok := r.(*rule.PartitionProcessor); ok && !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode &&
+		hasPartitionedDataSource(logic) {
 		// Static pruning needs PartitionProcessor to rewrite logical partition scans
 		// into concrete partition scans; skipping it can make partition data invisible.
 		appendPartitionProcessorStaticPruneBlacklistWarning(logic)
 		return false
 	}
 	return true
+}
+
+func hasPartitionedDataSource(logic base.LogicalPlan) bool {
+	if ds, ok := logic.(*logicalop.DataSource); ok {
+		return ds.TableInfo != nil && ds.TableInfo.GetPartitionInfo() != nil
+	}
+	for _, child := range logic.Children() {
+		if hasPartitionedDataSource(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func appendPartitionProcessorStaticPruneBlacklistWarning(logic base.LogicalPlan) {
