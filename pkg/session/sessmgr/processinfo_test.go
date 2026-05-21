@@ -62,7 +62,7 @@ func TestProcessInfoShallowCP(t *testing.T) {
 	fmt.Println(reflect.ValueOf(cp.StatsInfo).Pointer(), reflect.ValueOf(info.StatsInfo).Pointer())
 	require.True(t, cp.StmtCtx == info.StmtCtx)
 	require.True(t, cp.RefCountOfStmtCtx == info.RefCountOfStmtCtx)
-		require.True(t, cp.MemTracker == info.MemTracker)
+	require.True(t, cp.MemTracker == info.MemTracker)
 	require.True(t, cp.RedactSQL == info.RedactSQL)
 	require.True(t, cp.SessionAlias == info.SessionAlias)
 }
@@ -97,7 +97,7 @@ func TestProcessInfoToRowWithRefCountProtection(t *testing.T) {
 	// the StmtCtx is frozen (simulating concurrent reset).
 	freezeOK := refCount.TryFreeze()
 	require.True(t, freezeOK)
-		rowFrozen := info.ToRow(time.UTC)
+	rowFrozen := info.ToRow(time.UTC)
 	require.NotNil(t, rowFrozen)
 	// When frozen, StmtCtx-dependent fields should be zero-valued.
 	// bytesConsumed (index 9 in the row: ToRowForShow has 8 items, then Digest, then bytesConsumed)
