@@ -87,8 +87,9 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 		require.True(t, hasEvaluatedScalarColumn, "brief explain should keep the legacy scalar subquery evaluation behavior: %v", planRows)
 
 		rows = testKit.MustQuery(`explain format = 'brief' select 1 from brief_t1 where a = (select 1 from brief_t1 t join brief_t2 where b <= 1 and t.a)`).Rows()
-		hasOuterTableDual, planRows := planContains(rows, "TableDual")
-		require.True(t, hasOuterTableDual, "brief explain should keep the legacy outer TableDual shape: %v", planRows)
+		planRows = testdata.ConvertRowsToStrings(rows)
+		require.GreaterOrEqual(t, len(planRows), 2)
+		require.Contains(t, planRows[1], "TableDual", "brief explain should keep the legacy outer TableDual shape: %v", planRows)
 
 		testKit.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=0")
 		testKit.Session().GetSessionVars().RewritePhaseInfo.Reset()
