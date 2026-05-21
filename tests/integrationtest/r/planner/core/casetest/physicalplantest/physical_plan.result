@@ -3504,12 +3504,12 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__
 │         └─TableFullScan	cop[tikv]	table:td	keep order:false, stats:pseudo
 └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
   ├─Selection(Build)	root		gt(Column, 100)
-  │ └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tc.name)->planner__core__casetest__physicalplantest__physical_plan.tc.name
-  │   └─IndexLookUp	root		
-  │     ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
-  │     │ └─IndexRangeScan	cop[tikv]	table:tc, index:idx_tc_name(name)	range:["chad99","chad9:"), keep order:false, stats:pseudo
-  │     └─HashAgg(Probe)	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column
-  │       └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
+  │ └─StreamAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tc.name)->planner__core__casetest__physicalplantest__physical_plan.tc.name
+  │   └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.tc.id, planner__core__casetest__physicalplantest__physical_plan.tc.name
+  │     └─IndexLookUp	root		
+  │       ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
+  │       │ └─IndexRangeScan	cop[tikv]	table:tc, index:idx_tc_name(name)	range:["chad99","chad9:"), keep order:true, stats:pseudo
+  │       └─TableRowIDScan(Probe)	cop[tikv]	table:tc	keep order:false, stats:pseudo
   └─HashJoin(Probe)	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)]
     ├─TableReader(Build)	root		data:Selection
     │ └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.code))
@@ -3656,7 +3656,7 @@ HashAgg	root		funcs:count(1)->Column
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(distinct 1) from t -- shouldn't be rewritten;
 id	task	access object	operator info
-HashAgg	root		funcs:count(distinct 1)->Column
+StreamAgg	root		funcs:count(distinct 1)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(1), count(a), count(b) from t -- shouldn't be rewritten;

@@ -750,7 +750,7 @@ const (
 			index_name != 'PRIMARY'
 		GROUP BY table_schema, table_name, index_name
 		HAVING
-			sum(last_access_time) is null;`
+			count(last_access_time) = 0;`
 
 	// CreateIndexAdvisorResultsTable is a table to store the index advisor results.
 	CreateIndexAdvisorResultsTable = `CREATE TABLE IF NOT EXISTS mysql.index_advisor_results (

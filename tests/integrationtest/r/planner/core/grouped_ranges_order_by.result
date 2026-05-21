@@ -1423,7 +1423,7 @@ id	estRows	task	access object	operator info
 Apply	10000.00	root		CARTESIAN left outer join, left side:IndexReader
 ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
 │ └─IndexFullScan	10000.00	cop[tikv]	table:o, index:idx_k(k)	keep order:true, stats:pseudo
-└─MaxOneRow(Probe)	10000.00	root
+└─MaxOneRow(Probe)	10000.00	root		
   └─Projection	10000.00	root		planner__core__grouped_ranges_order_by.t_im_in.id
     └─IndexMerge	10000.00	root		type: union, limit embedded(offset:0, count:1)
       ├─Limit(Build)	1656.41	cop[tikv]		offset:0, count:1

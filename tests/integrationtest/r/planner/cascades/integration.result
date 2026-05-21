@@ -237,9 +237,9 @@ id	task	access object	operator info
 Projection	root		planner__cascades__integration.t.b, Column
 └─Sort	root		planner__cascades__integration.t.b
   └─Selection	root		gt(Column, 1)
-    └─HashAgg	root		group by:Column, funcs:avg(Column)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__cascades__integration.t.b
-      └─Projection	root		cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column, cast(planner__cascades__integration.t.a, decimal(10,0) BINARY)->Column, planner__cascades__integration.t.b->Column
-        └─TableReader	root		data:TableFullScan
+    └─HashAgg	root		group by:planner__cascades__integration.t.b, funcs:avg(Column, Column)->Column, funcs:sum(Column)->Column, funcs:firstrow(planner__cascades__integration.t.b)->planner__cascades__integration.t.b
+      └─TableReader	root		data:HashAgg
+        └─HashAgg	cop[tikv]		group by:planner__cascades__integration.t.b, funcs:count(planner__cascades__integration.t.a)->Column, funcs:sum(planner__cascades__integration.t.a)->Column, funcs:sum(planner__cascades__integration.t.a)->Column
           └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select b, avg(a) from t group by b having sum(a) > 1 order by b;
 b	avg(a)
@@ -422,7 +422,7 @@ count(case when a <= 0 or a > 1000 then null else b end)
 4
 explain format="plan_tree" select count(distinct case when a > 0 and a <= 1000 then b end) from t;
 id	task	access object	operator info
-HashAgg	root		funcs:count(distinct Column)->Column
+StreamAgg	root		funcs:count(distinct Column)->Column
 └─Projection	root		case(and(gt(planner__cascades__integration.t.a, 0), le(planner__cascades__integration.t.a, 1000)), planner__cascades__integration.t.b)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
