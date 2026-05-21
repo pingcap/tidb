@@ -1897,7 +1897,7 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseDatumBinaryCompare(t *testing.T)
 
 func TestMViewDeltaMergeAggRuntimeStatsString(t *testing.T) {
 	stats := newMergeRuntimeStats(3)
-	stats.fillFromPipelineStats(&mergePipelineStats{
+	stats.copyFrom(&mergeRuntimeStats{
 		readerTime:      15 * time.Millisecond,
 		writerTime:      8 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 0},
@@ -1917,7 +1917,7 @@ func TestMViewDeltaMergeAggRuntimeStatsString(t *testing.T) {
 
 func TestMViewDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 	left := newMergeRuntimeStats(2)
-	left.fillFromPipelineStats(&mergePipelineStats{
+	left.copyFrom(&mergeRuntimeStats{
 		readerTime:      3 * time.Millisecond,
 		writerTime:      4 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{5 * time.Millisecond, 7 * time.Millisecond},
@@ -1930,7 +1930,7 @@ func TestMViewDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
 		},
 	})
 	right := newMergeRuntimeStats(3)
-	right.fillFromPipelineStats(&mergePipelineStats{
+	right.copyFrom(&mergeRuntimeStats{
 		readerTime:      2 * time.Millisecond,
 		writerTime:      1 * time.Millisecond,
 		mergeWorkerTime: []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond},

@@ -334,14 +334,14 @@ const (
 )
 
 func prepareMinMaxRecomputeRows(workerData *mergeWorkerData, mappingIdx int) ([]int, error) {
-	if mappingIdx < 0 || mappingIdx >= len(workerData.minMaxRecomputeRowsByMapping) {
-		return nil, errors.Errorf("min/max mapping idx %d out of recompute slice range [0,%d)", mappingIdx, len(workerData.minMaxRecomputeRowsByMapping))
+	if mappingIdx < 0 || mappingIdx >= len(workerData.minMaxMappingIdxToRows) {
+		return nil, errors.Errorf("min/max mapping idx %d out of recompute slice range [0,%d)", mappingIdx, len(workerData.minMaxMappingIdxToRows))
 	}
-	return workerData.minMaxRecomputeRowsByMapping[mappingIdx], nil
+	return workerData.minMaxMappingIdxToRows[mappingIdx], nil
 }
 
 func storeMinMaxRecomputeRows(workerData *mergeWorkerData, mappingIdx int, rows []int) {
-	workerData.minMaxRecomputeRowsByMapping[mappingIdx] = rows
+	workerData.minMaxMappingIdxToRows[mappingIdx] = rows
 }
 
 func cmpFloat32(a, b float32) int {
