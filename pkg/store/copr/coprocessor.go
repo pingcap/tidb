@@ -231,7 +231,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		runawayChecker:   req.RunawayChecker,
 		maxKeysRead:      req.MaxKeysRead,
 		keysRead:         pickKeysReadCounter(req),
-		ema:              newRUEMA(),
+		predictor:        newRUPagePredictor(),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -1032,8 +1032,8 @@ type copIterator struct {
 	maxKeysRead uint64          // global limit from kv.Request (0 = unlimited)
 	keysRead    *atomic2.Uint64 // cumulative storage engine keys read across all completed tasks; may be shared across copIterators in the same statement
 
-	// One EMA per copIterator (logical scan), shared across workers.
-	ema *ruEMA
+	// One predictor per copIterator (logical scan), shared across workers.
+	predictor *ruPagePredictor
 }
 
 // pickKeysReadCounter returns the counter used by a copIterator for cumulative
@@ -1081,7 +1081,7 @@ type copIteratorWorker struct {
 	maxKeysRead uint64          // global limit (0 = unlimited)
 	keysRead    *atomic2.Uint64 // shared with copIterator for cumulative tracking
 
-	ema *ruEMA
+	predictor *ruPagePredictor
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1278,7 +1278,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		stats:                   it.stats,
 		maxKeysRead:             it.maxKeysRead,
 		keysRead:                it.keysRead,
-		ema:                     it.ema,
+		predictor:               it.predictor,
 	}
 }
 
@@ -1779,7 +1779,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	req.PredictedReadBytes = worker.ema.Predict()
+	req.PredictedReadBytes = worker.predictor.Predict(task.pagingSize)
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1967,9 +1967,8 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		return result, nil
 	}
 
-	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
-		worker.ema.Observe(readBytes, time.Now())
-	}
+	readBytes := pagingResponseReadBytes(resp.pbResp)
+	worker.predictor.Observe(task.pagingSize, readBytes, pagingRange == nil, time.Now())
 
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
