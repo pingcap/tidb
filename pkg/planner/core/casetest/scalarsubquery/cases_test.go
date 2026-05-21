@@ -17,6 +17,7 @@ package scalarsubquery
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -45,7 +46,19 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 		testKit.MustExec("create table t1(a int, b int, c int)")
 		testKit.MustExec("create table t2(a int, b int, c int)")
 		testKit.MustExec("create table t3(a varchar(5), b varchar(5), c varchar(5))")
-		testKit.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")
+		testKit.MustQuery("select @@tidb_opt_enable_non_eval_scalar_subquery").Check(testkit.Rows("1"))
+
+		testKit.Session().GetSessionVars().RewritePhaseInfo.Reset()
+		rows := testKit.MustQuery("explain format = 'plan_tree' select * from t1 where a = (select sleep(0.3))").Rows()
+		require.Equal(t, 0, testKit.Session().GetSessionVars().RewritePhaseInfo.PreprocessSubQueries)
+		var hasScalarSubQuery, hasSleepFunc bool
+		planRows := testdata.ConvertRowsToStrings(rows)
+		for _, row := range planRows {
+			hasScalarSubQuery = hasScalarSubQuery || strings.Contains(row, "ScalarSubQuery")
+			hasSleepFunc = hasSleepFunc || strings.Contains(row, "sleep(0.3)")
+		}
+		require.True(t, hasScalarSubQuery, "plan should keep the scalar subquery visible: %v", planRows)
+		require.True(t, hasSleepFunc, "plan should keep sleep(0.3) visible: %v", planRows)
 
 		cutExecutionInfoFromExplainAnalyzeOutput := func(rows [][]any) [][]any {
 			// The columns are id, estRows, actRows, task type, access object, execution info, operator info, memory, disk
