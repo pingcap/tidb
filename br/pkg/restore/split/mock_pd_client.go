@@ -18,10 +18,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
@@ -170,6 +172,10 @@ func (c *TestClient) WaitRegionsScattered(context.Context, []*RegionInfo) (int, 
 	return 0, nil
 }
 
+func (*TestClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
+}
+
 // MockPDClientForSplit is a mock PD client for testing split and scatter.
 type MockPDClientForSplit struct {
 	pd.Client
@@ -213,6 +219,10 @@ func NewMockPDClientForSplit() *MockPDClientForSplit {
 
 func newRegionNotFullyReplicatedErr(regionID uint64) error {
 	return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionID)
+}
+
+func (c *MockPDClientForSplit) WithCallerComponent(_ caller.Component) pd.Client {
+	return c
 }
 
 func (c *MockPDClientForSplit) SetRegions(boundaries [][]byte) []*metapb.Region {
@@ -556,6 +566,10 @@ func (fpdc *FakePDClient) SetRegions(regions []*router.Region) {
 	fpdc.regions = regions
 }
 
+func (fpdc *FakePDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return fpdc
+}
+
 func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return slices.Clone(fpdc.stores), nil
 }
@@ -674,4 +688,8 @@ func (f *FakeSplitClient) ScanRegions(
 
 func (f *FakeSplitClient) WaitRegionsScattered(context.Context, []*RegionInfo) (int, error) {
 	return 0, nil
+}
+
+func (*FakeSplitClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }

@@ -917,6 +917,19 @@ func TestDMLStmt(t *testing.T) {
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
 		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c:=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
 
+		// for RETURNING clause
+		{"INSERT INTO t (a) VALUES (1) RETURNING *", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING *"},
+		{"INSERT INTO t (a) VALUES (1) RETURNING id", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING `id`"},
+		{"INSERT INTO t (a) VALUES (1) RETURNING id, name", true, "INSERT INTO `t` (`a`) VALUES (1) RETURNING `id`, `name`"},
+		{"INSERT INTO t2(id,animal) VALUES (1,'Dog'),(2,'Lion'),(3,'Tiger'),(4,'Leopard') RETURNING id,id+id,id&id,id||id", true, "INSERT INTO `t2` (`id`,`animal`) VALUES (1,_UTF8MB4'Dog'),(2,_UTF8MB4'Lion'),(3,_UTF8MB4'Tiger'),(4,_UTF8MB4'Leopard') RETURNING `id`, `id`+`id`, `id`&`id`, `id` OR `id`"},
+		{"INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a=2 RETURNING id", true, "INSERT INTO `t` (`a`) VALUES (1) ON DUPLICATE KEY UPDATE `a`=2 RETURNING `id`"},
+		{"UPDATE t SET a=1 RETURNING *", true, "UPDATE `t` SET `a`=1 RETURNING *"},
+		{"UPDATE t SET a=1 WHERE id=1 RETURNING id, a", true, "UPDATE `t` SET `a`=1 WHERE `id`=1 RETURNING `id`, `a`"},
+		{"UPDATE t SET a=1 LIMIT 1 RETURNING *", true, "UPDATE `t` SET `a`=1 LIMIT 1 RETURNING *"},
+		{"DELETE FROM t RETURNING *", true, "DELETE FROM `t` RETURNING *"},
+		{"DELETE FROM t WHERE id=1 RETURNING id", true, "DELETE FROM `t` WHERE `id`=1 RETURNING `id`"},
+		{"DELETE FROM t ORDER BY id LIMIT 1 RETURNING *", true, "DELETE FROM `t` ORDER BY `id` LIMIT 1 RETURNING *"},
+
 		// for insert ... set
 		{"INSERT INTO t SET a=1,b=2", true, "INSERT INTO `t` SET `a`=1,`b`=2"},
 		{"INSERT INTO t (a) SET a=1", false, ""},
@@ -4372,6 +4385,55 @@ func TestErrorMsg(t *testing.T) {
 
 	_, _, err = p.Parse("select 1 collate some_unknown_collation", "", "")
 	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'some_unknown_collation'")
+}
+
+func TestGroupConcatSeparatorCharsetCollation(t *testing.T) {
+	p := parser.New()
+	testCases := []struct {
+		sql     string
+		charset string
+		collate string
+		sep     string
+	}{
+		{
+			sql:     "select group_concat('x')",
+			charset: charset.CharsetLatin1,
+			collate: charset.CollationLatin1,
+			sep:     ",",
+		},
+		{
+			sql:     "select group_concat('x' separator ';')",
+			charset: charset.CharsetLatin1,
+			collate: charset.CollationLatin1,
+			sep:     ";",
+		},
+		{
+			sql:     "select group_concat('x')",
+			charset: mysql.DefaultCharset,
+			collate: mysql.DefaultCollationName,
+			sep:     ",",
+		},
+	}
+
+	for _, tc := range testCases {
+		stmt, err := p.ParseOneStmt(tc.sql, tc.charset, tc.collate)
+		require.NoError(t, err)
+
+		sel, ok := stmt.(*ast.SelectStmt)
+		require.True(t, ok)
+		require.Len(t, sel.Fields.Fields, 1)
+
+		agg, ok := sel.Fields.Fields[0].Expr.(*ast.AggregateFuncExpr)
+		require.True(t, ok)
+		require.Equal(t, ast.AggFuncGroupConcat, agg.F)
+		require.GreaterOrEqual(t, len(agg.Args), 2)
+
+		separator, ok := agg.Args[len(agg.Args)-1].(ast.ValueExpr)
+		require.True(t, ok)
+		require.Equal(t, tc.sep, separator.GetString())
+		require.Equal(t, tc.charset, separator.GetType().GetCharset())
+		require.Equal(t, tc.collate, separator.GetType().GetCollate())
+	}
 }
 
 func TestOptimizerHints(t *testing.T) {

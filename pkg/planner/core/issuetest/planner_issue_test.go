@@ -205,6 +205,20 @@ ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 			"<nil> Bob <nil> <nil>"))
 	}
 
+	// issue-66322-nullif-type-leak
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t_nullif (c6 mediumtext null, c10 enum('value1','value2','value3') null, c14 float(8,2) null, c15 double(12,4) null)")
+		tk.MustExec("insert into t_nullif values ('sample_jNu', 'value3', 43.51, 49.92)")
+		tk.MustQuery("select nullif(nullif(c10, c15), c15) from t_nullif").Check(testkit.Rows("value3"))
+		tk.MustQuery("select c6 as v from t_nullif union all select nullif(nullif(c10, c15), c15) from t_nullif").Sort().Check(testkit.Rows("sample_jNu", "value3"))
+		tk.MustQuery("with cte_995 as (select (select s164.c10 as subq_col from t_nullif as s164 order by s164.c10 asc limit 1) as col_1, nullif(nullif(pft41.c10, pft41.c15), pft41.c15) as col_3 from t_nullif as pft41) (select distinct variance(car26.c14) as col_1, car26.c6 as c6 from t_nullif as car26 group by car26.c6) union all select ueb82.col_1 as col_1, ueb82.col_3 as col_5 from cte_995 as ueb82").Sort().Check(testkit.Rows("0 sample_jNu", "value3 value3"))
+		tk.MustExec("create table t_nullif_plan (u bigint unsigned not null)")
+		// The returned value branch should keep the original NULLIF argument type, not the comparison type.
+		plan := tk.MustQuery("explain format = 'plan_tree' select nullif(u, 1) from t_nullif_plan").String()
+		require.NotContains(t, plan, "cast(test.t_nullif_plan.u")
+	}
+
 	// update-join-covering-index
 	{
 		tk := prepareSharedTestKit(t)
@@ -858,6 +872,18 @@ ORDER BY field1`).Check(testkit.Rows())
 		tk.MustExec("rollback")
 	}
 
+	// issue-64854-in-subquery-inside-not-in-list
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t0(c1 float8, c2 double, unique(c2, c1))")
+
+		tk.MustQuery(`select /* issue:64854 */ t0.c1 as ca1, t0.c1 as ca2, t0.c2 as ca3
+			from t0
+			where ((t0.c2) in (select t0.c1 as ca4 from t0)) not in
+				(((t0.c1 is false)),
+				((((binary (null ^ true)) not regexp ((binary bit_length((default(t0.c2))) >> 17))) is not true)))`).Check(testkit.Rows())
+	})
+
 	// issue-67802-mutable-user-var-join-cond-should-not-become-inner-side-filter
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		resetTestDB(t, tk)
@@ -891,6 +917,35 @@ ORDER BY t1.a, t2.a, t3.a, var`
 			"9 <nil> <nil> 6",
 			"10 <nil> <nil> 6",
 		))
+	})
+
+	// constant-left-nulleq-partition-pruning
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t_range(a int) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+		tk.MustExec("insert into t_range values (1), (11), (null)")
+		tk.MustQuery("select /* issue:65991 */ a from t_range where 1 <=> a").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:65991 */ a from t_range where null <=> a").Check(testkit.Rows("<nil>"))
+
+		tk.MustExec("create table t_range_cols(a int) partition by range columns(a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+		tk.MustExec("insert into t_range_cols values (1), (11), (null)")
+		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where 1 <=> a").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where null <=> a").Check(testkit.Rows("<nil>"))
+	})
+
+	// issue-66706-decimal-scale-leak-through-sign-view-predicate
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("CREATE TABLE t0(c0 NUMERIC)")
+		tk.MustExec("CREATE TABLE t1 LIKE t0")
+		tk.MustExec("REPLACE INTO t0 VALUES (-1780864408)")
+		tk.MustExec("INSERT INTO t1 VALUES (1448472626)")
+		tk.MustExec("CREATE OR REPLACE VIEW v0(c0) AS SELECT 0.99 FROM t1, t0")
+
+		tk.MustQuery("SELECT /* issue:66706 */ v0.c0 FROM v0 WHERE SIGN(v0.c0)").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
 }
 

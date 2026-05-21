@@ -1803,7 +1803,10 @@ func (cli *TestServerClient) RunTestExplainForConn(t *testing.T) {
 		err := rows.Scan(&connID)
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
-		dbt.MustQuery("select * from t where a=1")
+		// Seed the statement inspected by EXPLAIN FOR CONNECTION, then close rows so
+		// database/sql releases the connection.
+		rows = dbt.MustQuery("select * from t where a=1")
+		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("explain for connection " + strconv.Itoa(int(connID)))
 		require.True(t, rows.Next())
 		row := make([]string, 9)

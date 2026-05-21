@@ -80,3 +80,7 @@ var
 # Personal config files
 /*config.toml
 .cache
+
+# Claude Code runtime state (per-user, not part of repo)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json

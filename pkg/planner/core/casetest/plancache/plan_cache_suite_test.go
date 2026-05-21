@@ -405,7 +405,7 @@ func runPreparedPlanCacheRedactExplain(t *testing.T, tk *testkit.TestKit) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_9 37.46 root  inner join, inner:IndexLookUp_28, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_28, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
 		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
 		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
 		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -494,7 +494,7 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
 			{"Projection_9"},
-			{"└─HashJoin_23"},
+			{"└─HashJoin_11"},
 			{"  ├─IndexReader_25(Build)"},
 			{"  │ └─IndexRangeScan_24"}, // RangeScan instead of FullScan
 			{"  └─TableReader_31(Probe)"},

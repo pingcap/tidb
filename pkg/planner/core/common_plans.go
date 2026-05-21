@@ -789,6 +789,19 @@ func (e *Explain) renderResultForExplore() error {
 	return nil
 }
 
+func (e *Explain) shouldDecodeBriefBinaryPlan() bool {
+	if e.BriefBinaryPlan == "" {
+		return false
+	}
+	if e.RuntimeStatsColl == nil {
+		return true
+	}
+	// Prepared Execute plans can keep ParamMarker or DeferredExpr nodes whose values
+	// belong to the original execution context, so live rendering may evaluate missing params.
+	_, isExecute := e.TargetPlan.(*Execute)
+	return isExecute
+}
+
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
 	if e.Explore {
@@ -838,8 +851,9 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-	// For explain for connection, we can directly decode the binary plan to get the explain rows.
-	if e.BriefBinaryPlan != "" {
+	// EXPLAIN FOR CONNECTION should prefer the live runtime stats collector because
+	// BriefBinaryPlan is only a snapshot taken when ProcessInfo was recorded.
+	if e.shouldDecodeBriefBinaryPlan() {
 		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
 			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
 		}
