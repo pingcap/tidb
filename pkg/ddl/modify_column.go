@@ -631,6 +631,11 @@ func buildMaterializedViewRelatedTableInfoForModifyColumn(
 			)
 		}
 		if len(usage.directOutputOffsets) == 0 {
+			if usage.isGroupKey {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+					"MODIFY COLUMN on base table with materialized view dependencies does not support modifying columns used only as group keys",
+				)
+			}
 			continue
 		}
 		if mvSel.Fields == nil || len(mvTblInfo.Columns) != len(mvSel.Fields.Fields) {
@@ -2120,6 +2125,11 @@ func validateMaterializedViewBaseModifyColumn(
 			)
 		}
 		if len(usage.directOutputOffsets) == 0 {
+			if usage.isGroupKey {
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+					fmt.Sprintf("%s on base table with materialized view dependencies does not support modifying columns used only as group keys", op),
+				)
+			}
 			// Column not referenced by MV definition at all.
 			continue
 		}

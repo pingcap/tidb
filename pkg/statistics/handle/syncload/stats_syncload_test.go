@@ -415,6 +415,9 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	// This test relies on stats sync-load to finish to validate column load state.
+	// In CI, the default (100ms) can be too short and lead to pseudo stats fallback.
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 60000")
 	tk.MustExec("create table t(a int, b int, c int, primary key(a))")
 	h := dom.StatsHandle()
 	// Skip create table event.
@@ -452,9 +455,15 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
 	statsTbl, ok = h.Get(tblInfo.ID)
 	require.True(t, ok)
-	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
-	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
-	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
+	colA := statsTbl.GetCol(tblInfo.Columns[0].ID)
+	require.NotNil(t, colA)
+	require.True(t, colA.IsFullLoad())
+	colB := statsTbl.GetCol(tblInfo.Columns[1].ID)
+	require.NotNil(t, colB)
+	require.True(t, colB.IsFullLoad())
+	colD := statsTbl.GetCol(tblInfo.Columns[3].ID)
+	require.NotNil(t, colD)
+	require.True(t, colD.IsFullLoad())
 	require.Nil(t, statsTbl.GetCol(tblInfo.Columns[2].ID))
 	_, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(tblInfo.Columns[2].ID, false)
 	// After the sync load. The column without any thing in storage should not be marked as loadNeeded any more.
@@ -468,9 +477,15 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	statsTbl, ok = h.Get(tblInfo.ID)
 	require.True(t, ok)
 	// a, b, d's status is not changed.
-	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
-	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
-	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
+	colA = statsTbl.GetCol(tblInfo.Columns[0].ID)
+	require.NotNil(t, colA)
+	require.True(t, colA.IsFullLoad())
+	colB = statsTbl.GetCol(tblInfo.Columns[1].ID)
+	require.NotNil(t, colB)
+	require.True(t, colB.IsFullLoad())
+	colD = statsTbl.GetCol(tblInfo.Columns[3].ID)
+	require.NotNil(t, colD)
+	require.True(t, colD.IsFullLoad())
 	// c's stats is loaded.
 	_, loadNeeded, analyzed = statsTbl.ColumnIsLoadNeeded(tblInfo.Columns[2].ID, false)
 	require.False(t, loadNeeded)

@@ -109,7 +109,7 @@ func TestRefreshMaterializedViewDoesNotMarkDDLExecution(t *testing.T) {
 	require.NotNil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 
 	tk.MustExec("insert into t_mv_flag values (1, 5)")
-	tk.MustExec("refresh materialized view mv_flag complete")
+	tk.MustExec("refresh materialized view mv_flag complete delta apply")
 	require.Nil(t, tk.Session().Value(sessionctx.LastExecuteDDL))
 }
 

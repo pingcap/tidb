@@ -4,13 +4,13 @@ insert into t_mv_txn_66385 values (1, 10), (1, 5), (2, 7);
 create materialized view log on t_mv_txn_66385 (a, b) purge next date_add(now(), interval 1 hour);
 create materialized view mv_txn_66385 (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
 select a, sum(b), count(1) from t_mv_txn_66385 group by a;
-refresh materialized view mv_txn_66385 with async mode complete;
+refresh materialized view mv_txn_66385 with async mode complete delta apply;
 Error 1105 (HY000): refresh materialized view: WITH ASYNC MODE is not supported yet
 begin;
-refresh materialized view mv_txn_66385 complete;
+refresh materialized view mv_txn_66385 complete delta apply;
 Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
 rollback;
-prepare stmt from "refresh materialized view mv_txn_66385 complete";
+prepare stmt from "refresh materialized view mv_txn_66385 complete delta apply";
 begin;
 execute stmt;
 Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
@@ -20,7 +20,7 @@ set autocommit = 0;
 select @@tidb_current_ts = 0;
 @@tidb_current_ts = 0
 1
-refresh materialized view mv_txn_66385 complete;
+refresh materialized view mv_txn_66385 complete delta apply;
 select @@tidb_current_ts = 0;
 @@tidb_current_ts = 0
 1
@@ -28,7 +28,7 @@ insert into t_mv_txn_66385 values (3, 4);
 select @@tidb_current_ts > 0;
 @@tidb_current_ts > 0
 1
-refresh materialized view mv_txn_66385 complete;
+refresh materialized view mv_txn_66385 complete delta apply;
 Error 1105 (HY000): cannot run REFRESH MATERIALIZED VIEW in explicit transaction
 rollback;
 set autocommit = 1;

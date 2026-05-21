@@ -1231,6 +1231,14 @@ func (do *Domain) Close() {
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())
 	}
+	// Close stats owner before closing sysSessionPool to avoid leaking background goroutines
+	// (e.g. DDL notifier) when stats initialization doesn't complete before exiting.
+	if do.statsOwner != nil {
+		do.statsOwner.Close()
+	}
+	if do.ddlNotifier != nil {
+		do.ddlNotifier.Stop()
+	}
 	if do.info != nil {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
