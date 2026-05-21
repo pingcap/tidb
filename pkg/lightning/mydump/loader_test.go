@@ -292,7 +292,7 @@ func TestDataNoHostTable(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestViewWithoutHostDBSchema(t *testing.T) {
+func TestViewNoHostDB(t *testing.T) {
 	/*
 		Path/
 			notdb-schema-create.sql
@@ -330,7 +330,7 @@ func TestViewWithoutHostDBSchema(t *testing.T) {
 	}, mdl.GetDatabases())
 }
 
-func TestViewWithoutHostTableSchema(t *testing.T) {
+func TestViewNoHostTable(t *testing.T) {
 	/*
 		Path/
 			db-schema-create.sql
