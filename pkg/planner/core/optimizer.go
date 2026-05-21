@@ -71,7 +71,11 @@ var OptimizeAstNodeNoCache func(ctx context.Context, sctx sessionctx.Context, no
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = atomic.NewBool(true)
 
-const initialMaxCores uint64 = 10000
+const (
+	initialMaxCores uint64 = 10000
+
+	partitionProcessorStaticPruneBlacklistWarning = "partition_processor in mysql.opt_rule_blacklist is ignored because static partition pruning requires it for correctness"
+)
 
 var (
 	// the old ref of optRuleList for downgrading to old optimizing routine.
@@ -1042,12 +1046,20 @@ func isLogicalRuleDisabled(r base.LogicalOptRule, logic base.LogicalPlan) bool {
 	if _, ok := r.(*rule.PartitionProcessor); ok && !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		// Static pruning needs PartitionProcessor to rewrite logical partition scans
 		// into concrete partition scans; skipping it can make partition data invisible.
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
-			"partition_processor in mysql.opt_rule_blacklist is ignored because static partition pruning requires it for correctness",
-		))
+		appendPartitionProcessorStaticPruneBlacklistWarning(logic)
 		return false
 	}
 	return true
+}
+
+func appendPartitionProcessorStaticPruneBlacklistWarning(logic base.LogicalPlan) {
+	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
+	for _, warn := range stmtCtx.GetWarnings() {
+		if warn.Err != nil && warn.Err.Error() == partitionProcessorStaticPruneBlacklistWarning {
+			return
+		}
+	}
+	stmtCtx.AppendWarning(errors.NewNoStackError(partitionProcessorStaticPruneBlacklistWarning))
 }
 
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
