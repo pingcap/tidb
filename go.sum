@@ -802,8 +802,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20260420090212-754a707563bd h1:/YCt5BQYvPbp5QtVVTR6Z35uL0CoCEV3HP+ezXsl+xs=
-github.com/tikv/client-go/v2 v2.0.8-0.20260420090212-754a707563bd/go.mod h1:U3yIqdfS7ONRA+1Ospy0lujvkii1xi9mZAzLprFIMac=
 github.com/tikv/client-go/v2 v2.0.8-0.20260521074709-0df8691a666e h1:eXsf70YFSZGL+vg/N8lVM8gr6u87nsuGJvu9nuc04GI=
 github.com/tikv/client-go/v2 v2.0.8-0.20260521074709-0df8691a666e/go.mod h1:U3yIqdfS7ONRA+1Ospy0lujvkii1xi9mZAzLprFIMac=
 github.com/tikv/pd/client v0.0.0-20260310072508-b936d55fc33e h1:QZZVH1lvNLCb3VndhRhW1dPFe9GITjJuNqOoFP0JeTw=
