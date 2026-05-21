@@ -139,7 +139,12 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
 	var memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes any
-	if pi.StmtCtx != nil {
+	var affectedRows any
+
+	// Use RefCountOfStmtCtx to protect concurrent access to StmtCtx.
+	// The session goroutine may reset the StatementContext via InitStatementContext()
+	// while this function reads from it. Without this protection, a data race occurs.
+	if pi.StmtCtx != nil && pi.RefCountOfStmtCtx != nil && pi.RefCountOfStmtCtx.TryIncrease() {
 		if pi.MemTracker != nil {
 			bytesConsumed = pi.MemTracker.BytesConsumed()
 		}
@@ -153,13 +158,11 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 		if pi.DiskTracker != nil {
 			diskConsumed = pi.DiskTracker.BytesConsumed()
 		}
+		affectedRows = pi.StmtCtx.AffectedRows()
+		pi.RefCountOfStmtCtx.Decrease()
 	}
 
-	var affectedRows any
 	var cpuUsages ppcpuusage.CPUUsages
-	if pi.StmtCtx != nil {
-		affectedRows = pi.StmtCtx.AffectedRows()
-	}
 	if pi.SQLCPUUsage != nil {
 		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
 	}

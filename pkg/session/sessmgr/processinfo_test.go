@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -61,7 +62,60 @@ func TestProcessInfoShallowCP(t *testing.T) {
 	fmt.Println(reflect.ValueOf(cp.StatsInfo).Pointer(), reflect.ValueOf(info.StatsInfo).Pointer())
 	require.True(t, cp.StmtCtx == info.StmtCtx)
 	require.True(t, cp.RefCountOfStmtCtx == info.RefCountOfStmtCtx)
-	require.True(t, cp.MemTracker == info.MemTracker)
+		require.True(t, cp.MemTracker == info.MemTracker)
 	require.True(t, cp.RedactSQL == info.RedactSQL)
 	require.True(t, cp.SessionAlias == info.SessionAlias)
+}
+
+func TestProcessInfoToRowWithRefCountProtection(t *testing.T) {
+	mem := memory.NewTracker(-1, -1)
+	mem.Consume(1 << 30)
+
+	sc := stmtctx.NewStmtCtx()
+
+	var refCount stmtctx.ReferenceCount = 0
+	info := &ProcessInfo{
+		ID:                233,
+		User:              "PingCAP",
+		Host:              "127.0.0.1",
+		DB:                "Database",
+		Info:              "select * from table",
+		CurTxnStartTS:     23333,
+		StatsInfo:         MyFunc,
+		StmtCtx:           sc,
+		RefCountOfStmtCtx: &refCount,
+		MemTracker:        mem,
+		RedactSQL:         "",
+		SessionAlias:      "",
+	}
+
+	// ToRow should work normally when RefCountOfStmtCtx allows access.
+	row := info.ToRow(time.UTC)
+	require.NotNil(t, row)
+
+	// ToRow should return gracefully (with zero-valued StmtCtx fields) when
+	// the StmtCtx is frozen (simulating concurrent reset).
+	freezeOK := refCount.TryFreeze()
+	require.True(t, freezeOK)
+		rowFrozen := info.ToRow(time.UTC)
+	require.NotNil(t, rowFrozen)
+	// When frozen, StmtCtx-dependent fields should be zero-valued.
+	// bytesConsumed (index 9 in the row: ToRowForShow has 8 items, then Digest, then bytesConsumed)
+	require.Equal(t, int64(0), rowFrozen[9])
+	refCount.UnFreeze()
+
+	// ToRow with nil RefCountOfStmtCtx should still work (backward compatible).
+	info2 := &ProcessInfo{
+		ID:                234,
+		User:              "PingCAP",
+		Host:              "127.0.0.1",
+		DB:                "Database",
+		Info:              "select * from table",
+		StmtCtx:           sc,
+		RefCountOfStmtCtx: nil,
+		MemTracker:        mem,
+		StatsInfo:         MyFunc,
+	}
+	rowNilRef := info2.ToRow(time.UTC)
+	require.NotNil(t, rowNilRef)
 }
