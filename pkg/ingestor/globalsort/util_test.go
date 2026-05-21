@@ -375,6 +375,8 @@ func TestReadWriteJSON(t *testing.T) {
 func TestExternalMetaPath(t *testing.T) {
 	require.Equal(t, "1/plan/merge-sort/1/meta.json", PlanMetaPath(1, "merge-sort", 1))
 	require.Equal(t, "2/plan/ingest/3/meta.json", PlanMetaPath(2, "ingest", 3))
+	require.Equal(t, "1/plan/prepared/meta.json", PreparedMetaPath(1))
+	require.Equal(t, "2/plan/prepared/meta.json", PreparedMetaPath(2))
 
 	require.Equal(t, "1/1/meta.json", SubtaskMetaPath(1, 1))
 	require.Equal(t, "2/3/meta.json", SubtaskMetaPath(2, 3))

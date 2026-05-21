@@ -19,12 +19,10 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
-	"path"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -65,12 +63,10 @@ const (
 	// the target table, it's known to be slow to import in this case.
 	// the value if chosen as most tables have less than 32 indexes, we can adjust
 	// it later if needed.
-	warningIndexCount         = 32
-	registerTaskTTL           = 10 * time.Minute
-	refreshTaskTTLInterval    = 3 * time.Minute
-	registerTimeout           = 5 * time.Second
-	preparedChunkMapPathStep  = "prepare-chunk-map"
-	preparedChunkMapMetaIndex = 1
+	warningIndexCount      = 32
+	registerTaskTTL        = 10 * time.Minute
+	refreshTaskTTLInterval = 3 * time.Minute
+	registerTimeout        = 5 * time.Second
 )
 
 var (
@@ -304,18 +300,16 @@ func (sch *importScheduler) writePreparedChunkMap(
 		return "", err
 	}
 	defer store.Close()
-	externalPath := globalsort.PlanMetaPath(
-		taskID,
-		path.Join(preparedChunkMapPathStep, uuid.NewString()),
-		preparedChunkMapMetaIndex,
-	)
-	baseMeta := globalsort.BaseExternalMeta{ExternalPath: externalPath}
-	if err = baseMeta.WriteJSONToExternalStorage(ctx, store, PreparedChunkMapMeta{
+	preparedMeta := PreparedChunkMapMeta{
+		BaseExternalMeta: globalsort.BaseExternalMeta{
+			ExternalPath: globalsort.PreparedMetaPath(taskID),
+		},
 		ChunkMap: chunkMap,
-	}); err != nil {
+	}
+	if err = preparedMeta.WriteJSONToExternalStorage(ctx, store, preparedMeta); err != nil {
 		return "", err
 	}
-	return externalPath, nil
+	return preparedMeta.ExternalPath, nil
 }
 
 // OnPrepare implements scheduler.Extension.

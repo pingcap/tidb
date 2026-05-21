@@ -150,12 +150,12 @@ func TestToPhysicalPlan(t *testing.T) {
 		preparedChunkMap := map[int32][]importer.Chunk{
 			1: {{Path: "gs://test-load/2.csv"}},
 		}
-		externalPath := globalsort.PlanMetaPath(100, "prepare-chunk-map/mock-attempt", 1)
-		data, err := json.Marshal(PreparedChunkMapMeta{
-			ChunkMap: preparedChunkMap,
-		})
-		require.NoError(t, err)
-		require.NoError(t, store.WriteFile(context.Background(), externalPath, data))
+		externalPath := globalsort.PreparedMetaPath(100)
+		preparedMeta := PreparedChunkMapMeta{
+			BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
+			ChunkMap:         preparedChunkMap,
+		}
+		require.NoError(t, preparedMeta.WriteJSONToExternalStorage(context.Background(), store, preparedMeta))
 
 		specs, err := generateImportSpecs(planner.PlanCtx{Ctx: context.Background()}, &LogicalPlan{
 			Plan: importer.Plan{
@@ -183,7 +183,7 @@ func TestToPhysicalPlan(t *testing.T) {
 		preparedChunkMap := map[int32][]importer.Chunk{
 			1: {{Path: "gs://test-load/legacy.csv"}},
 		}
-		externalPath := globalsort.PlanMetaPath(101, "prepare-chunk-map/mock-attempt", 1)
+		externalPath := globalsort.PreparedMetaPath(101)
 		data, err := json.Marshal(preparedChunkMap)
 		require.NoError(t, err)
 		require.NoError(t, store.WriteFile(context.Background(), externalPath, data))

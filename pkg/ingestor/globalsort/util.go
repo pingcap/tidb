@@ -274,6 +274,11 @@ func PlanMetaPath(taskID int64, step string, idx int) string {
 	return path.Join(strconv.FormatInt(taskID, 10), "plan", step, strconv.Itoa(idx), metaName)
 }
 
+// PreparedMetaPath returns the path of the prepared meta file.
+func PreparedMetaPath(taskID int64) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "plan", "prepared", metaName)
+}
+
 // SubtaskMetaPath returns the path of the subtask meta file.
 func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
