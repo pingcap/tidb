@@ -734,6 +734,9 @@ func (ds *DataSource) chooseTiCIIndex(
 	matchedIndexIsHinted := false
 
 	for _, path := range ds.AllPossibleAccessPaths {
+		if ds.isTiCIIndexIgnoredByHint(path.Index) {
+			continue
+		}
 		if !ds.isTiCIIndexPathCandidate(path, hasFTSFuncLocal, matchedIndexIsHinted) {
 			continue
 		}
@@ -755,6 +758,42 @@ func (ds *DataSource) chooseTiCIIndex(
 		}
 	}
 	return matchedIdx, matchedExprSetForChosenIndex, hasUnmatchedFTSOverAllIdx
+}
+
+func (ds *DataSource) isTiCIIndexIgnoredByHint(index *model.IndexInfo) bool {
+	if index == nil || !index.IsTiCIIndex() {
+		return false
+	}
+	for _, hint := range ds.AstIndexHints {
+		if isIgnoredByIndexHint(index, hint) {
+			return true
+		}
+	}
+	tblName := ds.TableInfo.Name
+	if ds.TableAsName != nil && ds.TableAsName.L != "" {
+		tblName = *ds.TableAsName
+	}
+	for _, hintedIdx := range ds.IndexHints {
+		if !hintedIdx.Match(ds.DBName, tblName) {
+			continue
+		}
+		if isIgnoredByIndexHint(index, hintedIdx.IndexHint) {
+			return true
+		}
+	}
+	return false
+}
+
+func isIgnoredByIndexHint(index *model.IndexInfo, hint *ast.IndexHint) bool {
+	if hint == nil || hint.HintScope != ast.HintForScan || hint.HintType != ast.HintIgnore {
+		return false
+	}
+	for _, idxName := range hint.IndexNames {
+		if idxName.L == index.Name.L {
+			return true
+		}
+	}
+	return false
 }
 
 func (ds *DataSource) isTiCIIndexPathCandidate(path *util.AccessPath, hasFTSFuncLocal bool, matchedIndexIsHinted bool) bool {
