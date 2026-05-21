@@ -1693,10 +1693,18 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	se, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
+	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
+	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+
 	// Pre-split regions based on total data volume across ALL files.
 	// On success the pipeline-level per-batch split is skipped to avoid
 	// redundant split+scatter work (see WrapLogFilesIterWithSplitHelper below).
-	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, g, mgr.GetStorage())
+	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, splitSize, splitKeys)
 	if preSplitErr != nil {
 		log.Warn("pre-split regions failed, continuing with per-batch splitting",
 			zap.Error(preSplitErr))
@@ -1711,14 +1719,6 @@ func restoreStream(
 	if err != nil {
 		return err
 	}
-
-	se, err := g.CreateSession(mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
-	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
 	// TODO: need keep the order of ssts for compatible of rewrite rules
 	// compacted ssts will set ts range for filter out irrelevant data

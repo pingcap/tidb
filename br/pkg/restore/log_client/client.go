@@ -1542,16 +1542,9 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 func (rc *LogClient) PreSplitRegions(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
-	g glue.Glue,
-	store kv.Storage,
+	splitSize uint64,
+	splitKeys int64,
 ) (bool, error) {
-	se, err := g.CreateSession(store)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	defer se.Close()
-	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("pre-split: get split threshold from tikv config",
 		zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
