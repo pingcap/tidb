@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -2642,7 +2643,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
 		if x.FnName.L == ast.ConnectionID {
 			sm := e.Ctx().GetSessionManager()
-			sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false, false)
+			killBySQLStmt(sm, e.Ctx().GetSessionVars().ConnectionID, s.Query, false)
 			return nil
 		}
 		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
@@ -2654,7 +2655,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			if sm == nil {
 				return nil
 			}
-			sm.Kill(s.ConnectionID, s.Query, false, false)
+			killBySQLStmt(sm, s.ConnectionID, s.Query, false)
 		} else {
 			err := errors.NewNoStackError("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
@@ -2669,7 +2670,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if e.IsFromRemote {
 		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.Ctx().GetSessionVars().SourceAddr.IP.String()))
-		sm.Kill(s.ConnectionID, s.Query, false, false)
+		killBySQLStmt(sm, s.ConnectionID, s.Query, true)
 		return nil
 	}
 
@@ -2695,10 +2696,21 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
-		sm.Kill(s.ConnectionID, s.Query, false, false)
+		killBySQLStmt(sm, s.ConnectionID, s.Query, false)
 	}
 
 	return nil
+}
+
+func killBySQLStmt(sm sessmgr.Manager, connectionID uint64, query bool, fromRemote bool) {
+	normalCloseMsg := ""
+	if !query {
+		normalCloseMsg = sessmgr.NormalCloseMsgKillStmt
+		if fromRemote {
+			normalCloseMsg = sessmgr.NormalCloseMsgKillStmtFromRemote
+		}
+	}
+	sessmgr.KillWithNormalCloseMsg(sm, connectionID, query, false, false, normalCloseMsg)
 }
 
 func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalconn.GCID, query bool) error {

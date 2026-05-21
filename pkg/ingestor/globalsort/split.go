@@ -21,6 +21,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -88,8 +89,8 @@ type RangeSplitter struct {
 	regionSplitKeyCnt int64
 	regionSplitKeys   [][]byte
 
-	propIter      *MergePropIter
-	multiFileStat []MultipleFilesStat
+	propIter      *simplesst.MergePropIter
+	multiFileStat []simplesst.MultipleFilesStat
 
 	// filename -> 2 level index in dataFiles/statFiles
 	activeDataFiles                map[string][2]int
@@ -104,7 +105,7 @@ type RangeSplitter struct {
 	recordRegionSplitAfterNextProp bool
 	lastDataFile                   string
 	lastStatFile                   string
-	lastRangeProperty              *rangeProperty
+	lastRangeProperty              *simplesst.RangeProperty
 	willExhaustHeap                exhaustedHeap
 
 	logger *zap.Logger
@@ -121,7 +122,7 @@ type RangeSplitter struct {
 // region split keys are controlled by `regionSplitSize` and `regionSplitKeyCnt`.
 func NewRangeSplitter(
 	ctx context.Context,
-	multiFileStat []MultipleFilesStat,
+	multiFileStat []simplesst.MultipleFilesStat,
 	externalStorage storeapi.Storage,
 	rangesGroupSize, rangesGroupKeyCnt int64,
 	rangeJobSize, rangeJobKeyCnt int64,
@@ -136,7 +137,7 @@ func NewRangeSplitter(
 		zap.Int64("regionSplitSize", regionSplitSize),
 		zap.Int64("regionSplitKeyCnt", regionSplitKeyCnt),
 	)
-	propIter, err := NewMergePropIter(ctx, multiFileStat, externalStorage)
+	propIter, err := simplesst.NewMergePropIter(ctx, multiFileStat, externalStorage)
 	if err != nil {
 		return nil, err
 	}
@@ -198,24 +199,24 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		if err = r.propIter.Error(); err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
-		prop := r.propIter.prop()
-		r.curGroupSize += int64(prop.size)
-		r.curRangeJobSize += int64(prop.size)
-		r.curRegionSplitSize += int64(prop.size)
-		r.curGroupKeyCnt += int64(prop.keys)
-		r.curRangeJobKeyCnt += int64(prop.keys)
-		r.curRegionSplitKeyCnt += int64(prop.keys)
+		prop := r.propIter.CurrProperty()
+		r.curGroupSize += int64(prop.Size)
+		r.curRangeJobSize += int64(prop.Size)
+		r.curRegionSplitSize += int64(prop.Size)
+		r.curGroupKeyCnt += int64(prop.Keys)
+		r.curRangeJobKeyCnt += int64(prop.Keys)
+		r.curRegionSplitKeyCnt += int64(prop.Keys)
 
 		// if this Next call will close the last reader
-		if *r.propIter.baseCloseReaderFlag {
+		if r.propIter.GetBaseIterCloseReaderFlag() {
 			heap.Push(&r.willExhaustHeap, exhaustedHeapElem{
-				key:      r.lastRangeProperty.lastKey,
+				key:      r.lastRangeProperty.LastKey,
 				dataFile: r.lastDataFile,
 				statFile: r.lastStatFile,
 			})
 		}
 
-		idx, idx2 := r.propIter.readerIndex()
+		idx, idx2 := r.propIter.ReaderIndex()
 		filePair := r.multiFileStat[idx].Filenames[idx2]
 		dataFilePath := filePair[0]
 		statFilePath := filePair[1]
@@ -226,7 +227,7 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		r.lastRangeProperty = prop
 
 		for r.willExhaustHeap.Len() > 0 &&
-			bytes.Compare(r.willExhaustHeap[0].key, prop.firstKey) < 0 {
+			bytes.Compare(r.willExhaustHeap[0].key, prop.FirstKey) < 0 {
 			exhaustedDataFiles = append(exhaustedDataFiles, r.willExhaustHeap[0].dataFile)
 			exhaustedStatFiles = append(exhaustedStatFiles, r.willExhaustHeap[0].statFile)
 			heap.Pop(&r.willExhaustHeap)
@@ -241,14 +242,14 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 				delete(r.activeStatFiles, p)
 			}
 			exhaustedStatFiles = exhaustedStatFiles[:0]
-			return prop.firstKey, retDataFiles, retStatFiles, r.takeRangeJobKeys(), r.takeRegionSplitKeys(), nil
+			return prop.FirstKey, retDataFiles, retStatFiles, r.takeRangeJobKeys(), r.takeRegionSplitKeys(), nil
 		}
 		if r.recordRangeJobAfterNextProp {
-			r.rangeJobKeys = append(r.rangeJobKeys, slices.Clone(prop.firstKey))
+			r.rangeJobKeys = append(r.rangeJobKeys, slices.Clone(prop.FirstKey))
 			r.recordRangeJobAfterNextProp = false
 		}
 		if r.recordRegionSplitAfterNextProp {
-			r.regionSplitKeys = append(r.regionSplitKeys, slices.Clone(prop.firstKey))
+			r.regionSplitKeys = append(r.regionSplitKeys, slices.Clone(prop.FirstKey))
 			r.recordRegionSplitAfterNextProp = false
 		}
 

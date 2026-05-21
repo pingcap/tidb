@@ -28,6 +28,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -158,7 +159,7 @@ func TestTPCH(t *testing.T) {
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, reader, int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 	require.NoError(t, err)
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID:  1,
 		Row:    datums[0],
 		Length: 116,
@@ -166,7 +167,7 @@ func TestTPCH(t *testing.T) {
 	assertPosEqual(t, parser, 126, 1)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID:  2,
 		Row:    datums[1],
 		Length: 104,
@@ -174,7 +175,7 @@ func TestTPCH(t *testing.T) {
 	assertPosEqual(t, parser, 241, 2)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID:  3,
 		Row:    datums[2],
 		Length: 117,
@@ -259,7 +260,7 @@ func TestRFC4180(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("aaa"),
@@ -271,7 +272,7 @@ func TestRFC4180(t *testing.T) {
 	assertPosEqual(t, parser, 12, 1)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewStringDatum("zzz"),
@@ -290,7 +291,7 @@ func TestRFC4180(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("aaa"),
@@ -302,7 +303,7 @@ func TestRFC4180(t *testing.T) {
 	assertPosEqual(t, parser, 12, 1)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewStringDatum("zzz"),
@@ -321,7 +322,7 @@ func TestRFC4180(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("aaa"),
@@ -333,7 +334,7 @@ func TestRFC4180(t *testing.T) {
 	assertPosEqual(t, parser, 18, 1)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewStringDatum("zzz"),
@@ -354,7 +355,7 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("aaa"),
@@ -366,7 +367,7 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 	assertPosEqual(t, parser, 19, 1)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewStringDatum("zzz"),
@@ -385,7 +386,7 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("aaa"),
@@ -415,7 +416,7 @@ func TestMySQL(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum(`"`),
@@ -427,7 +428,7 @@ func TestMySQL(t *testing.T) {
 	assertPosEqual(t, parser, 15, 1)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewStringDatum("\n"),
@@ -447,7 +448,7 @@ func TestMySQL(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum(string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})),
@@ -464,7 +465,7 @@ func TestMySQL(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("3"),
@@ -481,7 +482,7 @@ func TestMySQL(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("3"),
@@ -498,7 +499,7 @@ func TestMySQL(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum(`a"b`),
@@ -523,7 +524,7 @@ func TestCustomEscapeChar(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum(`"`),
@@ -535,7 +536,7 @@ func TestCustomEscapeChar(t *testing.T) {
 	assertPosEqual(t, parser, 15, 1)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewStringDatum("\n"),
@@ -563,7 +564,7 @@ func TestCustomEscapeChar(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum(`{"itemRangeType":0,"itemContainType":0,"shopRangeType":1,"shopJson":"[{\"id\":\"A1234\",\"shopName\":\"AAAAAA\"}]"}`),
@@ -617,7 +618,7 @@ func TestTSV(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("0"),
@@ -633,7 +634,7 @@ func TestTSV(t *testing.T) {
 	require.Equal(t, []string{"a", "b", "c", "d", "e", "f"}, parser.Columns())
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewStringDatum("0"),
@@ -648,7 +649,7 @@ func TestTSV(t *testing.T) {
 	assertPosEqual(t, parser, 52, 2)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 3,
 		Row: []types.Datum{
 			types.NewStringDatum("0"),
@@ -675,7 +676,7 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(data), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 	require.NoError(t, err)
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("0"),
@@ -687,7 +688,7 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 
 	assertPosEqual(t, parser, 12, 1)
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewStringDatum("123"),
@@ -705,7 +706,7 @@ func TestCsvWithWhiteSpaceLine(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, parser.ReadRow())
 	require.Equal(t, []string{"a", "b", "c"}, parser.Columns())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum("0"),
@@ -752,28 +753,28 @@ func TestCRLF(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID:  1,
 		Row:    []types.Datum{types.NewStringDatum("a")},
 		Length: 1,
 	}, parser.LastRow())
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID:  2,
 		Row:    []types.Datum{types.NewStringDatum("b")},
 		Length: 1,
 	}, parser.LastRow())
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID:  3,
 		Row:    []types.Datum{types.NewStringDatum("c")},
 		Length: 1,
 	}, parser.LastRow())
 
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID:  4,
 		Row:    []types.Datum{types.NewStringDatum("d")},
 		Length: 1,
@@ -791,7 +792,7 @@ func TestQuotedSeparator(t *testing.T) {
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, mydump.NewStringReader(`",",','`), int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 	require.NoError(t, err)
 	require.Nil(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum(","),

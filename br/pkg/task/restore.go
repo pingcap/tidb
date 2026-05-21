@@ -768,7 +768,7 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 	client.SetRewriteMode(ctx)
-	client.SetCheckPrivilegeTableRowsCollateCompatiblity(cfg.SysCheckCollation)
+	client.SetCheckPrivilegeTableRowsCollateCompatibility(cfg.SysCheckCollation)
 	return nil
 }
 
@@ -1487,7 +1487,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		canLoadSysTablePhysical, err := snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables, client.GetCheckPrivilegeTableRowsCollateCompatiblity())
+		canLoadSysTablePhysical, err := snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables, client.GetCheckPrivilegeTableRowsCollateCompatibility())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1495,9 +1495,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			log.Info("The system tables schema is not compatible. Fallback to logically load system tables.")
 			loadSysTablePhysical = false
 		}
-		if client.GetCheckPrivilegeTableRowsCollateCompatiblity() && canLoadSysTablePhysical {
+		if client.GetCheckPrivilegeTableRowsCollateCompatibility() && canLoadSysTablePhysical {
 			log.Info("The system tables schema match so no need to set sys check collation")
-			client.SetCheckPrivilegeTableRowsCollateCompatiblity(false)
+			client.SetCheckPrivilegeTableRowsCollateCompatibility(false)
 		}
 	}
 

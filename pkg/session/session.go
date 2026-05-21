@@ -1335,7 +1335,7 @@ func getSessionFactoryInternal(store kv.Storage, createSessFn func(store kv.Stor
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
+		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -4860,7 +4860,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		// But we need to init max_allowed_packet to use concat function during bootstrap or upgrade.
-		err := vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
+		err := vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
 		if err != nil {
 			logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
 		}

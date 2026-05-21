@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -388,7 +389,7 @@ func (s *kvSizeSampler) sampleOneFile(
 	return sourceSize, dataKVSize, indexKVSize, nil
 }
 
-func (s *kvSizeSampler) sampledRowSourceSize(parser mydump.Parser, startPos int64, row mydump.Row) int64 {
+func (s *kvSizeSampler) sampledRowSourceSize(parser mydump.Parser, startPos int64, row parsedef.Row) int64 {
 	// Sampling needs per-row source bytes, not buffered reader progress.
 	// SQL/CSV parsers expose byte offsets through Pos(), including compressed
 	// input where Pos() tracks uncompressed bytes and stays aligned with the

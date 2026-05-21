@@ -540,6 +540,7 @@ var Keywords = []KeywordsType{
 	{"RESTORES", false, "unreserved"},
 	{"RESUME", false, "unreserved"},
 	{"RETAIN", false, "unreserved"},
+	{"RETURNING", false, "unreserved"},
 	{"REUSE", false, "unreserved"},
 	{"REVERSE", false, "unreserved"},
 	{"ROLE", false, "unreserved"},
