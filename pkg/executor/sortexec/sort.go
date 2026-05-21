@@ -153,14 +153,6 @@ func (e *SortExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
-	if err := e.OpenSelf(); err != nil {
-		return err
-	}
-	return exec.Open(ctx, e.Children(0))
-}
-
-// OpenSelf initializes the executor itself without opening its children.
-func (e *SortExec) OpenSelf() error {
 	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
 	e.enableTmpStorageOnOOM = vardef.EnableTmpStorageOnOOM.Load()
@@ -195,7 +187,8 @@ func (e *SortExec) OpenSelf() error {
 			e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
 		}
 	}
-	return nil
+
+	return exec.Open(ctx, e.Children(0))
 }
 
 // InitUnparallelModeForTest is for unit test

@@ -526,8 +526,11 @@ func ExhaustPhysicalPlans4LogicalWindow(lp base.LogicalPlan, prop *property.Phys
 		orderedWindow.SetSchema(lw.Schema())
 		windows = append(windows, orderedWindow)
 	}
+	if prop.IndexJoinProp != nil {
+		return windows, true, nil
+	}
 	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, SortItems: byItems,
-		CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown, IndexJoinProp: prop.IndexJoinProp}
+		CanAddEnforcer: true, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
 	if !prop.IsPrefix(childProperty) {
 		return windows, true, nil
 	}

@@ -97,25 +97,6 @@
           "2 3 23",
           "3 4 34"
         ]
-      },
-      {
-        "Plan": [
-          "IndexHashJoin root  left outer join, inner:Selection, left side:IndexReader, outer key:test.t1.a, inner key:test.t3.a, equal cond:eq(test.t1.a, test.t3.a)",
-          "├─IndexReader(Build) root  index:IndexFullScan",
-          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
-          "└─Selection(Probe) root  eq(Column, 1)",
-          "  └─Window root  row_number()->Column over(partition by test.t3.a order by test.t3.b rows between current row and current row)",
-          "    └─Sort root  test.t3.a, test.t3.b",
-          "      └─IndexLookUp root  ",
-          "        ├─Selection(Build) cop[tikv]  not(isnull(test.t3.a))",
-          "        │ └─IndexRangeScan cop[tikv] table:t3, index:idx_a(a) range: decided by [eq(test.t3.a, test.t1.a)], keep order:false, stats:pseudo",
-          "        └─TableRowIDScan(Probe) cop[tikv] table:t3 keep order:false, stats:pseudo"
-        ],
-        "Result": [
-          "1 1 11",
-          "2 1 21",
-          "3 4 34"
-        ]
       }
     ]
   }

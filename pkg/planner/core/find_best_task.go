@@ -1931,14 +1931,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		// When a datasource is on the inner side of an index join, build it with the
 		// indexJoinProp-specific range logic instead of the normal EQ/IN range path,
 		// because the runtime constants are filled by the outer side at execution time.
-		t, err = getBestIndexJoinInnerTaskByProp(ds, prop)
-		if err != nil {
-			return nil, err
-		}
-		if prop.CanAddEnforcer && !prop.IsSortItemEmpty() && !t.Invalid() {
-			t = physicalop.EnforceProperty(prop, t, ds.Plan.SCtx(), nil)
-		}
-		return t, nil
+		return getBestIndexJoinInnerTaskByProp(ds, prop)
 	}
 	var unenforcedTask base.Task
 	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for ds.findBestTask.
