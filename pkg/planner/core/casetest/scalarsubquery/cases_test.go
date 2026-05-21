@@ -48,17 +48,42 @@ func TestExplainNonEvaledSubquery(t *testing.T) {
 		testKit.MustExec("create table t3(a varchar(5), b varchar(5), c varchar(5))")
 		testKit.MustQuery("select @@tidb_opt_enable_non_eval_scalar_subquery").Check(testkit.Rows("1"))
 
+		planContains := func(rows [][]any, substr string) (bool, []string) {
+			planRows := testdata.ConvertRowsToStrings(rows)
+			for _, row := range planRows {
+				if strings.Contains(row, substr) {
+					return true, planRows
+				}
+			}
+			return false, planRows
+		}
+		planContainsEvaluatedScalarColumn := func(rows [][]any) (bool, []string) {
+			planRows := testdata.ConvertRowsToStrings(rows)
+			for _, row := range planRows {
+				if strings.Contains(row, "ScalarQueryCol#") && strings.Contains(row, "(0)") {
+					return true, planRows
+				}
+			}
+			return false, planRows
+		}
+
 		testKit.Session().GetSessionVars().RewritePhaseInfo.Reset()
 		rows := testKit.MustQuery("explain format = 'plan_tree' select * from t1 where a = (select sleep(0.3))").Rows()
 		require.Equal(t, 0, testKit.Session().GetSessionVars().RewritePhaseInfo.PreprocessSubQueries)
-		var hasScalarSubQuery, hasSleepFunc bool
-		planRows := testdata.ConvertRowsToStrings(rows)
-		for _, row := range planRows {
-			hasScalarSubQuery = hasScalarSubQuery || strings.Contains(row, "ScalarSubQuery")
-			hasSleepFunc = hasSleepFunc || strings.Contains(row, "sleep(0.3)")
-		}
+		hasScalarSubQuery, planRows := planContains(rows, "ScalarSubQuery")
+		hasSleepFunc, _ := planContains(rows, "sleep(0.3)")
+		hasEvaluatedScalarColumn, _ := planContainsEvaluatedScalarColumn(rows)
 		require.True(t, hasScalarSubQuery, "plan should keep the scalar subquery visible: %v", planRows)
 		require.True(t, hasSleepFunc, "plan should keep sleep(0.3) visible: %v", planRows)
+		require.False(t, hasEvaluatedScalarColumn, "plan should not embed the evaluated scalar subquery result: %v", planRows)
+
+		testKit.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=0")
+		testKit.Session().GetSessionVars().RewritePhaseInfo.Reset()
+		rows = testKit.MustQuery("explain format = 'plan_tree' select * from t1 where a = (select sleep(0.3))").Rows()
+		require.Greater(t, testKit.Session().GetSessionVars().RewritePhaseInfo.PreprocessSubQueries, 0)
+		hasEvaluatedScalarColumn, planRows = planContainsEvaluatedScalarColumn(rows)
+		require.True(t, hasEvaluatedScalarColumn, "plan should embed the evaluated scalar subquery result: %v", planRows)
+		testKit.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=1")
 
 		cutExecutionInfoFromExplainAnalyzeOutput := func(rows [][]any) [][]any {
 			// The columns are id, estRows, actRows, task type, access object, execution info, operator info, memory, disk

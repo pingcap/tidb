@@ -107,6 +107,7 @@ func TestCorrelate(tt *testing.T) {
 
 		// Enable the correlate rule.
 		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+		tk.MustExec("set tidb_opt_enable_non_eval_scalar_subquery = OFF")
 
 		var input []string
 		var output []struct {
