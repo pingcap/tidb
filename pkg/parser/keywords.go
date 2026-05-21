@@ -168,6 +168,7 @@ var Keywords = []KeywordsType{
 	{"NUMERIC", true, "reserved"},
 	{"OF", true, "reserved"},
 	{"ON", true, "reserved"},
+	{"OPERATE", true, "reserved"},
 	{"OPTIMIZE", true, "reserved"},
 	{"OPTION", true, "reserved"},
 	{"OPTIONALLY", true, "reserved"},
