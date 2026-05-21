@@ -523,7 +523,7 @@ func (w *worker) finishModifyColumnWithoutReorg(
 	newCol, oldCol *model.ColumnInfo,
 	pos *ast.ColumnPosition,
 ) (ver int64, _ error) {
-		if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
+	if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
@@ -568,11 +568,8 @@ func (w *worker) doModifyColumnNoCheck(
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
-		return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
+	return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
-
-
-
 
 // precheckForVarcharToChar updates the column information and reorders all columns with data check.
 func (w *worker) precheckForVarcharToChar(
@@ -691,7 +688,7 @@ func (w *worker) doModifyColumnWithCheck(
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
-		return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
+	return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
 func adjustTableInfoAfterModifyColumn(
@@ -1096,7 +1093,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-				case model.StateDeleteOnly:
+		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			removedIdxIDs = append(removedIdxIDs, getIngestTempIndexIDs(job, changingIdxs)...)
 			if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, targetCol); err != nil {

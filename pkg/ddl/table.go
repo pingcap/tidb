@@ -816,7 +816,7 @@ func (w *worker) onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	}
 	fkh := newForeignKeyHelper()
 	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, metaMut,
-				job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
+		job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -851,7 +851,7 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return finishJobRenameTables(jobCtx, job)
 	}
 
-		fkh := newForeignKeyHelper()
+	fkh := newForeignKeyHelper()
 	metaMut := jobCtx.metaMut
 	is := jobCtx.infoCache.GetLatest()
 	for _, info := range args.RenameTableInfos {

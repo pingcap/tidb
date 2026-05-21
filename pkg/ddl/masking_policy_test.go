@@ -75,7 +75,7 @@ func TestMaskingPolicyIfNotExists(t *testing.T) {
 
 	dbChangeTestParallelExecSQL(t, store, "create masking policy if not exists p on t_mask(c) as c")
 
-		tk.MustQuery("select count(*) from mysql.tidb_masking_policy where db_name = 'test_db_state' and table_name = 't_mask' and policy_name = 'p'").
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where db_name = 'test_db_state' and table_name = 't_mask' and policy_name = 'p'").
 		Check(testkit.Rows("1"))
 }
 

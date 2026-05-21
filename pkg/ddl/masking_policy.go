@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-		"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -545,7 +545,7 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 			return errors.Trace(err)
 		}
 	}
-		return nil
+	return nil
 }
 
 // updateMaskingPolicyNamesAfterRename updates the db_name and table_name in
