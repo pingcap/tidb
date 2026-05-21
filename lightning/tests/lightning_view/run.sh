@@ -26,14 +26,16 @@ trap restore_sql_require_primary_key EXIT
 # Dumpling emits placeholder CREATE TABLE files for views without primary keys.
 # Lightning should still restore the real views when downstream requires PKs.
 run_sql 'SET GLOBAL sql_require_primary_key=ON'
-for _ in $(seq 3); do
-  sleep 1
+value='OFF'
+for _ in $(seq 60); do
   run_sql "SELECT IF(@@global.sql_require_primary_key, 'ON', 'OFF') value"
-  if [ "$(read_result)" = 'ON' ]; then
+  value=$(read_result)
+  if [ "$value" = 'ON' ]; then
     break
   fi
+  sleep 1
 done
-[ "$(read_result)" = 'ON' ]
+[ "$value" = 'ON' ]
 
 for BACKEND in local tidb; do
   if [ "$BACKEND" = 'local' ]; then
