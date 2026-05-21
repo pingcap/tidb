@@ -544,7 +544,7 @@ func TestCreateTableIfNotExistsStmt(t *testing.T) {
 		`, "m"))
 }
 
-func TestSchemaImporterRestoresViewsInDependencyOrderAndSkipsPlaceholders(t *testing.T) {
+func TestSchemaImporterRestoresViewsInDependencyOrderAfterPlaceholderPrune(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -560,14 +560,10 @@ func TestSchemaImporterRestoresViewsInDependencyOrderAndSkipsPlaceholders(t *tes
 	importer := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 1)
 
 	fileNameT := "test.t-schema.sql"
-	fileNameV1Table := "test.v1-schema.sql"
-	fileNameV2Table := "test.v2-schema.sql"
 	fileNameV1View := "test.v1-schema-view.sql"
 	fileNameV2View := "test.v2-schema-view.sql"
 
 	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameT), []byte("CREATE TABLE t(id INT PRIMARY KEY);"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV1Table), []byte("CREATE TABLE v1(id INT);"), 0o644))
-	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV2Table), []byte("CREATE TABLE v2(id INT);"), 0o644))
 	require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV1View), []byte(`
 /*!40101 SET NAMES binary*/;
 DROP TABLE IF EXISTS v1;
@@ -586,8 +582,6 @@ CREATE ALGORITHM=UNDEFINED DEFINER=`+"`root`@`%`"+` SQL SECURITY DEFINER VIEW v2
 			Name: "test",
 			Tables: []*MDTableMeta{
 				{DB: "test", Name: "t", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameT}}},
-				{DB: "test", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV1Table}}},
-				{DB: "test", Name: "v2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV2Table}}},
 			},
 			Views: []*MDTableMeta{
 				{DB: "test", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV1View}}},
@@ -608,9 +602,5 @@ CREATE ALGORITHM=UNDEFINED DEFINER=`+"`root`@`%`"+` SQL SECURITY DEFINER VIEW v2
 	mock.ExpectExec("CREATE ALGORITHM = UNDEFINED DEFINER = `root`@`%` SQL SECURITY DEFINER VIEW `test`.`v2`").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	plan, err := NewSchemaImportPlan(ctx, store, mysql.SQLMode(0), dbMetas)
-	require.NoError(t, err)
-	dbMetas[0].Tables = []*MDTableMeta{dbMetas[0].Tables[0]}
-	dbMetas[0].Views = nil
-	require.NoError(t, importer.runWithPlan(ctx, plan))
+	require.NoError(t, importer.Run(ctx, dbMetas))
 }
