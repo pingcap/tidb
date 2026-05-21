@@ -42,9 +42,8 @@ import (
 
 // Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
 var (
-	InspectionSummaryRules                 = inspectionSummaryRules
-	InspectionRules                        = inspectionRules
-	SetSharedLockUpgradeIfSupportedForTest = setSharedLockUpgradeIfSupported
+	InspectionSummaryRules = inspectionSummaryRules
+	InspectionRules        = inspectionRules
 )
 
 func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
