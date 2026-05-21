@@ -782,7 +782,7 @@ func verifyNoOverflowShardBits(s *sess.Pool, tbl table.Table, shardRowIDBits uin
 	return nil
 }
 
-func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetRenameTableArgs(job)
 	if err != nil {
 		// Invalid arguments, cancel this job.
@@ -816,9 +816,20 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	}
 	fkh := newForeignKeyHelper()
 	err = adjustForeignKeyChildTableInfoAfterRenameTable(jobCtx.infoCache, metaMut,
-		job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
+				job, &fkh, tblInfo, oldSchemaName, oldTableName, tableName, newSchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	// Update masking policy names after table rename.
+	is := jobCtx.infoCache.GetLatest()
+	newDB, ok := is.SchemaByID(newSchemaID)
+	if !ok {
+		job.State = model.JobStateCancelled
+		return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
+	}
+	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+		oldSchemaName, newDB.Name, oldTableName, tableName); err != nil {
+		return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 	}
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
 	if err != nil {
@@ -828,7 +839,7 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetRenameTablesArgs(job)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -840,8 +851,9 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		return finishJobRenameTables(jobCtx, job)
 	}
 
-	fkh := newForeignKeyHelper()
+		fkh := newForeignKeyHelper()
 	metaMut := jobCtx.metaMut
+	is := jobCtx.infoCache.GetLatest()
 	for _, info := range args.RenameTableInfos {
 		job.TableID = info.TableID
 		job.TableName = info.OldTableName.L
@@ -858,6 +870,16 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			info.OldSchemaName, info.OldTableName, info.NewTableName, info.NewSchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+		// Update masking policy names after table rename.
+		newDB, ok := is.SchemaByID(info.NewSchemaID)
+		if !ok {
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
+		}
+		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
+			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 		}
 	}
 

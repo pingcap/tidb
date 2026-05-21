@@ -1014,7 +1014,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(jobCtx, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTable(jobCtx, job)
+			ver, err = w.onRenameTable(jobCtx, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(jobCtx, job)
 	case model.ActionModifyTableComment:
@@ -1044,7 +1044,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(jobCtx, job)
 	case model.ActionRenameTables:
-		ver, err = onRenameTables(jobCtx, job)
+				ver, err = w.onRenameTables(jobCtx, job)
 	case model.ActionAlterTableAttributes:
 		ver, err = onAlterTableAttributes(jobCtx, job)
 	case model.ActionAlterTablePartitionAttributes:

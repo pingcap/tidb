@@ -516,14 +516,18 @@ func getModifyColumnInfo(
 	return dbInfo, tblInfo, oldCol, errors.Trace(err)
 }
 
-func finishModifyColumnWithoutReorg(
+func (w *worker) finishModifyColumnWithoutReorg(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
 	newCol, oldCol *model.ColumnInfo,
 	pos *ast.ColumnPosition,
 ) (ver int64, _ error) {
-	if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
+		if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
+		job.State = model.JobStateRollingback
+		return ver, errors.Trace(err)
+	}
+	if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, newCol); err != nil {
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
@@ -546,7 +550,7 @@ func finishModifyColumnWithoutReorg(
 }
 
 // doModifyColumnNoCheck updates the column information and reorders all columns. It does not support modifying column data.
-func (*worker) doModifyColumnNoCheck(
+func (w *worker) doModifyColumnNoCheck(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
@@ -564,8 +568,11 @@ func (*worker) doModifyColumnNoCheck(
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
-	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
+		return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
+
+
+
 
 // precheckForVarcharToChar updates the column information and reorders all columns with data check.
 func (w *worker) precheckForVarcharToChar(
@@ -684,7 +691,7 @@ func (w *worker) doModifyColumnWithCheck(
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
-	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
+		return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
 func adjustTableInfoAfterModifyColumn(
@@ -1089,9 +1096,12 @@ func (w *worker) doModifyColumnTypeWithData(
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-		case model.StateDeleteOnly:
+				case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			removedIdxIDs = append(removedIdxIDs, getIngestTempIndexIDs(job, changingIdxs)...)
+			if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, targetCol); err != nil {
+				return ver, errors.Trace(err)
+			}
 			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)

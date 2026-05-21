@@ -20,10 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
+		"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -544,7 +545,139 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 			return errors.Trace(err)
 		}
 	}
+		return nil
+}
+
+// updateMaskingPolicyNamesAfterRename updates the db_name and table_name in
+// mysql.tidb_masking_policy after a table is renamed.
+func (w *worker) updateMaskingPolicyNamesAfterRename(
+	ctx context.Context,
+	tableID int64,
+	_ /* oldDBName */, newDBName ast.CIStr,
+	_ /* oldTableName */, newTableName ast.CIStr,
+) error {
+	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, policy := range policies {
+		if policy.DBName.L == newDBName.L && policy.TableName.L == newTableName.L {
+			continue
+		}
+
+		newPolicy := policy.Clone()
+		newPolicy.DBName = newDBName
+		newPolicy.TableName = newTableName
+		newPolicy.UpdatedAt = time.Now()
+
+		if err = w.updateMaskingPolicyNamesInSysTable(ctx, newPolicy); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
+}
+
+// updateMaskingPolicyNamesInSysTable updates only the db_name and table_name fields.
+func (w *worker) updateMaskingPolicyNamesInSysTable(ctx context.Context, policy *model.MaskingPolicyInfo) error {
+	const updateSQL = `UPDATE mysql.tidb_masking_policy
+		SET db_name = %?, table_name = %?, updated_at = %?
+		WHERE policy_id = %?`
+	_, err := w.sess.Execute(ctx, updateSQL, "update-masking-policy-names",
+		policy.DBName.O,
+		policy.TableName.O,
+		policy.UpdatedAt,
+		policy.ID,
+	)
+	return errors.Trace(err)
+}
+
+// syncMaskingPolicyForModifiedColumn updates masking policy metadata in
+// mysql.tidb_masking_policy when a column is renamed or its ID changes.
+func (w *worker) syncMaskingPolicyForModifiedColumn(
+	jobCtx *jobContext,
+	tblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo,
+	newCol *model.ColumnInfo,
+) error {
+	if tblInfo == nil || oldCol == nil || newCol == nil {
+		return nil
+	}
+
+	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, tblInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, policy := range policies {
+		if policy.TableID != tblInfo.ID {
+			continue
+		}
+		if policy.ColumnID != oldCol.ID && policy.ColumnName.L != oldCol.Name.L && policy.ColumnName.L != newCol.Name.L {
+			continue
+		}
+
+		newPolicy := policy.Clone()
+		newPolicy.TableName = tblInfo.Name
+		newPolicy.ColumnID = newCol.ID
+		newPolicy.ColumnName = newCol.Name
+		if policy.ColumnName.L != newCol.Name.L {
+			newExpr, err := rewriteMaskingPolicyExprColumnName(policy.Expression, policy.ColumnName, newCol.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			newPolicy.Expression = newExpr
+		}
+		newPolicy.UpdatedAt = time.Now()
+
+		if err := w.updateMaskingPolicyInSysTable(jobCtx, newPolicy); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+type renameMaskingExprVisitor struct {
+	oldCol ast.CIStr
+	newCol ast.CIStr
+}
+
+func (v *renameMaskingExprVisitor) Enter(in ast.Node) (ast.Node, bool) {
+	colExpr, ok := in.(*ast.ColumnNameExpr)
+	if !ok {
+		return in, false
+	}
+	if colExpr.Name.Name.L != v.oldCol.L {
+		return in, false
+	}
+	colExpr.Name.Name = v.newCol
+	return in, false
+}
+
+func (*renameMaskingExprVisitor) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+func rewriteMaskingPolicyExprColumnName(expr string, oldCol, newCol ast.CIStr) (string, error) {
+	if oldCol.L == newCol.L {
+		return expr, nil
+	}
+	// #nosec G202: expression here is parsed as SQL AST for rewrite, not executed against storage.
+	stmt, err := parser.New().ParseOneStmt("SELECT "+expr, "", "")
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	selectStmt, ok := stmt.(*ast.SelectStmt)
+	if !ok || selectStmt.Fields == nil || len(selectStmt.Fields.Fields) != 1 {
+		return "", errors.New("invalid masking policy expression")
+	}
+	out, ok := selectStmt.Fields.Fields[0].Expr.Accept(&renameMaskingExprVisitor{oldCol: oldCol, newCol: newCol})
+	if !ok {
+		return "", errors.New("failed to rewrite masking policy expression")
+	}
+	outExpr, ok := out.(ast.ExprNode)
+	if !ok {
+		return "", errors.New("invalid rewritten masking policy expression")
+	}
+	return restoreMaskingExpression(outExpr)
 }
 
 func maskingPolicyFromSysTableRow(row chunk.Row) (*model.MaskingPolicyInfo, error) {

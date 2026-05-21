@@ -75,6 +75,108 @@ func TestMaskingPolicyIfNotExists(t *testing.T) {
 
 	dbChangeTestParallelExecSQL(t, store, "create masking policy if not exists p on t_mask(c) as c")
 
-	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where db_name = 'test_db_state' and table_name = 't_mask' and policy_name = 'p'").
+		tk.MustQuery("select count(*) from mysql.tidb_masking_policy where db_name = 'test_db_state' and table_name = 't_mask' and policy_name = 'p'").
 		Check(testkit.Rows("1"))
+}
+
+func TestMaskingPolicyRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists old_table, new_table")
+
+	// Create table and masking policy
+	tk.MustExec("create table old_table(id int primary key, c varchar(100))")
+	tk.MustExec("insert into old_table values (1, 'secret')")
+	tk.MustExec("create masking policy p on old_table(c) as c enable")
+
+	// Verify policy metadata before rename
+	tk.MustQuery("select db_name, table_name from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("test old_table"))
+
+	// Rename the table
+	tk.MustExec("rename table old_table to new_table")
+
+	// Verify policy metadata is updated in sys table
+	tk.MustQuery("select db_name, table_name from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("test new_table"))
+
+	// Verify we can drop the policy after rename
+	tk.MustExec("alter table new_table drop masking policy p")
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("0"))
+	tk.MustQuery("select c from new_table").Check(testkit.Rows("secret"))
+}
+
+func TestMaskingPolicyRenameTableCrossDatabase(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists db1")
+	tk.MustExec("drop database if exists db2")
+
+	// Create databases and table
+	tk.MustExec("create database db1")
+	tk.MustExec("create database db2")
+	tk.MustExec("create table db1.t(id int primary key, c varchar(100))")
+	tk.MustExec("insert into db1.t values (1, 'secret')")
+	tk.MustExec("create masking policy p on db1.t(c) as c enable")
+
+	// Verify before rename
+	tk.MustQuery("select db_name, table_name from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("db1 t"))
+
+	// Rename the table across databases
+	tk.MustExec("rename table db1.t to db2.t")
+
+	// Verify policy metadata is updated
+	tk.MustQuery("select db_name, table_name from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("db2 t"))
+
+	// Cleanup
+	tk.MustExec("drop table db2.t")
+	tk.MustExec("drop database db1")
+	tk.MustExec("drop database db2")
+}
+
+func TestMaskingPolicyRenameTableNoPolicy(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists old_table, new_table")
+
+	// Create table without masking policy
+	tk.MustExec("create table old_table(id int primary key, c varchar(100))")
+	tk.MustExec("insert into old_table values (1, 'secret')")
+
+	// Rename the table (no policy to update)
+	tk.MustExec("rename table old_table to new_table")
+
+	// Verify no error and table works
+	tk.MustQuery("select c from new_table").Check(testkit.Rows("secret"))
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy").
+		Check(testkit.Rows("0"))
+}
+
+func TestMaskingPolicyRenameColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_rename_col")
+	tk.MustExec("create table t_rename_col(id int primary key, c varchar(20))")
+	tk.MustExec("insert into t_rename_col values (1, 'delta')")
+	tk.MustExec("create masking policy p_rename_col on t_rename_col(c) as c enable")
+
+	// Verify policy exists before rename
+	tk.MustQuery("select column_name, expression from mysql.tidb_masking_policy where policy_name = 'p_rename_col'").
+		Check(testkit.Rows("c `c`"))
+
+	// Rename column
+	tk.MustExec("alter table t_rename_col rename column c to c_new")
+
+	// Verify column_name and expression are updated in sys table
+	tk.MustQuery("select column_name, expression from mysql.tidb_masking_policy where policy_name = 'p_rename_col'").
+		Check(testkit.Rows("c_new `c_new`"))
+
+	// Verify select still works
+	tk.MustQuery("select c_new from t_rename_col").Check(testkit.Rows("delta"))
 }
