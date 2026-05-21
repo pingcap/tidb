@@ -16,6 +16,7 @@ go_test(
         "//pkg/ddl/ingest/testutil",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
