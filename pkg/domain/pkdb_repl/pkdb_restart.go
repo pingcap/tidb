@@ -34,6 +34,8 @@ var restartHoldState struct {
 	holders int
 }
 
+var restartDomainCloseTimeout = 3 * time.Second
+
 // HoldRestart sets a barrier that blocks restartProcess until ReleaseRestart is called.
 func HoldRestart() {
 	restartHoldState.mu.Lock()
@@ -98,12 +100,7 @@ func restartProcess(domain domainCloser) {
 	disableStandbyMode()
 
 	if domain != nil {
-		domain.Close()
-		// nil is only possible in tests
-		if CloseDDLOwnerMgr != nil {
-			CloseDDLOwnerMgr()
-		}
-		logutil.BgLogger().Info("domain closed before restart")
+		closeDomainBeforeRestart(domain)
 	}
 	if intest.InTest {
 		// don't want to restart in go unit test
@@ -111,6 +108,26 @@ func restartProcess(domain domainCloser) {
 	}
 	if err := restart(); err != nil {
 		logutil.BgLogger().Fatal("failed to restart process", zap.Error(err))
+	}
+}
+
+func closeDomainBeforeRestart(domain domainCloser) {
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		domain.Close()
+		// nil is only possible in tests
+		if CloseDDLOwnerMgr != nil {
+			CloseDDLOwnerMgr()
+		}
+	}()
+
+	select {
+	case <-doneCh:
+		logutil.BgLogger().Info("domain closed before restart")
+	case <-time.After(restartDomainCloseTimeout):
+		logutil.BgLogger().Warn("timed out waiting for domain close before restart",
+			zap.Duration("timeout", restartDomainCloseTimeout))
 	}
 }
 
@@ -222,9 +239,8 @@ func WatchRestart(etcdCli *clientv3.Client, stopCh <-chan struct{}, domain domai
 			if len(watchResp.Events) == 0 {
 				continue
 			}
-			// will call Domain.Close() inside restartProcess, but this goroutine is also
-			// created by Domain, so we need to start another goroutine and return after
-			// Domain.Close() is blocked
+			// restartProcess calls Domain.Close(), but this goroutine is also created by
+			// Domain, so schedule the restart on another goroutine and let WatchRestart exit.
 			if !waitRestartHold(stopCh) {
 				return
 			}

@@ -13,8 +13,10 @@ go_library(
         "//pkg/kv",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//kv",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//txnkv/rangetask",
         "@com_github_tikv_pd_client//constants",
@@ -28,6 +30,7 @@ go_test(
     name = "pkdb_repl_test",
     timeout = "short",
     srcs = [
+        "pkdb_resolve_locks_test.go",
         "pkdb_restart_test.go",
         "pkdb_standby_test.go",
     ],
@@ -37,7 +40,9 @@ go_test(
     deps = [
         "//pkg/util/intest",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//constants",
+        "@io_etcd_go_etcd_api_v3//mvccpb",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
     ],

@@ -1844,7 +1844,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.auditComponentsLoop, "auditComponentsLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	do.wg.Run(func() {
-		pkdbrepl.WatchStandby(do.ctx, do.etcdClient, do)
+		pkdbrepl.WatchStandby(do.ctx, do.etcdClient)
 	}, "WatchStandby")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {

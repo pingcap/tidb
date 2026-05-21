@@ -3,13 +3,15 @@ package pkdbrepl
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tikvkv "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"github.com/tikv/pd/client/constants"
@@ -17,26 +19,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// logReplResolveLocksSafePoint stores the TS obtained during TiDB startup, used
-// as the safePoint parameter for resolve-locks after PD disables standby mode.
-var logReplResolveLocksSafePoint atomic.Uint64
-
-// SetLogReplResolveLocksSafePoint sets the safe point TS for resolve-locks operation.
-func SetLogReplResolveLocksSafePoint(ts uint64) {
-	logReplResolveLocksSafePoint.Store(ts)
-}
-
-func getLogReplResolveLocksSafePoint() uint64 {
-	return logReplResolveLocksSafePoint.Load()
-}
-
 const pkdbResolveLocksConcurrency = 2
+const pkdbResolveLocksSafePointDelay = 6 * time.Second
 
 // TryResolveLocksIfNeeded is expected to be called when a single-node owner is
-// elected. If PD has written the marker key before disabling standby mode, this
-// function will start an asynchronous resolve-locks task and delete the marker
-// key after it finishes successfully.
-// TODO(lance6716): reuse GCWorker's resolveLocks.
+// elected. If PD has written the marker key when disabling standby and
+// restarting TiDB, this function uses the TS stored in the marker value to start
+// an asynchronous resolve-locks task and delete the marker key after it finishes
+// successfully. TODO(lance6716): reuse GCWorker's resolveLocks.
 func TryResolveLocksIfNeeded(ctx context.Context, store kv.Storage, etcdCli *clientv3.Client) {
 	if etcdCli == nil {
 		return
@@ -54,9 +44,15 @@ func TryResolveLocksIfNeeded(ctx context.Context, store kv.Storage, etcdCli *cli
 	}
 
 	markerVal := string(resp.Kvs[0].Value)
-	safePoint := getLogReplResolveLocksSafePoint()
+	safePoint, err := resolveLocksSafePointFromMarkerValue(markerVal)
+	if err != nil {
+		logutil.BgLogger().Warn("marker key value is not a valid resolve-locks TS, skip",
+			zap.String("marker", markerVal),
+			zap.Error(err))
+		return
+	}
 	if safePoint == 0 {
-		logutil.BgLogger().Warn("marker key exists but startup TS is not set, skip",
+		logutil.BgLogger().Warn("marker key exists but resolve-locks safe point is zero, skip",
 			zap.String("marker", markerVal))
 		return
 	}
@@ -76,12 +72,19 @@ func TryResolveLocksIfNeeded(ctx context.Context, store kv.Storage, etcdCli *cli
 
 	go func() {
 		startTime := time.Now()
-		err := resolveLocksForWholeCluster(ctx, tikvStore, safePoint, pkdbResolveLocksConcurrency)
-		if err != nil {
+		for {
+			err := resolveLocksForWholeCluster(ctx, tikvStore, safePoint, pkdbResolveLocksConcurrency)
+			if err == nil {
+				break
+			}
 			logutil.BgLogger().Warn("resolve locks failed",
 				zap.Uint64("safePoint", safePoint),
 				zap.String("marker", markerVal),
 				zap.Error(err))
+			if strings.HasPrefix(err.Error(), "cannot set read timestamp to a future time") {
+				sleep(ctx.Done(), 2*time.Second)
+				continue
+			}
 			return
 		}
 
@@ -113,6 +116,18 @@ func TryResolveLocksIfNeeded(ctx context.Context, store kv.Storage, etcdCli *cli
 				zap.Duration("cost", time.Since(startTime)))
 		}
 	}()
+}
+
+func resolveLocksSafePointFromMarkerValue(markerVal string) (uint64, error) {
+	markerTS, err := strconv.ParseUint(markerVal, 10, 64)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if markerTS == 0 {
+		return 0, nil
+	}
+	resolveTime := oracle.GetTimeFromTS(markerTS).Add(pkdbResolveLocksSafePointDelay)
+	return oracle.GoTimeToTS(resolveTime), nil
 }
 
 func resolveLocksForWholeCluster(
