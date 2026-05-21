@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/util"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
@@ -107,6 +108,9 @@ func ForAllStores(
 
 	eg, c := errgroup.WithContext(ctx)
 	for _, store := range storesInfo.Stores {
+		if engine.IsReplicatorHTTPResp(&store.Store) {
+			continue
+		}
 		if store.Store.State <= int64(maxState) {
 			s := store.Store
 			eg.Go(func() error { return action(c, &s) })

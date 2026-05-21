@@ -703,7 +703,7 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientF
 
 	for _, s := range stores {
 		// skip stores that are not online
-		if s.State != metapb.StoreState_Up || engine.IsTiFlash(s) {
+		if s.State != metapb.StoreState_Up || engine.IsTiFlash(s) || engine.IsReplicator(s) {
 			continue
 		}
 		var err error

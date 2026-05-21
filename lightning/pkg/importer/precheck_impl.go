@@ -298,7 +298,7 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 			if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 				continue
 			}
-			if engine.IsTiFlashHTTPResp(&store.Store) {
+			if engine.IsTiFlashHTTPResp(&store.Store) || engine.IsReplicatorHTTPResp(&store.Store) {
 				continue
 			}
 			if regionCnt > errorThrehold {
@@ -361,7 +361,7 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
 		}
-		if engine.IsTiFlashHTTPResp(&store.Store) {
+		if engine.IsTiFlashHTTPResp(&store.Store) || engine.IsReplicatorHTTPResp(&store.Store) {
 			continue
 		}
 		stores = append(stores, &store)
