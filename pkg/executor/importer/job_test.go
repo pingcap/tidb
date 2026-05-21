@@ -159,6 +159,27 @@ func TestJobHappyPath(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, endTime, gotJobInfo.EndTime)
 	}
+
+	t.Run("prepare phase transition", func(t *testing.T) {
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+			"root@%", "", &importer.ImportParameters{Format: importer.DataFormatCSV}, 123)
+		require.NoError(t, err)
+
+		require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepPreparing))
+		info, err := importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+		require.False(t, info.StartTime.IsZero())
+		startTime := info.StartTime
+
+		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepImporting))
+		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepImporting, info.Step)
+		require.Equal(t, startTime, info.StartTime)
+	})
 }
 
 func TestGetAndCancelJob(t *testing.T) {

@@ -345,6 +345,11 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
+	if task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
+		if err := sch.startJob(ctx, sch.GetLogger(), taskMeta, importer.JobStepPreparing); err != nil {
+			return err
+		}
+	}
 	if !ShouldUseScopedPrepareIntegration(&taskMeta.Plan) {
 		return nil
 	}
@@ -445,8 +450,14 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		if sch.GlobalSort {
 			jobStep = importer.JobStepGlobalSorting
 		}
-		if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
-			return nil, err
+		if task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
+			if err = sch.job2Step(ctx, logger, taskMeta, jobStep); err != nil {
+				return nil, err
+			}
+		} else {
+			if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
+				return nil, err
+			}
 		}
 		if importer.GetNumOfIndexGenKV(taskMeta.Plan.TableInfo) > warningIndexCount {
 			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()

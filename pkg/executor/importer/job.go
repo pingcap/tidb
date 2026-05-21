@@ -61,11 +61,18 @@ const (
 
 	// when the job is finished, step will be set to none.
 	jobStepNone = ""
+	// JobStepPreparing is used by prepare-enabled jobs before generating
+	// first business-step subtasks.
+	JobStepPreparing = "preparing"
 	// JobStepGlobalSorting is the first step when using global sort,
 	// step goes from none -> global-sorting -> importing -> validating -> none.
+	// for prepare-enabled global sort, step goes from none -> preparing ->
+	// global-sorting -> importing -> validating -> none.
 	JobStepGlobalSorting = "global-sorting"
 	// JobStepImporting is the first step when using local sort,
 	// step goes from none -> importing -> validating -> none.
+	// for prepare-enabled local sort, step goes from none -> preparing ->
+	// importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
 	// when used in local sort, it means encode&sort data and then importing the data.
 	JobStepImporting = "importing"

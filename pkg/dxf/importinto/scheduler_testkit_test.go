@@ -194,6 +194,53 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", gotJobInfo.Status)
+
+	t.Run("prepare-enabled job transitions from preparing to first business phase", func(t *testing.T) {
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+			"root", "", &importer.ImportParameters{}, 123)
+		require.NoError(t, err)
+
+		logicalPlan.JobID = jobID
+		bs, err := logicalPlan.ToTaskMeta()
+		require.NoError(t, err)
+		task.Meta = bs
+		task.Step = proto.StepInit
+		task.State = proto.TaskStatePending
+		task.ExtraParams.PrepareMode = proto.PrepareModeRequired
+		task.ID, err = manager.CreateTask(
+			ctx,
+			importinto.TaskKey(jobID),
+			proto.ImportInto,
+			"",
+			1,
+			"",
+			1,
+			proto.ExtraParams{PrepareMode: proto.PrepareModeRequired},
+			bs,
+		)
+		require.NoError(t, err)
+
+		prepareExt, ok := ext.(scheduler.PrepareExtension)
+		require.True(t, ok)
+		require.NoError(t, prepareExt.OnPrepare(ctx, d, task))
+
+		gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, gotJobInfo.Status)
+		require.Equal(t, importer.JobStepPreparing, gotJobInfo.Step)
+		require.False(t, gotJobInfo.StartTime.IsZero())
+		startTime := gotJobInfo.StartTime
+
+		task.Step = proto.StepPrepared
+		subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, proto.ImportStepImport)
+		require.NoError(t, err)
+		require.Len(t, subtaskMetas, 1)
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, gotJobInfo.Status)
+		require.Equal(t, importer.JobStepImporting, gotJobInfo.Step)
+		require.Equal(t, startTime, gotJobInfo.StartTime)
+	})
 }
 
 func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {
