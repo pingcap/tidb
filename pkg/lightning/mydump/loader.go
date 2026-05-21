@@ -546,8 +546,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	if len(s.viewSchemas) != 0 {
 		// setup view schema
 		for _, fileInfo := range s.viewSchemas {
-			_, viewExists := s.insertView(fileInfo)
-			if viewExists && s.loader.router == nil {
+			if _, viewExists := s.insertView(fileInfo); viewExists && s.loader.router == nil {
 				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
@@ -882,10 +881,10 @@ func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
 		logutil.Logger(ctx).Info("pruned view placeholder tables",
 			zap.String("category", "loader"),
 			zap.Int("count", prunedCount),
-			zap.Strings("tables", prunedTables))
+			zap.Strings("tables(sampled)", prunedTables))
 	}
 
-	s.tableIndexMap = make(map[filter.Table]int)
+	clear(s.tableIndexMap)
 	for _, dbMeta := range s.loader.dbs {
 		for i, tableMeta := range dbMeta.Tables {
 			s.tableIndexMap[filterTableName(tableMeta.DB, tableMeta.Name)] = i
