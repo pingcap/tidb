@@ -539,16 +539,16 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 					"  └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
 			} else {
 				tk.MustQuery("explain format = 'plan_tree' select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0").Check(testkit.Rows(
-					"HashAgg root  group by:test.t_issue67009.c0, funcs:max(Column)->Column",
-					"└─IndexReader root  index:HashAgg",
-					"  └─HashAgg cop[tikv]  group by:test.t_issue67009.c0, funcs:max(test.t_issue67009.c0)->Column",
-					"    └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+					"StreamAgg root  group by:test.t_issue67009.c0, funcs:max(Column)->Column",
+					"└─IndexReader root  index:StreamAgg",
+					"  └─StreamAgg cop[tikv]  group by:test.t_issue67009.c0, funcs:max(test.t_issue67009.c0)->Column",
+					"    └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:true, stats:pseudo"))
 				tk.MustQuery("explain format = 'plan_tree' select /* issue:67009 constant */ max(42) from t_issue67009 group by c0").Check(testkit.Rows(
 					"Projection root  42->Column",
-					"└─HashAgg root  group by:test.t_issue67009.c0, funcs:count(Column)->Column",
-					"  └─IndexReader root  index:HashAgg",
-					"    └─HashAgg cop[tikv]  group by:test.t_issue67009.c0, funcs:count(1)->Column",
-					"      └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+					"└─StreamAgg root  group by:test.t_issue67009.c0, funcs:count(Column)->Column",
+					"  └─IndexReader root  index:StreamAgg",
+					"    └─StreamAgg cop[tikv]  group by:test.t_issue67009.c0, funcs:count(1)->Column",
+					"      └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:true, stats:pseudo"))
 			}
 		}
 
