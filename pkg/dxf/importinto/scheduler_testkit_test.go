@@ -220,9 +220,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		prepareExt, ok := ext.(scheduler.PrepareExtension)
-		require.True(t, ok)
-		require.NoError(t, prepareExt.OnPrepare(ctx, d, task))
+		require.NoError(t, ext.OnPrepare(ctx, d, task))
 
 		gotJobInfo, err := importer.GetJob(ctx, conn, jobID, "root", true)
 		require.NoError(t, err)
