@@ -62,7 +62,13 @@ type TaskMeta struct {
 // Keep this wrapper generic so future prepare-stage fields can be added without
 // changing the on-disk top-level JSON shape again.
 type PreparedChunkMapMeta struct {
-	ChunkMap map[int32][]importer.Chunk `json:"chunk_map,omitempty"`
+	globalsort.BaseExternalMeta
+	ChunkMap map[int32][]importer.Chunk `json:"chunk_map,omitempty" external:"true"`
+}
+
+// Marshal marshals the prepared chunk map meta to JSON.
+func (m *PreparedChunkMapMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // ImportStepMeta is the meta of import step.

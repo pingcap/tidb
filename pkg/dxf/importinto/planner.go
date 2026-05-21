@@ -425,13 +425,10 @@ func readPreparedChunkMap(
 		return nil, err
 	}
 	defer store.Close()
-	data, err := store.ReadFile(ctx, externalPath)
-	if err != nil {
-		return nil, err
+	preparedChunkMapMeta := PreparedChunkMapMeta{
+		BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
 	}
-
-	var preparedChunkMapMeta PreparedChunkMapMeta
-	if err := json.Unmarshal(data, &preparedChunkMapMeta); err != nil {
+	if err := preparedChunkMapMeta.ReadJSONFromExternalStorage(ctx, store, &preparedChunkMapMeta); err != nil {
 		return nil, err
 	}
 	if preparedChunkMapMeta.ChunkMap != nil {
@@ -441,7 +438,7 @@ func readPreparedChunkMap(
 	// Compatible with legacy format where the external file stored chunkMap
 	// directly as the top-level JSON object.
 	var legacyChunkMap map[int32][]importer.Chunk
-	if err := json.Unmarshal(data, &legacyChunkMap); err != nil {
+	if err := preparedChunkMapMeta.ReadJSONFromExternalStorage(ctx, store, &legacyChunkMap); err != nil {
 		return nil, err
 	}
 	return legacyChunkMap, nil

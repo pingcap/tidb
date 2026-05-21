@@ -151,14 +151,6 @@ func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()
 }
 
-// OnPrepare implements Extension with default delegation to Extension.
-func (s *BaseScheduler) OnPrepare(ctx context.Context, h storage.TaskHandle, task *proto.Task) error {
-	if s.Extension == nil || s.Extension == s {
-		return nil
-	}
-	return s.Extension.OnPrepare(ctx, h, task)
-}
-
 // getTaskClone returns a clone of the task.
 func (s *BaseScheduler) getTaskClone() *proto.Task {
 	clone := *s.GetTask()
