@@ -1018,7 +1018,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}
 		// Compute interaction rules that should be optimized again
 		interactionRule, ok := optInteractionRuleList[rule]
-		if planChanged && ok && isLogicalRuleDisabled(interactionRule, logic) {
+		if planChanged && ok && !isLogicalRuleDisabled(interactionRule, logic) {
 			againRuleList = append(againRuleList, interactionRule)
 		}
 	}
