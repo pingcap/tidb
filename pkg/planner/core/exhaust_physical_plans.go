@@ -126,7 +126,6 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 
 func checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 	// if a left key and its corresponding right key have different collation, don't use MergeJoin since
-	// the their children may sort their records in different ways
 	for i := range leftKeys {
 		lt := leftKeys[i].RetType
 		rt := rightKeys[i].RetType
