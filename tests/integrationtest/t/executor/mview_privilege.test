@@ -52,6 +52,7 @@ grant select, insert, update, delete on mview_privilege_test.* to 'u_dml'@'%';
 
 connect (u_show_mv, localhost, u_show_mv,,mview_privilege_test);
 connection u_show_mv;
+--replace_column 1 <mview_id>
 show materialized view mv remain_logs;
 -- error 1142
 show create materialized view mv;
@@ -67,6 +68,7 @@ revoke select on mview_privilege_test.mv from 'u_show_create'@'%';
 show grants for 'u_show_create'@'%';
 connect (u_show_create, localhost, u_show_create,,mview_privilege_test);
 connection u_show_create;
+--replace_column 1 <mview_id>
 show materialized view mv remain_logs;
 -- error 1142
 show create materialized view mv;
@@ -79,6 +81,7 @@ show grants for 'u_show_create'@'%';
 connect (u_show_create, localhost, u_show_create,,mview_privilege_test);
 connection u_show_create;
 -- error 1142
+--replace_column 1 <mview_id>
 show materialized view mv remain_logs;
 -- error 1142
 show create materialized view mv;
@@ -86,9 +89,12 @@ disconnect u_show_create;
 
 connect (u_show_log, localhost, u_show_log,,mview_privilege_test);
 connection u_show_log;
+--replace_column 1 <mlog_id> 3 <base_table_id>
 show materialized view logs from mview_privilege_test;
+--replace_column 1 <mlog_id> 3 <base_table_id>
 show materialized view logs from mview_privilege_test like '$mlog$%';
 show materialized view logs from mview_privilege_test like 'mview_privilege_test.$mlog$%';
+--replace_column 1 <mlog_id> 3 <base_table_id>
 show materialized view log on t wait_purge;
 show create materialized view log on t;
 -- error 1142
@@ -100,6 +106,7 @@ revoke select on mview_privilege_test.t from 'u_show_log'@'%';
 show grants for 'u_show_log'@'%';
 connect (u_show_log, localhost, u_show_log,,);
 connection u_show_log;
+--replace_column 1 <mlog_id> 3 <base_table_id>
 show materialized view logs from mview_privilege_test;
 -- error 1142
 show materialized view log on mview_privilege_test.t wait_purge;

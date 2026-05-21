@@ -97,7 +97,7 @@ create user 'u_dml'@'%';
 grant select, insert, update, delete on mview_privilege_test.* to 'u_dml'@'%';
 show materialized view mv remain_logs;
 mview_id	mview_name	pending_rows
-128	mv	1
+<mview_id>	mv	1
 show create materialized view mv;
 Error 1142 (42000): SELECT command denied to user 'u_show_mv'@'%' for table 'mv'
 show create materialized view mv;
@@ -110,7 +110,7 @@ GRANT USAGE ON *.* TO 'u_show_create'@'%'
 GRANT SHOW VIEW ON `mview_privilege_test`.`mv` TO 'u_show_create'@'%'
 show materialized view mv remain_logs;
 mview_id	mview_name	pending_rows
-128	mv	1
+<mview_id>	mv	1
 show create materialized view mv;
 Error 1142 (42000): SELECT command denied to user 'u_show_create'@'%' for table 'mv'
 grant select on mview_privilege_test.mv to 'u_show_create'@'%';
@@ -125,15 +125,15 @@ show create materialized view mv;
 Error 1142 (42000): SHOW VIEW command denied to user 'u_show_create'@'%' for table 'mv'
 show materialized view logs from mview_privilege_test;
 MLOG_ID	MLOG_NAME	BASE_TABLE_ID	BASE_TABLE_NAME
-126	mview_privilege_test.$mlog$t	124	mview_privilege_test.t
+<mlog_id>	mview_privilege_test.$mlog$t	<base_table_id>	mview_privilege_test.t
 show materialized view logs from mview_privilege_test like '$mlog$%';
 MLOG_ID	MLOG_NAME	BASE_TABLE_ID	BASE_TABLE_NAME
-126	mview_privilege_test.$mlog$t	124	mview_privilege_test.t
+<mlog_id>	mview_privilege_test.$mlog$t	<base_table_id>	mview_privilege_test.t
 show materialized view logs from mview_privilege_test like 'mview_privilege_test.$mlog$%';
 MLOG_ID	MLOG_NAME	BASE_TABLE_ID	BASE_TABLE_NAME
 show materialized view log on t wait_purge;
 mlog_id	mlog_name	base_table_id	base_table_name	pending_rows
-126	$mlog$t	124	t	0
+<mlog_id>	$mlog$t	<base_table_id>	t	0
 show create materialized view log on t;
 Materialized View Log	Create Materialized View Log
 t	CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`) PURGE NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)
