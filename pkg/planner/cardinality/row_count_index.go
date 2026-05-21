@@ -43,6 +43,14 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	sc := sctx.GetSessionVars().StmtCtx
 	idx := coll.GetIdx(idxID)
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
+	// Fast-path: a full-range scan over a non-MV, non-partial index returns exactly
+	// RealtimeCount regardless of histogram availability, so we can short-circuit
+	// before IndexStatsIsInvalid — which would otherwise queue an unnecessary async
+	// histogram load whenever the index stats are not fully loaded.
+	if idx != nil && canSkipIndexEstimation(idx, indexRanges) {
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
+		return statistics.DefaultRowEst(float64(realtimeCnt)), nil
+	}
 	if statistics.IndexStatsIsInvalid(sctx, idx, coll, idxID) {
 		if hasColumnStats(sctx, coll, idxCols) && !ranger.HasFullRange(indexRanges, false) {
 			count, maxCount, err = getPseudoRowCountWithPartialStats(sctx, coll, indexRanges, float64(coll.RealtimeCount), idxCols)
@@ -58,9 +66,6 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		return result, err
 	}
 	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
-	if canSkipIndexEstimation(idx, indexRanges) {
-		return statistics.DefaultRowEst(float64(realtimeCnt)), nil
-	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		count, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 		result = statistics.DefaultRowEst(count)
@@ -608,10 +613,16 @@ func canSkipIndexEstimation(idx *statistics.Index, indexRanges []*ranger.Range) 
 }
 
 // isFullRangeIncludingNulls checks if a single range covers all values including NULLs.
-// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull),
-// not KindMinNotNull, ensuring NULL rows are included in the count.
+// Unlike ranger.IsFullRange, this requires the low bound to be NULL (KindNull) inclusive,
+// not KindMinNotNull and not an exclusive lower bound, so NULL rows are guaranteed to be
+// included in the count.
 func isFullRangeIncludingNulls(ran *ranger.Range) bool {
 	if len(ran.LowVal) != len(ran.HighVal) || len(ran.LowVal) == 0 {
+		return false
+	}
+	// An exclusive bound on NULL (low) or +inf (high) would drop those endpoints
+	// and shrink the range, so the fast path must not apply.
+	if ran.LowExclude || ran.HighExclude {
 		return false
 	}
 	for i := range ran.LowVal {
