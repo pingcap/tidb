@@ -3400,7 +3400,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		return dbterror.ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
 
-	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
+		jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(spec.OldColumnName.Name, ident.Name))
@@ -3408,6 +3408,12 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+
+	// Reject modify/change column to unsupported type if the column has a masking policy.
+	if err := checkMaskingPolicyOnModifyColumn(e.infoCache.GetLatest(), ident, spec.OldColumnName.Name, specNewColumn); err != nil {
+		return errors.Trace(err)
+	}
+
 	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
 	jobW.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
@@ -3416,8 +3422,40 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
-	}
+		}
 	return errors.Trace(err)
+}
+
+// checkMaskingPolicyOnModifyColumn rejects MODIFY/CHANGE COLUMN to an unsupported type
+// if the column currently has a masking policy. This check is done at the SQL layer
+// before the DDL job is submitted, so the error is returned immediately.
+func checkMaskingPolicyOnModifyColumn(
+	is infoschema.InfoSchema,
+	ident ast.Ident,
+	originalColName ast.CIStr,
+	specNewColumn *ast.ColumnDef,
+) error {
+	if specNewColumn == nil || specNewColumn.Tp == nil {
+		return nil
+	}
+	tbl, err := is.TableByName(context.Background(), ident.Schema, ident.Name)
+	if err != nil {
+		return nil // table not found, let later checks handle it
+	}
+	col := table.FindCol(tbl.VisibleCols(), originalColName.L)
+	if col == nil {
+		return nil // column not found, let later checks handle it
+	}
+	// Check if the column has a masking policy.
+	_, ok := is.MaskingPolicyByTableColumn(tbl.Meta().ID, col.ID)
+	if !ok {
+		return nil // no masking policy, allow any type change
+	}
+	// Build a temporary ColumnInfo for the new type and validate it.
+	newCol := &model.ColumnInfo{
+		FieldType: *specNewColumn.Tp,
+	}
+	return checkMaskingPolicyColumn(newCol)
 }
 
 // RenameColumn renames an existing column.
@@ -3510,6 +3548,12 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+
+	// Reject modify/change column to unsupported type if the column has a masking policy.
+	if err := checkMaskingPolicyOnModifyColumn(e.infoCache.GetLatest(), ident, originalColName, specNewColumn); err != nil {
+		return errors.Trace(err)
+	}
+
 	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
 	jobW.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 

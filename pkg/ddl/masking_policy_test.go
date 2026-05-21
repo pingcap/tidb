@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
@@ -177,6 +178,25 @@ func TestMaskingPolicyRenameColumn(t *testing.T) {
 	tk.MustQuery("select column_name, expression from mysql.tidb_masking_policy where policy_name = 'p_rename_col'").
 		Check(testkit.Rows("c_new `c_new`"))
 
-	// Verify select still works
+		// Verify select still works
 	tk.MustQuery("select c_new from t_rename_col").Check(testkit.Rows("delta"))
+}
+
+func TestMaskingPolicyModifyColumnRejectUnsupportedType(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_mod")
+	tk.MustExec("create table t_mod(id int primary key, c varchar(100))")
+	tk.MustExec("create masking policy p on t_mod(c) as c enable")
+
+	// MODIFY COLUMN to JSON (unsupported type) should be rejected.
+	tk.MustGetErrCode("alter table t_mod modify column c json", errno.ErrUnsupportedDDLOperation)
+
+	// CHANGE COLUMN to JSON should also be rejected.
+	tk.MustGetErrCode("alter table t_mod change column c c2 json", errno.ErrUnsupportedDDLOperation)
+
+	// Verify the policy is still intact.
+	tk.MustQuery("select column_name, expression from mysql.tidb_masking_policy where policy_name = 'p'").
+		Check(testkit.Rows("c `c`"))
 }

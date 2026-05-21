@@ -615,6 +615,11 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 			continue
 		}
 
+		// Reject type changes that are unsupported by masking policy.
+		if err := checkMaskingPolicyColumn(newCol); err != nil {
+			return err
+		}
+
 		newPolicy := policy.Clone()
 		newPolicy.TableName = tblInfo.Name
 		newPolicy.ColumnID = newCol.ID
