@@ -2253,6 +2253,8 @@ func TestSelectLockWithStaticPruneAndPartitionProcessorBlacklist(t *testing.T) {
 	tk.MustExec(`insert into mysql.opt_rule_blacklist values ("predicate_push_down"), ("partition_processor")`)
 	tk.MustExec("admin reload opt_rule_blacklist")
 	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
+	require.Contains(t, fmt.Sprint(tk.MustQuery("show warnings").Rows()),
+		"partition_processor in mysql.opt_rule_blacklist is ignored because static partition pruning requires it for correctness")
 }
 
 func TestIssue26251(t *testing.T) {

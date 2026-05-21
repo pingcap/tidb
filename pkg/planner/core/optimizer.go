@@ -1035,13 +1035,19 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 }
 
 func isLogicalRuleDisabled(r base.LogicalOptRule, logic base.LogicalPlan) bool {
+	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.Name())
+	if !disabled {
+		return false
+	}
 	if _, ok := r.(*rule.PartitionProcessor); ok && !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		// Static pruning needs PartitionProcessor to rewrite logical partition scans
 		// into concrete partition scans; skipping it can make partition data invisible.
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			"partition_processor in mysql.opt_rule_blacklist is ignored because static partition pruning requires it for correctness",
+		))
 		return false
 	}
-	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.Name())
-	return disabled
+	return true
 }
 
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
