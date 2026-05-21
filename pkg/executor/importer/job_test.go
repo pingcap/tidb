@@ -161,8 +161,16 @@ func TestJobHappyPath(t *testing.T) {
 	}
 
 	t.Run("prepare phase transition", func(t *testing.T) {
+		createdParams := &importer.ImportParameters{
+			FileLocation: "s3://bucket/path.csv",
+			Format:       importer.DataFormatAuto,
+			Options: map[string]any{
+				"detached": nil,
+				"thread":   float64(16),
+			},
+		}
 		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
-			"root@%", "", &importer.ImportParameters{Format: importer.DataFormatCSV}, 123)
+			"root@%", "", createdParams, 123)
 		require.NoError(t, err)
 
 		require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepPreparing))
@@ -180,17 +188,13 @@ func TestJobHappyPath(t *testing.T) {
 		require.Equal(t, importer.JobStepImporting, info.Step)
 		require.Equal(t, startTime, info.StartTime)
 
-		updatedParams := &importer.ImportParameters{
-			Format: importer.DataFormatCSV,
-			Options: map[string]any{
-				"thread": float64(16),
-			},
-		}
-		require.NoError(t, importer.UpdateJobPreparedInfo(ctx, conn, jobID, 456, updatedParams))
+		require.NoError(t, importer.UpdateJobPreparedInfo(ctx, conn, jobID, 456, importer.DataFormatCSV))
 		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
 		require.NoError(t, err)
 		require.EqualValues(t, 456, info.SourceFileSize)
-		require.Equal(t, updatedParams.Options, info.Parameters.Options)
+		require.Equal(t, importer.DataFormatCSV, info.Parameters.Format)
+		require.Equal(t, createdParams.FileLocation, info.Parameters.FileLocation)
+		require.Equal(t, createdParams.Options, info.Parameters.Options)
 	})
 }
 
