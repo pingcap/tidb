@@ -71,8 +71,6 @@ const (
 	JobStepGlobalSorting = "global-sorting"
 	// JobStepImporting is the first step when using local sort,
 	// step goes from none -> importing -> validating -> none.
-	// for prepare-enabled local sort, step goes from none -> preparing ->
-	// importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
 	// when used in local sort, it means encode&sort data and then importing the data.
 	JobStepImporting = "importing"
@@ -260,10 +258,34 @@ func StartJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step string) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-		SET update_time = CURRENT_TIMESTAMP(6), step = %?
-		WHERE id = %? AND status = %?;`,
+			SET update_time = CURRENT_TIMESTAMP(6), step = %?
+			WHERE id = %? AND status = %?;`,
 		step, jobID, JobStatusRunning)
 
+	return err
+}
+
+// UpdateJobPreparedInfo updates import job fields that are known only after
+// async prepare succeeds.
+func UpdateJobPreparedInfo(
+	ctx context.Context,
+	conn sqlexec.SQLExecutor,
+	jobID int64,
+	sourceFileSize int64,
+	parameters *ImportParameters,
+) error {
+	if parameters == nil {
+		parameters = &ImportParameters{}
+	}
+	paramsBytes, err := json.Marshal(parameters)
+	if err != nil {
+		return err
+	}
+	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+			SET update_time = CURRENT_TIMESTAMP(6), source_file_size = %?, parameters = %?
+			WHERE id = %? AND status = %?;`,
+		sourceFileSize, paramsBytes, jobID, JobStatusRunning)
 	return err
 }
 

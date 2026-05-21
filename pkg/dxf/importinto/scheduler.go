@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -291,26 +292,6 @@ func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta 
 	})
 }
 
-func (sch *importScheduler) checkActiveImportJobs(ctx context.Context, taskMeta *TaskMeta) error {
-	taskManager, err := sch.getTaskMgrForAccessingImportJob()
-	if err != nil {
-		return err
-	}
-	return taskManager.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.GetSQLExecutor()
-		activeCnt, err := importer.GetActiveJobCnt(ctx, exec, taskMeta.Plan.DBName, taskMeta.Plan.TableInfo.Name.L)
-		if err != nil {
-			return err
-		}
-		// The current prepare-enabled job is already in pending state, so we only
-		// fail when there are other active jobs on the same table.
-		if activeCnt > 1 {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
-		}
-		return nil
-	})
-}
-
 func (sch *importScheduler) writePreparedChunkMap(
 	ctx context.Context,
 	taskID int64,
@@ -328,11 +309,8 @@ func (sch *importScheduler) writePreparedChunkMap(
 		uuid.NewString(),
 		"meta.json",
 	)
-	data, err := json.Marshal(chunkMap)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	if err = store.WriteFile(ctx, externalPath, data); err != nil {
+	baseMeta := globalsort.BaseExternalMeta{ExternalPath: externalPath}
+	if err = baseMeta.WriteJSONToExternalStorage(ctx, store, chunkMap); err != nil {
 		return "", err
 	}
 	return externalPath, nil
@@ -349,7 +327,7 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 			return err
 		}
 	}
-	if !ShouldUseScopedPrepareIntegration(&taskMeta.Plan) {
+	if !ShouldUseAsyncPrepareForImportInto(&taskMeta.Plan) {
 		return nil
 	}
 
@@ -372,9 +350,6 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 			"No file matched, or the file is empty. Please provide a valid file location.",
 		)
 	}
-	if err = sch.checkActiveImportJobs(ctx, taskMeta); err != nil {
-		return err
-	}
 	if err = sch.checkImportTableEmpty(ctx, taskMeta); err != nil {
 		return err
 	}
@@ -394,6 +369,9 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	taskMeta.Plan = *controller.Plan
 	taskMeta.ChunkMap = nil
 	taskMeta.PreparedChunkMapExternalPath = chunkMapPath
+	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta); err != nil {
+		return err
+	}
 	metaBytes, err := json.Marshal(taskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -814,6 +792,28 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.GetSQLExecutor()
 				return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
+			})
+		},
+	)
+}
+
+func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta) error {
+	taskManager, err := sch.getTaskMgrForAccessingImportJob()
+	if err != nil {
+		return err
+	}
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
+				exec := se.GetSQLExecutor()
+				return importer.UpdateJobPreparedInfo(
+					ctx,
+					exec,
+					taskMeta.JobID,
+					taskMeta.Plan.TotalFileSize,
+					taskMeta.Plan.Parameters,
+				)
 			})
 		},
 	)

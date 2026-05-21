@@ -64,9 +64,11 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
 }
 
-// ShouldUseScopedPrepareIntegration enables framework prepare integration only
-// for nextgen + global-sort path.
-func ShouldUseScopedPrepareIntegration(plan *importer.Plan) bool {
+// ShouldUseAsyncPrepareForImportInto returns whether IMPORT INTO should use
+// DXF prepare-mode asynchronous prepare.
+// Nextgen only supports global sort for IMPORT INTO in production, but local
+// sort can still be exercised in tests, so keep the IsGlobalSort check.
+func ShouldUseAsyncPrepareForImportInto(plan *importer.Plan) bool {
 	return plan != nil && kerneltype.IsNextGen() && plan.IsGlobalSort()
 }
 
@@ -94,7 +96,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		ThreadCnt:  plan.ThreadCnt,
 		MaxNodeCnt: plan.MaxNodeCnt,
 	}
-	if ShouldUseScopedPrepareIntegration(plan) {
+	if ShouldUseAsyncPrepareForImportInto(plan) {
 		logicalPlan.PrepareMode = proto.PrepareModeRequired
 		planCtx.ThreadCnt = 1
 		planCtx.MaxNodeCnt = 1

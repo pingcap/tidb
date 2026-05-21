@@ -179,6 +179,18 @@ func TestJobHappyPath(t *testing.T) {
 		require.Equal(t, importer.JobStatusRunning, info.Status)
 		require.Equal(t, importer.JobStepImporting, info.Step)
 		require.Equal(t, startTime, info.StartTime)
+
+		updatedParams := &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+			Options: map[string]any{
+				"thread": float64(16),
+			},
+		}
+		require.NoError(t, importer.UpdateJobPreparedInfo(ctx, conn, jobID, 456, updatedParams))
+		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.EqualValues(t, 456, info.SourceFileSize)
+		require.Equal(t, updatedParams.Options, info.Parameters.Options)
 	})
 }
 
