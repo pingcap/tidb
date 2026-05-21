@@ -124,13 +124,8 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tikv/client-go/v2 v2.0.8-0.20260414033830-1adc54c38a51
-	github.com/tikv/pd/client v0.0.0-20260514035418-08d563f93b67
-=======
 	github.com/tikv/client-go/v2 v2.0.8-0.20260429090231-839228f8c022
-	github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52
->>>>>>> bdd978350e0 (vars: validate some vars for tidb x (#68196))
+	github.com/tikv/pd/client v0.0.0-20260514035418-08d563f93b67
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
