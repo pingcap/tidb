@@ -151,10 +151,12 @@ func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()
 }
 
-// OnPrepare implements Extension with a no-op default.
-// will be removed in later PR.
-func (*BaseScheduler) OnPrepare(context.Context, storage.TaskHandle, *proto.Task) error {
-	return nil
+// OnPrepare implements Extension with default delegation to Extension.
+func (s *BaseScheduler) OnPrepare(ctx context.Context, h storage.TaskHandle, task *proto.Task) error {
+	if s.Extension == nil || s.Extension == s {
+		return nil
+	}
+	return s.Extension.OnPrepare(ctx, h, task)
 }
 
 // getTaskClone returns a clone of the task.
@@ -392,7 +394,7 @@ func (s *BaseScheduler) onPending() error {
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
-		if err := s.Extension.OnPrepare(s.ctx, s, task); err != nil {
+		if err := s.OnPrepare(s.ctx, s, task); err != nil {
 			return s.handlePrepareOrPlanErr(err)
 		}
 		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)

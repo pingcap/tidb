@@ -106,7 +106,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return e.importFromSelect(ctx)
 	}
 
-	useAsyncPrepare := importinto.ShouldUseAsyncPrepareForImportInto(e.controller.Plan)
+	useAsyncPrepare := importinto.ShouldUseAsyncPrepare(e.controller.Plan)
 	if !useAsyncPrepare {
 		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 			return err2

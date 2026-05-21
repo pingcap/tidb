@@ -58,6 +58,13 @@ type TaskMeta struct {
 	PreparedChunkMapExternalPath string `json:"prepared_chunk_map_external_path,omitempty"`
 }
 
+// PreparedChunkMapMeta stores chunk-map metadata generated in prepare stage.
+// Keep this wrapper generic so future prepare-stage fields can be added without
+// changing the on-disk top-level JSON shape again.
+type PreparedChunkMapMeta struct {
+	ChunkMap map[int32][]importer.Chunk `json:"chunk_map,omitempty"`
+}
+
 // ImportStepMeta is the meta of import step.
 // Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
