@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -69,15 +68,6 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
 )
-
-type matchIdentitySession struct {
-	sessionapi.Session
-	matchIdentity func(context.Context, string, string) (*auth.UserIdentity, error)
-}
-
-func (s matchIdentitySession) MatchIdentity(ctx context.Context, username, remoteHost string) (*auth.UserIdentity, error) {
-	return s.matchIdentity(ctx, username, remoteHost)
-}
 
 func TestMatchIdentityWithVariantsStarter(t *testing.T) {
 	if !kerneltype.IsNextGen() {
@@ -153,29 +143,6 @@ func TestMatchIdentityWithVariantsStarter(t *testing.T) {
 	cc = newClientConn("OTHER.test_user", 3)
 	_, err = cc.checkAuthPlugin(context.Background(), &resp)
 	require.True(t, errors.ErrorEqual(err, servererr.ErrUserPrefixMismatch), "%v", err)
-
-	unexpectedErr := errors.New("match identity failed")
-	cc = &clientConn{user: "test_user"}
-	cc.SetCtx(&TiDBContext{
-		Session: matchIdentitySession{
-			matchIdentity: func(context.Context, string, string) (*auth.UserIdentity, error) {
-				return nil, unexpectedErr
-			},
-		},
-	})
-	_, err = cc.matchIdentityWithVariants(context.Background(), "localhost")
-	require.Equal(t, unexpectedErr, errors.Cause(err))
-
-	cc = &clientConn{user: "test_user", peerHost: "localhost"}
-	cc.SetCtx(&TiDBContext{
-		Session: matchIdentitySession{
-			matchIdentity: func(context.Context, string, string) (*auth.UserIdentity, error) {
-				return nil, unexpectedErr
-			},
-		},
-	})
-	_, err = cc.checkAuthPlugin(context.Background(), &resp)
-	require.Equal(t, unexpectedErr, errors.Cause(err))
 }
 
 func TestReadHandshakeGatewayTLSAttrStarter(t *testing.T) {

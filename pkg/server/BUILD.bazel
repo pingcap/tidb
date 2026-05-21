@@ -194,7 +194,6 @@ go_test(
         "//pkg/server/internal/util",
         "//pkg/session",
         "//pkg/session/sessmgr",
-        "//pkg/session/sessionapi",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
