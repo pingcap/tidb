@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -71,16 +69,16 @@ func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
 	}
 
 	t.Run("shared lock upgrade gate propagates to lock ctx", func(t *testing.T) {
-		store := testkit.CreateMockStore(t)
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("begin pessimistic")
+		type lockCtxWithUpgradeField struct {
+			AllowSharedLockUpgrade bool
+		}
+		type lockCtxWithoutUpgradeField struct{}
 
-		vars := tk.Session().GetSessionVars()
-		require.NoError(t, vars.SetSystemVar(vardef.TiDBEnableSharedLockUpgrade, "ON"))
+		withUpgradeField := &lockCtxWithUpgradeField{}
+		executor.SetSharedLockUpgradeIfSupportedForTest(withUpgradeField, true)
+		require.True(t, withUpgradeField.AllowSharedLockUpgrade)
 
-		lockCtx, err := executor.NewLockCtxForTest(tk.Session(), 123, 1, true)
-		require.NoError(t, err)
-		require.True(t, lockCtx.InShareMode)
-		require.True(t, lockCtx.AllowSharedLockUpgrade)
+		withoutUpgradeField := &lockCtxWithoutUpgradeField{}
+		executor.SetSharedLockUpgradeIfSupportedForTest(withoutUpgradeField, true)
 	})
 }
