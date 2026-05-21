@@ -93,6 +93,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(vardef.DefTiDBTmpTableMaxSize), vars.TMPTableSize)
 	require.Equal(t, vardef.DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
+	require.Equal(t, vardef.DefTiDBEnableSharedLockUpgrade, vars.EnableSharedLockUpgrade)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -216,6 +217,11 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(vardef.TiDBOptEnableAlternativeLogicalPlans, "1")
 	require.NoError(t, err)
 	require.True(t, v.EnableAlternativeLogicalPlans)
+
+	require.False(t, v.EnableSharedLockUpgrade)
+	err = v.SetSystemVar(vardef.TiDBEnableSharedLockUpgrade, "1")
+	require.NoError(t, err)
+	require.True(t, v.EnableSharedLockUpgrade)
 
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)

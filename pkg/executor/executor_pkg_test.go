@@ -44,6 +44,7 @@ import (
 var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
+	NewLockCtxForTest      = newLockCtx
 )
 
 func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
