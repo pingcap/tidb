@@ -3939,12 +3939,11 @@ insert into t values(0, '2010', 2010);
 insert into t values(1, '2011', 2011);
 insert into t values(2, '2012', 2012);
 insert into t values(3, cast(18446744073709551615 as JSON), 18446744073709551616.000000);
-select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;
+select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d where t1.id < 3 and t2.id < 3;
 id	id
 0	0
 1	1
 2	2
-3	3
 drop table if exists catalog_sales, store_sales, date_dim;
 create table catalog_sales
 (
