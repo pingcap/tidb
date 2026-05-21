@@ -87,6 +87,21 @@ Grants for u_db_refresh@%
 GRANT USAGE ON *.* TO 'u_db_refresh'@'%'
 GRANT OPERATE VIEW ON `mview_privilege_test`.* TO 'u_db_refresh'@'%'
 GRANT SELECT ON `mview_privilege_test`.`t` TO 'u_db_refresh'@'%'
+create user 'u_compare_none'@'%';
+create user 'u_compare_operate'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_operate'@'%';
+create user 'u_compare_no_create'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_no_create'@'%';
+grant select on mview_privilege_test.t to 'u_compare_no_create'@'%';
+create user 'u_compare_no_insert'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_no_insert'@'%';
+grant select on mview_privilege_test.t to 'u_compare_no_insert'@'%';
+grant create on mview_privilege_test.* to 'u_compare_no_insert'@'%';
+create user 'u_compare_output_exists'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_output_exists'@'%';
+grant select on mview_privilege_test.t to 'u_compare_output_exists'@'%';
+grant create, insert on mview_privilege_test.* to 'u_compare_output_exists'@'%';
+create table mv_compare_output_exists (a int);
 create user 'u_purge_sel'@'%';
 create user 'u_purge_op'@'%';
 create user 'u_purge_global'@'%';
@@ -189,6 +204,16 @@ GRANT SELECT ON `mview_privilege_test`.`t` TO 'u_db_refresh'@'%'
 GRANT SHOW VIEW ON `mview_privilege_test`.`mv` TO 'u_db_refresh'@'%'
 refresh materialized view mv complete delta apply;
 Error 1142 (42000): OPERATE VIEW command denied to user 'u_db_refresh'@'%' for table 'mv'
+compare materialized view mview_privilege_test.mv as of timestamp '2026-05-21 10:00:00';
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_compare_none'@'%' for table 'mv'
+compare materialized view mv as of timestamp '2026-05-21 10:00:00';
+Error 1142 (42000): SELECT command denied to user 'u_compare_operate'@'%' for table 't'
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+Error 1142 (42000): CREATE command denied to user 'u_compare_no_create'@'%' for table 'mv_compare_output'
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+Error 1142 (42000): INSERT command denied to user 'u_compare_no_insert'@'%' for table 'mv_compare_output'
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output_exists;
+Error 1050 (42S01): Table 'mview_privilege_test.mv_compare_output_exists' already exists
 insert into t values (5, 9);
 insert into mv values (4, 1, 1);
 Error 1288 (HY000): The target table mv of the INSERT is not updatable
@@ -281,6 +306,11 @@ drop user if exists 'u_show_create'@'%';
 drop user if exists 'u_show_log'@'%';
 drop user if exists 'u_refresh_select'@'%';
 drop user if exists 'u_db_refresh'@'%';
+drop user if exists 'u_compare_none'@'%';
+drop user if exists 'u_compare_operate'@'%';
+drop user if exists 'u_compare_no_create'@'%';
+drop user if exists 'u_compare_no_insert'@'%';
+drop user if exists 'u_compare_output_exists'@'%';
 drop user if exists 'u_purge_sel'@'%';
 drop user if exists 'u_purge_op'@'%';
 drop user if exists 'u_purge_global'@'%';

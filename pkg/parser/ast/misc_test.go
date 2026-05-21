@@ -85,6 +85,7 @@ func TestMiscVisitorCover(t *testing.T) {
 		},
 		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
 		&ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
+		&ast.CompareMaterializedViewStmt{ViewName: &ast.TableName{}, AsOf: &ast.AsOfClause{TsExpr: valueExpr}},
 		&ast.RefreshMaterializedViewImplementStmt{
 			RefreshStmt:                  &ast.RefreshMaterializedViewStmt{ViewName: &ast.TableName{}},
 			LastSuccessfulRefreshReadTSO: 1,
@@ -120,6 +121,32 @@ func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
 func TestRefreshMaterializedViewStmtIsStmtNode(t *testing.T) {
 	_, ok := any(&ast.RefreshMaterializedViewStmt{}).(ast.StmtNode)
 	require.True(t, ok)
+}
+
+func TestCompareMaterializedViewStmtIsStmtNode(t *testing.T) {
+	_, ok := any(&ast.CompareMaterializedViewStmt{}).(ast.StmtNode)
+	require.True(t, ok)
+}
+
+func TestCompareMaterializedViewStmtRestore(t *testing.T) {
+	stmt := &ast.CompareMaterializedViewStmt{
+		ViewName: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv"),
+		},
+		AsOf: &ast.AsOfClause{
+			TsExpr: ast.NewValueExpr("2026-05-21 10:00:00", mysql.DefaultCharset, mysql.DefaultCollationName),
+		},
+		OutputTable: &ast.TableName{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("mv_diff"),
+		},
+	}
+
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	require.NoError(t, stmt.Restore(rctx))
+	require.Equal(t, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-05-21 10:00:00' OUTPUT INTO TABLE `test`.`mv_diff`", sb.String())
 }
 
 func TestRefreshMaterializedViewStmtRestoreOutOfPlace(t *testing.T) {

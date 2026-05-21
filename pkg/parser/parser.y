@@ -374,6 +374,7 @@ import (
 	commit                "COMMIT"
 	committed             "COMMITTED"
 	compact               "COMPACT"
+	compare               "COMPARE"
 	complete              "COMPLETE"
 	compressed            "COMPRESSED"
 	compression           "COMPRESSION"
@@ -537,6 +538,7 @@ import (
 	onDuplicate           "ON_DUPLICATE"
 	open                  "OPEN"
 	optional              "OPTIONAL"
+	output                "OUTPUT"
 	packKeys              "PACK_KEYS"
 	pageSym               "PAGE"
 	parser                "PARSER"
@@ -991,6 +993,7 @@ import (
 	CancelMaterializedViewJobStmt "CANCEL MATERIALIZED VIEW ... JOB statement"
 	CancelDistributionJobStmt     "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                    "COMMIT statement"
+	CompareMaterializedViewStmt   "COMPARE MATERIALIZED VIEW statement"
 	CreateTableStmt               "CREATE TABLE statement"
 	CreateViewStmt                "CREATE VIEW  statement"
 	CreateMaterializedViewStmt    "CREATE MATERIALIZED VIEW statement"
@@ -1454,6 +1457,7 @@ import (
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
 	RefreshCompleteMode                    "REFRESH MATERIALIZED VIEW COMPLETE mode option"
+	CompareMaterializedViewOutputOpt       "COMPARE MATERIALIZED VIEW OUTPUT INTO TABLE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5642,6 +5646,26 @@ CancelMaterializedViewJobStmt:
 		}
 	}
 
+CompareMaterializedViewStmt:
+	"COMPARE" "MATERIALIZED" "VIEW" TableName AsOfClause CompareMaterializedViewOutputOpt
+	{
+		$$ = &ast.CompareMaterializedViewStmt{
+			ViewName:    $4.(*ast.TableName),
+			AsOf:        $5.(*ast.AsOfClause),
+			OutputTable: $6.(*ast.TableName),
+		}
+	}
+
+CompareMaterializedViewOutputOpt:
+	%prec empty
+	{
+		$$ = (*ast.TableName)(nil)
+	}
+|	"OUTPUT" "INTO" "TABLE" TableName
+	{
+		$$ = $4.(*ast.TableName)
+	}
+
 RefreshMaterializedViewStmt:
 	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteMode RefreshMaterializedViewObserveOpt
 	{
@@ -7312,6 +7336,7 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPARE"
 |	"COMPLETE"
 |	"COMPRESSED"
 |	"CONSISTENCY"
@@ -7357,6 +7382,7 @@ UnReservedKeyword:
 |	"NAMES"
 |	"NVARCHAR"
 |	"OFFSET"
+|	"OUTPUT"
 |	"PACK_KEYS"
 |	"PARSER"
 |	"PASSWORD" %prec lowerThanEq
@@ -12927,6 +12953,7 @@ Statement:
 |	CalibrateResourceStmt
 |	CancelMaterializedViewJobStmt
 |	CancelDistributionJobStmt
+|	CompareMaterializedViewStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt

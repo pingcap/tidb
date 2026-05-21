@@ -3455,6 +3455,49 @@ func TestMaterializedViewRefreshRequiresOperateViewPrivilege(t *testing.T) {
 	require.Contains(t, dryRunOutput, "FINALIZE_HIST")
 }
 
+func TestCompareMaterializedViewPrivilegeSkeleton(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_priv (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_priv values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_compare_priv (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_priv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_priv group by a")
+	tk.MustExec("create user 'mv_compare_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'mv_compare_u'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_compare_u", Hostname: "%"}, nil, nil, nil))
+
+	compareSQL := "compare materialized view test.mv_compare_priv as of timestamp '2026-05-21 10:00:00'"
+	err := tkUser.ExecToErr(compareSQL)
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
+
+	tk.MustExec("grant operate view on test.mv_compare_priv to 'mv_compare_u'@'%'")
+	err = tkUser.QueryToErr(compareSQL)
+	require.ErrorContains(t, err, "SELECT command denied")
+
+	tk.MustExec("grant select on test.t_compare_priv to 'mv_compare_u'@'%'")
+	err = tkUser.QueryToErr(compareSQL)
+	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+
+	outputSQL := compareSQL + " output into table test.mv_compare_priv_diff"
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "CREATE command denied")
+
+	tk.MustExec("grant create on test.* to 'mv_compare_u'@'%'")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "INSERT command denied")
+
+	tk.MustExec("grant insert on test.* to 'mv_compare_u'@'%'")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+
+	tk.MustExec("create table mv_compare_priv_diff (a int)")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "Table 'test.mv_compare_priv_diff' already exists")
+}
+
 func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

@@ -1007,6 +1007,13 @@ type ProfileRefreshMaterializedView struct {
 	Statement *ast.RefreshMaterializedViewStmt
 }
 
+// CompareMaterializedView represents a "COMPARE MATERIALIZED VIEW ..." plan.
+type CompareMaterializedView struct {
+	baseSchemaProducer
+
+	Statement *ast.CompareMaterializedViewStmt
+}
+
 // PurgeMaterializedViewLog represents a "PURGE MATERIALIZED VIEW LOG ..." plan.
 type PurgeMaterializedViewLog struct {
 	baseSchemaProducer

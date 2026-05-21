@@ -337,6 +337,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.RefreshMaterializedViewStmt:
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
+	case *ast.CompareMaterializedViewStmt:
+		// The view name is not an existing table. Avoid resolving it as a normal table name.
+		p.flag |= inCreateOrDropTable
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
@@ -647,7 +650,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inCreateOrDropTable
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt:
+	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt, *ast.CompareMaterializedViewStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {

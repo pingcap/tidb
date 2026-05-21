@@ -40,6 +40,22 @@ grant operate view on mview_privilege_test.* to 'u_db_refresh'@'%';
 grant select on mview_privilege_test.t to 'u_db_refresh'@'%';
 show grants for 'u_db_refresh'@'%';
 
+create user 'u_compare_none'@'%';
+create user 'u_compare_operate'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_operate'@'%';
+create user 'u_compare_no_create'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_no_create'@'%';
+grant select on mview_privilege_test.t to 'u_compare_no_create'@'%';
+create user 'u_compare_no_insert'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_no_insert'@'%';
+grant select on mview_privilege_test.t to 'u_compare_no_insert'@'%';
+grant create on mview_privilege_test.* to 'u_compare_no_insert'@'%';
+create user 'u_compare_output_exists'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_output_exists'@'%';
+grant select on mview_privilege_test.t to 'u_compare_output_exists'@'%';
+grant create, insert on mview_privilege_test.* to 'u_compare_output_exists'@'%';
+create table mv_compare_output_exists (a int);
+
 create user 'u_purge_sel'@'%';
 create user 'u_purge_op'@'%';
 create user 'u_purge_global'@'%';
@@ -153,6 +169,37 @@ connection u_db_refresh;
 refresh materialized view mv complete delta apply;
 disconnect u_db_refresh;
 
+connect (u_compare_none, localhost, u_compare_none,,);
+connection u_compare_none;
+-- error 1142
+compare materialized view mview_privilege_test.mv as of timestamp '2026-05-21 10:00:00';
+disconnect u_compare_none;
+
+connect (u_compare_operate, localhost, u_compare_operate,,mview_privilege_test);
+connection u_compare_operate;
+-- error 1142
+compare materialized view mv as of timestamp '2026-05-21 10:00:00';
+disconnect u_compare_operate;
+
+connect (u_compare_no_create, localhost, u_compare_no_create,,mview_privilege_test);
+connection u_compare_no_create;
+-- error 1142
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+disconnect u_compare_no_create;
+
+connect (u_compare_no_insert, localhost, u_compare_no_insert,,mview_privilege_test);
+connection u_compare_no_insert;
+-- error 1142
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+disconnect u_compare_no_insert;
+
+connect (u_compare_output_exists, localhost, u_compare_output_exists,,mview_privilege_test);
+connection u_compare_output_exists;
+-- error 1050
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output_exists;
+disconnect u_compare_output_exists;
+
+connection default;
 insert into t values (5, 9);
 
 connect (u_dml, localhost, u_dml,,mview_privilege_test);
@@ -291,6 +338,11 @@ drop user if exists 'u_show_create'@'%';
 drop user if exists 'u_show_log'@'%';
 drop user if exists 'u_refresh_select'@'%';
 drop user if exists 'u_db_refresh'@'%';
+drop user if exists 'u_compare_none'@'%';
+drop user if exists 'u_compare_operate'@'%';
+drop user if exists 'u_compare_no_create'@'%';
+drop user if exists 'u_compare_no_insert'@'%';
+drop user if exists 'u_compare_output_exists'@'%';
 drop user if exists 'u_purge_sel'@'%';
 drop user if exists 'u_purge_op'@'%';
 drop user if exists 'u_purge_global'@'%';

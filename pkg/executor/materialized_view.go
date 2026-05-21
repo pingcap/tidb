@@ -73,6 +73,13 @@ type RefreshMaterializedViewExec struct {
 	done                  bool
 }
 
+// CompareMaterializedViewExec executes "COMPARE MATERIALIZED VIEW" as a utility-style statement.
+type CompareMaterializedViewExec struct {
+	exec.BaseExecutor
+	stmt *ast.CompareMaterializedViewStmt
+	done bool
+}
+
 // CancelMaterializedViewJobExec executes "CANCEL MATERIALIZED VIEW ... JOB" as a utility-style statement.
 type CancelMaterializedViewJobExec struct {
 	exec.BaseExecutor
@@ -1571,6 +1578,80 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	return e.executeRefreshMaterializedView(ctx, e.stmt)
+}
+
+// Next implements the Executor Next interface.
+func (e *CompareMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	_, tblInfo, err := e.resolveCompareMaterializedViewTarget()
+	if err != nil {
+		return err
+	}
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
+		return err
+	}
+	if err := e.checkCompareMaterializedViewOutputTableNotExists(); err != nil {
+		return err
+	}
+	return errors.NewNoStackError("COMPARE MATERIALIZED VIEW is not implemented")
+}
+
+func (e *CompareMaterializedViewExec) checkCompareMaterializedViewOutputTableNotExists() error {
+	if e.stmt.OutputTable == nil {
+		return nil
+	}
+
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemaName := e.stmt.OutputTable.Schema
+	if schemaName.O == "" {
+		if e.Ctx().GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		e.stmt.OutputTable.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	if is.TableExists(schemaName, e.stmt.OutputTable.Name) {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: e.stmt.OutputTable.Name})
+	}
+	return nil
+}
+
+func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewTarget() (pmodel.CIStr, *model.TableInfo, error) {
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemaName := e.stmt.ViewName.Schema
+	if schemaName.O == "" {
+		if e.Ctx().GetSessionVars().CurrentDB == "" {
+			return pmodel.CIStr{}, nil, errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		e.stmt.ViewName.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return pmodel.CIStr{}, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	tbl, err := is.TableByName(context.Background(), schemaName, e.stmt.ViewName.Name)
+	if err != nil {
+		return pmodel.CIStr{}, nil, err
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo.MaterializedView == nil {
+		return pmodel.CIStr{}, nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, e.stmt.ViewName.Name.O, "MATERIALIZED VIEW")
+	}
+	if len(tblInfo.MaterializedView.SQLContent) == 0 {
+		return pmodel.CIStr{}, nil, errors.New("compare materialized view: invalid select sql")
+	}
+	if err := checkRefreshMaterializedViewReady(schemaName, tblInfo); err != nil {
+		return pmodel.CIStr{}, nil, err
+	}
+	return schemaName, tblInfo, nil
 }
 
 // Next implements the Executor Next interface.
