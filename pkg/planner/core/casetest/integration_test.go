@@ -529,11 +529,26 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 				group by c0
 				having convert_tz('2025-12-31 14:30:00', 'Europe/Amsterdam', '+00:00')`).Check(testkit.Rows("42"))
 			tk.MustQuery("show warnings").Check(testkit.Rows())
-			if !notNull {
-				tk.MustHavePlan("select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0", "HashAgg")
-				tk.MustNotHavePlan("select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0", "Projection")
-				tk.MustHavePlan("select /* issue:67009 constant */ max(42) from t_issue67009 group by c0", "HashAgg")
-				tk.MustHavePlan("select /* issue:67009 constant */ max(42) from t_issue67009 group by c0", "Projection")
+			if notNull {
+				tk.MustQuery("explain format = 'plan_tree' select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0").Check(testkit.Rows(
+					"IndexReader root  index:IndexFullScan",
+					"└─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+				tk.MustQuery("explain format = 'plan_tree' select /* issue:67009 constant */ max(42) from t_issue67009 group by c0").Check(testkit.Rows(
+					"Projection root  42->Column",
+					"└─IndexReader root  index:IndexFullScan",
+					"  └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+			} else {
+				tk.MustQuery("explain format = 'plan_tree' select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0").Check(testkit.Rows(
+					"HashAgg root  group by:test.t_issue67009.c0, funcs:max(Column)->Column",
+					"└─IndexReader root  index:HashAgg",
+					"  └─HashAgg cop[tikv]  group by:test.t_issue67009.c0, funcs:max(test.t_issue67009.c0)->Column",
+					"    └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+				tk.MustQuery("explain format = 'plan_tree' select /* issue:67009 constant */ max(42) from t_issue67009 group by c0").Check(testkit.Rows(
+					"Projection root  42->Column",
+					"└─HashAgg root  group by:test.t_issue67009.c0, funcs:count(Column)->Column",
+					"  └─IndexReader root  index:HashAgg",
+					"    └─HashAgg cop[tikv]  group by:test.t_issue67009.c0, funcs:count(1)->Column",
+					"      └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
 			}
 		}
 
