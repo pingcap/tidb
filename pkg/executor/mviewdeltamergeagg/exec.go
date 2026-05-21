@@ -1385,11 +1385,11 @@ func (e *Exec) recomputeMinMaxBatch(
 			resultRows = workerData.batchResultRows
 			if cap(resultRows) < resultRowCnt {
 				resultRows = make([]int, resultRowCnt)
+				for i := range resultRowCnt {
+					resultRows[i] = i
+				}
 			} else {
 				resultRows = resultRows[:resultRowCnt]
-			}
-			for i := range resultRowCnt {
-				resultRows[i] = i
 			}
 			workerData.batchResultRows = resultRows
 		}
