@@ -51,6 +51,7 @@ import (
 var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
+	NewLockCtxForTest      = newLockCtx
 )
 
 func TestFillEmbedTextValues(t *testing.T) {
