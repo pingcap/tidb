@@ -399,17 +399,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	// Generate tasks for building stats for indexes.
-	// Skip special indexes (virtual/stored generated columns or prefix columns): their
-	// FMSketch and NullCount have already been set from the NDV pushdown above, and
-	// their histogram will be a zero-bucket histogram derived from the NDV count.
-	isSpecialIndex := make([]bool, len(e.indexes))
-	for _, offset := range indexesWithVirtualColOffsets {
-		isSpecialIndex[offset] = true
-	}
 	for i, idx := range e.indexes {
-		if isSpecialIndex[i] {
-			continue
-		}
 		buildTaskChan <- &samplingBuildTask{
 			id:               idx.ID,
 			rootRowCollector: rootRowCollector,
@@ -812,7 +802,7 @@ workLoop:
 						consumeBuffered(deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value:   &val,
+						Value:   val,
 						Ordinal: j,
 					})
 				}
@@ -826,15 +816,30 @@ workLoop:
 					MemSize:   collectorMemSize,
 				}
 			} else {
+				idx := e.indexes[task.slicePos-colLen]
+				// Check if any column has invalid offset.
+				// If so, we cannot build histogram from sampled rows because the column value
+				// is not available in the sample (e.g., stored generated column not in e.colsInfo).
+				hasInvalidOffset := false
+				for _, col := range idx.Columns {
+					if col.Offset < 0 || col.Offset >= len(e.colsInfo) {
+						hasInvalidOffset = true
+						break
+					}
+				}
+				if hasInvalidOffset {
+					hists[task.slicePos] = nil
+					topns[task.slicePos] = nil
+					continue
+				}
 				var tmpDatum types.Datum
 				var err error
-				idx := e.indexes[task.slicePos-colLen]
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
-				// types.EmptyDatumSize: same meaning as above branch.
-				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8 + types.EmptyDatumSize)
+				// statistics.EmptySampleItemSize already accounts for the embedded types.Datum in SampleItem.Value.
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
 				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
 			indexSampleCollectLoop:
@@ -871,9 +876,8 @@ workLoop:
 						// here we need to account the remaining bytes.
 						consumeBuffered(int64(cap(b) - 8))
 					}
-					tmp := types.NewBytesDatum(b)
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value: &tmp,
+						Value: types.NewBytesDatum(b),
 					})
 				}
 				flushBuffered(&collectorMemSize)
