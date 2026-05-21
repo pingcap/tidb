@@ -131,32 +131,33 @@ func (*aggregationEliminateChecker) tryToProjectConstMaxMin(agg *logicalop.Logic
 	// statement-level constant can be projected as the constant while the
 	// aggregation below still preserves group cardinality.
 	changed := false
-	proj := logicalop.LogicalProjection{
-		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.Init(agg.SCtx(), agg.QueryBlockOffset())
+	exprs := make([]expression.Expression, 0, len(agg.AggFuncs))
 	for i, af := range agg.AggFuncs {
 		if af.HasDistinct || len(af.OrderByItems) > 0 || len(af.Args) != 1 {
-			proj.Exprs = append(proj.Exprs, agg.Schema().Columns[i].Clone())
+			exprs = append(exprs, agg.Schema().Columns[i].Clone())
 			continue
 		}
 		if af.Name != ast.AggFuncMax && af.Name != ast.AggFuncMin {
-			proj.Exprs = append(proj.Exprs, agg.Schema().Columns[i].Clone())
+			exprs = append(exprs, agg.Schema().Columns[i].Clone())
 			continue
 		}
 		if expression.IsBinaryLiteral(af.Args[0]) {
-			proj.Exprs = append(proj.Exprs, agg.Schema().Columns[i].Clone())
+			exprs = append(exprs, agg.Schema().Columns[i].Clone())
 			continue
 		}
 		if af.Args[0].ConstLevel() < expression.ConstOnlyInContext {
-			proj.Exprs = append(proj.Exprs, agg.Schema().Columns[i].Clone())
+			exprs = append(exprs, agg.Schema().Columns[i].Clone())
 			continue
 		}
-		proj.Exprs = append(proj.Exprs, wrapCastFunction(agg.SCtx().GetExprCtx(), af.Args[0], af.RetTp))
+		exprs = append(exprs, wrapCastFunction(agg.SCtx().GetExprCtx(), af.Args[0], af.RetTp))
 		changed = true
 	}
 	if !changed {
 		return nil
 	}
+	proj := logicalop.LogicalProjection{
+		Exprs: exprs,
+	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	proj.SetSchema(agg.Schema().Clone())
 	proj.SetChildren(agg)
 	return proj
