@@ -4590,6 +4590,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if err != nil {
 				return nil, err
 			}
+			p = b.tryMoveSortBelowSetVarProjection(p)
 		}
 	}
 
@@ -4614,6 +4615,35 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	}
 
 	return b.tryToBuildSequence(currentLayerCTEs, p), nil
+}
+
+func (b *PlanBuilder) tryMoveSortBelowSetVarProjection(p base.LogicalPlan) base.LogicalPlan {
+	sort, ok := p.(*logicalop.LogicalSort)
+	if !ok || len(sort.Children()) != 1 {
+		return p
+	}
+	proj, ok := sort.Children()[0].(*logicalop.LogicalProjection)
+	if !ok || len(proj.Children()) != 1 || !slices.ContainsFunc(proj.Exprs, expression.HasAssignSetVarFunc) {
+		return p
+	}
+
+	// SELECT-list variable assignments should observe the ORDER BY result order.
+	// Move the sort below the assignment projection only when the sort keys can
+	// be evaluated from the projection child without reading or assigning variables.
+	exprCtx := b.ctx.GetExprCtx()
+	byItems := make([]*util.ByItems, 0, len(sort.ByItems))
+	for _, item := range sort.ByItems {
+		_, failed, expr := expression.ColumnSubstituteImpl(exprCtx, item.Expr, proj.Schema(), proj.Exprs, true)
+		if failed || expression.HasGetSetVarFunc(expr) {
+			return p
+		}
+		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
+	}
+
+	sort.ByItems = byItems
+	sort.SetChildren(proj.Children()[0])
+	proj.SetChildren(sort)
+	return proj
 }
 
 func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p base.LogicalPlan) base.LogicalPlan {

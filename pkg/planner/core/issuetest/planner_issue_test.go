@@ -106,6 +106,34 @@ func TestPlannerIssueRegressions(t *testing.T) {
 				"    └─TableFullScan cop[tikv] table:t7 keep order:false"))
 	}
 
+	// issue-58129-setvar-after-sort
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec(`create table t58129 (
+			id bigint unsigned not null,
+			version int not null,
+			primary key (id, version)
+		)`)
+		tk.MustExec("insert into t58129 values (1,100),(1,102),(2,29),(2,34),(2,60),(2,50),(1,129),(1,128)")
+		tk.MustQuery(`select id, version, @row_num := if(@id_last = id, @row_num + 1, 1) as rn, @id_last := id
+from t58129, (select @row_num := 0, @id_last := null) r
+order by id, version desc`).Check(testkit.Rows(
+			"1 129 1 1",
+			"1 128 2 1",
+			"1 102 3 1",
+			"1 100 4 1",
+			"2 60 1 2",
+			"2 50 2 2",
+			"2 34 3 2",
+			"2 29 4 2"))
+		tk.MustQuery(`explain format='plan_tree' select id, version, @row_num := if(@id_last = id, @row_num + 1, 1) as rn, @id_last := id
+from t58129, (select @row_num := 0, @id_last := null) r
+order by id, version desc`).MultiCheckContain([]string{
+			"Projection root  test.t58129.id, test.t58129.version, setvar(row_num",
+			"└─Sort root  test.t58129.id, test.t58129.version:desc",
+		})
+	}
+
 	// inl-join-inner-multi-pattern
 	{
 		tk := prepareSharedTestKit(t)
