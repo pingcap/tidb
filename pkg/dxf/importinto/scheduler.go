@@ -167,7 +167,6 @@ type importScheduler struct {
 }
 
 var _ scheduler.Extension = (*importScheduler)(nil)
-var _ scheduler.PrepareExtension = (*importScheduler)(nil)
 
 // NewImportScheduler creates a new import scheduler.
 func NewImportScheduler(
@@ -339,7 +338,7 @@ func (sch *importScheduler) writePreparedChunkMap(
 	return externalPath, nil
 }
 
-// OnPrepare implements scheduler.PrepareExtension.
+// OnPrepare implements scheduler.Extension.
 func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
 	taskMeta := &TaskMeta{}
 	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
