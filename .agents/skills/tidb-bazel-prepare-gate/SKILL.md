@@ -20,6 +20,8 @@ git status --short
 git diff --name-status
 git diff --name-status --cached
 git ls-files --others --exclude-standard
+git diff -U0 -- '*.go'
+git diff -U0 --cached -- '*.go'
 git diff -U0 -- '*_test.go'
 git diff -U0 --cached -- '*_test.go'
 ```
@@ -37,6 +39,17 @@ For the top-level test-function trigger in existing `*_test.go` files, inspect a
 ```
 
 and treat that as requiring `make bazel_prepare`.
+
+For import-section changes in existing Go files, inspect `git diff -U0 -- '*.go'` and
+`git diff -U0 --cached -- '*.go'` for added/removed import lines, for example:
+
+```diff
++import (
+-import "fmt"
++	"context"
+```
+
+and treat those changes as requiring `make bazel_prepare`.
 
 If any condition matches, run `make bazel_prepare`.
 If none of the rules match, continue without `make bazel_prepare` and report the evidence.
