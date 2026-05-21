@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mock",
+    srcs = ["mock.go"],
+    importpath = "github.com/pingcap/tidb/pkg/inference/embedding/mock",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/inference/embedding/base"],
+)
+
+go_test(
+    name = "mock_test",
+    timeout = "short",
+    srcs = ["mock_test.go"],
+    embed = [":mock"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
+)

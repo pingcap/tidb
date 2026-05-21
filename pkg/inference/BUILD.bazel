@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "inference",
+    srcs = ["sqlembed.go"],
+    importpath = "github.com/pingcap/tidb/pkg/inference",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/inference/embedding/base",
+        "//pkg/inference/embedding/batcher",
+        "//pkg/inference/embedding/cohere",
+        "//pkg/inference/embedding/gemini",
+        "//pkg/inference/embedding/huggingface",
+        "//pkg/inference/embedding/jina",
+        "//pkg/inference/embedding/mock",
+        "//pkg/inference/embedding/nvidia",
+        "//pkg/inference/embedding/openai",
+        "//pkg/inference/embedding/tidbcloud",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "@com_github_dgraph_io_ristretto//:ristretto",
+        "@org_golang_x_sync//singleflight",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "inference_test",
+    timeout = "short",
+    srcs = ["manager_test.go"],
+    embed = [":inference"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
+)

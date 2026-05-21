@@ -294,6 +294,9 @@ type Column struct {
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
 
+	// GeneratedExprString stores the generated expression for planner rewrites that need the original AST.
+	GeneratedExprString string
+
 	OrigName string
 	IsHidden bool
 

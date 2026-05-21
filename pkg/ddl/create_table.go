@@ -555,6 +555,9 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
 					return errors.Trace(err)
 				}
+				if err := checkGeneratedColForAutoEmbedding(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
@@ -593,6 +596,25 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		colName := colDef.Name.Name.L
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
+		}
+	}
+
+	autoEmbeddingCols := make(map[string]struct{})
+	for _, colDef := range colDefs {
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionGenerated && expression.IsAutoEmbedFnCallAST(option.Expr) {
+				autoEmbeddingCols[colDef.Name.Name.L] = struct{}{}
+			}
+		}
+	}
+	for colName, colInfo := range colName2Generation {
+		if !colInfo.generated {
+			continue
+		}
+		for depCol := range colInfo.dependences {
+			if _, ok := autoEmbeddingCols[depCol]; ok {
+				return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("generated column on an auto-embedding column is not supported: column '%s' is generated from '%s'", colName, depCol)
+			}
 		}
 	}
 	return nil

@@ -333,6 +333,9 @@ type Config struct {
 	// StarterParams contains Starter-only extension parameters.
 	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
+	// HostedEmbedding controls the TiDB Cloud hosted embedding provider.
+	HostedEmbedding HostedEmbedding `toml:"hosted-embedding" json:"hosted-embedding"`
+
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -1067,6 +1070,19 @@ type Experimental struct {
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
+// HostedEmbedding is the config for TiDB Cloud hosted embedding provider (tidbcloud_free/ prefix in EMBED_TEXT).
+type HostedEmbedding struct {
+	// Enabled indicates whether the hosted embedding service is enabled.
+	// It only takes effect for nextgen kernels.
+	Enabled bool `toml:"enabled" json:"enabled"`
+
+	// APIEndpoint is the endpoint for the hosted embedding service.
+	APIEndpoint string `toml:"api-endpoint" json:"api-endpoint"`
+
+	// APIKeyPath is the path to the Bearer API key file for accessing the hosted embedding service.
+	APIKeyPath string `toml:"api-key-path" json:"api-key-path"`
+}
+
 // Standby is the config for standby mode.
 type Standby struct {
 	// StandByMode indicates whether to enable the standby mode.
@@ -1258,6 +1274,7 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental:               Experimental{},
+	HostedEmbedding:            HostedEmbedding{Enabled: false},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),

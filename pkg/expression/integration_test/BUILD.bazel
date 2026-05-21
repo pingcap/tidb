@@ -16,6 +16,7 @@ go_test(
         "//pkg/domain/infosync",
         "//pkg/errno",
         "//pkg/expression",
+        "//pkg/inference",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",

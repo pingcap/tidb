@@ -37,6 +37,10 @@ func TestUnfoldableFuncs(t *testing.T) {
 // - Deterministic (this excludes RAND(), UUID(), CURRENT_TIMESTAMP(), etc)
 // - Not dependent on session or global state (this excludes CONNECTION_ID(), CURRENT_USER(), etc)
 // - Functions that have system interactions (this excludes GET_LOCK(), RELEASE_LOCK(), SLEEP(), ec)
+//
+// EMBED_TEXT is an exception to the general rule above: it is kept out of this
+// blocklist so DDL can allow the single supported auto-embedding shape, while
+// checkGeneratedColForAutoEmbedding applies stricter validation.
 func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 	builtin := GetBuiltinList()
 	legal := make([]string, 0) // Not on illegal list
@@ -95,6 +99,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"degrees",
 		"div",
 		"elt",
+		"embed_text",
 		"encode",
 		"eq",
 		"exp",
