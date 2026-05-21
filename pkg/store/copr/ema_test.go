@@ -137,3 +137,43 @@ func TestRUEMANonMonotonicTime(t *testing.T) {
 	require.InDelta(t, float64(100_000), float64(e.Predict()), 1,
 		"negative Δt should be clamped so the new sample has ~zero weight")
 }
+
+func TestRUPagePredictorScalesColdBucketByPagingRows(t *testing.T) {
+	p := newRUPagePredictor()
+	now := time.Now()
+
+	p.Observe(128, 87_000, false, now)
+
+	predicted128 := p.Predict(128)
+	require.InDelta(t, float64(87_000), float64(predicted128), 1_000)
+
+	predicted512 := p.Predict(512)
+	require.Greater(t, predicted512, uint64(300_000),
+		"a cold larger row-count bucket should scale from bytes-per-row history")
+}
+
+func TestRUPagePredictorUsesBucketWhenAvailable(t *testing.T) {
+	p := newRUPagePredictor()
+	now := time.Now()
+
+	p.Observe(128, 87_000, false, now)
+	p.Observe(512, 385_000, false, now.Add(100*time.Millisecond))
+	p.Observe(128, 88_000, false, now.Add(200*time.Millisecond))
+
+	predicted512 := p.Predict(512)
+	require.InDelta(t, float64(385_000), float64(predicted512), 1_000,
+		"an observed row-count bucket should use its own history instead of the smaller latest page")
+}
+
+func TestRUPagePredictorSkipsTerminalAndEmptyPages(t *testing.T) {
+	p := newRUPagePredictor()
+	now := time.Now()
+
+	p.Observe(128, 87_000, false, now)
+	p.Observe(512, 2_000_000, true, now.Add(100*time.Millisecond))
+	p.Observe(512, 0, false, now.Add(200*time.Millisecond))
+
+	predicted512 := p.Predict(512)
+	require.Less(t, predicted512, uint64(500_000),
+		"terminal and empty pages should not train the predictor")
+}

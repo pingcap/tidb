@@ -210,7 +210,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
-		ema:              newRUEMA(),
+		predictor:        newRUPagePredictor(),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -1002,8 +1002,8 @@ type copIterator struct {
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
 
-	// One EMA per copIterator (logical scan), shared across workers.
-	ema *ruEMA
+	// One predictor per copIterator (logical scan), shared across workers.
+	predictor *ruPagePredictor
 }
 
 type liteCopIteratorWorker struct {
@@ -1035,7 +1035,7 @@ type copIteratorWorker struct {
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
 
-	ema *ruEMA
+	predictor *ruPagePredictor
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1230,7 +1230,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedNum:         &it.storeBatchedNum,
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
-		ema:                     it.ema,
+		predictor:               it.predictor,
 	}
 }
 
@@ -1698,7 +1698,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	req.PredictedReadBytes = worker.ema.Predict()
+	req.PredictedReadBytes = worker.predictor.Predict(task.pagingSize)
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1885,9 +1885,8 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		return result, nil
 	}
 
-	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
-		worker.ema.Observe(readBytes, time.Now())
-	}
+	readBytes := pagingResponseReadBytes(resp.pbResp)
+	worker.predictor.Observe(task.pagingSize, readBytes, pagingRange == nil, time.Now())
 
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
