@@ -107,6 +107,15 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	require.Equal(t, "12 conflicts", c.GetRow(5).GetString(fmap["CurStepProcessedSize"]))
 	require.Equal(t, "34 conflicts", c.GetRow(5).GetString(fmap["CurStepTotalSize"]))
 	require.Equal(t, "5 conflicts/s", c.GetRow(5).GetString(fmap["CurStepSpeed"]))
+
+	// preparing phase should be visible while current business step is still init.
+	jobInfo.Step = importer.JobStepPreparing
+	ri = &importinto.RuntimeInfo{
+		Step: proto.StepInit,
+	}
+	executor.FillOneImportJobInfo(c, jobInfo, ri)
+	require.Equal(t, importer.JobStepPreparing, c.GetRow(6).GetString(fmap["Phase"]))
+	require.Equal(t, proto.Step2Str(proto.ImportInto, proto.StepInit), c.GetRow(6).GetString(fmap["CurStep"]))
 }
 
 func TestShow(t *testing.T) {
