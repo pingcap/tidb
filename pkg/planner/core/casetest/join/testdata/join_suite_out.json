@@ -31,14 +31,14 @@
       },
       {
         "Plan": [
-          "IndexJoin root  inner join, inner:Selection, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexReader(Build) root  index:IndexFullScan",
-          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
-          "└─Selection(Probe) root  eq(Column, 1)",
-          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
-          "    └─IndexReader root  index:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "        └─IndexRangeScan cop[tikv] table:t2, index:idx_abc(a, b, c) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) root  eq(Column, 1)",
+          "│ └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│   └─IndexReader root  index:IndexFullScan",
+          "│     └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) root  index:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1 11",
@@ -48,14 +48,14 @@
       },
       {
         "Plan": [
-          "IndexJoin root  inner join, inner:Selection, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexReader(Build) root  index:IndexFullScan",
-          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
-          "└─Selection(Probe) root  eq(Column, 2)",
-          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
-          "    └─IndexReader root  index:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "        └─IndexRangeScan cop[tikv] table:t2, index:idx_abc(a, b, c) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) root  eq(Column, 2)",
+          "│ └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│   └─IndexReader root  index:IndexFullScan",
+          "│     └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) root  index:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 2 12",
@@ -64,14 +64,14 @@
       },
       {
         "Plan": [
-          "IndexJoin root  inner join, inner:Selection, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexReader(Build) root  index:IndexFullScan",
-          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
-          "└─Selection(Probe) root  lt(Column, 2)",
-          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
-          "    └─IndexReader root  index:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "        └─IndexRangeScan cop[tikv] table:t2, index:idx_abc(a, b, c) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) root  lt(Column, 2)",
+          "│ └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│   └─IndexReader root  index:IndexFullScan",
+          "│     └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) root  index:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1 11",
@@ -81,14 +81,14 @@
       },
       {
         "Plan": [
-          "IndexJoin root  inner join, inner:Selection, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─IndexReader(Build) root  index:IndexFullScan",
-          "│ └─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
-          "└─Selection(Probe) root  le(Column, 2)",
-          "  └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
-          "    └─IndexReader root  index:Selection",
-          "      └─Selection cop[tikv]  not(isnull(test.t2.a))",
-          "        └─IndexRangeScan cop[tikv] table:t2, index:idx_abc(a, b, c) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+          "IndexHashJoin root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) root  le(Column, 2)",
+          "│ └─OrderedWindow root  row_number()->Column over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│   └─IndexReader root  index:IndexFullScan",
+          "│     └─IndexFullScan cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) root  index:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1 11",
@@ -100,23 +100,23 @@
       },
       {
         "Plan": [
-          "Projection root  test.delivery_monitor.bill_code, case(and(eq(test.transfer_event.apply_type_code, 4), eq(test.transfer_event.status, 2)), 1, 0)->Column, test.transfer_event.receiver_name",
-          "└─IndexHashJoin root  left outer join, inner:Selection, left side:IndexLookUp, outer key:test.delivery_monitor.bill_code, inner key:test.transfer_event.waybill_no, equal cond:eq(test.delivery_monitor.bill_code, test.transfer_event.waybill_no)",
+          "Projection root  test.probe_rows.probe_key, case(and(eq(test.inner_rows.type_code, 4), eq(test.inner_rows.state_code, 2)), 1, 0)->Column, test.inner_rows.payload",
+          "└─IndexHashJoin root  left outer join, inner:Selection, left side:IndexLookUp, outer key:test.probe_rows.probe_key, inner key:test.inner_rows.partition_key, equal cond:eq(test.probe_rows.probe_key, test.inner_rows.partition_key)",
           "  ├─IndexLookUp(Build) root  ",
-          "  │ ├─Selection(Build) cop[tikv]  eq(ifnull(test.delivery_monitor.remark3, 0), 0), eq(ifnull(test.delivery_monitor.remark6, 0), 0), eq(ifnull(test.delivery_monitor.sign_flag, 0), 0)",
-          "  │ │ └─IndexRangeScan cop[tikv] table:m, index:idx_courier_scan(courier_code, scan_time, sign_flag, remark3, remark6) range:(\"courier_001\" 2026-02-04 00:00:00,\"courier_001\" 2026-02-05 00:00:00], keep order:false, stats:pseudo",
-          "  │ └─TableRowIDScan(Probe) cop[tikv] table:m keep order:false, stats:pseudo",
+          "  │ ├─Selection(Build) cop[tikv]  eq(ifnull(test.probe_rows.flag1, 0), 0), eq(ifnull(test.probe_rows.flag2, 0), 0), eq(ifnull(test.probe_rows.flag3, 0), 0)",
+          "  │ │ └─IndexRangeScan cop[tikv] table:p, index:idx_filter_time(filter_code, probe_time, flag1, flag2, flag3) range:(\"filter_001\" 2026-02-04 00:00:00,\"filter_001\" 2026-02-05 00:00:00], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) cop[tikv] table:p keep order:false, stats:pseudo",
           "  └─Selection(Probe) root  eq(Column, 1)",
-          "    └─OrderedWindow root  row_number()->Column over(partition by test.transfer_event.waybill_no order by test.transfer_event.apply_time desc rows between current row and current row)",
-          "      └─Projection root  test.transfer_event.waybill_no, test.transfer_event.apply_time, test.transfer_event.apply_type_code, test.transfer_event.status, test.transfer_event.receiver_name",
+          "    └─OrderedWindow root  row_number()->Column over(partition by test.inner_rows.partition_key order by test.inner_rows.order_time desc rows between current row and current row)",
+          "      └─Projection root  test.inner_rows.partition_key, test.inner_rows.order_time, test.inner_rows.type_code, test.inner_rows.state_code, test.inner_rows.payload",
           "        └─IndexLookUp root  ",
-          "          ├─IndexRangeScan(Build) cop[tikv] table:e, index:idx_waybill_apply_time(waybill_no, apply_time) range: decided by [eq(test.transfer_event.waybill_no, test.delivery_monitor.bill_code)], keep order:true, desc, stats:pseudo",
-          "          └─TableRowIDScan(Probe) cop[tikv] table:e keep order:false, stats:pseudo"
+          "          ├─IndexRangeScan(Build) cop[tikv] table:i, index:idx_partition_order(partition_key, order_time) range: decided by [eq(test.inner_rows.partition_key, test.probe_rows.probe_key)], keep order:true, desc, stats:pseudo",
+          "          └─TableRowIDScan(Probe) cop[tikv] table:i keep order:false, stats:pseudo"
         ],
         "Result": [
-          "WB001 1 new_receiver_1",
-          "WB002 0 new_receiver_2",
-          "WB003 0 <nil>"
+          "K001 1 new_payload_1",
+          "K002 0 new_payload_2",
+          "K003 0 <nil>"
         ]
       }
     ]

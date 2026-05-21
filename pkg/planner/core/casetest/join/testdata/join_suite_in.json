@@ -4,11 +4,11 @@
     "cases": [
       "select a, b, c, row_number() over(partition by a order by b) as rn from t2",
       "select * from (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp where rn = 1",
-      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 1",
-      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 2",
-      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn < 2",
-      "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn <= 2",
-      "select m.bill_code, case when f.apply_type_code = 4 and f.status = 2 then 1 else 0 end as is_refund, f.receiver_name from delivery_monitor m left join (select * from (select e.waybill_no, e.apply_type_code, e.status, e.receiver_name, e.apply_time, row_number() over(partition by e.waybill_no order by e.apply_time desc) as rn from transfer_event e) ranked where rn = 1) f on m.bill_code = f.waybill_no where m.scan_time > '2026-02-04 00:00:00' and m.scan_time <= '2026-02-05 00:00:00' and m.courier_code = 'courier_001' and ifnull(m.sign_flag, 0) = 0 and ifnull(m.remark3, 0) = 0 and ifnull(m.remark6, 0) = 0"
+      "select t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 1",
+      "select t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 2",
+      "select t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn < 2",
+      "select t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn <= 2",
+      "select p.probe_key, case when f.type_code = 4 and f.state_code = 2 then 1 else 0 end as matched, f.payload from probe_rows p left join (select * from (select i.partition_key, i.type_code, i.state_code, i.payload, i.order_time, row_number() over(partition by i.partition_key order by i.order_time desc) as rn from inner_rows i) ranked where rn = 1) f on p.probe_key = f.partition_key where p.probe_time > '2026-02-04 00:00:00' and p.probe_time <= '2026-02-05 00:00:00' and p.filter_code = 'filter_001' and ifnull(p.flag1, 0) = 0 and ifnull(p.flag2, 0) = 0 and ifnull(p.flag3, 0) = 0"
     ]
   }
 ]
