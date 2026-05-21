@@ -27,6 +27,7 @@ go_test(
     srcs = ["processinfo_test.go"],
     embed = [":sessmgr"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/sessionctx/stmtctx",
         "//pkg/util/memory",
