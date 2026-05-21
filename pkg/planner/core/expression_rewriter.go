@@ -730,9 +730,9 @@ func (er *expressionRewriter) inDirectMatchBooleanContext() bool {
 // plan and rebuild via the fts-like-fallback round. It is used by the modifier
 // guard in matchAgainstToBuiltin to allow native emission of a non-default
 // modifier when round 1's plan is destined for discard anyway. The rescue
-// conditions mirror the ones in matchAgainstToExpression that trigger
-// MarkNonViableFTSMatch — alternative logical plans enabled AND a direct
-// boolean predicate context.
+// conditions mirror the ones in matchAgainstToExpression that trigger the
+// fallback round — alternative logical plans enabled AND a direct boolean
+// predicate context.
 func (er *expressionRewriter) matchHasLikeFallbackRescue() bool {
 	if er.planCtx == nil || er.planCtx.builder == nil || er.planCtx.builder.ctx == nil {
 		return false
@@ -2368,13 +2368,11 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	// etc. would silently produce wrong rows if the LIKE rewrite's integer
 	// result were substituted for the native float score.
 	//
-	// Round 1 also has to record viability before committing to native: if
-	// any boolean-context MATCH is non-viable, the resulting plan would
-	// fail at execution. The rewriter records that on the planBuilder so the
-	// round driver can invalidate the plan and trigger the fallback round.
-	// Round 1 additionally records that a direct-boolean-context MATCH was
-	// seen so the driver runs the LIKE round for cost competition even when
-	// round 1's native plan is executable.
+	// Round 1 records that a direct-boolean-context MATCH was seen so the
+	// round driver runs the LIKE round for cost competition when alternative
+	// logical plans are enabled. Whether the native plan is actually usable is
+	// decided by the real native planning path (DoOptimize / analyzeTiCIIndex),
+	// not by a separate heuristic here.
 	useLikeFallback := false
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
@@ -2384,14 +2382,10 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 				useLikeFallback = true
 			} else if sessVars.EnableAlternativeLogicalPlans {
 				// Round 1 (native). Mark the build so the driver runs the LIKE
-				// round and cost-compares its plan against round 1's. If this
-				// MATCH cannot run natively, also mark the build as non-viable
-				// so the driver discards round 1's plan; the rewrite continues
-				// with the native builtin to keep round 1 internally consistent.
+				// round and cost-compares its plan against round 1's. If native
+				// planning later fails, optimize.go will arm the fallback round
+				// from the real native error path.
 				er.planCtx.builder.MarkPredicateMatch()
-				if !er.ftsNativeViable(v.Modifier, numCols, stackLen) {
-					er.planCtx.builder.MarkNonViableFTSMatch()
-				}
 			}
 		}
 	}
