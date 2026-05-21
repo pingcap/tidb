@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -1166,6 +1167,10 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 		if len(spec.User.Hostname) > auth.HostNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
+		}
+		// Validate host pattern for CIDR and subnet mask notation
+		if !privileges.IsValidHostPattern(spec.User.Hostname) {
+			return exeerrors.ErrInvalidHostPattern.GenWithStackByArgs(spec.User.Hostname)
 		}
 		if len(users) > 0 {
 			sqlescape.MustFormatSQL(sql, ",")
