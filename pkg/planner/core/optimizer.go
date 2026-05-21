@@ -986,7 +986,7 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule, logic) {
 			continue
 		}
 		logic, _, err = rule.Optimize(ctx, logic)
@@ -1008,7 +1008,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule, logic) {
 			continue
 		}
 		var planChanged bool
@@ -1018,7 +1018,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}
 		// Compute interaction rules that should be optimized again
 		interactionRule, ok := optInteractionRuleList[rule]
-		if planChanged && ok && isLogicalRuleDisabled(interactionRule) {
+		if planChanged && ok && isLogicalRuleDisabled(interactionRule, logic) {
 			againRuleList = append(againRuleList, interactionRule)
 		}
 	}
@@ -1034,7 +1034,12 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	return logic, err
 }
 
-func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
+func isLogicalRuleDisabled(r base.LogicalOptRule, logic base.LogicalPlan) bool {
+	if _, ok := r.(*rule.PartitionProcessor); ok && !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		// Static pruning needs PartitionProcessor to rewrite logical partition scans
+		// into concrete partition scans; skipping it can make partition data invisible.
+		return false
+	}
 	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.Name())
 	return disabled
 }

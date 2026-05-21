@@ -2228,6 +2228,33 @@ partition p2 values less than (11))`)
 	}
 }
 
+func TestSelectLockWithStaticPruneAndPartitionProcessorBlacklist(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("delete from mysql.opt_rule_blacklist")
+	tk.MustExec("admin reload opt_rule_blacklist")
+	t.Cleanup(func() {
+		tk.MustExec("delete from mysql.opt_rule_blacklist")
+		tk.MustExec("admin reload opt_rule_blacklist")
+	})
+
+	tk.MustExec(`create table t (
+		id int primary key,
+		balance decimal(10,2),
+		balance2 decimal(10,2) generated always as (-balance) virtual,
+		created_at timestamp
+	) partition by hash (id) partitions 8`)
+	tk.MustExec("insert into t (id, balance, created_at) values (1, 100, '2021-06-17 22:35:20')")
+	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
+
+	tk.MustExec(`insert into mysql.opt_rule_blacklist values ("predicate_push_down"), ("partition_processor")`)
+	tk.MustExec("admin reload opt_rule_blacklist")
+	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
+}
+
 func TestIssue26251(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
