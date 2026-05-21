@@ -44,10 +44,6 @@ type tableResultWriter struct {
 	stats *mergeWriterStats
 }
 
-type writerRuntimeStatsAware interface {
-	setRuntimeStats(*mergeWriterStats)
-}
-
 func (w *tableResultWriter) setRuntimeStats(stats *mergeWriterStats) {
 	w.stats = stats
 }

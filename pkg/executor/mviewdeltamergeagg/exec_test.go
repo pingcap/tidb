@@ -1897,11 +1897,9 @@ func TestMarkUpdateTouchedRowsByColumnEnumSetUseDatumBinaryCompare(t *testing.T)
 
 func TestMViewDeltaMergeAggRuntimeStatsString(t *testing.T) {
 	stats := newMergeRuntimeStats(3)
-	stats.copyFrom(&mergeRuntimeStats{
-		readerTime:      15 * time.Millisecond,
-		writerTime:      8 * time.Millisecond,
-		mergeWorkerTime: []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 0},
-	})
+	stats.readerTime = 15 * time.Millisecond
+	stats.writerTime = 8 * time.Millisecond
+	stats.mergeWorkerTime = []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 0}
 	s := stats.String()
 	require.Contains(t, s, "mview_delta_merge_agg")
 	require.Contains(t, s, "total:3")
@@ -1915,33 +1913,29 @@ func TestMViewDeltaMergeAggRuntimeStatsString(t *testing.T) {
 	require.Contains(t, s, "row_ops:0")
 }
 
-func TestMViewDeltaMergeAggRuntimeStatsMergeAndClone(t *testing.T) {
+func TestMViewDeltaMergeAggRuntimeStatsMerge(t *testing.T) {
 	left := newMergeRuntimeStats(2)
-	left.copyFrom(&mergeRuntimeStats{
-		readerTime:      3 * time.Millisecond,
-		writerTime:      4 * time.Millisecond,
-		mergeWorkerTime: []time.Duration{5 * time.Millisecond, 7 * time.Millisecond},
-		writerDetail: mergeWriterStats{
-			chunks:     1,
-			rowOps:     10,
-			insertRows: 3,
-			updateRows: 5,
-			deleteRows: 2,
-		},
-	})
+	left.readerTime = 3 * time.Millisecond
+	left.writerTime = 4 * time.Millisecond
+	left.mergeWorkerTime = []time.Duration{5 * time.Millisecond, 7 * time.Millisecond}
+	left.writerDetail = mergeWriterStats{
+		chunks:     1,
+		rowOps:     10,
+		insertRows: 3,
+		updateRows: 5,
+		deleteRows: 2,
+	}
 	right := newMergeRuntimeStats(3)
-	right.copyFrom(&mergeRuntimeStats{
-		readerTime:      2 * time.Millisecond,
-		writerTime:      1 * time.Millisecond,
-		mergeWorkerTime: []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond},
-		writerDetail: mergeWriterStats{
-			chunks:     2,
-			rowOps:     7,
-			insertRows: 1,
-			updateRows: 4,
-			deleteRows: 2,
-		},
-	})
+	right.readerTime = 2 * time.Millisecond
+	right.writerTime = 1 * time.Millisecond
+	right.mergeWorkerTime = []time.Duration{1 * time.Millisecond, 2 * time.Millisecond, 9 * time.Millisecond}
+	right.writerDetail = mergeWriterStats{
+		chunks:     2,
+		rowOps:     7,
+		insertRows: 1,
+		updateRows: 4,
+		deleteRows: 2,
+	}
 
 	left.Merge(right)
 	require.Equal(t, 5*time.Millisecond, left.readerTime)

@@ -265,34 +265,6 @@ func newMergeRuntimeStats(workerCnt int) *mergeRuntimeStats {
 	}
 }
 
-func (s *mergeRuntimeStats) reset(workerCnt int) {
-	if workerCnt < 0 {
-		workerCnt = 0
-	}
-	s.readerTime = 0
-	s.writerTime = 0
-	if cap(s.mergeWorkerTime) < workerCnt {
-		s.mergeWorkerTime = make([]time.Duration, workerCnt)
-		return
-	}
-	s.mergeWorkerTime = s.mergeWorkerTime[:workerCnt]
-	clear(s.mergeWorkerTime)
-}
-
-func (s *mergeRuntimeStats) copyFrom(stats *mergeRuntimeStats) {
-	if s == nil || stats == nil {
-		return
-	}
-	s.readerTime = stats.readerTime
-	s.writerTime = stats.writerTime
-	if cap(s.mergeWorkerTime) < len(stats.mergeWorkerTime) {
-		s.mergeWorkerTime = make([]time.Duration, len(stats.mergeWorkerTime))
-	}
-	s.mergeWorkerTime = s.mergeWorkerTime[:len(stats.mergeWorkerTime)]
-	copy(s.mergeWorkerTime, stats.mergeWorkerTime)
-	s.writerDetail = stats.writerDetail
-}
-
 func (s *mergeRuntimeStats) String() string {
 	if s == nil {
 		return ""
@@ -429,11 +401,7 @@ func (e *Exec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.executed = true
 	if e.BaseExecutor.RuntimeStats() != nil {
-		if e.runtimeStats == nil {
-			e.runtimeStats = newMergeRuntimeStats(e.WorkerCnt)
-		} else {
-			e.runtimeStats.reset(e.WorkerCnt)
-		}
+		e.runtimeStats = newMergeRuntimeStats(e.WorkerCnt)
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)
 	}
 	return e.runMergePipeline(ctx)
@@ -455,17 +423,13 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 	if workerCnt <= 0 {
 		workerCnt = 1
 	}
-	var stats *mergeRuntimeStats
-	if e.runtimeStats != nil {
-		stats = &mergeRuntimeStats{
-			mergeWorkerTime: make([]time.Duration, workerCnt),
+	stats := e.runtimeStats
+	if stats != nil {
+		if tableWriter, ok := e.Writer.(*tableResultWriter); ok {
+			tableWriter.setRuntimeStats(&stats.writerDetail)
 		}
-		if statsWriter, ok := e.Writer.(writerRuntimeStatsAware); ok {
-			statsWriter.setRuntimeStats(&stats.writerDetail)
-		}
-		defer e.runtimeStats.copyFrom(stats)
-	} else if statsWriter, ok := e.Writer.(writerRuntimeStatsAware); ok {
-		statsWriter.setRuntimeStats(nil)
+	} else if tableWriter, ok := e.Writer.(*tableResultWriter); ok {
+		tableWriter.setRuntimeStats(nil)
 	}
 
 	inputBufSize := max(workerCnt*2, 2)
