@@ -458,6 +458,12 @@ func TestRouter(t *testing.T) {
 		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
+		require.Len(t, dbs, 3)
+		require.Equal(t, "a1", dbs[1].Name)
+		require.Len(t, dbs[1].Tables, 1)
+		require.Equal(t, "s1", dbs[1].Tables[0].Name)
+		require.Len(t, dbs[1].Views, 1)
+		require.Equal(t, "v1", dbs[1].Views[0].Name)
 		// hit rules: a0.t0 -> b.u, a0.t1 -> b.0, a1.t2 -> b.u
 		// not hit: a1.s1, a1.v1 (view placeholder is pruned from Tables)
 		expectedDBS := []*md.MDDatabaseMeta{
@@ -875,25 +881,6 @@ func TestFileRouting(t *testing.T) {
 			},
 		},
 	}, mdl.GetDatabases())
-}
-
-func TestLoaderPrunesPlaceholderTablesAfterViewDiscovery(t *testing.T) {
-	s := newTestMydumpLoaderSuite(t)
-
-	s.touch(t, "db-schema-create.sql")
-	s.touch(t, "db.real-schema.sql")
-	s.touch(t, "db.v1-schema.sql")
-	s.writeFile(t, "db.v1-schema-view.sql", "CREATE VIEW v1 AS SELECT 1;")
-
-	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
-	require.NoError(t, err)
-
-	dbMetas := mdl.GetDatabases()
-	require.Len(t, dbMetas, 1)
-	require.Len(t, dbMetas[0].Tables, 1)
-	require.Equal(t, "real", dbMetas[0].Tables[0].Name)
-	require.Len(t, dbMetas[0].Views, 1)
-	require.Equal(t, "v1", dbMetas[0].Views[0].Name)
 }
 
 func TestInputWithSpecialChars(t *testing.T) {
