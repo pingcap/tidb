@@ -213,7 +213,7 @@ func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			return ver, errors.Trace(err)
 		}
 
-				// Clean up masking policies associated with the dropped column.
+		// Clean up masking policies associated with the dropped column.
 		if !job.IsRollingback() {
 			if err := w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
 				return ver, errors.Wrapf(err, "failed to drop masking policies on column %d of table %d", colInfo.ID, tblInfo.ID)
