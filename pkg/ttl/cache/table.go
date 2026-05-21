@@ -744,21 +744,37 @@ func (t *PhysicalTable) SplitIndexScanRanges(expireTime time.Time, splitCnt int)
 	default:
 		minTime = time.Time{}
 	}
+
+	// Normalize DATETIME/DATE wall-clock to UTC so arithmetic is location-agnostic.
+	// TIMESTAMP uses Unix seconds directly, so this is a no-op semantically.
+	expireTime = time.Date(
+		expireTime.Year(), expireTime.Month(), expireTime.Day(),
+		expireTime.Hour(), expireTime.Minute(), expireTime.Second(),
+		expireTime.Nanosecond(), time.UTC,
+	)
+
 	if expireTime.Before(minTime) {
 		return []ScanRange{newFullRange()}
 	}
 
-	duration := expireTime.Sub(minTime)
-	interval := duration / time.Duration(splitCnt)
+	// Use Unix seconds to avoid time.Duration overflow.
+	// Go's time.Duration maxes out at ~290 years; DATETIME spans >2000 years.
+	minUnix := minTime.Unix()
+	expireUnix := expireTime.Unix()
+	totalSeconds := expireUnix - minUnix
+	intervalSeconds := totalSeconds / int64(splitCnt)
 
 	ft := t.TimeColumn.FieldType
 	ranges := make([]ScanRange, 0, splitCnt)
-	for i := range splitCnt {
-		start := minTime.Add(time.Duration(i) * interval)
-		end := minTime.Add(time.Duration(i+1) * interval)
+	for i := 0; i < splitCnt; i++ {
+		startSec := minUnix + int64(i)*intervalSeconds
+		endSec := minUnix + int64(i+1)*intervalSeconds
 		if i == splitCnt-1 {
-			end = expireTime
+			endSec = expireUnix
 		}
+
+		start := time.Unix(startSec, 0).UTC()
+		end := time.Unix(endSec, 0).UTC()
 
 		startDatum := types.NewTimeDatum(types.NewTime(
 			types.FromGoTime(start),

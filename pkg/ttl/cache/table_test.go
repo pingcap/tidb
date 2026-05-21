@@ -358,7 +358,7 @@ func TestSplitIndexScanRanges(t *testing.T) {
 	require.NoError(t, err)
 
 	expireTime := time.Date(2025, 5, 14, 0, 0, 0, 0, time.UTC)
-	splitCnt := 4
+	splitCnt := 64
 	ranges := ttlTbl.SplitIndexScanRanges(expireTime, splitCnt)
 	require.Len(t, ranges, splitCnt)
 
@@ -379,6 +379,27 @@ func TestSplitIndexScanRanges(t *testing.T) {
 	lastEnd := ranges[len(ranges)-1].End[0].GetMysqlTime()
 	require.Equal(t, expireTime.Format(time.DateTime), lastEnd.String())
 
+	// Regression: ranges should be evenly sized, not bunched up in year ~288.
+	// With the old time.Duration-based code, 64 ranges for DATETIME would overflow
+	// and cluster around year 1-288 because max Duration is ~290 years.
+	minTime := time.Time{}
+	totalSeconds := expireTime.Unix() - minTime.Unix()
+	expectedInterval := totalSeconds / int64(splitCnt)
+	for i := 0; i < splitCnt-1; i++ {
+		startTime := ranges[i].Start[0].GetMysqlTime()
+		endTime := ranges[i].End[0].GetMysqlTime()
+		startGo := time.Date(startTime.Year(), time.Month(startTime.Month()), int(startTime.Day()),
+			startTime.Hour(), startTime.Minute(), startTime.Second(), 0, time.UTC)
+		endGo := time.Date(endTime.Year(), time.Month(endTime.Month()), int(endTime.Day()),
+			endTime.Hour(), endTime.Minute(), endTime.Second(), 0, time.UTC)
+		actualInterval := endGo.Unix() - startGo.Unix()
+		require.Equal(t, expectedInterval, actualInterval,
+			"range %d should be evenly sized", i)
+	}
+	// Range 63 start should be near 2025, not year ~288 (overflow bug).
+	range63Start := ranges[63].Start[0].GetMysqlTime()
+	require.GreaterOrEqual(t, range63Start.Year(), 1990,
+		"range 63 start should be near 2025, not year ~288 (overflow bug)")
 	// Test with splitCnt <= 1 returns full range
 	ranges = ttlTbl.SplitIndexScanRanges(expireTime, 1)
 	require.Len(t, ranges, 1)
