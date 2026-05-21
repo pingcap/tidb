@@ -710,7 +710,7 @@ BAZEL_BEP_RESULTS_URL ?= https://bepless.hawkingrei.com/
 BAZEL_BEP_BASE_FLAGS = \
 	--bes_backend=$(BAZEL_BEP_BACKEND) \
 	--bes_results_url=$(BAZEL_BEP_RESULTS_URL) \
-	--remote_build_event_upload=all
+	--experimental_remote_build_event_upload=all
 
 .PHONY: bazel_ci_test
 bazel_ci_test: bazel-failpoint-enable bazel_ci_simple_prepare
