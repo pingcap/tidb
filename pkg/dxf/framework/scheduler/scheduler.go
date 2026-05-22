@@ -393,7 +393,7 @@ func (s *BaseScheduler) onPending() error {
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
 		if err := s.Extension.OnPrepare(s.ctx, s, task); err != nil {
-			return s.handlePlanErr(err)
+			return s.handlePrepareOrPlanErr(err)
 		}
 		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)
 		if err != nil {
@@ -543,7 +543,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
-		return s.handlePlanErr(err)
+		return s.handlePrepareOrPlanErr(err)
 	}
 
 	if err = s.scheduleSubTask(task, nextStep, metas, eligibleNodes); err != nil {
@@ -625,7 +625,7 @@ func (s *BaseScheduler) scheduleSubTask(
 	)
 }
 
-func (s *BaseScheduler) handlePlanErr(err error) error {
+func (s *BaseScheduler) handlePrepareOrPlanErr(err error) error {
 	task := s.getTaskClone()
 	s.logger.Warn("prepare or generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {

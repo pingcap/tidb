@@ -182,19 +182,14 @@ func TestUpdateTaskExtraParams(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.ExtraParams{
-		ManualRecovery:  true,
 		MaxRuntimeSlots: 123,
-		PrepareMode:     proto.PrepareModeRequired,
 	}, task.ExtraParams)
 
 	require.NoError(t, gm.UpdateTaskExtraParams(ctx, id, proto.ExtraParams{TargetSteps: []proto.Step{proto.StepOne}}))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.ExtraParams{
-		ManualRecovery:  true,
-		MaxRuntimeSlots: 123,
-		TargetSteps:     []proto.Step{proto.StepOne},
-		PrepareMode:     proto.PrepareModeRequired,
+		TargetSteps: []proto.Step{proto.StepOne},
 	}, task.ExtraParams)
 }
 

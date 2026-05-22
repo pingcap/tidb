@@ -429,11 +429,10 @@ func (*DXFTaskMaxRuntimeSlotsHandler) ServeHTTP(w http.ResponseWriter, req *http
 		}
 		stepStrs = append(stepStrs, proto.Step2Str(task.Type, step))
 	}
-	params := proto.ExtraParams{
-		MaxRuntimeSlots: maxRuntimeSlots,
-		TargetSteps:     steps,
-	}
-	if err := taskMgr.UpdateTaskExtraParams(ctx, taskID, params); err != nil {
+	extraParams := task.ExtraParams
+	extraParams.MaxRuntimeSlots = maxRuntimeSlots
+	extraParams.TargetSteps = steps
+	if err := taskMgr.UpdateTaskExtraParams(ctx, taskID, extraParams); err != nil {
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
