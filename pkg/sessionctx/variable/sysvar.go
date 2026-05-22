@@ -2122,6 +2122,10 @@ var defaultSysVars = []*SysVar{
 		s.IndexJoinCostFactor = tidbOptFloat64(val, DefOptIndexJoinCostFactor)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptIndexJoinMaxScanRowsRatio, Value: strconv.FormatFloat(DefOptIndexJoinMaxScanRowsRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexJoinMaxScanRowsRatio = tidbOptFloat64(val, DefOptIndexJoinMaxScanRowsRatio)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptimizerEnableNewOnlyFullGroupByCheck, Value: BoolToOnOff(DefTiDBOptimizerEnableNewOFGB), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptimizerEnableNewOnlyFullGroupByCheck = TiDBOptOn(val)
 		return nil

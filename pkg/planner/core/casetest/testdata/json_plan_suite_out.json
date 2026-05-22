@@ -51,22 +51,22 @@
             "operatorInfo": "funcs:count(Column#5)->Column#3",
             "subOperators": [
               {
-                "id": "TableReader_13",
+                "id": "IndexReader_13",
                 "estRows": "1.00",
                 "taskType": "root",
-                "operatorInfo": "data:HashAgg_5",
+                "operatorInfo": "index:HashAgg_5",
                 "subOperators": [
                   {
                     "id": "HashAgg_5",
                     "estRows": "1.00",
                     "taskType": "cop[tikv]",
-                    "operatorInfo": "funcs:count(test.t1._tidb_rowid)->Column#5",
+                    "operatorInfo": "funcs:count(1)->Column#5",
                     "subOperators": [
                       {
-                        "id": "TableFullScan_10",
+                        "id": "IndexFullScan_11",
                         "estRows": "10000.00",
                         "taskType": "cop[tikv]",
-                        "accessObject": "table:t1",
+                        "accessObject": "table:t1, index:id(id)",
                         "operatorInfo": "keep order:false, stats:pseudo"
                       }
                     ]
@@ -101,11 +101,11 @@
         "SQL": "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id",
         "JSONPlan": [
           {
-            "id": "MergeJoin_8",
+            "id": "MergeJoin_10",
             "estRows": "12487.50",
             "actRows": "0",
             "taskType": "root",
-            "executeInfo": "time:3.5ms, loops:1",
+            "executeInfo": "time:154.7µs, loops:1",
             "operatorInfo": "inner join, left key:test.t1.id, right key:test.t2.id",
             "memoryInfo": "760 Bytes",
             "diskInfo": "0 Bytes",
@@ -115,9 +115,9 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:3.47ms, loops:1, cop_task: {num: 1, max: 3.38ms, proc_keys: 0, tot_proc: 3ms, rpc_num: 1, rpc_time: 3.34ms, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
+                "executeInfo": "time:94.1µs, loops:1, cop_task: {num: 1, max: 58.2µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 1.08µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:50.5µs}}",
                 "operatorInfo": "index:IndexFullScan_35",
-                "memoryInfo": "171 Bytes",
+                "memoryInfo": "174 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
@@ -126,7 +126,7 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t2, index:id(id)",
-                    "executeInfo": "tikv_task:{time:3.3ms, loops:0}",
+                    "executeInfo": "tikv_task:{time:38.1µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"
@@ -138,9 +138,9 @@
                 "estRows": "9990.00",
                 "actRows": "0",
                 "taskType": "root",
-                "executeInfo": "time:14µs, loops:1, cop_task: {num: 1, max: 772.9µs, proc_keys: 0, rpc_num: 1, rpc_time: 735.7µs, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
+                "executeInfo": "time:56.7µs, loops:1, cop_task: {num: 1, max: 43.5µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 3.62µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:36.8µs}}",
                 "operatorInfo": "index:IndexFullScan_33",
-                "memoryInfo": "166 Bytes",
+                "memoryInfo": "174 Bytes",
                 "diskInfo": "N/A",
                 "subOperators": [
                   {
@@ -149,7 +149,7 @@
                     "actRows": "0",
                     "taskType": "cop[tikv]",
                     "accessObject": "table:t1, index:id(id)",
-                    "executeInfo": "tikv_task:{time:168.4µs, loops:0}",
+                    "executeInfo": "tikv_task:{time:27.2µs, loops:0}",
                     "operatorInfo": "keep order:true, stats:pseudo",
                     "memoryInfo": "N/A",
                     "diskInfo": "N/A"

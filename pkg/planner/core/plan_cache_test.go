@@ -285,14 +285,14 @@ func TestIssue38269(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_11(Probe) 37.46 root  ",
-		"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		"IndexJoin_14 37.46 root  inner join, inner:IndexLookUp_13, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+		"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_13(Probe) 37.46 root  ",
+		"  ├─Selection_12(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_10 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_11(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -363,7 +363,7 @@ func TestIssue40093(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
 			{"Projection_9"},
-			{"└─HashJoin_21"},
+			{"└─HashJoin_11"},
 			{"  ├─IndexReader_26(Build)"},
 			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
 			{"  └─TableReader_24(Probe)"},
@@ -394,13 +394,13 @@ func TestIssue38205(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexJoin_10"},
-			{"├─TableReader_19(Build)"},
-			{"│ └─Selection_18"},
-			{"│   └─TableFullScan_17"}, // RangeScan instead of FullScan
-			{"└─IndexReader_9(Probe)"},
-			{"  └─Selection_8"},
-			{"    └─IndexRangeScan_7"},
+			{"IndexJoin_12"},
+			{"├─TableReader_21(Build)"},
+			{"│ └─Selection_20"},
+			{"│   └─TableFullScan_19"},
+			{"└─IndexReader_11(Probe)"},
+			{"  └─Selection_10"},
+			{"    └─IndexRangeScan_9"},
 		})
 
 	tk.MustExec("execute stmt using @a, @b, @c")
