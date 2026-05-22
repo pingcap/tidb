@@ -106,9 +106,7 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftJoinKeys, desc, math.MaxFloat64, false)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightJoinKeys, desc, math.MaxFloat64, false)
 	lProp.CTEProducerStatus = prop.CTEProducerStatus
-	lProp.NoCopPushDown = prop.NoCopPushDown
 	rProp.CTEProducerStatus = prop.CTEProducerStatus
-	rProp.NoCopPushDown = prop.NoCopPushDown
 	if !prop.IsSortItemEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
 		if !all {
@@ -119,10 +117,10 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty
 		if !matchLeft && !matchRight {
 			return nil, false
 		}
-		if matchRight && p.JoinType == base.LeftOuterJoin {
+		if matchRight && p.JoinType == logicalop.LeftOuterJoin {
 			return nil, false
 		}
-		if matchLeft && p.JoinType == base.RightOuterJoin {
+		if matchLeft && p.JoinType == logicalop.RightOuterJoin {
 			return nil, false
 		}
 	}
