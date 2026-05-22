@@ -424,7 +424,7 @@ func TestSchemaImporterManyTables(t *testing.T) {
 		dbMeta := &MDDatabaseMeta{Name: dbName, Tables: make([]*MDTableMeta, 0, 100)}
 		mock.ExpectExec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", dbName)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
-		for j := 0; j < 50; j++ {
+		for j := range 50 {
 			tblName := fmt.Sprintf("t%03d", j)
 			fileName := fmt.Sprintf("%s.%s-schema.sql", dbName, tblName)
 			require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte(fmt.Sprintf("CREATE TABLE %s(a int);", tblName)), 0o644))
