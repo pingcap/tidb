@@ -460,7 +460,7 @@ func collectMutableGroupByProjections(ectx expression.EvalContext, gbyExprs []as
 		return nil
 	}
 	projections := make([]groupByProjection, 0, len(gbyExprs))
-	for i, expr := range gbyExprs {
+	for i, astExpr := range gbyExprs {
 		if i >= len(agg.GroupByItems) || !hasMutableEffectsOrNonDeterministicExpr(agg.GroupByItems[i]) {
 			continue
 		}
@@ -469,8 +469,9 @@ func collectMutableGroupByProjections(ectx expression.EvalContext, gbyExprs []as
 			continue
 		}
 		projections = append(projections, groupByProjection{
-			expr: expr,
-			col:  col,
+			astExpr: astExpr,
+			expr:    agg.GroupByItems[i],
+			col:     col,
 		})
 	}
 	return projections
@@ -1823,8 +1824,9 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 }
 
 type groupByProjection struct {
-	expr ast.ExprNode
-	col  *expression.Column
+	astExpr ast.ExprNode
+	expr    expression.Expression
+	col     *expression.Column
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
@@ -1881,6 +1883,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 			if err != nil {
 				return nil, nil, 0, err
 			}
+			newExpr = replaceMutableGroupByProjections(b.ctx.GetExprCtx().GetEvalCtx(), newExpr, groupByProjections)
 		} else {
 			np = p
 		}
@@ -2042,11 +2045,44 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 func resolveProjectionFromGroupBy(expr ast.ExprNode, groupByProjections []groupByProjection) expression.Expression {
 	expr = getInnerFromParenthesesAndUnaryPlus(expr)
 	for _, projection := range groupByProjections {
-		if ast.ExpressionDeepEqual(getInnerFromParenthesesAndUnaryPlus(projection.expr), expr) {
+		if ast.ExpressionDeepEqual(getInnerFromParenthesesAndUnaryPlus(projection.astExpr), expr) {
 			return projection.col
 		}
 	}
 	return nil
+}
+
+func replaceMutableGroupByProjections(ectx expression.EvalContext, expr expression.Expression, groupByProjections []groupByProjection) expression.Expression {
+	if expr == nil || len(groupByProjections) == 0 {
+		return expr
+	}
+	return expr.Traverse(mutableGroupByProjectionReplacer{
+		ectx:               ectx,
+		groupByProjections: groupByProjections,
+	})
+}
+
+type mutableGroupByProjectionReplacer struct {
+	ectx               expression.EvalContext
+	groupByProjections []groupByProjection
+}
+
+func (r mutableGroupByProjectionReplacer) Transform(expr expression.Expression) expression.Expression {
+	for _, projection := range r.groupByProjections {
+		if expr.Equal(r.ectx, projection.expr) {
+			return projection.col
+		}
+	}
+	scalar, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return expr
+	}
+	args := scalar.GetArgs()
+	for i, arg := range args {
+		args[i] = arg.Traverse(r)
+	}
+	scalar.CleanHashCode()
+	return scalar
 }
 
 func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logicalop.LogicalAggregation, error) {
