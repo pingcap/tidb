@@ -16,6 +16,8 @@ package mydump
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -265,11 +267,7 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 	}
 	createStmt.Select.Accept(collector)
 
-	deps := make([]filter.Table, 0, len(collector.deps))
-	for dep := range collector.deps {
-		deps = append(deps, dep)
-	}
-	sortTableNames(deps)
+	deps := slices.Collect(maps.Keys(collector.deps))
 
 	return &parsedViewSchema{
 		key:       currentView,
