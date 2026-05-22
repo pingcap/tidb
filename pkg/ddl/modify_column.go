@@ -2352,6 +2352,11 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify with check"))
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
+		// MariaDB system-versioned period column markers (parsed when
+		// SetMariaDB is enabled). TiDB has no engine semantics for them on
+		// any path; accept on MODIFY/CHANGE to stay consistent with CREATE
+		// and ADD COLUMN.
+		case ast.ColumnOptionMariaDBRowStart, ast.ColumnOptionMariaDBRowEnd:
 		default:
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(fmt.Sprintf("unknown column option type: %d", opt.Tp)))
 		}

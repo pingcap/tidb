@@ -4081,8 +4081,11 @@ ColumnOption:
 |	GeneratedAlways "AS" "ROW" "START"
 	{
 		// MariaDB system-versioned table period column. Parsed only when the
-		// MariaDB extension is enabled via (*Parser).SetMariaDB; the clause is
-		// kept on the AST for lossless restore but carries no engine semantics.
+		// MariaDB extension is enabled via (*Parser).SetMariaDB. The clause is
+		// recorded on the AST and carries no engine semantics; restore emits
+		// the canonical `GENERATED ALWAYS AS ROW START` form even when the
+		// `GENERATED ALWAYS` prefix was omitted on the input (normalisation,
+		// not byte-for-byte lossless round-trip).
 		if !parser.enableMariaDB {
 			yylex.AppendError(ErrSyntax)
 			return 1
