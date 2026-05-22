@@ -1345,6 +1345,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			return v, true
 		}
 	}
+	rexpr = er.adjustInSubqueryUnionCompareExpr(np, rexpr)
 	checkCondition, err := er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 	if err != nil {
 		er.err = err
@@ -1518,6 +1519,128 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 	}
 	return noDecorrelate
 }
+
+//revive:disable:cyclomatic,cognitive-complexity,function-length
+func (er *expressionRewriter) adjustInSubqueryUnionCompareExpr(
+	np base.LogicalPlan,
+	rexpr expression.Expression,
+) expression.Expression {
+	rCol, ok := rexpr.(*expression.Column)
+	if !ok || !rCol.GetType(er.sctx.GetEvalCtx()).EvalType().IsStringKind() {
+		return rexpr
+	}
+	castTp := findMixedUnionNumericSourceType(
+		np,
+		rCol.UniqueID,
+		er.sctx.GetEvalCtx(),
+	)
+	if castTp == nil {
+		return rexpr
+	}
+	// MySQL keeps displayed UNION output as string, but IN-subquery comparison
+	// still uses a numeric domain when one UNION branch is numeric.
+	rColCopy := *rCol
+	rColCopy.InOperand = true
+	return expression.BuildCastFunction(er.sctx, &rColCopy, castTp)
+}
+
+func findMixedUnionNumericSourceType(
+	p base.LogicalPlan,
+	targetColID int64,
+	evalCtx expression.EvalContext,
+) *types.FieldType {
+	switch x := p.(type) {
+	case *logicalop.LogicalAggregation:
+		for i, col := range x.Schema().Columns {
+			if col.UniqueID != targetColID ||
+				i >= len(x.AggFuncs) ||
+				len(x.AggFuncs[i].Args) != 1 {
+				continue
+			}
+			argCol, ok := x.AggFuncs[i].Args[0].(*expression.Column)
+			if !ok || len(x.Children()) == 0 {
+				return nil
+			}
+			return findMixedUnionNumericSourceType(
+				x.Children()[0],
+				argCol.UniqueID,
+				evalCtx,
+			)
+		}
+	case *logicalop.LogicalProjection:
+		for i, col := range x.Schema().Columns {
+			if col.UniqueID != targetColID || i >= len(x.Exprs) {
+				continue
+			}
+			argCol, ok := x.Exprs[i].(*expression.Column)
+			if ok && len(x.Children()) > 0 {
+				return findMixedUnionNumericSourceType(
+					x.Children()[0],
+					argCol.UniqueID,
+					evalCtx,
+				)
+			}
+			return nil
+		}
+	case *logicalop.LogicalUnionAll:
+		for i, col := range x.Schema().Columns {
+			if col.UniqueID == targetColID {
+				return mixedUnionNumericSourceType(x, i, evalCtx)
+			}
+		}
+	default:
+		return nil
+	}
+	return nil
+}
+
+func mixedUnionNumericSourceType(
+	u *logicalop.LogicalUnionAll,
+	colIdx int,
+	evalCtx expression.EvalContext,
+) *types.FieldType {
+	if colIdx >= u.Schema().Len() ||
+		!u.Schema().Columns[colIdx].GetType(evalCtx).EvalType().IsStringKind() {
+		return nil
+	}
+	var numericTp *types.FieldType
+	hasStringSource := false
+	for _, child := range u.Children() {
+		proj, ok := child.(*logicalop.LogicalProjection)
+		if !ok || colIdx >= len(proj.Exprs) {
+			return nil
+		}
+		sourceTp := unionProjectionSourceType(proj.Exprs[colIdx], evalCtx)
+		switch sourceTp.EvalType() {
+		case types.ETInt, types.ETReal, types.ETDecimal:
+			if numericTp == nil {
+				numericTp = sourceTp.Clone()
+			}
+		case types.ETString:
+			hasStringSource = true
+		default:
+			return nil
+		}
+	}
+	if numericTp == nil || !hasStringSource {
+		return nil
+	}
+	numericTp.DelFlag(mysql.NotNullFlag)
+	return numericTp
+}
+
+func unionProjectionSourceType(
+	expr expression.Expression,
+	evalCtx expression.EvalContext,
+) *types.FieldType {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if ok && sf.FuncName.L == ast.Cast && len(sf.GetArgs()) == 1 {
+		return sf.GetArgs()[0].GetType(evalCtx)
+	}
+	return expr.GetType(evalCtx)
+}
+
+//revive:enable:cyclomatic,cognitive-complexity,function-length
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) (ast.Node, bool) {
 	intest.AssertNotNil(planCtx)

@@ -958,3 +958,32 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
 }
+
+func TestIssue25600InSubqueryMixedUnionComparison(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(
+		_ *testing.T,
+		tk *testkit.TestKit,
+		_, _ string,
+	) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists a")
+		tk.MustExec("drop table if exists d")
+		tk.MustExec("create table a(b char, c varchar(50));")
+		tk.MustExec(`insert a values("", "sc");`)
+		tk.MustExec("create table d(e varchar(0));")
+		tk.MustExec(`insert d values("");`)
+
+		query := "select /* issue:25600 */ if(b = '', '<empty>', b), c " +
+			"from a where c in (select b union select avg(e) from d)"
+		tk.MustQuery(query).Check(testkit.Rows("<empty> sc"))
+		tk.MustQuery(
+			`select /* issue:25600 */ 'sc' in (select 0 union select '')`,
+		).Check(testkit.Rows("1"))
+		tk.MustQuery(
+			`select /* issue:25600 */ 'sc' not in (select 0 union select '')`,
+		).Check(testkit.Rows("0"))
+		tk.MustQuery(
+			`select /* issue:25600 */ 'sc' in (select '' union select '0')`,
+		).Check(testkit.Rows("0"))
+	})
+}
