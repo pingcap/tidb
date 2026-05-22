@@ -127,28 +127,26 @@ func (h UserResetPasswordHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	}
 	defer se.Close()
 
-	hosts, err := listUserHosts(ctx, se, username)
+	exists, err := userHostExists(ctx, se, username, defaultUserHost)
 	if err != nil {
 		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
-	if len(hosts) == 0 {
+	if !exists {
 		err := errors.New("user not found")
 		auditUserAdminStmt(req, buildAlterUserPasswordSQL(auditUser, defaultUserHost, auditRedactedPassword), err)
 		WriteErrorWithCode(w, http.StatusNotFound, err)
 		return
 	}
 
-	for _, host := range hosts {
-		stmtText := buildAlterUserPasswordSQL(username, host, payload.NewPassword)
-		if _, err := se.ExecuteInternal(ctx, "ALTER USER %?@%? IDENTIFIED BY %?", username, host, payload.NewPassword); err != nil {
-			auditUserAdminStmt(req, stmtText, err)
-			WriteErrorWithCode(w, http.StatusInternalServerError, err)
-			return
-		}
-		auditUserAdminStmt(req, stmtText, nil)
+	stmtText := buildAlterUserPasswordSQL(username, defaultUserHost, payload.NewPassword)
+	if _, err := se.ExecuteInternal(ctx, "ALTER USER %?@%? IDENTIFIED BY %?", username, defaultUserHost, payload.NewPassword); err != nil {
+		auditUserAdminStmt(req, stmtText, err)
+		WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
 	}
+	auditUserAdminStmt(req, stmtText, nil)
 
 	logutil.Logger(req.Context()).Info("internal user password reset", zap.String("user", username))
 
@@ -200,39 +198,37 @@ func (h UserDeleteHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	defer se.Close()
 
-	hosts, err := listUserHosts(ctx, se, username)
+	exists, err := userHostExists(ctx, se, username, defaultUserHost)
 	if err != nil {
 		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
-	if len(hosts) == 0 {
+	if !exists {
 		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), nil)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	totalUsers, err := countUserEntries(ctx, se)
+	loginCapableUsers, err := countLoginCapableUsers(ctx, se)
 	if err != nil {
 		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
-	if totalUsers <= len(hosts) {
+	if loginCapableUsers <= 1 {
 		err := errors.New("user cannot be deleted: last user")
 		auditUserAdminStmt(req, buildDropUserSQL(auditUser, defaultUserHost), err)
 		WriteErrorWithCode(w, http.StatusConflict, err)
 		return
 	}
 
-	for _, host := range hosts {
-		stmtText := buildDropUserSQL(username, host)
-		if _, err := se.ExecuteInternal(ctx, "DROP USER %?@%?", username, host); err != nil {
-			auditUserAdminStmt(req, stmtText, err)
-			WriteErrorWithCode(w, http.StatusConflict, err)
-			return
-		}
-		auditUserAdminStmt(req, stmtText, nil)
+	stmtText := buildDropUserSQL(username, defaultUserHost)
+	if _, err := se.ExecuteInternal(ctx, "DROP USER %?@%?", username, defaultUserHost); err != nil {
+		auditUserAdminStmt(req, stmtText, err)
+		WriteErrorWithCode(w, http.StatusConflict, err)
+		return
 	}
+	auditUserAdminStmt(req, stmtText, nil)
 
 	logutil.Logger(req.Context()).Info("internal user deleted", zap.String("user", username))
 	w.WriteHeader(http.StatusNoContent)
@@ -294,13 +290,13 @@ func (h UserCreateHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	defer se.Close()
 
-	hosts, err := listUserHosts(ctx, se, username)
+	exists, err := userHostExists(ctx, se, username, defaultUserHost)
 	if err != nil {
 		auditUserAdminStmt(req, stmtText, err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
-	if len(hosts) > 0 {
+	if exists {
 		err := errors.New("user already exists")
 		auditUserAdminStmt(req, stmtText, err)
 		WriteErrorWithCode(w, http.StatusConflict, err)
@@ -396,7 +392,13 @@ func (h UserRolesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		WriteErrorWithCode(w, http.StatusBadRequest, err)
 		return
 	}
-	auditRoleName, auditRoleHost := splitRole(roles[0])
+	roleIdents, err := parseRoleList(roles)
+	if err != nil {
+		auditUserAdminStmt(req, placeholderStmt, err)
+		WriteErrorWithCode(w, http.StatusBadRequest, err)
+		return
+	}
+	auditRoleName, auditRoleHost := roleIdents[0].name, roleIdents[0].host
 
 	ctx := kv.WithInternalSourceType(req.Context(), kv.InternalTxnOthers)
 	se, err := session.CreateSession(h.store)
@@ -407,30 +409,27 @@ func (h UserRolesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	defer se.Close()
 
-	hosts, err := listUserHosts(ctx, se, username)
+	exists, err := userHostExists(ctx, se, username, defaultUserHost)
 	if err != nil {
 		auditUserAdminStmt(req, buildGrantRoleSQL(auditRoleName, auditRoleHost, auditUser, defaultUserHost), err)
 		WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
-	if len(hosts) == 0 {
+	if !exists {
 		err := errors.New("user not found")
 		auditUserAdminStmt(req, buildGrantRoleSQL(auditRoleName, auditRoleHost, auditUser, defaultUserHost), err)
 		WriteErrorWithCode(w, http.StatusNotFound, err)
 		return
 	}
 
-	for _, host := range hosts {
-		for _, role := range roles {
-			roleName, roleHost := splitRole(role)
-			stmtText := buildGrantRoleSQL(roleName, roleHost, username, host)
-			if _, err := se.ExecuteInternal(ctx, "GRANT %?@%? TO %?@%?", roleName, roleHost, username, host); err != nil {
-				auditUserAdminStmt(req, stmtText, err)
-				WriteErrorWithCode(w, http.StatusInternalServerError, err)
-				return
-			}
-			auditUserAdminStmt(req, stmtText, nil)
+	for _, role := range roleIdents {
+		stmtText := buildGrantRoleSQL(role.name, role.host, username, defaultUserHost)
+		if _, err := se.ExecuteInternal(ctx, "GRANT %?@%? TO %?@%?", role.name, role.host, username, defaultUserHost); err != nil {
+			auditUserAdminStmt(req, stmtText, err)
+			WriteErrorWithCode(w, http.StatusInternalServerError, err)
+			return
 		}
+		auditUserAdminStmt(req, stmtText, nil)
 	}
 
 	logutil.Logger(req.Context()).Info("internal roles granted",
@@ -442,34 +441,30 @@ func (h UserRolesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func listUserHosts(ctx context.Context, se sessionapi.Session, username string) ([]string, error) {
-	rs, err := se.ExecuteInternal(ctx, "SELECT Host FROM mysql.user WHERE User = %?", username)
+type roleIdentity struct {
+	name string
+	host string
+}
+
+func userHostExists(ctx context.Context, se sessionapi.Session, username, host string) (bool, error) {
+	rs, err := se.ExecuteInternal(ctx, "SELECT 1 FROM mysql.user WHERE User = %? AND Host = %? LIMIT 1", username, host)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	if rs == nil {
-		return nil, nil
+		return false, nil
 	}
 	defer terror.Call(rs.Close)
 
-	hosts := make([]string, 0)
-	for {
-		chk := rs.NewChunk(nil)
-		if err := rs.Next(ctx, chk); err != nil {
-			return nil, err
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
-		for i := 0; i < chk.NumRows(); i++ {
-			hosts = append(hosts, chk.GetRow(i).GetString(0))
-		}
+	chk := rs.NewChunk(nil)
+	if err := rs.Next(ctx, chk); err != nil {
+		return false, err
 	}
-	return hosts, nil
+	return chk.NumRows() > 0, nil
 }
 
-func countUserEntries(ctx context.Context, se sessionapi.Session) (int, error) {
-	rs, err := se.ExecuteInternal(ctx, "SELECT COUNT(*) FROM mysql.user")
+func countLoginCapableUsers(ctx context.Context, se sessionapi.Session) (int, error) {
+	rs, err := se.ExecuteInternal(ctx, "SELECT COUNT(*) FROM mysql.user WHERE Account_locked = 'N'")
 	if err != nil {
 		return 0, err
 	}
@@ -505,17 +500,35 @@ func normalizeRoleList(roles []string) []string {
 	return out
 }
 
-func splitRole(role string) (string, string) {
-	at := strings.LastIndex(role, "@")
-	if at <= 0 || at == len(role)-1 {
-		return role, defaultUserHost
+func parseRoleList(roles []string) ([]roleIdentity, error) {
+	roleIdents := make([]roleIdentity, 0, len(roles))
+	for _, role := range roles {
+		roleName, roleHost, err := splitRole(role)
+		if err != nil {
+			return nil, err
+		}
+		roleIdents = append(roleIdents, roleIdentity{name: roleName, host: roleHost})
 	}
-	return role[:at], role[at+1:]
+	return roleIdents, nil
+}
+
+func splitRole(role string) (name string, host string, err error) {
+	if strings.Count(role, "@") > 1 {
+		return "", "", errors.Errorf("invalid role format %q", role)
+	}
+	at := strings.Index(role, "@")
+	if at < 0 {
+		return role, defaultUserHost, nil
+	}
+	if at == 0 || at == len(role)-1 {
+		return "", "", errors.Errorf("invalid role format %q", role)
+	}
+	return role[:at], role[at+1:], nil
 }
 
 func requireMTLS(_ *http.Request, cfg *config.Config) error {
-	// cmux wraps TLS connections and may hide the TLS state from net/http, so we rely on
-	// the status server being configured to require client certificates.
+	// cmux may hide TLS state from net/http, so this check relies on the status
+	// listener being configured to verify client certificate CNs.
 	if cfg != nil && cfg.Security.ClusterSSLCA != "" && len(cfg.Security.ClusterVerifyCN) > 0 {
 		return nil
 	}
@@ -527,10 +540,6 @@ func auditValue(value string) string {
 		return auditUnknownValue
 	}
 	return value
-}
-
-func buildAlterUserExpireSQL(username, host string) string {
-	return sqlescape.MustEscapeSQL("ALTER USER %?@%? PASSWORD EXPIRE", username, host)
 }
 
 func buildAlterUserPasswordSQL(username, host, password string) string {
@@ -549,11 +558,10 @@ func buildGrantRoleSQL(roleName, roleHost, username, userHost string) string {
 	return sqlescape.MustEscapeSQL("GRANT %?@%? TO %?@%?", roleName, roleHost, username, userHost)
 }
 
-
 func auditUserAdminStmt(req *http.Request, stmtText string, err error) {
 	extensions, extErr := extension.GetExtensions()
 	if extErr != nil {
-		logutil.Logger(req.Context()).Debug("failed to get extensions for audit log", zap.Error(extErr))
+		logutil.Logger(req.Context()).Warn("failed to get extensions for audit log", zap.Error(extErr))
 		return
 	}
 	sessExtensions := extensions.NewSessionExtensions()
@@ -647,7 +655,7 @@ func clientCertCommonName(req *http.Request) string {
 	return req.TLS.PeerCertificates[0].Subject.CommonName
 }
 
-func splitHostPort(addr string) (string, string) {
+func splitHostPort(addr string) (host string, port string) {
 	if addr == "" {
 		return "", ""
 	}
@@ -695,15 +703,15 @@ func (i *userAdminStmtEventInfo) StmtNode() ast.StmtNode {
 	return i.stmtNode
 }
 
-func (i *userAdminStmtEventInfo) ExecuteStmtNode() *ast.ExecuteStmt {
+func (*userAdminStmtEventInfo) ExecuteStmtNode() *ast.ExecuteStmt {
 	return nil
 }
 
-func (i *userAdminStmtEventInfo) ExecutePreparedStmt() ast.StmtNode {
+func (*userAdminStmtEventInfo) ExecutePreparedStmt() ast.StmtNode {
 	return nil
 }
 
-func (i *userAdminStmtEventInfo) PreparedParams() []types.Datum {
+func (*userAdminStmtEventInfo) PreparedParams() []types.Datum {
 	return nil
 }
 
@@ -711,16 +719,15 @@ func (i *userAdminStmtEventInfo) OriginalText() string {
 	return i.originalText
 }
 
-
 func (i *userAdminStmtEventInfo) SQLDigest() (normalized string, digest *parser.Digest) {
 	return i.normalizedSQL, i.digest
 }
 
-func (i *userAdminStmtEventInfo) AffectedRows() uint64 {
+func (*userAdminStmtEventInfo) AffectedRows() uint64 {
 	return 0
 }
 
-func (i *userAdminStmtEventInfo) RelatedTables() []stmtctx.TableEntry {
+func (*userAdminStmtEventInfo) RelatedTables() []stmtctx.TableEntry {
 	return nil
 }
 

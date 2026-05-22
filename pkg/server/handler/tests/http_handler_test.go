@@ -45,6 +45,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
@@ -55,8 +56,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -76,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -527,34 +529,55 @@ partition by range (a)
 func TestInternalUserAdminAPIMTLS(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	artifacts := generateTLSArtifacts(t)
-
-	t.Run("forbidden without client cert", func(t *testing.T) {
-		statusAPIAuditTestRecorder.Reset()
+	startUserAdminMTLSServer := func(t *testing.T) (*basicHTTPHandlerTestSuite, *http.Client, *sql.DB) {
 		ts := createBasicHTTPHandlerTestSuite()
 		cfg := util.NewTestConfig()
 		origCfg := config.GetGlobalConfig()
 		config.StoreGlobalConfig(cfg)
-		defer config.StoreGlobalConfig(origCfg)
-		cfg.Store = "tikv"
+		t.Cleanup(func() {
+			config.StoreGlobalConfig(origCfg)
+		})
+		cfg.Store = config.StoreTypeMockTiKV
 		cfg.Port = 0
 		cfg.Status.StatusPort = 0
 		cfg.Status.ReportStatus = true
+		cfg.Performance.ForceInitStats = false
+		cfg.Security.ClusterSSLCA = artifacts.caCert
+		cfg.Security.ClusterSSLCert = artifacts.serverCert
+		cfg.Security.ClusterSSLKey = artifacts.serverKey
+		cfg.Security.ClusterVerifyCN = []string{"tidb-client"}
+
+		ts.startServerWithConfig(t, cfg)
+		t.Cleanup(func() {
+			ts.stopServer(t)
+		})
+		ts.StatusScheme = "https"
+
+		db, err := sql.Open("mysql", ts.GetDSN())
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, db.Close())
+		})
+
+		client := newTLSHTTPClient(t, artifacts.caCert, artifacts.clientCert, artifacts.clientKey)
+		waitForStatus(t, client, ts.StatusURL("/status"))
+		return ts, client, db
+	}
+
+	t.Run("forbidden without client cert", func(t *testing.T) {
+		statusAPIAuditTestRecorder.Reset()
+		cfg := util.NewTestConfig()
+		cfg.Store = config.StoreTypeMockTiKV
 		cfg.Security.ClusterSSLCA = artifacts.caCert
 		cfg.Security.ClusterSSLCert = artifacts.serverCert
 		cfg.Security.ClusterSSLKey = artifacts.serverKey
 
-		ts.startServerWithConfig(t, cfg)
-		defer ts.stopServer(t)
-		ts.StatusScheme = "https"
-
-		client := newTLSHTTPClient(t, artifacts.caCert, "", "")
-		waitForStatus(t, client, ts.StatusURL("/status"))
-		resp, err := client.Post(ts.StatusURL("/internal/v1/users/testuser/reset-password"),
-			"application/json",
+		req := httptest.NewRequest(http.MethodPost, "/internal/v1/users/testuser/reset-password",
 			bytes.NewBufferString(`{"new_password":"KXMF*ivNaLWd*oNhKC+REY2+"}`))
-		require.NoError(t, err)
-		defer func() { require.NoError(t, resp.Body.Close()) }()
-		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+		req = mux.SetURLVars(req, map[string]string{"username": "testuser"})
+		resp := httptest.NewRecorder()
+		handler.NewUserResetPasswordHandler(nil, cfg).ServeHTTP(resp, req)
+		require.Equal(t, http.StatusForbidden, resp.Code)
 
 		records := statusAPIAuditTestRecorder.Records()
 		require.Len(t, records, 1)
@@ -571,10 +594,11 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 		origCfg := config.GetGlobalConfig()
 		config.StoreGlobalConfig(cfg)
 		defer config.StoreGlobalConfig(origCfg)
-		cfg.Store = "tikv"
+		cfg.Store = config.StoreTypeMockTiKV
 		cfg.Port = 0
 		cfg.Status.StatusPort = 0
 		cfg.Status.ReportStatus = true
+		cfg.Performance.ForceInitStats = false
 		cfg.Security.ClusterSSLCA = artifacts.caCert
 		cfg.Security.ClusterSSLCert = artifacts.serverCert
 		cfg.Security.ClusterSSLKey = artifacts.serverKey
@@ -645,6 +669,48 @@ func TestInternalUserAdminAPIMTLS(t *testing.T) {
 		require.Contains(t, records[1].sql, "KXMF*ivNaLWd*oNhKC+REY2+")
 		require.Contains(t, records[2].sql, "GRANT")
 		require.Contains(t, records[3].sql, "DROP USER")
+	})
+
+	t.Run("only default host is managed", func(t *testing.T) {
+		ts, client, db := startUserAdminMTLSServer(t)
+		_, err := db.Exec("CREATE USER 'hostscope'@'127.0.0.1' IDENTIFIED BY 'LocalPassw0rd!'")
+		require.NoError(t, err)
+
+		var localAuthStringBefore string
+		require.NoError(t, db.QueryRow("SELECT authentication_string FROM mysql.user WHERE User = 'hostscope' AND Host = '127.0.0.1'").Scan(&localAuthStringBefore))
+
+		resp, err := client.Post(ts.StatusURL("/internal/v1/users"),
+			"application/json",
+			bytes.NewBufferString(`{"username":"hostscope","password":"ApiPassw0rd!"}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		resp, err = client.Post(ts.StatusURL("/internal/v1/users/hostscope/reset-password"),
+			"application/json",
+			bytes.NewBufferString(`{"new_password":"NewApiPassw0rd!"}`))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		var localAuthStringAfter string
+		require.NoError(t, db.QueryRow("SELECT authentication_string FROM mysql.user WHERE User = 'hostscope' AND Host = '127.0.0.1'").Scan(&localAuthStringAfter))
+		require.Equal(t, localAuthStringBefore, localAuthStringAfter)
+
+		req, err := http.NewRequest(http.MethodDelete, ts.StatusURL("/internal/v1/users/hostscope"), nil)
+		require.NoError(t, err)
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusNoContent, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+
+		var defaultHostCount int
+		require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM mysql.user WHERE User = 'hostscope' AND Host = '%'").Scan(&defaultHostCount))
+		require.Equal(t, 0, defaultHostCount)
+
+		var localHostCount int
+		require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM mysql.user WHERE User = 'hostscope' AND Host = '127.0.0.1'").Scan(&localHostCount))
+		require.Equal(t, 1, localHostCount)
 	})
 }
 
@@ -718,13 +784,6 @@ func generateTestCert(
 		parentKey = privateKey
 	}
 
-	if parentCert == nil || parentKey == nil {
-		template.IsCA = true
-		template.KeyUsage |= x509.KeyUsageCertSign
-		parentCert = &template
-		parentKey = privateKey
-	}
-
 	derBytes, err := x509.CreateCertificate(crand.Reader, &template, parentCert, &privateKey.PublicKey, parentKey)
 	require.NoError(t, err)
 
@@ -766,7 +825,10 @@ func newTLSHTTPClient(t *testing.T, caFile, certFile, keyFile string) *http.Clie
 		}
 	}
 	tlsConfig.BuildNameToCertificate()
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+	}
 }
 
 func waitForStatus(t *testing.T, client *http.Client, url string) {
