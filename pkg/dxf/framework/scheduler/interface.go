@@ -152,8 +152,8 @@ type Extension interface {
 	// GetNextStep is used to get the next step for the task.
 	// If task runs successfully, business progression should go from StepInit to
 	// business steps, then to StepDone, and scheduler will mark it as finished.
-	// During the framework-only rollout, pending+prepared tasks resolve this
-	// method from StepInit.
+	// In prepare mode, on the pending+init path after OnPrepare, scheduler
+	// resolves this method from StepInit.
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step

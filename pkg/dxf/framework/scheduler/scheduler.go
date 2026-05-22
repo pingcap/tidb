@@ -406,10 +406,6 @@ func (s *BaseScheduler) onPending() error {
 		task.Step = proto.StepPrepared
 		s.task.Store(task)
 		nextStepInput = proto.StepInit
-	} else if task.Step == proto.StepPrepared {
-		// During the framework-only rollout, pending+prepared tasks still resolve
-		// business next-step from StepInit.
-		nextStepInput = proto.StepInit
 	}
 	return s.switch2NextStepWithInputStep(nextStepInput)
 }

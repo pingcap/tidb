@@ -542,33 +542,6 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("test onPending prepared step resolves next-step from init", func(t *testing.T) {
-		taskWithPrepared := task
-		taskWithPrepared.Step = proto.StepPrepared
-		taskWithPrepared.ExtraParams.PrepareMode = proto.PrepareModeRequired
-		scheduler.task.Store(&taskWithPrepared)
-
-		nextStepExt := schmock.NewMockExtension(ctrl)
-		nextStepExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(func(base *proto.TaskBase) proto.Step {
-			require.Equal(t, proto.StepInit, base.Step)
-			return proto.StepOne
-		})
-		nextStepExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{":4000"}, nil)
-		nextStepExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-			Return(nil, nil)
-		nextStepExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-		scheduler.Extension = nextStepExt
-
-		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
-		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
-		require.NoError(t, scheduler.onPending())
-		taskWithPrepared.Step = proto.StepOne
-		taskWithPrepared.State = proto.TaskStateRunning
-		require.Equal(t, taskWithPrepared, *scheduler.GetTask())
-		require.True(t, ctrl.Satisfied())
-		scheduler.Extension = schExt
-	})
-
 	t.Run("test revertTask", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
