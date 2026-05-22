@@ -132,6 +132,33 @@ func TestInitDeployMode(t *testing.T) {
 
 	cfg.DeployMode = deploymode.Mode(100)
 	require.ErrorContains(t, initDeployMode(cfg), "invalid deploy mode")
+
+	t.Run("starter TLS flags can override cert and key only", func(t *testing.T) {
+		fset := initFlagSet()
+		require.NoError(t, fset.Parse([]string{
+			"--cluster-cert=/tmp/flag-cluster-cert.pem",
+			"--cluster-key=/tmp/flag-cluster-key.pem",
+			"--sql-cert=/tmp/flag-sql-cert.pem",
+			"--sql-key=/tmp/flag-sql-key.pem",
+		}))
+
+		cfg := config.NewConfig()
+		cfg.DeployMode = deploymode.Starter
+		cfg.Security.ClusterSSLCA = "/tmp/config-cluster-ca.pem"
+		cfg.Security.ClusterSSLCert = "/tmp/config-cluster-cert.pem"
+		cfg.Security.ClusterSSLKey = "/tmp/config-cluster-key.pem"
+		cfg.Security.SSLCA = "/tmp/config-sql-ca.pem"
+		cfg.Security.SSLCert = "/tmp/config-sql-cert.pem"
+		cfg.Security.SSLKey = "/tmp/config-sql-key.pem"
+
+		overrideConfig(cfg, fset)
+		require.Equal(t, "/tmp/config-cluster-ca.pem", cfg.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/flag-cluster-cert.pem", cfg.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/flag-cluster-key.pem", cfg.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/config-sql-ca.pem", cfg.Security.SSLCA)
+		require.Equal(t, "/tmp/flag-sql-cert.pem", cfg.Security.SSLCert)
+		require.Equal(t, "/tmp/flag-sql-key.pem", cfg.Security.SSLKey)
+	})
 }
 
 func TestSetVersionByConfigInNextGen(t *testing.T) {

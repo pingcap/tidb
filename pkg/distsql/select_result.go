@@ -75,6 +75,21 @@ type SelectResult interface {
 	Close() error
 }
 
+// GetSelectResultConcurrency returns the internal cop iterator concurrency for a SelectResult.
+// The bool return value indicates whether the underlying implementation exposes this information.
+func GetSelectResultConcurrency(sr SelectResult) (concurrency int, extraConcurrency int, ok bool) {
+	r, ok := sr.(*selectResult)
+	if !ok || r == nil {
+		return 0, 0, false
+	}
+	ci, ok := r.resp.(copr.CopInfo)
+	if !ok {
+		return 0, 0, false
+	}
+	concurrency, extraConcurrency = ci.GetConcurrency()
+	return concurrency, extraConcurrency, true
+}
+
 // SelectResultRow indicates the row returned by the SelectResultIter
 type SelectResultRow struct {
 	// `ChannelIndex` indicates the index where this row locates.
