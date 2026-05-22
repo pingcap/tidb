@@ -234,6 +234,8 @@ func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPla
 	p := parser.New()
 	p.SetSQLMode(si.sqlMode)
 
+	// TODO: Parallelize independent views in the same topo layer instead of
+	// executing the whole ordered list one by one.
 	for _, node := range plan.viewPlan.ordered {
 		normalizedKey := normalizeTableName(node.key.Schema, node.key.Name)
 		if existingViews.has(normalizedKey) {
