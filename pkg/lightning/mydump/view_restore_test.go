@@ -264,4 +264,6 @@ func TestBuildViewRestorePlanDetectsCycle(t *testing.T) {
 		},
 	}, nil)
 	require.ErrorContains(t, err, "cyclic")
+	require.ErrorContains(t, err, "`test`.`v1`")
+	require.ErrorContains(t, err, "`test`.`v2`")
 }

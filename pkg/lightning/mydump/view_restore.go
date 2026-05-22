@@ -345,7 +345,18 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 	}
 
 	if len(plan.ordered) != len(plan.nodes) {
-		return nil, errors.New("cyclic view dependency detected")
+		cycleNodes := make([]filter.Table, 0, len(plan.nodes)-len(plan.ordered))
+		for key, indegree := range remainingIndegree {
+			if indegree > 0 {
+				cycleNodes = append(cycleNodes, key)
+			}
+		}
+		sortTableNames(cycleNodes)
+		cycleNames := make([]string, 0, len(cycleNodes))
+		for _, key := range cycleNodes {
+			cycleNames = append(cycleNames, key.String())
+		}
+		return nil, errors.Errorf("cyclic view dependency detected among %s", strings.Join(cycleNames, ", "))
 	}
 
 	return plan, nil
