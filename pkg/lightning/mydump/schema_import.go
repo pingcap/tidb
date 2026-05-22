@@ -223,11 +223,11 @@ func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPla
 	if plan == nil || plan.viewPlan == nil {
 		return nil
 	}
-	existingTables, existingViews, err := si.loadExistingViewDependencies(ctx, plan.viewPlan)
+	existingNonViews, existingViews, err := si.loadExistingViewDependencies(ctx, plan.viewPlan)
 	if err != nil {
 		return err
 	}
-	if err := validateViewRestorePlan(plan.viewPlan, unionTableNames(existingTables, existingViews)); err != nil {
+	if err := validateViewRestorePlan(plan.viewPlan, unionTableNames(existingNonViews, existingViews)); err != nil {
 		return err
 	}
 
@@ -244,8 +244,8 @@ func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPla
 				zap.String("view-name", node.key.Name))
 			continue
 		}
-		if existingTables.has(normalizedKey) {
-			return common.ErrCreateSchema.GenWithStack("downstream table already exists for view '%s'", node.key.String())
+		if existingNonViews.has(normalizedKey) {
+			return common.ErrCreateSchema.GenWithStack("downstream non-view object already exists for view '%s'", node.key.String())
 		}
 		if err := si.runCommonJob(ctx, p, &schemaJob{
 			dbName:   node.key.Schema,
@@ -321,7 +321,7 @@ func unionTableNames(sets ...tableNameSet) tableNameSet {
 func (si *SchemaImporter) loadExistingViewDependencies(
 	ctx context.Context,
 	plan *viewRestorePlan,
-) (existingTables tableNameSet, existingViews tableNameSet, err error) {
+) (existingNonViews tableNameSet, existingViews tableNameSet, err error) {
 	schemas := make(set.StringSet)
 	for _, node := range plan.nodes {
 		schemas.Insert(strings.ToLower(node.key.Schema))
@@ -330,8 +330,10 @@ func (si *SchemaImporter) loadExistingViewDependencies(
 		}
 	}
 
-	existingTables = make(tableNameSet)
+	existingNonViews = make(tableNameSet)
 	existingViews = make(tableNameSet)
+	// existingNonViews tracks all downstream TABLE_TYPE != VIEW objects. In
+	// TiDB today this effectively means tables and sequences.
 	schemaNames := make([]string, 0, len(schemas))
 	for schema := range schemas {
 		schemaNames = append(schemaNames, schema)
@@ -348,10 +350,10 @@ func (si *SchemaImporter) loadExistingViewDependencies(
 				existingViews.add(filter.Table{Schema: schema, Name: objectName})
 				continue
 			}
-			existingTables.add(filter.Table{Schema: schema, Name: objectName})
+			existingNonViews.add(filter.Table{Schema: schema, Name: objectName})
 		}
 	}
-	return existingTables, existingViews, nil
+	return existingNonViews, existingViews, nil
 }
 
 func (si *SchemaImporter) runCommonJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
