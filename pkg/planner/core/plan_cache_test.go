@@ -366,7 +366,7 @@ func TestIssue40093(t *testing.T) {
 			{"└─HashJoin_11"},
 			{"  ├─IndexReader_26(Build)"},
 			{"  │ └─IndexRangeScan_25"}, // RangeScan instead of FullScan
-			{"  └─TableReader_24(Probe)"}, 
+			{"  └─TableReader_24(Probe)"},
 			{"    └─Selection_23"},
 			{"      └─TableFullScan_22"},
 		})
