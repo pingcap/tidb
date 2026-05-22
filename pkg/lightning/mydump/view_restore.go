@@ -292,7 +292,7 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 		}
 		plan.nodes[normalizedKey] = &viewNode{
 			key:       parsed.key,
-			deps:      append([]filter.Table(nil), parsed.deps...),
+			deps:      parsed.deps,
 			createSQL: parsed.createSQL,
 		}
 	}
