@@ -394,6 +394,23 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 			names = append(names, fullNames[i])
 		}
 	}
+	for _, gbyItem := range gbyItems {
+		if !hasMutableEffectsOrNonDeterministicExpr(gbyItem) ||
+			firstRowColumnForExprInSchema(b.ctx.GetExprCtx().GetEvalCtx(), plan4Agg.AggFuncs, schema4Agg, gbyItem) != nil {
+			continue
+		}
+		newFunc, err := aggregation.NewAggFuncDesc(b.ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{gbyItem}, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
+		column := expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  newFunc.RetTp,
+		}
+		schema4Agg.Append(&column)
+		names = append(names, types.EmptyName)
+	}
 	hasGroupBy := len(gbyItems) > 0
 	for i, aggFunc := range plan4Agg.AggFuncs {
 		err := aggFunc.UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow)
@@ -415,6 +432,48 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	}
 	plan4Agg.SetSchema(schema4Agg)
 	return plan4Agg, aggIndexMap, nil
+}
+
+func hasMutableEffectsOrNonDeterministicExpr(expr expression.Expression) bool {
+	return expression.IsMutableEffectsExpr(expr) || expression.CheckNonDeterministic(expr)
+}
+
+func firstRowColumnForExpr(ectx expression.EvalContext, plan4Agg *logicalop.LogicalAggregation, expr expression.Expression) *expression.Column {
+	return firstRowColumnForExprInSchema(ectx, plan4Agg.AggFuncs, plan4Agg.Schema(), expr)
+}
+
+func firstRowColumnForExprInSchema(ectx expression.EvalContext, aggFuncs []*aggregation.AggFuncDesc, schema *expression.Schema, expr expression.Expression) *expression.Column {
+	for i, aggFunc := range aggFuncs {
+		if aggFunc.Name != ast.AggFuncFirstRow || len(aggFunc.Args) != 1 || i >= schema.Len() {
+			continue
+		}
+		if aggFunc.Args[0].Equal(ectx, expr) {
+			return schema.Columns[i]
+		}
+	}
+	return nil
+}
+
+func collectMutableGroupByProjections(ectx expression.EvalContext, gbyExprs []ast.ExprNode, p base.LogicalPlan) []groupByProjection {
+	agg, ok := p.(*logicalop.LogicalAggregation)
+	if !ok {
+		return nil
+	}
+	projections := make([]groupByProjection, 0, len(gbyExprs))
+	for i, expr := range gbyExprs {
+		if i >= len(agg.GroupByItems) || !hasMutableEffectsOrNonDeterministicExpr(agg.GroupByItems[i]) {
+			continue
+		}
+		col := firstRowColumnForExpr(ectx, agg, agg.GroupByItems[i])
+		if col == nil {
+			continue
+		}
+		projections = append(projections, groupByProjection{
+			expr: expr,
+			col:  col,
+		})
+	}
+	return projections
 }
 
 func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause) (p base.LogicalPlan, err error) {
@@ -1763,9 +1822,14 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 	return projSchema, projNames, projExprs
 }
 
+type groupByProjection struct {
+	expr ast.ExprNode
+	col  *expression.Column
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
-	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
+	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool, groupByProjections []groupByProjection) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
 		return nil, nil, 0, err
@@ -1804,9 +1868,21 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 			newNames = append(newNames, name)
 			continue
 		}
-		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
-		if err != nil {
-			return nil, nil, 0, err
+		var (
+			newExpr expression.Expression
+			np      base.LogicalPlan
+			err     error
+		)
+		if len(groupByProjections) > 0 {
+			newExpr = resolveProjectionFromGroupBy(field.Expr, groupByProjections)
+		}
+		if newExpr == nil {
+			newExpr, np, err = b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+		} else {
+			np = p
 		}
 
 		// for case: select a+1, b, sum(b), grouping(a) from t group by a, b with rollup.
@@ -1961,6 +2037,16 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		}
 	}
 	return proj, proj.Exprs, oldLen, nil
+}
+
+func resolveProjectionFromGroupBy(expr ast.ExprNode, groupByProjections []groupByProjection) expression.Expression {
+	expr = getInnerFromParenthesesAndUnaryPlus(expr)
+	for _, projection := range groupByProjections {
+		if ast.ExpressionDeepEqual(getInnerFromParenthesesAndUnaryPlus(projection.expr), expr) {
+			return projection.col
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logicalop.LogicalAggregation, error) {
@@ -4290,6 +4376,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		windowAggMap                  map[*ast.AggregateFuncExpr]int
 		correlatedAggMap              map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
+		groupByProjections            []groupByProjection
 		projExprs                     []expression.Expression
 		rollup                        bool
 	)
@@ -4512,6 +4599,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		if err != nil {
 			return nil, err
 		}
+		if !rollup {
+			groupByProjections = collectMutableGroupByProjections(b.ctx.GetExprCtx().GetEvalCtx(), gbyExprs, p)
+		}
 		for agg, idx := range totalMap {
 			totalMap[agg] = aggIndexMap[idx]
 		}
@@ -4520,7 +4610,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
+	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil, groupByProjections)
 	if err != nil {
 		return nil, err
 	}
@@ -4558,7 +4648,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// In such case plan `p` is not changed, so we don't have to build another projection.
 		if hasWindowFuncField {
 			// Now we build the window function fields.
-			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false, nil)
 			if err != nil {
 				return nil, err
 			}
