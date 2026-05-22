@@ -419,6 +419,50 @@ func TestS3Storage(t *testing.T) {
 	for i := range tests {
 		testFn(&tests[i], t)
 	}
+
+	t.Run("get object permission check uses configured prefix", func(t *testing.T) {
+		var (
+			mu    sync.Mutex
+			paths []string
+		)
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			paths = append(paths, r.URL.Path)
+			mu.Unlock()
+
+			w.Header().Set(bucketRegionHeader, "us-west-2")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer s.Close()
+
+		_, err := New(context.Background(), &backuppb.StorageBackend{
+			Backend: &backuppb.StorageBackend_S3{
+				S3: &backuppb.S3{
+					Region:         "",
+					Endpoint:       s.URL,
+					Bucket:         "bucket",
+					Prefix:         "prefix",
+					ForcePathStyle: true,
+				},
+			},
+		}, &ExternalStorageOptions{
+			SendCredentials:  true,
+			CheckPermissions: []Permission{GetObject},
+		})
+		require.NoError(t, err)
+
+		mu.Lock()
+		defer mu.Unlock()
+		var getObjectPath string
+		for _, p := range paths {
+			if strings.Contains(p, "perm-check") || strings.Contains(p, "not-exists") {
+				getObjectPath = p
+				break
+			}
+		}
+		require.NotEmpty(t, getObjectPath, "recorded paths: %v", paths)
+		require.True(t, strings.HasPrefix(getObjectPath, "/bucket/prefix/perm-check/"), "recorded paths: %v", paths)
+	})
 }
 
 func TestS3URI(t *testing.T) {
