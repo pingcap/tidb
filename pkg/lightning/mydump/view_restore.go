@@ -221,7 +221,7 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 
 	var (
 		res        strings.Builder
-		restoreCtx = format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment|format.RestoreWithTTLEnableOff, &res)
+		restoreCtx = format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
 		createStmt *ast.CreateViewStmt
 	)
 
