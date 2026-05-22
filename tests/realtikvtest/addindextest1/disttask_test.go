@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -151,6 +152,50 @@ func TestAddIndexDistBasic(t *testing.T) {
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 	checkTmpDDLDir(t)
+}
+
+func TestAddIndexDistAutoPauseOnKVDiskFull(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF and fast reorg are always enabled on nextgen, and this test uses the classic local ingest disk-full failpoint")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task=1;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task=0;")
+	})
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+
+	failpointName := "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace"
+	testfailpoint.Enable(t, failpointName, "return()")
+	err := tk.ExecToErr("alter table t add index idx_b(b);")
+	require.Error(t, err)
+	require.True(t, dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err), "unexpected error: %v", err)
+	testfailpoint.Disable(t, failpointName)
+
+	rows := tk.MustQuery("select job_id, job_meta from mysql.tidb_ddl_job").Rows()
+	require.Len(t, rows, 1)
+	jobID := fmt.Sprint(rows[0][0])
+	job := model.Job{}
+	require.NoError(t, job.Decode([]byte(rows[0][1].(string))))
+	require.True(t, job.IsPausingOrPausedBySystemForKVDiskFull(), "job: %s", job.String())
+	require.NotNil(t, job.PauseReason)
+	require.Contains(t, job.PauseReason.Message, "TiKV disk full")
+	require.Zero(t, job.ErrorCount)
+
+	tk.MustExec("admin resume ddl jobs " + jobID)
+	require.Eventually(t, func() bool {
+		err := tk.ExecToErr("admin check index t idx_b;")
+		return err == nil
+	}, 30*time.Second, 200*time.Millisecond)
 }
 
 func TestAddIndexDistCancelWithPartition(t *testing.T) {

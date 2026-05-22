@@ -1498,16 +1498,23 @@ func resumePausedJob(job *model.Job,
 			job.State, job.SchemaState)
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
-	// The Paused job should only be resumed by who paused it
-	if job.AdminOperator != byWho {
+	// The Paused job should only be resumed by who paused it, except system
+	// pauses with a reason that explicitly allows end-user recovery.
+	if job.AdminOperator != byWho && !canEndUserResumeSystemPausedJob(job, byWho) {
 		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
 			job.AdminOperator.String(), byWho.String())
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 
 	job.State = model.JobStateQueueing
+	job.ClearPauseReason()
+	job.Error = nil
 
 	return nil
+}
+
+func canEndUserResumeSystemPausedJob(job *model.Job, byWho model.AdminCommandOperator) bool {
+	return byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 }
 
 // processJobs command on the Job according to the process

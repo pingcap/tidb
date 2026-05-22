@@ -583,6 +583,20 @@ func (mr *MockTaskManagerMockRecorder) PauseTask(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PauseTask", reflect.TypeOf((*MockTaskManager)(nil).PauseTask), arg0, arg1)
 }
 
+// PauseTaskOnError mocks base method.
+func (m *MockTaskManager) PauseTaskOnError(arg0 context.Context, arg1 int64, arg2 proto.TaskState, arg3 proto.Step, arg4 error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PauseTaskOnError", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PauseTaskOnError indicates an expected call of PauseTaskOnError.
+func (mr *MockTaskManagerMockRecorder) PauseTaskOnError(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PauseTaskOnError", reflect.TypeOf((*MockTaskManager)(nil).PauseTaskOnError), arg0, arg1, arg2, arg3, arg4)
+}
+
 // PausedTask mocks base method.
 func (m *MockTaskManager) PausedTask(arg0 context.Context, arg1 int64) error {
 	m.ctrl.T.Helper()

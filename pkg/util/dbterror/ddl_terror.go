@@ -37,6 +37,8 @@ var (
 	ErrPausedDDLJob = ClassDDL.NewStd(mysql.ErrPausedDDLJob)
 	// ErrBDRRestrictedDDL means the DDL is restricted in BDR mode.
 	ErrBDRRestrictedDDL = ClassDDL.NewStd(mysql.ErrBDRRestrictedDDL)
+	// ErrDDLAutoPausedByKVDiskFull means TiDB paused the DDL job because TiKV disk is full.
+	ErrDDLAutoPausedByKVDiskFull = ClassDDL.NewStd(mysql.ErrDDLAutoPausedByKVDiskFull)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
 	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change for %s"), nil))
 	// ErrOperateSameColumn means we change the same columns multiple times in a DDL.

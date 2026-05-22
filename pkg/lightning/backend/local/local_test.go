@@ -2433,6 +2433,10 @@ func TestCheckDiskAvail(t *testing.T) {
 	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
 	err = checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+
+	store = &http.StoreInfo{Status: http.StoreStatus{Capacity: "100 GB", Available: "5 GB"}}
+	err = checkDiskAvail(ctx, store)
+	require.ErrorIs(t, err, errdef.ErrKVDiskFull)
 }
 
 func TestBackendCloseWithoutTiKVClient(t *testing.T) {
