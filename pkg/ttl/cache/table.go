@@ -727,7 +727,8 @@ func (t *PhysicalTable) FindTTLIndex() *model.IndexInfo {
 }
 
 // SplitIndexScanRanges splits scan ranges by TTL column value distribution.
-// Each range is a [start, end) interval of TTL column values.
+// Each range is a [start, end) interval of TTL column values. The expire time
+// must already be normalized to the UTC wall-clock value used for splitting.
 func (t *PhysicalTable) SplitIndexScanRanges(expireTime time.Time, splitCnt int) []ScanRange {
 	if splitCnt <= 1 {
 		return []ScanRange{newFullRange()}
@@ -744,14 +745,6 @@ func (t *PhysicalTable) SplitIndexScanRanges(expireTime time.Time, splitCnt int)
 	default:
 		minTime = time.Time{}
 	}
-
-	// Normalize DATETIME/DATE wall-clock to UTC so arithmetic is location-agnostic.
-	// TIMESTAMP uses Unix seconds directly, so this is a no-op semantically.
-	expireTime = time.Date(
-		expireTime.Year(), expireTime.Month(), expireTime.Day(),
-		expireTime.Hour(), expireTime.Minute(), expireTime.Second(),
-		expireTime.Nanosecond(), time.UTC,
-	)
 
 	if expireTime.Before(minTime) {
 		return []ScanRange{newFullRange()}
