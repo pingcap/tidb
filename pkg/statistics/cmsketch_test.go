@@ -202,6 +202,60 @@ func TestCMSketchTopN(t *testing.T) {
 	}
 }
 
+func TestEstimateNDVByGEE(t *testing.T) {
+	tests := []struct {
+		name           string
+		sampleNDV      uint64
+		singletonItems uint64
+		sampleSize     uint64
+		rowCount       uint64
+		expected       uint64
+	}{
+		{
+			name:           "applies singleton correction",
+			sampleNDV:      10,
+			singletonItems: 3,
+			sampleSize:     20,
+			rowCount:       80,
+			expected:       13,
+		},
+		{
+			name:           "rounds half up",
+			sampleNDV:      10,
+			singletonItems: 7,
+			sampleSize:     20,
+			rowCount:       45,
+			expected:       14,
+		},
+		{
+			name:           "keeps sample ndv as lower bound",
+			sampleNDV:      10,
+			singletonItems: 7,
+			sampleSize:     20,
+			rowCount:       10,
+			expected:       10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, EstimateNDVByGEE(tt.sampleNDV, tt.singletonItems, tt.sampleSize, tt.rowCount))
+		})
+	}
+
+	t.Run("invalid input", func(t *testing.T) {
+		require.PanicsWithValue(t, "assert failed, sampleSize should be greater than 0", func() {
+			EstimateNDVByGEE(1, 1, 0, 1)
+		})
+		require.PanicsWithValue(t, "assert failed, sampleNDV should be greater than 0", func() {
+			EstimateNDVByGEE(0, 0, 1, 1)
+		})
+		require.PanicsWithValue(t, "assert failed, rowCount should be greater than or equal to sampleNDV", func() {
+			EstimateNDVByGEE(10, 3, 20, 9)
+		})
+	})
+}
+
 func TestCMSketchTopNUniqueData(t *testing.T) {
 	d, w := int32(5), int32(2048)
 	total := uint64(1000000)
@@ -235,9 +289,9 @@ func TestCMSketchCodingTopN(t *testing.T) {
 	unsignedLong := types.NewFieldType(mysql.TypeLonglong)
 	unsignedLong.AddFlag(mysql.UnsignedFlag)
 	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
-	var rows []chunk.Row
-	for i := 0; i < 20; i++ {
-		tString := []byte(fmt.Sprintf("%20000d", i))
+	rows := make([]chunk.Row, 0, 20)
+	for i := range 20 {
+		tString := fmt.Appendf(nil, "%20000d", i)
 		topN[i] = TopNMeta{tString, math.MaxUint64}
 		chk.AppendBytes(0, tString)
 		chk.AppendUint64(1, math.MaxUint64)
@@ -271,7 +325,7 @@ func TestTopNScale(t *testing.T) {
 	for _, scaleFactor := range []float64{0.9999, 1.00001, 1.9999, 4.9999, 5.001, 9.99} {
 		var data []TopNMeta
 		sumCount := uint64(0)
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			cnt := uint64(rand.Intn(100000))
 			data = append(data, TopNMeta{
 				Count: cnt,
@@ -279,7 +333,9 @@ func TestTopNScale(t *testing.T) {
 			sumCount += cnt
 		}
 		topN := TopN{TopN: data}
-		topN.Scale(scaleFactor)
+		for i := range topN.TopN {
+			topN.TopN[i].Count = uint64(float64(topN.TopN[i].Count) * scaleFactor)
+		}
 		scaleCount := float64(sumCount) * scaleFactor
 		delta := math.Abs(float64(topN.TotalCount()) - scaleCount)
 		roundErrorRatio := delta / scaleCount

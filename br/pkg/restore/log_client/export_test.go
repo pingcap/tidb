@@ -20,14 +20,17 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
-var FilterFilesByRegion = filterFilesByRegion
+var (
+	FilterFilesByRegion = filterFilesByRegion
+)
 
 func (metaname *MetaName) Meta() Meta {
 	return metaname.meta
@@ -64,20 +67,22 @@ func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
 func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
 	m *stream.TableMappingManager,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
-	return rc.saveIDMap(ctx, m)
+	return rc.SaveIdMapWithFailPoints(ctx, m, logCheckpointMetaManager)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) ([]*backuppb.PitrDBMap, error) {
-	return rc.initSchemasMap(ctx, restoreTS)
+	return rc.loadSchemasMap(ctx, restoreTS, logCheckpointMetaManager)
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
-func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, error) {
-	metas, err := rc.streamingMeta(ctx)
+func (lm *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, error) {
+	metas, err := lm.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -93,12 +98,18 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 		dom:               dom,
 		unsafeSession:     se,
 		upstreamClusterID: upstreamClusterID,
+		restoreID:         0,
+		checkRequirements: true,
 		LogFileManager: &LogFileManager{
 			startTS:   startTS,
 			restoreTS: restoreTS,
 		},
 		clusterID: clusterID,
 	}
+}
+
+func (rc *LogClient) SetUseCheckpoint() {
+	rc.useCheckpoint = true
 }
 
 func TEST_NewLogFileManager(startTS, restoreTS, shiftStartTS uint64, helper streamMetadataHelper) *LogFileManager {
@@ -122,8 +133,24 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 	offset uint64,
 	length uint64,
 	compressionType backuppb.CompressionType,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	return helper.Data[offset : offset+length], nil
+}
+
+func (w *WithMigrations) AddIngestedSSTs(extPath string) {
+	w.fullBackups = append(w.fullBackups, extPath)
+}
+
+func (w *WithMigrations) SetRestoredTS(ts uint64) {
+	w.restoredTS = ts
+}
+
+func (w *WithMigrations) SetStartTS(ts uint64) {
+	w.startTS = ts
+}
+
+func (w *WithMigrations) CompactionDirs() []string {
+	return w.compactionDirs
 }

@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // SpecialAttributeFilter is used to filter tables with special attributes.
@@ -71,19 +71,19 @@ var TableLockAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.Lock != nil
 }
 
-// ForeignKeysAttribute is the ForeignKeys attribute filter used by ListTablesWithSpecialAttribute.
-var ForeignKeysAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
-	return len(t.ForeignKeys) > 0
-}
-
 // PartitionAttribute is the Partition attribute filter used by ListTablesWithSpecialAttribute.
 var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
 }
 
+// AffinityAttribute is the Affinity attribute filter used by ListTablesWithSpecialAttribute.
+var AffinityAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.Affinity != nil
+}
+
 // HasSpecialAttributes checks if a table has any special attributes.
 func HasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || AffinityAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.
@@ -91,7 +91,7 @@ var AllSpecialAttribute SpecialAttributeFilter = HasSpecialAttributes
 
 // TableInfoResult is used to store the result of ListTablesWithSpecialAttribute.
 type TableInfoResult struct {
-	DBName     pmodel.CIStr
+	DBName     ast.CIStr
 	TableInfos []*model.TableInfo
 }
 
@@ -100,30 +100,34 @@ type TableInfoResult struct {
 // But MetaOnlyInfoSchema is widely used for scenes that require meta only, so we give a convenience for that.
 type MetaOnlyInfoSchema interface {
 	SchemaMetaVersion() int64
-	SchemaByName(schema pmodel.CIStr) (*model.DBInfo, bool)
-	SchemaExists(schema pmodel.CIStr) bool
-	TableInfoByName(schema, table pmodel.CIStr) (*model.TableInfo, error)
+	SchemaByName(schema ast.CIStr) (*model.DBInfo, bool)
+	SchemaExists(schema ast.CIStr) bool
+	TableInfoByName(schema, table ast.CIStr) (*model.TableInfo, error)
 	TableInfoByID(id int64) (*model.TableInfo, bool)
 	FindTableInfoByPartitionID(partitionID int64) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition)
-	TableExists(schema, table pmodel.CIStr) bool
+	TableExists(schema, table ast.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaAndTable
-	AllSchemaNames() []pmodel.CIStr
-	SchemaSimpleTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error)
+	AllSchemaNames() []ast.CIStr
+	SchemaSimpleTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableNameInfo, error)
 	ListTablesWithSpecialAttribute(filter SpecialAttributeFilter) []TableInfoResult
+	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 	Misc
 }
 
 // SchemaAndTable is define for iterating all the schemas and tables in the infoschema.
 type SchemaAndTable interface {
 	AllSchemas() []*model.DBInfo
-	SchemaTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableInfo, error)
+	SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableInfo, error)
 }
 
 // Misc contains the methods that are not closely related to InfoSchema.
 type Misc interface {
-	PolicyByName(name pmodel.CIStr) (*model.PolicyInfo, bool)
-	ResourceGroupByName(name pmodel.CIStr) (*model.ResourceGroupInfo, bool)
+	PolicyByName(name ast.CIStr) (*model.PolicyInfo, bool)
+	ResourceGroupByName(name ast.CIStr) (*model.ResourceGroupInfo, bool)
+	MaskingPolicyByName(name ast.CIStr) (*model.MaskingPolicyInfo, bool)
+	MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
 	// AllPlacementBundles is used to get all placement bundles
@@ -132,14 +136,14 @@ type Misc interface {
 	AllPlacementPolicies() []*model.PolicyInfo
 	// ClonePlacementPolicies returns a copy of all placement policies.
 	ClonePlacementPolicies() map[string]*model.PolicyInfo
+	// AllMaskingPolicies returns all masking policies.
+	AllMaskingPolicies() []*model.MaskingPolicyInfo
 	// AllResourceGroups returns all resource groups
 	AllResourceGroups() []*model.ResourceGroupInfo
 	// CloneResourceGroups returns a copy of all resource groups.
 	CloneResourceGroups() map[string]*model.ResourceGroupInfo
 	// HasTemporaryTable returns whether information schema has temporary table
 	HasTemporaryTable() bool
-	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
-	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
 
 // DBInfoAsInfoSchema is used mainly in test.
@@ -151,7 +155,7 @@ func (d DBInfoAsInfoSchema) AllSchemas() []*model.DBInfo {
 }
 
 // SchemaTableInfos implement infoschema.SchemaAndTable interface.
-func (d DBInfoAsInfoSchema) SchemaTableInfos(ctx stdctx.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
+func (d DBInfoAsInfoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableInfo, error) {
 	for _, db := range d {
 		if db.Name == schema {
 			return db.Deprecated.Tables, nil

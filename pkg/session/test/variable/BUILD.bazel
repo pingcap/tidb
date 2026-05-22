@@ -11,8 +11,10 @@ go_test(
     shard_count = 12,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/session",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",
         "//pkg/testkit",

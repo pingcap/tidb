@@ -814,3 +814,31 @@ id	k
 4007	10
 4008	11
 drop table issue52465;
+drop table if exists issue58631;
+set tidb_enable_clustered_index=off;
+create table t(id bigint unsigned auto_increment primary key);
+insert into t values(123);
+select _tidb_rowid, id from t;
+_tidb_rowid	id
+124	123
+insert into t values(18446744073709551613);
+select _tidb_rowid, id from t;
+_tidb_rowid	id
+124	123
+-2	18446744073709551613
+insert into t values();
+Error 1467 (HY000): Failed to read auto-increment value from storage engine
+drop table t;
+create table t(id bigint unsigned auto_increment primary key) auto_id_cache=1;
+insert into t values(123);
+select _tidb_rowid, id from t;
+_tidb_rowid	id
+1	123
+insert into t values(18446744073709551615);
+select _tidb_rowid, id from t;
+_tidb_rowid	id
+1	123
+2	18446744073709551615
+insert into t values();
+Error 1105 (HY000): [autoid:1467]Failed to read auto-increment value from storage engine
+set tidb_enable_clustered_index=default;

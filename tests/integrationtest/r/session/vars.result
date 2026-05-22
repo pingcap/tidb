@@ -64,15 +64,15 @@ select @@tidb_enable_tso_follower_proxy;
 0
 select @@pd_enable_follower_handle_region;
 @@pd_enable_follower_handle_region
-0
-set global pd_enable_follower_handle_region = on;
-select @@pd_enable_follower_handle_region;
-@@pd_enable_follower_handle_region
 1
 set global pd_enable_follower_handle_region = off;
 select @@pd_enable_follower_handle_region;
 @@pd_enable_follower_handle_region
 0
+set global pd_enable_follower_handle_region = on;
+select @@pd_enable_follower_handle_region;
+@@pd_enable_follower_handle_region
+1
 set tidb_tso_client_batch_max_wait_time = 0;
 Error 1229 (HY000): Variable 'tidb_tso_client_batch_max_wait_time' is a GLOBAL variable and should be set with SET GLOBAL
 set global tidb_enable_tso_follower_proxy = default;

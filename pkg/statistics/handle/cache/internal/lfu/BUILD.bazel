@@ -12,13 +12,11 @@ go_library(
     deps = [
         "//pkg/statistics",
         "//pkg/statistics/handle/cache/internal",
-        "//pkg/statistics/handle/cache/internal/metrics",
+        "//pkg/statistics/handle/cache/metrics",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "@com_github_dgraph_io_ristretto//:ristretto",
-        "@org_golang_x_exp//maps",
-        "@org_golang_x_exp//rand",
         "@org_uber_go_zap//:zap",
     ],
 )

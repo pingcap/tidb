@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
@@ -25,7 +26,7 @@ import (
 
 // DecodeBinaryPlan decode the binary plan and display it similar to EXPLAIN ANALYZE statement.
 func DecodeBinaryPlan(binaryPlan string) (string, error) {
-	protoBytes, err := decompress(binaryPlan)
+	protoBytes, err := Decompress(binaryPlan)
 	if err != nil {
 		return "", err
 	}
@@ -38,9 +39,12 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 		return planDiscardedDecoded, nil
 	}
 	// 1. decode the protobuf into strings
-	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil)
+	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, false)
 	for _, cte := range pb.Ctes {
-		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows)
+		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, false)
+	}
+	for _, subQ := range pb.Subqueries {
+		rows = decodeBinaryOperator(subQ, "", true, pb.WithRuntimeStats, rows, false)
 	}
 	if len(rows) == 0 {
 		return "", nil
@@ -103,6 +107,64 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 	return b.String(), nil
 }
 
+// DecodeBinaryPlan4Connection decodes a binary execution plan for the `EXPLAIN FOR CONNECTION` statement.
+// This function is also used by TopSQL for plan analysis.
+func DecodeBinaryPlan4Connection(binaryPlan string, format string, forTopsql bool) ([][]string, error) {
+	protoBytes, err := Decompress(binaryPlan)
+	if err != nil {
+		return nil, err
+	}
+	pb := &tipb.ExplainData{}
+	err = pb.Unmarshal(protoBytes)
+	if err != nil {
+		return nil, err
+	}
+	if pb.DiscardedDueToTooLong {
+		return nil, nil
+	}
+	isBrief := format == types.ExplainFormatBrief
+	// decode the protobuf into strings
+	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil, isBrief)
+	for _, cte := range pb.Ctes {
+		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows, isBrief)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	// Define column indices for each format
+	var columnIndices []int
+	if pb.WithRuntimeStats && !forTopsql {
+		switch format {
+		case types.ExplainFormatBrief, types.ExplainFormatROW:
+			columnIndices = []int{0, 1, 3, 4, 5, 6, 7, 8, 9}
+		case types.ExplainFormatPlanTree:
+			columnIndices = []int{0, 2, 3, 4, 5, 6, 7, 8}
+		case types.ExplainFormatVerbose:
+			columnIndices = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+		}
+	} else {
+		switch format {
+		case types.ExplainFormatBrief, types.ExplainFormatROW:
+			columnIndices = []int{0, 1, 3, 4, 5}
+		case types.ExplainFormatPlanTree:
+			columnIndices = []int{0, 2, 3, 4, 5}
+		case types.ExplainFormatVerbose:
+			columnIndices = []int{0, 1, 2, 3, 4, 5}
+		}
+	}
+	// Extract specified columns
+	result := make([][]string, len(rows))
+	for i, row := range rows {
+		result[i] = make([]string, len(columnIndices))
+		for j, idx := range columnIndices {
+			result[i][j] = row[idx]
+		}
+	}
+
+	return result, nil
+}
+
 var (
 	noRuntimeStatsTitleFields = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
 	fullTitleFields           = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
@@ -138,11 +200,15 @@ func calculateMaxFieldLens(rows [][]string, hasRuntimeStats bool) (runeLens, byt
 	return
 }
 
-func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, hasRuntimeStats bool, out [][]string) [][]string {
+func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, hasRuntimeStats bool, out [][]string, isBrief bool) [][]string {
 	row := make([]string, 0, 10)
-
 	// 1. extract the information and turn them into strings for display
-	explainID := texttree.PrettyIdentifier(op.Name+printDriverSide(op.Labels), indent, isLastChild)
+	var explainID string
+	if isBrief {
+		explainID = texttree.PrettyIdentifier(op.BriefName+printDriverSide(op.Labels), indent, isLastChild)
+	} else {
+		explainID = texttree.PrettyIdentifier(op.Name+printDriverSide(op.Labels), indent, isLastChild)
+	}
 	estRows := strconv.FormatFloat(op.EstRows, 'f', 2, 64)
 	cost := strconv.FormatFloat(op.Cost, 'f', 2, 64)
 	var actRows, execInfo, memInfo, diskInfo string
@@ -188,7 +254,13 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	if hasRuntimeStats {
 		row = append(row, execInfo)
 	}
-	row = append(row, op.OperatorInfo)
+	// Choose the appropriate operator info based on isBrief flag
+	operatorInfo := op.OperatorInfo
+	if isBrief && op.BriefOperatorInfo != "" {
+		operatorInfo = op.BriefOperatorInfo
+	}
+	row = append(row, operatorInfo)
+
 	if hasRuntimeStats {
 		row = append(row, memInfo, diskInfo)
 	}
@@ -206,7 +278,7 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	}
 	childIndent := texttree.Indent4Child(indent, isLastChild)
 	for i, child := range children {
-		out = decodeBinaryOperator(child, childIndent, i == len(children)-1, hasRuntimeStats, out)
+		out = decodeBinaryOperator(child, childIndent, i == len(children)-1, hasRuntimeStats, out, isBrief)
 	}
 	return out
 }

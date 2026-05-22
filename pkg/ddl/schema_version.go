@@ -20,11 +20,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
 
@@ -380,18 +384,34 @@ func waitVersionSynced(
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLWaitSchemaSynced, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
+	checkAssumedSvr := shouldCheckAssumedServer(job)
+	logger := logutil.DDLLogger().With(zap.Int64("ver", latestSchemaVersion), zap.Bool("checkAssumedSvr", checkAssumedSvr))
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err = jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion)
+	sum, err := jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion, checkAssumedSvr)
 	if err != nil {
-		logutil.DDLLogger().Info("wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion),
+		logger.Info("wait schema version synced encounter error",
 			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
 		return err
 	}
-	logutil.DDLLogger().Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)",
-		zap.Int64("ver", latestSchemaVersion),
+	failpoint.InjectCall("afterWaitVersionSynced", sum)
+	logger.Info("wait schema version synced success",
 		zap.Duration("take time", time.Since(timeStart)),
-		zap.String("job", job.String()))
+		zap.String("job", job.String()), zap.Stringer("summary", sum))
 	return nil
+}
+
+// assumedServer is the virtual server that involved in the online schema change
+// of some keyspace, it's run on a real server with different keyspace, it's only
+// used in cross keyspace scenario.
+func shouldCheckAssumedServer(job *model.Job) bool {
+	if kerneltype.IsClassic() {
+		return false
+	}
+
+	// check the table ID is enough, as we forbid doing DDL which involve multiple
+	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
+	// ExchangePartition, etc.
+	return metadef.IsReservedID(job.TableID)
 }
 
 // waitVersionSyncedWithoutMDL handles the following situation:
@@ -405,13 +425,30 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 		return nil
 	}
 
-	ver, _ := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	ver, err := jobCtx.store.CurrentVersion(kv.GlobalTxnScope)
+	failpoint.Inject("mockGetCurrentVersionFailed", func(val failpoint.Value) {
+		if val.(bool) {
+			// ref: https://github.com/tikv/client-go/blob/master/tikv/kv.go#L505-L532
+			ver, err = kv.NewVersion(0), tikverr.NewErrPDServerTimeout("mock PD timeout")
+		}
+	})
+
+	// If we failed to get the current version, caller will retry after one second again.
+	if err != nil {
+		logutil.DDLLogger().Warn("get current version failed", zap.Int64("jobID", job.ID), zap.Error(err))
+		return err
+	}
 	snapshot := jobCtx.store.GetSnapshot(ver)
 	m := meta.NewReader(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		logutil.DDLLogger().Warn("get global version failed", zap.Int64("jobID", job.ID), zap.Error(err))
 		return err
+	}
+
+	// Try adding guard for schema version in test
+	if intest.InTest {
+		intest.Assert(latestSchemaVersion > 0, "latestSchemaVersion should be greater than 0")
 	}
 
 	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -39,13 +39,13 @@ import (
 
 func TestRowDecoder(t *testing.T) {
 	defer view.Stop()
-	c1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &model.ColumnInfo{ID: 2, Name: pmodel.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &model.ColumnInfo{ID: 3, Name: pmodel.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
-	c4 := &model.ColumnInfo{ID: 4, Name: pmodel.NewCIStr("c4"), State: model.StatePublic, Offset: 3, FieldType: *types.NewFieldType(mysql.TypeTimestamp)}
-	c5 := &model.ColumnInfo{ID: 5, Name: pmodel.NewCIStr("c5"), State: model.StatePublic, Offset: 4, FieldType: *types.NewFieldType(mysql.TypeDuration), OriginDefaultValue: "02:00:02"}
-	c6 := &model.ColumnInfo{ID: 6, Name: pmodel.NewCIStr("c6"), State: model.StatePublic, Offset: 5, FieldType: *types.NewFieldType(mysql.TypeTimestamp), GeneratedExprString: "c4+c5"}
-	c7 := &model.ColumnInfo{ID: 7, Name: pmodel.NewCIStr("c7"), State: model.StatePublic, Offset: 6, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	c1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	c2 := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	c3 := &model.ColumnInfo{ID: 3, Name: ast.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
+	c4 := &model.ColumnInfo{ID: 4, Name: ast.NewCIStr("c4"), State: model.StatePublic, Offset: 3, FieldType: *types.NewFieldType(mysql.TypeTimestamp)}
+	c5 := &model.ColumnInfo{ID: 5, Name: ast.NewCIStr("c5"), State: model.StatePublic, Offset: 4, FieldType: *types.NewFieldType(mysql.TypeDuration), OriginDefaultValue: "02:00:02"}
+	c6 := &model.ColumnInfo{ID: 6, Name: ast.NewCIStr("c6"), State: model.StatePublic, Offset: 5, FieldType: *types.NewFieldType(mysql.TypeTimestamp), GeneratedExprString: "c4+c5"}
+	c7 := &model.ColumnInfo{ID: 7, Name: ast.NewCIStr("c7"), State: model.StatePublic, Offset: 6, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
 	c7.AddFlag(mysql.PriKeyFlag)
 
 	cols := []*model.ColumnInfo{c1, c2, c3, c4, c5, c6, c7}
@@ -149,14 +149,14 @@ func TestRowDecoder(t *testing.T) {
 
 func TestClusterIndexRowDecoder(t *testing.T) {
 	defer view.Stop()
-	c1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
-	c2 := &model.ColumnInfo{ID: 2, Name: pmodel.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
-	c3 := &model.ColumnInfo{ID: 3, Name: pmodel.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
+	c1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	c2 := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("c2"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	c3 := &model.ColumnInfo{ID: 3, Name: ast.NewCIStr("c3"), State: model.StatePublic, Offset: 2, FieldType: *types.NewFieldType(mysql.TypeNewDecimal)}
 	c1.AddFlag(mysql.PriKeyFlag)
 	c2.AddFlag(mysql.PriKeyFlag)
-	pk := &model.IndexInfo{ID: 1, Name: pmodel.NewCIStr("primary"), State: model.StatePublic, Primary: true, Columns: []*model.IndexColumn{
-		{Name: pmodel.NewCIStr("c1"), Offset: 0},
-		{Name: pmodel.NewCIStr("c2"), Offset: 1},
+	pk := &model.IndexInfo{ID: 1, Name: ast.NewCIStr("primary"), State: model.StatePublic, Primary: true, Columns: []*model.IndexColumn{
+		{Name: ast.NewCIStr("c1"), Offset: 0},
+		{Name: ast.NewCIStr("c2"), Offset: 1},
 	}}
 
 	cols := []*model.ColumnInfo{c1, c2, c3}

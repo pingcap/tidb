@@ -18,6 +18,8 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,19 +30,21 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -50,33 +54,37 @@ import (
 	"go.uber.org/zap"
 )
 
-// IsReadOnly check whether the ast.Node is a read only statement.
-func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
-	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		prepareStmt, err := core.GetPreparedStmt(execStmt, vars)
-		if err != nil {
-			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
-			return false
-		}
-		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
+const nonPreparedPlanCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
+
+func containUsePlanCacheHintInSQLOrBinding(sctx sessionctx.Context, stmt ast.StmtNode) bool {
+	if hint.ContainTableHintInStmtNode(stmt, hint.HintUsePlanCache) {
+		return true
 	}
-	return ast.IsReadOnly(node)
+	binding, matched, _ := bindinfo.MatchSQLBinding(sctx, stmt)
+	return matched && binding != nil && binding.Hint != nil && binding.Hint.ContainTableHint(hint.HintUsePlanCache)
 }
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
-func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
+func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
+	stmt, isStmtNode := node.Node.(ast.StmtNode)
 	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
-		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
-		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
+		!isStmtNode ||
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
 		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
-		sctx.GetSessionVars().InMultiStmts || // in multi-stmt
-		(stmtCtx.InExplainStmt && stmtCtx.ExplainFormat != types.ExplainFormatPlanCache) { // in explain internal
+		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
 		return nil, nil, false, nil
 	}
+	if sctx.GetSessionVars().PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+		!containUsePlanCacheHintInSQLOrBinding(sctx, stmt) {
+		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", nonPreparedPlanCacheHintOnlyNoHintReason))
+		}
+		return nil, nil, false, nil
+	}
+
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 	if !ok {
 		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
@@ -134,12 +142,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(pctx)
-		defer debugtrace.LeaveContextCommon(pctx)
-	}
 
-	if !sessVars.InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
+	if !sessVars.InRestrictedSQL && (vardef.RestrictedReadOnly.Load() || vardef.VarTiDBSuperReadOnly.Load()) {
 		allowed, err := allowInReadOnlyMode(pctx, node.Node)
 		if err != nil {
 			return nil, nil, err
@@ -149,7 +153,105 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 	}
 
-	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
+	defer func() {
+		if retErr == nil {
+			// Override the resource group if the hint is set.
+			// resource group name is case-insensitive. so we need to convert it to lower case.
+			lowerRgName := strings.ToLower(sessVars.StmtCtx.StmtHints.ResourceGroup)
+			if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+				if vardef.EnableResourceControl.Load() {
+					hasPriv := true
+					// only check dynamic privilege when strict-mode is enabled.
+					if vardef.EnableResourceControlStrictMode.Load() {
+						checker := privilege.GetPrivilegeManager(sctx)
+						if checker != nil {
+							hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
+							hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
+							hasPriv = hasRgAdminPriv || hasRgUserPriv
+						}
+					}
+					if hasPriv {
+						sessVars.StmtCtx.ResourceGroupName = lowerRgName
+						// if we are in a txn, should update the txn resource name to let the txn
+						// commit with the hint resource group.
+						if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+							kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
+						}
+					} else {
+						err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
+						sessVars.StmtCtx.AppendWarning(err)
+					}
+				} else {
+					err := infoschema.ErrResourceGroupSupportDisabled
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+			}
+
+			// Handle SetVars hints for cached plans.
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+			}
+		}
+	}()
+
+	// Handle the execute statement.  This calls into the prepared plan cache.
+	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
+		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
+		return p, names, err
+	}
+
+	return optimizeCache(ctx, sctx, node, is)
+}
+
+func optimizeCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	// Call into the non-prepared plan cache.
+	cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, node, is)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ok {
+		return cachedPlan, names, nil
+	}
+
+	return optimizeNoCache(ctx, sctx, node, is)
+}
+
+func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = tidbutil.GetRecoverError(r)
+		}
+	}()
+	pctx := sctx.GetPlanCtx()
+	sessVars := sctx.GetSessionVars()
+
+	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
+		setVarHintChecker, hypoIndexChecker(ctx, is),
+		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
+	sessVars.StmtCtx.StmtHints = originStmtHints
+	for _, warn := range warns {
+		sessVars.StmtCtx.AppendWarning(warn)
+	}
+
+	if sessVars.StmtCtx.StmtHints.IgnorePlanCache {
+		sessVars.StmtCtx.SetSkipPlanCache("ignore_plan_cache hint used in SQL query")
+	}
+
+	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+		oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
+		if err != nil {
+			sessVars.StmtCtx.AppendWarning(err)
+		}
+		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+	}
+
+	// XXX: this should be handled after any bindings are setup.
+	if sessVars.SQLMode.HasStrictMode() && !core.IsReadOnly(node.Node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {
@@ -161,65 +263,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 			}
 		}()
-	}
-
-	// handle the execute statement
-	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
-		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
-		return p, names, err
-	}
-
-	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
-		setVarHintChecker, hypoIndexChecker(ctx, is),
-		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
-	sessVars.StmtCtx.StmtHints = originStmtHints
-	for _, warn := range warns {
-		sessVars.StmtCtx.AppendWarning(warn)
-	}
-
-	defer func() {
-		// Override the resource group if the hint is set.
-		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
-			if variable.EnableResourceControl.Load() {
-				hasPriv := true
-				// only check dynamic privilege when strict-mode is enabled.
-				if variable.EnableResourceControlStrictMode.Load() {
-					checker := privilege.GetPrivilegeManager(sctx)
-					if checker != nil {
-						hasRgAdminPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
-						hasRgUserPriv := checker.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "RESOURCE_GROUP_USER", false)
-						hasPriv = hasRgAdminPriv || hasRgUserPriv
-					}
-				}
-				if hasPriv {
-					sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
-					// if we are in a txn, should update the txn resource name to let the txn
-					// commit with the hint resource group.
-					if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
-						kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
-					}
-				} else {
-					err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER")
-					sessVars.StmtCtx.AppendWarning(err)
-				}
-			} else {
-				err := infoschema.ErrResourceGroupSupportDisabled
-				sessVars.StmtCtx.AppendWarning(err)
-			}
-		}
-	}()
-
-	warns = warns[:0]
-	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
-		if err != nil {
-			sessVars.StmtCtx.AppendWarning(err)
-		}
-		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
-	}
-	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
 	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
@@ -234,9 +277,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	if err := pctx.AdviseTxnWarmup(); err != nil {
-		return nil, nil, err
-	}
 
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.Node.(ast.StmtNode)
@@ -249,19 +289,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		node = node.CloneWithNewNode(stmtNode)
 	}
 
-	// try to get Plan from the NonPrepared Plan Cache
-	if sessVars.EnableNonPreparedPlanCache &&
-		isStmtNode &&
-		!useBinding { // TODO: support binding
-		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
-		if err != nil {
-			return nil, nil, err
-		}
-		if ok {
-			return cachedPlan, names, nil
-		}
-	}
-
 	var (
 		names                      types.NameSlice
 		bestPlan, bestPlanFromBind base.Plan
@@ -271,23 +298,26 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	if useBinding {
 		var bindStmtHints hint.StmtHints
 		originHints := hint.CollectHint(stmtNode)
+		var warns []error
 		if binding != nil && binding.IsBindingEnabled() {
-			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-				core.DebugTraceTryBinding(pctx, binding.Hint)
-			}
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(),
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
-			// update session var by hint /set_var/
+
+			if sessVars.StmtCtx.StmtHints.IgnorePlanCache {
+				sessVars.StmtCtx.SetSkipPlanCache("ignore_plan_cache hint used in SQL binding")
+			}
+
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				oldV, err := sessVars.SetSystemVarWithOldStateAsRet(name, val)
 				if err != nil {
 					sessVars.StmtCtx.AppendWarning(err)
 				}
 				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
+
 			plan, curNames, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
 				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
@@ -309,7 +339,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			} else {
 				sessVars.StmtCtx.AppendExtraNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
-			if len(tableHints) > 0 {
+			if originStmtHints.QueryHasHints {
 				sessVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
@@ -317,9 +347,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		hint.BindHint(stmtNode, originHints)
 	}
 
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
-		core.DebugTraceBestBinding(pctx, chosenBinding.Hint)
+	// postpone Warmup because binding may change the behaviour, like pipelined DML
+	if err = pctx.AdviseTxnWarmup(); err != nil {
+		return nil, nil, err
 	}
+
 	// No plan found from the bindings, or the bindings are ignored.
 	if bestPlan == nil {
 		sessVars.StmtCtx.StmtHints = originStmtHints
@@ -416,7 +448,8 @@ func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) 
 	}
 
 	vars := sctx.GetSessionVars()
-	return IsReadOnly(node, vars), nil
+	// Passing false allows global variables updates in read-only mode.
+	return core.IsReadOnlyInternal(node, vars, false), nil
 }
 
 var planBuilderPool = sync.Pool{
@@ -425,8 +458,234 @@ var planBuilderPool = sync.Pool{
 	},
 }
 
+type logicalPlanBuildCtx struct {
+	stmtCtxState             stmtctx.LogicalPlanBuildState
+	plannerSelectBlockAsName *[]ast.HintTable
+	mapScalarSubQ            []any
+	mapHashCode2UniqueID     map[string]int
+	rewritePhaseInfo         variable.RewritePhaseInfo
+}
+
+func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx {
+	return logicalPlanBuildCtx{
+		stmtCtxState:             sessVars.StmtCtx.SaveLogicalPlanBuildState(),
+		plannerSelectBlockAsName: sessVars.PlannerSelectBlockAsName.Load(),
+		mapScalarSubQ:            sessVars.MapScalarSubQ,
+		mapHashCode2UniqueID:     sessVars.MapHashCode2UniqueID4ExtendedCol,
+		rewritePhaseInfo:         sessVars.RewritePhaseInfo,
+	}
+}
+
+func restoreLogicalPlanBuildCtx(sessVars *variable.SessionVars, logicalPlanCtx logicalPlanBuildCtx) {
+	sessVars.StmtCtx.RestoreLogicalPlanBuildState(logicalPlanCtx.stmtCtxState)
+	sessVars.PlannerSelectBlockAsName.Store(logicalPlanCtx.plannerSelectBlockAsName)
+	sessVars.MapScalarSubQ = logicalPlanCtx.mapScalarSubQ
+	sessVars.MapHashCode2UniqueID4ExtendedCol = logicalPlanCtx.mapHashCode2UniqueID
+	sessVars.RewritePhaseInfo = logicalPlanCtx.rewritePhaseInfo
+}
+
+func buildAndOptimizeLogicalPlanRound(
+	ctx context.Context,
+	sctx planctx.PlanContext,
+	node *resolve.NodeW,
+	is infoschema.InfoSchema,
+	hintProcessor *hint.QBHintHandler,
+	checked *bool,
+	optimizeStarted *bool,
+	beginOpt *time.Time,
+	needRestoreLogicalPlanCtx bool,
+	bestPlan *base.PhysicalPlan,
+	bestNames *types.NameSlice,
+	bestCost *float64,
+	bestLogicalPlanCtx *logicalPlanBuildCtx,
+	optFlagAdjust func(uint64) uint64,
+) (base.Plan, types.NameSlice, bool, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	// TODO: when buildRound > 1, only emit unused view-hint warnings for the winner build.
+	defer builder.HandleUnusedViewHints()
+
+	builder.Init(sctx, is, hintProcessor)
+
+	// todo: you can customize each round's special builder (like semi join rewrite or not by signal)
+	p, err := buildLogicalPlan(ctx, sctx, node, builder)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	names := p.OutputNames()
+
+	if !*checked {
+		// Keep privilege and lock checks fail-fast. These depend on visitInfo
+		// produced by the logical build, but not on the later cost winner.
+		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+			visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
+			if err := core.CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
+				return nil, nil, false, err
+			}
+		}
+
+		if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+			return nil, nil, false, err
+		}
+
+		if err := core.CheckTableMode(node); err != nil {
+			return nil, nil, false, err
+		}
+		*checked = true
+	}
+
+	// Handle the non-logical plan statement.
+	logic, isLogicalPlan := p.(base.LogicalPlan)
+	if !isLogicalPlan {
+		return p, names, true, nil
+	}
+
+	core.RecheckCTE(logic)
+
+	// todo: also you can customize each round's special logical opt flag here (like decorrelate rule or not)
+	if !*optimizeStarted {
+		*optimizeStarted = true
+		*beginOpt = time.Now()
+	}
+	optFlag := builder.GetOptFlag()
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		optFlag&rule.FlagPushDownTopN > 0 &&
+		optFlag&rule.FlagJoinReOrder > 0 {
+		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	}
+	if optFlagAdjust != nil {
+		optFlag = optFlagAdjust(optFlag)
+	}
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	// Record predicate-context MATCH for cost competition. The fts-like-fallback
+	// alternative round reads this signal to decide whether to build a competing
+	// ILIKE-based plan alongside round 1's native plan, so the cheaper of the
+	// two wins via the normal alt-rounds cost comparison.
+	if builder.HasPredicateMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
+	}
+
+	// If this round saw a predicate-context MATCH that cannot be served by the
+	// native FTSMysqlMatchAgainst builtin, the produced plan would fail at
+	// execution. Discard it and arm AlternativeLogicalPlanFTSLikeFallback so
+	// any intervening rounds (correlate, etc.) re-rewrite with ILIKE too. The
+	// fts-like-fallback round below also forces this flag during setup; this
+	// outer assignment covers the non-viable case where the flag must stay
+	// true across all subsequent rounds, not just inside the LIKE round.
+	if builder.HasNonViableFTSMatch() {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		return p, names, false, nil
+	}
+
+	if *bestPlan == nil || cost < *bestCost {
+		*bestCost = cost
+		*bestPlan = finalPlan
+		*bestNames = names
+		if needRestoreLogicalPlanCtx {
+			*bestLogicalPlanCtx = saveLogicalPlanBuildCtx(sctx.GetSessionVars())
+		}
+	}
+	return p, names, false, nil
+}
+
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
+
+func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
+}
+
+func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+}
+
+func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
+}
+
+// alternativeRound describes one alternative logical-plan round.
+// adjustFlag adjusts the optimization flags for the round.
+// enabled returns true when the round should be attempted.
+// setup/cleanup optionally modify session state before/after plan building.
+type alternativeRound struct {
+	name       string
+	adjustFlag func(uint64) uint64
+	enabled    func(*variable.SessionVars) bool
+	setup      func(*variable.SessionVars)
+	cleanup    func(*variable.SessionVars)
+}
+
+// savedEnableCorrelateSubquery holds the pre-round value of
+// EnableCorrelateSubquery so setup/cleanup can share it without a closure
+// wrapper. Safe because optimize is single-threaded per session.
+var savedEnableCorrelateSubquery bool
+
+// savedFTSLikeFallback holds the pre-round value of
+// AlternativeLogicalPlanFTSLikeFallback so the fts-like-fallback round's
+// setup/cleanup can restore it after running with the flag forced on. Safe
+// because optimize is single-threaded per session.
+var savedFTSLikeFallback bool
+
+var alternativeRounds = [...]alternativeRound{
+	{
+		name:       "non-decorrelate",
+		adjustFlag: func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+		enabled:    shouldTryNonDecorrelationRound,
+	},
+	{
+		name:       "order-aware-reorder",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+		enabled:    shouldTryOrderAwareReorderRound,
+	},
+	{
+		name:       "correlate",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+		enabled:    shouldTryCorrelateRound,
+		setup: func(sv *variable.SessionVars) {
+			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+			sv.EnableCorrelateSubquery = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+		},
+	},
+	{
+		// fts-like-fallback: rebuild the plan rewriting predicate-context
+		// MATCH...AGAINST to ILIKE so it can compete with round 1's native plan
+		// on cost (and serve as the only valid plan when native is non-viable).
+		// Round 1 always uses the native builtin (same as Alt-disabled). This
+		// round fires whenever round 1 saw a direct-boolean-context MATCH
+		// (HasPredicateContextMatch) — both plans then compete via the strict-`<`
+		// cost comparison in buildAndOptimizeLogicalPlanRound — or whenever
+		// round 1 saw a MATCH whose native form cannot execute
+		// (FTSLikeFallback, set by the round driver after discarding round 1).
+		// In the discard case, round 1's plan is unavailable and this round's
+		// plan wins by default.
+		name: "fts-like-fallback",
+		enabled: func(sv *variable.SessionVars) bool {
+			if !sv.EnableAlternativeLogicalPlans {
+				return false
+			}
+			return sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback ||
+				sv.StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch
+		},
+		setup: func(sv *variable.SessionVars) {
+			savedFTSLikeFallback = sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.StmtCtx.AlternativeLogicalPlanFTSLikeFallback = savedFTSLikeFallback
+		},
+	},
+}
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
@@ -443,54 +702,149 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
 	})
 	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
+	var (
+		beginOpt        time.Time
+		optimizeStarted bool
+	)
+	defer func() {
+		if optimizeStarted {
+			sessVars.DurationOptimizer.Total = time.Since(beginOpt)
+		}
+	}()
 
-	// build logical plan
+	// Build the logical plan from the raw AST. The hint processor only keeps
+	// AST-derived metadata; per-build state is allocated inside PlanBuilder.
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
 	node.Node.Accept(hintProcessor)
-	defer hintProcessor.HandleUnusedViewHints()
-	builder := planBuilderPool.Get().(*core.PlanBuilder)
-	defer planBuilderPool.Put(builder.ResetForReuse())
-	builder.Init(sctx, is, hintProcessor)
-	p, err := buildLogicalPlan(ctx, sctx, node, builder)
+
+	// build multi logical plan from raw AST.
+	var (
+		needRestoreLogicalPlanCtx = sessVars.EnableAlternativeLogicalPlans
+		bestCost                  = math.MaxFloat64
+		bestPlan                  base.PhysicalPlan
+		bestNames                 types.NameSlice
+		bestLogicalPlanCtx        logicalPlanBuildCtx
+		checked                   bool
+	)
+	var initialLogicalPlanCtx logicalPlanBuildCtx
+	if needRestoreLogicalPlanCtx {
+		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
+		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
+		// Round 1 always uses the native FTSMysqlMatchAgainst builtin — same as
+		// the Alt-disabled default. The build records two signals on the
+		// planBuilder when MATCH...AGAINST is seen:
+		//   * HasPredicateMatch: any direct-boolean-context MATCH. The round
+		//     driver propagates this into stmtctx to trigger the
+		//     fts-like-fallback alternative round, which builds a competing
+		//     ILIKE-based plan; the cheaper of the two wins.
+		//   * HasNonViableFTSMatch: a predicate-context MATCH whose native form
+		//     cannot execute (no FTS index / no TiFlash replica / unsupported
+		//     modifier). The round driver discards round 1's plan and forces
+		//     AlternativeLogicalPlanFTSLikeFallback true so all subsequent
+		//     rounds (correlate, etc.) re-rewrite with ILIKE.
+	}
+
+	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+		ctx,
+		sctx,
+		node,
+		is,
+		hintProcessor,
+		&checked,
+		&optimizeStarted,
+		&beginOpt,
+		needRestoreLogicalPlanCtx,
+		&bestPlan,
+		&bestNames,
+		&bestCost,
+		&bestLogicalPlanCtx,
+		nil,
+	)
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
-	activeRoles := sessVars.ActiveRoles
-	// Check privilege. Maybe it's better to move this to the Preprocess, but
-	// we need the table information to check privilege, which is collected
-	// into the visitInfo in the logical plan builder.
-	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
-		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
-			return nil, nil, 0, err
-		}
-	}
-
-	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
-		return nil, nil, 0, err
-	}
-
-	names := p.OutputNames()
-
-	// Handle the non-logical plan statement.
-	logic, isLogicalPlan := p.(base.LogicalPlan)
-	if !isLogicalPlan {
+	if nonLogical {
+		// keep compatible with the old.
 		return p, names, 0, nil
 	}
 
-	core.RecheckCTE(logic)
+	// Pre-compute which rounds are enabled based on the signals from the first
+	// (default) build. This prevents signal leakage: alternative rounds rebuild
+	// the plan and may set AlternativeLogicalPlan* signals as a side effect,
+	// which are not reset by restoreLogicalPlanBuildCtx. Evaluating enabled()
+	// upfront ensures each round's eligibility is determined solely by the
+	// original build's signals.
+	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
+	for _, round := range alternativeRounds {
+		if round.enabled(sessVars) {
+			enabledRounds = append(enabledRounds, round)
+		}
+	}
+	var lastAltRoundErr error
+	for _, round := range enabledRounds {
+		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
+			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
+				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
+			}
+		})
 
-	beginOpt := time.Now()
-	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
-	// TODO: capture plan replayer here if it matches sql and plan digest
-
-	sessVars.DurationOptimization = time.Since(beginOpt)
-	return finalPlan, names, cost, err
+		// Use a closure so that defer-based cleanup runs at the end of each
+		// iteration, not at function exit. This ensures session state (e.g.
+		// EnableCorrelateSubquery) is restored even if the round panics.
+		func() {
+			if round.setup != nil {
+				round.setup(sessVars)
+				defer round.cleanup(sessVars)
+			}
+			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+				ctx,
+				sctx,
+				node,
+				is,
+				hintProcessor,
+				&checked,
+				&optimizeStarted,
+				&beginOpt,
+				needRestoreLogicalPlanCtx,
+				&bestPlan,
+				&bestNames,
+				&bestCost,
+				&bestLogicalPlanCtx,
+				round.adjustFlag,
+			)
+		}()
+		if err != nil {
+			// Alternative rounds are optional optimizations. If one fails,
+			// log and continue — the first round's plan is still valid in
+			// the general case. fts-like-fallback is the exception: the
+			// first round's plan may have been discarded as non-executable,
+			// so we remember the last alt-round error in case bestPlan
+			// remains nil after the loop.
+			logutil.BgLogger().Warn("alternative logical plan round failed",
+				zap.String("round", round.name),
+				zap.Error(err))
+			lastAltRoundErr = err
+			continue
+		}
+		if nonLogical {
+			return p, names, 0, nil
+		}
+	}
+	if bestPlan == nil {
+		if lastAltRoundErr != nil {
+			// No valid plan from any round. Surface the most recent alt-round
+			// error rather than the generic sentinel — typically this is the
+			// fts-like-fallback round reporting why MATCH...AGAINST cannot be
+			// rewritten (unsupported search string, etc.).
+			return nil, nil, 0, lastAltRoundErr
+		}
+		return nil, nil, 0, errors.New("failed to build logical plan")
+	}
+	if needRestoreLogicalPlanCtx {
+		restoreLogicalPlanBuildCtx(sessVars, bestLogicalPlanCtx)
+	}
+	return bestPlan, bestNames, bestCost, nil
 }
 
 // OptimizeExecStmt to handle the "execute" statement
@@ -557,8 +911,8 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	return true, warning
 }
 
-func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl, col model.CIStr) (colOffset int, err error) {
-	return func(db, tbl, col model.CIStr) (colOffset int, err error) {
+func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl, col ast.CIStr) (colOffset int, err error) {
+	return func(db, tbl, col ast.CIStr) (colOffset int, err error) {
 		t, err := is.TableByName(ctx, db, tbl)
 		if err != nil {
 			return 0, errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)
@@ -575,7 +929,7 @@ func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tb
 // queryPlanCost returns the plan cost of this node, which is mainly for the Index Advisor.
 func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) {
 	nodeW := resolve.NewNodeW(stmt)
-	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return 0, err
 	}
@@ -583,14 +937,109 @@ func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) 
 	if !ok {
 		return 0, errors.Errorf("plan is not a physical plan: %T", plan)
 	}
-	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	return core.GetPlanCost(pp, property.RootTaskType, costusage.NewDefaultPlanCostOption())
+}
+
+func calculatePlanDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(
+		context.Background(),
+		sctx,
+		nodeW,
+		core.WithPreprocessorReturn(ret),
+		core.InitTxnContextProvider,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return "", err
+	}
+	flat := core.FlattenPhysicalPlan(p, false)
+	_, digest := core.NormalizeFlatPlan(flat)
+	return digest.String(), nil
+}
+
+func recordRelevantOptVarsAndFixes(sctx sessionctx.Context, stmt ast.StmtNode) (varNames []string, fixIDs []uint64, err error) {
+	sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(true)
+	defer sctx.GetSessionVars().ResetRelevantOptVarsAndFixes(false)
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(
+		context.Background(),
+		sctx,
+		nodeW,
+		core.WithPreprocessorReturn(ret),
+		core.InitTxnContextProvider,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	_, _, err = Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for varName := range sctx.GetSessionVars().RelevantOptVars {
+		varNames = append(varNames, varName)
+	}
+	sort.Strings(varNames)
+
+	for fixID := range sctx.GetSessionVars().RelevantOptFixes {
+		fixIDs = append(fixIDs, fixID)
+	}
+	sort.Slice(fixIDs, func(i, j int) bool {
+		return fixIDs[i] < fixIDs[j]
+	})
+	return
+}
+
+func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest, planHintStr string, planText [][]string, err error) {
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	if err = core.Preprocess(context.Background(), sctx, nodeW,
+		core.WithPreprocessorReturn(ret), core.InitTxnContextProvider,
+	); err != nil {
+		return "", "", nil, err
+	}
+
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return "", "", nil, err
+	}
+	flat := core.FlattenPhysicalPlan(p, false)
+	_, digest := core.NormalizeFlatPlan(flat)
+	sctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix = true // ignore operatorID to make the output simpler
+	plan := core.ExplainFlatPlanInRowFormat(flat, types.ExplainFormatBrief, false, nil)
+	hints := core.GenHintsFromFlatPlan(flat)
+
+	return digest.String(), hint.RestoreOptimizerHints(hints), plan, nil
+}
+
+func planIDFunc(plan any) (planID int, ok bool) {
+	if p, ok := plan.(base.Plan); ok {
+		return p.ID(), true
+	}
+	return 0, false
 }
 
 func init() {
-	core.OptimizeAstNode = Optimize
-	core.IsReadOnly = IsReadOnly
+	core.OptimizeAstNode = optimizeCache
+	core.OptimizeAstNodeNoCache = optimizeNoCache
 	indexadvisor.QueryPlanCostHook = queryPlanCost
-	bindinfo.GetGlobalBindingHandle = func(sctx sessionctx.Context) bindinfo.GlobalBindingHandle {
-		return domain.GetDomain(sctx).BindHandle()
+	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
+		dom := domain.GetDomain(sctx)
+		if dom == nil {
+			return nil
+		}
+		return dom.BindingHandle()
 	}
+	bindinfo.CalculatePlanDigest = calculatePlanDigestFunc
+	bindinfo.RecordRelevantOptVarsAndFixes = recordRelevantOptVarsAndFixes
+	bindinfo.GenBriefPlanWithSCtx = genBriefPlanWithSCtx
+	stmtctx.PlanIDFunc = planIDFunc
 }

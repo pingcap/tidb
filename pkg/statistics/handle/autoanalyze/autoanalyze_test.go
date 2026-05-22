@@ -25,9 +25,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -61,11 +64,11 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 	// Enable auto analyze priority queue.
 	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=ON")
-	require.True(t, variable.EnableAutoAnalyzePriorityQueue.Load())
+	require.True(t, vardef.EnableAutoAnalyzePriorityQueue.Load())
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	statistics.AutoAnalyzeMinCnt = 0
@@ -73,6 +76,10 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	// Try to set tidb_enable_auto_analyze_priority_queue to OFF, it should return error.
+	_, err = tk.Exec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=OFF")
+	require.Error(t, err)
+	require.Equal(t, "tidb_enable_auto_analyze_priority_queue has been deprecated and TiDB will always use priority queue to schedule auto analyze", err.Error())
 }
 
 func TestAutoAnalyzeLockedTable(t *testing.T) {
@@ -84,7 +91,7 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	// Lock the table.
 	tk.MustExec("lock stats t")
 	is := dom.InfoSchema()
@@ -98,7 +105,7 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	// Try again, it should analyze the table.
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
@@ -116,7 +123,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.DumpColStatsUsageToKV())
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	statistics.AutoAnalyzeMinCnt = 0
@@ -164,7 +171,7 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 
@@ -188,85 +195,6 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
-func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, index idx(a))")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set @@global.tidb_analyze_version = 1")
-	do := dom
-	statistics.AutoAnalyzeMinCnt = 0
-	defer func() {
-		statistics.AutoAnalyzeMinCnt = 1000
-	}()
-	h := do.StatsHandle()
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	is := do.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	// Auto analyze when global ver is 1.
-	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl1 := h.GetTableStats(tbl.Meta())
-	// Check that all the version of t's stats are 1.
-	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.Equal(t, int64(1), col.GetStatsVer())
-		return false
-	})
-	statsTbl1.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		require.Equal(t, int64(1), idx.GetStatsVer())
-		return false
-	})
-	require.Equal(t, 1, statsTbl1.StatsVer)
-	tk.MustExec("set @@global.tidb_analyze_version = 2")
-	tk.MustExec("insert into t values(1), (2), (3), (4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(context.Background(), is))
-	// Auto analyze t whose version is 1 after setting global ver to 2.
-	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetTableStats(tbl.Meta())
-	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
-	// All of its statistics should still be version 1.
-	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.Equal(t, int64(1), col.GetStatsVer())
-		return false
-	})
-	statsTbl1.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		require.Equal(t, int64(1), idx.GetStatsVer())
-		return false
-	})
-	require.Equal(t, 1, statsTbl1.StatsVer)
-	// Add a new table after the analyze version set to 2.
-	tk.MustExec("create table tt(a int, index idx(a))")
-	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	is = do.InfoSchema()
-	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tt"))
-	require.NoError(t, err)
-	require.NoError(t, h.Update(context.Background(), is))
-	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl2 := h.GetTableStats(tbl2.Meta())
-	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
-	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.Equal(t, int64(2), col.GetStatsVer())
-		return false
-	})
-	statsTbl2.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		require.Equal(t, int64(2), idx.GetStatsVer())
-		return false
-	})
-	require.Equal(t, 2, statsTbl2.StatsVer)
-	tk.MustExec("set @@global.tidb_analyze_version = 1")
-}
-
 func TestTableAnalyzed(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -275,18 +203,18 @@ func TestTableAnalyzed(t *testing.T) {
 	testKit.MustExec("insert into t values (1)")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.False(t, statsTbl.LastAnalyzeVersion > 0)
 
 	testKit.MustExec("analyze table t")
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 
 	h.Clear()
@@ -297,7 +225,7 @@ func TestTableAnalyzed(t *testing.T) {
 		h.SetLease(oriLease)
 	}()
 	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 }
 
@@ -358,10 +286,11 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
+	statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
 	tk.MustExec("select * from t where a = 1 and b = 1 and c = '1'")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
@@ -399,7 +328,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	// test if it will be limited by the time range
@@ -430,11 +359,12 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
@@ -454,17 +384,21 @@ func makeFailpointRes(t *testing.T, v any) string {
 	return fmt.Sprintf("return(`%s`)", string(bytes))
 }
 
-func getMockedServerInfo() map[string]*infosync.ServerInfo {
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+func getMockedServerInfo() map[string]*serverinfo.ServerInfo {
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s1": {
-			ID:   "s1",
-			IP:   "127.0.0.1",
-			Port: 4000,
+			StaticInfo: serverinfo.StaticInfo{
+				ID:   "s1",
+				IP:   "127.0.0.1",
+				Port: 4000,
+			},
 		},
 		"s2": {
-			ID:   "s2",
-			IP:   "127.0.0.2",
-			Port: 4000,
+			StaticInfo: serverinfo.StaticInfo{
+				ID:   "s2",
+				IP:   "127.0.0.2",
+				Port: 4000,
+			},
 		},
 	}
 	return mockedAllServerInfos
@@ -560,13 +494,13 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	require.NoError(
 		t,
 		failpoint.Enable(
-			"github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo",
+			"github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo",
 			makeFailpointRes(t, getMockedServerInfo()),
 		),
 	)
 	defer func() {
 		require.NoError(
-			t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"),
+			t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"),
 		)
 	}()
 	// Create a new chunk with capacity for three fields
@@ -601,7 +535,9 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		[]any{[]string{"2"}},
 	).Return(nil, nil, nil)
 
-	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil)
+	require.NoError(t, err)
+	err = autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
@@ -612,10 +548,10 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	ttStart := time.Now().Add(-2 * time.Hour)
 	ttEnd := time.Now().Add(-1 * time.Hour)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		dbName := fmt.Sprintf("db%d", i)
 		tk.MustExec(fmt.Sprintf("create database %s", dbName))
-		for j := 0; j < 2; j++ {
+		for j := range 2 {
 			tableName := fmt.Sprintf("table%d", j)
 			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", dbName, tableName))
 		}
@@ -652,7 +588,7 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	h := dom.StatsHandle()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
@@ -661,12 +597,11 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("insert into t values(1, '[1, 2]', '[1, 3, 4]', '[1, 4, 5, 6]')")
-	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=off")
 	tk.MustExec("analyze table t all columns")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.True(t, statsTbl.LastAnalyzeVersion > 0)
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("alter table t add index idx(a)")

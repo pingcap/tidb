@@ -22,12 +22,16 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/exp/slices"
 )
@@ -36,16 +40,23 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile      = getSSTMetaFromFile
-	GetKeyRangeByMode       = getKeyRangeByMode
-	MapTableToFiles         = mapTableToFiles
-	GetFileRangeKey         = getFileRangeKey
-	GetSortedPhysicalTables = getSortedPhysicalTables
+	GetSSTMetaFromFile            = getSSTMetaFromFile
+	GetKeyRangeByMode             = getKeyRangeByMode
+	GetFileRangeKey               = getFileRangeKey
+	GetSortedPhysicalTables       = getSortedPhysicalTables
+	GetMinUserTableID             = getMinUserTableID
+	NotifyUpdateAllUsersPrivilege = notifyUpdateAllUsersPrivilege
+	GetSchemaVersionFromStatsMeta = getSchemaVersionFromStatsMeta
+	UpdateStatsMetaSchema         = updateStatsMetaSchema
 )
 
 // MockClient create a fake Client used to test.
 func MockClient(dbs map[string]*metautil.Database) *SnapClient {
 	return &SnapClient{databases: dbs}
+}
+
+func (rc *SnapClient) SetDomain(dom *domain.Domain) {
+	rc.dom = dom
 }
 
 // Mock the call of setSpeedLimit function
@@ -62,7 +73,7 @@ func MockCallSetSpeedLimit(ctx context.Context, stores []*metapb.Store, fakeImpo
 	closeCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
 		return setFn(importer, 0)
 	})
-	opt := NewSnapFileImporterOptions(nil, nil, fakeImportClient, nil, rc.rewriteMode, nil, 128, createCallBacks, closeCallBacks)
+	opt := NewSnapFileImporterOptions(nil, nil, fakeImportClient, nil, rc.rewriteMode, nil, 128, 128, createCallBacks, closeCallBacks)
 	fileImporter, err := NewSnapFileImporter(ctx, kvrpcpb.APIVersion(0), TiDBFull, opt)
 	rc.restorer = restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
 	if err != nil {
@@ -78,6 +89,7 @@ func (rc *SnapClient) CreateTablesTest(
 	newTS uint64,
 ) (*restoreutils.RewriteRules, []*model.TableInfo, error) {
 	rc.dom = dom
+	rc.AllocTableIDs(context.TODO(), tables, false, false, nil)
 	rewriteRules := &restoreutils.RewriteRules{
 		Data: make([]*import_sstpb.RewriteRule, 0),
 	}
@@ -86,6 +98,7 @@ func (rc *SnapClient) CreateTablesTest(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
+	rc.AllocTableIDs(context.Background(), tables, false, false, nil)
 	createdTables, err := rc.CreateTables(context.TODO(), tables, newTS)
 	if err != nil {
 		return nil, nil, err
@@ -100,4 +113,70 @@ func (rc *SnapClient) CreateTablesTest(
 		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
 	return rewriteRules, newTables, nil
+}
+
+func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
+	builder *PipelineConcurrentBuilder,
+	s storeapi.Storage,
+	updateCh glue.Progress,
+	statsConcurrency uint,
+) {
+	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
+}
+
+func (rc *SnapClient) ReplaceTables(
+	ctx context.Context,
+	createdTables []*restoreutils.CreatedTable,
+	restoreTS uint64,
+	loadStatsPhysical, loadSysTablePhysical bool,
+	kvClient kv.Client,
+	checksum bool,
+	checksumConcurrency uint,
+) (int, error) {
+	return rc.replaceTables(
+		ctx,
+		createdTables,
+		restoreTS,
+		loadStatsPhysical,
+		loadSysTablePhysical,
+		kvClient,
+		checksum,
+		checksumConcurrency,
+	)
+}
+
+func NewTemporaryTableChecker(loadStatsPhysical, loadSysTablePhysical bool) *TemporaryTableChecker {
+	return &TemporaryTableChecker{loadStatsPhysical: loadStatsPhysical, loadSysTablePhysical: loadSysTablePhysical}
+}
+
+func (rc *SnapClient) CheckPrivilegeTableRowsCollateCompatibility(
+	ctx context.Context,
+	dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	return rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbNameL, tableNameL, upstreamTable, downstreamTable)
+}
+
+func (options *SnapFileImporterOptions) SetRegionScanConcurrency(concurrency uint) {
+	options.scanConcurrency = concurrency
+}
+
+func NewSnapFileImporterOptionsForTest(
+	splitClient split.SplitClient,
+	importClient importclient.ImporterClient,
+	tikvStores []*metapb.Store,
+	rewriteMode RewriteMode,
+	concurrencyPerStore uint,
+) *SnapFileImporterOptions {
+	return &SnapFileImporterOptions{
+		metaClient:          splitClient,
+		importClient:        importClient,
+		tikvStores:          tikvStores,
+		rewriteMode:         rewriteMode,
+		concurrencyPerStore: concurrencyPerStore,
+	}
+}
+
+func (importer *SnapFileImporter) PaginateScanRegionForTest(ctx context.Context, startKey, endKey []byte) ([]*split.RegionInfo, error) {
+	return importer.paginateScanRegion(ctx, startKey, endKey)
 }

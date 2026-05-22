@@ -66,7 +66,10 @@ const (
 
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
-	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
+	// PartitionIDFlag is the flag used to decode the partition ID.
+	// Used in both global index values and global index keys (for V1+ non-unique indexes).
+	// In keys: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded (IntHandle)
+	// In values: PartitionIDFlag + partition_id (8 bytes)
 	PartitionIDFlag byte = 126
 	// IndexVersionFlag is the flag used to decode the index's version info.
 	IndexVersionFlag byte = 125
@@ -748,7 +751,7 @@ func CutIndexPrefix(key kv.Key) []byte {
 func CutIndexKeyTo(key kv.Key, values [][]byte) (b []byte, err error) {
 	b = key[prefixLen+idLen:]
 	length := len(values)
-	for i := 0; i < length; i++ {
+	for i := range length {
 		var val []byte
 		val, b, err = codec.CutOne(b)
 		if err != nil {
@@ -774,7 +777,7 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 func CutCommonHandle(key kv.Key, length int) (values [][]byte, b []byte, err error) {
 	b = key[prefixLen:]
 	values = make([][]byte, 0, length)
-	for i := 0; i < length; i++ {
+	for range length {
 		var val []byte
 		val, b, err = codec.CutOne(b)
 		if err != nil {
@@ -812,7 +815,7 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 func reEncodeHandleTo(handle kv.Handle, unsigned bool, buf []byte, result [][]byte) ([][]byte, error) {
 	if !handle.IsInt() {
 		handleColLen := handle.NumCols()
-		for i := 0; i < handleColLen; i++ {
+		for i := range handleColLen {
 			result = append(result, handle.EncodedCol(i))
 		}
 		return result, nil
@@ -830,7 +833,7 @@ func reEncodeHandleTo(handle kv.Handle, unsigned bool, buf []byte, result [][]by
 func reEncodeHandleConsiderNewCollation(handle kv.Handle, columns []rowcodec.ColInfo, restoreData []byte) ([][]byte, error) {
 	handleColLen := handle.NumCols()
 	cHandleBytes := make([][]byte, 0, handleColLen)
-	for i := 0; i < handleColLen; i++ {
+	for i := range handleColLen {
 		cHandleBytes = append(cHandleBytes, handle.EncodedCol(i))
 	}
 	if len(restoreData) == 0 {
@@ -1006,14 +1009,38 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	var err error
 	b := key[prefixLen+idLen:]
-	for i := 0; i < colsLen; i++ {
+	for range colsLen {
 		_, b, err = codec.CutOne(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	if len(b) > 0 {
-		return decodeHandleInIndexKey(b)
+		handle, err := decodeHandleInIndexKey(b)
+		if err != nil {
+			return nil, err
+		}
+		// If len(value) >= 9, it may contain partition id.
+		// We should decode it and return a partition handle.
+		if len(value) >= 9 {
+			seg := SplitIndexValue(value)
+			if len(seg.PartitionID) != 0 {
+				_, pid, err := codec.DecodeInt(seg.PartitionID)
+				if err != nil {
+					return nil, err
+				}
+				// For GlobalIndexVersionV1+, the handle from the key may already be a
+				// PartitionHandle (partition ID encoded in key). To avoid creating a
+				// nested PartitionHandle, extract the inner handle first.
+				// For V1: use partition ID from value (authoritative source).
+				// TODO: For V2+, use partition ID from key (PartitionHandle) instead.
+				if ph, ok := handle.(kv.PartitionHandle); ok {
+					handle = ph.Handle
+				}
+				handle = kv.NewPartitionHandle(pid, handle)
+			}
+		}
+		return handle, nil
 	} else if len(value) >= 8 {
 		return DecodeHandleInIndexValue(value)
 	}
@@ -1022,6 +1049,22 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
+	// Check if this is a PartitionHandle (for global non-unique indexes V1+)
+	if len(keySuffix) > 0 && keySuffix[0] == PartitionIDFlag {
+		// Format: PartitionIDFlag + partition_id (8 bytes) + inner_handle
+		keySuffix = keySuffix[1:] // Skip the flag
+		remain, partID, err := codec.DecodeInt(keySuffix)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Decode the inner handle
+		innerHandle, err := decodeHandleInIndexKey(remain)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return kv.NewPartitionHandle(partID, innerHandle), nil
+	}
+
 	remain, d, err := codec.DecodeOne(keySuffix)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1209,6 +1252,23 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 		return nil, false, err
 	}
 	if !distinct && h != nil {
+		// For PartitionHandle on global indexes V1+, we must encode BOTH partition ID and inner handle
+		// in the key to prevent collisions when different partitions have duplicate handles.
+		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
+		// Only use the new format for version >= V1. Legacy indexes (version 0) use the old format.
+		if idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			if tblInfo.HasClusteredIndex() {
+				return nil, false, errors.New("clustered index is not supported in GlobalIndexVersionV1+")
+			}
+			ph, ok := h.(kv.PartitionHandle)
+			if !ok {
+				return nil, false, errors.New("handle is not a PartitionHandle in GlobalIndexVersionV1+")
+			}
+			// Encode as: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
+			key = append(key, PartitionIDFlag)
+			key = codec.EncodeInt(key, ph.PartitionID)
+		}
+
 		if h.IsInt() {
 			// We choose the efficient path here instead of calling `codec.EncodeKey`
 			// because the int handle must be an int64, and it must be comparable.
@@ -1592,14 +1652,14 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
 			col := tblInfo.Columns[idxCol.Offset]
-			// If  the column is the primary key's column,
+			// If the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
-			if types.NeedRestoredData(&col.FieldType) {
+			if model.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
 				colIds = append(colIds, col.ID)
-				if collate.IsBinCollation(col.GetCollate()) {
+				if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
 					allRestoredData = append(allRestoredData, indexedValues[i])
@@ -1710,7 +1770,7 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 
 // TruncateIndexValues truncates the index values created using only the leading part of column values.
 func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
-	for i := 0; i < len(indexedValues); i++ {
+	for i := range indexedValues {
 		idxCol := idxInfo.Columns[i]
 		tblCol := tblInfo.Columns[idxCol.Offset]
 		TruncateIndexValue(&indexedValues[i], idxCol, tblCol)

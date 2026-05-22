@@ -40,23 +40,23 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (*model.TableInfo, error) {
+func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
 
@@ -146,10 +146,65 @@ func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		if tbInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return tbInfo, errors.Wrapf(err, "failed to create table affinity groups in PD")
+			}
+		}
+
+		// Updating auto id meta kv is done in a separate txn.
+		// It's ok as these data are bind with table ID, and we won't use these
+		// table IDs until info schema version is updated.
+		if err := handleAutoIncID(r, job, tbInfo); err != nil {
+			return tbInfo, errors.Trace(err)
+		}
+
 		return tbInfo, nil
 	default:
 		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+}
+
+type autoIDType struct {
+	End int64
+	Tp  autoid.AllocatorType
+}
+
+// handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
+// For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
+func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableInfo) error {
+	allocs := autoid.NewAllocatorsFromTblInfo(r, job.SchemaID, tbInfo)
+
+	hs := make([]autoIDType, 0, 3)
+	if tbInfo.AutoIncID > 1 {
+		// Default tableAutoIncID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		if tbInfo.SepAutoInc() {
+			hs = append(hs, autoIDType{tbInfo.AutoIncID - 1, autoid.AutoIncrementType})
+		} else {
+			hs = append(hs, autoIDType{tbInfo.AutoIncID - 1, autoid.RowIDAllocType})
+		}
+	}
+	if tbInfo.AutoIncIDExtra != 0 {
+		hs = append(hs, autoIDType{tbInfo.AutoIncIDExtra - 1, autoid.RowIDAllocType})
+	}
+	if tbInfo.AutoRandID > 1 {
+		// Default tableAutoRandID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		hs = append(hs, autoIDType{tbInfo.AutoRandID - 1, autoid.AutoRandomType})
+	}
+
+	for _, h := range hs {
+		if alloc := allocs.Get(h.Tp); alloc != nil {
+			if err := alloc.Rebase(context.Background(), h.End, false); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	failpoint.InjectCall("handleAutoIncID")
+	return nil
 }
 
 func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -158,6 +213,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 			failpoint.Return(ver, errors.New("mock do job error"))
 		}
 	})
+
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.onCreateTable")
+	defer r.End()
 
 	args, err := model.GetCreateTableArgs(job)
 	if err != nil {
@@ -173,7 +231,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
-	tbInfo, err = createTable(jobCtx, job, args)
+	tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+		store:     w.store,
+		autoidCli: w.autoidCli,
+	}, args)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -201,7 +262,10 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(jobCtx, job, args)
+		tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+			store:     w.store,
+			autoidCli: w.autoidCli,
+		}, args)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -266,7 +330,10 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			tbInfo, err := createTable(jobCtx, stubJob, tblArgs)
+			tbInfo, err := createTable(jobCtx, stubJob, &asAutoIDRequirement{
+				store:     w.store,
+				autoidCli: w.autoidCli,
+			}, tblArgs)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -314,6 +381,9 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 	metaMut := jobCtx.metaMut
 	oldTableID, err := findTableIDByName(jobCtx.infoCache, metaMut, schemaID, tbInfo.Name.L)
+	if err == nil && oldTableID > 0 {
+		err = infoschema.ErrTableExists
+	}
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
@@ -330,6 +400,7 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 	}
+
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -383,7 +454,7 @@ func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableNa
 	if !ok {
 		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	tbl, err := is.TableByName(context.Background(), schema.Name, pmodel.NewCIStr(tableName))
+	tbl, err := is.TableByName(context.Background(), schema.Name, ast.NewCIStr(tableName))
 	if err != nil {
 		return 0, err
 	}
@@ -474,7 +545,7 @@ func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 	return nil
 }
 
-func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, tableName pmodel.CIStr, colDefs []*ast.ColumnDef) error {
+func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableName ast.CIStr, colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	var exists bool
 	var autoIncrementColumn string
@@ -527,15 +598,15 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 	return nil
 }
 
-func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr, tblInfo *model.TableInfo) error {
-	var hasVectorIndex bool
+func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
+	var hasColumnarIndex bool
 	for _, idx := range tblInfo.Indices {
-		if idx.VectorInfo != nil {
-			hasVectorIndex = true
+		if idx.IsColumnarIndex() {
+			hasColumnarIndex = true
 			break
 		}
 	}
-	if !hasVectorIndex {
+	if !hasColumnarIndex {
 		return nil
 	}
 	if store == nil {
@@ -551,7 +622,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr,
 			return errors.Trace(err)
 		}
 		if replicas == 0 {
-			return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
 		}
 
 		// Always try to set to 1 as the default replica count.
@@ -562,7 +633,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr,
 		}
 	}
 
-	return errors.Trace(checkTableTypeForVectorIndex(tblInfo))
+	return errors.Trace(checkTableTypeForColumnarIndex(tblInfo))
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -570,7 +641,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr,
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName pmodel.CIStr, tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName ast.CIStr, tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -593,7 +664,7 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName pmodel
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkVectorIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
+	if err := checkColumnarIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -698,9 +769,19 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	}
-	return tbInfo, err
+
+	if err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
+		return nil, err
+	}
+	return tbInfo, nil
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
@@ -744,6 +825,7 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 	// set default shard row id bits and pre-split regions for table.
 	if !tbInfo.HasClusteredIndex() && tbInfo.TempTableType == model.TempTableNone {
 		tbInfo.ShardRowIDBits = ctx.GetShardRowIDBits()
+		tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		tbInfo.PreSplitRegions = ctx.GetPreSplitRegions()
 	}
 
@@ -763,6 +845,11 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 	// After handleTableOptions, so the partitions can get defaults from Table level
 	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
 	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// validateTableAffinity settings, this should be after buildTablePartitionInfo for some partition checks
+	if err = validateTableAffinity(tbInfo, tbInfo.Affinity); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -870,10 +957,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if op.UintValue > 0 && tbInfo.HasClusteredIndex() {
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
-			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > variable.MaxShardRowIDBits {
-				tbInfo.ShardRowIDBits = variable.MaxShardRowIDBits
-			}
+			tbInfo.ShardRowIDBits = min(op.UintValue, vardef.MaxShardRowIDBits)
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
 			if tbInfo.TempTableType != model.TempTableNone {
@@ -884,7 +968,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			// We don't handle charset and collate here since they're handled in `GetCharsetAndCollateInTableOption`.
 		case ast.TableOptionPlacementPolicy:
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
-				Name: pmodel.NewCIStr(op.StrValue),
+				Name: ast.NewCIStr(op.StrValue),
 			}
 		case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 			if ttlOptionsHandled {
@@ -908,6 +992,14 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionAffinity:
+			affinity, err := model.NewTableAffinityInfoWithLevel(op.StrValue)
+			if err != nil {
+				return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", op.StrValue)))
+			}
+			tbInfo.Affinity = affinity
+		case ast.TableOptionEngineAttribute:
+			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -995,7 +1087,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
+				colName = getAnonymousIndexPrefix(constr.Option != nil && constr.Option.Tp == ast.IndexTypeVector)
 			}
 		}
 		if colName == "" {
@@ -1017,7 +1109,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 	}
 }
 
-func checkConstraintNames(tableName pmodel.CIStr, constraints []*ast.Constraint) error {
+func checkConstraintNames(tableName ast.CIStr, constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
 	fkNames := map[string]bool{}
 
@@ -1187,16 +1279,27 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		tblInfo.Partition = &pi
 	}
 
-	if referTblInfo.TTLInfo != nil {
+	// for issue #64948, temporary table does not support TLL, we should remove it
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TTLInfo = nil
+	} else if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
+
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		// temporary table does not support affinity, we should remove it
+		tblInfo.Affinity = nil
+	} else if referTblInfo.Affinity != nil {
+		tblInfo.Affinity = referTblInfo.Affinity.Clone()
+	}
+
 	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
 }
 
 func renameCheckConstraint(tblInfo *model.TableInfo) {
 	for _, cons := range tblInfo.Constraints {
-		cons.Name = pmodel.NewCIStr("")
+		cons.Name = ast.NewCIStr("")
 		cons.Table = tblInfo.Name
 	}
 	setNameForConstraintInfo(tblInfo.Name.L, map[string]bool{}, tblInfo.Constraints)
@@ -1205,7 +1308,7 @@ func renameCheckConstraint(tblInfo *model.TableInfo) {
 // BuildTableInfo creates a TableInfo.
 func BuildTableInfo(
 	ctx *metabuild.Context,
-	tableName pmodel.CIStr,
+	tableName ast.CIStr,
 	cols []*table.Column,
 	constraints []*ast.Constraint,
 	charset string,
@@ -1226,11 +1329,30 @@ func BuildTableInfo(
 		existedColsMap[v.Name.L] = struct{}{}
 	}
 	foreignKeyID := tbInfo.MaxForeignKeyID
+
+	// This pre-scan is necessary because index building in the main loop may need to check
+	// tbInfo.HasClusteredIndex() before the PRIMARY KEY constraint is fully processed.
+	for _, constr := range constraints {
+		if constr.Tp == ast.ConstraintPrimaryKey {
+			isSingleIntPK := isSingleIntPKFromTableInfo(constr, tbInfo)
+
+			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
+				if isSingleIntPK {
+					tbInfo.PKIsHandle = true
+				} else {
+					tbInfo.IsCommonHandle = true
+					tbInfo.CommonHandleVersion = 1
+				}
+			}
+			break // Only one PRIMARY KEY possible
+		}
+	}
+
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector {
+		if constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
-			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns)
+			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, ast.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
 				return nil, err
 			}
@@ -1243,17 +1365,17 @@ func BuildTableInfo(
 			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
 		}
 		// Check clustered on non-primary key.
-		if constr.Option != nil && constr.Option.PrimaryKeyTp != pmodel.PrimaryKeyTypeDefault &&
+		if constr.Option != nil && constr.Option.PrimaryKeyTp != ast.PrimaryKeyTypeDefault &&
 			constr.Tp != ast.ConstraintPrimaryKey {
 			return nil, dbterror.ErrUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
-			var fkName pmodel.CIStr
+			var fkName ast.CIStr
 			foreignKeyID++
 			if constr.Name != "" {
-				fkName = pmodel.NewCIStr(constr.Name)
+				fkName = ast.NewCIStr(constr.Name)
 			} else {
-				fkName = pmodel.NewCIStr(fmt.Sprintf("fk_%d", foreignKeyID))
+				fkName = ast.NewCIStr(fmt.Sprintf("fk_%d", foreignKeyID))
 			}
 			if model.FindFKInfoByName(tbInfo.ForeignKeys, fkName.L) != nil {
 				return nil, infoschema.ErrCannotAddForeign
@@ -1272,7 +1394,13 @@ func BuildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			isSingleIntPK := isSingleIntPK(constr, lastCol)
+			if constr.Option != nil && constr.Option.Condition != nil {
+				// Theoretically, if the index is not a clustered index and also not PKIsHandle, it can be a partial index
+				// because it'll have no difference compared to a normal index. However, for simplicity, this branch blocks
+				// all partial primary key.
+				return nil, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("create an primary key with partial index is not supported")
+			}
+			isSingleIntPK := isSingleIntPKFromCol(constr, lastCol)
 			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
 				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
@@ -1296,14 +1424,10 @@ func BuildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
-			continue
-		}
-
 		var (
-			indexName               = constr.Name
-			primary, unique, vector bool
+			indexName         = constr.Name
+			primary, unique   bool
+			columnarIndexType = model.ColumnarIndexTypeNA
 		)
 
 		// Check if the index is primary, unique or vector.
@@ -1314,16 +1438,22 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
-		case ast.ConstraintVector:
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+		case ast.ConstraintColumnar:
+			switch constr.Option.Tp {
+			case ast.IndexTypeVector:
+				columnarIndexType = model.ColumnarIndexTypeVector
+			case ast.IndexTypeInverted:
+				columnarIndexType = model.ColumnarIndexTypeInverted
+			case ast.IndexTypeFulltext:
+				columnarIndexType = model.ColumnarIndexTypeFulltext
+			default:
+				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}
-			vector = true
 		}
 
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
-			if !variable.EnableCheckConstraint.Load() {
+			if !vardef.EnableCheckConstraint.Load() {
 				ctx.AppendWarning(errCheckConstraintIsOff)
 				continue
 			}
@@ -1334,16 +1464,16 @@ func BuildTableInfo(
 			if ok, err := table.IsSupportedExpr(constr); !ok {
 				return nil, err
 			}
-			var dependedCols []pmodel.CIStr
+			var dependedCols []ast.CIStr
 			dependedColsMap := findDependentColsInExpr(constr.Expr)
 			if !constr.InColumn {
-				dependedCols = make([]pmodel.CIStr, 0, len(dependedColsMap))
+				dependedCols = make([]ast.CIStr, 0, len(dependedColsMap))
 				for k := range dependedColsMap {
 					if _, ok := existedColsMap[k]; !ok {
 						// The table constraint depended on a non-existed column.
 						return nil, dbterror.ErrTableCheckConstraintReferUnknown.GenWithStackByArgs(constr.Name, k)
 					}
-					dependedCols = append(dependedCols, pmodel.NewCIStr(k))
+					dependedCols = append(dependedCols, ast.NewCIStr(k))
 				}
 			} else {
 				// Check the column-type constraint dependency.
@@ -1359,7 +1489,7 @@ func BuildTableInfo(
 					if _, ok := dependedColsMap[constr.InColumnName]; !ok {
 						return nil, dbterror.ErrColumnCheckConstraintReferOther.GenWithStackByArgs(constr.Name)
 					}
-					dependedCols = []pmodel.CIStr{pmodel.NewCIStr(constr.InColumnName)}
+					dependedCols = []ast.CIStr{ast.NewCIStr(constr.InColumnName)}
 				}
 			}
 			// check auto-increment column
@@ -1376,7 +1506,7 @@ func BuildTableInfo(
 				return nil, errors.Trace(err)
 			}
 			// check if the expression is bool type
-			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx().GetEvalCtx(), constraintInfo, tbInfo); err != nil {
+			if err := table.IfCheckConstraintExprBoolType(ctx.GetExprCtx(), constraintInfo, tbInfo); err != nil {
 				return nil, err
 			}
 			constraintInfo.ID = allocateConstraintID(tbInfo)
@@ -1388,10 +1518,10 @@ func BuildTableInfo(
 		idxInfo, err := BuildIndexInfo(
 			ctx,
 			tbInfo,
-			pmodel.NewCIStr(indexName),
+			ast.NewCIStr(indexName),
 			primary,
 			unique,
-			vector,
+			columnarIndexType,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -1417,7 +1547,7 @@ func BuildTableInfo(
 
 func precheckBuildHiddenColumnInfo(
 	indexPartSpecifications []*ast.IndexPartSpecification,
-	indexName pmodel.CIStr,
+	indexName ast.CIStr,
 ) error {
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
@@ -1436,7 +1566,7 @@ func precheckBuildHiddenColumnInfo(
 	return nil
 }
 
-func buildHiddenColumnInfoWithCheck(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+func buildHiddenColumnInfoWithCheck(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName ast.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	if err := precheckBuildHiddenColumnInfo(indexPartSpecifications, indexName); err != nil {
 		return nil, err
 	}
@@ -1444,13 +1574,13 @@ func buildHiddenColumnInfoWithCheck(ctx *metabuild.Context, indexPartSpecificati
 }
 
 // BuildHiddenColumnInfo builds hidden column info.
-func BuildHiddenColumnInfo(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName pmodel.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+func BuildHiddenColumnInfo(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName ast.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
 			continue
 		}
-		idxPart.Column = &ast.ColumnName{Name: pmodel.NewCIStr(fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i))}
+		idxPart.Column = &ast.ColumnName{Name: ast.NewCIStr(fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i))}
 		// Check whether the hidden columns have existed.
 		col := table.FindCol(existCols, idxPart.Column.Name.L)
 		if col != nil {
@@ -1556,7 +1686,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, model.ColumnarIndexTypeNA, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1566,11 +1696,8 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 	return nil
 }
 
-func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
-	if len(constr.Keys) != 1 {
-		return false
-	}
-	switch lastCol.GetType() {
+func isIntCol(col *model.ColumnInfo) bool {
+	switch col.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
 		return true
@@ -1578,19 +1705,50 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 	return false
 }
 
+// isSingleIntPKFromTableInfo determines if a constraint represents a single integer primary key
+// by looking up the column information from the table info. This is used during the pre-scan
+// phase before CheckPKOnGeneratedColumn is called.
+func isSingleIntPKFromTableInfo(constr *ast.Constraint, tbInfo *model.TableInfo) bool {
+	// Multi-column PKs are not single integer PKs
+	if len(constr.Keys) != 1 {
+		return false
+	}
+
+	// Expression-based PKs (e.g., PRIMARY KEY ((col+1))) are not single integer PKs
+	if constr.Keys[0].Expr != nil {
+		return false
+	}
+
+	// Find the column in the table
+	colName := constr.Keys[0].Column.Name.L
+	for _, col := range tbInfo.Columns {
+		if col.Name.L == colName {
+			return isIntCol(col)
+		}
+	}
+	return false
+}
+
+func isSingleIntPKFromCol(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
+	if len(constr.Keys) != 1 {
+		return false
+	}
+	return isIntCol(lastCol)
+}
+
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
-func ShouldBuildClusteredIndex(mode variable.ClusteredIndexDefMode, opt *ast.IndexOption, isSingleIntPK bool) bool {
-	if opt == nil || opt.PrimaryKeyTp == pmodel.PrimaryKeyTypeDefault {
+func ShouldBuildClusteredIndex(mode vardef.ClusteredIndexDefMode, opt *ast.IndexOption, isSingleIntPK bool) bool {
+	if opt == nil || opt.PrimaryKeyTp == ast.PrimaryKeyTypeDefault {
 		switch mode {
-		case variable.ClusteredIndexDefModeOn:
+		case vardef.ClusteredIndexDefModeOn:
 			return true
-		case variable.ClusteredIndexDefModeIntOnly:
+		case vardef.ClusteredIndexDefModeIntOnly:
 			return !config.GetGlobalConfig().AlterPrimaryKey && isSingleIntPK
 		default:
 			return false
 		}
 	}
-	return opt.PrimaryKeyTp == pmodel.PrimaryKeyTypeClustered
+	return opt.PrimaryKeyTp == ast.PrimaryKeyTypeClustered
 }
 
 // BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.

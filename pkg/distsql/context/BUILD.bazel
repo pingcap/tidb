@@ -30,6 +30,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/errctx",
+        "//pkg/executor/join/joinversion",
         "//pkg/kv",
         "//pkg/parser/mysql",
         "//pkg/util/context",

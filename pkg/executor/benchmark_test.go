@@ -37,15 +37,14 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -62,13 +61,13 @@ var (
 
 func buildHashAggExecutor(ctx sessionctx.Context, src exec.Executor, schema *expression.Schema,
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression) exec.Executor {
-	plan := new(core.PhysicalHashAgg)
+	plan := new(physicalop.PhysicalHashAgg)
 	plan.AggFuncs = aggFuncs
 	plan.GroupByItems = groupItems
 	plan.SetSchema(schema)
 	plan.Init(ctx.GetPlanCtx(), nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(context.Background(), ctx, nil, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*aggregate.HashAggExec)
 	hashAgg.SetChildren(0, src)
@@ -79,7 +78,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
 
-	sg := new(core.PhysicalStreamAgg)
+	sg := new(physicalop.PhysicalStreamAgg)
 	sg.AggFuncs = aggFuncs
 	sg.GroupByItems = groupItems
 	sg.SetSchema(schema)
@@ -92,7 +91,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 		for _, col := range sg.GroupByItems {
 			byItems = append(byItems, &util.ByItems{Expr: col, Desc: false})
 		}
-		sortPP := &core.PhysicalSort{ByItems: byItems}
+		sortPP := &physicalop.PhysicalSort{ByItems: byItems}
 		sortPP.SetChildren(src)
 		sg.SetChildren(sortPP)
 		tail = sortPP
@@ -102,13 +101,13 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 
 	var (
 		plan     base.PhysicalPlan
-		splitter core.PartitionSplitterType = core.PartitionHashSplitterType
+		splitter physicalop.PartitionSplitterType = physicalop.PartitionHashSplitterType
 	)
 	if concurrency > 1 {
 		if dataSourceSorted {
-			splitter = core.PartitionRangeSplitterType
+			splitter = physicalop.PartitionRangeSplitterType
 		}
-		plan = core.PhysicalShuffle{
+		plan = physicalop.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tails:        []base.PhysicalPlan{tail},
 			DataSources:  []base.PhysicalPlan{src},
@@ -120,21 +119,21 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(context.Background(), ctx, nil, nil)
 	return b.build(plan)
 }
 
 func buildAggExecutor(b *testing.B, testCase *testutil.AggTestCase, child exec.Executor) exec.Executor {
 	ctx := testCase.Ctx
 	if testCase.ExecType == "stream" {
-		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBStreamAggConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
+		if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBStreamAggConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
 			b.Fatal(err)
 		}
 	} else {
-		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
+		if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
 			b.Fatal(err)
 		}
-		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
+		if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.Concurrency)); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -161,7 +160,7 @@ func buildAggExecutor(b *testing.B, testCase *testutil.AggTestCase, child exec.E
 }
 
 func benchmarkAggExecWithCase(b *testing.B, casTest *testutil.AggTestCase) {
-	if err := casTest.Ctx.GetSessionVars().SetSystemVar(variable.TiDBStreamAggConcurrency, fmt.Sprintf("%v", casTest.Concurrency)); err != nil {
+	if err := casTest.Ctx.GetSessionVars().SetSystemVar(vardef.TiDBStreamAggConcurrency, fmt.Sprintf("%v", casTest.Concurrency)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -282,10 +281,10 @@ func BenchmarkAggDistinct(b *testing.B) {
 
 func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *logicalop.WindowFrame, srcExec exec.Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) exec.Executor {
 	src := testutil.BuildMockDataPhysicalPlan(ctx, srcExec)
-	win := new(core.PhysicalWindow)
+	win := new(physicalop.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
 	winSchema := schema.Clone()
-	for i := 0; i < funcs; i++ {
+	for i := range funcs {
 		var args []expression.Expression
 		switch windowFunc {
 		case ast.WindowFuncNtile:
@@ -326,7 +325,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		for _, col := range partitionBy {
 			byItems = append(byItems, &util.ByItems{Expr: col, Desc: false})
 		}
-		sort := &core.PhysicalSort{ByItems: byItems}
+		sort := &physicalop.PhysicalSort{ByItems: byItems}
 		sort.SetChildren(src)
 		win.SetChildren(sort)
 		tail = sort
@@ -341,11 +340,11 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			byItems = append(byItems, item.Col)
 		}
 
-		plan = core.PhysicalShuffle{
+		plan = physicalop.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tails:        []base.PhysicalPlan{tail},
 			DataSources:  []base.PhysicalPlan{src},
-			SplitterType: core.PartitionHashSplitterType,
+			SplitterType: physicalop.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx.GetPlanCtx(), nil, 0)
 		plan.SetChildren(win)
@@ -353,17 +352,17 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(context.Background(), ctx, nil, nil)
 	exec := b.build(plan)
 	return exec
 }
 
 func benchmarkWindowExecWithCase(b *testing.B, casTest *testutil.WindowTestCase) {
 	ctx := casTest.Ctx
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBWindowConcurrency, fmt.Sprintf("%v", casTest.Concurrency)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBWindowConcurrency, fmt.Sprintf("%v", casTest.Concurrency)); err != nil {
 		b.Fatal(err)
 	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnablePipelinedWindowFunction, fmt.Sprintf("%v", casTest.Pipelined)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBEnablePipelinedWindowFunction, fmt.Sprintf("%v", casTest.Pipelined)); err != nil {
 		b.Fatal(err)
 	}
 
@@ -587,7 +586,7 @@ type hashJoinTestCase struct {
 	concurrency        int
 	ctx                sessionctx.Context
 	keyIdx             []int
-	joinType           logicalop.JoinType
+	joinType           base.JoinType
 	disk               bool
 	useOuterToBuild    bool
 	rawData            string
@@ -608,10 +607,10 @@ func (tc hashJoinTestCase) String() string {
 		tc.rows, tc.cols, tc.concurrency, tc.keyIdx, tc.disk)
 }
 
-func defaultHashJoinTestCase(cols []*types.FieldType, joinType logicalop.JoinType, useOuterToBuild bool) *hashJoinTestCase {
+func defaultHashJoinTestCase(cols []*types.FieldType, joinType base.JoinType, useOuterToBuild bool) *hashJoinTestCase {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SetIndexLookupJoinConcurrency(4)
@@ -622,10 +621,10 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType logicalop.JoinTyp
 	return tc
 }
 
-func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType logicalop.JoinType) *expression.Schema {
+func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType base.JoinType) *expression.Schema {
 	colsNeedResolving := joinSchema.Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if joinType == logicalop.LeftOuterSemiJoin || joinType == logicalop.AntiLeftOuterSemiJoin {
+	if joinType == base.LeftOuterSemiJoin || joinType == base.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	mergedSchema := expression.MergeSchema(lSchema, rSchema)
@@ -639,9 +638,9 @@ func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, join
 	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
 	// we are using mapping mechanism instead of moving j forward.
 	marked := make([]bool, mergedSchema.Len())
-	for i := 0; i < colsNeedResolving; i++ {
+	for i := range colsNeedResolving {
 		findIdx := -1
-		for j := 0; j < len(mergedSchema.Columns); j++ {
+		for j := range mergedSchema.Columns {
 			if !joinSchema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
 				continue
 			}
@@ -688,7 +687,7 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 	// todo: need systematic way to protect.
 	// physical join should resolveIndices to get right schema column index.
 	// otherwise, markChildrenUsedColsForTest will fail below.
-	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), logicalop.InnerJoin)
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), base.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
@@ -729,7 +728,7 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 		e.RUsed = append(e.RUsed, index)
 	}
 
-	for i := 0; i < testCase.concurrency; i++ {
+	for i := range testCase.concurrency {
 		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
 			HashJoinCtx: e.HashJoinCtxV2,
 			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, uint(i), testCase.joinType, probeKeysColIdx, joinedTypes, probeKeyTypes, false),
@@ -777,7 +776,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 	// todo: need systematic way to protect.
 	// physical join should resolveIndices to get right schema column index.
 	// otherwise, markChildrenUsedColsForTest will fail below.
-	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), logicalop.InnerJoin)
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), base.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
@@ -1195,14 +1194,14 @@ func (tc IndexJoinTestCase) Columns() []*expression.Column {
 
 func defaultIndexJoinTestCase() *IndexJoinTestCase {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	tc := &IndexJoinTestCase{
 		OuterRows:       100000,
-		InnerRows:       variable.DefMaxChunkSize * 100,
+		InnerRows:       vardef.DefMaxChunkSize * 100,
 		Concurrency:     4,
 		Ctx:             ctx,
 		OuterJoinKeyIdx: []int{0, 1},
@@ -1254,7 +1253,7 @@ func prepare4IndexInnerHashJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDat
 		keyOff2IdxOff[i] = i
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.Ctx, nil).
+	readerBuilder, err := newExecutorBuilder(context.Background(), tc.Ctx, nil, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1273,6 +1272,7 @@ func prepare4IndexInnerHashJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDat
 			ColLens:       colLens,
 			KeyCols:       tc.InnerJoinKeyIdx,
 			HashCols:      tc.InnerHashKeyIdx,
+			HashIsNullEQ:  make([]bool, len(tc.InnerHashKeyIdx)),
 		},
 		WorkerWg:      new(sync.WaitGroup),
 		Joiner:        join.NewJoiner(tc.Ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false),
@@ -1292,7 +1292,7 @@ func prepare4IndexOuterHashJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDat
 	idxHash := &join.IndexNestedLoopHashJoin{IndexLookUpJoin: *e.(*join.IndexLookUpJoin)}
 	concurrency := tc.Concurrency
 	idxHash.Joiners = make([]join.Joiner, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		idxHash.Joiners[i] = e.(*join.IndexLookUpJoin).Joiner.Clone()
 	}
 	return idxHash, nil
@@ -1328,7 +1328,7 @@ func prepare4IndexMergeJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDataSou
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.Ctx, nil).
+	readerBuilder, err := newExecutorBuilder(context.Background(), tc.Ctx, nil, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1358,7 +1358,7 @@ func prepare4IndexMergeJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDataSou
 	}
 	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
 	joiners := make([]join.Joiner, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		joiners[i] = join.NewJoiner(tc.Ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false)
 	}
 	e.Joiners = joiners
@@ -1628,8 +1628,8 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *testutil.MockDat
 
 func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc *mergeJoinTestCase, innerDS, outerDS *testutil.MockDataSource) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
@@ -1878,8 +1878,8 @@ func (tc topNTestCase) String() string {
 
 func defaultTopNTestCase() *topNTestCase {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	return &topNTestCase{
 		rows:                  100000,
@@ -1910,7 +1910,7 @@ func benchmarkTopNExec(b *testing.B, cas *topNTestCase) {
 
 	executor := &sortexec.TopNExec{
 		SortExec: executorSort,
-		Limit: &core.PhysicalLimit{
+		Limit: &physicalop.PhysicalLimit{
 			Count:  uint64(cas.count),
 			Offset: uint64(cas.offset),
 		},
@@ -2056,10 +2056,10 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				aggMap := make(aggfuncs.AggPartialResultMapper)
+				aggMap := aggfuncs.NewAggPartialResultMapper()
 				tempSlice := make([]aggfuncs.PartialResult, 10)
-				for num := 0; num < c.rowNum; num++ {
-					aggMap[strconv.Itoa(num)] = tempSlice
+				for num := range c.rowNum {
+					aggMap.Set(strconv.Itoa(num), tempSlice)
 				}
 			}
 		})
@@ -2073,7 +2073,7 @@ func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 func BenchmarkCompleteInsertErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name:      pmodel.NewCIStr("a"),
+		Name:      ast.NewCIStr("a"),
 		FieldType: *types.NewFieldType(mysql.TypeBlob),
 	}
 	err := types.ErrWarnDataOutOfRange
@@ -2085,7 +2085,7 @@ func BenchmarkCompleteInsertErr(b *testing.B) {
 func BenchmarkCompleteLoadErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name: pmodel.NewCIStr("a"),
+		Name: ast.NewCIStr("a"),
 	}
 	err := types.ErrDataTooLong
 	for n := 0; n < b.N; n++ {

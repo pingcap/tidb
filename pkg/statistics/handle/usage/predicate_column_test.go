@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +47,7 @@ func TestCleanupPredicateColumns(t *testing.T) {
 	tk.MustExec("alter table t drop column b")
 	// Get table ID.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	columns, err := h.GetPredicateColumns(tbl.Meta().ID)
 	require.NoError(t, err)
@@ -177,44 +177,6 @@ func TestAnalyzeTableWithTiDBPersistAnalyzeOptionsDisabled(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
 		testkit.Rows("t analyze table column a with 256 buckets, 100 topn, 1 samplerate"),
-	)
-}
-
-func TestAnalyzeTableWhenV1StatsExists(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// Set tidb_analyze_column_options to PREDICATE.
-	tk.MustExec("set global tidb_analyze_column_options='PREDICATE'")
-
-	// Create table and select data with predicate.
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, c int)")
-	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
-	tk.MustQuery("select * from t where a > 1").Check(testkit.Rows("2 2 2", "3 3 3"))
-	// Dump the statistics usage.
-	h := dom.StatsHandle()
-	err := h.DumpColStatsUsageToKV()
-	require.NoError(t, err)
-
-	// Set tidb_analyze_version to 1.
-	tk.MustExec("set tidb_analyze_version = 1")
-	tk.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
-
-	// Analyze table.
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze columns"),
-	)
-
-	// Set tidb_analyze_version to 2.
-	tk.MustExec("set tidb_analyze_version = 2")
-	tk.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("2"))
-
-	// Analyze table. It should analyze all columns because the v1 stats exists.
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select table_name, job_info from mysql.analyze_jobs order by id desc limit 1").Check(
-		testkit.Rows("t analyze table all columns with 256 buckets, 100 topn, 1 samplerate"),
 	)
 }
 

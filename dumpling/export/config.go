@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -18,8 +19,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -76,6 +80,14 @@ const (
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
+	flagPDAddr                   = "pd"
+	flagClusterSSLCA             = "cluster-ssl-ca"
+	flagClusterSSLCert           = "cluster-ssl-cert"
+	flagClusterSSLKey            = "cluster-ssl-key"
+	flagPartitions               = "partitions"
+	flagParquetCompress          = "parquet-compress"
+	flagParquetPageSize          = "parquet-page-size"
+	flagParquetRowGroupSize      = "parquet-row-group-size"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -118,7 +130,7 @@ var DialectBinaryFormatMap = map[CSVDialect]BinaryFormat{
 
 // Config is the dump config for dumpling
 type Config struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 
 	SpecifiedTables          bool
 	AllowCleartextPasswords  bool
@@ -133,7 +145,7 @@ type Config struct {
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
-	CompressType             storage.CompressType
+	CompressType             compressedio.CompressType
 
 	Host     string
 	Port     int
@@ -179,15 +191,35 @@ type Config struct {
 	Tables              DatabaseTables
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
+	Partitions          []string
 
-	Labels        prometheus.Labels       `json:"-"`
-	PromFactory   promutil.Factory        `json:"-"`
-	PromRegistry  promutil.Registry       `json:"-"`
-	ExtStorage    storage.ExternalStorage `json:"-"`
-	MinTLSVersion uint16                  `json:"-"`
+	Labels        prometheus.Labels `json:"-"`
+	PromFactory   promutil.Factory  `json:"-"`
+	PromRegistry  promutil.Registry `json:"-"`
+	ExtStorage    storeapi.Storage  `json:"-"`
+	MinTLSVersion uint16            `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
+
+	// PDAddr is a comma-separated list of PD endpoints in host:port form.
+	// http:// or https:// prefixes are also accepted and normalized by the PD client.
+	// It's used for controlling GC in keyspace-level clusters where PD addresses
+	// may not be discoverable from TiDB.
+	PDAddr string
+	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
+	// to PD endpoints for GC control.
+	ClusterSSLCA   string
+	ClusterSSLCert string
+	ClusterSSLKey  string
+
+	// ParquetCompressType is the parquet row-group compression type.
+	ParquetCompressType compressedio.CompressType
+	// ParquetPageSize is the parquet data page size in bytes.
+	ParquetPageSize int64
+	// ParquetRowGroupSize is the parquet row-group flush threshold by accounted
+	// in-memory bytes.
+	ParquetRowGroupSize int64
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -241,6 +273,13 @@ func DefaultConfig() *Config {
 		PromFactory:              promutil.NewDefaultFactory(),
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
+		PDAddr:                   "",
+		ClusterSSLCA:             "",
+		ClusterSSLCert:           "",
+		ClusterSSLKey:            "",
+		ParquetCompressType:      parquetfile.DefaultCompressionType,
+		ParquetPageSize:          units.MiB,
+		ParquetRowGroupSize:      parquetfile.DefaultRowGroupMemoryLimitBytes,
 	}
 }
 
@@ -305,7 +344,7 @@ func timestampDirName() string {
 
 // DefineFlags defines flags of dumpling's configuration
 func (*Config) DefineFlags(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringSliceP(flagDatabase, "B", nil, "Databases to dump")
 	flags.StringSliceP(flagTablesList, "T", nil, "Comma delimited table list to dump; must be qualified table names")
 	flags.StringP(flagHost, "h", "127.0.0.1", "The host to connect to")
@@ -330,7 +369,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
+	flags.String(flagFiletype, "", "The type of export file (sql/csv/parquet)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
@@ -357,6 +396,19 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
+	flags.StringSlice(flagPartitions, nil, "The table partitions to dump. Every listed partition must exist on all selected base tables; incompatible with --sql. TiDB >= v5.0.0 only")
+
+	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
+	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
+	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
+	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
+	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
+	flags.String(flagParquetPageSize, units.BytesSize(float64(units.MiB)), "Parquet page size in bytes, accepts human-readable units")
+	flags.String(
+		flagParquetRowGroupSize,
+		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
+		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
+	)
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -515,6 +567,11 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.Partitions, err = flags.GetStringSlice(flagPartitions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.Partitions = normalizePartitions(conf.Partitions)
 
 	if conf.Threads <= 0 {
 		return errors.Errorf("--threads is set to %d. It should be greater than 0", conf.Threads)
@@ -585,7 +642,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.CompressType, err = ParseCompressType(compressType)
+	conf.CompressType, err = compressedio.ParseCompressType(compressType)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -598,6 +655,40 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Errorf("%s is only supported when dumping whole table to csv, not compatible with %s", flagCsvOutputDialect, conf.FileType)
 	}
 	conf.CsvOutputDialect, err = ParseOutputDialect(dialect)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	parquetCompressType, err := flags.GetString(flagParquetCompress)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetCompressType, err = parseParquetCompressType(parquetCompressType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetPageSize, err = parseSizeFlag(flags, flagParquetPageSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetRowGroupSize, err = parseSizeFlag(flags, flagParquetRowGroupSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	conf.PDAddr, err = flags.GetString(flagPDAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ClusterSSLCA, err = flags.GetString(flagClusterSSLCA)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ClusterSSLCert, err = flags.GetString(flagClusterSSLCert)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ClusterSSLKey, err = flags.GetString(flagClusterSSLKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -634,7 +725,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	}
 
 	// only parse -T when -f is default value. otherwise bail out.
-	if !sameStringArray(filters, []string{"*.*", DefaultTableFilter}) {
+	if !slices.Equal(filters, []string{"*.*", DefaultTableFilter}) {
 		return nil, errors.New("cannot pass --tables-list and --filter together")
 	}
 
@@ -670,22 +761,6 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 	return dbTables, nil
 }
 
-// ParseCompressType parses compressType string to storage.CompressType
-func ParseCompressType(compressType string) (storage.CompressType, error) {
-	switch compressType {
-	case "", "no-compression":
-		return storage.NoCompression, nil
-	case "gzip", "gz":
-		return storage.Gzip, nil
-	case "snappy":
-		return storage.Snappy, nil
-	case "zstd", "zst":
-		return storage.Zstd, nil
-	default:
-		return storage.NoCompression, errors.Errorf("unknown compress type %s", compressType)
-	}
-}
-
 // ParseOutputDialect parses output dialect string to Dialect
 func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	switch outputDialect {
@@ -702,17 +777,38 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
-func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
+func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
+	size, err := flags.GetString(flagName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	bytes, err := units.RAMInBytes(size)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to parse --%s", flagName)
+	}
+	return bytes, nil
+}
+
+// parseParquetCompressType parses the parquet compression flag value.
+// Empty means the flag is not configured, so Dumpling uses the parquet default.
+func parseParquetCompressType(compressType string) (compressedio.CompressType, error) {
+	if compressType == "" {
+		return parquetfile.DefaultCompressionType, nil
+	}
+	return compressedio.ParseCompressType(compressType)
+}
+
+func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
 	}
-	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
+	b, err := objstore.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// TODO: support setting httpClient with certification later
-	return storage.New(ctx, b, &storage.ExternalStorageOptions{})
+	return objstore.New(ctx, b, &storeapi.Options{})
 }
 
 const (
@@ -773,6 +869,9 @@ func validateSpecifiedSQL(conf *Config) error {
 	if conf.SQL != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	}
+	if conf.SQL != "" && len(conf.Partitions) > 0 {
+		return errors.New("can't specify both --sql and --partitions at the same time")
+	}
 	return nil
 }
 
@@ -790,6 +889,10 @@ func adjustFileFormat(conf *Config) error {
 			return errors.Errorf("unsupported config.FileType '%s' when we specify --sql, please unset --filetype or set it to 'csv'", conf.FileType)
 		}
 	case FileFormatCSVString:
+	case FileFormatParquetString:
+		if conf.CompressType != compressedio.NoCompression {
+			return errors.Errorf("parquet does not support --compress, please unset it or use --parquet-compress instead")
+		}
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}
@@ -807,4 +910,21 @@ func matchMysqlBugversion(info version.ServerInfo) bool {
 	bugVersionStart := semver.New("8.0.2")
 	bugVersionEnd := semver.New("8.0.23")
 	return bugVersionStart.LessThan(*currentVersion) && currentVersion.LessThan(*bugVersionEnd)
+}
+
+func normalizePartitions(partitions []string) []string {
+	seen := make(map[string]struct{}, len(partitions))
+	result := make([]string, 0, len(partitions))
+	for _, p := range partitions {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		result = append(result, p)
+	}
+	return result
 }

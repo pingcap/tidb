@@ -52,6 +52,7 @@ var (
 	ErrQueryInterrupted                     = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
 	ErrMaxExecTimeExceeded                  = dbterror.ClassExecutor.NewStd(mysql.ErrMaxExecTimeExceeded)
 	ErrResourceGroupQueryRunawayInterrupted = dbterror.ClassExecutor.NewStd(mysql.ErrResourceGroupQueryRunawayInterrupted)
+	ErrQueryExecStopped                     = dbterror.ClassExecutor.NewStd(mysql.ErrQueryExecStopped)
 	ErrResourceGroupQueryRunawayQuarantine  = dbterror.ClassExecutor.NewStd(mysql.ErrResourceGroupQueryRunawayQuarantine)
 	ErrDynamicPrivilegeNotRegistered        = dbterror.ClassExecutor.NewStd(mysql.ErrDynamicPrivilegeNotRegistered)
 	ErrIllegalPrivilegeLevel                = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalPrivilegeLevel)
@@ -82,6 +83,7 @@ var (
 	ErrUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
 	ErrTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))
 	ErrExistsInHistoryPassword      = dbterror.ClassExecutor.NewStd(mysql.ErrExistsInHistoryPassword)
+	ErrUserNameNeedPrefix           = dbterror.ClassDDL.NewStdErr(mysql.ErrUsername, parser_mysql.Message("User name must start with `%s.` (use `%s.%s` instead)", nil))
 
 	ErrWarnTooFewRecords              = dbterror.ClassExecutor.NewStd(mysql.ErrWarnTooFewRecords)
 	ErrWarnTooManyRecords             = dbterror.ClassExecutor.NewStd(mysql.ErrWarnTooManyRecords)
@@ -97,8 +99,11 @@ var (
 	ErrInvalidOptionVal               = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidOptionVal)
 	ErrDuplicateOption                = dbterror.ClassExecutor.NewStd(mysql.ErrDuplicateOption)
 	ErrLoadDataUnsupportedOption      = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedOption)
+	ErrLoadDataDuplicateKeyConflict   = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataDuplicateKeyConflict)
 	ErrLoadDataJobNotFound            = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataJobNotFound)
 	ErrLoadDataInvalidOperation       = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidOperation)
 	ErrLoadDataLocalUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataLocalUnsupportedOption)
 	ErrLoadDataPreCheckFailed         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataPreCheckFailed)
+
+	ErrMaxKeysReadExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrMaxKeysReadExceeded)
 )

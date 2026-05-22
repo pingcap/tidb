@@ -24,34 +24,63 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
 )
 
 func TestExtractPlanWithoutHistoryView(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	extractHandler := dom.GetExtractHandle()
 	task := domain.NewExtractPlanTask(time.Now(), time.Now())
 	task.UseHistoryView = false
-	_, err := extractHandler.ExtractTask(context.Background(), task)
-	defer os.RemoveAll(domain.GetExtractTaskDirName())
+	_, err = extractHandler.ExtractTask(ctx, task)
 	require.NoError(t, err)
 }
 
 func TestExtractWithoutStmtSummaryPersistedEnabled(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	setupStmtSummary()
 	closeStmtSummary()
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 	extractHandler := dom.GetExtractHandle()
 	task := domain.NewExtractPlanTask(time.Now(), time.Now())
 	task.UseHistoryView = true
-	_, err := extractHandler.ExtractTask(context.Background(), task)
-	defer os.RemoveAll(domain.GetExtractTaskDirName())
+	_, err = extractHandler.ExtractTask(ctx, task)
 	require.Error(t, err)
 }
 
 func TestExtractHandlePlanTask(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	setupStmtSummary()
 	defer closeStmtSummary()
 
@@ -77,7 +106,6 @@ func TestExtractHandlePlanTask(t *testing.T) {
 	task := domain.NewExtractPlanTask(startTime, end)
 	task.UseHistoryView = true
 	name, err := extractHandler.ExtractTask(context.Background(), task)
-	defer os.RemoveAll(domain.GetExtractTaskDirName())
 	require.NoError(t, err)
 	require.True(t, len(name) > 0)
 }

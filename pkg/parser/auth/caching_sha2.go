@@ -125,7 +125,7 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 
 	// 17, 18, 19
 	bufDS := bufA
-	for i = 0; i < 16+int(sumA[0]); i++ {
+	for range 16 + int(sumA[0]) {
 		bufDS.Write(salt)
 	}
 	sumDS := hash(bufDS.Bytes())
@@ -144,7 +144,7 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 	// 21
 	bufC := bufA
 	var sumC []byte
-	for i = 0; i < iterations; i++ {
+	for i = range iterations {
 		bufC.Reset()
 		if i&1 != 0 {
 			bufC.Write(p)

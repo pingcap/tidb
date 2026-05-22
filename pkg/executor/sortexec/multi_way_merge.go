@@ -59,7 +59,7 @@ type diskSource struct {
 func (d *diskSource) init(multiWayMerge *multiWayMergeImpl) error {
 	inDiskNum := len(d.sortedRowsInDisk)
 	d.cursors = make([]*dataCursor, 0, inDiskNum)
-	for i := 0; i < inDiskNum; i++ {
+	for i := range inDiskNum {
 		chk, err := d.sortedRowsInDisk[i].GetChunk(0)
 		if err != nil {
 			return err
@@ -109,7 +109,7 @@ type sortPartitionSource struct {
 
 func (s *sortPartitionSource) init(multiWayMerge *multiWayMergeImpl) error {
 	partitionNum := s.getPartitionNum()
-	for i := 0; i < partitionNum; i++ {
+	for i := range partitionNum {
 		row, err := s.sortPartitions[i].getNextSortedRow()
 		if err != nil {
 			return err

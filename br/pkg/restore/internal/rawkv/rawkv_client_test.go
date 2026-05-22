@@ -40,7 +40,7 @@ func (f *fakeRawkvClient) BatchPut(
 			"the length of keys don't equal the length of values")
 	}
 
-	for i := 0; i < len(keys); i++ {
+	for i := range keys {
 		entry := kv.Entry{
 			Key:   keys[i],
 			Value: values[i],
@@ -70,7 +70,7 @@ func TestRawKVBatchClient(t *testing.T) {
 		{Key: codec.EncodeUintDesc([]byte("key5"), 5), Value: []byte("v5")},
 	}
 
-	for i := 0; i < batchCount; i++ {
+	for i := range batchCount {
 		require.Equal(t, 0, len(fakeRawkvClient.kvs))
 		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value, uint64(i+1))
 		require.Nil(t, err)
@@ -115,7 +115,7 @@ func TestRawKVBatchClientDuplicated(t *testing.T) {
 		{Key: codec.EncodeUintDesc([]byte("key4"), 4), Value: []byte("v4")},
 	}
 
-	for i := 0; i < batchCount; i++ {
+	for i := range batchCount {
 		require.Equal(t, 0, len(fakeRawkvClient.kvs))
 		err := rawkvBatchClient.Put(context.TODO(), kvs[i].Key, kvs[i].Value, uint64(i+1))
 		require.Nil(t, err)

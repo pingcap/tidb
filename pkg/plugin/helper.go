@@ -15,8 +15,14 @@
 package plugin
 
 import (
+	"context"
+	"strconv"
 	"strings"
+	"testing"
 	"unsafe"
+
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/stretchr/testify/require"
 )
 
 // DeclareAuditManifest declares manifest as AuditManifest.
@@ -52,4 +58,58 @@ func (n ID) Decode() (name string, version string, err error) {
 	name = string(n)[:index]
 	version = string(n)[index+1:]
 	return
+}
+
+// LoadPluginForTest loads a test plugin with given onGeneralEvent callback.
+func LoadPluginForTest(t *testing.T, onGeneralEvent func(context.Context, *variable.SessionVars, GeneralEvent, string)) {
+	ctx := context.Background()
+	pluginName := "audit_test"
+	pluginVersion := uint16(1)
+	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
+
+	cfg := Config{
+		Plugins:    []string{pluginSign},
+		PluginDir:  "",
+		EnvVersion: map[string]uint16{"go": 1112},
+	}
+
+	validate := func(_ context.Context, _ *Manifest) error {
+		return nil
+	}
+	onInit := func(_ context.Context, _ *Manifest) error {
+		return nil
+	}
+	onShutdown := func(_ context.Context, _ *Manifest) error {
+		return nil
+	}
+	onConnectionEvent := func(_ context.Context, _ ConnectionEvent, _ *variable.ConnectionInfo) error {
+		return nil
+	}
+
+	// setup load test hook.
+	loadOne := func(_ *Plugin, _ string, _ ID) (manifest func() *Manifest, err error) {
+		return func() *Manifest {
+			m := &AuditManifest{
+				Manifest: Manifest{
+					Kind:       Audit,
+					Name:       pluginName,
+					Version:    pluginVersion,
+					OnInit:     onInit,
+					OnShutdown: onShutdown,
+					Validate:   validate,
+				},
+				OnGeneralEvent:    onGeneralEvent,
+				OnConnectionEvent: onConnectionEvent,
+			}
+			return ExportManifest(m)
+		}, nil
+	}
+	SetTestHook(loadOne)
+
+	// trigger load.
+	err := Load(ctx, cfg)
+	require.NoErrorf(t, err, "load plugin [%s] fail, error [%s]\n", pluginSign, err)
+
+	err = Init(ctx, cfg)
+	require.NoErrorf(t, err, "init plugin [%s] fail, error [%s]\n", pluginSign, err)
 }

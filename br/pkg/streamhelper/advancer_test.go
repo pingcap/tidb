@@ -15,6 +15,7 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
@@ -65,7 +66,7 @@ func TestTick(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		cp := c.advanceCheckpoints()
 		require.NoError(t, adv.OnTick(ctx))
 		require.Equal(t, env.getCheckpoint(), cp)
@@ -73,7 +74,7 @@ func TestTick(t *testing.T) {
 }
 
 func TestWithFailure(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer func() {
 		fmt.Println(c)
@@ -89,15 +90,15 @@ func TestWithFailure(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 
 	cp := c.advanceCheckpoints()
-	for _, v := range c.stores {
-		v.flush()
+	for _, v := range c.storeList() {
+		v.Flush()
 		break
 	}
 	require.NoError(t, adv.OnTick(ctx))
 	require.Less(t, env.getCheckpoint(), cp, "%d %d", env.getCheckpoint(), cp)
 
-	for _, v := range c.stores {
-		v.flush()
+	for _, v := range c.storeList() {
+		v.Flush()
 	}
 
 	require.NoError(t, adv.OnTick(ctx))
@@ -118,18 +119,18 @@ func shouldFinishInTime(t *testing.T, d time.Duration, name string, f func()) {
 }
 
 func TestCollectorFailure(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
-	c.onGetClient = func(u uint64) error {
+	c.SetOnGetClient(func(u uint64) error {
 		return status.Error(codes.DataLoss,
 			"Exiled requests from the client, please slow down and listen a story: "+
 				"the server has been dropped, we are longing for new nodes, however the goddess(k8s) never allocates new resource. "+
 				"May you take the sword named `vim`, refactoring the definition of the nature, in the yaml file hidden at somewhere of the cluster, "+
 				"to save all of us and gain the response you desiring?")
-	}
+	})
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 10000)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		splitKeys = append(splitKeys, fmt.Sprintf("%04d", i))
 	}
 	c.splitAndScatter(splitKeys...)
@@ -165,11 +166,11 @@ func oneStoreFailure() func(uint64) error {
 }
 
 func TestOneStoreFailure(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		splitKeys = append(splitKeys, fmt.Sprintf("%04d", i))
 	}
 	c.splitAndScatter(splitKeys...)
@@ -179,15 +180,15 @@ func TestOneStoreFailure(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	c.onGetClient = oneStoreFailure()
+	c.SetOnGetClient(oneStoreFailure())
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		c.advanceCheckpoints()
 		c.flushAll()
 		require.ErrorContains(t, adv.OnTick(ctx), "the warm lamplight")
 	}
 
-	c.onGetClient = nil
+	c.SetOnGetClient(nil)
 	cp := c.advanceCheckpoints()
 	c.flushAll()
 	require.NoError(t, adv.OnTick(ctx))
@@ -207,18 +208,21 @@ func TestGCServiceSafePoint(t *testing.T) {
 	c.flushAll()
 
 	req.NoError(adv.OnTick(ctx))
-	req.Equal(env.serviceGCSafePoint, cp-1)
+	req.Equal(env.ServiceGCSafePoint, cp-1)
+	env.Cluster.Mu.Lock()
+	req.True(env.ServiceGCSafePointSet)
+	env.Cluster.Mu.Unlock()
 
 	env.unregisterTask()
 	req.Eventually(func() bool {
-		env.fakeCluster.mu.Lock()
-		defer env.fakeCluster.mu.Unlock()
-		return env.serviceGCSafePoint != 0 && env.serviceGCSafePointDeleted
+		env.Cluster.Mu.Lock()
+		defer env.Cluster.Mu.Unlock()
+		return env.ServiceGCSafePointDeleted
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
 func TestTaskRanges(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer fmt.Println(c)
 	ctx := context.Background()
@@ -237,7 +241,7 @@ func TestTaskRanges(t *testing.T) {
 }
 
 func TestTaskRangesWithSplit(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer fmt.Println(c)
 	ctx := context.Background()
@@ -268,17 +272,16 @@ func TestClearCache(t *testing.T) {
 	c.splitAndScatter("0012", "0034", "0048")
 
 	clearedCache := make(map[uint64]bool)
-	c.onClearCache = func(u uint64) error {
+	c.SetOnClearCache(func(u uint64) error {
 		// make store u cache cleared
 		clearedCache[u] = true
 		return nil
-	}
+	})
 	failedStoreID := uint64(0)
 	hasFailed := atomic.NewBool(false)
-	for _, s := range c.stores {
-		s.clientMu.Lock()
+	for _, s := range c.storeList() {
 		sid := s.GetID()
-		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+		s.SetGetRegionCheckpointHook(func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
 			// mark one store failed is enough
 			if hasFailed.CompareAndSwap(false, true) {
 				// mark this store cache cleared
@@ -286,8 +289,7 @@ func TestClearCache(t *testing.T) {
 				return errors.New("failed to get checkpoint")
 			}
 			return nil
-		}
-		s.clientMu.Unlock()
+		})
 	}
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
@@ -302,36 +304,48 @@ func TestClearCache(t *testing.T) {
 }
 
 func TestBlocked(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	ctx := context.Background()
 	req := require.New(t)
 	c.splitAndScatter("0012", "0034", "0048")
+	blockReq := make(chan struct{})
+	defer close(blockReq)
+	firstBlocked := make(chan struct{}, 1)
+	firstBlockedOnce := sync.Once{}
 	marked := false
-	for _, s := range c.stores {
-		s.clientMu.Lock()
-		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+	for _, s := range c.storeList() {
+		s.SetGetRegionCheckpointHook(func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+			firstBlockedOnce.Do(func() {
+				firstBlocked <- struct{}{}
+			})
 			// blocking the thread.
 			// this may happen when TiKV goes down or too busy.
-			<-(chan struct{})(nil)
+			<-blockReq
 			return nil
-		}
-		s.clientMu.Unlock()
+		})
 		marked = true
 	}
 	req.True(marked, "failed to mark the cluster: ")
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		// ... So the tick timeout would be 100ms
-		c.TickDuration = 10 * time.Millisecond
+	adv.UpdateConfigWith(func(c *config.CommandConfig) {
+		// keep enough headroom so the blocked rpc request is observed before timeout.
+		c.TickDuration = 100 * time.Millisecond
+	})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- adv.OnTick(ctx)
+	}()
+	shouldFinishInTime(t, 5*time.Second, "wait until blocked request observed", func() {
+		<-firstBlocked
 	})
 	var err error
-	shouldFinishInTime(t, time.Second, "ticking", func() {
-		err = adv.OnTick(ctx)
+	shouldFinishInTime(t, 5*time.Second, "ticking", func() {
+		err = <-errCh
 	})
-	req.ErrorIs(errors.Cause(err), context.DeadlineExceeded)
+	req.ErrorIs(err, context.DeadlineExceeded)
 }
 
 func TestResolveLock(t *testing.T) {
@@ -353,7 +367,7 @@ func TestResolveLock(t *testing.T) {
 	minCheckpoint := c.advanceCheckpoints()
 	env := newTestEnv(c, t)
 
-	lockRegion := c.findRegionByKey([]byte("01"))
+	lockRegion := c.FindRegionByKey([]byte("01"))
 	allLocks := []*txnlock.Lock{
 		{
 			Key: []byte("011"),
@@ -407,7 +421,7 @@ func TestResolveLock(t *testing.T) {
 	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 
-	env.maxTs = maxTargetTs + 1
+	env.MaxTS = maxTargetTs + 1
 	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
 		time.Second, 50*time.Millisecond)
 	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
@@ -457,7 +471,7 @@ func TestOwnerDropped(t *testing.T) {
 
 // TestRemoveTaskAndFlush tests the bug has been described in #50839.
 func TestRemoveTaskAndFlush(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
+	logutil.OverrideLevelForTest(t, zapcore.DebugLevel)
 	ctx := context.Background()
 	c := createFakeCluster(t, 4, true)
 	installSubscribeSupport(c)
@@ -503,14 +517,12 @@ func TestEnableCheckPointLimit(t *testing.T) {
 	}
 	log.Info("Start Time:", zap.Uint64("StartTs", env.task.Info.StartTs))
 
-	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv := streamhelper.NewCommandCheckpointAdvancer(env)
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	adv.StartTaskListener(ctx)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		c.advanceClusterTimeBy(30 * time.Second)
 		c.advanceCheckpointBy(20 * time.Second)
 		require.NoError(t, adv.OnTick(ctx))
@@ -542,9 +554,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	adv.OnStart(ctx1)
 	adv.OnBecomeOwner(ctx1)
@@ -553,13 +563,10 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 
 	// another advancer but never advance checkpoint before
 	adv2 := streamhelper.NewCheckpointAdvancer(env)
-	adv2.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv2.UpdateCheckPointLagLimit(time.Minute)
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	adv2.OnStart(ctx2)
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		c.advanceClusterTimeBy(2 * time.Minute)
 		c.advanceCheckpointBy(2 * time.Minute)
 		require.NoError(t, adv.OnTick(ctx1))
@@ -574,11 +581,12 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	// stop advancer1, and advancer2 should take over
 	cancel1()
 	log.Info("advancer1 owner canceled, and advancer2 become owner")
+	adv2.OnStart(ctx2)
 	adv2.OnBecomeOwner(ctx2)
 	require.NoError(t, adv2.OnTick(ctx2))
 
 	// advancer2 should take over and tick normally
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		c.advanceClusterTimeBy(2 * time.Minute)
 		c.advanceCheckpointBy(2 * time.Minute)
 		require.NoError(t, adv2.OnTick(ctx2))
@@ -621,9 +629,7 @@ func TestCheckPointLagged(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(2 * time.Minute)
 	// if global ts is not advanced, the checkpoint will not be lagged
@@ -632,8 +638,8 @@ func TestCheckPointLagged(t *testing.T) {
 	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	// after some times, the isPaused will be set and ticks are skipped
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 }
 
@@ -648,9 +654,7 @@ func TestCheckPointResume(t *testing.T) {
 	defer cancel()
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	// if global ts is not advanced, the checkpoint will not be lagged
@@ -658,18 +662,20 @@ func TestCheckPointResume(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 	//now the checkpoint issue is fixed and resumed
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.ResumeTask(ctx)
-	require.Eventually(t, func() bool {
-		return assert.NoError(t, adv.OnTick(ctx))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)
 	//with time passed, the checkpoint will exceed the limit again
 	c.advanceClusterTimeBy(2 * time.Minute)
-	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func TestUnregisterAfterPause(t *testing.T) {
@@ -682,9 +688,7 @@ func TestUnregisterAfterPause(t *testing.T) {
 	defer cancel()
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	adv.StartTaskListener(ctx)
 
 	// wait for the task to be added
@@ -698,8 +702,13 @@ func TestUnregisterAfterPause(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
 	c.advanceClusterTimeBy(1 * time.Minute)
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.unregisterTask()
+	require.Eventually(t, func() bool {
+		return !adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	env.putTask()
 
 	// wait for the task to be added
@@ -707,7 +716,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 		return adv.HasTask()
 	}, 5*time.Second, 100*time.Millisecond)
 
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "check point lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 
 	env.unregisterTask()
 	// wait for the task to be deleted
@@ -720,14 +731,22 @@ func TestUnregisterAfterPause(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
 	c.advanceClusterTimeBy(1 * time.Minute)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.unregisterTask()
+	require.Eventually(t, func() bool {
+		return !adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	env.putTask()
 	// wait for the task to be add
 	require.Eventually(t, func() bool {
 		return adv.HasTask()
 	}, 5*time.Second, 100*time.Millisecond)
 
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "check point lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 // If the start ts is *NOT* lagged, even both the cluster and pd are lagged, the task should run normally.
@@ -756,9 +775,7 @@ func TestAddTaskWithLongRunTask0(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	c.advanceClusterTimeBy(3 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.advanceCheckpointBy(1 * time.Minute)
@@ -796,9 +813,7 @@ func TestAddTaskWithLongRunTask1(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	c.advanceClusterTimeBy(3 * time.Minute)
 	c.advanceCheckpointBy(2 * time.Minute)
 	env.advanceCheckpointBy(1 * time.Minute)
@@ -836,9 +851,7 @@ func TestAddTaskWithLongRunTask2(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(3 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
@@ -881,9 +894,7 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 	}
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	adv.UpdateConfigWith(func(c *config.Config) {
-		c.CheckPointLagLimit = 1 * time.Minute
-	})
+	adv.UpdateCheckPointLagLimit(time.Minute)
 	// advance cluster time to 4 minutes, and checkpoint to 1 minutes
 	// if start ts equals to checkpoint, the task will not be paused
 	adv.StartTaskListener(ctx)
@@ -918,6 +929,9 @@ func TestOwnershipLost(t *testing.T) {
 	c.flushAll()
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "pause")
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs", "return(500)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs"))
+	}()
 	wg := new(sync.WaitGroup)
 	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
 	cancel()
@@ -939,6 +953,9 @@ func TestSubscriptionPanic(t *testing.T) {
 
 	require.NoError(t, adv.OnTick(ctx))
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "5*panic")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend"))
+	}()
 	ckpt := c.advanceCheckpoints()
 	c.flushAll()
 	cnt := 0
@@ -983,12 +1000,20 @@ func TestGCCheckpoint(t *testing.T) {
 
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
+	require.Eventually(t, func() bool {
+		return adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.PauseTask(ctx, "whole")
-	c.serviceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
+	c.ServiceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.ResumeTask(ctx)
-	require.ErrorContains(t, adv.OnTick(ctx), "greater than the target")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "greater than the target")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 func TestRedactBackend(t *testing.T) {
@@ -1007,7 +1032,8 @@ func TestRedactBackend(t *testing.T) {
 	}
 
 	redacted := redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"12abCD!@#[]{}?/\\\\\" secret_access_key:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_Gcs{
@@ -1020,7 +1046,8 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" CredentialsBlob:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_AzureBlobStorage{
@@ -1038,5 +1065,6 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<[REDACTED]> > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<encryption_key:\"[REDACTED]\" > > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"12abCD!@#[]{}?/\\\\\" access_sig:\"12abCD!@#[]{}?/\\\\\" encryption_key:<encryption_key:\"12abCD!@#[]{}?/\\\\\" encryption_key_sha256:\"12abCD!@#[]{}?/\\\\\" > > > name:\"test\" ")
 }

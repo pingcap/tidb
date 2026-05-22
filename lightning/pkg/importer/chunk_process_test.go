@@ -28,21 +28,22 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -316,7 +317,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
 
 	schema := "test_1"
 	tb := "t1"
-	ti := &checkpoints.TidbTableInfo{
+	ti := &importdef.TableInfo{
 		ID:   tableInfo.ID,
 		DB:   schema,
 		Name: tb,
@@ -424,7 +425,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	err = os.WriteFile(filepath.Join(dir, fileName), []byte("1,2,3\r\n4,5,6\r\n7,8,9\r"), 0o644)
 	require.NoError(s.T(), err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 
@@ -498,7 +499,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	err := os.WriteFile(filepath.Join(dir, fileName), []byte("1,2\r\n4,5,6,7\r\n"), 0o644)
 	require.NoError(s.T(), err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
 	ctx := context.Background()
@@ -597,7 +598,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	err := os.WriteFile(filepath.Join(dir, fileName), []byte(f), 0o644)
 	require.NoError(s.T(), err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
 	ctx := context.Background()
@@ -717,7 +718,7 @@ func TestCompressChunkRestore(t *testing.T) {
 
 	// Write some sample CSV dump
 	fakeDataDir := t.TempDir()
-	store, err := storage.NewLocalStorage(fakeDataDir)
+	store, err := objstore.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
 
 	fakeDataFiles := make([]mydump.FileInfo, 0)
@@ -729,7 +730,7 @@ func TestCompressChunkRestore(t *testing.T) {
 
 	var totalBytes int64
 	for i := 0; i < 300; i += 3 {
-		n, err := gzWriter.Write([]byte(fmt.Sprintf("%d,%d,%d\r\n", i, i+1, i+2)))
+		n, err := gzWriter.Write(fmt.Appendf(nil, "%d,%d,%d\r\n", i, i+1, i+2))
 		require.NoError(t, err)
 		totalBytes += int64(n)
 	}

@@ -157,7 +157,7 @@ func TestSimplifyTable(t *testing.T) {
 		require.NoError(t, err)
 
 		// run twice to make sure originalTblInfo is not changed
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			actualTblInfo, actualColPerm := simplifyTable(originalTblInfo, tc.colPerm)
 			if tc.expTableHasNoCols {
 				require.Empty(t, actualTblInfo.Columns)

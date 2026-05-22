@@ -22,13 +22,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -89,7 +92,7 @@ type LocalWriterConfig struct {
 // EngineConfig defines configuration used for open engine
 type EngineConfig struct {
 	// TableInfo is the corresponding tidb table info
-	TableInfo *checkpoints.TidbTableInfo
+	TableInfo *importdef.TableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
 	// local backend external engine specified configuration
@@ -120,18 +123,24 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	StorageURI string
-	DataFiles  []string
-	StatFiles  []string
-	StartKey   []byte
-	EndKey     []byte
-	JobKeys    [][]byte
-	SplitKeys  [][]byte
+	ExtStore  storeapi.Storage
+	DataFiles []string
+	StatFiles []string
+	StartKey  []byte
+	EndKey    []byte
+	JobKeys   [][]byte
+	SplitKeys [][]byte
 	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
 	CheckHotspot bool
+	// MemCapacity is the memory capacity for the whole subtask.
+	MemCapacity int64
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup engineapi.OnDuplicateKey
+	// this is the prefix of files recording conflicted KVs
+	FilePrefix string
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -216,9 +225,6 @@ type Backend interface {
 	// (e.g. preparing to resolve a disk quota violation).
 	FlushAllEngines(ctx context.Context) error
 
-	// ResetEngine clears all written KV pairs in this opened engine.
-	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
-
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
 }
@@ -261,7 +267,7 @@ func (be EngineManager) OpenEngine(
 	engineID int32,
 ) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, int64(engineID))
-	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
+	logger := makeLogger(log.Wrap(logutil.Logger(ctx)), tag, engineUUID)
 
 	if err := be.backend.OpenEngine(ctx, config, engineUUID); err != nil {
 		return nil, err
@@ -342,7 +348,7 @@ func (be EngineManager) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *Engi
 	engineUUID uuid.UUID, id int32) (*ClosedEngine, error) {
 	return engine{
 		backend: be.backend,
-		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
+		logger:  makeLogger(log.Wrap(logutil.Logger(ctx)), tag, engineUUID),
 		uuid:    engineUUID,
 		id:      id,
 	}.unsafeClose(ctx, cfg)
@@ -390,7 +396,7 @@ func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int3
 func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys int64) error {
 	var err error
 
-	for i := 0; i < importMaxRetryTimes; i++ {
+	for i := range importMaxRetryTimes {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {
@@ -421,16 +427,11 @@ func (engine *ClosedEngine) Logger() log.Logger {
 	return engine.logger
 }
 
-// ChunkFlushStatus is the status of a chunk flush.
-type ChunkFlushStatus interface {
-	Flushed() bool
-}
-
 // EngineWriter is the interface for writing data to an engine.
 type EngineWriter interface {
 	AppendRows(ctx context.Context, columnNames []string, rows encode.Rows) error
 	IsSynced() bool
-	Close(ctx context.Context) (ChunkFlushStatus, error)
+	Close(ctx context.Context) (common.ChunkFlushStatus, error)
 }
 
 // GetEngineUUID returns the engine UUID.

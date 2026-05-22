@@ -16,13 +16,14 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"strconv"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
@@ -40,24 +41,21 @@ func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionctx.Cont
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		logutil.BgLogger().Warn("Information about TiKV store status can be gotten only when the storage is TiKV")
-		return variable.DefAnalyzeDistSQLScanConcurrency
+		return vardef.DefAnalyzeDistSQLScanConcurrency
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(tikvStore)
 	pdCli, err := tikvHelper.TryGetPDHTTPClient()
 	if err != nil {
 		logutil.BgLogger().Warn("fail to TryGetPDHTTPClient", zap.Error(err))
-		return variable.DefAnalyzeDistSQLScanConcurrency
+		return vardef.DefAnalyzeDistSQLScanConcurrency
 	}
 	storesStat, err := pdCli.GetStores(ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("fail to get stores info", zap.Error(err))
-		return variable.DefAnalyzeDistSQLScanConcurrency
+		return vardef.DefAnalyzeDistSQLScanConcurrency
 	}
 	if storesStat.Count <= 5 {
-		return variable.DefAnalyzeDistSQLScanConcurrency
+		return vardef.DefAnalyzeDistSQLScanConcurrency
 	} else if storesStat.Count <= 10 {
 		return storesStat.Count
 	} else if storesStat.Count <= 20 {
@@ -79,11 +77,11 @@ func getIntFromSessionVars(ctx sessionctx.Context, name string) (int, error) {
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
-	return getIntFromSessionVars(ctx, variable.TiDBBuildStatsConcurrency)
+	return getIntFromSessionVars(ctx, vardef.TiDBBuildStatsConcurrency)
 }
 
 func getBuildSamplingStatsConcurrency(ctx sessionctx.Context) (int, error) {
-	return getIntFromSessionVars(ctx, variable.TiDBBuildSamplingStatsConcurrency)
+	return getIntFromSessionVars(ctx, vardef.TiDBBuildSamplingStatsConcurrency)
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
@@ -106,6 +104,18 @@ func getAnalyzePanicErr(r any) error {
 		return err
 	}
 	return errors.Trace(errAnalyzeWorkerPanic)
+}
+
+func normalizeCtxErrWithCause(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+	}
+	return err
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup

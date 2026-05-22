@@ -31,23 +31,26 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -155,8 +158,8 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*precheck.CheckR
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			newTasks := append([]taskMeta(nil), tasks...)
-			for i := 0; i < len(newTasks); i++ {
+			newTasks := slices.Clone(tasks)
+			for i := range newTasks {
 				newTasks[i].tikvAvail = tikvAvail
 				newTasks[i].tiflashAvail = tiflashAvail
 			}
@@ -430,14 +433,14 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 		Message:  "Lightning has the correct storage permission",
 	}
 
-	u, err := storage.ParseBackend(ci.cfg.Mydumper.SourceDir, nil)
+	u, err := objstore.ParseBackend(ci.cfg.Mydumper.SourceDir, nil)
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	_, err = storage.New(ctx, u, &storage.ExternalStorageOptions{
-		CheckPermissions: []storage.Permission{
-			storage.ListObjects,
-			storage.GetObject,
+	_, err = objstore.New(ctx, u, &storeapi.Options{
+		CheckPermissions: []storeapi.Permission{
+			storeapi.ListObjects,
+			storeapi.GetObject,
 		},
 	})
 	if err != nil {
@@ -515,7 +518,7 @@ func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*precheck.Check
 		Passed:   true,
 		Message:  "local source dir and temp-kv dir are in different disks",
 	}
-	sourceDir := strings.TrimPrefix(ci.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
+	sourceDir := strings.TrimPrefix(ci.cfg.Mydumper.SourceDir, objstore.LocalURIPrefix)
 	same, err := common.SameDisk(sourceDir, ci.cfg.TikvImporter.SortedKVDir)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -577,33 +580,44 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 		return nil, errors.Trace(err)
 	}
 	localAvailable := int64(storageSize.Available)
+	availableStr := units.BytesSize(float64(localAvailable))
+
 	estimatedDataSizeResult, err := ci.preInfoGetter.EstimateSourceDataSize(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	estimatedDataSizeWithIndex := estimatedDataSizeResult.SizeWithIndex
+	estimatedStr := units.BytesSize(float64(estimatedDataSizeWithIndex))
+
+	diskQuota := int64(ci.cfg.TikvImporter.DiskQuota)
+	diskQuotaStr := units.BytesSize(float64(diskQuota))
+
+	// Warn the user if diskQuota is 0 or negative, as it's likely a misconfiguration
+	if diskQuota <= 0 {
+		logutil.Logger(ctx).Warn("`tikv-importer.disk-quota` is set to 0 or less; please configure a valid positive value")
+	}
 
 	switch {
 	case localAvailable > estimatedDataSizeWithIndex:
 		theResult.Message = fmt.Sprintf("local disk resources are rich, estimate sorted data size %s, local available is %s",
-			units.BytesSize(float64(estimatedDataSizeWithIndex)), units.BytesSize(float64(localAvailable)))
+			estimatedStr, availableStr)
 		theResult.Passed = true
-	case int64(ci.cfg.TikvImporter.DiskQuota) > localAvailable:
-		theResult.Message = fmt.Sprintf("local disk space may not enough to finish import, estimate sorted data size is %s,"+
-			" but local available is %s, please set `tikv-importer.disk-quota` to a smaller value than %s"+
-			" or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports",
-			units.BytesSize(float64(estimatedDataSizeWithIndex)),
-			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(localAvailable)))
+	case diskQuota > localAvailable:
+		theResult.Message = fmt.Sprintf("local disk space is insufficient to meet the configured disk-quota. "+
+			"Available space: %s, Configured disk-quota: %s. "+
+			"Please increase the available disk space or adjust the tikv-importer.disk-quota setting to a value lower than the available space and try again",
+			availableStr,
+			diskQuotaStr)
 		theResult.Passed = false
-		log.FromContext(ctx).Error(theResult.Message)
+		logutil.Logger(ctx).Error(theResult.Message)
 	default:
 		theResult.Message = fmt.Sprintf("local disk space may not enough to finish import, "+
 			"estimate sorted data size is %s, but local available is %s,"+
 			"we will use disk-quota (size: %s) to finish imports, which may slow down import",
-			units.BytesSize(float64(estimatedDataSizeWithIndex)),
-			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(ci.cfg.TikvImporter.DiskQuota)))
+			estimatedStr,
+			availableStr, diskQuotaStr)
 		theResult.Passed = true
-		log.FromContext(ctx).Warn(theResult.Message)
+		logutil.Logger(ctx).Warn(theResult.Message)
 	}
 	return theResult, nil
 }
@@ -664,14 +678,14 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 }
 
 // checkpointIsValid checks whether we can start this import with this checkpoint.
-func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
+func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*importdef.DBInfo) ([]string, error) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := ci.checkpointsDB.Get(ctx, uniqueName)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// there is no checkpoint
-			log.FromContext(ctx).Debug("no checkpoint detected", zap.String("table", uniqueName))
+			logutil.Logger(ctx).Debug("no checkpoint detected", zap.String("table", uniqueName))
 			return nil, nil
 		}
 		return nil, errors.Trace(err)
@@ -733,12 +747,12 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 		}
 	}
 	if len(columns) == 0 {
-		log.FromContext(ctx).Debug("no valid checkpoint detected", zap.String("table", uniqueName))
+		logutil.Logger(ctx).Debug("no valid checkpoint detected", zap.String("table", uniqueName))
 		return nil, nil
 	}
 	info := dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if info != nil {
-		permFromTiDB, err := parseColumnPermutations(info.Core, columns, nil, log.FromContext(ctx))
+		permFromTiDB, err := parseColumnPermutations(info.Core, columns, nil, log.Wrap(logutil.Logger(ctx)))
 		if err != nil {
 			msgs = append(msgs, fmt.Sprintf("failed to calculate columns %s, table %s's info has changed,"+
 				"consider remove this checkpoint, and start import again.", err.Error(), uniqueName))
@@ -925,9 +939,9 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*precheck.CheckResult, er
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
+func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*importdef.DBInfo) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
-		log.FromContext(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
+		logutil.Logger(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil
 	}
 
@@ -962,7 +976,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 
 	colCountFromTiDB := len(info.Core.Columns)
 	if len(fullExtendColsSet) > 0 {
-		log.FromContext(ctx).Info("check extend column count through data files", zap.String("db", tableInfo.DB),
+		logutil.Logger(ctx).Info("check extend column count through data files", zap.String("db", tableInfo.DB),
 			zap.String("table", tableInfo.Name))
 		igColCnt := 0
 		for _, col := range info.Core.Columns {
@@ -1019,7 +1033,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 
 	// only check the first file of this table.
 	dataFile := tableInfo.DataFiles[0]
-	log.FromContext(ctx).Info("datafile to check", zap.String("db", tableInfo.DB),
+	logutil.Logger(ctx).Info("datafile to check", zap.String("db", tableInfo.DB),
 		zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
 	// get columns name from data file.
 	dataFileMeta := dataFile.FileMeta
@@ -1037,7 +1051,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 		row = rows[0]
 	}
 	if colsFromDataFile == nil && len(row) == 0 {
-		log.FromContext(ctx).Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
+		logutil.Logger(ctx).Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
 		return msgs, nil
 	}
 
@@ -1046,8 +1060,8 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 		// so the last several columns either can be ignored or has a default value.
 		for i := len(row); i < colCountFromTiDB; i++ {
 			if _, ok := defaultCols[core.Columns[i].Name.L]; !ok {
-				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns,"+
-					"and data file has %d columns, but column %s are missing the default value,"+
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns, "+
+					"and data file has %d columns, but column %s is missing the default value, "+
 					"please give column a default value to skip this check",
 					tableInfo.DB, tableInfo.Name, colCountFromTiDB, len(row), core.Columns[i].Name.L))
 			}
@@ -1067,7 +1081,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 			// tidb's column is ignored
 			// we need ensure this column has the default value.
 			if _, hasDefault := defaultCols[col.Name.L]; !hasDefault {
-				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored,"+
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored, "+
 					"because it doesn't have a default value, please set tables.ignoreColumns properly",
 					tableInfo.DB, tableInfo.Name, col.Name.L))
 			}
@@ -1229,7 +1243,7 @@ outer:
 			return theResult, nil
 		}
 
-		for i := 0; i < len(rows[0]); i++ {
+		for i := range rows[0] {
 			if rows[0][i].GetString() != rows[1][i].GetString() {
 				return theResult, nil
 			}
@@ -1285,7 +1299,7 @@ outer:
 	if hasUniqueField && len(rows) > 1 {
 		theResult.Severity = precheck.Critical
 	} else {
-		ok, err := checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx))
+		ok, err := checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.Wrap(logutil.Logger(ctx)))
 		if err != nil {
 			return nil, err
 		}
@@ -1375,7 +1389,7 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 	ch := make(chan tableNameComponents, concurrency)
 	eg, gCtx := errgroup.WithContext(ctx)
 
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		eg.Go(func() error {
 			for tblNameComp := range ch {
 				fullTableName := common.UniqueTable(tblNameComp.DBName, tblNameComp.TableName)

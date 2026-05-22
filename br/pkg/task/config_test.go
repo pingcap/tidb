@@ -27,15 +27,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -61,6 +62,10 @@ func (m mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOpti
 	return []*metapb.Store{}, nil
 }
 
+func (m mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
+}
+
 func TestConfigureRestoreClient(t *testing.T) {
 	cfg := Config{
 		Concurrency: 1024,
@@ -69,15 +74,17 @@ func TestConfigureRestoreClient(t *testing.T) {
 		Online: true,
 	}
 	restoreCfg := &RestoreConfig{
-		Config:              cfg,
-		RestoreCommonConfig: restoreComCfg,
-		DdlBatchSize:        127,
+		Config:                cfg,
+		RestoreCommonConfig:   restoreComCfg,
+		DdlBatchSize:          128,
+		RegionScanConcurrency: 3,
 	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
+	require.Equal(t, uint(3), client.GetRegionScanConcurrency())
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
@@ -86,8 +93,7 @@ func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
 	restoreCfg.adjustRestoreConfigForStreamRestore()
 	require.Equal(t, restoreCfg.PitrBatchCount, uint32(defaultPiTRBatchCount))
 	require.Equal(t, restoreCfg.PitrBatchSize, uint32(defaultPiTRBatchSize))
-	require.Equal(t, restoreCfg.PitrConcurrency, uint32(defaultPiTRConcurrency))
-	require.Equal(t, restoreCfg.Concurrency, restoreCfg.PitrConcurrency)
+	require.Equal(t, restoreCfg.PitrConcurrency, uint32(defaultPiTRConcurrency)+1)
 }
 
 func TestCheckRestoreDBAndTable(t *testing.T) {
@@ -194,25 +200,25 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 		for _, db := range ca.backupDBs {
 			backupDBs = append(backupDBs, db)
 		}
-		err := CheckRestoreDBAndTable(backupDBs, cfg)
+		err := VerifyDBAndTableInBackup(backupDBs, cfg)
 		require.NoError(t, err)
 	}
 }
 
 func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*metautil.Database {
 	testDir := t.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
 	mockSchemas := make([]*backuppb.Schema, 0)
 	var dbID int64 = 1
 	for db, tables := range db2Tables {
-		dbName := pmodel.NewCIStr(db)
+		dbName := ast.NewCIStr(db)
 		mockTblList := make([]*model.TableInfo, 0)
 		tblBytesList, statsBytesList := make([][]byte, 0), make([][]byte, 0)
 
 		for i, table := range tables {
-			tblName := pmodel.NewCIStr(table)
+			tblName := ast.NewCIStr(table)
 			mockTbl := &model.TableInfo{
 				ID:   dbID*100 + int64(i),
 				Name: tblName,
@@ -242,7 +248,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 		dbBytes, err := json.Marshal(mockDB)
 		require.NoError(t, err)
 
-		for i := 0; i < len(tblBytesList); i++ {
+		for i := range tblBytesList {
 			mockSchemas = append(mockSchemas, &backuppb.Schema{
 				Db:    dbBytes,
 				Table: tblBytesList[i],

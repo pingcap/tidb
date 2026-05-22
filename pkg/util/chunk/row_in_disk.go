@@ -362,7 +362,7 @@ func (format *diskFormatRow) toRow(fields []*types.FieldType, chk *Chunk) (Row, 
 		if size == -1 { // isNull
 			col.AppendNull()
 		} else {
-			if col.isFixed() {
+			if col.IsFixed() {
 				col.elemBuf = format.cells[cellOff]
 				col.finishAppendFixed()
 			} else {
@@ -409,11 +409,7 @@ func (r *ReaderWithCache) ReadAt(p []byte, off int64) (readCnt int, err error) {
 	// When got here, user input is not filled fully, so we need read data from cache.
 	err = nil
 	p = p[readCnt:]
-	beg := off - r.cacheOff
-	if beg < 0 {
-		// This happens when only partial data of user requested resides in r.cache.
-		beg = 0
-	}
+	beg := max(off-r.cacheOff, 0)
 	end := int(beg) + len(p)
 	if end > len(r.cache) {
 		err = io.EOF

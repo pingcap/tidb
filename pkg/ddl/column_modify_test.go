@@ -23,12 +23,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -160,7 +161,7 @@ AddLoop:
 	defer tk.MustExec("drop table test_on_update_c;")
 	tk.MustExec("alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_on_update_c"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_on_update_c"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colC := tblInfo.Columns[2]
@@ -170,7 +171,7 @@ AddLoop:
 	tk.MustExec("create table test_on_update_d (c1 int, c2 datetime);")
 	tk.MustExec("alter table test_on_update_d add column c3 datetime on update current_timestamp;")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_on_update_d"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_on_update_d"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
@@ -202,7 +203,7 @@ AddLoop:
 
 	num = 100
 	// add some rows
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec("insert into t2 values (?, ?, ?, ?)", i, i, i, i)
 	}
 
@@ -275,10 +276,10 @@ func TestDropColumn(t *testing.T) {
 	ddlDone := make(chan error, num)
 
 	testddlutil.ExecMultiSQLInGoroutine(store, "test", multiDDL, ddlDone)
-	for i := 0; i < num; i++ {
+	for range num {
 		testddlutil.ExecMultiSQLInGoroutine(store, "test", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
-	for i := 0; i < num; i++ {
+	for range num {
 		err := <-ddlDone
 		require.NoError(t, err)
 	}
@@ -305,7 +306,7 @@ func TestChangeColumn(t *testing.T) {
 	// for no default flag
 	tk.MustExec("alter table t3 change d dd bigint not null")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colD := tblInfo.Columns[2]
@@ -313,7 +314,7 @@ func TestChangeColumn(t *testing.T) {
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
 	tk.MustExec("alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colB := tblInfo.Columns[1]
@@ -325,7 +326,7 @@ func TestChangeColumn(t *testing.T) {
 	tk.MustExec("alter table t3 add column c timestamp not null")
 	tk.MustExec("alter table t3 change c c timestamp null default '2017-02-11' comment 'col c comment' on update current_timestamp")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[3]
@@ -339,7 +340,7 @@ func TestChangeColumn(t *testing.T) {
 	tk.MustExec("create table t (k char(10), v int, INDEX(k(7)));")
 	tk.MustExec("alter table t change column k k tinytext")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// for failing tests
@@ -381,7 +382,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
 	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_gv_ddl"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
 		generatedExprString string
@@ -405,7 +406,7 @@ func TestVirtualColumnDDL(t *testing.T) {
 	// for local temporary table
 	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_local_gv_ddl"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_local_gv_ddl"))
 	require.NoError(t, err)
 	for i, column := range tbl.Meta().Columns {
 		require.Equal(t, testCases[i].generatedExprString, column.GeneratedExprString)
@@ -545,7 +546,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	})
 
 	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
-	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
+	tk.MustExec("alter table test.t change column c2 cC2 varchar(256) after `_col$_c2`")
 	require.NoError(t, checkErr)
 
 	tbl := external.GetTableByName(t, tk, "test", "t")
@@ -622,10 +623,16 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
-	tk.MustExec("create table t (a int primary key, b bigint);")
+	if kerneltype.IsNextGen() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeInitReorgMeta", func(m *model.DDLReorgMeta) {
+			m.Concurrency.Store(1)
+		})
+	} else {
+		tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
+	}
+	tk.MustExec("create table t (a int primary key, b varchar(16));")
 	rowCnt := 10
-	for i := 0; i < rowCnt; i++ {
+	for i := range rowCnt {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i*10000, i*10000))
 	}
 	splitTableSQL := fmt.Sprintf("split table t between (0) and (%d*10000) regions %d;", rowCnt, rowCnt)
@@ -647,4 +654,23 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk.MustExec("alter table t modify column b int;")
 	require.Len(t, rangeCnts, 2)                // It should have two rounds for loading table ranges.
 	require.Less(t, rangeCnts[1], rangeCnts[0]) // Verify if the checkpoint is progressing.
+}
+
+func TestIssue37611(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a char(5), b char(6) as (concat(a, a)), index idx(b));")
+	tk.MustExec("set @@sql_mode='';")
+	tk.MustExec("insert into t (a) values ('aaa');")
+	tk.MustExec("insert into t (a) values ('aaaa');")
+	tk.MustGetErrCode("alter table t modify b char(10) as (concat(a, a));", errno.ErrUnsupportedOnGeneratedColumn)
+	tk.MustExec("set @@sql_mode=default;")
+	tk.MustQuery("select * from t ignore index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
+	tk.MustQuery("select * from t force index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
+	tk.MustGetErrCode("alter table t change column b c char(10) as (concat(a, a));", errno.ErrUnsupportedOnGeneratedColumn)
+
+	tk.MustExec("create table t2(a char(5), b char(6) as (concat(a, a)) stored, index idx(b));")
+	tk.MustGetErrCode("alter table t2 modify b char(10) as (concat(a, a)) stored;", errno.ErrUnsupportedOnGeneratedColumn)
 }

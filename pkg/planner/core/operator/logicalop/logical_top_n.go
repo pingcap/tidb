@@ -23,8 +23,6 @@ import (
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -52,7 +50,7 @@ func (lt LogicalTopN) Init(ctx base.PlanContext, offset int) *LogicalTopN {
 func (lt *LogicalTopN) ExplainInfo() string {
 	ectx := lt.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString("")
-	buffer = util.ExplainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
+	buffer = property.ExplainPartitionBy(ectx, buffer, lt.GetPartitionBy(), false)
 	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
 		buffer.WriteString("order by ")
 	}
@@ -63,8 +61,8 @@ func (lt *LogicalTopN) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, byItem := range lt.ByItems {
-		ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
+	for i, byItem := range lt.ByItems {
+		lt.ByItems[i].Expr = ruleutil.ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
@@ -79,19 +77,26 @@ func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column)
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
-func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	child := lt.Children()[0]
 	var cols []*expression.Column
 
-	lt.InlineProjection(parentUsedCols, opt)
+	snapParentUsedCols := make([]*expression.Column, 0, len(parentUsedCols))
+	snapParentUsedCols = append(snapParentUsedCols, parentUsedCols...)
 
-	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
+	lt.ByItems, cols = pruneByItems(lt, lt.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
-	lt.Children()[0], err = child.PruneColumns(parentUsedCols, opt)
+	lt.Children()[0], err = child.PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
+	// Refresh the schema from the pruned child before inline projection.
+	// TopN may carry stale hidden sort columns or duplicate column slots after child pruning,
+	// and inline projection only needs the parent-visible outputs here.
+	lt.SetSchema(nil)
+	lt.InlineProjection(snapParentUsedCols)
+
 	return lt, nil
 }
 
@@ -118,28 +123,37 @@ func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
-	if lt.StatsInfo() != nil {
-		return lt.StatsInfo(), nil
+func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
 	}
-	lt.SetStats(util.DeriveLimitStats(childStats[0], float64(lt.Count)))
-	return lt.StatsInfo(), nil
+	if !reload && lt.StatsInfo() != nil {
+		return lt.StatsInfo(), false, nil
+	}
+	lt.SetStats(property.DeriveLimitStats(childStats[0], float64(lt.Count)))
+	return lt.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, infos ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiFlash := false
+	if len(infos) > 0 && infos[0] != nil {
+		hasTiFlash = infos[0].HasTiFlash
+	}
+	lt.hasTiFlash = hasTiFlash
 	propCols := getPossiblePropertyFromByItems(lt.ByItems)
 	if len(propCols) == 0 {
-		return nil
+		return &base.PossiblePropertiesInfo{
+			HasTiFlash: lt.hasTiFlash,
+		}
 	}
-	return [][]*expression.Column{propCols}
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (lt *LogicalTopN) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalTopN(lt, prop)
+	return &base.PossiblePropertiesInfo{
+		Orders:     [][]*expression.Column{propCols},
+		HasTiFlash: lt.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -183,7 +197,7 @@ func (lt *LogicalTopN) IsLimit() bool {
 
 // AttachChild set p as topn's child, for difference with LogicalPlan.SetChild().
 // AttachChild will tracer the children change while SetChild doesn't.
-func (lt *LogicalTopN) AttachChild(p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (lt *LogicalTopN) AttachChild(p base.LogicalPlan) base.LogicalPlan {
 	// Remove this TopN if its child is a TableDual.
 	dual, isDual := p.(*LogicalTableDual)
 	if isDual {
@@ -204,21 +218,9 @@ func (lt *LogicalTopN) AttachChild(p base.LogicalPlan, opt *optimizetrace.Logica
 			PartitionBy:      lt.GetPartitionBy(),
 		}.Init(lt.SCtx(), lt.QueryBlockOffset())
 		limit.SetChildren(p)
-		appendTopNPushDownTraceStep(limit, p, opt)
 		return limit
 	}
 	// Then lt must be topN.
 	lt.SetChildren(p)
-	appendTopNPushDownTraceStep(lt, p, opt)
 	return lt
-}
-
-func appendTopNPushDownTraceStep(parent base.LogicalPlan, child base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
-	action := func() string {
-		return fmt.Sprintf("%v_%v is added as %v_%v's parent", parent.TP(), parent.ID(), child.TP(), child.ID())
-	}
-	reason := func() string {
-		return fmt.Sprintf("%v is pushed down", parent.TP())
-	}
-	opt.AppendStepToCurrent(parent.ID(), parent.TP(), reason, action)
 }

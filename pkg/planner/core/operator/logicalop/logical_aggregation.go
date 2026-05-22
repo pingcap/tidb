@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -28,9 +29,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -40,16 +38,17 @@ import (
 type LogicalAggregation struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true"`
-	GroupByItems []expression.Expression    `hash64-equals:"true"`
+	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true" shallow-ref:"true"`
+	GroupByItems []expression.Expression    `hash64-equals:"true" shallow-ref:"true"`
 
 	// PreferAggType And PreferAggToCop stores aggregation hint information.
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column `hash64-equals:"true"`
-	InputCount         float64                // InputCount is the input count of this plan.
+	PossibleProperties base.PossiblePropertiesInfo `hash64-equals:"true" shallow-ref:"true"`
+	InputCount         float64                     // InputCount is the input count of this plan.
 
+	// Deprecated: NoCopPushDown is substituted by prop.NoCopPushDown.
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
 	NoCopPushDown bool
@@ -85,15 +84,15 @@ func (la *LogicalAggregation) ExplainInfo() string {
 // ReplaceExprColumns implements base.Plan.<5th> interface.
 func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
-		for _, aggExpr := range agg.Args {
-			ruleutil.ResolveExprAndReplace(aggExpr, replace)
+		for i, aggExpr := range agg.Args {
+			agg.Args[i] = ruleutil.ResolveExprAndReplace(aggExpr, replace)
 		}
-		for _, orderExpr := range agg.OrderByItems {
-			ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
+		for i, orderExpr := range agg.OrderByItems {
+			agg.OrderByItems[i].Expr = ruleutil.ResolveExprAndReplace(orderExpr.Expr, replace)
 		}
 	}
-	for _, gbyItem := range la.GroupByItems {
-		ruleutil.ResolveExprAndReplace(gbyItem, replace)
+	for i, gbyItem := range la.GroupByItems {
+		la.GroupByItems[i] = ruleutil.ResolveExprAndReplace(gbyItem, replace)
 	}
 }
 
@@ -104,14 +103,14 @@ func (la *LogicalAggregation) ReplaceExprColumns(replace map[string]*expression.
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan) {
+func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	condsToPush, ret := la.splitCondForAggregation(predicates)
-	la.BaseLogicalPlan.PredicatePushDown(condsToPush, opt)
-	return ret, la
+	_, _, err := la.BaseLogicalPlan.PredicatePushDown(condsToPush)
+	return ret, la, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	child := la.Children()[0]
 	used := expression.GetUsedList(la.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, la.Schema())
 	prunedColumns := make([]*expression.Column, 0)
@@ -127,21 +126,17 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		if !used[i] && !expression.ExprsHasSideEffects(la.AggFuncs[i].Args) {
 			prunedColumns = append(prunedColumns, la.Schema().Columns[i])
 			prunedFunctions = append(prunedFunctions, la.AggFuncs[i])
-			la.Schema().Columns = append(la.Schema().Columns[:i], la.Schema().Columns[i+1:]...)
-			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
+			la.Schema().Columns = slices.Delete(la.Schema().Columns, i, i+1)
+			la.AggFuncs = slices.Delete(la.AggFuncs, i, i+1)
 		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allRemainFirstRow = false
 		}
 	}
-	logicaltrace.AppendColumnPruneTraceStep(la, prunedColumns, opt)
-	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
-	//nolint: prealloc
-	var selfUsedCols []*expression.Column
+	selfUsedCols := make([]*expression.Column, 0, 5)
 	for _, aggrFunc := range la.AggFuncs {
-		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
-
+		selfUsedCols = append(selfUsedCols, expression.ExtractColumnsFromExpressions(aggrFunc.Args, nil)...)
 		var cols []*expression.Column
-		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
+		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
 	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
@@ -172,7 +167,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			cols := expression.ExtractColumns(la.GroupByItems[i])
 			if len(cols) == 0 && !expression.ExprHasSetVarOrSleep(la.GroupByItems[i]) {
 				prunedGroupByItems = append(prunedGroupByItems, la.GroupByItems[i])
-				la.GroupByItems = append(la.GroupByItems[:i], la.GroupByItems[i+1:]...)
+				la.GroupByItems = slices.Delete(la.GroupByItems, i, i+1)
 			} else {
 				selfUsedCols = append(selfUsedCols, cols...)
 			}
@@ -183,9 +178,8 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
-	logicaltrace.AppendGroupByItemsPruneTraceStep(la, prunedGroupByItems, opt)
 	var err error
-	la.Children()[0], err = child.PruneColumns(selfUsedCols, opt)
+	la.Children()[0], err = child.PruneColumns(selfUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -222,19 +216,23 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
+func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
 	childProfile := childStats[0]
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
 	}
-	if la.StatsInfo() != nil {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && la.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
 		la.StatsInfo().GroupNDVs = la.getGroupNDVs(childProfile, gbyCols)
-		return la.StatsInfo(), nil
+		return la.StatsInfo(), false, nil
 	}
-	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), gbyCols, childSchema[0], childProfile)
 	la.SetStats(&property.StatsInfo{
 		RowCount: ndv,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
@@ -245,7 +243,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 	}
 	la.InputCount = childProfile.RowCount
 	la.StatsInfo().GroupNDVs = la.getGroupNDVs(childProfile, gbyCols)
-	return la.StatsInfo(), nil
+	return la.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -267,30 +265,38 @@ func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	childProps := childrenProperties[0]
+	la.hasTiFlash = childProps != nil && childProps.HasTiFlash
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
-		la.PossibleProperties = [][]*expression.Column{nil}
-		return nil
+		la.PossibleProperties = base.PossiblePropertiesInfo{
+			Orders:     [][]*expression.Column{nil},
+			HasTiFlash: la.hasTiFlash,
+		}
+		return &la.PossibleProperties
 	}
-	resultProperties := make([][]*expression.Column, 0, len(childProps))
+	if childProps == nil {
+		la.PossibleProperties = base.PossiblePropertiesInfo{
+			HasTiFlash: la.hasTiFlash,
+		}
+		return &la.PossibleProperties
+	}
+	resultProperties := make([][]*expression.Column, 0, len(childProps.Orders))
 	groupByCols := la.GetGroupByCols()
-	for _, possibleChildProperty := range childProps {
+	for _, possibleChildProperty := range childProps.Orders {
 		sortColOffsets := util.GetMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
 			prop := possibleChildProperty[:len(groupByCols)]
 			resultProperties = append(resultProperties, prop)
 		}
 	}
-	la.PossibleProperties = resultProperties
-	return resultProperties
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalAggregation(la, prop)
+	la.PossibleProperties = base.PossiblePropertiesInfo{
+		Orders:     resultProperties,
+		HasTiFlash: la.hasTiFlash,
+	}
+	return &la.PossibleProperties
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -571,16 +577,14 @@ func (la *LogicalAggregation) DistinctArgsMeetsProperty() bool {
 // For example,
 // (a > 1 or avg(b) > 1) and (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: a < 3, ret: a > 1 or avg(b) > 1
-func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
+func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
 	subCNFItem := expression.SplitCNFItems(cond)
 	if len(subCNFItem) == 1 {
-		return la.pushDownPredicatesForAggregation(subCNFItem[0], groupByColumns, exprsOriginal)
+		return la.pushDownPredicates(subCNFItem[0], groupByColumns, exprsOriginal, pushDownFunc)
 	}
 	exprCtx := la.SCtx().GetExprCtx()
 	for _, item := range subCNFItem {
-		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
+		condsToPushForItem, retForItem := la.pushDownDNFPredicates(item, groupByColumns, exprsOriginal, pushDownFunc)
 		if len(condsToPushForItem) > 0 {
 			condsToPush = append(condsToPush, expression.ComposeDNFCondition(exprCtx, condsToPushForItem...))
 		}
@@ -591,22 +595,21 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 	return condsToPush, ret
 }
 
-// pushDownDNFPredicatesForAggregation split a DNF condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
+// pushDownDNFPredicates split a DNF condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
 // It would consider the DNF.
 // For example,
 // (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
-func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	//nolint: prealloc
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
+func (la *LogicalAggregation) pushDownDNFPredicates(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (_, _ []expression.Expression) {
 	subDNFItem := expression.SplitDNFItems(cond)
 	if len(subDNFItem) == 1 {
-		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal)
+		return la.pushDownPredicates(subDNFItem[0], groupByColumns, exprsOriginal, pushDownFunc)
 	}
+	condsToPush := make([]expression.Expression, 0, len(subDNFItem))
+	var ret []expression.Expression
 	exprCtx := la.SCtx().GetExprCtx()
 	for _, item := range subDNFItem {
-		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
+		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal, pushDownFunc)
 		if len(condsToPushForItem) <= 0 {
 			return nil, []expression.Expression{cond}
 		}
@@ -625,32 +628,113 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 }
 
 // splitCondForAggregation splits the condition into those who can be pushed and others.
-func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
+func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Expression) (condsToPush, ret []expression.Expression) {
+	exprCtx := la.SCtx().GetExprCtx()
 	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
-	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
+	aggFirstRowColumns := expression.NewSchema(la.getAggFuncsColsForFirstRow()...)
+	aggConstResultColumns, aggConstResultExprs := la.getAggFuncsColsForConstResult()
+	var aggConstResultSchema *expression.Schema
+	if len(aggConstResultColumns) > 0 {
+		aggConstResultSchema = expression.NewSchema(aggConstResultColumns...)
+	}
 	for _, cond := range predicates {
-		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal)
-		if len(subCondsToPush) > 0 {
-			condsToPush = append(condsToPush, subCondsToPush...)
-		}
-		if len(subRet) > 0 {
-			ret = append(ret, subRet...)
+		for _, cnfItem := range expression.SplitCNFItems(cond) {
+			if aggConstResultSchema != nil {
+				cnfItem = expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, cnfItem, aggConstResultSchema, aggConstResultExprs))
+			}
+			subCondsToPush, subRet := la.pushDownDNFPredicates(cnfItem, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
+			if len(subCondsToPush) > 0 {
+				condsToPush = append(condsToPush, subCondsToPush...)
+			}
+			if len(subRet) > 0 {
+				// If we cannot find columns that can be pushed down in the GROUP BY clause,
+				// we will then look for columns that can be pushed down in the aggregate functions.
+				// Currently, only the first row is supported.
+				for _, s := range subRet {
+					subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggFirstRowColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
+					if len(subCondsToPush1) > 0 {
+						condsToPush = append(condsToPush, subCondsToPush1...)
+					}
+					ret = append(ret, subRet1...)
+				}
+			}
 		}
 	}
 	return condsToPush, ret
 }
 
-// pushDownPredicatesForAggregation split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
-	switch cond.(type) {
+func (la *LogicalAggregation) hasOnlyConstGroupByItems() bool {
+	if len(la.GroupByItems) == 0 {
+		return true
+	}
+	for _, item := range la.GroupByItems {
+		if item.ConstLevel() < expression.ConstOnlyInContext {
+			return false
+		}
+	}
+	return true
+}
+
+// getAggFuncsColsForConstResult gets aggregate output columns whose values always match their
+// single row-independent argument for every non-empty group.
+func (la *LogicalAggregation) getAggFuncsColsForConstResult() (aggFuncsCols []*expression.Column, aggFuncsExprs []expression.Expression) {
+	if len(la.GroupByItems) == 0 {
+		return nil, nil
+	}
+	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
+	aggFuncsExprs = make([]expression.Expression, 0, len(la.AggFuncs))
+	for idx, col := range la.Schema().Columns {
+		if idx >= len(la.AggFuncs) {
+			break
+		}
+		aggFunc := la.AggFuncs[idx]
+		if aggFuncResultMatchesArgForNonEmptyGroup(aggFunc) {
+			aggFuncsCols = append(aggFuncsCols, col)
+			aggFuncsExprs = append(aggFuncsExprs, aggFunc.Args[0])
+		}
+	}
+	return aggFuncsCols, aggFuncsExprs
+}
+
+func aggFuncResultMatchesArgForNonEmptyGroup(aggFunc *aggregation.AggFuncDesc) bool {
+	if aggFunc.HasDistinct || len(aggFunc.Args) != 1 || len(aggFunc.OrderByItems) > 0 {
+		return false
+	}
+	switch aggFunc.Name {
+	case ast.AggFuncMax, ast.AggFuncMin:
+	default:
+		return false
+	}
+	return aggFunc.Args[0].ConstLevel() >= expression.ConstOnlyInContext
+}
+
+// getAggFuncsColsForFirstRow gets the columns that are used by first_row agg functions.
+func (la *LogicalAggregation) getAggFuncsColsForFirstRow() (aggFuncsCols []*expression.Column) {
+	// Constant-group aggregations (for example GROUP BY NULL) choose an arbitrary input row for
+	// firstrow() outputs, so pushing HAVING predicates on those outputs back to base rows is unsound.
+	if la.hasOnlyConstGroupByItems() {
+		return nil
+	}
+	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
+	for idx, col := range la.Schema().Columns {
+		aggFunc := la.AggFuncs[idx]
+		if aggFunc.Name == ast.AggFuncFirstRow {
+			cols := expression.ExtractColumns(aggFunc.Args[0])
+			if len(cols) == 1 {
+				aggFuncsCols = append(aggFuncsCols, col)
+			}
+		}
+	}
+	return aggFuncsCols
+}
+
+// pushDownPredicates split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
+func (*LogicalAggregation) pushDownPredicates(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
+	switch c := cond.(type) {
 	case *expression.Constant:
 		condsToPush = append(condsToPush, cond)
 		// Consider SQL list "select sum(b) from t group by a having 1=0". "1=0" is a constant predicate which should be
@@ -658,21 +742,52 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 		// with value 0 rather than an empty query result.
 		ret = append(ret, cond)
 	case *expression.ScalarFunction:
-		extractedCols := expression.ExtractColumns(cond)
-		ok := true
-		for _, col := range extractedCols {
-			if !groupByColumns.Contains(col) {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
-			condsToPush = append(condsToPush, newFunc)
-		} else {
-			ret = append(ret, cond)
-		}
+		return pushDownFunc(c, groupByColumns, exprsOriginal)
 	default:
+		ret = append(ret, cond)
+	}
+	return condsToPush, ret
+}
+
+type pushDownPredicatesFunc func(cond *expression.ScalarFunction, cols *expression.Schema, exprsOriginal []expression.Expression) (_, _ []expression.Expression)
+
+func (la *LogicalAggregation) pushDownPredicatesByGroupby(cond *expression.ScalarFunction, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
+	extractedCols := expression.ExtractColumns(cond)
+	ok := true
+	for _, col := range extractedCols {
+		if !groupByColumns.Contains(col) {
+			ok = false
+			break
+		}
+	}
+	if ok {
+		newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
+		condsToPush = append(condsToPush, newFunc)
+	} else {
+		ret = append(ret, cond)
+	}
+	return
+}
+
+// pushDownPredicatesByAggFuncs is only used for firstrow
+func (la *LogicalAggregation) pushDownPredicatesByAggFuncs(cond *expression.ScalarFunction, aggFirstRowColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
+	extractedCols := expression.ExtractColumnsMapFromExpressions(nil, cond)
+	if len(extractedCols) != 1 || len(aggFirstRowColumns.Columns) == 0 {
+		ret = append(ret, cond)
+		return condsToPush, ret
+	}
+	var schemaCol *expression.Column
+	// `aggFirstRowColumns` are the output columns of the first row function.
+	// We compare the columns in the push-down predicates with the output columns of the first row.
+	// The columns that match are the ones that can be pushed down.
+	// The length of extractedCols is 1, so this loop will only run once.
+	for _, col := range extractedCols {
+		schemaCol = aggFirstRowColumns.RetrieveColumn(col)
+	}
+	if schemaCol != nil {
+		newFunc := expression.ColumnSubstitute(la.SCtx().GetExprCtx(), cond, la.Schema(), exprsOriginal)
+		condsToPush = append(condsToPush, newFunc)
+	} else {
 		ret = append(ret, cond)
 	}
 	return condsToPush, ret
@@ -703,7 +818,7 @@ func (la *LogicalAggregation) CanPullUp() bool {
 	}
 	for _, f := range la.AggFuncs {
 		for _, arg := range f.Args {
-			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
+			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg, true)
 			if err != nil {
 				return false
 			}

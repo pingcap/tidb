@@ -16,21 +16,102 @@ package execdetails
 
 import (
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
+
+func defaultRUV2WeightsForTest() RUV2Weights {
+	cfg := config.DefaultRUV2Config()
+	return RUV2Weights{
+		RUScale:                 cfg.RUScale,
+		ResultChunkCells:        cfg.ResultChunkCells,
+		ExecutorL1:              cfg.ExecutorL1,
+		ExecutorL2:              cfg.ExecutorL2,
+		ExecutorL3:              cfg.ExecutorL3,
+		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
+		PlanCnt:                 cfg.PlanCnt,
+		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
+		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
+		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		SessionParserTotal:      cfg.SessionParserTotal,
+		TxnCnt:                  cfg.TxnCnt,
+	}
+}
 
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
 		CopTime:      time.Second + 3*time.Millisecond,
-		BackoffTime:  time.Second,
 		RequestCount: 1,
+		LockKeysDetail: &util.LockKeysDetails{
+			TotalTime:   time.Second,
+			RegionNum:   2,
+			LockKeys:    10,
+			BackoffTime: int64(time.Second * 3),
+			Mu: struct {
+				sync.Mutex
+				BackoffTypes        []string
+				SlowestReqTotalTime time.Duration
+				SlowestRegion       uint64
+				SlowestStoreAddr    string
+				SlowestExecDetails  util.TiKVExecDetails
+			}{
+				BackoffTypes: []string{
+					"backoff4",
+					"backoff5",
+					"backoff5",
+				},
+				SlowestReqTotalTime: time.Second,
+				SlowestRegion:       1000,
+				SlowestStoreAddr:    "tikv-1:20160",
+				SlowestExecDetails: util.TiKVExecDetails{
+					TimeDetail: &util.TimeDetail{
+						TotalRPCWallTime: 500 * time.Millisecond,
+					},
+					ScanDetail: &util.ScanDetail{
+						ProcessedKeys:             10,
+						TotalKeys:                 100,
+						RocksdbDeleteSkippedCount: 1,
+						RocksdbKeySkippedCount:    1,
+						RocksdbBlockCacheHitCount: 1,
+						RocksdbBlockReadCount:     1,
+						RocksdbBlockReadByte:      100,
+						RocksdbBlockReadDuration:  20 * time.Millisecond,
+					},
+					WriteDetail: &util.WriteDetail{
+						StoreBatchWaitDuration:        10 * time.Microsecond,
+						ProposeSendWaitDuration:       20 * time.Microsecond,
+						PersistLogDuration:            30 * time.Microsecond,
+						RaftDbWriteLeaderWaitDuration: 40 * time.Microsecond,
+						RaftDbSyncLogDuration:         45 * time.Microsecond,
+						RaftDbWriteMemtableDuration:   50 * time.Microsecond,
+						CommitLogDuration:             60 * time.Microsecond,
+						ApplyBatchWaitDuration:        70 * time.Microsecond,
+						ApplyLogDuration:              80 * time.Microsecond,
+						ApplyMutexLockDuration:        90 * time.Microsecond,
+						ApplyWriteLeaderWaitDuration:  100 * time.Microsecond,
+						ApplyWriteWalDuration:         101 * time.Microsecond,
+						ApplyWriteMemtableDuration:    102 * time.Microsecond,
+					},
+				}},
+			LockRPCTime:  int64(time.Second * 5),
+			LockRPCCount: 50,
+			RetryCount:   2,
+			ResolveLock: util.ResolveLockDetail{
+				ResolveLockTime: int64(time.Second * 2),
+			},
+		},
 		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime: time.Second,
 			GetLatestTsTime: time.Second,
@@ -134,22 +215,24 @@ func TestString(t *testing.T) {
 				ResolveLockTime: 1000000000, // 10^9 ns = 1s
 			},
 		},
-		ScanDetail: &util.ScanDetail{
-			ProcessedKeys:             10,
-			TotalKeys:                 100,
-			RocksdbDeleteSkippedCount: 1,
-			RocksdbKeySkippedCount:    1,
-			RocksdbBlockCacheHitCount: 1,
-			RocksdbBlockReadCount:     1,
-			RocksdbBlockReadByte:      100,
-			RocksdbBlockReadDuration:  time.Millisecond,
-		},
-		DetailsNeedP90: DetailsNeedP90{TimeDetail: util.TimeDetail{
-			ProcessTime: 2*time.Second + 5*time.Millisecond,
-			WaitTime:    time.Second,
-		}},
+		CopExecDetails: CopExecDetails{
+			BackoffTime: time.Second,
+			ScanDetail: &util.ScanDetail{
+				ProcessedKeys:             10,
+				TotalKeys:                 100,
+				RocksdbDeleteSkippedCount: 1,
+				RocksdbKeySkippedCount:    1,
+				RocksdbBlockCacheHitCount: 1,
+				RocksdbBlockReadCount:     1,
+				RocksdbBlockReadByte:      100,
+				RocksdbBlockReadDuration:  time.Millisecond,
+			},
+			TimeDetail: util.TimeDetail{
+				ProcessTime: 2*time.Second + 5*time.Millisecond,
+				WaitTime:    time.Second,
+			}},
 	}
-	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
+	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 LockKeys_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
 		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +
 		"Prewrite_Backoff_types: [backoff1 backoff2] Commit_Backoff_types: [commit1 commit2] " +
 		"Slowest_prewrite_rpc_detail: {total:1.000s, region_id: 1000, " +
@@ -158,20 +241,50 @@ func TestString(t *testing.T) {
 		"read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, " +
 		"persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
 		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, " +
-		"write_wal: 101µs, write_memtable: 102µs}}} " +
+		"write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 0s}}} " +
 		"Commit_primary_rpc_detail: {total:2.000s, region_id: 2000, " +
 		"store: tikv-2:20160, time_detail: {tikv_wall_time: 1s}, scan_detail: {total_process_keys: 20, total_keys: 200, " +
 		"rocksdb: {delete_skipped_count: 2, key_skipped_count: 2, block: {cache_hit_count: 2, read_count: 2, " +
 		"read_byte: 200 Bytes, read_time: 40ms}}}, write_detail: {store_batch_wait: 110µs, propose_send_wait: 120µs, " +
 		"persist_log: {total: 130µs, write_leader_wait: 140µs, sync_log: 145µs, write_memtable: 150µs}, " +
 		"commit_log: 160µs, apply_batch_wait: 170µs, apply: {total:180µs, mutex_lock: 190µs, write_leader_wait: 200µs, " +
-		"write_wal: 201µs, write_memtable: 202µs}}} " +
+		"write_wal: 201µs, write_memtable: 202µs}, scheduler: {process: 0s}}} " +
 		"Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: " +
 		"1 Prewrite_region: 1 Txn_retry: 1 Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: " +
 		"1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100 Rocksdb_block_read_time: 0.001"
 	require.Equal(t, expected, detail.String())
 	detail = &ExecDetails{}
 	require.Equal(t, "", detail.String())
+
+	t.Run("load tikv exec details snapshot", func(t *testing.T) {
+		tikvExecDetail := &util.ExecDetails{}
+		atomic.StoreInt64(&tikvExecDetail.BackoffCount, 2)
+		atomic.StoreInt64(&tikvExecDetail.BackoffDuration, int64(3*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.WaitKVRespDuration, int64(4*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.WaitPDRespDuration, int64(5*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentKVTotal, 11)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedKVTotal, 12)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentKVCrossZone, 13)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedKVCrossZone, 14)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentMPPTotal, 15)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedMPPTotal, 16)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentMPPCrossZone, 17)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedMPPCrossZone, 18)
+
+		snapshot := LoadTiKVExecDetails(tikvExecDetail)
+		require.Equal(t, int64(2), snapshot.BackoffCount)
+		require.Equal(t, int64(3*time.Second), snapshot.BackoffDuration)
+		require.Equal(t, int64(4*time.Second), snapshot.WaitKVRespDuration)
+		require.Equal(t, int64(5*time.Second), snapshot.WaitPDRespDuration)
+		require.Equal(t, int64(11), snapshot.UnpackedBytesSentKVTotal)
+		require.Equal(t, int64(12), snapshot.UnpackedBytesReceivedKVTotal)
+		require.Equal(t, int64(13), snapshot.UnpackedBytesSentKVCrossZone)
+		require.Equal(t, int64(14), snapshot.UnpackedBytesReceivedKVCrossZone)
+		require.Equal(t, int64(15), snapshot.UnpackedBytesSentMPPTotal)
+		require.Equal(t, int64(16), snapshot.UnpackedBytesReceivedMPPTotal)
+		require.Equal(t, int64(17), snapshot.UnpackedBytesSentMPPCrossZone)
+		require.Equal(t, int64(18), snapshot.UnpackedBytesReceivedMPPCrossZone)
+	})
 }
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
@@ -179,7 +292,7 @@ func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIteration
 		NumIterations: &NumIterations}
 }
 
-func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, dmfileScannedRows, dmfileSkippedRows, totalDmfileRsCheckMs, totalDmfileReadTimeMs, totalBuildSnapshotMs, localRegions, remoteRegions, totalLearnerReadMs, disaggReadCacheHitBytes, disaggReadCacheMissBytes, minTSOWaitTime, pipelineBreakerWaitTime, pipelineQueueTime uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
+func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, dmfileScannedRows, dmfileSkippedRows, totalDmfileRsCheckMs, totalDmfileReadTimeMs, totalBuildSnapshotMs, localRegions, remoteRegions, totalLearnerReadMs, disaggReadCacheHitBytes, disaggReadCacheMissBytes, minTSOWaitTime, pipelineBreakerWaitTime, pipelineQueueTime uint64, innerZoneSendBytes uint64, interZoneSendBytes uint64, innerZoneReceiveBytes uint64, interZoneReceiveBytes uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
 	tiflashScanContext := tipb.TiFlashScanContext{
 		DmfileDataScannedRows:    &dmfileScannedRows,
 		DmfileDataSkippedRows:    &dmfileSkippedRows,
@@ -197,8 +310,14 @@ func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, Nu
 		PipelineQueueWaitNs:   &pipelineBreakerWaitTime,
 		PipelineBreakerWaitNs: &pipelineQueueTime,
 	}
+	tiflashNetworkSummary := tipb.TiFlashNetWorkSummary{
+		InnerZoneSendBytes:    &innerZoneSendBytes,
+		InterZoneSendBytes:    &interZoneSendBytes,
+		InnerZoneReceiveBytes: &innerZoneReceiveBytes,
+		InterZoneReceiveBytes: &interZoneReceiveBytes,
+	}
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
-		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, TiflashWaitSummary: &tiflashWaitSummary}
+		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, TiflashWaitSummary: &tiflashWaitSummary, TiflashNetworkSummary: &tiflashNetworkSummary}
 }
 
 func TestCopRuntimeStats(t *testing.T) {
@@ -250,15 +369,240 @@ func TestCopRuntimeStats(t *testing.T) {
 	require.Equal(t, "", zeroCopStats.String())
 }
 
+func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
+	weights := defaultRUV2WeightsForTest()
+	metrics := NewRUV2Metrics()
+	metrics.AddResultChunkCells(1000)
+	metrics.AddExecutorMetric(1, "TableReader", 5)
+	metrics.AddExecutorMetric(1, "Projection", 7)
+	metrics.AddExecutorMetric(2, "Selection", 11)
+	metrics.AddExecutorMetric(3, "HashJoin", 13)
+	metrics.AddExecutorL5InsertRows(17)
+	metrics.AddPlanCnt(19)
+	metrics.AddPlanDeriveStatsPaths(23)
+	metrics.AddResourceManagerReadCnt(29)
+	metrics.AddResourceManagerWriteCnt(31)
+	metrics.AddSessionParserTotal(37)
+	metrics.AddTxnCnt(41)
+	metrics.AddTiKVKVEngineCacheMiss(43)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchSelection", 53)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 59)
+	metrics.AddTiKVCoprocessorExecutorIterations(61)
+	metrics.AddTiKVCoprocessorResponseBytes(67)
+	metrics.AddTiKVRaftstoreStoreWriteTriggerWB(71)
+	metrics.AddTiKVStorageProcessedKeysBatchGet(73)
+	metrics.AddTiKVStorageProcessedKeysGet(79)
+
+	tidbRU := metrics.CalculateRUValues(weights)
+	tikvRU := float64(157258)
+	tiflashRU := float64(24680)
+	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
+	require.InEpsilon(t, 40.2906903357, tidbRU, 0.01)
+	require.InEpsilon(t, 157258.0, tikvRU, 0.01)
+	require.InEpsilon(t, 24680.0, tiflashRU, 0.01)
+	require.InEpsilon(t, 181978.2906903357, totalRU, 0.01)
+
+	t.Run("zero scale stays zero", func(t *testing.T) {
+		zeroScaleWeights := weights
+		zeroScaleWeights.RUScale = 0
+		require.Zero(t, metrics.CalculateRUValues(zeroScaleWeights))
+		require.Equal(t, tikvRU+tiflashRU, metrics.TotalRU(zeroScaleWeights, tikvRU, tiflashRU))
+	})
+
+	t.Run("bypass keeps total zero", func(t *testing.T) {
+		bypassed := NewRUV2Metrics()
+		bypassed.SetBypass(true)
+		bypassed.AddResultChunkCells(1000)
+		bypassed.AddPlanCnt(2)
+
+		require.Zero(t, bypassed.CalculateRUValues(weights))
+		require.Zero(t, bypassed.TotalRU(weights, tikvRU, tiflashRU))
+		total, detail := FormatRUV2Summary(bypassed, weights, tikvRU, tiflashRU)
+		require.Empty(t, total)
+		require.Empty(t, detail)
+	})
+
+	t.Run("nil metrics keep tikv and tiflash ru", func(t *testing.T) {
+		var nilMetrics *RUV2Metrics
+		require.Equal(t, tikvRU+tiflashRU, nilMetrics.TotalRU(weights, tikvRU, tiflashRU))
+	})
+}
+
+func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
+	weights := defaultRUV2WeightsForTest()
+	metrics := NewRUV2Metrics()
+	metrics.AddResultChunkCells(1000)
+	metrics.AddPlanCnt(2)
+
+	baseline := metrics.CalculateRUValues(weights)
+
+	updated := weights
+	updated.ResultChunkCells *= 10
+	updated.PlanCnt *= 10
+
+	require.NotEqual(t, baseline, metrics.CalculateRUValues(updated))
+}
+
+func TestUpdateRUV2MetricsFromRUV2(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	UpdateRUV2MetricsFromRUV2(metrics, &kvrpcpb.RUV2{
+		ReadRpcCount:                      2,
+		WriteRpcCount:                     3,
+		KvEngineCacheMiss:                 5,
+		CoprocessorExecutorIterations:     7,
+		CoprocessorResponseBytes:          11,
+		RaftstoreStoreWriteTriggerWbBytes: 13,
+		StorageProcessedKeysBatchGet:      17,
+		StorageProcessedKeysGet:           19,
+		ExecutorInputs: &kvrpcpb.ExecutorInputs{
+			TikvCoprocessorExecutorWorkTotalBatchIndexScan:    23,
+			TikvCoprocessorExecutorWorkTotalBatchTableScan:    29,
+			TikvCoprocessorExecutorWorkTotalBatchSelection:    31,
+			TikvCoprocessorExecutorWorkTotalBatchTopN:         37,
+			TikvCoprocessorExecutorWorkTotalBatchLimit:        41,
+			TikvCoprocessorExecutorWorkTotalBatchSimpleAggr:   43,
+			TikvCoprocessorExecutorWorkTotalBatchFastHashAggr: 47,
+		},
+	})
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+	require.Equal(t, int64(5), metrics.TiKVKVEngineCacheMiss())
+	require.Equal(t, int64(7), metrics.TiKVCoprocessorExecutorIterations())
+	require.Equal(t, int64(11), metrics.TiKVCoprocessorResponseBytes())
+	require.Equal(t, int64(13), metrics.TiKVRaftstoreStoreWriteTriggerWB())
+	require.Equal(t, int64(17), metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(19), metrics.TiKVStorageProcessedKeysGet())
+
+	detail := FormatRUV2Metrics(metrics, defaultRUV2WeightsForTest(), 0, 0)
+	require.Contains(t, detail, "resource_manager_read_cnt:2")
+	require.Contains(t, detail, "resource_manager_write_cnt:3")
+	require.Contains(t, detail, "tikv_storage_processed_keys_batch_get:17")
+	require.Contains(t, detail, "tikv_storage_processed_keys_get:19")
+	require.Contains(t, detail, "BatchFastHashAggr:47")
+}
+
+func TestSyncRUV2MetricsFromRUDetailsIncremental(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	ruDetails := util.NewRUDetails()
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		ReadRpcCount:                      2,
+		WriteRpcCount:                     3,
+		KvEngineCacheMiss:                 5,
+		RaftstoreStoreWriteTriggerWbBytes: 17,
+		StorageProcessedKeysBatchGet:      7,
+		StorageProcessedKeysGet:           19,
+		ExecutorInputs: &kvrpcpb.ExecutorInputs{
+			TikvCoprocessorExecutorWorkTotalBatchIndexScan:    11,
+			TikvCoprocessorExecutorWorkTotalBatchFastHashAggr: 23,
+		},
+	})
+
+	// First drain picks up all counters.
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+	require.Equal(t, int64(5), metrics.TiKVKVEngineCacheMiss())
+	require.Equal(t, int64(17), metrics.TiKVRaftstoreStoreWriteTriggerWB())
+	require.Equal(t, int64(7), metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(19), metrics.TiKVStorageProcessedKeysGet())
+
+	// Second drain without new data is a no-op.
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+
+	// New counters accumulate after the first drain.
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		ReadRpcCount:                 10,
+		StorageProcessedKeysBatchGet: 100,
+	})
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(12), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(107), metrics.TiKVStorageProcessedKeysBatchGet())
+
+	detail := FormatRUV2Metrics(metrics, defaultRUV2WeightsForTest(), 0, 0)
+	require.Contains(t, detail, "resource_manager_read_cnt:12")
+	require.Contains(t, detail, "resource_manager_write_cnt:3")
+	require.Contains(t, detail, "tikv_storage_processed_keys_batch_get:107")
+	require.Contains(t, detail, "tikv_storage_processed_keys_get:19")
+	require.Contains(t, detail, "BatchIndexScan:11")
+	require.Contains(t, detail, "BatchFastHashAggr:23")
+}
+
+func TestSyncRUV2MetricsFromRUDetailsBypass(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	metrics.SetBypass(true)
+	ruDetails := util.NewRUDetails()
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		StorageProcessedKeysBatchGet: 7,
+	})
+
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Zero(t, metrics.ResourceManagerReadCnt())
+	require.Zero(t, metrics.ResourceManagerWriteCnt())
+	require.Zero(t, metrics.TiKVStorageProcessedKeysBatchGet())
+}
+
+func TestUpdateRUV2MetricsFromRUV2Bypass(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	metrics.SetBypass(true)
+	UpdateRUV2MetricsFromRUV2(metrics, &kvrpcpb.RUV2{
+		ReadRpcCount:                 1,
+		WriteRpcCount:                1,
+		StorageProcessedKeysBatchGet: 1,
+	})
+	require.Zero(t, metrics.ResourceManagerReadCnt())
+	require.Zero(t, metrics.ResourceManagerWriteCnt())
+	require.Zero(t, metrics.TiKVStorageProcessedKeysBatchGet())
+}
+
+func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
+	weights := defaultRUV2WeightsForTest()
+	metrics := NewRUV2Metrics()
+	metrics.AddResultChunkCells(1000)
+	metrics.AddResourceManagerWriteCnt(20)
+	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 10)
+	total, formatted := FormatRUV2Summary(metrics, weights, 10987, 246)
+
+	require.Equal(t, "11236.09", total)
+	require.Equal(t, total, FormatRUV2Total(metrics, weights, 10987, 246))
+	require.Equal(t, formatted, FormatRUV2Metrics(metrics, weights, 10987, 246))
+	require.Contains(t, formatted, "tidb_ru:")
+	require.Contains(t, formatted, "tikv_ru:")
+	require.Contains(t, formatted, "tiflash_ru:")
+	require.Contains(t, formatted, "total_ru:")
+	require.True(t, strings.HasPrefix(formatted, "total_ru:"))
+
+	parts := strings.Split(formatted, ", ")
+	require.Len(t, parts, 7)
+	require.Equal(t, "total_ru:11236.09", parts[0])
+	require.Equal(t, "tidb_ru:3.09", parts[1])
+	require.Equal(t, "tikv_ru:10987.00", parts[2])
+	require.Equal(t, "tiflash_ru:246.00", parts[3])
+}
+
+func TestRURuntimeStatsStringIncludesTiFlashRU(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetails(),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	stats.RUDetails.AddTiKVRUV2(200)
+	stats.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 100, WRU: 200})
+
+	require.Equal(t, "RU:500.00", stats.String())
+}
+
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	stats := NewRuntimeStatsColl(nil)
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
-	stats.RecordOneCopTask(tableScanID, kv.TiFlash, mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 8192, 0, 15, 200, 40, 10, 4, 1, 100, 50, 30000000, 20000000, 10000000, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(tableScanID, kv.TiFlash, mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 20000000, 10000000, 5000000, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(aggID, kv.TiFlash, mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 12000, 6000, 60, 1000, 20, 5, 1, 0, 20, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
-	stats.RecordOneCopTask(aggID, kv.TiFlash, mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 8192, 80000, 40, 2000, 30, 1, 1, 0, 0, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(tableScanID, kv.TiFlash, mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 8192, 0, 15, 200, 40, 10, 4, 1, 100, 50, 30000000, 20000000, 10000000, 1000, 2000, 3000, 4000, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(tableScanID, kv.TiFlash, mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 20000000, 10000000, 5000000, 10000, 20000, 30000, 40000, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(aggID, kv.TiFlash, mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 12000, 6000, 60, 1000, 20, 5, 1, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(aggID, kv.TiFlash, mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 8192, 80000, 40, 2000, 30, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 10,
 		ProcessedKeys:             10,
@@ -272,18 +616,24 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetCopStats(tableScanID)
-	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_wait: {minTSO_wait: 20ms, pipeline_breaker_wait: 5ms, pipeline_queue_wait: 10ms}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:202ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}", cop.String())
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_wait: {minTSO_wait: 20ms, pipeline_breaker_wait: 5ms, pipeline_queue_wait: 10ms}, tiflash_network: {inner_zone_send_bytes: 11000, inter_zone_send_bytes: 22000, inner_zone_receive_bytes: 33000, inter_zone_receive_bytes: 44000}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:202ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}", cop.String())
 
 	copStats := cop.stats
 	require.NotNil(t, copStats)
 
-	require.Equal(t, "time:3ns, loops:3, threads:2, tiflash_wait: {minTSO_wait: 20ms, pipeline_breaker_wait: 5ms, pipeline_queue_wait: 10ms}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:202ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}", copStats.String())
+	require.Equal(t, "time:3ns, loops:3, threads:2, tiflash_wait: {minTSO_wait: 20ms, pipeline_breaker_wait: 5ms, pipeline_queue_wait: 10ms}, tiflash_network: {inner_zone_send_bytes: 11000, inter_zone_send_bytes: 22000, inner_zone_receive_bytes: 33000, inter_zone_receive_bytes: 44000}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:202ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}", copStats.String())
 	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:6, remote_regions:2, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:50ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:20192, data_skipped_rows:86000, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:100ms, tot_read:3000ms, disagg_cache_hit_bytes: 20, disagg_cache_miss_bytes: 0}}"
 	require.Equal(t, expected, stats.GetCopStats(aggID).String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
 	require.NotNil(t, rootStats)
 	require.True(t, stats.ExistsRootStats(tableReaderID))
+
+	stmtNetworkStats := stats.GetStmtCopRuntimeStats().TiflashNetworkStats
+	require.Equal(t, stmtNetworkStats.innerZoneSendBytes, uint64(11000))
+	require.Equal(t, stmtNetworkStats.interZoneSendBytes, uint64(22000))
+	require.Equal(t, stmtNetworkStats.innerZoneReceiveBytes, uint64(33000))
+	require.Equal(t, stmtNetworkStats.interZoneReceiveBytes, uint64(44000))
 }
 
 func TestVectorSearchStats(t *testing.T) {
@@ -291,8 +641,8 @@ func TestVectorSearchStats(t *testing.T) {
 
 	var v uint64 = 1
 
-	execSummary := mockExecutorExecutionSummaryForTiFlash(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "")
-	execSummary.DetailInfo.(*tipb.ExecutorExecutionSummary_TiflashScanContext).TiflashScanContext.TotalVectorIdxLoadFromS3 = &v
+	execSummary := mockExecutorExecutionSummaryForTiFlash(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "")
+	execSummary.DetailInfo.(*tipb.ExecutorExecutionSummary_TiflashScanContext).TiflashScanContext.VectorIdxLoadFromS3 = &v
 	stats.RecordOneCopTask(1, kv.TiFlash, execSummary)
 	s := stats.GetCopStats(1)
 	require.Equal(t, "tiflash_task:{time:0s, loops:0, threads:0}, vector_idx:{load:{total:0ms,from_s3:1,from_disk:0,from_cache:0},search:{total:0ms,visited_nodes:0,discarded_nodes:0},read:{vec_total:0ms,others_total:0ms}}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:0, remote_regions:0, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:0ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:0, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:0ms, tot_read:0ms}}", s.String())
@@ -320,7 +670,9 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 				StoreAddr:    "tikv-1:20160",
 				ExecDetails: util.TiKVExecDetails{
 					TimeDetail: &util.TimeDetail{
-						TotalRPCWallTime: 500 * time.Millisecond,
+						TotalRPCWallTime:  500 * time.Millisecond,
+						KvGrpcWaitTime:    100 * time.Millisecond,
+						KvGrpcProcessTime: 200 * time.Millisecond,
 					},
 					ScanDetail: &util.ScanDetail{
 						ProcessedKeys:             10,
@@ -333,19 +685,23 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 						RocksdbBlockReadDuration:  20 * time.Millisecond,
 					},
 					WriteDetail: &util.WriteDetail{
-						StoreBatchWaitDuration:        10 * time.Microsecond,
-						ProposeSendWaitDuration:       20 * time.Microsecond,
-						PersistLogDuration:            30 * time.Microsecond,
-						RaftDbWriteLeaderWaitDuration: 40 * time.Microsecond,
-						RaftDbSyncLogDuration:         45 * time.Microsecond,
-						RaftDbWriteMemtableDuration:   50 * time.Microsecond,
-						CommitLogDuration:             60 * time.Microsecond,
-						ApplyBatchWaitDuration:        70 * time.Microsecond,
-						ApplyLogDuration:              80 * time.Microsecond,
-						ApplyMutexLockDuration:        90 * time.Microsecond,
-						ApplyWriteLeaderWaitDuration:  100 * time.Microsecond,
-						ApplyWriteWalDuration:         101 * time.Microsecond,
-						ApplyWriteMemtableDuration:    102 * time.Microsecond,
+						StoreBatchWaitDuration:               10 * time.Microsecond,
+						ProposeSendWaitDuration:              20 * time.Microsecond,
+						PersistLogDuration:                   30 * time.Microsecond,
+						RaftDbWriteLeaderWaitDuration:        40 * time.Microsecond,
+						RaftDbSyncLogDuration:                45 * time.Microsecond,
+						RaftDbWriteMemtableDuration:          50 * time.Microsecond,
+						CommitLogDuration:                    60 * time.Microsecond,
+						ApplyBatchWaitDuration:               70 * time.Microsecond,
+						ApplyLogDuration:                     80 * time.Microsecond,
+						ApplyMutexLockDuration:               90 * time.Microsecond,
+						ApplyWriteLeaderWaitDuration:         100 * time.Microsecond,
+						ApplyWriteWalDuration:                101 * time.Microsecond,
+						ApplyWriteMemtableDuration:           102 * time.Microsecond,
+						SchedulerLatchWaitDuration:           103 * time.Microsecond,
+						SchedulerProcessDuration:             104 * time.Microsecond,
+						SchedulerThrottleDuration:            105 * time.Microsecond,
+						SchedulerPessimisticLockWaitDuration: 106 * time.Microsecond,
 					},
 				},
 			},
@@ -363,12 +719,14 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		Commit: commitDetail,
 	}
 	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, prewrite type: [backoff1 backoff2]}, " +
-		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, " +
+		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, " +
+		"time_detail: {tikv_grpc_process_time: 200ms, tikv_grpc_wait_time: 100ms, tikv_wall_time: 500ms}, " +
 		"scan_detail: {total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, " +
 		"block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, " +
 		"write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, " +
 		"sync_log: 45µs, write_memtable: 50µs}, commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, " +
-		"write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}}}, resolve_lock: 1s, region_num:5, write_keys:3" +
+		"write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 104µs, latch_wait: 103µs, " +
+		"pessimistic_lock_wait: 106µs, throttle: 105µs}}}, resolve_lock: 1s, region_num:5, write_keys:3" +
 		", write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
 
@@ -438,9 +796,37 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"{total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, block: " +
 		"{cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: " +
 		"{store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
-		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}}}, " +
-		"lock_rpc:5s, rpc_count:50, retry_count:2}"
+		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, " +
+		"scheduler: {process: 0s}}}, lock_rpc:5s, rpc_count:50, retry_count:2}"
 	require.Equal(t, expect, stats.String())
+
+	stats.SharedLockKeys = lockDetail.Clone()
+	require.Equal(t, expect+", shared_"+expect, stats.String())
+
+	// Test Clone with SharedLockKeys
+	clonedStats := stats.Clone().(*RuntimeStatsWithCommit)
+	require.Equal(t, stats.String(), clonedStats.String())
+	require.NotNil(t, clonedStats.SharedLockKeys)
+	require.Equal(t, stats.SharedLockKeys.LockKeys, clonedStats.SharedLockKeys.LockKeys)
+
+	// Test Merge with SharedLockKeys
+	stats2 := &RuntimeStatsWithCommit{
+		SharedLockKeys: &util.LockKeysDetails{
+			TotalTime: time.Second,
+			RegionNum: 3,
+			LockKeys:  5,
+		},
+	}
+	stats.Merge(stats2)
+	require.Equal(t, int32(5), stats.SharedLockKeys.RegionNum)
+	require.Equal(t, int32(15), stats.SharedLockKeys.LockKeys)
+
+	// Test Merge into empty SharedLockKeys
+	stats3 := &RuntimeStatsWithCommit{}
+	stats3.Merge(stats2)
+	require.NotNil(t, stats3.SharedLockKeys)
+	require.Equal(t, int32(3), stats3.SharedLockKeys.RegionNum)
+	require.Equal(t, int32(5), stats3.SharedLockKeys.LockKeys)
 }
 
 func TestRootRuntimeStats(t *testing.T) {
@@ -553,4 +939,109 @@ func TestCopRuntimeStats2(t *testing.T) {
 		"total_kv_read_wall_time: 5.03s, tikv_wall_time: 50.3s}"
 	require.Equal(t, expected, cop.String())
 	require.Equal(t, expected, cop.String())
+}
+
+func TestRURuntimeStatsStringV1(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetailsWith(10.5, 20.3, 0),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV1,
+	}
+	// v1: shows RRU + WRU
+	require.Equal(t, "RU:30.80", stats.String())
+}
+
+func TestRURuntimeStatsStringV1NilDetails(t *testing.T) {
+	stats := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV1,
+	}
+	// v1 with nil RUDetails returns empty
+	require.Equal(t, "", stats.String())
+}
+
+func TestRURuntimeStatsStringV2(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetails(),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	stats.RUDetails.AddTiKVRUV2(200)
+	stats.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 100, WRU: 200})
+	// v2: shows total RU from v2 metrics (tikvRU + tiflashRU + tidbRU)
+	require.Equal(t, "RU:500.00", stats.String())
+}
+
+func TestRURuntimeStatsStringV2ZeroRU(t *testing.T) {
+	stats := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	// v2 with zero total RU returns empty
+	require.Equal(t, "", stats.String())
+}
+
+func TestRURuntimeStatsStringDefaultVersion(t *testing.T) {
+	// RUVersion=0 (zero value) should default to v1 for backward compatibility
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetailsWith(10.5, 20.3, 0),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+	}
+	// default (v1): shows RRU + WRU
+	require.Equal(t, "RU:30.80", stats.String())
+}
+
+func TestRURuntimeStatsClonePreservesRUVersion(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetailsWith(10, 20, 0),
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV1,
+	}
+	cloned := stats.Clone().(*RURuntimeStats)
+	require.Equal(t, rmclient.RUVersionV1, cloned.RUVersion)
+	// Verify the clone produces the same output
+	require.Equal(t, stats.String(), cloned.String())
+}
+
+func TestRURuntimeStatsCloneNilPreservesZeroVersion(t *testing.T) {
+	var stats *RURuntimeStats
+	cloned := stats.Clone().(*RURuntimeStats)
+	require.Equal(t, rmclient.RUVersion(0), cloned.RUVersion)
+}
+
+func TestRURuntimeStatsMergeRUVersion(t *testing.T) {
+	// Merge takes RUVersion from other when receiver has zero value
+	dst := &RURuntimeStats{
+		Metrics: NewRUV2Metrics(),
+		Weights: defaultRUV2WeightsForTest(),
+	}
+	src := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	dst.Merge(src)
+	require.Equal(t, rmclient.RUVersionV2, dst.RUVersion)
+}
+
+func TestRURuntimeStatsMergeKeepsExistingRUVersion(t *testing.T) {
+	// Merge does NOT override a non-zero RUVersion
+	dst := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV1,
+	}
+	src := &RURuntimeStats{
+		Metrics:   NewRUV2Metrics(),
+		Weights:   defaultRUV2WeightsForTest(),
+		RUVersion: rmclient.RUVersionV2,
+	}
+	dst.Merge(src)
+	require.Equal(t, rmclient.RUVersionV1, dst.RUVersion)
 }

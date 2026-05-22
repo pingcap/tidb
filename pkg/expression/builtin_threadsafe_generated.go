@@ -930,11 +930,6 @@ func (s *builtinFieldStringSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinFindInSetSig) SafeToShareAcrossSession() bool {
-	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinFloorDecToDecSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
@@ -991,6 +986,11 @@ func (s *builtinFromUnixTime1ArgSig) SafeToShareAcrossSession() bool {
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinFromUnixTime2ArgSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinFtsMatchWordSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
 
@@ -1476,6 +1476,11 @@ func (s *builtinJSONStorageFreeSig) SafeToShareAcrossSession() bool {
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinJSONStorageSizeSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinJSONSumCRC32Sig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
 
@@ -2390,7 +2395,27 @@ func (s *builtinUUIDSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinUUIDTimestampSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinUUIDToBinSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinUUIDVersionSig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinUUIDv4Sig) SafeToShareAcrossSession() bool {
+	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinUUIDv7Sig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }
 

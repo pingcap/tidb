@@ -17,6 +17,7 @@ package unistore
 import (
 	"bytes"
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -147,5 +148,5 @@ func (h *rawHandler) appendPair(pairs []*kvrpcpb.KvPair, it *lockstore.Iterator)
 }
 
 func safeCopy(val []byte) []byte {
-	return append([]byte{}, val...)
+	return slices.Clone(val)
 }

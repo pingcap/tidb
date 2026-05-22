@@ -21,17 +21,19 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -44,16 +46,16 @@ func TestPublishToTableStore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	t.Cleanup(func() {
-		tk.MustExec("TRUNCATE mysql." + ddl.NotifierTableName)
+		tk.MustExec("delete from mysql." + metadef.NotifierTableName)
 	})
 
 	ctx := context.Background()
-	s := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+	s := notifier.OpenTableStore("mysql", metadef.NotifierTableName)
 	se := sess.NewSession(tk.Session())
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
 	changes := make([]*notifier.SchemaChange, 8)
@@ -64,14 +66,16 @@ func TestPublishToTableStore(t *testing.T) {
 	closeFn()
 }
 
+var localNotifierTableSQL = strings.ReplaceAll(metadef.CreateTiDBDDLNotifierTable, "mysql.tidb_ddl_notifier", "tidb_ddl_notifier")
+
 func TestBasicPubSub(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec(localNotifierTableSQL)
 
-	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
 	sessionPool := util.NewSessionPool(
 		2,
 		func() (pools.Resource, error) {
@@ -79,9 +83,12 @@ func TestBasicPubSub(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 
 	var seenChangesMu sync.Mutex
 	seenChanges := make([]*notifier.SchemaChangeEvent, 0, 8)
@@ -108,23 +115,18 @@ func TestBasicPubSub(t *testing.T) {
 		return nil
 	}
 	n.RegisterHandler(notifier.TestHandlerID, testHandler)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2#special-char?in'name")})
+	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2#special-char?in'name")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	event3 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1002, Name: ast.NewCIStr("t3")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
 	require.NoError(t, err)
 
@@ -138,17 +140,16 @@ func TestBasicPubSub(t *testing.T) {
 	require.Equal(t, event2, seenChanges[1])
 	require.Equal(t, event3, seenChanges[2])
 	n.OnRetireOwner()
-	<-done
 }
 
 func TestDeliverOrderAndCleanup(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec(localNotifierTableSQL)
 
-	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
 	sessionPool := util.NewSessionPool(
 		1,
 		func() (pools.Resource, error) {
@@ -156,8 +157,11 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 
 	newRndFailHandler := func() (notifier.SchemaChangeHandler, *[]int64) {
 		maxFail := 5
@@ -186,23 +190,18 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	n.RegisterHandler(3, h1)
 	n.RegisterHandler(4, h2)
 	n.RegisterHandler(9, h3)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
-	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
+	event2 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1001, Name: ast.NewCIStr("t2")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: pmodel.NewCIStr("t3")})
+	event3 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1002, Name: ast.NewCIStr("t3")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 3, -1, event3, s)
 	require.NoError(t, err)
 
@@ -220,7 +219,6 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	require.Equal(t, []int64{1000, 1001, 1002}, *id3)
 
 	n.OnRetireOwner()
-	<-done
 }
 
 func TestPubSub(t *testing.T) {
@@ -324,21 +322,24 @@ func Test2OwnerForAShortTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS " + ddl.NotifierTableName)
-	tk.MustExec(ddl.NotifierTableSQL)
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec(localNotifierTableSQL)
 	tk.MustExec("CREATE TABLE result (id INT PRIMARY KEY)")
 
-	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
+	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
 	sessionPool := util.NewSessionPool(
-		1,
+		4,
 		func() (pools.Resource, error) {
-			return tk.Session(), nil
+			return testkit.NewTestKit(t, store).Session(), nil
 		},
+		nil,
 		nil,
 		nil,
 	)
 
 	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
 	waitCh := make(chan struct{})
 	waitCh2 := make(chan struct{})
 
@@ -352,23 +353,18 @@ func Test2OwnerForAShortTime(t *testing.T) {
 		return nil
 	}
 	n.RegisterHandler(notifier.TestHandlerID, testHandler)
-
-	done := make(chan struct{})
-	go func() {
-		n.OnBecomeOwner()
-		close(done)
-	}()
+	n.OnBecomeOwner()
 
 	tk2 := testkit.NewTestKit(t, store)
 	se := sess.NewSession(tk2.Session())
 	ctx := context.Background()
-	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: pmodel.NewCIStr("t1")})
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
 	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
 	require.NoError(t, err)
 
 	<-waitCh
 	// mimic another owner to handle the event, which is delete the record
-	tk2.MustExec("DELETE FROM test." + ddl.NotifierTableName)
+	tk2.MustExec("DELETE FROM test." + metadef.NotifierTableName)
 	close(waitCh2)
 
 	require.Eventually(t, func() bool {
@@ -377,13 +373,12 @@ func Test2OwnerForAShortTime(t *testing.T) {
 		if !bytes.Contains(content, []byte("Error processing change")) {
 			return false
 		}
-		return bytes.Contains(content, []byte("Write conflict"))
+		return bytes.Contains(content, []byte("maybe the row has been updated by other owner"))
 	}, time.Second, 25*time.Millisecond)
 	// the handler should not commit
 	tk2.MustQuery("SELECT * FROM test.result").Check(testkit.Rows())
 
 	n.OnRetireOwner()
-	<-done
 }
 
 func TestPaginatedList(t *testing.T) {
@@ -451,4 +446,172 @@ func TestPaginatedList(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return count.Load() == 8
 	}, 5*time.Second, 500*time.Millisecond)
+}
+
+func TestBeginTwice(t *testing.T) {
+	conf := new(log.Config)
+	logFilename := path.Join(t.TempDir(), "/testBeginTwice.log")
+	conf.File.Filename = logFilename
+	lg, p, e := log.InitLogger(conf)
+	require.NoError(t, e)
+	rs := log.ReplaceGlobals(lg, p)
+	defer rs()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec(localNotifierTableSQL)
+
+	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		5,
+		func() (pools.Resource, error) {
+			return testkit.NewTestKit(t, store).Session(), nil
+		},
+		nil,
+		nil,
+		nil,
+	)
+
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
+
+	testHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
+		return nil
+	}
+	n.RegisterHandler(notifier.TestHandlerID, testHandler)
+	n.OnBecomeOwner()
+
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+	ctx := context.Background()
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+
+	// after handler processed the event, wait to ensure the record is deleted by DDL notifier
+	require.Eventually(t, func() bool {
+		changes := make([]*notifier.SchemaChange, 8)
+		result, closeFn := s.List(ctx, se)
+		count, err2 := result.Read(changes)
+		require.NoError(t, err2)
+		closeFn()
+		return count == 0
+	}, time.Second, 50*time.Millisecond)
+
+	content, err := os.ReadFile(logFilename)
+	require.NoError(t, err)
+	require.NotContains(t, string(content), "context provider not set")
+}
+
+func TestHandlersSeePessimisticTxnError(t *testing.T) {
+	// 1. One always fails
+	// 2. One always succeeds
+	// Make sure events don't get lost after the second handler succeeds.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec(localNotifierTableSQL)
+	ctx := context.Background()
+	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		4,
+		func() (pools.Resource, error) {
+			return testkit.NewTestKit(t, store).Session(), nil
+		},
+		nil,
+		nil,
+		nil,
+	)
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
+	// Always fails
+	failHandler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
+		// Mock a duplicate key error
+		_, err := sctx.GetSQLExecutor().Execute(ctx, "INSERT INTO test."+metadef.NotifierTableName+" VALUES(1, -1, 'some', 0)")
+		return err
+	}
+	// Always succeeds
+	successHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
+		return nil
+	}
+	n.RegisterHandler(2, successHandler)
+	n.RegisterHandler(1, failHandler)
+	n.OnBecomeOwner()
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+	require.Never(t, func() bool {
+		changes := make([]*notifier.SchemaChange, 8)
+		result, closeFn := s.List(ctx, se)
+		count, err2 := result.Read(changes)
+		require.NoError(t, err2)
+		closeFn()
+		return count == 0
+	}, time.Second, 50*time.Millisecond)
+}
+
+func TestCommitFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
+	// Make sure events don't get lost if internal txn commit failed.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_metadata_lock=1")
+	})
+	tk.MustExec("DROP TABLE IF EXISTS " + metadef.NotifierTableName)
+	tk.MustExec(localNotifierTableSQL)
+	tk.MustExec("CREATE TABLE subscribe_table (id INT PRIMARY KEY, c INT)")
+	tk.MustExec("INSERT INTO subscribe_table VALUES (1, 1)")
+
+	ctx := context.Background()
+	s := notifier.OpenTableStore("test", metadef.NotifierTableName)
+	sessionPool := util.NewSessionPool(
+		4,
+		func() (pools.Resource, error) {
+			return testkit.NewTestKit(t, store).Session(), nil
+		},
+		nil,
+		nil,
+		nil,
+	)
+	n := notifier.NewDDLNotifier(sessionPool, s, 50*time.Millisecond)
+	// Close it before we close the domain to avoid use closed session pool from domain.
+	defer n.Stop()
+	handler := func(_ context.Context, sctx sessionctx.Context, _ *notifier.SchemaChangeEvent) error {
+		// pessimistic + DDL will cause an "infoschema is changed" error at commit time.
+		_, err := sctx.GetSQLExecutor().Execute(
+			ctx, "UPDATE test.subscribe_table SET c = c + 1 WHERE id = 1",
+		)
+		require.NoError(t, err)
+
+		tk.MustExec("TRUNCATE test.subscribe_table")
+		return nil
+	}
+	n.RegisterHandler(notifier.TestHandlerID, handler)
+	n.OnBecomeOwner()
+	tk2 := testkit.NewTestKit(t, store)
+	se := sess.NewSession(tk2.Session())
+	event1 := notifier.NewCreateTableEvent(&model.TableInfo{ID: 1000, Name: ast.NewCIStr("t1")})
+	err := notifier.PubSchemeChangeToStore(ctx, se, 1, -1, event1, s)
+	require.NoError(t, err)
+	require.Never(t, func() bool {
+		changes := make([]*notifier.SchemaChange, 8)
+		result, closeFn := s.List(ctx, se)
+		count, err2 := result.Read(changes)
+		require.NoError(t, err2)
+		closeFn()
+		return count == 0
+	}, time.Second, 50*time.Millisecond)
+	n.OnRetireOwner()
 }

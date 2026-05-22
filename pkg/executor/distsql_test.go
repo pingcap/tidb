@@ -23,14 +23,19 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -39,10 +44,12 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // checkGoroutineExists
@@ -75,20 +82,23 @@ func TestCopClientSend(t *testing.T) {
 	tk.MustExec("create table copclient (id int primary key)")
 
 	// Insert 1000 rows.
-	var values []string
-	for i := 0; i < 1000; i++ {
+	values := make([]string, 0, 1000)
+	for i := range 1000 {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
 	tk.MustExec("insert copclient values " + strings.Join(values, ","))
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("copclient"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("copclient"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
 
 	ctx := context.Background()
@@ -161,24 +171,25 @@ func TestInconsistentIndex(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	idx := tbl.Meta().FindIndexByName("idx_a")
-	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
+	idxOp, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
+	require.NoError(t, err)
 	ctx := mock.NewContext()
 	ctx.Store = store
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i))
 		require.NoError(t, tk.QueryToErr("select * from t where a>=0"))
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("update t set a=%d where a=%d", i, i+10))
 		require.NoError(t, tk.QueryToErr("select * from t where a>=0"))
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		_, err = idxOp.Create(ctx.GetTableCtx(), txn, types.MakeDatums(i+10), kv.IntHandle(100+i), nil)
@@ -194,7 +205,7 @@ func TestInconsistentIndex(t *testing.T) {
 	}
 
 	// fix inconsistent problem to pass CI
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		err = idxOp.Delete(ctx.GetTableCtx(), txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
@@ -218,7 +229,7 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
         partition p4 values less than (40))`)
 	tk.MustExec("create table tnormal (a int, b int, key(a))")
 	values := make([]string, 0, 128)
-	for i := 0; i < 128; i++ {
+	for range 128 {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(40), rand.Intn(40)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
@@ -231,7 +242,7 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
 		}
 		return a, b
 	}
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
@@ -272,7 +283,7 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 	tk.MustExec("create table tnormal (a int, b int, key(a), key(b))")
 	nRows := 512
 	values := make([]string, 0, nRows)
-	for i := 0; i < nRows; i++ {
+	for range nRows {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
@@ -285,7 +296,7 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 		}
 		return a, b
 	}
-	for i := 0; i < nRows; i++ {
+	for range nRows {
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(t2.b between %v and %v)", lb, rb)
 		result := tk.MustQuery("select t1.* from tnormal t1, tnormal t2 use index(a) where t1.a=t2.b and " + cond).Sort().Rows()
@@ -301,7 +312,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	tk.MustExec("create table t_paging (a int, b int, key(a), key(b))")
 	nRows := 512
 	values := make([]string, 0, nRows)
-	for i := 0; i < nRows; i++ {
+	for range nRows {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t_paging values %v", strings.Join(values, ", ")))
@@ -352,6 +363,9 @@ func TestCoprocessorPagingSize(t *testing.T) {
 }
 
 func TestAdaptiveClosestRead(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_replica_read closest-adaptive is not supported in next generation")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -524,7 +538,7 @@ func TestCoprocessorBatchByStore(t *testing.T) {
     	partition p0 values less than(10000),
     	partition p1 values less than (50000),
     	partition p2 values less than (100000))`)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec("insert into t values(?, ?, ?)", i*10000, i*10000, i%2)
 		tk.MustExec("insert into t1 values(?, ?, ?)", i*10000, i*10000, i%2)
 	}
@@ -553,7 +567,7 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 		baseSQL := fmt.Sprintf("select * from %s force index(i) where id < 100000 and (%s)", table, strings.Join(ranges, " or "))
 		for _, paging := range []string{"on", "off"} {
 			tk.MustExec("set session tidb_enable_paging=?", paging)
-			for size := 0; size < 10; size++ {
+			for size := range 10 {
 				tk.MustExec("set session tidb_store_batch_size=?", size)
 				tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
 				tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)
@@ -591,4 +605,151 @@ func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
 	})
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("1", "2", "3"))
+}
+
+func TestIndexLookUpPushDownCopTask(t *testing.T) {
+	// ensure cop-cache is enabled by default
+	defer config.RestoreFunc()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.CoprCache.CapacityMB = 100
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, a int, b int, index a(a))")
+	tk.MustExec("insert into t values(1,10,100),(2,20,200),(3,30,300)")
+	tk.MustExec("set @@tidb_session_alias='test_index_lookup_push_down_cop'")
+	// ensure paging is enabled by default
+	tk.MustExec("set @@tidb_enable_paging=1")
+
+	mustQueryWithCheck := func(sql string) *testkit.Result {
+		var mu sync.Mutex
+		reqParams := make([][]any, 0, 1)
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(req *tikvrpc.Request) {
+			copReq := req.Req.(*coprocessor.Request)
+			if copReq.ConnectionAlias != "test_index_lookup_push_down_cop" {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			reqParams = append(reqParams, []any{
+				copReq.PagingSize,
+				copReq.IsCacheEnabled,
+			})
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
+		}()
+		result := tk.MustQuery(sql)
+		mu.Lock()
+		defer mu.Unlock()
+		// For index lookup push down rows, paging and cop-cache should be disabled
+		require.Equal(t, [][]any{{uint64(0), false}}, reqParams)
+		return result
+	}
+
+	sql := "select /*+ index_lookup_pushdown(t, a) */ * from t order by id"
+	mustQueryWithCheck(sql).Check(testkit.Rows("1 10 100", "2 20 200", "3 30 300"))
+	r := mustQueryWithCheck("explain analyze " + sql)
+	localIndexLookUpRow := r.Rows()[2]
+	require.Contains(t, localIndexLookUpRow[0], "LocalIndexLookUp", r.String())
+	require.Equal(t, "3", localIndexLookUpRow[2], r.String())
+}
+
+func TestPartitionIndexLookUpMergeWithSkewedPartitions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=2")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	tk.MustExec("set @@tidb_max_chunk_size = 64")
+	sessionAlias := "test_partition_merge_skew"
+	tk.MustExec(fmt.Sprintf("set @@tidb_session_alias='%s'", sessionAlias))
+
+	tk.MustExec("drop table if exists t_partition_merge_skew")
+	tk.MustExec("create table t_partition_merge_skew(a int, b int, p int, key idx_a(a)) partition by hash(p) partitions 100")
+
+	// Build skewed rows:
+	// - partition p=0 has many small `a` values (hot partition for top-N)
+	// - other partitions have larger `a` values (cold partitions)
+	const hotRows = 1000
+	const coldRowsPerPartition = 100
+	const partitionCount = 100
+	const coldPartitions = partitionCount - 1
+	const totalRows = hotRows + coldPartitions*coldRowsPerPartition
+
+	values := make([]string, 0, totalRows)
+	for a := range hotRows {
+		values = append(values, fmt.Sprintf("(%d, %d, 0)", a, a%23))
+	}
+	for p := 1; p < partitionCount; p++ {
+		for i := range coldRowsPerPartition {
+			a := 1000000 + p*10000 + i
+			values = append(values, fmt.Sprintf("(%d, %d, %d)", a, a%29, p))
+		}
+	}
+	require.Len(t, values, totalRows)
+	tk.MustExec("insert into t_partition_merge_skew values " + strings.Join(values, ","))
+
+	sql := "select b from t_partition_merge_skew force index(idx_a) where a >= 0 order by a limit 3000"
+	plan := tk.MustQuery("explain format = 'brief' " + sql).String()
+	require.Contains(t, plan, "IndexLookUp")
+
+	isIndexScanReq := func(req *tikvrpc.Request) bool {
+		copReq, ok := req.Req.(*coprocessor.Request)
+		if !ok || copReq.ConnectionAlias != sessionAlias {
+			return false
+		}
+		dagReq := &tipb.DAGRequest{}
+		if err := dagReq.Unmarshal(copReq.Data); err != nil {
+			return false
+		}
+		hasIndexScan := false
+		for _, exec := range dagReq.Executors {
+			switch exec.Tp {
+			case tipb.ExecType_TypeIndexScan:
+				hasIndexScan = true
+			case tipb.ExecType_TypeTableScan, tipb.ExecType_TypePartitionTableScan:
+				return false
+			}
+		}
+		return hasIndexScan
+	}
+
+	var indexScanReqCount int64
+	var active int64
+	var maxActive int64
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(req *tikvrpc.Request) {
+		if !isIndexScanReq(req) {
+			return
+		}
+		atomic.AddInt64(&indexScanReqCount, 1)
+		cur := atomic.AddInt64(&active, 1)
+		for {
+			old := atomic.LoadInt64(&maxActive)
+			if cur <= old || atomic.CompareAndSwapInt64(&maxActive, old, cur) {
+				break
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+		atomic.AddInt64(&active, -1)
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
+	}()
+
+	// Force disable cop lite worker so all cop requests go through the regular sender path.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker"))
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	rows := tk.MustQueryWithContext(ctx, sql).Rows()
+	require.Len(t, rows, 3000)
+	require.Greater(t, atomic.LoadInt64(&indexScanReqCount), int64(1))
+	require.GreaterOrEqual(t, atomic.LoadInt64(&maxActive), int64(1))
+	require.LessOrEqual(t, atomic.LoadInt64(&maxActive), int64(8))
 }

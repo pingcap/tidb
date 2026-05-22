@@ -132,7 +132,7 @@ func TestFlushConcurrentIndexCollector(t *testing.T) {
 		10, 10, 10000, 10000, 10000,
 	}
 	ops := make([]testOp, 0, opCount)
-	for i := 0; i < opCount; i++ {
+	for range opCount {
 		op := opGenerator.generateTestOp()
 		ops = append(ops, op)
 		expectSessionCollector.Update(op.idx.TableID, op.idx.IndexID, op.info)
@@ -142,7 +142,7 @@ func TestFlushConcurrentIndexCollector(t *testing.T) {
 	iuc := NewCollector()
 	iuc.StartWorker()
 	wg := &sync.WaitGroup{}
-	for i := 0; i < sessionCount; i++ {
+	for i := range sessionCount {
 		localOps := ops[i*opPerSess : (i+1)*opPerSess]
 		localCollector := iuc.SpawnSessionCollector()
 		wg.Add(1)

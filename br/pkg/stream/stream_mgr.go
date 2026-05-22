@@ -26,10 +26,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -94,7 +96,7 @@ func buildObserveTableRanges(
 
 	ranges := make([]kv.KeyRange, 0, len(dbs)+1)
 	for _, dbInfo := range dbs {
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) {
+		if !tableFilter.MatchSchema(dbInfo.Name.O) || metadef.IsMemDB(dbInfo.Name.L) {
 			continue
 		}
 
@@ -245,7 +247,7 @@ func (m *MetadataHelper) ReadFile(
 	offset uint64,
 	length uint64,
 	compressionType backuppb.CompressionType,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	var err error
@@ -296,7 +298,7 @@ func (m *MetadataHelper) ReadFile(
 func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error) {
 	meta := &backuppb.Metadata{}
 	err := meta.Unmarshal(rawMetaData)
-	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+	if meta.MetaVersion == backuppb.MetaVersion_V1 && len(meta.FileGroups) == 0 {
 		group := &backuppb.DataFileGroup{
 			// For MetaDataV2, file's path is stored in it.
 			Path: "",
@@ -316,7 +318,7 @@ func (*MetadataHelper) ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, 
 func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metadata, error) {
 	meta := &backuppb.Metadata{}
 	err := meta.Unmarshal(rawMetaData)
-	if meta.MetaVersion == backuppb.MetaVersion_V1 {
+	if meta.MetaVersion == backuppb.MetaVersion_V1 && len(meta.FileGroups) == 0 {
 		groups := make([]*backuppb.DataFileGroup, 0, len(meta.Files))
 		for _, d := range meta.Files {
 			groups = append(groups, &backuppb.DataFileGroup{
@@ -356,23 +358,71 @@ func (*MetadataHelper) Marshal(meta *backuppb.Metadata) ([]byte, error) {
 	return meta.Marshal()
 }
 
+func (m *MetadataHelper) Close() {
+	if m.decoder != nil {
+		m.decoder.Close()
+	}
+	if m.encryptionManager != nil {
+		m.encryptionManager.Close()
+	}
+}
+
+func FilterPathByTs(path string, left, right uint64) string {
+	filename := strings.TrimSuffix(path, metaSuffix)
+	filename = filename[strings.LastIndex(filename, "/")+1:]
+	metaFile, err := backupmetas.ParseName(filename)
+	if err != nil {
+		// keep consistency with old behaviour, tolerate future file path changes.
+		return path
+	}
+
+	minBeginTsInDefaultCf := metaFile.MinBeginTsInDefaultCf
+	if minBeginTsInDefaultCf == 0 || minBeginTsInDefaultCf > metaFile.MinTS {
+		log.Warn("minBeginTsInDefaultCf is not correct, won't filter out this file",
+			zap.String("file", path),
+			zap.Uint64("flushTs", metaFile.FlushTS),
+			zap.Uint64("storeID", metaFile.StoreID),
+			zap.Uint64("minTs", metaFile.MinTS),
+			zap.Uint64("minBeginTsInDefaultCf", minBeginTsInDefaultCf),
+		)
+		return path
+	}
+
+	if right < minBeginTsInDefaultCf || metaFile.MaxTS < left {
+		return ""
+	}
+
+	// keep consistency with old behaviour
+	return path
+}
+
 // FastUnmarshalMetaData used a 128 worker pool to speed up
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
+	startTS uint64,
+	endTS uint64,
 	metaDataWorkerPoolSize uint,
 	fn func(path string, rawMetaData []byte) error,
 ) error {
 	log.Info("use workers to speed up reading metadata files", zap.Uint("workers", metaDataWorkerPoolSize))
 	pool := util.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
 	eg, ectx := errgroup.WithContext(ctx)
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
+	opt := &storeapi.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, metaSuffix) {
 			return nil
 		}
-		readPath := path
+		readPath := FilterPathByTs(path, startTS, endTS)
+		if len(readPath) == 0 {
+			log.Info("skip download meta file out of range",
+				zap.String("file", path),
+				zap.Uint64("startTs", startTS),
+				zap.Uint64("endTs", endTS),
+			)
+			return nil
+		}
 		pool.ApplyOnErrorGroup(eg, func() error {
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {

@@ -5,7 +5,9 @@ package split
 import (
 	"bytes"
 	"context"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -16,10 +18,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
@@ -74,7 +78,7 @@ func (c *TestClient) GetPDClient() *FakePDClient {
 	return NewFakePDClient(stores, false, nil)
 }
 
-func (c *TestClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *TestClient) GetStore(ctx context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	store, ok := c.stores[storeID]
@@ -144,7 +148,7 @@ func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResp
 	}, nil
 }
 
-func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
+func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*RegionInfo, error) {
 	if c.InjectErr && c.InjectTimes > 0 {
 		c.InjectTimes -= 1
 		return nil, status.Error(codes.Unavailable, "not leader")
@@ -166,6 +170,10 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 
 func (c *TestClient) WaitRegionsScattered(context.Context, []*RegionInfo) (int, error) {
 	return 0, nil
+}
+
+func (*TestClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }
 
 // MockPDClientForSplit is a mock PD client for testing split and scatter.
@@ -190,8 +198,10 @@ type MockPDClientForSplit struct {
 		count                map[uint64]int
 	}
 	scatterRegions struct {
-		notImplemented bool
-		regionCount    int
+		notImplemented     bool
+		regionCount        int
+		failedCount        int
+		finishedPercentage int
 	}
 	getOperator struct {
 		responses map[uint64][]*pdpb.GetOperatorResponse
@@ -203,11 +213,16 @@ func NewMockPDClientForSplit() *MockPDClientForSplit {
 	ret := &MockPDClientForSplit{}
 	ret.Regions = &pdtypes.RegionTree{}
 	ret.scatterRegion.count = make(map[uint64]int)
+	ret.scatterRegions.finishedPercentage = 100
 	return ret
 }
 
 func newRegionNotFullyReplicatedErr(regionID uint64) error {
 	return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionID)
+}
+
+func (c *MockPDClientForSplit) WithCallerComponent(_ caller.Component) pd.Client {
+	return c
 }
 
 func (c *MockPDClientForSplit) SetRegions(boundaries [][]byte) []*metapb.Region {
@@ -379,8 +394,15 @@ func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uin
 	if c.scatterRegions.notImplemented {
 		return nil, status.Error(codes.Unimplemented, "Ah, yep")
 	}
-	c.scatterRegions.regionCount += len(regionIDs)
-	return &pdpb.ScatterRegionResponse{}, nil
+	if c.scatterRegions.failedCount > 0 {
+		c.scatterRegions.failedCount--
+		return &pdpb.ScatterRegionResponse{
+			FinishedPercentage: 0,
+			FailedRegionsId:    regionIDs[:],
+		}, nil
+	}
+	c.scatterRegions.regionCount += len(regionIDs) * c.scatterRegions.finishedPercentage / 100
+	return &pdpb.ScatterRegionResponse{FinishedPercentage: uint64(c.scatterRegions.finishedPercentage)}, nil
 }
 
 func (c *MockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
@@ -395,7 +417,7 @@ func (c *MockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (
 	return ret, nil
 }
 
-func (c *MockPDClientForSplit) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *MockPDClientForSplit) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return c.stores[storeID], nil
 }
 
@@ -473,9 +495,7 @@ func (fpdh *FakePDHTTPClient) SetSchedulerDelay(_ context.Context, key string, d
 }
 
 func (fpdh *FakePDHTTPClient) SetConfig(_ context.Context, config map[string]any, ttl ...float64) error {
-	for key, value := range config {
-		fpdh.cfgs[key] = value
-	}
+	maps.Copy(fpdh.cfgs, config)
 	return nil
 }
 
@@ -546,8 +566,12 @@ func (fpdc *FakePDClient) SetRegions(regions []*router.Region) {
 	fpdc.regions = regions
 }
 
+func (fpdc *FakePDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return fpdc
+}
+
 func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, fpdc.stores...), nil
+	return slices.Clone(fpdc.stores), nil
 }
 
 func (fpdc *FakePDClient) ScanRegions(
@@ -646,6 +670,7 @@ func (f *FakeSplitClient) ScanRegions(
 	ctx context.Context,
 	startKey, endKey []byte,
 	limit int,
+	_ ...opt.GetRegionOption,
 ) ([]*RegionInfo, error) {
 	result := make([]*RegionInfo, 0)
 	count := 0
@@ -663,4 +688,8 @@ func (f *FakeSplitClient) ScanRegions(
 
 func (f *FakeSplitClient) WaitRegionsScattered(context.Context, []*RegionInfo) (int, error) {
 	return 0, nil
+}
+
+func (*FakeSplitClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }

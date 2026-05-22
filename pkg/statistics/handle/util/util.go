@@ -23,9 +23,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -74,46 +77,39 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	se, err := pool.Get()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			pool.Put(se)
-		}
-	}()
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
-		return err
-	}
+func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
+	return pool.WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
+				return errors.Trace(err)
+			}
 
-	wrapTxn := false
-	for _, flag := range flags {
-		if flag == FlagWrapTxn {
-			wrapTxn = true
-		}
-	}
-	if wrapTxn {
-		err = WrapTxn(sctx, f)
-	} else {
-		err = f(sctx)
-	}
-	return err
+			wrapTxn := false
+			for _, flag := range flags {
+				if flag == FlagWrapTxn {
+					wrapTxn = true
+				}
+			}
+			if wrapTxn {
+				return WrapTxn(sctx, f)
+			}
+			return f(sctx)
+		})
+	})
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	// async merge global stats
-	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAsyncMergeGlobalStats)
+	enableAsyncMergeGlobalStats, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
 
 	// concurrency of save stats to storage
-	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzePartitionConcurrency)
+	analyzePartitionConcurrency, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzePartitionConcurrency)
 	if err != nil {
 		return err
 	}
@@ -124,7 +120,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().AnalyzePartitionConcurrency = int(c)
 
 	// analyzer version
-	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
@@ -135,40 +131,40 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
 	// enable historical stats
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
 
 	// partition mode
-	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
 
 	// enable analyze snapshot
-	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
+	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAnalyzeSnapshot)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
 
 	// enable skip column types
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
 
 	// skip missing partition stats
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBSkipMissingPartitionStats)
 	if err != nil {
 		return err
 	}
 	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
-	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBMergePartitionStatsConcurrency)
+	verInString, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBMergePartitionStatsConcurrency)
 	if err != nil {
 		return err
 	}
@@ -177,11 +173,32 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
+	// sync innodb_lock_wait_timeout
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.InnodbLockWaitTimeout)
+	if err != nil {
+		return err
+	}
+	lockWaitSec, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().LockWaitTimeout = lockWaitSec * 1000
+
+	// timezone setting
+	// timezone used to datetime/timestamp conversion when collecting stats.
+	globalTZ, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TimeZone)
+	if err != nil {
+		return err
+	}
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, globalTZ); err != nil {
+		return err
+	}
+	sctx.GetSessionVars().StmtCtx.SetTimeZone(sctx.GetSessionVars().Location())
 	return nil
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func GetCurrentPruneMode(pool util.SessionPool) (mode string, err error) {
+func GetCurrentPruneMode(pool syssession.Pool) (mode string, err error) {
 	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil

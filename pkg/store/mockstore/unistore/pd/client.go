@@ -41,7 +41,7 @@ type Client interface {
 	Bootstrap(ctx context.Context, store *metapb.Store, region *metapb.Region) (*pdpb.BootstrapResponse, error)
 	IsBootstrapped(ctx context.Context) (bool, error)
 	PutStore(ctx context.Context, store *metapb.Store) error
-	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+	GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error)
 	GetRegion(ctx context.Context, key []byte, opts ...opt.GetRegionOption) (*router.Region, error)
 	GetRegionByID(ctx context.Context, regionID uint64, opts ...opt.GetRegionOption) (*router.Region, error)
 	ReportRegion(*pdpb.RegionHeartbeatRequest)
@@ -112,7 +112,7 @@ func NewClient(pdAddrs []string, tag string) (Client, error) {
 		err     error
 		members *pdpb.GetMembersResponse
 	)
-	for i := 0; i < maxRetryCount; i++ {
+	for range maxRetryCount {
 		if members, err = c.updateLeader(); err == nil {
 			break
 		}
@@ -256,7 +256,7 @@ func (c *client) leaderClient() pdpb.PDClient {
 
 func (c *client) doRequest(ctx context.Context, f func(context.Context, pdpb.PDClient) error) error {
 	var err error
-	for i := 0; i < maxRetryCount; i++ {
+	for range maxRetryCount {
 		ctx1, cancel := context.WithTimeout(ctx, pdTimeout)
 		err = f(ctx1, c.leaderClient())
 		cancel()
@@ -449,7 +449,7 @@ func (c *client) PutStore(ctx context.Context, store *metapb.Store) error {
 	return nil
 }
 
-func (c *client) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *client) GetStore(ctx context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	var resp *pdpb.GetStoreResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error

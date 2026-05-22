@@ -19,13 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMemoryUsageOpsHistory(t *testing.T) {
-	info := util.ProcessInfo{}
+	info := sessmgr.ProcessInfo{}
 	genInfo := func(i int) {
 		info.ID = uint64(i)
 		info.DB = strconv.Itoa(2 * i)

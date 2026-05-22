@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
@@ -166,14 +167,6 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 				s.Address, tikvVersion, build.ReleaseVersion)
 		}
 	}
-
-	if BRVersion.Major > 8 || (BRVersion.Major == 8 && BRVersion.Minor >= 4) {
-		if tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 4) {
-			return errors.Annotatef(berrors.ErrVersionMismatch,
-				"TiKV node %s version %s is too old because the PITR id map is written into the cluster system table mysql.tidb_pitr_id_map, please use the tikv with version v8.4.0+",
-				s.Address, tikvVersion)
-		}
-	}
 	return nil
 }
 
@@ -211,8 +204,8 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 			s.Address, tikvVersion, build.ReleaseVersion)
 	}
 
-	// BR 6.x works with TiKV 5.x and not guarantee works with 4.x
-	if BRVersion.Major < tikvVersion.Major || BRVersion.Major-tikvVersion.Major > 1 {
+	// BR 9.x works with TiKV 7.x and not guarantee works with 6.x
+	if BRVersion.Major < tikvVersion.Major || BRVersion.Major-tikvVersion.Major > 2 {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s major version mismatch, please use the same version of BR",
 			s.Address, tikvVersion, build.ReleaseVersion)
 	}
@@ -240,15 +233,6 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 		// checkpoint mode only support after v6.5.0
 		checkpointSupportError = errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use checkpoint, please update tikv's version to at least v6.5.0",
 			s.Address, tikvVersion)
-	}
-
-	// 8.2 br(store based backup) does not support tikv <= 8.1
-	// due to the performance issue https://github.com/tikv/tikv/issues/17168
-	// TODO: we can remove this check if the performance issue is fixed and cherry-pick
-	if (BRVersion.Major > 8 || (BRVersion.Major == 8 && BRVersion.Minor >= 2)) &&
-		(tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 2)) {
-		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch, please use the same version of BR",
-			s.Address, tikvVersion, build.ReleaseVersion)
 	}
 
 	// don't warn if we are the master build, which always have the version v4.0.0-beta.2-*
@@ -370,7 +354,7 @@ type ServerType int
 
 const (
 	// ServerTypeUnknown represents unknown server type
-	ServerTypeUnknown = iota
+	ServerTypeUnknown ServerType = iota
 	// ServerTypeMySQL represents MySQL server type
 	ServerTypeMySQL
 	// ServerTypeMariaDB represents MariaDB server type
@@ -410,9 +394,42 @@ var (
 	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select version()` result for cloud version format.
+	tidbCloudServerVersionRegex = regexp.MustCompile(`TiDB-CLOUD\.(\d{4})(\d{2})\.(\d+)([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select tidb_version()` result for cloud release version format.
+	tidbCloudReleaseVersionRegex = regexp.MustCompile(`Release Version:\s*CLOUD\.(\d{4})(\d{2})\.(\d+)([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result with full release version
-	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*(v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|CLOUD\.\d{6}\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)`)
 )
+
+func parseTiDBXVersionToSemver(versionStr string) string {
+	// Cloud release version is exposed as
+	// TiDB-CLOUD.<YYYYMM>.<patch> or Release Version: CLOUD.<YYYYMM>.<patch>
+	// (optionally with pre-release suffix).
+	// See mysql.BuildTiDBXReleaseVersion, which converts semantic version
+	// v<YY>.<M>.<patch> into that wire-visible format. We parse it back here so
+	// BR version checks can keep working on semver-like values.
+	match := tidbCloudServerVersionRegex.FindStringSubmatch(versionStr)
+	if len(match) != 6 {
+		match = tidbCloudReleaseVersionRegex.FindStringSubmatch(versionStr)
+	}
+	if len(match) != 6 {
+		return ""
+	}
+	year, err := strconv.Atoi(match[1])
+	if err != nil || year < mysql.TiDBXVerMinYear || year > mysql.TiDBXVerMaxYear {
+		return ""
+	}
+	month, err := strconv.Atoi(match[2])
+	if err != nil || month < 1 || month > 12 {
+		return ""
+	}
+	patch, err := strconv.Atoi(match[3])
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d.%d%s", year-2000, month, patch, match[4])
+}
 
 // ParseServerInfo parses exported server type and version info from version string
 func ParseServerInfo(src string) ServerInfo {
@@ -441,6 +458,10 @@ func ParseServerInfo(src string) ServerInfo {
 		} else {
 			versionStr = tidbVersionRegex.FindString(src)
 			versionStr = strings.TrimPrefix(versionStr, "-")
+		}
+		// try to parse TiDB-X version if Classic tidb version parsing fails.
+		if versionStr == "" {
+			versionStr = parseTiDBXVersionToSemver(src)
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -138,18 +138,20 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
 			rs, err := tk.Exec("show variables like 'tidb_gc_enable'")
 			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
 			rs, err = tk.Exec("show variables like 'tidb_enable_auto_analyze'")
 			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
 			rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
 			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.On)
 			rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
 			assert.NoError(t, err)
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
 		}
 	})
 	// first try with `tidb_gc_enable` = on and `tidb_super_read_only` = off and `tidb_ttl_job_enable` = on
@@ -161,13 +163,13 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 
 	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
 	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.On)
 	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
 	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
 
 	// second try with `tidb_gc_enable` = off and `tidb_super_read_only` = on and `tidb_ttl_job_enable` = off
 	tk.MustExec("set global tidb_gc_enable = off")
@@ -179,13 +181,13 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
 	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.On)
 	rs, err = tk.Exec("show variables like 'tidb_gc_enable'")
 	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
 	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
 	assert.NoError(t, err)
-	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
 
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
@@ -220,7 +222,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 
 	rs, err := tk.Exec("show variables like 'tidb_ttl_job_enable'")
 	assert.NoError(t, err)
-	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
+	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.On)
 
 	// Try canceled on StateWriteReorganization, cancel failed
 	hook = newCancelJobHook(t, store, func(job *model.Job) bool {
@@ -232,7 +234,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 
 	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")
 	assert.NoError(t, err)
-	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
+	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], vardef.Off)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))

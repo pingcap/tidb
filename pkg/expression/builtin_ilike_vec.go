@@ -25,7 +25,7 @@ import (
 
 // LowerAlphaASCII only lowers alpha ascii
 func LowerAlphaASCII(loweredCol *chunk.Column, rowNum int) {
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		str := loweredCol.GetString(i)
 		strBytes := hack.Slice(str)
 
@@ -36,7 +36,7 @@ func LowerAlphaASCII(loweredCol *chunk.Column, rowNum int) {
 // LowerAlphaASCIIExcludeEscapeChar lower alpha ascii exclude escape char
 func LowerAlphaASCIIExcludeEscapeChar(loweredCol *chunk.Column, rowNum int, excludedChar int64) int64 {
 	actualEscapeChar := excludedChar
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		str := loweredCol.GetString(i)
 		strBytes := hack.Slice(str)
 
@@ -94,9 +94,9 @@ func (b *builtinIlikeSig) lowerExpr(param *funcParam, rowNum int) {
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
-		strBytes := hack.Slice(str)
+		strBytes := []byte(str)
 		stringutil.LowerOneString(strBytes)
-		param.setStrVal(str)
+		param.setStrVal(string(strBytes))
 		return
 	}
 
@@ -109,9 +109,9 @@ func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int6
 	col := param.getCol()
 	if col == nil {
 		str := param.getStringVal(0)
-		strBytes := hack.Slice(str)
+		strBytes := []byte(str)
 		escape = int64(stringutil.LowerOneStringExcludeEscapeChar(strBytes, byte(escape)))
-		param.setStrVal(str)
+		param.setStrVal(string(strBytes))
 		return escape
 	}
 
@@ -126,7 +126,7 @@ func (b *builtinIlikeSig) vecVec(pattern collate.WildcardPattern, params []*func
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(params[0].getCol(), params[1].getCol())
 	i64s := result.Int64s()
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		if result.IsNull(i) {
 			continue
 		}
@@ -141,7 +141,7 @@ func (b *builtinIlikeSig) constVec(pattern collate.WildcardPattern, expr string,
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(param.getCol())
 	i64s := result.Int64s()
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		if result.IsNull(i) {
 			continue
 		}
@@ -156,7 +156,7 @@ func (b *builtinIlikeSig) ilikeWithMemorization(pattern collate.WildcardPattern,
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(exprParam.getCol())
 	i64s := result.Int64s()
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		if result.IsNull(i) {
 			continue
 		}
@@ -179,7 +179,7 @@ func (b *builtinIlikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	params := make([]*funcParam, 0, 3)
 	defer releaseBuffers(&b.baseBuiltinFunc, params)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		param, isConstNull, err := buildStringParam(ctx, &b.baseBuiltinFunc, i, input, false)
 		if err != nil {
 			return ErrRegexp.GenWithStackByArgs(err)

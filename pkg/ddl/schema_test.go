@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -53,9 +53,8 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 
-	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	tblInfo.State = model.StateNone
 	return job
 }
@@ -81,7 +80,7 @@ func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, error) {
 	tblInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}
 	genIDs, err := genGlobalIDs(store, 1)
 
@@ -93,7 +92,7 @@ func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, er
 	cols := make([]*model.ColumnInfo, num)
 	for i := range cols {
 		col := &model.ColumnInfo{
-			Name:         pmodel.NewCIStr(fmt.Sprintf("c%d", i+1)),
+			Name:         ast.NewCIStr(fmt.Sprintf("c%d", i+1)),
 			Offset:       i,
 			DefaultValue: i + 1,
 			State:        model.StatePublic,
@@ -124,7 +123,7 @@ func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 
 func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 	dbInfo := &model.DBInfo{
-		Name: pmodel.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}
 
 	genIDs, err := genGlobalIDs(store, 1)
@@ -149,9 +148,8 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTes
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.CreateSchemaArgs{DBInfo: dbInfo}, true)))
 
-	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	checkJobWithHistory(t, ctx, job.ID, dbInfo, nil)
 	dbInfo.State = model.StateNone
 	return job
 }
@@ -170,13 +168,12 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 	return j
 }
 
-func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo) *model.Job {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, &model.DropSchemaArgs{FKCheck: true}, true))
 	require.NoError(t, err)
-	ver := getSchemaVer(t, ctx)
-	return job, ver
+	return job
 }
 
 func isDDLJobDone(test *testing.T, t *meta.Mutator, store kv.Storage) bool {
@@ -263,12 +260,12 @@ func TestSchema(t *testing.T) {
 		require.NoError(t, err)
 	}
 	tk3 := testkit.NewTestKit(t, store)
-	job, v := testDropSchema(t, tk3.Session(), de, dbInfo)
+	job = testDropSchema(t, tk3.Session(), de, dbInfo)
 	testCheckSchemaState(t, store, dbInfo, model.StateNone)
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
-	checkHistoryJobArgs(t, tk3.Session(), job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
+	checkJobWithHistory(t, tk3.Session(), job.ID, dbInfo, nil)
 
 	// Drop a non-existent database.
 	job = &model.Job{
@@ -289,7 +286,7 @@ func TestSchema(t *testing.T) {
 	job = testCreateSchema(t, ctx, de, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
-	job, _ = testDropSchema(t, ctx, de, dbInfo1)
+	job = testDropSchema(t, ctx, de, dbInfo1)
 	testCheckSchemaState(t, store, dbInfo1, model.StateNone)
 	testCheckJobDone(t, store, job.ID, false)
 }
@@ -300,7 +297,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	require.True(t, domain.DDL().OwnerManager().IsOwner())
 
 	d2, de2 := ddl.NewDDL(context.Background(),
-		ddl.WithEtcdClient(domain.EtcdClient()),
+		ddl.WithEtcdClient(domain.GetEtcdClient()),
 		ddl.WithStore(store),
 		ddl.WithInfoCache(domain.InfoCache()),
 		ddl.WithLease(testLease),

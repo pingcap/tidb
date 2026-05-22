@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -65,7 +66,7 @@ func TestCalibrateResource(t *testing.T) {
 	mockPrivider := &mockResourceGroupProvider{
 		cfg: *oldCfg,
 	}
-	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil)
+	resourceCtl, err := rmclient.NewResourceGroupController(context.Background(), 1, mockPrivider, nil, constants.NullKeyspaceID)
 	require.NoError(t, err)
 	do.SetResourceGroupsController(resourceCtl)
 

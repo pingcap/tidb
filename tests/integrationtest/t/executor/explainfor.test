@@ -1,30 +1,30 @@
 # TestExplainMemTablePredicate
-desc format='brief' select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
-desc format='brief' select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
-desc format='brief' select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
-desc format='brief' select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
-desc format='brief' select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
-desc format='brief' select * from information_schema.slow_query;
-desc format='brief' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+explain format='plan_tree' select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
+explain format='plan_tree' select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
+explain format='plan_tree' select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+explain format='plan_tree' select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+explain format='plan_tree' select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+explain format='plan_tree' select * from information_schema.slow_query;
+explain format='plan_tree' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
 set @@time_zone = '+00:00';
-desc format='brief' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+explain format='plan_tree' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
 set @@time_zone = default;
 
 # TestExplainClusterTable
-desc format='brief' select * from information_schema.cluster_config where type in ('tikv', 'tidb');
-desc format='brief' select * from information_schema.cluster_config where instance='192.168.1.7:2379';
-desc format='brief' select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379';
+explain format='plan_tree' select * from information_schema.cluster_config where type in ('tikv', 'tidb');
+explain format='plan_tree' select * from information_schema.cluster_config where instance='192.168.1.7:2379';
+explain format='plan_tree' select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379';
 
 # TestInspectionResultTable
-desc format='brief' select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config';
-desc format='brief' select * from information_schema.inspection_result where rule in ('ddl', 'config');
-desc format='brief' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool');
-desc format='brief' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config');
+explain format='plan_tree' select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config';
+explain format='plan_tree' select * from information_schema.inspection_result where rule in ('ddl', 'config');
+explain format='plan_tree' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool');
+explain format='plan_tree' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config');
 
 # TestInspectionRuleTable
-desc format='brief' select * from information_schema.inspection_rules where type='inspection';
-desc format='brief' select * from information_schema.inspection_rules where type='inspection' or type='summary';
-desc format='brief' select * from information_schema.inspection_rules where type='inspection' and type='summary';
+explain format='plan_tree' select * from information_schema.inspection_rules where type='inspection';
+explain format='plan_tree' select * from information_schema.inspection_rules where type='inspection' or type='summary';
+explain format='plan_tree' select * from information_schema.inspection_rules where type='inspection' and type='summary';
 
 # TestSavedPlanPanicPlanCache
 set tidb_enable_prepared_plan_cache=1;
@@ -44,33 +44,33 @@ rollback;
 set tidb_enable_prepared_plan_cache=default;
 
 # TestExplainTableStorage
-desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';
-desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata';
-desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata';
+explain format='plan_tree' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';
+explain format='plan_tree' select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata';
+explain format='plan_tree' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata';
 
 # TestInspectionSummaryTable
-desc format='brief' select * from information_schema.inspection_summary where rule='ddl';
-desc format='brief' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config';
-desc format='brief' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query';
-desc format='brief' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
-desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
-desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1';
-desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2');
-desc format='brief' select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2');
-desc format='brief' select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3';
-desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config');
-desc format='brief' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90);
-desc format='brief' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3');
+explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl';
+explain format='plan_tree' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config';
+explain format='plan_tree' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query';
+explain format='plan_tree' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
+explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
+explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1';
+explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2');
+explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2');
+explain format='plan_tree' select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3';
+explain format='plan_tree' select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config');
+explain format='plan_tree' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90);
+explain format='plan_tree' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3');
 
 # TestExplainTiFlashSystemTables
-desc format='brief' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930';
-desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930';
-desc format='brief' select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = 'test';
-desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = 'test';
-desc format='brief' select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = 't';
-desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = 't';
-desc format='brief' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
-desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
+explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930';
+explain format='plan_tree' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930';
+explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = 'test';
+explain format='plan_tree' select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = 'test';
+explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = 't';
+explain format='plan_tree' select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = 't';
+explain format='plan_tree' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
+explain format='plan_tree' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
 
 # TestSetOperations4PlanCache
 set tidb_enable_prepared_plan_cache=1;
@@ -435,21 +435,21 @@ drop table if exists t;
 create table t(a int);
 drop table if exists r;
 create table r(a int);
-desc format='brief' select * from information_schema.tables where table_name='t';
-desc format='brief' select * from information_schema.tables where lower(table_name)='t';
-desc format='brief' select * from information_schema.tables where upper(table_name)=upper('t');
+explain format='plan_tree' select * from information_schema.tables where table_name='t';
+explain format='plan_tree' select * from information_schema.tables where lower(table_name)='t';
+explain format='plan_tree' select * from information_schema.tables where upper(table_name)=upper('t');
 
-desc format='brief' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
-desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
-desc format='brief' select * from information_schema.STATISTICS where table_name='t';
-desc format='brief' select * from information_schema.STATISTICS where table_name='t' and table_name='r';
-desc format='brief' select * from information_schema.STATISTICS where table_name='t' or table_name='r';
-desc format='brief' select * from information_schema.tables where table_schema='t';
-desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_schema='s1';
-desc format='brief' select * from information_schema.STATISTICS where table_schema='s1';
-desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' and table_schema='test';
-desc format='brief' select * from information_schema.STATISTICS where table_name='s1' and table_schema='test';
-desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' or table_schema='test';
-desc format='brief' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
-desc format='brief' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
-desc format='brief' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';
+explain format='plan_tree' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
+explain format='plan_tree' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
+explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t';
+explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t' and table_name='r';
+explain format='plan_tree' select * from information_schema.STATISTICS where table_name='t' or table_name='r';
+explain format='plan_tree' select * from information_schema.tables where table_schema='t';
+explain format='plan_tree' select * from information_schema.KEY_COLUMN_USAGE where table_schema='s1';
+explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1';
+explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1' and table_schema='test';
+explain format='plan_tree' select * from information_schema.STATISTICS where table_name='s1' and table_schema='test';
+explain format='plan_tree' select * from information_schema.STATISTICS where table_schema='s1' or table_schema='test';
+explain format='plan_tree' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
+explain format='plan_tree' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
+explain format='plan_tree' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';

@@ -24,10 +24,10 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -61,16 +61,16 @@ func newTableRestore(t *testing.T,
 	require.NoError(t, err)
 	tableInfo.State = model.StatePublic
 
-	ti := &checkpoints.TidbTableInfo{
+	ti := &importdef.TableInfo{
 		ID:   tableInfo.ID,
 		DB:   db,
 		Name: table,
 		Core: tableInfo,
 	}
-	dbInfo := &checkpoints.TidbDBInfo{
+	dbInfo := &importdef.DBInfo{
 		ID:   dbID,
 		Name: db,
-		Tables: map[string]*checkpoints.TidbTableInfo{
+		Tables: map[string]*importdef.TableInfo{
 			table: ti,
 		},
 	}
@@ -361,7 +361,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 		s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? WHERE table_id = ? AND task_id = ?\\E").
 			WithArgs(checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), metaStatusRestoreStarted.String(), int64(1), int64(1)).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
-		s.checksumMgr.checksum = local.RemoteChecksum{
+		s.checksumMgr.checksum = ingestctrl.RemoteChecksum{
 			TotalBytes: checksum.SumSize(),
 			TotalKVs:   checksum.SumKVS(),
 			Checksum:   checksum.Sum(),
@@ -421,7 +421,7 @@ func TestCheckTasksExclusively(t *testing.T) {
 		sort.Slice(tasks, func(i, j int) bool {
 			return tasks[i].taskID < tasks[j].taskID
 		})
-		for j := 0; j < 5; j++ {
+		for j := range 5 {
 			require.Equal(t, int64(j), tasks[j].taskID)
 		}
 
@@ -438,14 +438,18 @@ func TestCheckTasksExclusively(t *testing.T) {
 }
 
 type testChecksumMgr struct {
-	checksum local.RemoteChecksum
+	checksum ingestctrl.RemoteChecksum
 	callCnt  int
 }
 
-func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*local.RemoteChecksum, error) {
+var _ ingestctrl.ChecksumManager = (*testChecksumMgr)(nil)
+
+func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *importdef.TableInfo) (*ingestctrl.RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
 }
+
+func (*testChecksumMgr) Close() {}
 
 func TestSingleTaskMetaMgr(t *testing.T) {
 	metaBuilder := singleMgrBuilder{

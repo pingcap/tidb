@@ -16,6 +16,8 @@ package expression
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -36,11 +38,26 @@ import (
 )
 
 // DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
-var DefaultExprPushDownBlacklist *atomic.Value
+var DefaultExprPushDownBlacklist atomic.Pointer[map[string]uint32]
 
 // ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
 // This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
 var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
+
+// scalarFuncSigLowerNameMap is a map from the upper case function name in tipb.ScalarFuncSig_name to the lower case function name.
+var scalarFuncSigLowerNameMap map[string]string
+
+func init() {
+	defaultExprPushDownBlacklistMap := make(map[string]uint32)
+	DefaultExprPushDownBlacklist.Store(&defaultExprPushDownBlacklistMap)
+	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
+	nameSlices := slices.Collect(maps.Values(tipb.ScalarFuncSig_name))
+	scalarFuncSigLowerNameMap = make(map[string]string, len(nameSlices))
+	for _, name := range nameSlices {
+		// The name in tipb.ScalarFuncSig_name is upper case, we need to convert it to lower case.
+		scalarFuncSigLowerNameMap[name] = strings.ToLower(name)
+	}
+}
 
 func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
@@ -75,9 +92,18 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	}
 
 	if ret {
-		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, strings.ToLower(sf.Function.PbCode().String()))
+		defaultExprPushDownBlacklistMap := DefaultExprPushDownBlacklist.Load()
+		if len(*defaultExprPushDownBlacklistMap) == 0 {
+			return true
+		}
+		if result := IsPushDownEnabled(sf.FuncName.L, storeType); !result {
+			return result
+		}
+		// scalarFuncSigLowerNameMap is to string.ToLower the function name in tipb.ScalarFuncSig_name.
+		// ref https://github.com/pingcap/tidb/issues/61375
+		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, scalarFuncSigLowerNameMap[sf.Function.PbCode().String()])
 		// Aside from checking function name, also check the pb name in case only the specific push down is disabled.
-		ret = IsPushDownEnabled(sf.FuncName.L, storeType) && IsPushDownEnabled(funcFullName, storeType)
+		ret = IsPushDownEnabled(funcFullName, storeType)
 	}
 	return ret
 }
@@ -209,21 +235,26 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
 		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
-		ast.FromDays,                  /* ast.ToDays */
-		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+		ast.FromDays, /* ast.ToDays */
+		ast.PeriodAdd, ast.PeriodDiff, ast.TimestampDiff, ast.FromUnixTime,
 		/* ast.LastDay */
-		ast.Sysdate,
+		ast.Sysdate, /* ast.StrToDate, */
 
 		// encryption functions.
-		ast.MD5, ast.SHA1, ast.UncompressedLength,
+		ast.MD5, ast.SHA1, ast.SHA2, ast.UncompressedLength,
 
 		ast.Cast,
 
 		// misc functions.
 		// TODO(#26942): enable functions below after them are fully tested in TiKV.
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
-		ast.UUID:
+		ast.UUID, ast.UUIDVersion, ast.UUIDTimestamp:
 
+		return true
+	case ast.UnixTimestamp:
+		if sf.Function.PbCode() == tipb.ScalarFuncSig_UnixTimestampCurrent {
+			return false
+		}
 		return true
 	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 	// open the following switchers if we implement them in coprocessor via `cmath`
@@ -280,7 +311,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Power, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.JSONContainsPath, ast.JSONValid, ast.JSONKeys,
+		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONObject, ast.JSONArray, ast.JSONContainsPath, ast.JSONValid, ast.JSONKeys,
 		ast.Repeat, ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
@@ -374,6 +405,12 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
 			return true
 		}
+	case ast.Truncate:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_TruncateUint, tipb.ScalarFuncSig_TruncateInt,
+			tipb.ScalarFuncSig_TruncateReal, tipb.ScalarFuncSig_TruncateDecimal:
+			return true
+		}
 	case ast.Extract:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_ExtractDatetime, tipb.ScalarFuncSig_ExtractDuration:
@@ -413,6 +450,20 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
+	case ast.FTSMatchWord:
+		return true
+	case ast.FTSMysqlMatchAgainst:
+		// The tipb pushdown protocol (see distsql_builtin.go) does not
+		// serialize the FTS modifier; TiFlash defaults to natural-language
+		// mode on the reconstructed signature. Pushing a Boolean-mode or
+		// WITH QUERY EXPANSION call down would therefore silently execute
+		// with the modifier dropped. Mark such calls as not Flash-supported
+		// here as a defense in depth — the planner's modifier guard in
+		// matchAgainstToBuiltin already rejects them at plan time, but
+		// keeping pushdown self-consistent guards against any future code
+		// path that builds an FTSMysqlMatchAgainst around the planner.
+		sig, ok := function.Function.(*builtinFtsMysqlMatchAgainstSig)
+		return ok && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
@@ -430,15 +481,11 @@ func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
 
 // IsPushDownEnabled returns true if the input expr is not in the expr_pushdown_blacklist
 func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
-	value, exists := DefaultExprPushDownBlacklist.Load().(map[string]uint32)[name]
+	blacklistmap := *DefaultExprPushDownBlacklist.Load()
+	value, exists := blacklistmap[name]
 	if exists {
 		mask := storeTypeMask(storeType)
 		return !(value&mask == mask)
-	}
-
-	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
-		// Can not push down approx_count_distinct to other store except tiflash by now.
-		return false
 	}
 
 	return true
@@ -512,6 +559,11 @@ func (ctx PushDownContext) AppendWarning(err error) {
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
 func PushDownExprsWithExtraInfo(ctx PushDownContext, exprs []Expression, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
+	if len(exprs) == 0 {
+		return nil, nil
+	}
+	pushed = make([]Expression, 0, len(exprs))
+	remained = make([]Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		if canExprPushDown(ctx, expr, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
@@ -543,10 +595,4 @@ func storeTypeMask(storeType kv.StoreType) uint32 {
 		return 1<<kv.TiKV | 1<<kv.TiFlash | 1<<kv.TiDB
 	}
 	return 1 << storeType
-}
-
-func init() {
-	DefaultExprPushDownBlacklist = new(atomic.Value)
-	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
-	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
 }

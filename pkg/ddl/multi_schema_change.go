@@ -15,18 +15,25 @@
 package ddl
 
 import (
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	jobCtx.inInnerRunOneJobStep = true
+	defer func() {
+		jobCtx.inInnerRunOneJobStep = false
+	}()
 	metaMut := jobCtx.metaMut
 	if job.MultiSchemaInfo.Revertible {
 		// Handle the rolling back job.
@@ -38,7 +45,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
+				ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -61,7 +68,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job, i)
-			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
+			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
@@ -69,10 +76,16 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 
 		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
-		tblInfo, err = metaMut.GetTable(job.SchemaID, job.TableID)
+		tblInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 		if err != nil {
 			return ver, err
 		}
+
+		finished := w.doAnalyzeWithoutReorg(job, tblInfo)
+		if !finished {
+			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		}
+
 		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
@@ -87,7 +100,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob, nil)
+			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -136,7 +149,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job, i)
-		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob, nil)
+		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}
@@ -192,7 +205,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		SchemaState: jobW.SchemaState,
 		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
-		CtxVars:     jobW.CtxVars,
+		NeedReorg:   jobW.NeedReorg,
 		ReorgTp:     reorgTp,
 	})
 	return nil
@@ -205,7 +218,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		col, pos := args.Col, args.Pos
 		info.AddColumns = append(info.AddColumns, col.Name)
 		for colName := range col.Dependences {
-			info.RelativeColumns = append(info.RelativeColumns, pmodel.CIStr{L: colName, O: colName})
+			info.RelativeColumns = append(info.RelativeColumns, ast.CIStr{L: colName, O: colName})
 		}
 		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
@@ -227,7 +240,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		}
 		for _, c := range indexArg.HiddenCols {
 			for depColName := range c.Dependences {
-				info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
+				info.RelativeColumns = append(info.RelativeColumns, ast.NewCIStr(depColName))
 			}
 		}
 	case model.ActionRenameIndex:
@@ -273,7 +286,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	modifyCols := make(map[string]struct{})
 	modifyIdx := make(map[string]struct{})
 
-	checkColumns := func(colNames []pmodel.CIStr, addToModifyCols bool) error {
+	checkColumns := func(colNames []ast.CIStr, addToModifyCols bool) error {
 		for _, colName := range colNames {
 			name := colName.L
 			if _, ok := modifyCols[name]; ok {
@@ -286,7 +299,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 		return nil
 	}
 
-	checkIndexes := func(idxNames []pmodel.CIStr, addToModifyIdx bool) error {
+	checkIndexes := func(idxNames []ast.CIStr, addToModifyIdx bool) error {
 		for _, idxName := range idxNames {
 			name := idxName.L
 			if _, ok := modifyIdx[name]; ok {
@@ -362,6 +375,36 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	mergedSubJob.JobArgs = newAddIndexesArgs
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
+}
+
+// checkNeedAnalyze check if the job need analyze.
+func checkNeedAnalyze(job *model.Job, tblInfo *model.TableInfo) bool {
+	analyzeVer := vardef.DefTiDBAnalyzeVersion
+	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+		analyzeVer = variable.TidbOptInt(val, analyzeVer)
+	}
+	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
+		enableDDLAnalyze = variable.TiDBOptOn(val)
+	}
+	hasPartition := tblInfo.GetPartitionInfo() != nil
+	if !enableDDLAnalyze || hasPartition || analyzeVer != 2 {
+		logutil.DDLLogger().Info("skip analyze",
+			zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
+			zap.Bool("is partitioned table", hasPartition),
+			zap.Int("tidb_analyze_version", analyzeVer))
+		return false
+	}
+
+	// If we reach here, it means all the reorg work has been done, either after
+	// MODIFY COLUMN or ADD INDEX. So we can just check the index state to decide
+	// whether there are new indexes added.
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StateWriteReorganization {
+			return true
+		}
+	}
+	return false
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {

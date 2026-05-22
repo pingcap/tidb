@@ -528,8 +528,28 @@ func TestImportActions(t *testing.T) {
 			expectSQL: "SHOW IMPORT JOB 123",
 		},
 		{
+			sourceSQL: "show raw import jobs",
+			expectSQL: "SHOW RAW IMPORT JOBS",
+		},
+		{
+			sourceSQL: "show raw import job 123",
+			expectSQL: "SHOW RAW IMPORT JOB 123",
+		},
+		{
+			sourceSQL: "show raw import jobs where group_key = 'g'",
+			expectSQL: "SHOW RAW IMPORT JOBS WHERE `group_key`=_UTF8MB4'g'",
+		},
+		{
 			sourceSQL: "show import jobs where aa > 1",
 			expectSQL: "SHOW IMPORT JOBS WHERE `aa`>1",
+		},
+		{
+			sourceSQL: "show import groups",
+			expectSQL: "SHOW IMPORT GROUPS",
+		},
+		{
+			sourceSQL: "show import group '123'",
+			expectSQL: "SHOW IMPORT GROUP '123'",
 		},
 	}
 	extractNodeFunc := func(node Node) Node {
@@ -627,6 +647,10 @@ func TestImportIntoSecureText(t *testing.T) {
 		{
 			input:   "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
 			secured: "\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'\\E",
+		},
+		{
+			input:   "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb' with CLOUD_STORAGE_uri='s3://bucket/prefix?access-key=cccccc&secret-access-key=dddddd'",
+			secured: `^IMPORT INTO .t. FROM \Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|')){2} WITH cloud_storage_uri=\Q's3://bucket/prefix?\E((access-key=xxxxxx|secret-access-key=xxxxxx)(&|')){2}`,
 		},
 	}
 

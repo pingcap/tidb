@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -212,10 +212,10 @@ func (m *mockDelRateLimiter) WaitDelToken(ctx context.Context) error {
 }
 
 func TestTTLDeleteTaskDoDelete(t *testing.T) {
-	origBatchSize := variable.TTLDeleteBatchSize.Load()
+	origBatchSize := vardef.TTLDeleteBatchSize.Load()
 	delBatch := 3
-	variable.TTLDeleteBatchSize.Store(int64(delBatch))
-	defer variable.TTLDeleteBatchSize.Store(origBatchSize)
+	vardef.TTLDeleteBatchSize.Store(int64(delBatch))
+	defer vardef.TTLDeleteBatchSize.Store(origBatchSize)
 
 	t1 := newMockTTLTbl(t, "t1")
 	s := newMockSession(t)
@@ -252,7 +252,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 	nRows := func(n int) [][]types.Datum {
 		rows := make([][]types.Datum, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			rows[i] = []types.Datum{
 				types.NewIntDatum(int64(i)),
 			}
@@ -353,7 +353,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		// check SQLs
 		expectedSQLs := make([]string, 0, len(sqls))
-		for i := 0; i < c.batchCnt; i++ {
+		for i := range c.batchCnt {
 			if c.cancelCtx && i >= c.cancelCtxBatch {
 				break
 			}
@@ -374,7 +374,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		// check retry rows
 		var expectedRetryRows [][]types.Datum
-		for i := 0; i < c.batchCnt; i++ {
+		for i := range c.batchCnt {
 			if slices.Contains(c.retryErrBatches, i) || (c.cancelCtx && i >= c.cancelCtxBatch) {
 				expectedRetryRows = append(expectedRetryRows, task.rows[i*delBatch:(i+1)*delBatch]...)
 			}
@@ -383,7 +383,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		// check statistics
 		var expectedErrRows uint64
-		for i := 0; i < c.batchCnt; i++ {
+		for i := range c.batchCnt {
 			if slices.Contains(c.noRetryErrBatches, i) && !(c.cancelCtx && i >= c.cancelCtxBatch) {
 				expectedErrRows += uint64(delBatch)
 			}
@@ -398,12 +398,12 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 	origGlobalDelRateLimiter := globalDelRateLimiter
 	defer func() {
 		globalDelRateLimiter = origGlobalDelRateLimiter
-		variable.TTLDeleteRateLimit.Store(variable.DefTiDBTTLDeleteRateLimit)
+		vardef.TTLDeleteRateLimit.Store(vardef.DefTiDBTTLDeleteRateLimit)
 	}()
 
 	// The global inner limiter should have a default config
-	require.Equal(t, 0, variable.DefTiDBTTLDeleteRateLimit)
-	require.Equal(t, int64(0), variable.TTLDeleteRateLimit.Load())
+	require.Equal(t, 0, vardef.DefTiDBTTLDeleteRateLimit)
+	require.Equal(t, int64(0), vardef.TTLDeleteRateLimit.Load())
 	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
 	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
 	// The newDelRateLimiter() should return a default config
@@ -418,12 +418,12 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 		}
 	}()
 
-	variable.TTLDeleteRateLimit.Store(100000)
+	vardef.TTLDeleteRateLimit.Store(100000)
 	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
 	require.Equal(t, rate.Limit(100000), globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
 	require.Equal(t, int64(100000), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
 
-	variable.TTLDeleteRateLimit.Store(0)
+	vardef.TTLDeleteRateLimit.Store(0)
 	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
 	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
 	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
@@ -437,9 +437,9 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 }
 
 func TestTTLDeleteTaskWorker(t *testing.T) {
-	origBatchSize := variable.TTLDeleteBatchSize.Load()
-	variable.TTLDeleteBatchSize.Store(3)
-	defer variable.TTLDeleteBatchSize.Store(origBatchSize)
+	origBatchSize := vardef.TTLDeleteBatchSize.Load()
+	vardef.TTLDeleteBatchSize.Store(3)
+	defer vardef.TTLDeleteBatchSize.Store(origBatchSize)
 
 	t1 := newMockTTLTbl(t, "t1")
 	t2 := newMockTTLTbl(t, "t2")
@@ -595,19 +595,19 @@ func TestDelRateLimiterConcurrency(t *testing.T) {
 	origGlobalDelRateLimiter := globalDelRateLimiter
 	defer func() {
 		globalDelRateLimiter = origGlobalDelRateLimiter
-		variable.TTLDeleteRateLimit.Store(variable.DefTiDBTTLDeleteRateLimit)
+		vardef.TTLDeleteRateLimit.Store(vardef.DefTiDBTTLDeleteRateLimit)
 	}()
 
 	globalDelRateLimiter = newDelRateLimiter()
 	require.NoError(t, globalDelRateLimiter.WaitDelToken(context.Background()))
 
-	variable.TTLDeleteRateLimit.Store(128)
+	vardef.TTLDeleteRateLimit.Store(128)
 	var waiting atomic.Int64
 	continue1 := make(chan struct{})
 	continue2 := make(chan struct{})
 	continue3 := make(chan struct{})
 	cnt := 4
-	for i := 0; i < cnt; i++ {
+	for range cnt {
 		go func() {
 			ctx := context.WithValue(context.Background(), beforeWaitLimiterForTest, func() {
 				if waiting.Add(1) == int64(cnt) {
@@ -627,7 +627,7 @@ func TestDelRateLimiterConcurrency(t *testing.T) {
 
 	select {
 	case <-continue1:
-		variable.TTLDeleteRateLimit.Store(0)
+		vardef.TTLDeleteRateLimit.Store(0)
 		require.NoError(t, globalDelRateLimiter.WaitDelToken(timeCtx))
 		close(continue2)
 	case <-timeCtx.Done():

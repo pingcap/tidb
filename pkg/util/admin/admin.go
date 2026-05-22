@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -194,7 +194,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 }
 
 func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
-	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
+	dbName := ast.NewCIStr(sctx.GetSessionVars().CurrentDB)
 	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
 		return nil, err

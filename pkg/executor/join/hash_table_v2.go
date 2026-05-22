@@ -245,8 +245,12 @@ func (ht *hashTableV2) totalRowCount() uint64 {
 	return ret
 }
 
-func getHashTableLength(table *rowTable) uint64 {
-	return max(nextPowerOfTwo(table.validKeyCount()), uint64(minimalHashTableLen))
+func getHashTableLengthByRowTable(table *rowTable) uint64 {
+	return getHashTableLengthByRowLen(table.validKeyCount())
+}
+
+func getHashTableLengthByRowLen(rowLen uint64) uint64 {
+	return max(nextPowerOfTwo(rowLen), uint64(minimalHashTableLen))
 }
 
 func getHashTableMemoryUsage(hashTableLength uint64) int64 {

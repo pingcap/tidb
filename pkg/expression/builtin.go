@@ -133,7 +133,6 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 	}
 
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -200,7 +199,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
+			args[i] = WrapWithCastAsInt(ctx, args[i], nil)
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETDecimal:
@@ -225,7 +224,6 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -266,7 +264,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	for i := range args {
 		switch argTps[i].EvalType() {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
+			args[i] = WrapWithCastAsInt(ctx, args[i], argTps[i])
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
@@ -286,7 +284,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -305,7 +302,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 // do not check and compute collation.
 func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -397,6 +393,10 @@ func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 				break
 			}
 		}
+		if b.childrenVectorized {
+			// only init this when all children are vectorized
+			b.bufAllocator = newLocalColumnPool()
+		}
 	})
 	return b.childrenVectorized
 }
@@ -431,13 +431,12 @@ func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 }
 
 func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
-	b.args = make([]Expression, 0, len(b.args))
+	b.args = make([]Expression, 0, len(from.args))
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
 	b.tp = from.tp
 	b.pbCode = from.pbCode
-	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
 		b.ctor = from.ctor.Clone()
@@ -481,7 +480,6 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 	var err error
 	if isExplicitCharset {
 		bf = baseBuiltinFunc{
-			bufAllocator:           newLocalColumnPool(),
 			childrenVectorizedOnce: new(sync.Once),
 
 			args: args,
@@ -865,11 +863,14 @@ var funcs = map[string]functionClass{
 	ast.IsIPv6:          &isIPv6FunctionClass{baseFunctionClass{ast.IsIPv6, 1, 1}},
 	ast.IsUsedLock:      &isUsedLockFunctionClass{baseFunctionClass{ast.IsUsedLock, 1, 1}},
 	ast.IsUUID:          &isUUIDFunctionClass{baseFunctionClass{ast.IsUUID, 1, 1}},
-	ast.MasterPosWait:   &masterPosWaitFunctionClass{baseFunctionClass{ast.MasterPosWait, 2, 4}},
 	ast.NameConst:       &nameConstFunctionClass{baseFunctionClass{ast.NameConst, 2, 2}},
 	ast.ReleaseAllLocks: &releaseAllLocksFunctionClass{baseFunctionClass{ast.ReleaseAllLocks, 0, 0}},
 	ast.UUID:            &uuidFunctionClass{baseFunctionClass{ast.UUID, 0, 0}},
+	ast.UUIDv4:          &uuidv4FunctionClass{baseFunctionClass{ast.UUIDv4, 0, 0}},
+	ast.UUIDv7:          &uuidv7FunctionClass{baseFunctionClass{ast.UUIDv7, 0, 0}},
 	ast.UUIDShort:       &uuidShortFunctionClass{baseFunctionClass{ast.UUIDShort, 0, 0}},
+	ast.UUIDVersion:     &uuidVersionFunctionClass{baseFunctionClass{ast.UUIDVersion, 1, 1}},
+	ast.UUIDTimestamp:   &uuidTimestampFunctionClass{baseFunctionClass{ast.UUIDTimestamp, 1, 1}},
 	ast.VitessHash:      &vitessHashFunctionClass{baseFunctionClass{ast.VitessHash, 1, 1}},
 	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
 	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
@@ -977,6 +978,10 @@ var funcs = map[string]functionClass{
 	ast.VecL2Norm:               &vecL2NormFunctionClass{baseFunctionClass{ast.VecL2Norm, 1, 1}},
 	ast.VecFromText:             &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
 	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
+
+	// fts functions
+	ast.FTSMatchWord:         &ftsMatchWordFunctionClass{baseFunctionClass{ast.FTSMatchWord, 2, 2}},
+	ast.FTSMysqlMatchAgainst: &ftsMysqlMatchAgainstFunctionClass{baseFunctionClass{ast.FTSMysqlMatchAgainst, 2, -1}},
 
 	// TiDB internal function.
 	ast.TiDBDecodeKey:       &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},

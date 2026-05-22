@@ -16,7 +16,6 @@ package importclient_test
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -29,6 +28,8 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/stretchr/testify/require"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -38,10 +39,14 @@ type storeClient struct {
 	addr string
 }
 
-func (sc *storeClient) GetStore(_ context.Context, _ uint64) (*metapb.Store, error) {
+func (sc *storeClient) GetStore(_ context.Context, _ uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return &metapb.Store{
 		Address: sc.addr,
 	}, nil
+}
+
+func (*storeClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	return nil
 }
 
 type mockImportServer struct {
@@ -79,18 +84,9 @@ func (s *mockImportServer) MultiIngest(_ context.Context, req *import_sstpb.Mult
 
 func TestImportClient(t *testing.T) {
 	ctx := context.Background()
-	var port int
-	var lis net.Listener
-	var err error
-	for port = 0; port < 1000; port += 1 {
-		addr := fmt.Sprintf(":%d", 51111+port)
-		lis, err = net.Listen("tcp", addr)
-		if err == nil {
-			break
-		}
-		t.Log(err)
-	}
-
+	lis, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	addr := lis.Addr().String()
 	s := grpc.NewServer()
 	import_sstpb.RegisterImportSSTServer(s, &mockImportServer{ErrCount: 3})
 
@@ -102,7 +98,7 @@ func TestImportClient(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	client := importclient.NewImportClient(&storeClient{addr: fmt.Sprintf(":%d", 51111+port)}, nil, keepalive.ClientParameters{})
+	client := importclient.NewImportClient(&storeClient{addr: addr}, nil, keepalive.ClientParameters{})
 
 	{
 		resp, err := client.ClearFiles(ctx, 1, &import_sstpb.ClearRequest{Prefix: "test"})

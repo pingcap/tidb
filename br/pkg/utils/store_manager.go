@@ -16,6 +16,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -25,8 +26,8 @@ import (
 )
 
 const (
-	dialTimeout     = 30 * time.Second
-	resetRetryTimes = 3
+	defaultDialTimeout = 30 * time.Second
+	resetRetryTimes    = 3
 )
 
 // Pool is a lazy pool of gRPC channels.
@@ -95,6 +96,8 @@ type StoreManager struct {
 	}
 	keepalive keepalive.ClientParameters
 	tlsConf   *tls.Config
+
+	DialTimeout time.Duration
 }
 
 func (mgr *StoreManager) GetKeepalive() keepalive.ClientParameters {
@@ -114,8 +117,19 @@ func NewStoreManager(pdCli pd.Client, kl keepalive.ClientParameters, tlsConf *tl
 	}
 }
 
+func (mgr *StoreManager) getDialTimeout() time.Duration {
+	if mgr.DialTimeout > 0 {
+		return mgr.DialTimeout
+	}
+	return defaultDialTimeout
+}
+
 func (mgr *StoreManager) PDClient() pd.Client {
 	return mgr.pdClient
+}
+
+func (mgr *StoreManager) ResetPDClientCallerComponent(component caller.Component) {
+	mgr.pdClient = mgr.pdClient.WithCallerComponent(component)
 }
 
 func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
@@ -141,7 +155,7 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	if mgr.tlsConf != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(mgr.tlsConf))
 	}
-	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	ctx, cancel := context.WithTimeout(ctx, mgr.getDialTimeout())
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = time.Second * 3
 	addr := store.GetPeerAddress()
@@ -224,7 +238,7 @@ func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) 
 	mgr.grpcClis.mu.Lock()
 	defer mgr.grpcClis.mu.Unlock()
 
-	for retry := 0; retry < resetRetryTimes; retry++ {
+	for retry := range resetRetryTimes {
 		conn, err = mgr.getGrpcConnLocked(ctx, storeID)
 		if err != nil {
 			log.Warn("failed to reset grpc connection, retry it",

@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,13 +30,14 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -45,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -170,13 +172,13 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	}
 
 	if ft := options.TargetFieldType; ft != nil {
-		expr = expression.BuildCastFunction(ctx, expr, ft)
+		expr = expression.BuildCastFunction(ctx, expr, ft.DeepCopy())
 	}
 
 	return expr, err
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *physicalop.Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -243,15 +245,20 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
-			rewriter.schema = p.Schema()
-			rewriter.names = p.OutputNames()
+			if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+				rewriter.schema = join.FullSchema
+				rewriter.names = join.FullNames
+			} else {
+				rewriter.schema = p.Schema()
+				rewriter.names = p.OutputNames()
+			}
 		}
 	}()
 
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
-			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand},
+			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, curClause: b.curClause, rollExpand: b.currentBlockExpand},
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -267,6 +274,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.ctx = ctx
 	rewriter.err = nil
 	rewriter.planCtx.plan = p
+	rewriter.planCtx.curClause = b.curClause
 	rewriter.planCtx.aggrMap = nil
 	rewriter.planCtx.insertPlan = nil
 	rewriter.planCtx.rollExpand = b.currentBlockExpand
@@ -324,12 +332,15 @@ type exprRewriterPlanCtx struct {
 	plan    base.LogicalPlan
 	builder *PlanBuilder
 
+	// curClause tracks which part of the query is being processed
+	curClause clauseCode
+
 	aggrMap   map[*ast.AggregateFuncExpr]int
 	windowMap map[*ast.WindowFuncExpr]int
 
 	// insertPlan is only used to rewrite the expressions inside the assignment
 	// of the "INSERT" statement.
-	insertPlan *Insert
+	insertPlan *physicalop.Insert
 
 	rollExpand *logicalop.LogicalExpand
 }
@@ -361,6 +372,8 @@ type expressionRewriter struct {
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
 	tryFoldCounter     int
+
+	astNodeStack []ast.Node
 
 	planCtx *exprRewriterPlanCtx
 }
@@ -402,7 +415,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	switch op {
 	case ast.EQ, ast.NE, ast.NullEQ:
 		funcs := make([]expression.Expression, lLen)
-		for i := 0; i < lLen; i++ {
+		for i := range lLen {
 			var err error
 			funcs[i], err = er.constructBinaryOpFunction(expression.GetFuncArg(l, i), expression.GetFuncArg(r, i), op)
 			if err != nil {
@@ -424,12 +437,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		*/
 		resultDNFList := make([]expression.Expression, 0, lLen)
 		// Step 1
-		for i := 0; i < lLen; i++ {
+		for i := range lLen {
 			exprList := make([]expression.Expression, 0, i+1)
 			// Step 1.1 build prefix equal conditions
 			// (l[0], ... , l[i-1], ...) op (r[0], ... , r[i-1], ...) should be convert to
 			// l[0] = r[0] and l[1] = r[1] and ... and l[i-1] = r[i-1]
-			for j := 0; j < i; j++ {
+			for j := range i {
 				jExpr, err := er.constructBinaryOpFunction(expression.GetFuncArg(l, j), expression.GetFuncArg(r, j), ast.EQ)
 				if err != nil {
 					return nil, err
@@ -515,6 +528,7 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ct
 
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
+	er.astNodeStack = append(er.astNodeStack, inNode)
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
 		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
@@ -573,7 +587,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			})
 		}
 		if len(v.List) != 1 {
-			break
+			// IN-list operands are scalar expression children. A nested IN-subquery on the left
+			// must therefore append its boolean result for this parent IN expression.
+			er.asScalar = true
+			return inNode, false
 		}
 		// For 10 in ((select * from t)), the parser won't set v.Sel.
 		// So we must process this case here.
@@ -588,6 +605,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
+				// Expect its left and right child to be a scalar value.
+				er.asScalar = true
 				return inNode, false
 			}
 		}
@@ -603,8 +622,8 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			// expressions inside the assignment of "INSERT" statement. we have to
 			// use the "tableSchema" of that "insertPlan".
 			if planCtx.insertPlan != nil {
-				schema = planCtx.insertPlan.tableSchema
-				names = planCtx.insertPlan.tableColNames
+				schema = planCtx.insertPlan.TableSchema
+				names = planCtx.insertPlan.TableColNames
 			}
 			idx, err := expression.FindFieldName(names, v.Column.Name)
 			if err != nil {
@@ -662,6 +681,93 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
+// canTreatInSubqueryAsExistsForFilter reports whether the IN subquery is in a WHERE/HAVING boolean chain
+// composed only of AND/OR and parentheses, so it can be treated like EXISTS for filter context.
+func (er *expressionRewriter) canTreatInSubqueryAsExistsForFilter(planCtx *exprRewriterPlanCtx) bool {
+	if planCtx == nil {
+		return false
+	}
+	if planCtx.curClause != whereClause && planCtx.curClause != havingClause {
+		return false
+	}
+	if len(er.astNodeStack) == 0 {
+		return false
+	}
+	for i := len(er.astNodeStack) - 2; i >= 0; i-- {
+		switch n := er.astNodeStack[i].(type) {
+		case *ast.ParenthesesExpr:
+		case *ast.BinaryOperationExpr:
+			if n.Op != opcode.LogicAnd && n.Op != opcode.LogicOr {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// inDirectMatchBooleanContext reports whether the MATCH...AGAINST currently
+// being rewritten sits in a position where its boolean (0/1) result is
+// directly consumed as a predicate — i.e. every ancestor up to the WHERE /
+// HAVING / JOIN ON root is one of: parentheses, AND, OR, or NOT.
+//
+// Any other ancestor (comparison `= 0` / `> 0.5`, `IS NULL`, CASE, arithmetic,
+// XOR, scalar function, etc.) means MATCH is being used as a scalar relevance
+// score, where the LIKE rewrite's 0/1 output would diverge from the native
+// float score and silently produce wrong rows. In those positions the
+// rewriter must fall through to the native FTSMysqlMatchAgainst builtin,
+// which preserves the relevance-score semantics (and errors at execution if
+// no FTS index is available — the same behavior the user would see with
+// alternative logical plans disabled).
+func (er *expressionRewriter) inDirectMatchBooleanContext() bool {
+	if er.planCtx == nil {
+		return false
+	}
+	switch er.planCtx.builder.curClause {
+	case whereClause, havingClause, onClause:
+	default:
+		return false
+	}
+	if len(er.astNodeStack) == 0 {
+		return false
+	}
+	for i := len(er.astNodeStack) - 2; i >= 0; i-- {
+		switch n := er.astNodeStack[i].(type) {
+		case *ast.ParenthesesExpr:
+		case *ast.BinaryOperationExpr:
+			if n.Op != opcode.LogicAnd && n.Op != opcode.LogicOr {
+				return false
+			}
+		case *ast.UnaryOperationExpr:
+			if n.Op != opcode.Not && n.Op != opcode.Not2 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// matchHasLikeFallbackRescue reports whether matchAgainstToBuiltin is being
+// invoked in a position where the alt-rounds driver will discard the produced
+// plan and rebuild via the fts-like-fallback round. It is used by the modifier
+// guard in matchAgainstToBuiltin to allow native emission of a non-default
+// modifier when round 1's plan is destined for discard anyway. The rescue
+// conditions mirror the ones in matchAgainstToExpression that trigger
+// MarkNonViableFTSMatch — alternative logical plans enabled AND a direct
+// boolean predicate context.
+func (er *expressionRewriter) matchHasLikeFallbackRescue() bool {
+	if er.planCtx == nil || er.planCtx.builder == nil || er.planCtx.builder.ctx == nil {
+		return false
+	}
+	if !er.planCtx.builder.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		return false
+	}
+	return er.inDirectMatchBooleanContext()
+}
+
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np base.LogicalPlan, planCtx *exprRewriterPlanCtx, l, r expression.Expression, not, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	if er.asScalar || not {
@@ -713,11 +819,14 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 	b := planCtx.builder
 	ci := b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
+	asScalar := er.asScalar
+	er.asScalar = true
 	v.L.Accept(er)
 	if er.err != nil {
 		return v, true
 	}
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
+	er.asScalar = asScalar
 	subq, ok := v.R.(*ast.SubqueryExpr)
 	if !ok {
 		er.err = errors.Errorf("Unknown compare type %T", v.R)
@@ -728,13 +837,8 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 		er.err = err
 		return v, true
 	}
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingCompareSubquery)
 
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
@@ -804,10 +908,11 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 		useMin := ((v.Op == opcode.LT || v.Op == opcode.LE) && v.All) || ((v.Op == opcode.GT || v.Op == opcode.GE) && !v.All)
 		er.handleOtherComparableSubq(planCtx, lexpr, rexpr, np, useMin, v.Op.String(), v.All, noDecorrelate)
 	}
+	er.ctxStackPop(1)
 	if er.asScalar {
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
-		er.ctxStack[len(er.ctxStack)-1] = planCtx.plan.Schema().Columns[planCtx.plan.Schema().Len()-1]
-		er.ctxNameStk[len(er.ctxNameStk)-1] = planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1]
+		col := planCtx.plan.Schema().Columns[planCtx.plan.Schema().Len()-1]
+		er.ctxStackAppend(col, planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1])
 	}
 	return v, true
 }
@@ -914,7 +1019,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
 	outerSchemaLen := planCtx.plan.Schema().Len()
-	planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, plan4Agg, logicalop.InnerJoin, markNoDecorrelate)
+	planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, plan4Agg, base.InnerJoin, markNoDecorrelate)
 	joinSchema := planCtx.plan.Schema()
 	proj := logicalop.LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
@@ -1038,16 +1143,37 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		er.err = err
 		return v, true
 	}
-	np = er.popExistsSubPlan(planCtx, np)
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
+	// Add LIMIT 1 when noDecorrelate is true for EXISTS subqueries to enable early exit
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
+	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
+	// prevent decorrelation of correlated subqueries so they stay as Apply with index lookups.
+	// Skip when SEMI_JOIN_REWRITE() hint is present, since that hint explicitly requires
+	// decorrelation and would be silently ineffective on LogicalApply nodes.
+	semiJoinRewriteHint := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+	if !noDecorrelate && len(corCols) > 0 && !semiJoinRewriteHint {
+		b.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+		if b.ctx.GetSessionVars().EnableCorrelateSubquery {
+			noDecorrelate = true
+		}
 	}
-	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
-	if semiJoinRewrite && noDecorrelate {
+	if noDecorrelate {
+		// Only add LIMIT 1 if the query doesn't already contain a LIMIT clause
+		if !hasLimit(np) {
+			limitClause := &ast.Limit{
+				Count: ast.NewValueExpr(1, "", ""),
+			}
+			var err error
+			np, err = planCtx.builder.buildLimit(np, limitClause, np.QueryBlockOffset())
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+		}
+	}
+	np = er.popExistsSubPlan(planCtx, np)
+	semiJoinRewrite := semiJoinRewriteHint
+	if semiJoinRewrite && hintFlags&hint.HintFlagNoDecorrelate > 0 {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective.")
 		noDecorrelate = false
@@ -1097,6 +1223,21 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			er.ctxStackAppend(scalarSubQ, types.EmptyName)
 			return v, true
 		}
+		// register the subquery plan but continue with normal execution
+		subqueryCtx := ScalarSubqueryEvalCtx{
+			scalarSubQuery: physicalPlan,
+			ctx:            ctx,
+			is:             b.is,
+		}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
+		newColIDs := make([]int64, 0, np.Schema().Len())
+		for range np.Schema().Columns {
+			newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
+			newColIDs = append(newColIDs, newColID)
+		}
+		subqueryCtx.outputColIDs = newColIDs
+
+		planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
+
 		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
 		if err != nil {
 			er.err = err
@@ -1162,12 +1303,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		return v, true
 	}
 	var rexpr expression.Expression
+	markInOperand := v.Not || (asScalar && !er.canTreatInSubqueryAsExistsForFilter(planCtx))
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
 		rCol := rexpr.(*expression.Column)
 		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
 		// normal column equal condition, so we specially mark the inner operand here.
-		if v.Not || asScalar {
+		if markInOperand {
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead. Otherwise, mark the left and right side.
 			// eg: for some optimization, the column substitute in right side in projection elimination
@@ -1183,7 +1325,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for i, col := range np.Schema().Columns {
-			if v.Not || asScalar {
+			if markInOperand {
 				larg := expression.GetFuncArg(lexpr, i)
 				// If both input columns of `in` expression are not null, we can treat the expression
 				// as normal column equal condition instead. Otherwise, mark the left and right side.
@@ -1212,40 +1354,104 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
 	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
 	// To keep it simple, we forbid this converting if they have different collations.
+	// tested by TestCollateSubQuery.
 	lt, rt := lexpr.GetType(er.sctx.GetEvalCtx()), rexpr.GetType(er.sctx.GetEvalCtx())
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
-	if len(corCols) == 0 && noDecorrelate {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
+	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
+	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
+	// prevent decorrelation of correlated IN subqueries so they stay as Apply with index lookups.
+	if !noDecorrelate && len(corCols) > 0 && !v.Not {
+		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+		if planCtx.builder.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+			planCtx.builder.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanPreferCorrelate()
+		}
+		if planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
+			noDecorrelate = true
+		}
 	}
 
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag {
+	// When EnableCorrelateSubquery is ON (set by the correlate alternative round), skip the
+	// InnerJoin+Agg rewrite so that a SemiJoin is built instead; the CorrelateSolver rule can
+	// then convert it to a correlated Apply with index lookups.
+	canRewriteToJoinAgg := planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag
+	if canRewriteToJoinAgg {
+		// Record that the alternative logical plans variable is relevant — toggling it
+		// changes whether we take the InnerJoin+Agg path or the SemiApply path.
+		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+		// Signal that a correlate alternative round is worth attempting.
+		if planCtx.builder.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+			planCtx.builder.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanPreferCorrelate()
+		}
+	}
+	if canRewriteToJoinAgg && !planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		planCtx.builder.optFlag |= rule.FlagEliminateAgg
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
 		planCtx.builder.optFlag |= rule.FlagJoinReOrder
+		planCtx.builder.optFlag |= rule.FlagEmptySelectionEliminator
+		distinctChild := np
+		distinctLen := np.Schema().Len()
+		joinCondition := checkCondition
+		// IN-subquery rewrite turns:
+		//   outer_col IN (SELECT inner_col ...)
+		// into:
+		//   outer JOIN DISTINCT(inner_col) ON outer_col = inner_col
+		//
+		// DISTINCT must be applied on the same comparison domain as the join predicate.
+		// If "=" injects an implicit cast on the RHS (e.g. blob/string -> number), deduplicating
+		// raw inner values is insufficient: different raw values may become equal after cast and
+		// multiply outer rows in the rewritten inner join.
+		//
+		// To keep semantics equivalent to IN, we project the RHS comparison expression first,
+		// then distinct on that projected key.
+		if lLen == 1 {
+			if eqCond, ok := checkCondition.(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
+				rhs := eqCond.GetArgs()[1]
+				if expression.ExprFromSchema(rhs, np.Schema()) {
+					if _, isCol := rhs.(*expression.Column); !isCol {
+						// rhs is computed from inner columns (typically with an implicit cast generated
+						// by type coercion rules). Materialize it as an inner projection column so both
+						// DISTINCT and JOIN use exactly this coerced key.
+						proj := logicalop.LogicalProjection{Exprs: []expression.Expression{rhs}}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+						projCol := &expression.Column{
+							UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
+							RetType:  rhs.GetType(er.sctx.GetEvalCtx()).Clone(),
+						}
+						proj.SetChildren(np)
+						proj.SetSchema(expression.NewSchema(projCol))
+						proj.SetOutputNames([]*types.FieldName{types.EmptyName})
+						distinctChild = proj
+						distinctLen = 1
+						// Rebuild join condition against the projected key; this preserves
+						// the same coercion behavior while preventing duplicate matches.
+						joinCondition, err = er.constructBinaryOpFunction(lexpr, projCol, ast.EQ)
+						if err != nil {
+							er.err = err
+							return v, true
+						}
+					}
+				}
+			}
+		}
 		// Build distinct for the inner query.
-		agg, err := planCtx.builder.buildDistinct(np, np.Schema().Len())
+		agg, err := planCtx.builder.buildDistinct(distinctChild, distinctLen)
 		if err != nil {
 			er.err = err
 			return v, true
 		}
 		// Build inner join above the aggregation.
-		join := logicalop.LogicalJoin{JoinType: logicalop.InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+		join := logicalop.LogicalJoin{JoinType: base.InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 		join.SetChildren(planCtx.plan, agg)
 		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.Schema()))
 		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))
 		copy(join.OutputNames(), planCtx.plan.OutputNames())
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
-		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		join.AttachOnConds(expression.SplitCNFItems(joinCondition))
 		// set FullSchema and FullNames for this join
 		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
 			join.FullSchema = left.FullSchema
@@ -1257,9 +1463,21 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		}
 		planCtx.plan = join
 	} else {
-		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, false, noDecorrelate)
+		semiRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, semiRewrite, noDecorrelate)
 		if er.err != nil {
 			return v, true
+		}
+		// When EnableCorrelateSubquery is ON (set by the correlate alternative round)
+		// and the subquery is non-correlated, mark the join so that CorrelateSolver
+		// converts it to a correlated Apply.
+		if len(corCols) == 0 && !v.Not {
+			planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+			if planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
+				if ap, ok := planCtx.plan.(*logicalop.LogicalApply); ok {
+					ap.PreferCorrelate = true
+				}
+			}
 		}
 	}
 
@@ -1269,6 +1487,36 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		er.ctxStackAppend(col, planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1])
 	}
 	return v, true
+}
+
+func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.CorrelatedColumn, hintFlags uint64, sCtx subQueryCtx) bool {
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
+
+	if len(corCols) == 0 {
+		if noDecorrelate {
+			planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+				"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
+			noDecorrelate = false
+		}
+	} else {
+		semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+		// We can't override noDecorrelate via the variable for EXISTS subqueries with semi join rewrite
+		// as this will cause a conflict that will result in both being disabled in later code
+		// SemiJoinRewrite does not check the variable TiDBOptEnableSemiJoinRewrite.
+		// If that variable is enabled - we can still choose NOT to decorrelate here.
+		if !(semiJoinRewrite && sCtx == handlingExistsSubquery) {
+			// Only support scalar and exists subqueries
+			validSubqType := sCtx == handlingScalarSubquery || sCtx == handlingExistsSubquery
+			if validSubqType && planCtx.curClause == fieldList { // subquery is in the select list
+				planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
+				// If it isn't already enabled via hint, and variable is set, then enable it
+				if !noDecorrelate && planCtx.builder.ctx.GetSessionVars().EnableNoDecorrelateInSelect {
+					noDecorrelate = true
+				}
+			}
+		}
+	}
+	return noDecorrelate
 }
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) (ast.Node, bool) {
@@ -1281,16 +1529,11 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		return v, true
 	}
 	np = planCtx.builder.buildMaxOneRow(np)
-
-	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
-	if noDecorrelate && len(coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
-		noDecorrelate = false
-	}
+	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	noDecorrelate := isNoDecorrelate(planCtx, correlatedColumn, hintFlags, handlingScalarSubquery)
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
-		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, logicalop.LeftOuterJoin, noDecorrelate)
+		planCtx.plan = planCtx.builder.buildApplyWithJoinType(planCtx.plan, np, base.LeftOuterJoin, noDecorrelate)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
 			for _, col := range np.Schema().Columns {
@@ -1350,33 +1593,46 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		}
 		return v, true
 	}
+
+	// register the subquery plan but continue with normal execution
+	subqueryCtx := ScalarSubqueryEvalCtx{
+		scalarSubQuery: physicalPlan,
+		ctx:            ctx,
+		is:             planCtx.builder.is,
+	}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
+	newColIDs := make([]int64, 0, np.Schema().Len())
+	for range np.Schema().Columns {
+		newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
+		newColIDs = append(newColIDs, newColID)
+	}
+	subqueryCtx.outputColIDs = newColIDs
+
+	planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
 	if err != nil {
 		er.err = err
 		return v, true
 	}
-	if np.Schema().Len() > 1 {
-		newCols := make([]expression.Expression, 0, np.Schema().Len())
-		for i, data := range row {
-			constant := &expression.Constant{
-				Value:   data,
-				RetType: np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx())}
-			constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
-			newCols = append(newCols, constant)
+	newCols := make([]expression.Expression, 0, np.Schema().Len())
+	for i, data := range row {
+		constant := &expression.Constant{
+			Value:         data,
+			RetType:       np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx()),
+			SubqueryRefID: newColIDs[i],
 		}
-		expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
-		if err1 != nil {
-			er.err = err1
+		constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
+		newCols = append(newCols, constant)
+	}
+
+	if np.Schema().Len() > 1 {
+		expr, err := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
+		if err != nil {
+			er.err = err
 			return v, true
 		}
 		er.ctxStackAppend(expr, types.EmptyName)
 	} else {
-		constant := &expression.Constant{
-			Value:   row[0],
-			RetType: np.Schema().Columns[0].GetType(er.sctx.GetEvalCtx()),
-		}
-		constant.SetCoercibility(np.Schema().Columns[0].Coercibility())
-		er.ctxStackAppend(constant, types.EmptyName)
+		er.ctxStackAppend(newCols[0], types.EmptyName)
 	}
 	return v, true
 }
@@ -1385,12 +1641,7 @@ func hasCTEConsumerInSubPlan(p base.LogicalPlan) bool {
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return true
 	}
-	for _, child := range p.Children() {
-		if hasCTEConsumerInSubPlan(child) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.Children(), hasCTEConsumerInSubPlan)
 }
 
 func initConstantRepertoire(ctx expression.EvalContext, c *expression.Constant) {
@@ -1414,6 +1665,11 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
+	defer func() {
+		if len(er.astNodeStack) > 0 {
+			er.astNodeStack = er.astNodeStack[:len(er.astNodeStack)-1]
+		}
+	}()
 	if er.err != nil {
 		return retNode, false
 	}
@@ -1514,7 +1770,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, false, v.ExplicitCharSet)
+		targetTp := v.Tp.DeepCopy()
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, targetTp, false, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
 			return retNode, false
@@ -1533,6 +1790,19 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+	case *ast.JSONSumCrc32Expr:
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		targetTp := v.Tp.DeepCopy()
+		jsonSumFunction, err := expression.BuildJSONSumCrc32FunctionWithCheck(er.sctx, arg, targetTp)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+
+		jsonSumFunction.SetCoercibility(expression.CoercibilityNumeric)
+		jsonSumFunction.SetRepertoire(expression.ASCII)
+		er.ctxStack[len(er.ctxStack)-1] = jsonSumFunction
+		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeOrIlikeExpr:
 		er.patternLikeOrIlikeToExpression(v)
 	case *ast.PatternRegexpExpr:
@@ -1541,7 +1811,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.rowToScalarFunc(v)
 	case *ast.PatternInExpr:
 		if v.Sel == nil {
-			er.inToExpression(len(v.List), v.Not, &v.Type)
+			er.inToExpression(len(v.List), v.Not, v.Type.DeepCopy())
 		}
 	case *ast.PositionExpr:
 		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
@@ -1617,6 +1887,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType(er.sctx.GetEvalCtx()).GetCharset(), arg.GetType(er.sctx.GetEvalCtx()).GetCollate())
+	case *ast.MatchAgainst:
+		er.matchAgainstToExpression(v)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1641,6 +1913,11 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	}
 	if err != nil {
 		return
+	}
+	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
+		if er.planCtx != nil && er.planCtx.builder != nil {
+			er.planCtx.builder.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
+		}
 	}
 	return
 }
@@ -1718,7 +1995,7 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 		}
 		return
 	}
-	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
+	if sysVar.IsNoop && !vardef.EnableNoopVariables.Load() {
 		// The variable does nothing, append a warning to the statement output.
 		sessionVars.StmtCtx.AppendWarning(plannererrors.ErrGettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
@@ -1731,16 +2008,26 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
-		if !v.IsGlobal && !sysVar.HasSessionScope() {
-			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
+		if v.IsInstance && !sysVar.HasInstanceScope() {
+			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION or GLOBAL")
 			return
+		}
+		if !v.IsGlobal && !v.IsInstance {
+			if !sysVar.HasSessionScope() {
+				er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
+				return
+			}
+			if sysVar.InternalSessionVariable {
+				er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+				return
+			}
 		}
 	}
 	var val string
 	var err error
 	if sysVar.HasNoneScope() {
 		val = sysVar.Value
-	} else if v.IsGlobal {
+	} else if v.IsGlobal || v.IsInstance {
 		val, err = sessionVars.GetGlobalSystemVar(er.ctx, name)
 	} else {
 		val, err = sessionVars.GetSessionOrGlobalSystemVar(er.ctx, name)
@@ -1753,9 +2040,9 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
 	switch nativeType {
 	case mysql.TypeVarString:
-		charset, _ := sessionVars.GetSystemVar(variable.CharacterSetConnection)
+		charset, _ := sessionVars.GetSystemVar(vardef.CharacterSetConnection)
 		e.GetType(er.sctx.GetEvalCtx()).SetCharset(charset)
-		collate, _ := sessionVars.GetSystemVar(variable.CollationConnection)
+		collate, _ := sessionVars.GetSystemVar(vardef.CollationConnection)
 		e.GetType(er.sctx.GetEvalCtx()).SetCollate(collate)
 	case mysql.TypeLong, mysql.TypeLonglong:
 		e.GetType(er.sctx.GetEvalCtx()).SetCharset(charset.CharsetBin)
@@ -1788,7 +2075,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
-	er.ctxStack[stkLen-1], er.err = er.newFunction(op, &v.Type, er.ctxStack[stkLen-1])
+	er.ctxStack[stkLen-1], er.err = er.newFunction(op, v.Type.DeepCopy(), er.ctxStack[stkLen-1])
 	er.ctxNameStk[stkLen-1] = types.EmptyName
 }
 
@@ -1840,7 +2127,7 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
-	function := er.notToExpression(v.Not, ast.IsNull, &v.Type, er.ctxStack[stkLen-1])
+	function := er.notToExpression(v.Not, ast.IsNull, v.Type.DeepCopy(), er.ctxStack[stkLen-1])
 	er.ctxStackPop(1)
 	er.ctxStackAppend(function, types.EmptyName)
 }
@@ -1880,7 +2167,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
-	function := er.notToExpression(v.Not, op, &v.Type, er.ctxStack[stkLen-1])
+	function := er.notToExpression(v.Not, op, v.Type.DeepCopy(), er.ctxStack[stkLen-1])
 	er.ctxStackPop(1)
 	er.ctxStackAppend(function, types.EmptyName)
 }
@@ -1891,7 +2178,7 @@ func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	l := expression.GetRowLen(er.ctxStack[stkLen-lLen-1])
-	for i := 0; i < lLen; i++ {
+	for i := range lLen {
 		if l != expression.GetRowLen(er.ctxStack[stkLen-lLen+i]) {
 			er.err = expression.ErrOperandColumns.GenWithStackByArgs(l)
 			return
@@ -1909,12 +2196,12 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
-				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
+				if expression.MaybeOverOptimized4PlanCache(er.sctx, c) {
 					if c.GetType(er.sctx.GetEvalCtx()).EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
 					er.sctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to INT", c.StringWithCtx(er.sctx.GetEvalCtx(), errors.RedactLogDisable)))
-					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
+					if err := expression.RemoveMutableConst(er.sctx, c); err != nil {
 						er.err = err
 						return
 					}
@@ -2071,7 +2358,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		//        else clause
 		args = er.ctxStack[stkLen-argsLen:]
 	}
-	function, err := er.newFunction(ast.Case, &v.Type, args...)
+	function, err := er.newFunction(ast.Case, v.Type.DeepCopy(), args...)
 	if err != nil {
 		er.err = err
 		return
@@ -2087,6 +2374,20 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 		return
 	}
 
+	escape := v.Escape
+	evalCtx := er.sctx.GetEvalCtx()
+	if !v.EscapeExplicit && evalCtx.SQLMode().HasNoBackslashEscapesMode() &&
+		evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+		sessionVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if sessionVars.EnableNoBackslashEscapesInLike {
+			escape = 0
+		}
+	}
+
 	char, col := er.sctx.GetCharsetInfo()
 	var function expression.Expression
 	fieldType := &types.FieldType{}
@@ -2099,7 +2400,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 			return
 		}
 		if !isNull {
-			patValue, patTypes := stringutil.CompilePattern(patString, v.Escape)
+			patValue, patTypes := stringutil.CompilePattern(patString, escape)
 			if stringutil.IsExactMatch(patTypes) && er.ctxStack[l-2].GetType(er.sctx.GetEvalCtx()).EvalType() == types.ETString {
 				op := ast.EQ
 				if v.Not {
@@ -2118,13 +2419,301 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 		if !v.IsLike {
 			funcName = ast.Ilike
 		}
-		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
-		function = er.notToExpression(v.Not, funcName, &v.Type,
-			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
+		types.DefaultTypeForValue(int(escape), fieldType, char, col)
+		function = er.notToExpression(v.Not, funcName, v.Type.DeepCopy(),
+			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(escape)), RetType: fieldType})
 	}
 
 	er.ctxStackPop(2)
 	er.ctxStackAppend(function, types.EmptyName)
+}
+
+func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
+	// Both the column expressions and Against expression have been visited
+	// and pushed onto the ctxStack. The stack layout is:
+	// [..., col1, col2, ..., colN, against]
+	numCols := len(v.ColumnNames)
+	stackLen := len(er.ctxStack)
+	if stackLen < numCols+1 {
+		er.err = errors.Errorf("Unexpected stack length for MatchAgainst: %d", stackLen)
+		return
+	}
+
+	// Default behavior (Alt-disabled or Alt-enabled round 1) is to emit the
+	// native FTSMysqlMatchAgainst builtin. The alternative-rounds driver flips
+	// AlternativeLogicalPlanFTSLikeFallback to true and re-runs the build
+	// only when round 1 reported a direct-boolean-context MATCH that the
+	// native builtin cannot serve (no FTS index on a TiFlash replica /
+	// modifier not pushdown-supported). In that second pass the rewriter
+	// emits ILIKE for direct-boolean-context MATCH only — scoring contexts
+	// (SELECT field list / ORDER BY) and scalar predicate positions
+	// (IS NULL, comparisons, CASE, arithmetic) need the float relevance
+	// score, so they keep using the native builtin and will error at
+	// execution if no FTS index exists there.
+	//
+	// "Direct boolean context" requires that every ancestor up to the
+	// WHERE/HAVING/ON root is AND/OR/NOT/parens — see inDirectMatchBooleanContext.
+	// Limiting the LIKE rewrite to that subset preserves the 0/1-vs-float
+	// distinction: in scalar positions, `MATCH(...) IS NULL`, `MATCH(...) > 0.5`,
+	// etc. would silently produce wrong rows if the LIKE rewrite's integer
+	// result were substituted for the native float score.
+	//
+	// Round 1 also has to record viability before committing to native: if
+	// any boolean-context MATCH is non-viable, the resulting plan would
+	// fail at execution. The rewriter records that on the planBuilder so the
+	// round driver can invalidate the plan and trigger the fallback round.
+	// Round 1 additionally records that a direct-boolean-context MATCH was
+	// seen so the driver runs the LIKE round for cost competition even when
+	// round 1's native plan is executable.
+	useLikeFallback := false
+	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
+		sessVars := er.planCtx.builder.ctx.GetSessionVars()
+		if er.inDirectMatchBooleanContext() {
+			if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
+				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
+				useLikeFallback = true
+			} else if sessVars.EnableAlternativeLogicalPlans {
+				// Round 1 (native). Mark the build so the driver runs the LIKE
+				// round and cost-compares its plan against round 1's. If this
+				// MATCH cannot run natively, also mark the build as non-viable
+				// so the driver discards round 1's plan; the rewrite continues
+				// with the native builtin to keep round 1 internally consistent.
+				er.planCtx.builder.MarkPredicateMatch()
+				if !er.ftsNativeViable(v.Modifier, numCols, stackLen) {
+					er.planCtx.builder.MarkNonViableFTSMatch()
+				}
+			}
+		}
+	}
+
+	if useLikeFallback {
+		er.matchAgainstToLike(v, numCols, stackLen)
+	} else {
+		er.matchAgainstToBuiltin(v, numCols, stackLen)
+	}
+}
+
+// ftsNativeViable reports whether the MATCH(...) currently being rewritten
+// can be served on TiFlash by the native FTSMysqlMatchAgainst builtin. It
+// walks the resolved column FieldNames sitting on ctxNameStk (stack layout is
+// [..., col1, ..., colN, against]) and requires for each column:
+//   - the originating table has an available TiFlash replica;
+//   - the column is covered by a public FULLTEXT index on that table.
+//
+// In addition, the modifier must be the default natural-language mode. Boolean
+// mode and WITH QUERY EXPANSION are not encoded in the tipb pushdown today
+// (only ScalarFuncSig_FTSMatchExpression is emitted regardless of modifier),
+// so a native plan that wins on cost would execute on TiFlash with the modifier
+// silently dropped. Until the modifier is carried in the pushdown protocol, we
+// treat those modifiers as non-viable for native pushdown.
+func (er *expressionRewriter) ftsNativeViable(modifier ast.FulltextSearchModifier, numCols, stackLen int) bool {
+	if numCols <= 0 {
+		return false
+	}
+	if !ftsModifierAllowsNativePushdown(modifier) {
+		return false
+	}
+	builder := er.planCtx.builder
+	sessVars := builder.ctx.GetSessionVars()
+	nameStart := stackLen - numCols - 1
+	for i := range numCols {
+		name := er.ctxNameStk[nameStart+i]
+		if name == nil {
+			return false
+		}
+		tblName := name.OrigTblName
+		if tblName.L == "" {
+			tblName = name.TblName
+		}
+		if tblName.L == "" {
+			return false
+		}
+		dbName := name.DBName
+		if dbName.L == "" {
+			dbName = ast.NewCIStr(sessVars.CurrentDB)
+		}
+		tblInfo, err := builder.is.TableInfoByName(dbName, tblName)
+		if err != nil {
+			return false
+		}
+		if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available || tblInfo.TiFlashReplica.Count == 0 {
+			return false
+		}
+		colName := name.OrigColName
+		if colName.L == "" {
+			colName = name.ColName
+		}
+		if !tableHasPublicFTSIndexOnColumn(tblInfo, colName.L) {
+			return false
+		}
+	}
+	return true
+}
+
+// ftsModifierAllowsNativePushdown reports whether an FTS modifier can be
+// safely served by the native FTSMysqlMatchAgainst builtin pushed to TiFlash.
+// Today the tipb pushdown encodes only ScalarFuncSig_FTSMatchExpression and
+// drops the modifier, so any non-default modifier would be executed by TiFlash
+// as natural-language mode, silently producing wrong results. Only the default
+// (natural-language, no query expansion) modifier is currently safe.
+func ftsModifierAllowsNativePushdown(modifier ast.FulltextSearchModifier) bool {
+	return !modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
+}
+
+// tableHasPublicFTSIndexOnColumn reports whether tblInfo has a public FULLTEXT
+// index covering the given column. TiDB's FULLTEXT index is single-column, so
+// each column in MATCH(...) needs its own FTS index for the native path to be
+// viable.
+func tableHasPublicFTSIndexOnColumn(tblInfo *model.TableInfo, columnNameL string) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.FullTextInfo == nil || !idx.IsPublic() {
+			continue
+		}
+		if idx.FindColumnByName(columnNameL) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// matchAgainstToBuiltin converts MATCH...AGAINST to the FTSMysqlMatchAgainst
+// builtin scalar function which can be pushed down to TiFlash for execution
+// against a fulltext index.
+func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols, stackLen int) {
+	// Reject non-default modifiers when native is the final plan. The tipb
+	// pushdown protocol (see expression/distsql_builtin.go for the explicit
+	// note) does not serialize the FTS modifier, so TiFlash would silently
+	// execute Boolean-mode / query-expansion searches as natural-language
+	// mode. Until the modifier rides through pushdown, refuse to emit
+	// native here unless the alt-rounds driver is expected to discard this
+	// emission and rebuild via the fts-like-fallback round (which handles
+	// Boolean mode correctly via ILIKE; query expansion still errors there
+	// with a specific message).
+	if !ftsModifierAllowsNativePushdown(v.Modifier) && !er.matchHasLikeFallbackRescue() {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs(
+			"MATCH...AGAINST with this modifier on the native FTS path (modifier is not carried through pushdown to TiFlash)")
+		return
+	}
+
+	against := er.ctxStack[stackLen-1]
+	cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
+
+	args := make([]expression.Expression, 0, 1+numCols)
+	args = append(args, against)
+	args = append(args, cols...)
+
+	er.ctxStackPop(numCols + 1)
+	fn, err := er.newFunction(ast.FTSMysqlMatchAgainst, &v.Type, args...)
+	if err != nil {
+		er.err = err
+		return
+	}
+	sf, ok := fn.(*expression.ScalarFunction)
+	if !ok {
+		er.err = errors.Errorf("unexpected expression type for %s: %T", ast.FTSMysqlMatchAgainst, fn)
+		return
+	}
+	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
+		er.err = err
+		return
+	}
+	er.ctxStackAppend(fn, types.EmptyName)
+}
+
+// matchAgainstToLike converts MATCH...AGAINST to LIKE predicates as a
+// fallback when the native FTS pushdown path is not viable.
+func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, stackLen int) {
+	againstExpr := er.ctxStack[stackLen-1]
+
+	constExpr, ok := againstExpr.(*expression.Constant)
+	if !ok {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-constant search string")
+		return
+	}
+
+	// The LIKE fallback bakes the search value into the produced plan — either
+	// as ILIKE pattern constants (non-NULL case) or as a Constant(NULL)
+	// short-circuit. A cached plan would reuse the first execution's baked
+	// value for later executions, producing wrong results whenever the AGAINST
+	// argument is mutable: a `?` parameter marker, a user variable, or another
+	// deferred expression. In particular, a NULL first bind would bake a
+	// Constant(NULL) plan and reuse it for a later non-NULL bind. Mark the
+	// plan non-cacheable here, before the NULL fast-path and before Eval, so
+	// the skip applies uniformly across all branches below.
+	if expression.MaybeOverOptimized4PlanCache(er.sctx, constExpr) {
+		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
+	}
+
+	// Reject non-string matched columns before any value-based branch so the
+	// column-type error always wins. In current architecture round 1's
+	// matchAgainstToBuiltin → getFunction (builtin_fts.go) already rejects
+	// non-string columns before round 2 (this function) can run, but keep
+	// the check here too as defense in depth: the LIKE fallback's own NULL
+	// fast-path and strict-subset validator below should never accept a
+	// non-string column, regardless of any future code path that might
+	// reach this function around round 1.
+	columns := make([]expression.Expression, numCols)
+	for i := range numCols {
+		col := er.ctxStack[stackLen-numCols-1+i]
+		if col.GetType(er.sctx.GetEvalCtx()).EvalType() != types.ETString {
+			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
+			return
+		}
+		columns[i] = col
+	}
+
+	searchText, err := constExpr.Eval(er.sctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	if searchText.IsNull() {
+		// NULL search yields NULL in MySQL FTS semantics
+		// (builtin_fts.go evalReal returns isNull=true for NULL args), so we
+		// emit Constant(NULL) rather than Constant(0). This preserves
+		// three-valued logic under NOT — NOT NULL = NULL filters the row —
+		// and under IS NULL / IS NOT NULL. A literal Constant(0) would make
+		// NOT(MATCH...) admit every row when the search is NULL, diverging
+		// from native semantics.
+		er.ctxStackPop(numCols + 1)
+		er.ctxStackAppend(&expression.Constant{
+			Value:   types.Datum{},
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}, types.EmptyName)
+		return
+	}
+
+	if searchText.Kind() != types.KindString {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search expression")
+		return
+	}
+
+	// The LIKE fallback only translates a strict subset of MySQL FTS search
+	// strings (alphanumeric words, optionally prefixed with + or - in boolean
+	// mode). Anything outside that subset would tokenize differently in MySQL
+	// FTS than a substring LIKE match, so refuse it here. If the same MATCH
+	// is independently native-viable (FTS index + supported modifier),
+	// delegate to the native builtin so TiFlash serves it correctly; otherwise
+	// surface the error to the user.
+	if err := expression.ValidateFTSSearchStringForLikeFallback(searchText.GetString(), v.Modifier); err != nil {
+		if er.ftsNativeViable(v.Modifier, numCols, stackLen) {
+			er.matchAgainstToBuiltin(v, numCols, stackLen)
+			return
+		}
+		er.err = err
+		return
+	}
+
+	er.ctxStackPop(numCols + 1)
+
+	result, err := er.convertMatchAgainstToLike(columns, searchText.GetString(), v.Modifier)
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	er.ctxStackAppend(result, types.EmptyName)
 }
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
@@ -2133,7 +2722,7 @@ func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	if er.err != nil {
 		return
 	}
-	function := er.notToExpression(v.Not, ast.Regexp, &v.Type, er.ctxStack[l-2], er.ctxStack[l-1])
+	function := er.notToExpression(v.Not, ast.Regexp, v.Type.DeepCopy(), er.ctxStack[l-2], er.ctxStack[l-1])
 	er.ctxStackPop(2)
 	er.ctxStackAppend(function, types.EmptyName)
 }
@@ -2160,7 +2749,10 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	var castFunc func(expression.BuildContext, expression.Expression) expression.Expression
 	switch expression.ResolveType4Between(er.sctx.GetEvalCtx(), [3]expression.Expression{expr, lexp, rexp}) {
 	case types.ETInt:
-		castFunc = expression.WrapWithCastAsInt
+		expr = expression.WrapWithCastAsInt(er.sctx, expr, nil)
+		lexp = expression.WrapWithCastAsInt(er.sctx, lexp, nil)
+		rexp = expression.WrapWithCastAsInt(er.sctx, rexp, nil)
+		return
 	case types.ETReal:
 		castFunc = expression.WrapWithCastAsReal
 	case types.ETDecimal:
@@ -2218,21 +2810,21 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll, enumOrSetRealTypeIsStr)
 
 	var l, r expression.Expression
-	l, er.err = expression.NewFunction(er.sctx, ast.GE, &v.Type, expr, lexp)
+	l, er.err = expression.NewFunction(er.sctx, ast.GE, v.Type.DeepCopy(), expr, lexp)
 	if er.err != nil {
 		return
 	}
-	r, er.err = expression.NewFunction(er.sctx, ast.LE, &v.Type, expr, rexp)
+	r, er.err = expression.NewFunction(er.sctx, ast.LE, v.Type.DeepCopy(), expr, rexp)
 	if er.err != nil {
 		return
 	}
-	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
+	function, err := er.newFunction(ast.LogicAnd, v.Type.DeepCopy(), l, r)
 	if err != nil {
 		er.err = err
 		return
 	}
 	if v.Not {
-		function, err = er.newFunction(ast.UnaryNot, &v.Type, function)
+		function, err = er.newFunction(ast.UnaryNot, v.Type.DeepCopy(), function)
 		if err != nil {
 			er.err = err
 			return
@@ -2275,9 +2867,15 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 				retTp.SetDecimal(0)
 				types.SetBinChsClnFlag(retTp)
 			}
+			lhsTp := lhs.GetType(er.sctx.GetEvalCtx())
+			// Keep the IFNULL call when its inferred return type differs from the non-null column.
+			// Replacing it with CAST can change comparison semantics for mixed-type expressions.
+			if lhsTp.GetType() != retTp.GetType() || lhsTp.GetCharset() != retTp.GetCharset() || lhsTp.GetCollate() != retTp.GetCollate() ||
+				lhsTp.GetFlen() != retTp.GetFlen() || lhsTp.GetDecimal() != retTp.GetDecimal() || lhsTp.GetFlag() != retTp.GetFlag() {
+				return false
+			}
 			er.ctxStackPop(len(v.Args))
-			casted := expression.BuildCastFunction(er.sctx, lhs, retTp)
-			er.ctxStackAppend(casted, types.EmptyName)
+			er.ctxStackAppend(lhs, types.EmptyName)
 			return true
 		}
 
@@ -2290,23 +2888,30 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		stackLen := len(er.ctxStack)
 		param1 := er.ctxStack[stackLen-2]
 		param2 := er.ctxStack[stackLen-1]
-		// param1 = param2
-		funcCompare, err := er.constructBinaryOpFunction(param1, param2, ast.EQ)
+		// Build the comparison with cloned operands. The comparison branch may refine
+		// argument types or wrap casts, while NULLIF must still return the original
+		// first-argument semantics when the comparison is false.
+		funcCompare, err := er.constructBinaryOpFunction(param1.Clone(), param2.Clone(), ast.EQ)
 		if err != nil {
 			er.err = err
 			return true
 		}
-		// NULL
-		nullTp := types.NewFieldType(mysql.TypeNull)
-		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
-		nullTp.SetFlen(flen)
-		nullTp.SetDecimal(decimal)
+		// NULLIF returns the first argument when the comparison is false, otherwise NULL.
+		// Keep the NULL branch as TypeNull so IF inherits the return type from the
+		// value branch instead of aggregating it with a typed NULL and rewriting metadata.
+		valueBranch := param1.Clone()
+		retTp := valueBranch.GetType(er.sctx.GetEvalCtx()).Clone()
+		retTp.DelFlag(mysql.NotNullFlag)
+		if !retTp.EvalType().IsStringKind() {
+			retTp.SetCharset(charset.CharsetBin)
+			retTp.SetCollate(charset.CollationBin)
+		}
+		setExprRetType(valueBranch, retTp.Clone())
 		paramNull := &expression.Constant{
 			Value:   types.NewDatum(nil),
-			RetType: nullTp,
+			RetType: types.NewFieldType(mysql.TypeNull),
 		}
-		// if(param1 = param2, NULL, param1)
-		funcIf, err := er.newFunction(ast.If, &v.Type, funcCompare, paramNull, param1)
+		funcIf, err := er.newFunction(ast.If, retTp, funcCompare, paramNull, valueBranch)
 		if err != nil {
 			er.err = err
 			return true
@@ -2316,6 +2921,19 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func setExprRetType(expr expression.Expression, retTp *types.FieldType) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		x.RetType = retTp
+	case *expression.CorrelatedColumn:
+		x.RetType = retTp
+	case *expression.Constant:
+		x.RetType = retTp
+	case *expression.ScalarFunction:
+		x.RetType = retTp
 	}
 }
 
@@ -2363,11 +2981,11 @@ func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewri
 				return
 			}
 			newArg := planCtx.rollExpand.GID.Clone()
-			init := func(groupingFunc *expression.ScalarFunction) (expression.Expression, error) {
+			init := func(groupingFunc *expression.ScalarFunction) (*expression.ScalarFunction, error) {
 				err = groupingFunc.Function.(*expression.BuiltinGroupingImplSig).SetMetadata(planCtx.rollExpand.GroupingMode, planCtx.rollExpand.GenerateGroupingMarks(resolvedCols))
 				return groupingFunc, err
 			}
-			function, er.err = er.newFunctionWithInit(v.FnName.L, &v.Type, init, newArg)
+			function, er.err = er.newFunctionWithInit(v.FnName.L, v.Type.DeepCopy(), init, newArg)
 			er.ctxStackAppend(function, types.EmptyName)
 		}
 	default:
@@ -2394,15 +3012,15 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		// When the expression is unix_timestamp and the number of argument is not zero,
 		// we deal with it as normal expression.
 		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
-			function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
+			function, er.err = er.newFunction(v.FnName.L, v.Type.DeepCopy(), args...)
 			er.ctxStackAppend(function, types.EmptyName)
 		} else {
-			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
+			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, v.Type.DeepCopy(), args...)
 			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType(er.sctx.GetEvalCtx()).Clone(), DeferredExpr: function}
 			er.ctxStackAppend(c, types.EmptyName)
 		}
 	} else {
-		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
+		function, er.err = er.newFunction(v.FnName.L, v.Type.DeepCopy(), args...)
 		er.ctxStackAppend(function, types.EmptyName)
 	}
 }
@@ -2442,7 +3060,23 @@ func (er *expressionRewriter) clause() clauseCode {
 	return expressionClause
 }
 
+func shouldRemapRedundantBaseColumn(planCtx *exprRewriterPlanCtx, clause clauseCode, name *types.FieldName) bool {
+	if planCtx == nil || planCtx.builder == nil || name == nil {
+		return false
+	}
+	if clause != whereClause && clause != havingClause {
+		return false
+	}
+	// UPDATE/DELETE build JOIN schema/output names in merged (non-coalesced) order.
+	// Skip redundant-column remap in DML to avoid mixing coalesced mapping semantics.
+	if planCtx.builder.inUpdateStmt || planCtx.builder.inDeleteStmt {
+		return false
+	}
+	return name.Redundant && name.OrigTblName.L != ""
+}
+
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
+	planCtx := er.planCtx
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
@@ -2450,11 +3084,22 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	}
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
+		name := er.names[idx]
 		if column.IsHidden {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
-		er.ctxStackAppend(column, er.names[idx])
+		if shouldRemapRedundantBaseColumn(planCtx, er.clause(), name) {
+			// JOIN ... USING/NATURAL keeps redundant side in FullSchema for name-resolution,
+			// but the executable Join.Schema() only keeps canonical visible columns.
+			// For qualified base-table references (OrigTblName != ""), remap redundant
+			// column to canonical output to avoid carrying an unresolvable redundant column
+			// into later physical ResolveIndices.
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(planCtx.plan, column); mappedCol != nil {
+				column, name = mappedCol, mappedName
+			}
+		}
+		er.ctxStackAppend(column, name)
 		return
 	} else if er.planCtx == nil && er.sourceTable != nil &&
 		(v.Table.L == "" || er.sourceTable.Name.L == v.Table.L) {
@@ -2463,12 +3108,15 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
-		er.ctxStackAppend(&expression.Column{RetType: &colInfo.FieldType, ID: colInfo.ID, UniqueID: colInfo.ID},
-			&types.FieldName{ColName: v.Name})
+		er.ctxStackAppend(&expression.Column{
+			RetType:  &colInfo.FieldType,
+			ID:       colInfo.ID,
+			UniqueID: colInfo.ID,
+			OrigName: fmt.Sprintf("%s.%s", er.sourceTable.Name.L, colInfo.Name.L),
+		}, &types.FieldName{ColName: v.Name})
 		return
 	}
 
-	planCtx := er.planCtx
 	if planCtx == nil {
 		er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.clause()])
 		return
@@ -2479,6 +3127,13 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.err = err
 		return
 	} else if col != nil {
+		if shouldRemapRedundantBaseColumn(planCtx, er.clause(), name) {
+			// Keep behavior consistent with direct-name hit above: only remap redundant
+			// base-table names from natural/using join to canonical visible output.
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(planCtx.plan, col); mappedCol != nil {
+				col, name = mappedCol, mappedName
+			}
+		}
 		er.ctxStackAppend(col, name)
 		return
 	}
@@ -2519,8 +3174,57 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 			}
 		}
+	case *logicalop.LogicalApply:
+		// LogicalApply embeds LogicalJoin, so it also has FullSchema/FullNames for USING/NATURAL joins.
+		// When FullSchema is nil, treat Apply as a transparent wrapper and recurse into the outer
+		// (left) child, which may itself be a LogicalJoin with FullSchema for a USING/NATURAL join.
+		if x.FullSchema == nil {
+			return findFieldNameFromNaturalUsingJoin(x.Children()[0], v)
+		}
+		idx, err := expression.FindFieldName(x.FullNames, v)
+		if err != nil {
+			return nil, nil, err
+		}
+		if idx >= 0 {
+			return x.FullSchema.Columns[idx], x.FullNames[idx], nil
+		}
 	}
 	return nil, nil, nil
+}
+
+func resolveRedundantColumnFromNaturalUsingJoinPlan(p base.LogicalPlan, col *expression.Column) (*expression.Column, *types.FieldName) {
+	switch x := p.(type) {
+	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
+		// These nodes preserve child's column identity; continue tracing down.
+		return resolveRedundantColumnFromNaturalUsingJoinPlan(p.Children()[0], col)
+	case *logicalop.LogicalApply:
+		// LogicalApply embeds LogicalJoin, so handle it the same way for USING/NATURAL remapping.
+		if x.JoinType == base.InnerJoin && x.FullSchema != nil && x.FullSchema.Contains(col) {
+			if mappedCol, mappedName := x.ResolveRedundantColumn(col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+		for _, child := range x.Children() {
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(child, col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+	case *logicalop.LogicalJoin:
+		// Remapping is only defined for inner JOIN ... USING/NATURAL semantics.
+		// When an ancestor join contains this column but has no mapping, continue
+		// descending so child joins can provide the canonical output mapping.
+		if x.JoinType == base.InnerJoin && x.FullSchema != nil && x.FullSchema.Contains(col) {
+			if mappedCol, mappedName := x.ResolveRedundantColumn(col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+		for _, child := range x.Children() {
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(child, col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+	}
+	return nil, nil
 }
 
 func (er *expressionRewriter) evalDefaultExprForTable(v *ast.DefaultExpr, tbl *model.TableInfo) {
@@ -2574,7 +3278,7 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
-		dbName = pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
+		dbName = ast.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
 	}
 	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:
@@ -2639,4 +3343,22 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 		return false
 	}
 	return strings.ToLower(x) == ast.CurrentTimestamp
+}
+
+// hasLimit checks if the plan already contains a LIMIT operator
+func hasLimit(plan base.LogicalPlan) bool {
+	if plan == nil {
+		return false
+	}
+	// Check if this is a LogicalLimit
+	if _, ok := plan.(*logicalop.LogicalLimit); ok {
+		return true
+	}
+	// Recursively check children
+	for _, child := range plan.Children() {
+		if hasLimit(child) {
+			return true
+		}
+	}
+	return false
 }

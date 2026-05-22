@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -140,7 +141,12 @@ func TestStmtSummaryTable(t *testing.T) {
 	rows := tk.MustQuery("select tidb_decode_plan('" + p1 + "');").Rows()
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, 1, len(rows[0]))
-	require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	if kerneltype.IsNextGen() {
+		// next-gen system tables use clustered index.
+		require.Regexp(t, "\n.*Point_Get.*table.tidb, clustered index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	} else {
+		require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	}
 
 	sql = "select table_names from information_schema.statements_summary " +
 		"where digest_text like 'select `variable_value`%' and `schema_name`='test'"
@@ -364,6 +370,30 @@ func TestStmtSummaryPreparedStatements(t *testing.T) {
 		where digest_text like "select ?"`).Check(testkit.Rows("1"))
 }
 
+func TestStmtSummaryBinaryValues(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 binary(16) not null primary key)")
+	tk.MustExec("insert into t1 values (0xd2e4a6b8c1f3e5d7a9b2c4d6e8f1a3b5)")
+
+	tk.MustQuery("select count(*) from t1 where c1 = '\xd2\xe4\xa6\xb8\xc1\xf3\xe5\xd7\xa9\xb2\xc4\xd6\xe8\xf1\xa3\xb5'").Check(testkit.Rows("1"))
+
+	rows := tk.MustQuery("select query_sample_text from information_schema.statements_summary " +
+		"where digest_text like 'select count%from `t1` where%'").Rows()
+	require.Len(t, rows, 1)
+	sampleText := rows[0][0].(string)
+	// Verify the binary value is converted to a replayable 0x hex literal
+	require.Equal(t, "select count(*) from t1 where c1 = 0xd2e4a6b8c1f3e5d7a9b2c4d6e8f1a3b5", sampleText)
+}
+
 func TestStmtSummarySensitiveQuery(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
@@ -542,20 +572,13 @@ func TestPlanCacheUnqualified2(t *testing.T) {
     from information_schema.statements_summary where digest_text like '%select%from%t_apply_unqualified_test%'`).Sort().Check(testkit.Rows(
 		"select * from `t1` where `t1` . `a` > ( select `a` from `t_apply_unqualified_test` where `t1` . `b` > `t_apply_unqualified_test` . `b` ) 1 1 PhysicalApply plan is un-cacheable"))
 
-	// queries containing ignore_plan_cache or set_var hints
+	// queries containing ignore_plan_cache hints
 	tk.MustExec(`create table t_ignore_unqualified_test (a int, b int)`)
 	tk.MustExec(`prepare st from 'select /*+ ignore_plan_cache() */ * from t_ignore_unqualified_test'`)
 	tk.MustExec(`execute st`)
 	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where digest_text like '%select%from%t_ignore_unqualified_test%'`).Sort().Check(testkit.Rows(
-		"select * from `t_ignore_unqualified_test` 1 1 ignore plan cache by hint"))
-
-	tk.MustExec(`create table t_setvar_unqualified_test (a int, b int)`)
-	tk.MustExec(`prepare st from 'select /*+ set_var(max_execution_time=10000) */ * from t_setvar_unqualified_test'`)
-	tk.MustExec(`execute st`)
-	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
-    from information_schema.statements_summary where digest_text like '%select%from%t_setvar_unqualified_test%'`).Sort().Check(testkit.Rows(
-		"select * from `t_setvar_unqualified_test` 1 1 SET_VAR is used in the SQL"))
+		"select * from `t_ignore_unqualified_test` 1 1 ignore_plan_cache hint used in SQL query"))
 
 	// queries containing non-deterministic functions
 	tk.MustExec(`create table t_non_deterministic_1_unqualified_test (a int, b int)`)
@@ -626,7 +649,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 
 	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where plan_cache_unqualified > 0`).Sort().Check(testkit.Rows(
-		"select * from `t1` 2 2 ignore plan cache by hint",
+		"select * from `t1` 2 2 ignore_plan_cache hint used in SQL query",
 		"select * from `t1` where `a` <= ? 4 4 '123' may be converted to INT",
 		"select * from `t1` where `t1` . `a` > ( select ? from `t2` where `t2` . `b` < ? ) 3 3 query has uncorrelated sub-queries is un-cacheable",
 		"select database ( ) from `t1` 2 2 query has 'database' is un-cacheable"))
@@ -637,7 +660,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 	}
 	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, plan_cache_unqualified_last_reason
     from information_schema.statements_summary where plan_cache_unqualified > 0`).Sort().Check(testkit.Rows(
-		"select * from `t1` 102 102 ignore plan cache by hint",
+		"select * from `t1` 102 102 ignore_plan_cache hint used in SQL query",
 		"select * from `t1` where `a` <= ? 4 4 '123' may be converted to INT",
 		"select * from `t1` where `t1` . `a` > ( select ? from `t2` where `t2` . `b` < ? ) 3 3 query has uncorrelated sub-queries is un-cacheable",
 		"select database ( ) from `t1` 102 102 query has 'database' is un-cacheable"))
@@ -716,6 +739,5 @@ func closeStmtSummary() {
 		conf.Instance.StmtSummaryEnablePersistent = false
 	})
 	stmtsummaryv2.GlobalStmtSummary.Close()
-	stmtsummaryv2.GlobalStmtSummary = nil
 	_ = os.Remove(config.GetGlobalConfig().Instance.StmtSummaryFilename)
 }

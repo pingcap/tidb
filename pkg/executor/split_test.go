@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -34,16 +34,17 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSplitIndex(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         pmodel.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -55,14 +56,14 @@ func TestSplitIndex(t *testing.T) {
 	idxCols := []*model.IndexColumn{{Name: tbInfo.Columns[0].Name, Offset: 0, Length: types.UnspecifiedLength}}
 	idxInfo := &model.IndexInfo{
 		ID:      2,
-		Name:    pmodel.NewCIStr("idx1"),
-		Table:   pmodel.NewCIStr("t1"),
+		Name:    ast.NewCIStr("idx1"),
+		Table:   ast.NewCIStr("t1"),
 		Columns: idxCols,
 		State:   model.StatePublic,
 	}
 	firstIdxInfo0 := idxInfo.Clone()
 	firstIdxInfo0.ID = 1
-	firstIdxInfo0.Name = pmodel.NewCIStr("idx")
+	firstIdxInfo0.Name = ast.NewCIStr("idx")
 	tbInfo.Indices = []*model.IndexInfo{firstIdxInfo0, idxInfo}
 
 	// Test for int index.
@@ -114,7 +115,8 @@ func TestSplitIndex(t *testing.T) {
 		{1000, 9},
 	}
 
-	index := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
+	index, err := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
+	require.NoError(t, err)
 	for _, ca := range cases {
 		// test for minInt64 handle
 		sc := ctx.GetSessionVars().StmtCtx
@@ -241,11 +243,11 @@ func TestSplitIndex(t *testing.T) {
 
 func TestSplitTable(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         pmodel.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -255,9 +257,9 @@ func TestSplitTable(t *testing.T) {
 		},
 	}
 	defer func(originValue int64) {
-		minRegionStepValue = originValue
-	}(minRegionStepValue)
-	minRegionStepValue = 10
+		regionsplit.MinRegionStepValue = originValue
+	}(regionsplit.MinRegionStepValue)
+	regionsplit.MinRegionStepValue = 10
 	// range is 0 ~ 100, and split into 10 region.
 	// So 10 regions range is like below:
 	// region1: [-inf ~ 10)
@@ -318,11 +320,11 @@ func TestSplitTable(t *testing.T) {
 func TestStepShouldLargeThanMinStep(t *testing.T) {
 	ctx := mock.NewContext()
 	tbInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		ID:   rand.Int63(),
 		Columns: []*model.ColumnInfo{
 			{
-				Name:         pmodel.NewCIStr("c0"),
+				Name:         ast.NewCIStr("c0"),
 				ID:           1,
 				Offset:       1,
 				DefaultValue: 0,
@@ -345,7 +347,7 @@ func TestStepShouldLargeThanMinStep(t *testing.T) {
 
 func TestClusterIndexSplitTable(t *testing.T) {
 	tbInfo := &model.TableInfo{
-		Name:                pmodel.NewCIStr("t"),
+		Name:                ast.NewCIStr("t"),
 		ID:                  1,
 		IsCommonHandle:      true,
 		CommonHandleVersion: 1,
@@ -362,21 +364,21 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		},
 		Columns: []*model.ColumnInfo{
 			{
-				Name:      pmodel.NewCIStr("c0"),
+				Name:      ast.NewCIStr("c0"),
 				ID:        1,
 				Offset:    0,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeDouble),
 			},
 			{
-				Name:      pmodel.NewCIStr("c1"),
+				Name:      ast.NewCIStr("c1"),
 				ID:        2,
 				Offset:    1,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 			{
-				Name:      pmodel.NewCIStr("c2"),
+				Name:      ast.NewCIStr("c2"),
 				ID:        3,
 				Offset:    2,
 				State:     model.StatePublic,
@@ -385,15 +387,14 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		},
 	}
 	defer func(originValue int64) {
-		minRegionStepValue = originValue
-	}(minRegionStepValue)
-	minRegionStepValue = 3
+		regionsplit.MinRegionStepValue = originValue
+	}(regionsplit.MinRegionStepValue)
+	regionsplit.MinRegionStepValue = 3
 	ctx := mock.NewContext()
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	e := &SplitTableRegionExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
-		handleCols:   buildHandleColsForSplit(sc, tbInfo),
+		handleCols:   buildHandleColsForSplit(tbInfo),
 		lower:        types.MakeDatums(1, 0),
 		upper:        types.MakeDatums(1, 100),
 		num:          10,
@@ -427,8 +428,9 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	}
 
 	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, ca := range cases {
-		h, err := e.handleCols.BuildHandleByDatums(ca.value)
+		h, err := e.handleCols.BuildHandleByDatums(sc, ca.value)
 		require.NoError(t, err)
 		key := tablecodec.EncodeRecordKey(recordPrefix, h)
 		require.NoError(t, err)

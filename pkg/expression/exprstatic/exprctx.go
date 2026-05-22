@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -157,11 +158,11 @@ func NewExprContext(opts ...ExprCtxOption) *ExprContext {
 			charset:                    cs.Name,
 			collation:                  cs.DefaultCollation,
 			defaultCollationForUTF8MB4: mysql.DefaultCollationName,
-			blockEncryptionMode:        variable.DefBlockEncryptionMode,
-			sysDateIsNow:               variable.DefSysdateIsNow,
-			noopFuncsMode:              variable.TiDBOptOnOffWarn(variable.DefTiDBEnableNoopFuncs),
+			blockEncryptionMode:        vardef.DefBlockEncryptionMode,
+			sysDateIsNow:               vardef.DefSysdateIsNow,
+			noopFuncsMode:              variable.TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
 			windowingUseHighPrecision:  true,
-			groupConcatMaxLen:          variable.DefGroupConcatMaxLen,
+			groupConcatMaxLen:          vardef.DefGroupConcatMaxLen,
 		},
 	}
 	for _, opt := range opts {
@@ -343,23 +344,23 @@ func (ctx *ExprContext) loadSessionVarsInternal(
 	for name := range sysVars {
 		name = strings.ToLower(name)
 		switch name {
-		case variable.CharacterSetConnection, variable.CollationConnection:
+		case vardef.CharacterSetConnection, vardef.CollationConnection:
 			opts = append(opts, WithCharset(sessionVars.GetCharsetInfo()))
-		case variable.DefaultCollationForUTF8MB4:
+		case vardef.DefaultCollationForUTF8MB4:
 			opts = append(opts, WithDefaultCollationForUTF8MB4(sessionVars.DefaultCollationForUTF8MB4))
-		case variable.BlockEncryptionMode:
-			blockMode, ok := sessionVars.GetSystemVar(variable.BlockEncryptionMode)
+		case vardef.BlockEncryptionMode:
+			blockMode, ok := sessionVars.GetSystemVar(vardef.BlockEncryptionMode)
 			intest.Assert(ok)
 			if ok {
 				opts = append(opts, WithBlockEncryptionMode(blockMode))
 			}
-		case variable.TiDBSysdateIsNow:
+		case vardef.TiDBSysdateIsNow:
 			opts = append(opts, WithSysDateIsNow(sessionVars.SysdateIsNow))
-		case variable.TiDBEnableNoopFuncs:
+		case vardef.TiDBEnableNoopFuncs:
 			opts = append(opts, WithNoopFuncsMode(sessionVars.NoopFuncsMode))
-		case variable.WindowingUseHighPrecision:
+		case vardef.WindowingUseHighPrecision:
 			opts = append(opts, WithWindowingUseHighPrecision(sessionVars.WindowingUseHighPrecision))
-		case variable.GroupConcatMaxLen:
+		case vardef.GroupConcatMaxLen:
 			opts = append(opts, WithGroupConcatMaxLen(sessionVars.GroupConcatMaxLen))
 		}
 	}

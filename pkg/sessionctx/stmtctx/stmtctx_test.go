@@ -15,6 +15,7 @@
 package stmtctx_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,13 +28,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -41,45 +46,43 @@ import (
 func TestCopTasksDetails(t *testing.T) {
 	ctx := stmtctx.NewStmtCtx()
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
-	for i := 0; i < 100; i++ {
-		d := &execdetails.ExecDetails{
-			DetailsNeedP90: execdetails.DetailsNeedP90{
-				CalleeAddress: fmt.Sprintf("%v", i+1),
-				BackoffSleep:  make(map[string]time.Duration),
-				BackoffTimes:  make(map[string]int),
-				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(i+1),
-					WaitTime:    time.Millisecond * time.Duration(i+1),
-				},
+	for i := range 100 {
+		d := &execdetails.CopExecDetails{
+			CalleeAddress: fmt.Sprintf("%v", i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(i+1),
+				WaitTime:    time.Millisecond * time.Duration(i+1),
 			},
 		}
 		for _, backoff := range backoffs {
 			d.BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(i+1)
 			d.BackoffTimes[backoff] = i + 1
 		}
-		ctx.MergeExecDetails(d, nil)
+		ctx.MergeCopExecDetails(d, 0)
 	}
 	d := ctx.CopTasksDetails()
 	require.Equal(t, 100, d.NumCopTasks)
-	require.Equal(t, time.Second*101/2, d.AvgProcessTime)
-	require.Equal(t, time.Second*101/2*100, d.TotProcessTime)
-	require.Equal(t, time.Second*91, d.P90ProcessTime)
-	require.Equal(t, time.Second*100, d.MaxProcessTime)
-	require.Equal(t, "100", d.MaxProcessAddress)
-	require.Equal(t, time.Millisecond*101/2, d.AvgWaitTime)
-	require.Equal(t, time.Millisecond*101/2*100, d.TotWaitTime)
-	require.Equal(t, time.Millisecond*91, d.P90WaitTime)
-	require.Equal(t, time.Millisecond*100, d.MaxWaitTime)
-	require.Equal(t, "100", d.MaxWaitAddress)
+	require.Equal(t, time.Second*101/2, d.ProcessTimeStats.AvgTime)
+	require.Equal(t, time.Second*101/2*100, d.ProcessTimeStats.TotTime)
+	require.Equal(t, time.Second*91, d.ProcessTimeStats.P90Time)
+	require.Equal(t, time.Second*100, d.ProcessTimeStats.MaxTime)
+	require.Equal(t, "100", d.ProcessTimeStats.MaxAddress)
+	require.Equal(t, time.Millisecond*101/2, d.WaitTimeStats.AvgTime)
+	require.Equal(t, time.Millisecond*101/2*100, d.WaitTimeStats.TotTime)
+	require.Equal(t, time.Millisecond*91, d.WaitTimeStats.P90Time)
+	require.Equal(t, time.Millisecond*100, d.WaitTimeStats.MaxTime)
+	require.Equal(t, "100", d.WaitTimeStats.MaxAddress)
 	fields := d.ToZapFields()
 	require.Equal(t, 9, len(fields))
 	for _, backoff := range backoffs {
-		require.Equal(t, "100", d.MaxBackoffAddress[backoff])
-		require.Equal(t, 100*time.Millisecond*100, d.MaxBackoffTime[backoff])
-		require.Equal(t, time.Millisecond*100*91, d.P90BackoffTime[backoff])
-		require.Equal(t, time.Millisecond*100*101/2, d.AvgBackoffTime[backoff])
+		require.Equal(t, "100", d.BackoffTimeStatsMap[backoff].MaxAddress)
+		require.Equal(t, 100*time.Millisecond*100, d.BackoffTimeStatsMap[backoff].MaxTime)
+		require.Equal(t, time.Millisecond*100*91, d.BackoffTimeStatsMap[backoff].P90Time)
+		require.Equal(t, time.Millisecond*100*101/2, d.BackoffTimeStatsMap[backoff].AvgTime)
 		require.Equal(t, 101*50, d.TotBackoffTimes[backoff])
-		require.Equal(t, 101*50*100*time.Millisecond, d.TotBackoffTime[backoff])
+		require.Equal(t, 101*50*100*time.Millisecond, d.BackoffTimeStatsMap[backoff].TotTime)
 	}
 }
 
@@ -218,21 +221,103 @@ func TestMarshalSQLWarn(t *testing.T) {
 	tk.MustQuery("show warnings").Check(rows)
 }
 
+func TestLogicalPlanBuildStateRestore(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	sc.AppendWarning(errors.New("baseline warning"))
+	sc.AppendExtraWarning(errors.New("baseline extra warning"))
+	sc.Tables = []stmtctx.TableEntry{{DB: "test", Table: "t"}}
+	sc.TableStats = map[int64]any{42: "baseline stats"}
+	sc.LockTableIDs = map[int64]struct{}{1: {}}
+	tblInfo := &model.TableInfo{ID: 42}
+	sc.TblInfo2UnionScan = map[*model.TableInfo]bool{tblInfo: true}
+	sc.UseDynamicPruneMode = true
+	sc.ViewDepth = 2
+	sc.ColRefFromUpdatePlan.Insert(7)
+	sc.SetCacheType(contextutil.SessionNonPrepared)
+	sc.EnablePlanCache()
+
+	state := sc.SaveLogicalPlanBuildState()
+
+	sc.AppendWarning(errors.New("candidate warning"))
+	sc.AppendExtraWarning(errors.New("candidate extra warning"))
+	sc.Tables = []stmtctx.TableEntry{{DB: "candidate", Table: "t2"}}
+	sc.TableStats = map[int64]any{99: "candidate stats"}
+	sc.LockTableIDs[2] = struct{}{}
+	sc.TblInfo2UnionScan = map[*model.TableInfo]bool{{ID: 99}: false}
+	sc.UseDynamicPruneMode = false
+	sc.ViewDepth = 9
+	sc.ColRefFromUpdatePlan.Insert(9)
+	sc.SetSkipPlanCache("candidate reason")
+
+	sc.RestoreLogicalPlanBuildState(state)
+
+	warnings := sc.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Equal(t, "baseline warning", warnings[0].Err.Error())
+
+	extraWarnings := sc.GetExtraWarnings()
+	require.Len(t, extraWarnings, 1)
+	require.Equal(t, "baseline extra warning", extraWarnings[0].Err.Error())
+
+	require.Equal(t, []stmtctx.TableEntry{{DB: "test", Table: "t"}}, sc.Tables)
+	require.Equal(t, map[int64]any{42: "baseline stats"}, sc.TableStats)
+	require.Equal(t, map[int64]struct{}{1: {}}, sc.LockTableIDs)
+	require.Equal(t, map[*model.TableInfo]bool{tblInfo: true}, sc.TblInfo2UnionScan)
+	require.True(t, sc.UseDynamicPartitionPrune())
+	require.Equal(t, int32(2), sc.ViewDepth)
+	require.True(t, sc.ColRefFromUpdatePlan.Has(7))
+	require.False(t, sc.ColRefFromUpdatePlan.Has(9))
+	require.True(t, sc.UseCache())
+	require.Empty(t, sc.PlanCacheUnqualified())
+}
+
+func TestQBHintHandlerBuildState(t *testing.T) {
+	handler := hint.NewQBHintHandler(nil)
+	handler.QBNameToSelOffset = map[string]int{"qb_1": 1}
+	handler.ViewQBNameToTable = map[string][]ast.HintTable{
+		"view_qb": {{TableName: ast.NewCIStr("t")}},
+	}
+	handler.ViewQBNameToHints = map[string][]*ast.TableOptimizerHint{
+		"view_qb": {{HintName: ast.NewCIStr("merge_join")}},
+	}
+	handler.Enter(&ast.SelectStmt{})
+	handler.Enter(&ast.SelectStmt{})
+	state := handler.NewBuildState()
+	hints := handler.GetCurrentStmtHints([]*ast.TableOptimizerHint{
+		{HintName: ast.NewCIStr("use_index"), QBName: ast.NewCIStr("qb_1")},
+	}, 1, state)
+	handler.MarkViewQBNameUsed("view_qb", state)
+
+	require.Len(t, hints, 1)
+	require.Equal(t, "use_index", hints[0].HintName.L)
+
+	require.Equal(t, 2, handler.MaxSelectStmtOffset())
+	require.Equal(t, map[string]int{"qb_1": 1}, handler.QBNameToSelOffset)
+	require.Equal(t, map[string][]*ast.TableOptimizerHint{
+		"view_qb": {{HintName: ast.NewCIStr("merge_join")}},
+	}, handler.ViewQBNameToHints)
+	require.Equal(t, map[string][]ast.HintTable{
+		"view_qb": {{TableName: ast.NewCIStr("t")}},
+	}, handler.ViewQBNameToTable)
+	require.Equal(t, map[int][]*ast.TableOptimizerHint{
+		1: {{HintName: ast.NewCIStr("use_index"), QBName: ast.NewCIStr("qb_1")}},
+	}, state.QBOffsetToHints)
+	require.Equal(t, map[string]struct{}{"view_qb": {}}, state.ViewQBNameUsed)
+}
+
 func TestApproxRuntimeInfo(t *testing.T) {
 	var n = rand.Intn(19000) + 1000
 	var valRange = rand.Int31n(10000) + 1000
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
-	details := []*execdetails.ExecDetails{}
-	for i := 0; i < n; i++ {
-		d := &execdetails.ExecDetails{
-			DetailsNeedP90: execdetails.DetailsNeedP90{
-				CalleeAddress: fmt.Sprintf("%v", i+1),
-				BackoffSleep:  make(map[string]time.Duration),
-				BackoffTimes:  make(map[string]int),
-				TimeDetail: util.TimeDetail{
-					ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
-					WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
-				},
+	details := []*execdetails.CopExecDetails{}
+	for i := range n {
+		d := &execdetails.CopExecDetails{
+			CalleeAddress: fmt.Sprintf("%v", i+1),
+			BackoffSleep:  make(map[string]time.Duration),
+			BackoffTimes:  make(map[string]int),
+			TimeDetail: util.TimeDetail{
+				ProcessTime: time.Second * time.Duration(rand.Int31n(valRange)),
+				WaitTime:    time.Millisecond * time.Duration(rand.Int31n(valRange)),
 			},
 		}
 		details = append(details, d)
@@ -243,15 +328,15 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	}
 
 	// Make CalleeAddress for each max value is deterministic.
-	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
-	details[rand.Intn(n)].DetailsNeedP90.TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
+	details[rand.Intn(n)].TimeDetail.ProcessTime = time.Second * time.Duration(valRange)
+	details[rand.Intn(n)].TimeDetail.WaitTime = time.Millisecond * time.Duration(valRange)
 	for _, backoff := range backoffs {
 		details[rand.Intn(n)].BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(valRange)
 	}
 
 	ctx := stmtctx.NewStmtCtx()
-	for i := 0; i < n; i++ {
-		ctx.MergeExecDetails(details[i], nil)
+	for i := range n {
+		ctx.MergeCopExecDetails(details[i], 0)
 	}
 	d := ctx.CopTasksDetails()
 
@@ -263,11 +348,11 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for _, detail := range details {
 		timeSum += detail.TimeDetail.ProcessTime
 	}
-	require.Equal(t, d.TotProcessTime, timeSum)
-	require.Equal(t, d.AvgProcessTime, timeSum/time.Duration(n))
-	require.InEpsilon(t, d.P90ProcessTime.Nanoseconds(), details[n*9/10].TimeDetail.ProcessTime.Nanoseconds(), 0.05)
-	require.Equal(t, d.MaxProcessTime, details[n-1].TimeDetail.ProcessTime)
-	require.Equal(t, d.MaxProcessAddress, details[n-1].CalleeAddress)
+	require.Equal(t, d.ProcessTimeStats.TotTime, timeSum)
+	require.Equal(t, d.ProcessTimeStats.AvgTime, timeSum/time.Duration(n))
+	require.InEpsilon(t, d.ProcessTimeStats.P90Time.Nanoseconds(), details[n*9/10].TimeDetail.ProcessTime.Nanoseconds(), 0.05)
+	require.Equal(t, d.ProcessTimeStats.MaxTime, details[n-1].TimeDetail.ProcessTime)
+	require.Equal(t, d.ProcessTimeStats.MaxAddress, details[n-1].CalleeAddress)
 
 	sort.Slice(details, func(i, j int) bool {
 		return details[i].TimeDetail.WaitTime.Nanoseconds() < details[j].TimeDetail.WaitTime.Nanoseconds()
@@ -276,11 +361,11 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for _, detail := range details {
 		timeSum += detail.TimeDetail.WaitTime
 	}
-	require.Equal(t, d.TotWaitTime, timeSum)
-	require.Equal(t, d.AvgWaitTime, timeSum/time.Duration(n))
-	require.InEpsilon(t, d.P90WaitTime.Nanoseconds(), details[n*9/10].TimeDetail.WaitTime.Nanoseconds(), 0.05)
-	require.Equal(t, d.MaxWaitTime, details[n-1].TimeDetail.WaitTime)
-	require.Equal(t, d.MaxWaitAddress, details[n-1].CalleeAddress)
+	require.Equal(t, d.WaitTimeStats.TotTime, timeSum)
+	require.Equal(t, d.WaitTimeStats.AvgTime, timeSum/time.Duration(n))
+	require.InEpsilon(t, d.WaitTimeStats.P90Time.Nanoseconds(), details[n*9/10].TimeDetail.WaitTime.Nanoseconds(), 0.05)
+	require.Equal(t, d.WaitTimeStats.MaxTime, details[n-1].TimeDetail.WaitTime)
+	require.Equal(t, d.WaitTimeStats.MaxAddress, details[n-1].CalleeAddress)
 
 	fields := d.ToZapFields()
 	require.Equal(t, 9, len(fields))
@@ -294,20 +379,21 @@ func TestApproxRuntimeInfo(t *testing.T) {
 			timeSum += detail.BackoffSleep[backoff]
 			timesSum += detail.BackoffTimes[backoff]
 		}
-		require.Equal(t, d.MaxBackoffAddress[backoff], details[n-1].CalleeAddress)
-		require.Equal(t, d.MaxBackoffTime[backoff], details[n-1].BackoffSleep[backoff])
-		require.InEpsilon(t, d.P90BackoffTime[backoff], details[n*9/10].BackoffSleep[backoff], 0.1)
-		require.Equal(t, d.AvgBackoffTime[backoff], timeSum/time.Duration(n))
+		backoffStats := d.BackoffTimeStatsMap[backoff]
+		require.Equal(t, backoffStats.MaxAddress, details[n-1].CalleeAddress)
+		require.Equal(t, backoffStats.MaxTime, details[n-1].BackoffSleep[backoff])
+		require.InEpsilon(t, backoffStats.P90Time, details[n*9/10].BackoffSleep[backoff], 0.1)
+		require.Equal(t, backoffStats.AvgTime, timeSum/time.Duration(n))
 
 		require.Equal(t, d.TotBackoffTimes[backoff], timesSum)
-		require.Equal(t, d.TotBackoffTime[backoff], timeSum)
+		require.Equal(t, backoffStats.TotTime, timeSum)
 	}
 }
 
 func TestStmtHintsClone(t *testing.T) {
 	hints := hint.StmtHints{}
 	value := reflect.ValueOf(&hints).Elem()
-	for i := 0; i < value.NumField(); i++ {
+	for i := range value.NumField() {
 		field := value.Field(i)
 		switch field.Kind() {
 		case reflect.Int, reflect.Int32, reflect.Int64:
@@ -438,6 +524,15 @@ func TestStmtCtxID(t *testing.T) {
 	}
 }
 
+func TestIssue58600(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessionctx/stmtctx/afterFoundRowsLocked", func(sc *stmtctx.StatementContext) {
+		// no panic when call sc.Reset()
+		assert.False(t, sc.Reset())
+	})
+	sc.FoundRows()
+}
+
 func TestErrCtx(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
 	// the default errCtx
@@ -492,6 +587,49 @@ func TestReservedRowIDAlloc(t *testing.T) {
 	id, ok = reserved.Consume()
 	require.False(t, ok)
 	require.Equal(t, int64(0), id)
+}
+
+func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
+	// pseudo stats: Version=0
+	sPseudo := &stmtctx.UsedStatsInfoForTable{
+		Name:          "t1",
+		Version:       0,
+		RealtimeCount: 1000,
+		ModifyCount:   100,
+	}
+	var buf bytes.Buffer
+	sPseudo.WriteToSlowLog(&buf)
+	out := buf.String()
+	// pseudo returns early, so no "[index][column]" part
+	require.NotContains(t, out, "][")
+	require.Equal(t, "t1:stats_meta_version=pseudo[realtime_count=1000;modify_count=100]", out)
+
+	// real stats: Version != 0
+	buf.Reset()
+	sReal := &stmtctx.UsedStatsInfoForTable{
+		Name:          "orders",
+		Version:       5,
+		RealtimeCount: 1000000,
+		ModifyCount:   500,
+	}
+	sReal.WriteToSlowLog(&buf)
+	out = buf.String()
+	require.Equal(t, "orders:stats_meta_version=5[realtime_count=1000000;modify_count=500]", out)
+
+	// real stats with column/index load status
+	buf.Reset()
+	sWithStatus := &stmtctx.UsedStatsInfoForTable{
+		Name:                  "t2",
+		Version:               10,
+		RealtimeCount:         2000,
+		ModifyCount:           0,
+		IndexStatsLoadStatus:  map[int64]string{1: "allLoaded"},
+		ColumnStatsLoadStatus: map[int64]string{2: "onlyCmsEvicted"},
+	}
+	sWithStatus.WriteToSlowLog(&buf)
+	out = buf.String()
+	// TblInfo is nil so column/index names fall back to "ID <id>"; order: [index][column]
+	require.Equal(t, "t2:stats_meta_version=10[realtime_count=2000;modify_count=0][ID 1:allLoaded][ID 2:onlyCmsEvicted]", out)
 }
 
 func BenchmarkErrCtx(b *testing.B) {

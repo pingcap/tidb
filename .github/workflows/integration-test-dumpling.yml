@@ -49,11 +49,9 @@ jobs:
       fail-fast: true
       matrix:
         mysql_version:
-          - 5.7.35
-          - 8.0.22
-          - 8.0.26
-          - 8.0.37
-          - 8.4.3
+          - 5.7.35 # Note that OpenSSL is upgraded from 1.1.1 to 3.0.x in 5.7.43
+          - 8.0.45
+          - 8.4.8
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -67,6 +65,8 @@ jobs:
     steps:
       - name: "checkout repository"
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: "set up golang"
         uses: actions/setup-go@v5
         with:
@@ -90,6 +90,23 @@ jobs:
         run: make build_lightning
       - name: "integration test"
         run: make dumpling_integration_test VERBOSE="true"
+      - name: "dump tidb log on failure"
+        if: ${{ failure() }}
+        run: |
+          if [ -f /tmp/dumpling_test_result/tidb.log ]; then
+            echo "=== /tmp/dumpling_test_result/tidb.log (tail -n 500) ==="
+            tail -n 500 /tmp/dumpling_test_result/tidb.log
+          else
+            echo "tidb.log not found at /tmp/dumpling_test_result/tidb.log"
+          fi
+      - name: "upload tidb log artifact"
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dumpling-tidb-log-${{ matrix.mysql_version }}
+          path: /tmp/dumpling_test_result/tidb.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: "set up tmate session if necessary"
         if: ${{ failure() && github.event_name == 'workflow_dispatch' && github.event.inputs.debug }}
         uses: mxschmitt/action-tmate@v3

@@ -15,6 +15,7 @@
 package refresher
 
 import (
+	"context"
 	stderrors "errors"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
@@ -34,6 +36,8 @@ import (
 // Refresher provides methods to refresh stats info.
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
+	// This context is used to cancel background tasks when the domain exits.
+	ctx context.Context
 	// This will be refreshed every time we rebuild the priority queue.
 	autoAnalysisTimeWindow priorityqueue.AutoAnalysisTimeWindow
 
@@ -57,12 +61,14 @@ type Refresher struct {
 
 // NewRefresher creates a new Refresher and starts the goroutine.
 func NewRefresher(
+	ctx context.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 ) *Refresher {
-	maxConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	maxConcurrency := int(vardef.AutoAnalyzeConcurrency.Load())
 	r := &Refresher{
+		ctx:            ctx,
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
 		jobs:           priorityqueue.NewAnalysisPriorityQueue(statsHandle),
@@ -77,7 +83,7 @@ func NewRefresher(
 
 // UpdateConcurrency updates the maximum concurrency for auto-analyze jobs
 func (r *Refresher) UpdateConcurrency() {
-	newConcurrency := int(variable.AutoAnalyzeConcurrency.Load())
+	newConcurrency := int(vardef.AutoAnalyzeConcurrency.Load())
 	r.worker.UpdateConcurrency(newConcurrency)
 }
 
@@ -86,19 +92,11 @@ func (r *Refresher) UpdateConcurrency() {
 // Usually, this is done by the caller through `util.CallWithSCtx`.
 func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	err := r.setAutoAnalysisTimeWindow(parameters)
-	if err != nil {
-		statslogutil.StatsLogger().Error("Set auto analyze time window failed", zap.Error(err))
-		return false
-	}
-	if !r.isWithinTimeWindow() {
-		return false
-	}
-	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
-		if err := r.jobs.Initialize(); err != nil {
-			statslogutil.StatsLogger().Error("Failed to initialize the queue", zap.Error(err))
+		if err := r.jobs.Initialize(r.ctx); err != nil {
+			statslogutil.StatsErrVerboseSampleLogger().Error("Failed to initialize the queue", zap.Error(err))
 			return false
 		}
 		r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
@@ -110,10 +108,24 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			r.lastSeenPruneMode = currentPruneMode
 			err := r.jobs.Rebuild()
 			if err != nil {
-				statslogutil.StatsLogger().Error("Failed to rebuild the queue", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Error("Failed to rebuild the queue", zap.Error(err))
 				return false
 			}
 		}
+	}
+
+	// NOTE: This check must be done after initializing/rebuilding the queue.
+	// For example, if TiDB instances restart outside the time window, the queue will not be initialized.
+	// This means the DDL events are not being processed. This would prevent the DDL notifier from moving forward.
+	// Although this won't cause a correctness issue and it does not affect other handlers, it is still better to avoid this situation.
+	// We should make sure the queue is always initialized when the current instance is the owner.
+	err := r.setAutoAnalysisTimeWindow(parameters)
+	if err != nil {
+		statslogutil.StatsErrVerboseSampleLogger().Error("Set auto analyze time window failed", zap.Error(err))
+		return false
+	}
+	if !r.isWithinTimeWindow() {
+		return false
 	}
 
 	// Update the concurrency to the latest value.
@@ -123,7 +135,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	currentRunningJobs := r.worker.GetRunningJobs()
 	remainConcurrency := maxConcurrency - len(currentRunningJobs)
 	if remainConcurrency <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Info("No concurrency available")
+		statslogutil.StatsSampleLogger().Info("No concurrency available")
 		return false
 	}
 
@@ -145,7 +157,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			continue
 		}
 		if valid, failReason := job.ValidateAndPrepare(sctx); !valid {
-			statslogutil.SingletonStatsSamplerLogger().Info(
+			statslogutil.StatsSampleLogger().Info(
 				"Table not ready for analysis",
 				zap.String("reason", failReason),
 				zap.Stringer("job", job),
@@ -184,7 +196,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 		return true
 	}
 
-	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
+	statslogutil.StatsSampleLogger().Info("No tables to analyze")
 	return false
 }
 
@@ -197,8 +209,8 @@ func (r *Refresher) setAutoAnalysisTimeWindow(
 	parameters map[string]string,
 ) error {
 	start, end, err := exec.ParseAutoAnalysisWindow(
-		parameters[variable.TiDBAutoAnalyzeStartTime],
-		parameters[variable.TiDBAutoAnalyzeEndTime],
+		parameters[vardef.TiDBAutoAnalyzeStartTime],
+		parameters[vardef.TiDBAutoAnalyzeEndTime],
 	)
 	if err != nil {
 		return errors.Wrap(err, "parse auto analyze period failed")
@@ -238,6 +250,12 @@ func (r *Refresher) RequeueMustRetryJobsForTest() {
 	r.jobs.RequeueMustRetryJobs()
 }
 
+// IsQueueInitializedForTest returns whether the priority queue is initialized.
+// Only used in the test.
+func (r *Refresher) IsQueueInitializedForTest() bool {
+	return r.jobs.IsInitialized()
+}
+
 // Len returns the length of the analysis job queue.
 func (r *Refresher) Len() int {
 	l, err := r.jobs.Len()
@@ -253,15 +271,8 @@ func (r *Refresher) Close() {
 	}
 }
 
-// OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
-func (*Refresher) OnBecomeOwner() {
-	// No action is taken when becoming the stats owner.
-	// Initialization of the Refresher can fail, so operations are deferred until the first auto-analyze check.
-}
-
-// OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
-func (r *Refresher) OnRetireOwner() {
-	// Theoretically we should stop the worker here, but stopping analysis jobs can be time-consuming.
-	// To avoid blocking etcd leader re-election, we only close the priority queue.
+// ClosePriorityQueue closes the stats priority queue if initialized.
+// NOTE: This does NOT stop the analyze worker. Only the priority queue is closed.
+func (r *Refresher) ClosePriorityQueue() {
 	r.jobs.Close()
 }

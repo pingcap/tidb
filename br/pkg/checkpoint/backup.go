@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 type BackupKeyType = string
@@ -37,8 +37,8 @@ const (
 	CheckpointLockPathForBackup    = CheckpointBackupDir + "/checkpoint.lock"
 )
 
-func flushPositionForBackup() flushPosition {
-	return flushPosition{
+func flushPathForBackup() flushPath {
+	return flushPath{
 		CheckpointDataDir:     CheckpointDataDirForBackup,
 		CheckpointChecksumDir: CheckpointChecksumDirForBackup,
 		CheckpointLockPath:    CheckpointLockPathForBackup,
@@ -52,16 +52,16 @@ func valueMarshalerForBackup(group *RangeGroup[BackupKeyType, BackupValueType]) 
 // only for test
 func StartCheckpointBackupRunnerForTest(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 	tick time.Duration,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
-	checkpointStorage, err := newExternalCheckpointStorage(ctx, storage, timer)
+	checkpointStorage, err := newExternalCheckpointStorage(ctx, storage, timer, flushPathForBackup())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
+	runner := newCheckpointRunner(
 		checkpointStorage, cipher, valueMarshalerForBackup)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, tick, tick)
@@ -70,11 +70,11 @@ func StartCheckpointBackupRunnerForTest(
 
 func StartCheckpointRunnerForBackup(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
-	checkpointStorage, err := newExternalCheckpointStorage(ctx, storage, timer)
+	checkpointStorage, err := newExternalCheckpointStorage(ctx, storage, timer, flushPathForBackup())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -94,19 +94,19 @@ func StartCheckpointRunnerForBackup(
 func AppendForBackup(
 	ctx context.Context,
 	r *CheckpointRunner[BackupKeyType, BackupValueType],
-	groupKey BackupKeyType,
 	startKey []byte,
 	endKey []byte,
 	files []*backuppb.File,
 ) error {
 	return r.Append(ctx, &CheckpointMessage[BackupKeyType, BackupValueType]{
-		GroupKey: groupKey,
 		Group: []BackupValueType{
 			{
 				Range: &rtree.Range{
-					StartKey: startKey,
-					EndKey:   endKey,
-					Files:    files,
+					KeyRange: rtree.KeyRange{
+						StartKey: startKey,
+						EndKey:   endKey,
+					},
+					Files: files,
 				},
 			},
 		},
@@ -117,25 +117,24 @@ func AppendForBackup(
 // and return the total time cost in the past executions
 func WalkCheckpointFileForBackup(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	cipher *backuppb.CipherInfo,
-	fn func(BackupKeyType, BackupValueType),
+	fn func(BackupKeyType, BackupValueType) error,
 ) (time.Duration, error) {
 	return walkCheckpointFile(ctx, s, cipher, CheckpointDataDirForBackup, fn)
 }
 
 type CheckpointMetadataForBackup struct {
-	GCServiceId string        `json:"gc-service-id"`
-	ConfigHash  []byte        `json:"config-hash"`
-	BackupTS    uint64        `json:"backup-ts"`
-	Ranges      []rtree.Range `json:"ranges"`
+	GCServiceId string `json:"gc-service-id"`
+	ConfigHash  []byte `json:"config-hash"`
+	BackupTS    uint64 `json:"backup-ts"`
 
-	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
-	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
+	CheckpointChecksum    map[int64]*ChecksumItem `json:"-"`
+	LoadCheckpointDataMap bool                    `json:"-"`
 }
 
 // load checkpoint metadata from the external storage
-func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*CheckpointMetadataForBackup, error) {
+func LoadCheckpointMetadata(ctx context.Context, s storeapi.Storage) (*CheckpointMetadataForBackup, error) {
 	m := &CheckpointMetadataForBackup{}
 	err := loadCheckpointMeta(ctx, s, CheckpointMetaPathForBackup, m)
 	if err != nil {
@@ -146,10 +145,10 @@ func LoadCheckpointMetadata(ctx context.Context, s storage.ExternalStorage) (*Ch
 }
 
 // save the checkpoint metadata into the external storage
-func SaveCheckpointMetadata(ctx context.Context, s storage.ExternalStorage, meta *CheckpointMetadataForBackup) error {
+func SaveCheckpointMetadata(ctx context.Context, s storeapi.Storage, meta *CheckpointMetadataForBackup) error {
 	return saveCheckpointMetadata(ctx, s, meta, CheckpointMetaPathForBackup)
 }
 
-func RemoveCheckpointDataForBackup(ctx context.Context, s storage.ExternalStorage) error {
+func RemoveCheckpointDataForBackup(ctx context.Context, s storeapi.Storage) error {
 	return removeCheckpointData(ctx, s, CheckpointBackupDir)
 }

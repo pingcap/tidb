@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -145,7 +144,7 @@ func TestClone(t *testing.T) {
 		&builtinToSecondsSig{}, &builtinUTCTimeWithArgSig{}, &builtinUTCTimeWithoutArgSig{}, &builtinTimestamp1ArgSig{}, &builtinTimestamp2ArgsSig{},
 		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
 		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddSubDateAsStringSig{},
-		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
+		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{}, &builtinUUIDv4Sig{}, &builtinUUIDv7Sig{}, &builtinUUIDVersionSig{}, &builtinUUIDTimestampSig{},
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
@@ -205,7 +204,7 @@ func TestPopRowFirstArg(t *testing.T) {
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
-	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
+	fun := &ScalarFunction{Function: f, FuncName: ast.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
 	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
@@ -287,6 +286,13 @@ func TestPushDownNot(t *testing.T) {
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
 
+	// (not not (a=1)) should be optimized to (a=1)
+	eqFunc = newFunctionWithMockCtx(ast.EQ, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, eqFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, eqFunc))
+
 	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunctionWithMockCtx(ast.Plus, col, NewOne())
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, plusFunc)
@@ -299,6 +305,13 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
+	// (not not not (a > 1)) should be optimized to (a <= 1)
+	gtFunc := newFunctionWithMockCtx(ast.GT, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, gtFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.LE, col, NewOne())))
 	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
@@ -306,6 +319,15 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
+
+	// (not not not not (a <= 1)) should be optimized to (a <= 1)
+	leFunc := newFunctionWithMockCtx(ast.LE, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, leFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, leFunc))
 }
 
 func TestFilter(t *testing.T) {
@@ -338,7 +360,7 @@ func TestHashGroupKey(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for i := 0; i < len(tNames); i++ {
+	for i := range tNames {
 		ft := eType2FieldType(eTypes[i])
 		if eTypes[i] == types.ETDecimal {
 			ft.SetFlen(0)
@@ -348,7 +370,7 @@ func TestHashGroupKey(t *testing.T) {
 		fillColumnWithGener(eTypes[i], input, 0, nil)
 		colBuf := chunk.NewColumn(ft, 1024)
 		bufs := make([][]byte, 1024)
-		for j := 0; j < 1024; j++ {
+		for j := range 1024 {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
@@ -358,7 +380,7 @@ func TestHashGroupKey(t *testing.T) {
 		require.NoError(t, err)
 
 		var buf []byte
-		for j := 0; j < input.NumRows(); j++ {
+		for j := range input.NumRows() {
 			d, err := colExpr.Eval(ctx, input.GetRow(j))
 			require.NoError(t, err)
 			buf, err = codec.EncodeValue(sc.TimeZone(), buf[:0], d)

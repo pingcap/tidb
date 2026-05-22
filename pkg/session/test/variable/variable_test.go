@@ -22,8 +22,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -79,7 +81,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	tk.MustQuery(`split table t6 between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
 	tk.MustQuery("split table t6 INDEX id between (0) and (10000) regions 10;").Check(testkit.Rows("10 1"))
 	count := 10
-	for i := 0; i < count; i++ {
+	for i := range count {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
 		tk.MustExec(fmt.Sprintf("insert into t6 (id) values (%v)", i))
 	}
@@ -118,7 +120,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
-		for i := 0; i < count; i++ {
+		for i := range count {
 			expect = append(expect, fmt.Sprintf("%v", i))
 		}
 		tk.MustQuery(sql).Sort().Check(testkit.Rows(expect...))
@@ -196,10 +198,10 @@ func TestCorrectScopeError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeNone, Name: "sv_none", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal, Name: "sv_global", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeSession, Name: "sv_session", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "sv_both", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeNone, Name: "sv_none", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal, Name: "sv_global", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeSession, Name: "sv_session", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "sv_both", Value: "acdc"})
 
 	// check set behavior
 
@@ -322,6 +324,15 @@ func TestMaxExecutionTime(t *testing.T) {
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
 
+	// max_execution_time should be 0 if in non-select statement
+	tk.MustExec("update MaxExecTime set age = age + 1 where id = 1000;")
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	tk.MustExec("update /*+ MAX_EXECUTION_TIME(10000) */ MaxExecTime set age = age + 1 where id = 1000;")
+	// hint works, maybe we should just ignore this hint in non-select statement?
+	require.Equal(t, uint64(10000), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	// but MaxExecutionTime is still 0
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetMaxExecutionTime())
+
 	tk.MustExec("set @@global.MAX_EXECUTION_TIME = 0;")
 	tk.MustExec("set @@MAX_EXECUTION_TIME = 0;")
 	tk.MustExec("commit")
@@ -329,14 +340,19 @@ func TestMaxExecutionTime(t *testing.T) {
 }
 
 func TestReplicaRead(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_replica_read follower is not supported in next generation")
+	}
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessionctx/variable/GetReplicaReadUnadjusted", "return(true)"))
 	require.Equal(t, kv.ReplicaReadLeader, tk.Session().GetSessionVars().GetReplicaRead())
 	tk.MustExec("set @@tidb_replica_read = 'follower';")
 	require.Equal(t, kv.ReplicaReadFollower, tk.Session().GetSessionVars().GetReplicaRead())
 	tk.MustExec("set @@tidb_replica_read = 'leader';")
 	require.Equal(t, kv.ReplicaReadLeader, tk.Session().GetSessionVars().GetReplicaRead())
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessionctx/variable/GetReplicaReadUnadjusted"))
 }
 
 func TestIsolationRead(t *testing.T) {
@@ -417,8 +433,8 @@ func TestGeneralLogNonzeroTxnStartTS(t *testing.T) {
 	defer func() { logutil.GeneralLogger = oldGL }()
 
 	// enable general log
-	oldVar := variable.ProcessGeneralLog.Swap(true)
-	defer variable.ProcessGeneralLog.Store(oldVar)
+	oldVar := vardef.ProcessGeneralLog.Swap(true)
+	defer vardef.ProcessGeneralLog.Store(oldVar)
 
 	store := testkit.CreateMockStore(t)
 

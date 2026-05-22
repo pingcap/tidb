@@ -301,7 +301,7 @@ func TestRegexpLikeVec(t *testing.T) {
 	var matchType []string = []string{"m", "i", "icc", "cii", "s", "msi"}
 
 	constants := make([]*Constant, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		constants[i] = nil
 	}
 
@@ -372,7 +372,7 @@ func TestRegexpSubstr(t *testing.T) {
 		{"a", "", nil, nil, ErrRegexp}, // issue 37988
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam2 {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
@@ -421,7 +421,7 @@ func TestRegexpSubstr(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam3 {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
@@ -474,7 +474,7 @@ func TestRegexpSubstr(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam4 {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
@@ -519,7 +519,7 @@ func TestRegexpSubstr(t *testing.T) {
 		{nil, "ab.", nil, int64(1), nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam5 {
 			fc := funcs[ast.RegexpSubstr]
 			expectMatch := tt.match
@@ -557,7 +557,7 @@ func TestRegexpSubstrVec(t *testing.T) {
 	args = append(args, any(matchType))
 
 	constants := make([]*Constant, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		constants[i] = nil
 	}
 
@@ -628,7 +628,7 @@ func TestRegexpInStr(t *testing.T) {
 		{"a", "", nil, nil, ErrRegexp}, // issue 37988
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam2 {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
@@ -676,7 +676,7 @@ func TestRegexpInStr(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam3 {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
@@ -729,7 +729,7 @@ func TestRegexpInStr(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam4 {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
@@ -776,7 +776,7 @@ func TestRegexpInStr(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam5 {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
@@ -823,7 +823,7 @@ func TestRegexpInStr(t *testing.T) {
 		{nil, "ab.", nil, int64(1), int64(0), nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam6 {
 			fc := funcs[ast.RegexpInStr]
 			expectMatch := tt.match
@@ -863,7 +863,7 @@ func TestRegexpInStrVec(t *testing.T) {
 	args = append(args, any(matchType))
 
 	constants := make([]*Constant, 6)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		constants[i] = nil
 	}
 
@@ -962,7 +962,7 @@ func TestRegexpReplace(t *testing.T) {
 		{"a", "", "a", nil, nil, ErrRegexp}, // issue 37988
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam3 {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
@@ -1017,7 +1017,7 @@ func TestRegexpReplace(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam4 {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
@@ -1076,7 +1076,7 @@ func TestRegexpReplace(t *testing.T) {
 		{nil, nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam5 {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
@@ -1128,7 +1128,7 @@ func TestRegexpReplace(t *testing.T) {
 		{nil, "ab.", nil, int64(1), int64(0), nil, nil, nil, nil},
 	}
 
-	for charsetAndCollateTp := 0; charsetAndCollateTp < testCharsetAndCollateTpNum; charsetAndCollateTp++ {
+	for charsetAndCollateTp := range testCharsetAndCollateTpNum {
 		for _, tt := range testParam6 {
 			fc := funcs[ast.RegexpReplace]
 			expectMatch := tt.match
@@ -1168,7 +1168,7 @@ func TestRegexpReplaceVec(t *testing.T) {
 	args = append(args, any(matchType))
 
 	constants := make([]*Constant, 6)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		constants[i] = nil
 	}
 

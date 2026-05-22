@@ -135,7 +135,7 @@ local ConfigPanel = tableNewPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_capacity"}) < bool 0',
+    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_capacity"})',
     legendFormat="{{resource_group}}",
     instant=true,
   )
@@ -184,18 +184,21 @@ local ConfigPanel = tableNewPanel.new(
       id: "mappings",
       value: [
         {
-          options: {
-            "0": {
-              index: 1,
-              text: "false",
-            },
-            "1": {
-              index: 0,
-              text: "true",
-            },
-          },
-          type: "value",
+          "from": "0",
+          "text": "Off",
+          "to": "2147483647",
+          "type": 2
         },
+        {
+          "text": "Moderated",
+          "type": 1,
+          "value": "-2"
+        },
+        {
+          "text": "Unlimited",
+          "type": 1,
+          "value": "-1"
+        }
       ],
     },
   ],
@@ -217,11 +220,26 @@ local RUPanel = graphPanel.new(
 ).addTarget(
   prometheus.target(
     'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)',
-    legendFormat="{{resource_group}}",
+    legendFormat="tp-{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
     'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))',
+    legendFormat="tp-total",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    legendFormat="ap-{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m]))',
+    legendFormat="ap-total",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap|tp"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap|tp"}[1m]))',
     legendFormat="total",
   )
 );
@@ -263,7 +281,7 @@ local RUPerQueryPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    '(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (name) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    '(sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
     legendFormat="{{resource_group}}",
   )
 ).addTarget(
@@ -313,7 +331,7 @@ local RRUPerQueryPanel = graphPanel.new(
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
     legendFormat="{{resource_group}}",
   )
 ).addTarget(
@@ -531,7 +549,7 @@ local BytesWrittenPerQueryPanel = graphPanel.new(
   logBase1Y=2,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (name) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    'sum(rate(resource_manager_resource_write_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (resource_group) / sum(rate(tidb_session_resource_group_query_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}[1m])) by (resource_group)',
     legendFormat="{{resource_group}}",
   )
 ).addTarget(
@@ -591,6 +609,54 @@ local SQLCPUTimePanel = graphPanel.new(
   )
 );
 
+local CrossAZTrafficRead = graphPanel.new(
+  title="Cross AZ Traffic Bytes(Read)",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=false,
+  legend_max=true,
+  legend_avg=false,
+  legend_current=false,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="The metrics about cross AZ network traffic involved in queries for all resource groups.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group", type="read"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="read"}[1m]))',
+    legendFormat="total",
+  )
+);
+
+local CrossAZTrafficWrite = graphPanel.new(
+  title="Cross AZ Traffic Bytes(Write)",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=false,
+  legend_max=true,
+  legend_avg=false,
+  legend_current=false,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="The metrics about cross AZ network traffic involved in write for all resource groups.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group", type="write"}[1m])) by (resource_group)',
+    legendFormat="{{resource_group}}",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="write"}[1m]))',
+    legendFormat="total",
+  )
+);
+
 //*  ==============Panel (Client)==================
 //*  Row Title: Client
 //*  Description:  The metrics about resource control client
@@ -632,7 +698,7 @@ local TotalKVRequestCountPanel = graphPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_request_success_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name) + sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name)',
+    'sum(rate(resource_manager_client_request_success_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) + sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m]))',
     legendFormat="total",
   )
 );
@@ -669,7 +735,7 @@ local SuccessfulKVRequestWaitDurationPanel = graphPanel.new(
   legend_current=true,
   legend_alignAsTable=true,
   legend_values=true,
-  format="short",
+  format="s",
   description="The metrics about successful kv request wait duration.",
 ).addTarget(
   prometheus.target(
@@ -764,7 +830,7 @@ local TokenRequestCountPanel = graphPanel.new(
 //*  ==============Panel (Runaway)==================
 //*  Row Title: Runaway
 //*  Description: The metrics about runaway resource control
-//*  Panels: 2
+//*  Panels: 11
 //*  ==============Panel (Runaway)==================
 
 local runawayRow = row.new(collapse=true, title="Runaway");
@@ -810,6 +876,236 @@ local RunawayEventPanel = graphPanel.new(
   prometheus.target(
     'sum(rate(tidb_server_query_runaway_check{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type!="hit", resource_group=~"$resource_group"}[5m])) by (resource_group, type, action)',
     legendFormat="{{resource_group}}-{{type}}-{{action}}",
+  )
+);
+
+// Runaway Flusher Flush OPS
+local RunawayFlusherFlushOPSPanel = graphPanel.new(
+  title="Runaway Flusher Flush OPS",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_avg=true,
+  legend_max=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  logBase1Y=1,
+  description="The rate of runaway flusher flush operations per second, by flusher name and result.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_runaway_flusher_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name, result)',
+    legendFormat="{{name}}-{{result}}",
+  )
+);
+
+// Runaway Flusher Add OPS
+local RunawayFlusherAddOPSPanel = graphPanel.new(
+  title="Runaway Flusher Add OPS",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_avg=true,
+  legend_max=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  logBase1Y=1,
+  description="The rate of records added to runaway flusher per second, by flusher name.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_runaway_flusher_add_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name)',
+    legendFormat="{{name}}",
+  )
+);
+
+// Runaway Flusher Batch Size
+local RunawayFlusherBatchSizePanel = graphPanel.new(
+  title="Runaway Flusher Batch Size",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_avg=true,
+  legend_max=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  logBase1Y=1,
+  description="The batch size distribution of runaway flusher flush operations.",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_runaway_flusher_batch_size_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name, le))',
+    legendFormat="{{name}}-P99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9, sum(rate(tidb_server_runaway_flusher_batch_size_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name, le))',
+    legendFormat="{{name}}-P90",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_runaway_flusher_batch_size_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name) / sum(rate(tidb_server_runaway_flusher_batch_size_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name)',
+    legendFormat="{{name}}-avg",
+  )
+);
+
+// Runaway Flusher Duration
+local RunawayFlusherDurationPanel = graphPanel.new(
+  title="Runaway Flusher Duration",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_avg=true,
+  legend_max=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="s",
+  logBase1Y=2,
+  description="The duration of runaway flusher flush operations in seconds.",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_runaway_flusher_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name, le))',
+    legendFormat="{{name}}-P99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9, sum(rate(tidb_server_runaway_flusher_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name, le))',
+    legendFormat="{{name}}-P90",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_runaway_flusher_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name) / sum(rate(tidb_server_runaway_flusher_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name)',
+    legendFormat="{{name}}-avg",
+  )
+);
+
+// Runaway Flusher Interval
+local RunawayFlusherIntervalPanel = graphPanel.new(
+  title="Runaway Flusher Interval",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_avg=true,
+  legend_max=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="s",
+  logBase1Y=2,
+  description="The interval between consecutive runaway flusher flush operations in seconds.",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_runaway_flusher_interval_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name, le))',
+    legendFormat="{{name}}-P99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9, sum(rate(tidb_server_runaway_flusher_interval_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name, le))',
+    legendFormat="{{name}}-P90",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_runaway_flusher_interval_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name) / sum(rate(tidb_server_runaway_flusher_interval_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (name)',
+    legendFormat="{{name}}-avg",
+  )
+);
+
+// Runaway Syncer OPS
+local RunawaySyncerOPSPanel = graphPanel.new(
+  title="Runaway Syncer OPS",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_avg=true,
+  legend_max=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  logBase1Y=1,
+  description="The rate of runaway syncer operations per second, by instance and result.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_runaway_syncer_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, result)',
+    legendFormat="{{instance}}-{{result}}",
+  )
+);
+
+// Runaway Syncer Duration
+local RunawaySyncerDurationPanel = graphPanel.new(
+  title="Runaway Syncer Duration",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_avg=true,
+  legend_max=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="s",
+  logBase1Y=2,
+  description="The duration of runaway syncer read operations in seconds.",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_runaway_syncer_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, le))',
+    legendFormat="{{instance}}-P99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9, sum(rate(tidb_server_runaway_syncer_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, le))',
+    legendFormat="{{instance}}-P90",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_runaway_syncer_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance) / sum(rate(tidb_server_runaway_syncer_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance)',
+    legendFormat="{{instance}}-avg",
+  )
+);
+
+// Runaway Syncer Interval
+local RunawaySyncerIntervalPanel = graphPanel.new(
+  title="Runaway Syncer Interval",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_avg=true,
+  legend_max=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="s",
+  logBase1Y=2,
+  description="The interval between consecutive runaway syncer operations in seconds.",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_runaway_syncer_interval_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, le))',
+    legendFormat="{{instance}}-P99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9, sum(rate(tidb_server_runaway_syncer_interval_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, le))',
+    legendFormat="{{instance}}-P90",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_runaway_syncer_interval_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance) / sum(rate(tidb_server_runaway_syncer_interval_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance)',
+    legendFormat="{{instance}}-avg",
+  )
+);
+
+// Runaway Syncer Checkpoint
+local RunawaySyncerCheckpointPanel = graphPanel.new(
+  title="Runaway Syncer Checkpoint",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="none",
+  logBase1Y=1,
+  labelY1="Unix ms",
+  decimals=0,
+  description="The current lower-bound checkpoint of runaway syncer, expressed as Unix milliseconds of the next scan window for start_time (watch) or done_time (watch_done). A value of 0 means no checkpoint has been established yet.",
+).addTarget(
+  prometheus.target(
+    'tidb_server_runaway_syncer_checkpoint{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}',
+    legendFormat="{{instance}}-{{type}}",
   )
 );
 
@@ -1229,6 +1525,8 @@ TiDBResourceControlDash
   .addPanel(BytesWrittenPerQueryPanel, gridPos=rightPanelPos)
   .addPanel(KVCPUTimePanel, gridPos=leftPanelPos)
   .addPanel(SQLCPUTimePanel, gridPos=rightPanelPos)
+  .addPanel(CrossAZTrafficRead, gridPos=leftPanelPos)
+  .addPanel(CrossAZTrafficWrite, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 ).addPanel(
@@ -1246,6 +1544,15 @@ TiDBResourceControlDash
   runawayRow/* Runaway */
   .addPanel(QueryMaxDurationPanel, gridPos=leftPanelPos)
   .addPanel(RunawayEventPanel, gridPos=rightPanelPos)
+  .addPanel(RunawayFlusherFlushOPSPanel, gridPos=leftPanelPos)
+  .addPanel(RunawayFlusherAddOPSPanel, gridPos=rightPanelPos)
+  .addPanel(RunawayFlusherBatchSizePanel, gridPos=leftPanelPos)
+  .addPanel(RunawayFlusherDurationPanel, gridPos=rightPanelPos)
+  .addPanel(RunawayFlusherIntervalPanel, gridPos=leftPanelPos)
+  .addPanel(RunawaySyncerOPSPanel, gridPos=rightPanelPos)
+  .addPanel(RunawaySyncerDurationPanel, gridPos=leftPanelPos)
+  .addPanel(RunawaySyncerIntervalPanel, gridPos=rightPanelPos)
+  .addPanel(RunawaySyncerCheckpointPanel, gridPos=leftPanelPos)
   ,
   gridPos=rowPos
 ).addPanel(

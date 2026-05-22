@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -69,7 +70,7 @@ func getTableStats(sql string, t *testing.T, ctx sessionctx.Context, dom *domain
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
-	sctx := core.MockContext()
+	sctx := coretestsdk.MockContext()
 	sctx.GetSessionVars().EnablePlanReplayerCapture = true
 	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())

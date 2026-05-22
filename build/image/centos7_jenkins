@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM hub.pingcap.net/wangweizhen/base_image:go12320241009
+FROM hub.pingcap.net/wangweizhen/base_image:go12520260122
 ENV GOPATH /go
 ENV GOROOT /usr/local/go
 ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH

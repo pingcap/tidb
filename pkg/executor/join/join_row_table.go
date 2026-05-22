@@ -26,9 +26,10 @@ const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 
 var (
-	fakeAddrPlaceHolder = []byte{0, 0, 0, 0, 0, 0, 0, 0}
-	usedFlagMask        uint32
-	bitMaskInUint32     [32]uint32
+	fakeAddrPlaceHolder    = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+	fakeAddrPlaceHolderLen = len(fakeAddrPlaceHolder)
+	usedFlagMask           uint32
+	bitMaskInUint32        [32]uint32
 )
 
 func init() {
@@ -63,7 +64,7 @@ func init() {
 //   - If the system is big-endian, the bit masks are set sequentially from the highest bit (bit 31) to the lowest bit (bit 0),
 //     ensuring that atomic operations can be performed correctly on different endian systems
 func initializeBitMasks(isLittleEndian bool) {
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		if isLittleEndian {
 			// On little-endian systems, bit masks are arranged in order from high to low within each byte
 			bitMaskInUint32[i] = uint32(1) << (7 - (i % 8) + (i/8)*8)
@@ -106,7 +107,6 @@ type rowTableSegment struct {
 	hashValues      []uint64 // the hash value of each rows
 	rowStartOffset  []uint64 // the start address of each row
 	validJoinKeyPos []int    // the pos of rows that need to be inserted into hash table, used in hash table build
-	finalized       bool     // after finalized is set to true, no further modification is allowed
 	// taggedBits is the bit that can be used to tag for all pointer in rawData, it use the MSB to tag, so if the n MSB is all 0, the taggedBits is n
 	taggedBits uint8
 }
@@ -131,19 +131,8 @@ func (rts *rowTableSegment) initTaggedBits() {
 	rts.taggedBits = getTaggedBitsFromUintptr(endPtr | startPtr)
 }
 
-// This variable should be const, but we need to modify it for test
-var maxRowTableSegmentSize = int64(1024)
-
-// 64 MB
-const maxRowTableSegmentByteSize = 64 * 1024 * 1024
-
-func newRowTableSegment(rowSizeHint uint) *rowTableSegment {
-	return &rowTableSegment{
-		rawData:         make([]byte, 0),
-		hashValues:      make([]uint64, 0, rowSizeHint),
-		rowStartOffset:  make([]uint64, 0, rowSizeHint),
-		validJoinKeyPos: make([]int, 0, rowSizeHint),
-	}
+func newRowTableSegment() *rowTableSegment {
+	return &rowTableSegment{}
 }
 
 func (rts *rowTableSegment) rowCount() int64 {
@@ -186,9 +175,7 @@ type rowTable struct {
 func (rt *rowTable) getTotalMemoryUsage() int64 {
 	totalMemoryUsage := int64(0)
 	for _, seg := range rt.segments {
-		if seg.finalized {
-			totalMemoryUsage += seg.totalUsedBytes()
-		}
+		totalMemoryUsage += seg.totalUsedBytes()
 	}
 	return totalMemoryUsage
 }
@@ -203,7 +190,7 @@ func (rt *rowTable) clearSegments() {
 
 // used for test
 func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
-	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+	for segIndex := range rt.segments {
 		if rowIndex < len(rt.segments[segIndex].rowStartOffset) {
 			return rt.segments[segIndex].getRowPointer(rowIndex)
 		}
@@ -214,7 +201,7 @@ func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
 
 func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 	startOffset := 0
-	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+	for segIndex := range rt.segments {
 		if rowIndex < len(rt.segments[segIndex].validJoinKeyPos) {
 			return startOffset + rt.segments[segIndex].validJoinKeyPos[rowIndex]
 		}
@@ -222,16 +209,6 @@ func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 		startOffset += len(rt.segments[segIndex].rowStartOffset)
 	}
 	return -1
-}
-
-func (rt *rowTable) getTotalUsedBytesInSegments() int64 {
-	totalUsedBytes := int64(0)
-	for _, seg := range rt.segments {
-		if seg.finalized {
-			totalUsedBytes += seg.totalUsedBytes()
-		}
-	}
-	return totalUsedBytes
 }
 
 func newRowTable() *rowTable {

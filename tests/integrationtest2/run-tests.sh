@@ -60,7 +60,7 @@ record_case=""
 stats="s"
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
+trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -97,7 +97,7 @@ function find_available_port() {
             echo "Error: No available ports found below 65536." >&2
             exit 1
         fi
-        if ! lsof -i :"$port" &> /dev/null; then
+        if ! lsof -nP -i :"$port" &> /dev/null; then
             echo $port
             return 0
         fi

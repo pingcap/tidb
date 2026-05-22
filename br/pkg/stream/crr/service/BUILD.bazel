@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "service",
+    srcs = [
+        "http.go",
+        "metrics.go",
+        "service.go",
+        "status.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/stream/crr/service",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/stream/crr/internal/checkpoint",
+        "//pkg/metrics/common",
+        "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "service_test",
+    timeout = "short",
+    srcs = ["service_test.go"],
+    embed = [":service"],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        "//br/pkg/stream/crr/internal/checkpoint",
+        "//br/pkg/streamhelper/config",
+        "//br/pkg/utiltest/crr",
+        "@com_github_stretchr_testify//require",
+    ],
+)

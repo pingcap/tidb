@@ -17,16 +17,16 @@ package model
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID         int64       `json:"id"`      // Database ID
-	Name       model.CIStr `json:"db_name"` // DB name.
-	Charset    string      `json:"charset"`
-	Collate    string      `json:"collate"`
-	Deprecated struct {    // Tables is not set in infoschema v2, use infoschema SchemaTableInfos() instead.
+	ID         int64     `json:"id"`      // Database ID
+	Name       ast.CIStr `json:"db_name"` // DB name.
+	Charset    string    `json:"charset"`
+	Collate    string    `json:"collate"`
+	Deprecated struct {  // Tables is not set in infoschema v2, use infoschema SchemaTableInfos() instead.
 		Tables []*TableInfo `json:"-"` // Tables in the DB.
 	}
 	State              SchemaState      `json:"state"`

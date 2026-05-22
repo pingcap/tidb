@@ -1,4 +1,4 @@
-create table `pt_case_1` (a int, b int, unique index idx(a) global) partition by list(b)
+create table `pt_case_1` (a int, b int, unique index idx(a) global, index idx1(a) global) partition by list(b)
 (partition p0 values in (0, 1, 2, 3),
  partition p1 values in (4, 5, 6),
  partition p2 values in (7, 8, 9, 10));

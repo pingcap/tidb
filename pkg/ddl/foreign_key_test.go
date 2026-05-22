@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -34,17 +34,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete pmodel.ReferOptionType, onUpdate pmodel.ReferOptionType) *model.Job {
-	FKName := pmodel.NewCIStr(fkName)
-	Keys := make([]pmodel.CIStr, len(keys))
+func testCreateForeignKey(t *testing.T, d ddl.ExecutorForTest, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
+	FKName := ast.NewCIStr(fkName)
+	Keys := make([]ast.CIStr, len(keys))
 	for i, key := range keys {
-		Keys[i] = pmodel.NewCIStr(key)
+		Keys[i] = ast.NewCIStr(key)
 	}
 
-	RefTable := pmodel.NewCIStr(refTable)
-	RefKeys := make([]pmodel.CIStr, len(refKeys))
+	RefTable := ast.NewCIStr(refTable)
+	RefKeys := make([]ast.CIStr, len(refKeys))
 	for i, key := range refKeys {
-		RefKeys[i] = pmodel.NewCIStr(key)
+		RefKeys[i] = ast.NewCIStr(key)
 	}
 
 	fkInfo := &model.FKInfo{
@@ -87,11 +87,10 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForT
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	args := &model.DropForeignKeyArgs{FkName: pmodel.NewCIStr(foreignKeyName)}
+	args := &model.DropForeignKeyArgs{FkName: ast.NewCIStr(foreignKeyName)}
 	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 	return job
 }
 
@@ -119,10 +118,10 @@ func TestForeignKey(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo.Indices = append(tblInfo.Indices, &model.IndexInfo{
 		ID:    1,
-		Name:  pmodel.NewCIStr("idx_fk"),
-		Table: pmodel.NewCIStr("t"),
+		Name:  ast.NewCIStr("idx_fk"),
+		Table: ast.NewCIStr("t"),
 		Columns: []*model.IndexColumn{{
-			Name:   pmodel.NewCIStr("c1"),
+			Name:   ast.NewCIStr("c1"),
 			Offset: 0,
 			Length: types.UnspecifiedLength,
 		}},
@@ -155,7 +154,7 @@ func TestForeignKey(t *testing.T) {
 	})
 
 	ctx := testkit.NewTestKit(t, store).Session()
-	job := testCreateForeignKey(t, de, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, pmodel.ReferOptionCascade, pmodel.ReferOptionSetNull)
+	job := testCreateForeignKey(t, de, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
 	testCheckJobDone(t, store, job.ID, true)
 	require.NoError(t, err)
 	mu.Lock()
@@ -164,8 +163,7 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	require.NoError(t, hErr)
 	require.True(t, ok)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkJobWithHistory(t, ctx, job.ID, nil, tblInfo)
 
 	mu.Lock()
 	checkOK = false
@@ -442,4 +440,19 @@ func TestForeignKeyInWriteOnlyMode(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "Table 'test.child' doesn't exist")
 	}
+}
+
+func TestFix59705(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set foreign_key_checks=off;")
+	tk.MustExec("create table child (id int,pid_test int,foreign key (pid_test) references parent(pid));")
+	tk.MustGetErrMsg("alter table child change column pid_test pid varchar(10);", "[schema:1146]Table 'test.parent' doesn't exist")
+	tk.MustExec("create table parent(pid int primary key);")
+	tk.MustGetErrMsg("alter table child change column pid_test pid varchar(10);", "[ddl:3780]Referencing column 'pid' and referenced column 'pid' in foreign key constraint 'fk_1' are incompatible.")
+	tk.MustQuery("select * from information_schema.key_column_usage;")
+	tk.MustExec("alter table child change column pid_test pid int")
+	tk.MustQuery("select * from information_schema.key_column_usage;")
+	tk.MustQuery("show create table child").Check(testkit.Rows("child CREATE TABLE `child` (\n  `id` int(11) DEFAULT NULL,\n  `pid` int(11) DEFAULT NULL,\n  KEY `fk_1` (`pid`),\n  CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `parent` (`pid`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }

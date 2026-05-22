@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "generator",
+    srcs = [
+        "dml.go",
+        "expression.go",
+        "generator.go",
+        "misc.go",
+        "prompt.go",
+    ],
+    importpath = "github.com/pingcap/tidb/tests/llmtest/generator",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tests/llmtest/logger",
+        "//tests/llmtest/testcase",
+        "@com_github_openai_openai_go//:openai-go",
+        "@com_github_openai_openai_go//option",
+        "@org_uber_go_zap//:zap",
+    ],
+)

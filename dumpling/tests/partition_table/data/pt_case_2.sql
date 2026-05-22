@@ -1,4 +1,4 @@
-create table `pt_case_2` (a int, b int, unique index idx(a) global) partition by range(b)
+create table `pt_case_2` (a int, b int, unique index idx(a) global, index idx1(a) global) partition by range(b)
 (partition p0 values less than (4),
  partition p1 values less than (7),
  partition p2 values less than (11));

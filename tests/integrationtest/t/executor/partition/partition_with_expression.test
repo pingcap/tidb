@@ -7,12 +7,12 @@ insert into tp values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2
 insert into t values("2015-09-09 00:00:00", 1), ("2020-08-08 19:00:01", 2), ("2024-01-01 01:01:01", 3);
 analyze table tp all columns;
 analyze table t all columns;
-explain format='brief' select * from tp where a != '2024-01-01 01:01:01';
+explain format='plan_tree' select * from tp where a != '2024-01-01 01:01:01';
 --sorted_result
 select * from tp where a != '2024-01-01 01:01:01';
 --sorted_result
 select * from t where a != '2024-01-01 01:01:01';
-explain format='brief' select * from tp where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
+explain format='plan_tree' select * from tp where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
 --sorted_result
 select * from tp where a != '2024-01-01 01:01:01' and a > '2015-09-09 00:00:00';
 --sorted_result
@@ -28,17 +28,17 @@ insert into tp values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2
 insert into t values("2020-08-17 00:00:00", 1), ("2020-08-18 00:00:00", 2), ("2020-08-19 00:00:00", 4), ("2020-08-20 00:00:00", 5), ("2020-08-21 00:00:00", 6), ("2020-08-22 00:00:00", 0);
 analyze table tp all columns;
 analyze table t all columns;
-explain format='brief' select * from tp where a = '2020-08-17 00:00:00';
+explain format='plan_tree' select * from tp where a = '2020-08-17 00:00:00';
 --sorted_result
 select * from tp where a = '2020-08-17 00:00:00';
 --sorted_result
 select * from t where a = '2020-08-17 00:00:00';
-explain format='brief' select * from tp where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
+explain format='plan_tree' select * from tp where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
 --sorted_result
 select * from tp where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
 --sorted_result
 select * from t where a= '2020-08-20 00:00:00' and a < '2020-08-22 00:00:00';
-explain format='brief' select * from tp where a < '2020-08-19 00:00:00';
+explain format='plan_tree' select * from tp where a < '2020-08-19 00:00:00';
 --sorted_result
 select * from tp where a < '2020-08-19 00:00:00';
 --sorted_result
@@ -54,12 +54,12 @@ insert into tp values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2
 insert into t values('2020-01-01 19:00:00', 1),('2020-08-15 00:00:00', -1), ('2020-08-18 05:00:01', 2), ('2020-10-01 14:13:15', 3);
 analyze table tp all columns;
 analyze table t all columns;
-explain select * from tp where a > '2020-09-11 00:00:00';
 --sorted_result
 select * from tp where a > '2020-09-11 00:00:00';
+explain select * from tp where a > '2020-09-11 00:00:00';
+explain select * from tp where a < '2020-07-07 01:00:00';
 --sorted_result
 select * from t where a > '2020-09-11 00:00:00';
-explain select * from tp where a < '2020-07-07 01:00:00';
 --sorted_result
 select * from tp where a < '2020-07-07 01:00:00';
 --sorted_result
@@ -148,306 +148,306 @@ analyze table thash all columns;
 analyze table t all columns;
 --sorted_result
 SELECT * from t where a = 2;
-explain format='brief' select * from trange where a = 2;
+explain format='plan_tree' select * from trange where a = 2;
 --sorted_result
 SELECT * from trange where a = 2;
-explain format='brief' select * from thash where a = 2;
+explain format='plan_tree' select * from thash where a = 2;
 --sorted_result
 SELECT * from thash where a = 2;
 --sorted_result
 SELECT * from t where a = 4 or a = 1;
-explain format='brief' select * from trange where a = 4 or a = 1;
+explain format='plan_tree' select * from trange where a = 4 or a = 1;
 --sorted_result
 SELECT * from trange where a = 4 or a = 1;
-explain format='brief' select * from thash where a = 4 or a = 1;
+explain format='plan_tree' select * from thash where a = 4 or a = 1;
 --sorted_result
 SELECT * from thash where a = 4 or a = 1;
 --sorted_result
 SELECT * from t where a = -1;
-explain format='brief' select * from trange where a = -1;
+explain format='plan_tree' select * from trange where a = -1;
 --sorted_result
 SELECT * from trange where a = -1;
-explain format='brief' select * from thash where a = -1;
+explain format='plan_tree' select * from thash where a = -1;
 --sorted_result
 SELECT * from thash where a = -1;
 --sorted_result
 SELECT * from t where a is NULL;
-explain format='brief' select * from trange where a is NULL;
+explain format='plan_tree' select * from trange where a is NULL;
 --sorted_result
 SELECT * from trange where a is NULL;
-explain format='brief' select * from thash where a is NULL;
+explain format='plan_tree' select * from thash where a is NULL;
 --sorted_result
 SELECT * from thash where a is NULL;
 --sorted_result
 SELECT * from t where b is NULL;
-explain format='brief' select * from trange where b is NULL;
+explain format='plan_tree' select * from trange where b is NULL;
 --sorted_result
 SELECT * from trange where b is NULL;
-explain format='brief' select * from thash where b is NULL;
+explain format='plan_tree' select * from thash where b is NULL;
 --sorted_result
 SELECT * from thash where b is NULL;
 --sorted_result
 SELECT * from t where a > -1;
-explain format='brief' select * from trange where a > -1;
+explain format='plan_tree' select * from trange where a > -1;
 --sorted_result
 SELECT * from trange where a > -1;
-explain format='brief' select * from thash where a > -1;
+explain format='plan_tree' select * from thash where a > -1;
 --sorted_result
 SELECT * from thash where a > -1;
 --sorted_result
 SELECT * from t where a >= 4 and a <= 5;
-explain format='brief' select * from trange where a >= 4 and a <= 5;
+explain format='plan_tree' select * from trange where a >= 4 and a <= 5;
 --sorted_result
 SELECT * from trange where a >= 4 and a <= 5;
-explain format='brief' select * from thash where a >= 4 and a <= 5;
+explain format='plan_tree' select * from thash where a >= 4 and a <= 5;
 --sorted_result
 SELECT * from thash where a >= 4 and a <= 5;
 --sorted_result
 SELECT * from t where a > 10;
-explain format='brief' select * from trange where a > 10;
+explain format='plan_tree' select * from trange where a > 10;
 --sorted_result
 SELECT * from trange where a > 10;
-explain format='brief' select * from thash where a > 10;
+explain format='plan_tree' select * from thash where a > 10;
 --sorted_result
 SELECT * from thash where a > 10;
 --sorted_result
 SELECT * from t where a >=2 and a <= 3;
-explain format='brief' select * from trange where a >=2 and a <= 3;
+explain format='plan_tree' select * from trange where a >=2 and a <= 3;
 --sorted_result
 SELECT * from trange where a >=2 and a <= 3;
-explain format='brief' select * from thash where a >=2 and a <= 3;
+explain format='plan_tree' select * from thash where a >=2 and a <= 3;
 --sorted_result
 SELECT * from thash where a >=2 and a <= 3;
 --sorted_result
 SELECT * from t where a between 2 and 3;
-explain format='brief' select * from trange where a between 2 and 3;
+explain format='plan_tree' select * from trange where a between 2 and 3;
 --sorted_result
 SELECT * from trange where a between 2 and 3;
-explain format='brief' select * from thash where a between 2 and 3;
+explain format='plan_tree' select * from thash where a between 2 and 3;
 --sorted_result
 SELECT * from thash where a between 2 and 3;
 --sorted_result
 SELECT * from t where a < 2;
-explain format='brief' select * from trange where a < 2;
+explain format='plan_tree' select * from trange where a < 2;
 --sorted_result
 SELECT * from trange where a < 2;
-explain format='brief' select * from thash where a < 2;
+explain format='plan_tree' select * from thash where a < 2;
 --sorted_result
 SELECT * from thash where a < 2;
 --sorted_result
 SELECT * from t where a <= 3;
-explain format='brief' select * from trange where a <= 3;
+explain format='plan_tree' select * from trange where a <= 3;
 --sorted_result
 SELECT * from trange where a <= 3;
-explain format='brief' select * from thash where a <= 3;
+explain format='plan_tree' select * from thash where a <= 3;
 --sorted_result
 SELECT * from thash where a <= 3;
 --sorted_result
 SELECT * from t where a in (2, 3);
-explain format='brief' select * from trange where a in (2, 3);
+explain format='plan_tree' select * from trange where a in (2, 3);
 --sorted_result
 SELECT * from trange where a in (2, 3);
-explain format='brief' select * from thash where a in (2, 3);
+explain format='plan_tree' select * from thash where a in (2, 3);
 --sorted_result
 SELECT * from thash where a in (2, 3);
 --sorted_result
 SELECT * from t where a in (1, 5);
-explain format='brief' select * from trange where a in (1, 5);
+explain format='plan_tree' select * from trange where a in (1, 5);
 --sorted_result
 SELECT * from trange where a in (1, 5);
-explain format='brief' select * from thash where a in (1, 5);
+explain format='plan_tree' select * from thash where a in (1, 5);
 --sorted_result
 SELECT * from thash where a in (1, 5);
 --sorted_result
 SELECT * from t where a not in (1, 5);
-explain format='brief' select * from trange where a not in (1, 5);
+explain format='plan_tree' select * from trange where a not in (1, 5);
 --sorted_result
 SELECT * from trange where a not in (1, 5);
-explain format='brief' select * from thash where a not in (1, 5);
+explain format='plan_tree' select * from thash where a not in (1, 5);
 --sorted_result
 SELECT * from thash where a not in (1, 5);
 --sorted_result
 SELECT * from t where a = 2 and a = 2;
-explain format='brief' select * from trange where a = 2 and a = 2;
+explain format='plan_tree' select * from trange where a = 2 and a = 2;
 --sorted_result
 SELECT * from trange where a = 2 and a = 2;
-explain format='brief' select * from thash where a = 2 and a = 2;
+explain format='plan_tree' select * from thash where a = 2 and a = 2;
 --sorted_result
 SELECT * from thash where a = 2 and a = 2;
 --sorted_result
 SELECT * from t where a = 2 and a = 3;
-explain format='brief' select * from trange where a = 2 and a = 3;
+explain format='plan_tree' select * from trange where a = 2 and a = 3;
 --sorted_result
 SELECT * from trange where a = 2 and a = 3;
-explain format='brief' select * from thash where a = 2 and a = 3;
+explain format='plan_tree' select * from thash where a = 2 and a = 3;
 --sorted_result
 SELECT * from thash where a = 2 and a = 3;
 --sorted_result
 SELECT * from t where a < 2 and a > 0;
-explain format='brief' select * from trange where a < 2 and a > 0;
+explain format='plan_tree' select * from trange where a < 2 and a > 0;
 --sorted_result
 SELECT * from trange where a < 2 and a > 0;
-explain format='brief' select * from thash where a < 2 and a > 0;
+explain format='plan_tree' select * from thash where a < 2 and a > 0;
 --sorted_result
 SELECT * from thash where a < 2 and a > 0;
 --sorted_result
 SELECT * from t where a < 2 and a < 3;
-explain format='brief' select * from trange where a < 2 and a < 3;
+explain format='plan_tree' select * from trange where a < 2 and a < 3;
 --sorted_result
 SELECT * from trange where a < 2 and a < 3;
-explain format='brief' select * from thash where a < 2 and a < 3;
+explain format='plan_tree' select * from thash where a < 2 and a < 3;
 --sorted_result
 SELECT * from thash where a < 2 and a < 3;
 --sorted_result
 SELECT * from t where a > 1 and a > 2;
-explain format='brief' select * from trange where a > 1 and a > 2;
+explain format='plan_tree' select * from trange where a > 1 and a > 2;
 --sorted_result
 SELECT * from trange where a > 1 and a > 2;
-explain format='brief' select * from thash where a > 1 and a > 2;
+explain format='plan_tree' select * from thash where a > 1 and a > 2;
 --sorted_result
 SELECT * from thash where a > 1 and a > 2;
 --sorted_result
 SELECT * from t where a = 2 or a = 3;
-explain format='brief' select * from trange where a = 2 or a = 3;
+explain format='plan_tree' select * from trange where a = 2 or a = 3;
 --sorted_result
 SELECT * from trange where a = 2 or a = 3;
-explain format='brief' select * from thash where a = 2 or a = 3;
+explain format='plan_tree' select * from thash where a = 2 or a = 3;
 --sorted_result
 SELECT * from thash where a = 2 or a = 3;
 --sorted_result
 SELECT * from t where a = 2 or a in (3);
-explain format='brief' select * from trange where a = 2 or a in (3);
+explain format='plan_tree' select * from trange where a = 2 or a in (3);
 --sorted_result
 SELECT * from trange where a = 2 or a in (3);
-explain format='brief' select * from thash where a = 2 or a in (3);
+explain format='plan_tree' select * from thash where a = 2 or a in (3);
 --sorted_result
 SELECT * from thash where a = 2 or a in (3);
 --sorted_result
 SELECT * from t where a = 2 or a > 3;
-explain format='brief' select * from trange where a = 2 or a > 3;
+explain format='plan_tree' select * from trange where a = 2 or a > 3;
 --sorted_result
 SELECT * from trange where a = 2 or a > 3;
-explain format='brief' select * from thash where a = 2 or a > 3;
+explain format='plan_tree' select * from thash where a = 2 or a > 3;
 --sorted_result
 SELECT * from thash where a = 2 or a > 3;
 --sorted_result
 SELECT * from t where a = 2 or a <= 1;
-explain format='brief' select * from trange where a = 2 or a <= 1;
+explain format='plan_tree' select * from trange where a = 2 or a <= 1;
 --sorted_result
 SELECT * from trange where a = 2 or a <= 1;
-explain format='brief' select * from thash where a = 2 or a <= 1;
+explain format='plan_tree' select * from thash where a = 2 or a <= 1;
 --sorted_result
 SELECT * from thash where a = 2 or a <= 1;
 --sorted_result
 SELECT * from t where a = 2 or a between 2 and 2;
-explain format='brief' select * from trange where a = 2 or a between 2 and 2;
+explain format='plan_tree' select * from trange where a = 2 or a between 2 and 2;
 --sorted_result
 SELECT * from trange where a = 2 or a between 2 and 2;
-explain format='brief' select * from thash where a = 2 or a between 2 and 2;
+explain format='plan_tree' select * from thash where a = 2 or a between 2 and 2;
 --sorted_result
 SELECT * from thash where a = 2 or a between 2 and 2;
 --sorted_result
 SELECT * from t where a != 2;
-explain format='brief' select * from trange where a != 2;
+explain format='plan_tree' select * from trange where a != 2;
 --sorted_result
 SELECT * from trange where a != 2;
-explain format='brief' select * from thash where a != 2;
+explain format='plan_tree' select * from thash where a != 2;
 --sorted_result
 SELECT * from thash where a != 2;
 --sorted_result
 SELECT * from t where a != 2 and a > 4;
-explain format='brief' select * from trange where a != 2 and a > 4;
+explain format='plan_tree' select * from trange where a != 2 and a > 4;
 --sorted_result
 SELECT * from trange where a != 2 and a > 4;
-explain format='brief' select * from thash where a != 2 and a > 4;
+explain format='plan_tree' select * from thash where a != 2 and a > 4;
 --sorted_result
 SELECT * from thash where a != 2 and a > 4;
 --sorted_result
 SELECT * from t where a != 2 and a != 3;
-explain format='brief' select * from trange where a != 2 and a != 3;
+explain format='plan_tree' select * from trange where a != 2 and a != 3;
 --sorted_result
 SELECT * from trange where a != 2 and a != 3;
-explain format='brief' select * from thash where a != 2 and a != 3;
+explain format='plan_tree' select * from thash where a != 2 and a != 3;
 --sorted_result
 SELECT * from thash where a != 2 and a != 3;
 --sorted_result
 SELECT * from t where a != 2 and a = 3;
-explain format='brief' select * from trange where a != 2 and a = 3;
+explain format='plan_tree' select * from trange where a != 2 and a = 3;
 --sorted_result
 SELECT * from trange where a != 2 and a = 3;
-explain format='brief' select * from thash where a != 2 and a = 3;
+explain format='plan_tree' select * from thash where a != 2 and a = 3;
 --sorted_result
 SELECT * from thash where a != 2 and a = 3;
 --sorted_result
 SELECT * from t where not (a = 2);
-explain format='brief' select * from trange where not (a = 2);
+explain format='plan_tree' select * from trange where not (a = 2);
 --sorted_result
 SELECT * from trange where not (a = 2);
-explain format='brief' select * from thash where not (a = 2);
+explain format='plan_tree' select * from thash where not (a = 2);
 --sorted_result
 SELECT * from thash where not (a = 2);
 --sorted_result
 SELECT * from t where not (a > 2);
-explain format='brief' select * from trange where not (a > 2);
+explain format='plan_tree' select * from trange where not (a > 2);
 --sorted_result
 SELECT * from trange where not (a > 2);
-explain format='brief' select * from thash where not (a > 2);
+explain format='plan_tree' select * from thash where not (a > 2);
 --sorted_result
 SELECT * from thash where not (a > 2);
 --sorted_result
 SELECT * from t where not (a < 2);
-explain format='brief' select * from trange where not (a < 2);
+explain format='plan_tree' select * from trange where not (a < 2);
 --sorted_result
 SELECT * from trange where not (a < 2);
-explain format='brief' select * from thash where not (a < 2);
+explain format='plan_tree' select * from thash where not (a < 2);
 --sorted_result
 SELECT * from thash where not (a < 2);
 --sorted_result
 SELECT * from t where a + 1 > 4;
-explain format='brief' select * from trange where a + 1 > 4;
+explain format='plan_tree' select * from trange where a + 1 > 4;
 --sorted_result
 SELECT * from trange where a + 1 > 4;
-explain format='brief' select * from thash where a + 1 > 4;
+explain format='plan_tree' select * from thash where a + 1 > 4;
 --sorted_result
 SELECT * from thash where a + 1 > 4;
 --sorted_result
 SELECT * from t where a - 1 > 0;
-explain format='brief' select * from trange where a - 1 > 0;
+explain format='plan_tree' select * from trange where a - 1 > 0;
 --sorted_result
 SELECT * from trange where a - 1 > 0;
-explain format='brief' select * from thash where a - 1 > 0;
+explain format='plan_tree' select * from thash where a - 1 > 0;
 --sorted_result
 SELECT * from thash where a - 1 > 0;
 --sorted_result
 SELECT * from t where a * 2 < 0;
-explain format='brief' select * from trange where a * 2 < 0;
+explain format='plan_tree' select * from trange where a * 2 < 0;
 --sorted_result
 SELECT * from trange where a * 2 < 0;
-explain format='brief' select * from thash where a * 2 < 0;
+explain format='plan_tree' select * from thash where a * 2 < 0;
 --sorted_result
 SELECT * from thash where a * 2 < 0;
 --sorted_result
 SELECT * from t where a << 1 < 0;
-explain format='brief' select * from trange where a << 1 < 0;
+explain format='plan_tree' select * from trange where a << 1 < 0;
 --sorted_result
 SELECT * from trange where a << 1 < 0;
-explain format='brief' select * from thash where a << 1 < 0;
+explain format='plan_tree' select * from thash where a << 1 < 0;
 --sorted_result
 SELECT * from thash where a << 1 < 0;
 --sorted_result
 SELECT * from t where a > '10';
-explain format='brief' select * from trange where a > '10';
+explain format='plan_tree' select * from trange where a > '10';
 --sorted_result
 SELECT * from trange where a > '10';
-explain format='brief' select * from thash where a > '10';
+explain format='plan_tree' select * from thash where a > '10';
 --sorted_result
 SELECT * from thash where a > '10';
 --sorted_result
 SELECT * from t where a > '10ab';
-explain format='brief' select * from trange where a > '10ab';
+explain format='plan_tree' select * from trange where a > '10ab';
 --sorted_result
 SELECT * from trange where a > '10ab';
-explain format='brief' select * from thash where a > '10ab';
+explain format='plan_tree' select * from thash where a > '10ab';
 --sorted_result
 SELECT * from thash where a > '10ab';
 set tidb_partition_prune_mode=default;

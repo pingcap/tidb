@@ -20,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -115,7 +115,7 @@ func encodeImplicitPrimaryKeyToLattice(ci *model.ColumnInfo) Tuple {
 		EqualitySingleton(indexColumnSlice{indexColumn{colName: ci.Name.L, length: types.UnspecifiedLength}}),
 		Bool(false),
 		Bool(false),
-		Singleton(pmodel.IndexTypeBtree),
+		Singleton(ast.IndexTypeBtree),
 	}
 }
 
@@ -133,7 +133,7 @@ func restoreIndexInfoFromUnwrapped(ctx *format.RestoreCtx, index []any, keyName 
 		ctx.WriteName(keyName)
 	}
 
-	if tp := index[indexInfoTupleIndexType].(pmodel.IndexType); tp != pmodel.IndexTypeBtree {
+	if tp := index[indexInfoTupleIndexType].(ast.IndexType); tp != ast.IndexTypeBtree {
 		ctx.WriteKeyWord(" USING ")
 		ctx.WriteKeyWord(tp.String())
 	}
@@ -239,8 +239,7 @@ func (indexMap) JoinWithNil(_ Lattice) (Lattice, error) {
 }
 
 const (
-	tableInfoTupleIndexCharset = iota
-	tableInfoTupleIndexCollate
+	tableInfoTupleIndexCollate = iota
 	tableInfoTupleIndexColumns
 	tableInfoTupleIndexIndices
 	// nolint:unused, varcheck, deadcode
@@ -271,8 +270,7 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 	}
 
 	return Tuple{
-		Singleton(ti.Charset),
-		Singleton(ti.Collate),
+		Collation(ti.Collate),
 		Map(columns),
 		Map(indices),
 		// TODO ForeignKeys?
@@ -324,14 +322,11 @@ func restoreTableInfoFromUnwrapped(ctx *format.RestoreCtx, table []any, tableNam
 	}
 
 	ctx.WritePlain(")")
-	if charset := table[tableInfoTupleIndexCharset].(string); charset != "" {
-		ctx.WriteKeyWord(" CHARSET ")
-		ctx.WriteKeyWord(charset)
-	}
-	if collate := table[tableInfoTupleIndexCollate].(string); collate != "" {
-		ctx.WriteKeyWord(" COLLATE ")
-		ctx.WriteKeyWord(collate)
-	}
+
+	collate := table[tableInfoTupleIndexCollate].(string)
+	ctx.WriteKeyWord(" COLLATE ")
+	ctx.WritePlain(collate)
+
 	if bits := table[tableInfoTupleIndexShardRowIDBits].(uint64); bits > 0 {
 		ctx.WriteKeyWord(" SHARD_ROW_ID_BITS ")
 		ctx.WritePlainf("%d", bits)

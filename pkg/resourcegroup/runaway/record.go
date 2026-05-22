@@ -17,15 +17,15 @@ package runaway
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -38,14 +38,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// watchTableName is the name of system table which save runaway watch items.
-	watchTableName = "mysql.tidb_runaway_watch"
-	// watchDoneTableName is the name of system table which save done runaway watch items.
-	watchDoneTableName = "mysql.tidb_runaway_watch_done"
-
-	maxIDRetries = 3
-)
+const maxIDRetries = 3
 
 // NullTime is a zero time.Time.
 var NullTime time.Time
@@ -74,18 +67,6 @@ type recordKey struct {
 	SQLDigest         string
 	PlanDigest        string
 	Match             string
-}
-
-// Hash generates a hash for the recordKey.
-// Because `tidb_runaway_queries` is informational and not performance-critical,
-// we can lose some accuracy for other component's performance.
-func (k recordKey) Hash() uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(k.ResourceGroupName))
-	h.Write([]byte(k.SQLDigest))
-	h.Write([]byte(k.PlanDigest))
-	h.Write([]byte(k.Match))
-	return h.Sum64()
 }
 
 // genRunawayQueriesStmt generates statement with given RunawayRecords.
@@ -160,7 +141,7 @@ func writeInsert(builder *strings.Builder, tableName string) {
 func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
-	writeInsert(&builder, watchTableName)
+	writeInsert(&builder, runawayWatchFullTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -182,7 +163,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 11)
-	writeInsert(&builder, watchDoneTableName)
+	writeInsert(&builder, runawayWatchDoneFullTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
@@ -207,9 +188,57 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 1)
 	builder.WriteString("delete from ")
-	builder.WriteString(watchTableName)
+	builder.WriteString(runawayWatchFullTableName)
 	builder.WriteString(" where id = %?")
 	params = append(params, r.ID)
+	return builder.String(), params
+}
+
+// genBatchInsertWatchStmt generates batch INSERT statement for multiple watch records.
+func genBatchInsertWatchStmt(records map[string]*QuarantineRecord) (string, []any) {
+	var builder strings.Builder
+	params := make([]any, 0, len(records)*9)
+	writeInsert(&builder, runawayWatchFullTableName)
+	firstRecord := true
+	for _, r := range records {
+		if !firstRecord {
+			builder.WriteByte(',')
+		}
+		firstRecord = false
+		builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
+		params = append(params, r.ResourceGroupName)
+		params = append(params, r.StartTime)
+		if r.EndTime.Equal(NullTime) {
+			params = append(params, nil)
+		} else {
+			params = append(params, r.EndTime)
+		}
+		params = append(params, r.Watch)
+		params = append(params, r.WatchText)
+		params = append(params, r.Source)
+		params = append(params, r.Action)
+		params = append(params, r.getSwitchGroupName())
+		params = append(params, r.ExceedCause)
+	}
+	return builder.String(), params
+}
+
+func genBatchDeleteWatchByIDStmt(records map[int64]*QuarantineRecord) (string, []any) {
+	var builder strings.Builder
+	params := make([]any, 0, len(records))
+	builder.WriteString("delete from ")
+	builder.WriteString(runawayWatchFullTableName)
+	builder.WriteString(" where id in (")
+	first := true
+	for id := range records {
+		if !first {
+			builder.WriteByte(',')
+		}
+		first = false
+		builder.WriteString("%?")
+		params = append(params, id)
+	}
+	builder.WriteByte(')')
 	return builder.String(), params
 }
 
@@ -218,18 +247,32 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		tableName = "tidb_runaway_queries"
 		colName   = "start_time"
 	)
-	var systemSchemaCIStr = model.NewCIStr("mysql")
 
 	if !rm.ddl.OwnerManager().IsOwner() {
 		return
 	}
-	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Second * 1
+	batchSize := runawayRecordGCSelectBatchSize
+	deleteSize := runawayRecordGCBatchSize
+	failpoint.Inject("FastRunawayGC", func(val failpoint.Value) {
+		expiredDurationMs := val.(int)
+		if expiredDurationMs == 0 {
+			expiredDurationMs = 1
+		}
+		expiredDuration = time.Millisecond * time.Duration(expiredDurationMs)
+		deleteSize = 2
+		batchSize = 5 * deleteSize
 	})
 	expiredTime := time.Now().Add(-expiredDuration)
-	tbCIStr := model.NewCIStr(tableName)
-	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
+	tbCIStr := ast.NewCIStr(tableName)
+	latestIS := rm.infoCache.GetLatest()
+	if latestIS == nil {
+		return
+	}
+	tbl, err := latestIS.TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
 	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return
+		}
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
@@ -239,7 +282,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), col)
+	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), col)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -252,7 +295,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	var leftRows [][]types.Datum
 	for {
 		sql := ""
-		if sql, err = generator.NextSQL(leftRows, runawayRecordGCSelectBatchSize); err != nil {
+		if sql, err = generator.NextSQL(leftRows, batchSize); err != nil {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
@@ -260,26 +303,29 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		if len(sql) == 0 {
 			return
 		}
-
 		rows, sqlErr := ExecRCRestrictedSQL(rm.sysSessionPool, sql, nil)
 		if sqlErr != nil {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
+		if len(rows) == 0 {
+			return
+		}
+		logutil.BgLogger().Info("start to delete the expired rows",
+			zap.Int("rows", len(rows)),
+			zap.Int("batch-size", batchSize),
+			zap.Int("delete-size", deleteSize),
+		)
 		leftRows = make([][]types.Datum, len(rows))
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
-
-		for len(leftRows) > 0 {
-			var delBatch [][]types.Datum
-			if len(leftRows) < runawayRecordGCBatchSize {
-				delBatch = leftRows
-				leftRows = nil
-			} else {
-				delBatch = leftRows[0:runawayRecordGCBatchSize]
-				leftRows = leftRows[runawayRecordGCBatchSize:]
+		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
+			endIndex := startIndex + deleteSize
+			if endIndex > len(leftRows) {
+				endIndex = len(leftRows)
 			}
+			delBatch := leftRows[startIndex:endIndex]
 			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
 			if err != nil {
 				logutil.BgLogger().Error(
@@ -297,38 +343,12 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				)
 			}
 		}
+		logutil.BgLogger().Info("deleted expired rows",
+			zap.Int("rows", len(rows)),
+			zap.Int("batch-size", batchSize),
+			zap.Int("delete-size", deleteSize),
+		)
 	}
-}
-
-func handleRemoveStaleRunawayWatch(sysSessionPool util.SessionPool, record *QuarantineRecord) error {
-	se, err := sysSessionPool.Get()
-	defer func() {
-		sysSessionPool.Put(se)
-	}()
-	if err != nil {
-		return errors.Annotate(err, "get session failed")
-	}
-	sctx := se.(sessionctx.Context)
-	exec := sctx.GetSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	_, err = exec.ExecuteInternal(ctx, "BEGIN")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err != nil {
-			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
-			terror.Log(err1)
-			return
-		}
-		_, err = exec.ExecuteInternal(ctx, "COMMIT")
-		if err != nil {
-			return
-		}
-	}()
-	sql, params := record.genDeletionStmt()
-	_, err = exec.ExecuteInternal(ctx, sql, params...)
-	return err
 }
 
 func handleRunawayWatchDone(sysSessionPool util.SessionPool, record *QuarantineRecord) error {
@@ -416,7 +436,7 @@ func (rm *Manager) AddRunawayWatch(record *QuarantineRecord) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	for retry := 0; retry < maxIDRetries; retry++ {
+	for retry := range maxIDRetries {
 		if retry > 0 {
 			select {
 			case <-rm.exit:
@@ -460,4 +480,20 @@ func (rm *Manager) RemoveRunawayWatch(recordID int64) error {
 
 	err = handleRunawayWatchDone(rm.sysSessionPool, records[0])
 	return err
+}
+
+// RemoveRunawayResourceGroupWatch is used to remove all runaway watch items of a resource group.
+func (rm *Manager) RemoveRunawayResourceGroupWatch(groupName string) error {
+	rm.runawaySyncer.mu.Lock()
+	defer rm.runawaySyncer.mu.Unlock()
+	records, err := rm.runawaySyncer.getWatchRecordByGroup(groupName)
+	if err != nil {
+		return errors.Annotate(err, "get watch records by resource group failed")
+	}
+	for _, record := range records {
+		if err := handleRunawayWatchDone(rm.sysSessionPool, record); err != nil {
+			return errors.Annotatef(err, "remove watch for resource group %s failed", groupName)
+		}
+	}
+	return nil
 }

@@ -96,6 +96,7 @@ var (
 	ErrCTERecursiveRequiresNonRecursiveFirst = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveRequiresNonRecursiveFirst)
 	ErrCTERecursiveForbidsAggregation        = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveForbidsAggregation)
 	ErrCTERecursiveForbiddenJoinOrder        = dbterror.ClassOptimizer.NewStd(mysql.ErrCTERecursiveForbiddenJoinOrder)
+	ErrInvalidLateralJoin                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidLateralJoin)
 	ErrInvalidRequiresSingleReference        = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidRequiresSingleReference)
 	ErrSQLInReadOnlyMode                     = dbterror.ClassOptimizer.NewStd(mysql.ErrReadOnlyMode)
 	ErrDeleteNotFoundColumn                  = dbterror.ClassOptimizer.NewStd(mysql.ErrDeleteNotFoundColumn)
@@ -120,4 +121,5 @@ var (
 	ErrPrepareDDL       = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
 	ErrRowIsReferenced2 = dbterror.ClassOptimizer.NewStd(mysql.ErrRowIsReferenced2)
 	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
+	ErrSpDoesNotExist   = dbterror.ClassOptimizer.NewStd(mysql.ErrSpDoesNotExist)
 )

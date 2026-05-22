@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -26,6 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -132,6 +138,33 @@ func TestScatterSequentiallyRetryCnt(t *testing.T) {
 		backoffer,
 	)
 	require.Equal(t, 7, backoffer.already)
+}
+
+// TestBatchScatterRegionsRetryCnt tests the retry count of BatchScatterRegions.
+func TestBatchScatterRegionsRetryCnt(t *testing.T) {
+	mockClient := NewMockPDClientForSplit()
+	mockClient.scatterRegions.failedCount = 7
+	client := pdClient{
+		needScatterVal: true,
+		client:         mockClient,
+	}
+	client.needScatterInit.Do(func() {})
+
+	ctx := context.Background()
+	regions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id: 1,
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id: 2,
+			},
+		},
+	}
+	err := client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
 }
 
 func TestScatterBackwardCompatibility(t *testing.T) {
@@ -440,6 +473,114 @@ func checkRegionsBoundaries(t *testing.T, regions []*RegionInfo, expected [][]by
 	}
 }
 
+type codecAwareMockPDClient struct {
+	*MockPDClientForSplit
+	keyspaceMeta *keyspacepb.KeyspaceMeta
+}
+
+func (c *codecAwareMockPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return c
+}
+
+func (c *codecAwareMockPDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return c.keyspaceMeta, nil
+}
+
+func newCodecV2PDClientForSplitTest(t *testing.T, mockClient *MockPDClientForSplit) *tikv.CodecPDClient {
+	codecPDClient, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, &codecAwareMockPDClient{
+		MockPDClientForSplit: mockClient,
+		keyspaceMeta: &keyspacepb.KeyspaceMeta{
+			Id:   42,
+			Name: "test_keyspace",
+		},
+	}, "test_keyspace")
+	require.NoError(t, err)
+	return codecPDClient
+}
+
+func TestPaginateScanRegionWithCodecAwareCodecPDClient(t *testing.T) {
+	ctx := context.Background()
+	t.Run("bounded range", func(t *testing.T) {
+		mockPDClient := NewMockPDClientForSplit()
+		codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+		tikvCodec := codecPDClient.GetCodec()
+
+		physicalBoundaries := [][]byte{
+			tikvCodec.EncodeRegionKey([]byte("a")),
+			tikvCodec.EncodeRegionKey([]byte("b")),
+			tikvCodec.EncodeRegionKey([]byte("d")),
+		}
+		mockPDClient.SetRegions(physicalBoundaries)
+
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
+		regions, err := PaginateScanRegionWithCodecAware(
+			ctx,
+			client,
+			tikvCodec.EncodeKey([]byte("a")),
+			tikvCodec.EncodeKey([]byte("d")),
+			2,
+		)
+		require.NoError(t, err)
+		checkRegionsBoundaries(t, regions, physicalBoundaries)
+	})
+
+	t.Run("empty logical end key", func(t *testing.T) {
+		mockPDClient := NewMockPDClientForSplit()
+		codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+		tikvCodec := codecPDClient.GetCodec()
+
+		_, physicalEnd := tikvCodec.EncodeRegionRange([]byte("b"), nil)
+		physicalBoundaries := [][]byte{
+			tikvCodec.EncodeRegionKey([]byte("a")),
+			tikvCodec.EncodeRegionKey([]byte("b")),
+			physicalEnd,
+		}
+		mockPDClient.SetRegions(physicalBoundaries)
+
+		client := NewCodecAwareClient(codecPDClient, nil, nil, 100, 4)
+		scanStart, scanEnd := tikvCodec.EncodeRange([]byte("a"), nil)
+		regions, err := PaginateScanRegionWithCodecAware(
+			ctx,
+			client,
+			scanStart,
+			scanEnd,
+			2,
+		)
+		require.NoError(t, err)
+		checkRegionsBoundaries(t, regions, physicalBoundaries)
+	})
+}
+
+func TestSplitKeysAndScatterCodecPDClientMapsSplitKeys(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/split/failToSplit", "return()"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/split/failToSplit"))
+	})
+	originSplitRetryTimes := SplitRetryTimes
+	SplitRetryTimes = 1
+	t.Cleanup(func() {
+		SplitRetryTimes = originSplitRetryTimes
+	})
+
+	ctx := context.Background()
+	mockPDClient := NewMockPDClientForSplit()
+	codecPDClient := newCodecV2PDClientForSplitTest(t, mockPDClient)
+	tikvCodec := codecPDClient.GetCodec()
+	mockPDClient.SetRegions([][]byte{
+		tikvCodec.EncodeRegionKey([]byte("a")),
+		tikvCodec.EncodeRegionKey([]byte("d")),
+	})
+
+	client := &pdClient{
+		client:           codecPDClient,
+		splitConcurrency: 1,
+		splitBatchKeyCnt: 100,
+		isCodecPDClient:  true,
+	}
+	_, err := client.SplitKeysAndScatter(ctx, [][]byte{tikvCodec.EncodeKey([]byte("b"))})
+	require.ErrorContains(t, err, "retryable error")
+}
+
 func TestPaginateScanRegion(t *testing.T) {
 	ctx := context.Background()
 	mockPDClient := NewMockPDClientForSplit()
@@ -563,6 +704,165 @@ func TestPaginateScanRegion(t *testing.T) {
 	got, err = PaginateScanRegion(ctx, mockClient, []byte{1}, []byte{5}, 100)
 	require.NoError(t, err)
 	checkRegionsBoundaries(t, got, [][]byte{{1}, {2}, {3}, {4}, {5}})
+}
+
+type mockPDErrorClient struct {
+	pd.Client
+	t         *testing.T
+	testCases []scanRegionTestCase
+}
+
+type scanRegionTestCase struct {
+	allowFollowerHandle bool
+	caseError           error
+	caseRegion          []*router.Region
+}
+
+func (s *mockPDErrorClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
+	testCase := s.testCases[0]
+	s.testCases = s.testCases[1:]
+	op := &opt.GetRegionOp{}
+	for _, opt := range opts {
+		opt(op)
+	}
+	require.Equal(s.t, testCase.allowFollowerHandle, op.AllowFollowerHandle)
+	return testCase.caseRegion, testCase.caseError
+}
+
+func newCaseRegion(kids []uint64) []*router.Region {
+	regions := make([]*router.Region, 0, len(kids))
+	for _, kid := range kids {
+		regions = append(regions, &router.Region{
+			Meta: &metapb.Region{
+				Id:       kid,
+				StartKey: fmt.Appendf(nil, "%03d", kid),
+				EndKey:   fmt.Appendf(nil, "%03d", kid+1),
+			},
+			Leader: &metapb.Peer{
+				Id:      kid,
+				StoreId: kid,
+			},
+		})
+	}
+	return regions
+}
+
+func rk(kid int) []byte {
+	return fmt.Appendf(nil, "%03d5", kid)
+}
+
+func TestScanRegionsLimitWithRetry(t *testing.T) {
+	ctx := context.Background()
+	mockPDClient := &mockPDErrorClient{t: t}
+	mockClient := &pdClient{client: mockPDClient}
+
+	backup := WaitRegionOnlineAttemptTimes
+	WaitRegionOnlineAttemptTimes = 3
+	t.Cleanup(func() {
+		WaitRegionOnlineAttemptTimes = backup
+	})
+
+	caseError := errors.Annotate(berrors.ErrPDBatchScanRegion, "case error")
+	// Case 1: must leader is false, and the first try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseError: caseError},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+	}
+	_, mustLeader, err := scanRegionsLimitWithRetry(ctx, mockClient, rk(1), rk(2), 128, false)
+	require.True(t, mustLeader)
+	require.NoError(t, err)
+	require.Len(t, mockPDClient.testCases, 0)
+
+	// Case 2: must leader is false, and the first try is successful
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+	}
+	_, mustLeader, err = scanRegionsLimitWithRetry(ctx, mockClient, rk(1), rk(2), 128, false)
+	require.False(t, mustLeader)
+	require.NoError(t, err)
+	require.Len(t, mockPDClient.testCases, 0)
+
+	// Case 3: must leader is true, and the first try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: false, caseError: caseError},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+	}
+	_, mustLeader, err = scanRegionsLimitWithRetry(ctx, mockClient, rk(1), rk(2), 128, true)
+	require.True(t, mustLeader)
+	require.NoError(t, err)
+	require.Len(t, mockPDClient.testCases, 0)
+
+	// Case4: must leader is true, and the first try is successful
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+	}
+	_, mustLeader, err = scanRegionsLimitWithRetry(ctx, mockClient, rk(1), rk(2), 128, true)
+	require.True(t, mustLeader)
+	require.NoError(t, err)
+	require.Len(t, mockPDClient.testCases, 0)
+}
+
+func checkRegions(t *testing.T, startKid, endKid uint64, regions []*RegionInfo) {
+	require.Len(t, regions, int(endKid-startKid+1))
+	i := 0
+	for kid := startKid; kid <= endKid; kid += 1 {
+		require.Equal(t, kid, regions[i].Leader.Id)
+		require.Equal(t, kid, regions[i].Leader.StoreId)
+		require.Equal(t, kid, regions[i].Region.Id)
+		require.Equal(t, fmt.Appendf(nil, "%03d", kid), regions[i].Region.StartKey)
+		require.Equal(t, fmt.Appendf(nil, "%03d", kid+1), regions[i].Region.EndKey)
+		i += 1
+	}
+}
+
+func TestPaginateScanRegion2(t *testing.T) {
+	ctx := context.Background()
+	mockPDClient := &mockPDErrorClient{t: t}
+	mockClient := &pdClient{client: mockPDClient}
+
+	backup := WaitRegionOnlineAttemptTimes
+	WaitRegionOnlineAttemptTimes = 3
+	t.Cleanup(func() {
+		WaitRegionOnlineAttemptTimes = backup
+	})
+
+	caseError := errors.Annotate(berrors.ErrPDBatchScanRegion, "case error")
+	// Case 1: must leader is false, and the first try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseError: caseError},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{4, 5})},
+	}
+	regions, err := PaginateScanRegion(ctx, mockClient, rk(1), rk(5), 3)
+	require.NoError(t, err)
+	checkRegions(t, 1, 5, regions)
+
+	// Case 2: must leader is false, and the first try is successful
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: true, caseError: caseError},
+		{allowFollowerHandle: false, caseError: caseError},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{4, 5, 6})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{7, 8, 9})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{10})},
+	}
+	regions, err = PaginateScanRegion(ctx, mockClient, rk(1), rk(10), 3)
+	require.NoError(t, err)
+	checkRegions(t, 1, 10, regions)
+
+	// Case 3: must leader is false, and the first try paginate try is failed
+	mockPDClient.testCases = []scanRegionTestCase{
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: true, caseRegion: newCaseRegion([]uint64{4, 5})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{1, 2, 3})},
+		{allowFollowerHandle: false, caseRegion: newCaseRegion([]uint64{4, 5, 6})},
+	}
+	regions, err = PaginateScanRegion(ctx, mockClient, rk(1), rk(6), 3)
+	require.NoError(t, err)
+	checkRegions(t, 1, 6, regions)
 }
 
 func TestRegionConsistency(t *testing.T) {
@@ -690,7 +990,7 @@ func TestRegionConsistency(t *testing.T) {
 		},
 	}
 	for _, ca := range cases {
-		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions, false)
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
 	}
@@ -869,20 +1169,28 @@ func initKeys() [][]byte {
 func initRanges() []rtree.Range {
 	var ranges [4]rtree.Range
 	ranges[0] = rtree.Range{
-		StartKey: []byte("aaa"),
-		EndKey:   []byte("aae"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aaa"),
+			EndKey:   []byte("aae"),
+		},
 	}
 	ranges[1] = rtree.Range{
-		StartKey: []byte("aae"),
-		EndKey:   []byte("aaz"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("aae"),
+			EndKey:   []byte("aaz"),
+		},
 	}
 	ranges[2] = rtree.Range{
-		StartKey: []byte("ccd"),
-		EndKey:   []byte("ccf"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccd"),
+			EndKey:   []byte("ccf"),
+		},
 	}
 	ranges[3] = rtree.Range{
-		StartKey: []byte("ccf"),
-		EndKey:   []byte("ccj"),
+		KeyRange: rtree.KeyRange{
+			StartKey: []byte("ccf"),
+			EndKey:   []byte("ccj"),
+		},
 	}
 	return ranges[:]
 }
@@ -983,7 +1291,7 @@ func TestSplitPoint2(t *testing.T) {
 	client := NewFakeSplitClient()
 	client.AppendRegion(keyWithTablePrefix(tableID, "a"), keyWithTablePrefix(tableID, "g"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "g"), keyWithTablePrefix(tableID, getCharFromNumber("g", 0)))
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", i)), keyWithTablePrefix(tableID, getCharFromNumber("g", i+1)))
 	}
 	client.AppendRegion(keyWithTablePrefix(tableID, getCharFromNumber("g", 256)), keyWithTablePrefix(tableID, "h"))
@@ -1025,4 +1333,45 @@ func TestSplitPoint2(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestRegionsNotFullyScatter(t *testing.T) {
+	mockClient := NewMockPDClientForSplit()
+	client := pdClient{
+		needScatterVal: true,
+		client:         mockClient,
+	}
+	client.needScatterInit.Do(func() {})
+	ctx := context.Background()
+
+	regions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id: 1,
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id: 2,
+			},
+		},
+	}
+	err := client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2, mockClient.scatterRegions.regionCount)
+	require.Len(t, mockClient.scatterRegion.count, 0)
+
+	// simulate that one region is not fully scattered when scatterRegions
+	mockClient.scatterRegions.finishedPercentage = 50
+	err = client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2+1, mockClient.scatterRegions.regionCount)
+	require.Equal(t, map[uint64]int{1: 1, 2: 1}, mockClient.scatterRegion.count)
+
+	// simulate that the regions is not fully scattered when scatterRegion
+	mockClient.scatterRegion.eachRegionFailBefore = 7
+	err = client.scatterRegions(ctx, regions)
+	require.NoError(t, err)
+	require.Equal(t, 2+1+1, mockClient.scatterRegions.regionCount)
+	require.Equal(t, map[uint64]int{1: 1 + 7, 2: 1 + 7}, mockClient.scatterRegion.count)
 }

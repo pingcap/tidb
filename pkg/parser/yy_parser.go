@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"unicode"
 
@@ -94,11 +95,24 @@ type Parser struct {
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
+	enableMariaDB         bool
 
 	// the following fields are used by yyParse to reduce allocation.
 	cache  []yySymType
 	yylval yySymType
 	yyVAL  *yySymType
+}
+
+// setNodeText sets the raw text on a parsed AST node and propagates the
+// NO_BACKSLASH_ESCAPES SQL mode so that Text() can correctly handle
+// backslash escapes when converting binary string literals to hex.
+func (parser *Parser) setNodeText(n interface {
+	SetText(charset.Encoding, string)
+}, text string) {
+	n.SetText(parser.lexer.client, text)
+	if setter, ok := n.(interface{ SetNoBackslashEscapes(bool) }); ok {
+		setter.SetNoBackslashEscapes(parser.lexer.sqlMode.HasNoBackslashEscapesMode())
+	}
 }
 
 func yySetOffset(yyVAL *yySymType, offset int) {
@@ -126,11 +140,28 @@ func New() *Parser {
 	p := &Parser{
 		cache: make([]yySymType, 200),
 	}
-	p.EnableWindowFunc(true)
-	p.SetStrictDoubleTypeCheck(true)
-	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
-	p.SetSQLMode(mode)
+	p.reset()
 	return p
+}
+
+// Reset resets the parser.
+func (parser *Parser) Reset() {
+	clear(parser.cache)
+	parser.reset()
+}
+
+func (parser *Parser) reset() {
+	parser.explicitCharset = false
+	parser.strictDoubleFieldType = false
+	parser.EnableWindowFunc(true)
+	parser.SetStrictDoubleTypeCheck(true)
+	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	parser.SetSQLMode(mode)
+}
+
+// SetMariaDB is setting the parser mode for extended MariaDB syntax
+func (parser *Parser) SetMariaDB(b bool) {
+	parser.enableMariaDB = b
 }
 
 // SetStrictDoubleTypeCheck enables/disables strict double type check.
@@ -162,7 +193,7 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 
 	warns, errs := l.Errors()
 	if len(warns) > 0 {
-		warns = append([]error(nil), warns...)
+		warns = slices.Clone(warns)
 	} else {
 		warns = nil
 	}

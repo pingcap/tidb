@@ -93,7 +93,7 @@ type EvaluatorSuite struct {
 func NewEvaluatorSuite(exprs []Expression, avoidColumnEvaluator bool) *EvaluatorSuite {
 	e := &EvaluatorSuite{}
 
-	for i := 0; i < len(exprs); i++ {
+	for i := range exprs {
 		if col, isCol := exprs[i].(*Column); isCol && !avoidColumnEvaluator {
 			if e.ColumnSwapHelper == nil {
 				e.ColumnSwapHelper = &chunk.ColumnSwapHelper{InputIdxToOutputIdxes: make(map[int][]int)}

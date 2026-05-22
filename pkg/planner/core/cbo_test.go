@@ -29,7 +29,7 @@ import (
 
 func constructInsertSQL(i, n int) string {
 	sql := "insert into t (a,b,c,e)values "
-	for j := 0; j < n; j++ {
+	for j := range n {
 		sql += fmt.Sprintf("(%d, %d, '%d', %d)", i*n+j, i, i+j, i*n+j)
 		if j != n-1 {
 			sql += ", "
@@ -50,7 +50,7 @@ func BenchmarkOptimize(b *testing.B) {
 	testKit.MustExec("create index e on t (e)")
 	testKit.MustExec("create index b_c on t (b,c)")
 	testKit.MustExec("create index ts on t (ts)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		testKit.MustExec(constructInsertSQL(i, 100))
 	}
 	testKit.MustExec("analyze table t")

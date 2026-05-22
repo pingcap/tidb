@@ -198,3 +198,18 @@ last_insert_id(0)
 select last_insert_id();
 last_insert_id()
 0
+VALUES ( ('foo'), ROW('bar') );
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ('foo'), ROW('bar') )" 
+show warnings;
+Level	Code	Message
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ('foo'), ROW('bar') )" 
+VALUES ( ('foo'), ROW('bar') );
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ('foo'), ROW('bar') )" 
+show warnings;
+Level	Code	Message
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ('foo'), ROW('bar') )" 
+VALUES ( ('foo'), ROW('bar') );
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ('foo'), ROW('bar') )" 
+show warnings;
+Level	Code	Message
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ('foo'), ROW('bar') )" 

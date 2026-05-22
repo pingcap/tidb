@@ -21,10 +21,24 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
+)
+
+// IndexLookUpPushDownByType indicates whether to use index lookup push down optimization where it comes.
+type IndexLookUpPushDownByType int
+
+const (
+	// IndexLookUpPushDownNone indicates do not push down the index lookup.
+	IndexLookUpPushDownNone IndexLookUpPushDownByType = iota
+	// IndexLookUpPushDownByHint indicates the hint tells to push down the index lookup.
+	IndexLookUpPushDownByHint
+	// IndexLookUpPushDownBySysVar indicates the system variable tells to push down the index lookup.
+	IndexLookUpPushDownBySysVar
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
@@ -41,6 +55,16 @@ type AccessPath struct {
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
 	CountAfterAccess float64
+	// MinCountAfterAccess is a lower bound on CountAfterAccess, accounting for risks that could
+	// lead to overestimation, such as assuming correlation with exponential backoff when columns are actually independent.
+	// Case MinCountAfterAccess > 0 : we've encountered risky scenarios and have a potential lower row count estimation
+	// Default MinCountAfterAccess = 0 : we have not identified risks that could lead to lower row count
+	MinCountAfterAccess float64
+	// MaxCountAfterAccess is an upper bound on the CountAfterAccess, accounting for risks that could
+	// lead to underestimation, such as assuming independence between non-index columns.
+	// Case MaxCountAfterAccess > 0 : we've encountered risky scenarios and have a potential greater row count estimation
+	// Default MaxCountAfterAccess = 0 : we have not identified risks that could lead to greater row count
+	MaxCountAfterAccess float64
 	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	CountAfterIndex float64
 	AccessConds     []expression.Expression
@@ -112,11 +136,33 @@ type AccessPath struct {
 	Forced           bool
 	ForceKeepOrder   bool
 	ForceNoKeepOrder bool
+	// ForcePartialOrder means whether to force using "current path + partial order optimize".
+	// Only when "Index is Force", "Partial Order is enable" and "Index can match partial order property"
+	// this flag will be set to true.
+	ForcePartialOrder bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
+	IndexLookUpPushDownBy IndexLookUpPushDownByType
+
+	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
+	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
+	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
+
+	// GroupedRanges stores the result of grouping ranges by columns. Finally, we need a merge sort on the results of
+	// each range group.
+	GroupedRanges [][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
+	// property.
+	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
+	// It's used in plan cache or Apply.
+	GroupByColIdxs []int
+
+	// Disables plan cache for plans using this Path.
+	NoncacheableReason string
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -130,8 +176,10 @@ func (path *AccessPath) Clone() *AccessPath {
 		IdxCols:                      CloneCols(path.IdxCols),
 		IdxColLens:                   slices.Clone(path.IdxColLens),
 		ConstCols:                    slices.Clone(path.ConstCols),
-		Ranges:                       CloneRanges(path.Ranges),
+		Ranges:                       sliceutil.DeepClone(path.Ranges),
 		CountAfterAccess:             path.CountAfterAccess,
+		MinCountAfterAccess:          path.MinCountAfterAccess,
+		MaxCountAfterAccess:          path.MaxCountAfterAccess,
 		CountAfterIndex:              path.CountAfterIndex,
 		AccessConds:                  CloneExprs(path.AccessConds),
 		EqCondCount:                  path.EqCondCount,
@@ -148,22 +196,29 @@ func (path *AccessPath) Clone() *AccessPath {
 		Forced:                       path.Forced,
 		ForceKeepOrder:               path.ForceKeepOrder,
 		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		ForcePartialOrder:            path.ForcePartialOrder,
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
+		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+		NoncacheableReason:           path.NoncacheableReason,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
-	ret.PartialIndexPaths = SliceDeepClone(path.PartialIndexPaths)
+	ret.PartialIndexPaths = sliceutil.DeepClone(path.PartialIndexPaths)
 	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))
 	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
 		clonedORBranch := make([][]*AccessPath, 0, len(oneORBranch))
 		for _, oneAlternative := range oneORBranch {
-			clonedOneAlternative := SliceDeepClone(oneAlternative)
+			clonedOneAlternative := sliceutil.DeepClone(oneAlternative)
 			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
 		}
 		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)
+	}
+	for _, ranges := range path.GroupedRanges {
+		ret.GroupedRanges = append(ret.GroupedRanges, sliceutil.DeepClone(ranges))
 	}
 	return ret
 }
@@ -185,15 +240,13 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
+// It also supports a trailing range predicate (LT/GT/LE/GE) with a correlated column on the last
+// access column, e.g. `idx_col_1 = cor_col AND idx_col_2 < cor_col`.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
-	// The plan cache do not support subquery now. So we skip this function when
-	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
-		return nil, path.TableFilters
-	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
+	usedCnt := 0
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
@@ -213,18 +266,46 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			if !colEqConstant && !colEqCorCol {
 				continue
 			}
+			// The plan cache do not support subquery now. So we skip the plan cache when there are correlated subqueries.
+			// Future judgement should be aligned with the function `isPhysicalPlanCacheable`.
+			ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
 			matched = true
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
+				usedCnt++
 			}
 			break
 		}
 		if !matched {
+			// Try a range predicate (LT/GT/LE/GE) with a correlated column.
+			// A range predicate terminates the access prefix, so we only
+			// attempt this when no EQ match was found.
+			for j, filter := range path.TableFilters {
+				if used[j] {
+					continue
+				}
+				if isColRangeCorCol(filter, path.IdxCols[i]) {
+					ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
+					access[i-eqOrInCount] = filter
+					// Range predicates must also remain as post-scan filters
+					// because the index range is a superset when prefix lengths
+					// are involved, and to be safe we always keep the filter.
+					access = access[:i-eqOrInCount+1]
+					remained = make([]expression.Expression, 0, len(path.TableFilters)-usedCnt)
+					for k, ok := range used {
+						if !ok {
+							remained = append(remained, path.TableFilters[k]) // nozero
+						}
+					}
+					return access, remained
+				}
+			}
 			access = access[:i-eqOrInCount]
 			break
 		}
 	}
+	remained = make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
 		if !ok {
 			remained = append(remained, path.TableFilters[i]) // nozero
@@ -249,6 +330,42 @@ func isColEqCorCol(expr expression.Expression, col *expression.Column) bool {
 		return ok
 	}
 	return isColEqExpr(expr, col, isCorCol)
+}
+
+// isColRangeCorCol checks if the expression is a range comparison (LT/GT/LE/GE)
+// where one side is the given column and the other side is a correlated column.
+func isColRangeCorCol(expr expression.Expression, col *expression.Column) bool {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch f.FuncName.L {
+	case ast.LT, ast.GT, ast.LE, ast.GE:
+	default:
+		return false
+	}
+	_, collation := f.CharsetAndCollation()
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isColEqExpr checks if the expression is eq function that one side is column and the other side passes checkFn.
@@ -367,30 +484,39 @@ func (c1 Col2Len) dominate(c2 Col2Len) bool {
 	return true
 }
 
-// CompareCol2Len will compare the two Col2Len maps. The last return value is used to indicate whether they are comparable.
-// When the second return value is true, the first return value:
-// (1) -1 means that c1 is worse than c2;
-// (2) 0 means that c1 equals to c2;
+// CompareCol2Len will compare the two Col2Len maps.
+// The first return value:
+// (1) -1 means that len(c1) is less than len(c2);
+// (2) 0 means that len(c1) equals to len(c2);
 // (3) 1 means that c1 is better than c2;
+// The 2nd return value is used to indicate whether they are comparable. If they are NOT comparable, then the caller
+// should use other criteria to determine whether the winner is justified.
 func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 	l1, l2 := len(c1), len(c2)
 	if l1 > l2 {
 		if c1.dominate(c2) {
 			return 1, true
 		}
-		return 0, false
+		return 1, false
 	}
 	if l1 < l2 {
 		if c2.dominate(c1) {
 			return -1, true
 		}
-		return 0, false
+		return -1, false
 	}
 	// If c1 and c2 have the same columns but have different lengths on some column, we regard c1 and c2 incomparable.
 	for colID, colLen2 := range c2 {
 		colLen1, ok := c1[colID]
-		if !ok || colLen1 != colLen2 {
+		if !ok {
 			return 0, false
+		}
+		if colLen1 != colLen2 {
+			// If lengths are not equal, return 1 if c1 is larger, or -1 if c2 is larger
+			if colLen1 > colLen2 {
+				return 1, false
+			}
+			return -1, false
 		}
 	}
 	return 0, true
@@ -402,4 +528,44 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+}
+
+// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
+// the table scan.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+		return true
+	}
+	return false
+}
+
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	if path.Index.MVIndex || path.Index.ConditionExprString != "" {
+		return true
+	}
+	return false
+}
+
+// IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
+// If path is mv index path:
+// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+// on mvi, it will return many index rows which breaks handle-unique attribute here.
+// So we cannot use mv index path for index join.
+// If path is partial index path:
+// We need to first determine whether we already meet the partial index condition.
+// Currently we don't support that, so we conservatively return true here.
+func (path *AccessPath) IsIndexJoinUnapplicable() bool {
+	return path.IsUndetermined()
 }

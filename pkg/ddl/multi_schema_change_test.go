@@ -17,15 +17,19 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
@@ -164,6 +168,8 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
 
 	// unsupported ddl operations
 	{
@@ -224,8 +230,8 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization {
-			rs, _ := tk.Exec("select b from t")
-			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "2")
+			rs, _ := tk2.Exec("select b from t")
+			assert.Equal(t, tk2.ResultSetToResult(rs, "").Rows()[0][0], "2")
 		}
 	})
 	tk.MustExec("alter table t add column c int default 3, rename column b to d;")
@@ -355,6 +361,36 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 	tk.MustGetErrCode("select d from t", errno.ErrBadField)
 }
 
+func TestMultiSchemaChangeRenameTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2, index t(a, b));")
+	tk.MustExec("insert into t values (1, 2);")
+	var wg sync.WaitGroup
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateNone:
+			wg.Add(1)
+			go func() {
+				_, err := tk.Exec("alter table t rename column b to c, change column a e bigint default 3;")
+				require.Error(t, err)
+				wg.Done()
+			}()
+		}
+	})
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("alter table t rename to t1")
+	wg.Wait()
+
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+	tk2.MustExec("admin check table t1;")
+	tk2.MustExec("alter table t1 rename column b to c, change column a e bigint default 3;")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+}
 func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -541,9 +577,13 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterIndex(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test;")
 
 	// unsupported ddl operations
 	{
@@ -583,7 +623,7 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 		// "modify column a tinyint" in write-reorg.
 		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
 			checked = true
-			rs, err := tk.Exec("select * from t use index(i1);")
+			rs, err := tk2.Exec("select * from t use index(i1);")
 			assert.NoError(t, err)
 			assert.NoError(t, rs.Close())
 		}
@@ -598,6 +638,9 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 }
 
 func TestMultiSchemaChangeMixCancelled(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -628,7 +671,6 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1;")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustExec("insert into t values (1, 2, 3)")
 
@@ -776,25 +818,151 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	require.NoError(t, checkErr)
 }
 
+func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column b smallint, add column d int;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("alter table t modify column a smallint, add column c int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, c char(10));")
+	tk.MustExec("insert into t values (1, 1, '1');")
+	tk.MustExec("alter table t modify column c int after a, add column d int, add column e int, modify column b smallint;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t modify column c2 int after id, modify column id int after c2;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t1(id bigint, c1 bigint, c2 bigint);")
+	tk.MustExec("alter table t1 modify column c2 int, drop column id;")
+}
+
+func TestMultiSchemaChangeDMLUpdate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, d int)")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("insert into t(a, c) values (1, 2), (2, 3), (3, 4), (4, 5)")
+		tk.MustExec("update t set c = 5 where a = 1")
+		tk.MustExec("delete from t")
+	})
+	tk.MustExec("alter table t change column b e int unsigned, change column d f int unsigned")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+
+	tk.MustExec("drop table t")
+}
+
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	orig := variable.EnableRowLevelChecksum.Load()
-	defer variable.EnableRowLevelChecksum.Store(orig)
+	orig := vardef.EnableRowLevelChecksum.Load()
+	defer vardef.EnableRowLevelChecksum.Store(orig)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c int)")
 
-	variable.EnableRowLevelChecksum.Store(true)
+	vardef.EnableRowLevelChecksum.Store(true)
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
 	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
 
-	variable.EnableRowLevelChecksum.Store(false)
+	vardef.EnableRowLevelChecksum.Store(false)
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustGetErrCode("alter table t add column c1 int, add column c2 int", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
+}
+
+func TestMultiSchemaChangePollJobCount(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+	runOneJobCounter := 0
+	pollJobCounter := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+		runOneJobCounter++
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePollDDLJob", func() {
+		pollJobCounter++
+	})
+	// Should not test reorg DDL because the result can be unstable.
+	tk.MustExec("alter table t add column b int,  modify column a bigint, add column c char(10);")
+	require.Equal(t, 30, runOneJobCounter)
+	require.Equal(t, 10, pollJobCounter)
+}
+
+func TestMultiSchemaChangeMDLView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	unistoreMDLView := metadef.CreateTiDBMDLView
+	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_processlist", "processlist")
+	unistoreMDLView = strings.ReplaceAll(unistoreMDLView, "cluster_tidb_trx", "tidb_trx")
+	tk.MustExec(unistoreMDLView)
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add column b int, add column c int;")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select count(*) from mysql.tidb_mdl_view;").Check(testkit.Rows("0"))
+
+	tk.MustExec("commit;")
+}
+
+func TestMultiSchemaChangeWithoutMDL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	defer func() {
+		tk.MustExec("set global tidb_enable_metadata_lock = default;")
+	}()
+
+	testcases := []struct {
+		name string
+		sql  string
+	}{
+		{"drop column", "alter table t drop column col2, drop column col3"},
+		{"drop index", "alter table t drop index idx2, drop index idx3"},
+		{"modify column", "alter table t modify column col2 bigint, modify column col3 bigint"},
+		{"modify column with reorg", "alter table t modify column col2 varchar(4), modify column col3 varchar(4)"},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("set global tidb_enable_metadata_lock = on;")
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec("create table t(col1 int, col2 int, col3 int, index idx2(col2), index idx3(col2));")
+			tk.MustExec("set global tidb_enable_metadata_lock = off;")
+			tk.MustExec(tc.sql)
+		})
+	}
 }
 
 type cancelOnceHook struct {

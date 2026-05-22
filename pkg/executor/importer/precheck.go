@@ -17,41 +17,37 @@ package importer
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-const (
-	etcdDialTimeout = 5 * time.Second
-)
-
 // GetEtcdClient returns an etcd client.
 // exported for testing.
-var GetEtcdClient = getEtcdClient
+var GetEtcdClient = store.NewEtcdCli
 
 // CheckRequirements checks the requirements for IMPORT INTO.
 // we check the following things here:
 //   - when import from file
 //     1. there is no active job on the target table
 //     2. the total file size > 0
-//     3. if global sort, thread count >= 16 and have required privileges
+//     3. if global sort, check required privileges
 //   - target table should be empty
 //   - no CDC or PiTR tasks running
 //
 // we check them one by one, and return the first error we meet.
-func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
+func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionctx.Context) error {
+	conn := se.GetSQLExecutor()
 	if e.DataSourceType == DataSourceTypeFile {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
 		if err != nil {
@@ -63,17 +59,12 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 		if err := e.checkTotalFileSize(); err != nil {
 			return err
 		}
-		// run global sort with < 8 thread might OOM on ingest step
-		// TODO: remove this limit after control memory usage.
-		if e.IsGlobalSort() && e.ThreadCnt < 8 {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("global sort requires at least 8 threads")
-		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
 	if !e.DisablePrecheck {
-		if err := e.checkCDCPiTRTasks(ctx); err != nil {
+		if err := e.checkCDCPiTRTasks(ctx, se); err != nil {
 			return err
 		}
 	}
@@ -110,14 +101,14 @@ func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.S
 	return nil
 }
 
-func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
-	cli, err := GetEtcdClient()
+func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context, se sessionctx.Context) error {
+	cli, err := GetEtcdClient(se.GetStore())
 	if err != nil {
 		return err
 	}
 	defer terror.Call(cli.Close)
 
-	pitrCli := streamhelper.NewMetaDataClient(cli.GetClient())
+	pitrCli := streamhelper.NewMetaDataClient(cli)
 	tasks, err := pitrCli.GetAllTasks(ctx)
 	if err != nil {
 		return err
@@ -130,7 +121,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, cli.GetClient())
+	nameSet, err := cdcutil.GetRunningChangefeeds(ctx, cli)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -143,51 +134,33 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 
 func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) error {
 	// we need read/put/delete/list privileges on global sort store.
-	// only support S3 now.
 	target := "cloud storage"
-	cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+	cloudStorageURL, err3 := objstore.ParseRawURL(e.Plan.CloudStorageURI)
 	if err3 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err3.Error())
 	}
-	b, err2 := storage.ParseBackendFromURL(cloudStorageURL, nil)
+	b, err2 := objstore.ParseBackendFromURL(cloudStorageURL, nil)
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
-	if b.GetS3() == nil && b.GetGcs() == nil {
-		// we only support S3 now, but in test we are using GCS.
+	if !isSupportedCloudStorageBackend(b) {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
 	}
 
-	opt := &storage.ExternalStorageOptions{
-		CheckPermissions: []storage.Permission{
-			storage.GetObject,
-			storage.ListObjects,
-			storage.PutAndDeleteObject,
+	opt := &storeapi.Options{
+		CheckPermissions: []storeapi.Permission{
+			storeapi.GetObject,
+			storeapi.ListObjects,
+			storeapi.PutAndDeleteObject,
 		},
 	}
 	if intest.InTest {
 		opt.NoCredentials = true
 	}
-	_, err := storage.New(ctx, b, opt)
+	_, err := objstore.New(ctx, b, opt)
 	if err != nil {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("check cloud storage uri access: " + err.Error())
 	}
 	return nil
-}
-
-func getEtcdClient() (*etcd.Client, error) {
-	tidbCfg := tidb.GetGlobalConfig()
-	tls, err := util.NewTLSConfig(
-		util.WithCAPath(tidbCfg.Security.ClusterSSLCA),
-		util.WithCertAndKeyPath(tidbCfg.Security.ClusterSSLCert, tidbCfg.Security.ClusterSSLKey),
-	)
-	if err != nil {
-		return nil, err
-	}
-	ectdEndpoints, err := util.ParseHostPortAddr(tidbCfg.Path)
-	if err != nil {
-		return nil, err
-	}
-	return etcd.NewClientFromCfg(ectdEndpoints, etcdDialTimeout, "", tls)
 }

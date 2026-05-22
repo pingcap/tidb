@@ -17,6 +17,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -25,6 +26,11 @@ import (
 const (
 	logBackupServiceID    = "log-backup-coordinator"
 	logBackupSafePointTTL = 24 * time.Hour
+
+	// dialTimeOut is the timeout for establishing the connection to a TiKV.
+	// when TiKV was disconnected, the request may not be positive rejected but get stuck,
+	// which may make the remaining task in a tick fail.
+	dialTimeOut = 8 * time.Second
 )
 
 // Env is the interface required by the advancer.
@@ -135,6 +141,7 @@ func (t clusterEnv) ClearCache(ctx context.Context, storeID uint64) error {
 
 // CliEnv creates the Env for CLI usage.
 func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.Client) Env {
+	cli.ResetPDClientCallerComponent(caller.Pitr)
 	return clusterEnv{
 		clis:                 cli,
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
@@ -149,15 +156,19 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 	if err != nil {
 		return nil, err
 	}
-	return clusterEnv{
-		clis: utils.NewStoreManager(pdCli, keepalive.ClientParameters{
+	pitrPDClient := pdCli.WithCallerComponent(caller.Pitr)
+	env := clusterEnv{
+		clis: utils.NewStoreManager(pitrPDClient, keepalive.ClientParameters{
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 		}, tconf),
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner:      PDRegionScanner{Client: pdCli},
+		PDRegionScanner:      PDRegionScanner{Client: pitrPDClient},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
-	}, nil
+	}
+
+	env.clis.DialTimeout = dialTimeOut
+	return env, nil
 }
 
 type LogBackupService interface {
@@ -178,7 +189,7 @@ type StreamMeta interface {
 	GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
 	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.
 	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
-	PauseTask(ctx context.Context, taskName string) error
+	PauseTask(ctx context.Context, taskName string, opts ...PauseTaskOption) error
 }
 
 var _ tikv.RegionLockResolver = &AdvancerLockResolver{}

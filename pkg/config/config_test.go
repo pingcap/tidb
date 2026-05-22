@@ -30,6 +30,9 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	meter_config "github.com/pingcap/metering_sdk/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -729,7 +732,8 @@ txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
 plan-replayer-dump-worker-concurrency = 1
-lite-init-stats = false
+skip-init-stats = false
+lite-init-stats = true
 force-init-stats = false
 [tikv-client]
 commit-timeout="41s"
@@ -822,7 +826,8 @@ max_connections = 200
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 	require.True(t, conf.Performance.EnableLoadFMSketch)
-	require.False(t, conf.Performance.LiteInitStats)
+	require.False(t, conf.Performance.SkipInitStats)
+	require.True(t, conf.Performance.LiteInitStats)
 	require.False(t, conf.Performance.ForceInitStats)
 
 	err = f.Truncate(0)
@@ -915,10 +920,19 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
 
 	configFile = "config.toml.example"
+	if kerneltype.IsNextGen() {
+		configFile = "config.toml.nextgen.example"
+	}
 	require.NoError(t, conf.Load(configFile))
+
+	require.Equal(t, 2.01, conf.RUV2.RUScale)
+	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
+	if kerneltype.IsNextGen() {
+		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	}
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
@@ -1010,7 +1024,7 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	// test for config `toml` and `json` tag names
 	c1 := Config{}
 	st := reflect.TypeOf(c1)
-	for i := 0; i < st.NumField(); i++ {
+	for i := range st.NumField() {
 		field := st.Field(i)
 		require.Equal(t, field.Tag.Get("json"), field.Tag.Get("toml"))
 	}
@@ -1035,7 +1049,174 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}
 }
 
+func TestDeployModeConfig(t *testing.T) {
+	conf := NewConfig()
+	require.Equal(t, deploymode.Premium, conf.DeployMode)
+	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+	conf.DeployMode = deploymode.Mode(100)
+	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
+	conf.DeployMode = deploymode.Premium
+	conf.MaxAllowedPacket = 0
+	require.NoError(t, conf.Valid())
+	conf.MaxAllowedPacket = DefMaxAllowedPacket
+
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
+
+	if kerneltype.IsClassic() {
+		require.NoError(t, os.WriteFile(configFile, []byte(`dxf-resource-limit = 30`), 0644))
+		conf = NewConfig()
+		require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+
+		require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"`), 0644))
+		conf = NewConfig()
+		require.ErrorContains(t, conf.Load(configFile), "deploy-mode can only be configured for nextgen TiDB")
+
+		conf = NewConfig()
+		conf.DeployMode = deploymode.PremiumReserved
+		require.ErrorContains(t, conf.Valid(), "deploy-mode can only be configured for nextgen TiDB")
+		return
+	}
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"`), 0644))
+
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 30`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.Equal(t, 30, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"
+dxf-resource-limit = 100`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 9`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 101`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.True(t, conf.Standby.EnableZeroBackend)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+deploy-mode = "starter"
+[standby]
+enable-zero-backend = false
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.False(t, conf.Standby.EnableZeroBackend)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
+max-allowed-packet = %d`, minMaxAllowedPacket)), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.Equal(t, uint64(minMaxAllowedPacket), conf.MaxAllowedPacket)
+	require.NoError(t, conf.Valid())
+
+	maxAllowedPacketErr := fmt.Sprintf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
+	for _, packetSize := range []uint64{0, minMaxAllowedPacket - 1, minMaxAllowedPacket + 1, maxOfMaxAllowedPacket + 1} {
+		require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
+max-allowed-packet = %d`, packetSize)), 0644))
+		conf = NewConfig()
+		require.NoError(t, conf.Load(configFile))
+		require.ErrorContains(t, conf.Valid(), maxAllowedPacketErr)
+	}
+
+	originDeployMode := deploymode.Get()
+	originGlobalConfig := GetGlobalConfig()
+	t.Cleanup(func() {
+		StoreGlobalConfig(originGlobalConfig)
+		require.NoError(t, deploymode.Set(originDeployMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	conf = NewConfig()
+	conf.MaxAllowedPacket = minMaxAllowedPacket
+	StoreGlobalConfig(conf)
+	require.Equal(t, uint64(minMaxAllowedPacket), GetMaxAllowedPacket())
+	conf.MaxAllowedPacket = 0
+	StoreGlobalConfig(conf)
+	require.Equal(t, uint64(DefMaxAllowedPacket), GetMaxAllowedPacket())
+
+	t.Run("adjust starter config with full TLS env", func(t *testing.T) {
+		conf := NewConfig()
+		t.Setenv(EnvClusterCA, "/tmp/cluster-ca.pem")
+		t.Setenv(EnvClusterCert, "/tmp/cluster-cert.pem")
+		t.Setenv(EnvClusterKey, "/tmp/cluster-key.pem")
+		t.Setenv(EnvSQLCA, "/tmp/sql-ca.pem")
+		t.Setenv(EnvSQLCert, "/tmp/sql-cert.pem")
+		t.Setenv(EnvSQLKey, "/tmp/sql-key.pem")
+		require.NoError(t, conf.AdjustStarterConfig(true))
+		require.Equal(t, "/tmp/cluster-ca.pem", conf.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/cluster-cert.pem", conf.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/cluster-key.pem", conf.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/sql-ca.pem", conf.Security.SSLCA)
+		require.Equal(t, "/tmp/sql-cert.pem", conf.Security.SSLCert)
+		require.Equal(t, "/tmp/sql-key.pem", conf.Security.SSLKey)
+	})
+
+	t.Run("adjust starter config keeps CA when env overrides cert and key", func(t *testing.T) {
+		conf := NewConfig()
+		conf.Security.ClusterSSLCA = "/tmp/config-cluster-ca.pem"
+		conf.Security.ClusterSSLCert = "/tmp/config-cluster-cert.pem"
+		conf.Security.ClusterSSLKey = "/tmp/config-cluster-key.pem"
+		conf.Security.SSLCA = "/tmp/config-sql-ca.pem"
+		conf.Security.SSLCert = "/tmp/config-sql-cert.pem"
+		conf.Security.SSLKey = "/tmp/config-sql-key.pem"
+		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
+		t.Setenv(EnvClusterKey, "/tmp/env-cluster-key.pem")
+		t.Setenv(EnvSQLCert, "/tmp/env-sql-cert.pem")
+		t.Setenv(EnvSQLKey, "/tmp/env-sql-key.pem")
+		require.NoError(t, conf.AdjustStarterConfig(true))
+		require.Equal(t, "/tmp/config-cluster-ca.pem", conf.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/env-cluster-cert.pem", conf.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/env-cluster-key.pem", conf.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/config-sql-ca.pem", conf.Security.SSLCA)
+		require.Equal(t, "/tmp/env-sql-cert.pem", conf.Security.SSLCert)
+		require.Equal(t, "/tmp/env-sql-key.pem", conf.Security.SSLKey)
+	})
+
+	t.Run("adjust starter config rejects incomplete TLS env", func(t *testing.T) {
+		conf := NewConfig()
+		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
+		require.ErrorContains(t, conf.AdjustStarterConfig(true), "CLUSTER_CERT and CLUSTER_KEY must be set together")
+	})
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
+}
+
 func TestConflictInstanceConfig(t *testing.T) {
+	t.Cleanup(func() {
+		ConflictOptions = nil
+		DeprecatedOptions = nil
+	})
+
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1094,6 +1275,11 @@ func TestConflictInstanceConfig(t *testing.T) {
 }
 
 func TestDeprecatedConfig(t *testing.T) {
+	t.Cleanup(func() {
+		ConflictOptions = nil
+		DeprecatedOptions = nil
+	})
+
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1181,6 +1367,25 @@ func TestTableColumnCountLimit(t *testing.T) {
 	checkValid(DefTableColumnCountLimit-1, false)
 	checkValid(DefMaxOfTableColumnCountLimit, true)
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
+}
+func TestPluginAuditLog(t *testing.T) {
+	conf := NewConfig()
+	checkValid := func(bufferSize int, shouldBeValid bool) {
+		conf.Instance.PluginAuditLogBufferSize = bufferSize
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkValid(-1, false)
+	checkValid(MaxPluginAuditLogBufferSize, true)
+	checkValid(MaxPluginAuditLogBufferSize+1, false)
+
+	conf = NewConfig()
+	checkValid = func(flushInterval int, shouldBeValid bool) {
+		conf.Instance.PluginAuditLogFlushInterval = flushInterval
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
+	}
+	checkValid(-1, false)
+	checkValid(MaxPluginAuditLogFlushInterval, true)
+	checkValid(MaxPluginAuditLogFlushInterval+1, false)
 }
 
 func TestTokenLimit(t *testing.T) {
@@ -1371,6 +1576,21 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 	})
 }
 
+func TestGetGlobalTiKVWorkerURL(t *testing.T) {
+	conf := NewConfig()
+	require.Empty(t, conf.TiKVWorkerURL)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.TiKVWorkerURL = "tikv-worker-0:10080"
+	})
+
+	require.Equal(t, "tikv-worker-0:10080", GetGlobalConfig().TiKVWorkerURL)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.TiKVWorkerURL = ""
+	})
+}
+
 func TestAutoScalerConfig(t *testing.T) {
 	conf := NewConfig()
 	require.False(t, conf.UseAutoScaler)
@@ -1408,4 +1628,70 @@ enforce-mpp = 1
 	err = conf.Load(configFile)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
+}
+
+func TestKeyspaceName(t *testing.T) {
+	conf := NewConfig()
+	conf.KeyspaceName = "#!"
+	require.ErrorContains(t, conf.Valid(), "is invalid")
+	conf.KeyspaceName = "abc"
+	require.NoError(t, conf.Valid())
+	conf.KeyspaceName = "18446744073709551615" // max uint64
+	require.NoError(t, conf.Valid())
+	conf.KeyspaceName = "a18446744073709551615"
+	require.ErrorContains(t, conf.Valid(), "invalid keyspace name")
+}
+
+func TestMetering(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("skip metering test in classic kernel")
+	}
+	testCases := []struct {
+		name      string
+		uri       string
+		checkFunc func(*testing.T, *meter_config.MeteringConfig)
+	}{
+		{
+			name: "s3",
+			uri:  "s3://test-bucket/test-prefix?region-id=test-region",
+			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
+				require.Equal(t, "s3", string(mcfg.Type))
+				require.Equal(t, "test-bucket", mcfg.Bucket)
+				require.Equal(t, "test-prefix", mcfg.Prefix)
+				require.Equal(t, "test-region", mcfg.Region)
+			},
+		},
+		{
+			name: "azure",
+			uri:  "azure://metering-data/test-prefix?account-name=test-account&account-key=test-key",
+			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
+				require.Equal(t, "azure", string(mcfg.Type))
+				require.Equal(t, "metering-data", mcfg.Bucket)
+				require.Equal(t, "test-prefix", mcfg.Prefix)
+				require.NotNil(t, mcfg.Azure)
+				require.Equal(t, "test-account", mcfg.Azure.AccountName)
+				require.Equal(t, "test-key", mcfg.Azure.AccountKey)
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := NewConfig()
+			conf.MeteringStorageURI = tc.uri
+			require.NoError(t, conf.Valid())
+			mcfg, err := meter_config.NewFromURI(conf.MeteringStorageURI)
+			require.NoError(t, err)
+			tc.checkFunc(t, mcfg)
+		})
+	}
+}
+
+func TestGetTiKVConfigKeepsZeroRUV2RUScale(t *testing.T) {
+	conf := NewConfig()
+	conf.RUV2.RUScale = 123
+	conf.TiKVClient.RUV2.RUScale = 0
+
+	tikvConf := conf.GetTiKVConfig()
+	require.Zero(t, tikvConf.TiKVClient.RUV2.RUScale)
 }

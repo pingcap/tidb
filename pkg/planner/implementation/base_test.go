@@ -18,19 +18,20 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
 
 func TestBaseImplementation(t *testing.T) {
 	defer view.Stop()
-	sctx := plannercore.MockContext()
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
-	p := plannercore.PhysicalLimit{}.Init(sctx, nil, 0, nil)
+	p := physicalop.PhysicalLimit{}.Init(sctx, nil, 0, nil)
 	impl := &baseImpl{plan: p}
 	require.Equal(t, p, impl.GetPlan())
 

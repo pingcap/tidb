@@ -22,6 +22,8 @@ wait_log_checkpoint_advance() {
     sleep 10
     local current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
     echo "current ts: $current_ts"
+
+    run_br --skip-goleak --pd $PD_ADDR operator force-flush || echo "failed to run force flush, the case may be slower."
     i=0
     while true; do
         # extract the checkpoint ts of the log backup task. If there is some error, the checkpoint ts should be empty
@@ -34,6 +36,7 @@ wait_log_checkpoint_advance() {
         if [ $checkpoint_ts -gt 0 ] 2>/dev/null; then
             if [ $checkpoint_ts -gt $current_ts ]; then
                 echo "the checkpoint has advanced"
+                LATEST_CHECKPOINT_TS=$checkpoint_ts
                 break
             fi
             echo "the checkpoint hasn't advanced"

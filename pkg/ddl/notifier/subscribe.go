@@ -18,6 +18,7 @@ import (
 	"context"
 	goerr "errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -152,6 +155,8 @@ func (n *DDLNotifier) start() {
 
 	ctx := kv.WithInternalSourceType(n.ctx, kv.InternalDDLNotifier)
 	ctx = logutil.WithCategory(ctx, "ddl-notifier")
+	trace := traceevent.NewTrace()
+	ctx = tracing.WithFlightRecorder(ctx, trace)
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 	for {
@@ -160,8 +165,15 @@ func (n *DDLNotifier) start() {
 			return
 		case <-ticker.C:
 			if err := n.processEvents(ctx); err != nil {
+				intest.Assert(
+					errors.ErrorEqual(err, context.Canceled) ||
+						strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+						strings.Contains(err.Error(), "session pool closed"),
+					fmt.Sprintf("error processing events: %v", err),
+				)
 				logutil.Logger(ctx).Error("Error processing events", zap.Error(err))
 			}
+			trace.DiscardOrFlush(ctx)
 		}
 	}
 }
@@ -171,6 +183,8 @@ func (n *DDLNotifier) start() {
 var ProcessEventsBatchSize = 1024
 
 func (n *DDLNotifier) processEvents(ctx context.Context) error {
+	r := tracing.StartRegion(ctx, "DDLNotifier.processEvents")
+	defer r.End()
 	s, err := n.sysSessionPool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -231,12 +245,19 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 			}
 
 			if change.processedByFlag == n.handlersBitMap {
-				if err3 := n.store.DeleteAndCommit(
+				s3, err3 := n.sysSessionPool.Get()
+				if err3 != nil {
+					return errors.Trace(err3)
+				}
+				sess4Del := sess.NewSession(s3.(sessionctx.Context))
+				err3 = n.store.DeleteAndCommit(
 					ctx,
-					sess4List,
+					sess4Del,
 					change.ddlJobID,
 					int(change.subJobID),
-				); err3 != nil {
+				)
+				n.sysSessionPool.Put(s3)
+				if err3 != nil {
 					logutil.Logger(ctx).Error("Error deleting change",
 						zap.Int64("ddlJobID", change.ddlJobID),
 						zap.Int64("subJobID", change.subJobID),
@@ -261,15 +282,20 @@ func (n *DDLNotifier) processEventForHandler(
 	if (change.processedByFlag & (1 << handlerID)) != 0 {
 		return nil
 	}
+	newFlag := change.processedByFlag | (1 << handlerID)
 
-	if err = session.Begin(ctx); err != nil {
+	if err = session.BeginPessimistic(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		if err == nil {
-			err = errors.Trace(session.Commit(ctx))
-		} else {
+		if err != nil {
 			session.Rollback()
+			return
+		}
+
+		err = errors.Trace(session.Commit(ctx))
+		if err == nil {
+			change.processedByFlag = newFlag
 		}
 	}()
 
@@ -286,19 +312,14 @@ func (n *DDLNotifier) processEventForHandler(
 			zap.Duration("duration", time.Since(now)))
 	}
 
-	newFlag := change.processedByFlag | (1 << handlerID)
-	if err = n.store.UpdateProcessed(
+	return errors.Trace(n.store.UpdateProcessed(
 		ctx,
 		session,
 		change.ddlJobID,
 		change.subJobID,
+		change.processedByFlag,
 		newFlag,
-	); err != nil {
-		return errors.Trace(err)
-	}
-	change.processedByFlag = newFlag
-
-	return nil
+	))
 }
 
 // Stop stops the background loop.
@@ -322,7 +343,7 @@ func (n *DDLNotifier) OnBecomeOwner() {
 			return
 		}
 		// In unit tests, we want to panic directly to find the root cause.
-		if intest.InTest {
+		if intest.EnableInternalCheck && !strings.Contains(util.GetRecoverError(r).Error(), "failpoint") {
 			panic(r)
 		}
 		logutil.BgLogger().Error("panic in ddl notifier", zap.Any("recover", r), zap.Stack("stack"))

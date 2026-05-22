@@ -420,8 +420,8 @@ SET SESSION mpp_version = unspecified;
 select @@session.mpp_version;
 @@session.mpp_version
 unspecified
-SET SESSION mpp_version = 3;
-Error 1105 (HY000): incorrect value: 3. mpp_version options: -1 (unspecified), 0, 1, 2
+SET SESSION mpp_version = 4;
+Error 1105 (HY000): incorrect value: 4. mpp_version options: -1 (unspecified), 0, 1, 2, 3
 SET GLOBAL mpp_version = 1;
 select @@global.mpp_version;
 @@global.mpp_version

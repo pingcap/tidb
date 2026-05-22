@@ -25,9 +25,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/vitess"
 )
+
+// UUIDStrLen is the length of a UUID in string format
+// 16 bytes in hex is 32 characters, plus 4 hyphens = 36 characters (hex/ASCII, 1 byte chars)
+// https://datatracker.ietf.org/doc/html/rfc9562#name-uuid-format
+const UUIDStrLen = 36
 
 func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -43,7 +49,7 @@ func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	ip := make(net.IP, net.IPv4len)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		val := i64s[i]
 		if buf.IsNull(i) || val < 0 || uint64(val) > math.MaxUint32 {
 			result.AppendNull()
@@ -76,12 +82,12 @@ func (b *builtinIsIPv4Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		// Note that even when the i-th input string is null, the output is
-		// 0 instead of null, therefore we do not set the null bit mask in
-		// result's corresponding row.
-		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
+	for i := range n {
+		if buf.IsNull(i) {
+			continue
+		}
 		if isIPv4(buf.GetString(i)) {
 			i64s[i] = 1
 		} else {
@@ -133,21 +139,17 @@ func (b *builtinIsIPv6Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
-		// Note that even when the i-th input string is null, the output is
-		// 0 instead of null, therefore we do not set the null bit mask in
-		// result's corresponding row.
-		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
+	for i := range n {
 		if buf.IsNull(i) {
-			i64s[i] = 0
+			continue
+		}
+		ipStr := buf.GetString(i)
+		if ip := net.ParseIP(ipStr); ip != nil && !isIPv4(ipStr) {
+			i64s[i] = 1
 		} else {
-			ipStr := buf.GetString(i)
-			if ip := net.ParseIP(ipStr); ip != nil && !isIPv4(ipStr) {
-				i64s[i] = 1
-			} else {
-				i64s[i] = 0
-			}
+			i64s[i] = 0
 		}
 	}
 	return nil
@@ -170,11 +172,16 @@ func (b *builtinIsUUIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
-		if _, err = uuid.Parse(buf.GetString(i)); err != nil {
+		val := buf.GetString(i)
+		// MySQL's IS_UUID is strict and doesn't trim spaces, unlike Go's uuid.Parse
+		// We need to check if the string has leading/trailing spaces before parsing
+		if strings.TrimSpace(val) != val {
+			i64s[i] = 0
+		} else if _, err = uuid.Parse(val); err != nil {
 			i64s[i] = 0
 		} else {
 			i64s[i] = 1
@@ -205,15 +212,131 @@ func (b *builtinUUIDSig) vectorized() bool {
 
 func (b *builtinUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	result.ReserveString(n)
+	result.ReserveStringWithSizeHint(n, UUIDStrLen)
 	var id uuid.UUID
 	var err error
-	for i := 0; i < n; i++ {
+	for range n {
 		id, err = uuid.NewUUID()
 		if err != nil {
 			return err
 		}
 		result.AppendString(id.String())
+	}
+	return nil
+}
+
+func (b *builtinUUIDv4Sig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUUIDv4Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ReserveStringWithSizeHint(n, UUIDStrLen)
+	var id uuid.UUID
+	var err error
+	for range n {
+		id, err = uuid.NewRandom()
+		if err != nil {
+			return err
+		}
+		result.AppendString(id.String())
+	}
+	return nil
+}
+
+func (b *builtinUUIDv7Sig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUUIDv7Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ReserveStringWithSizeHint(n, UUIDStrLen)
+	var id uuid.UUID
+	var err error
+	for range n {
+		id, err = uuid.NewV7()
+		if err != nil {
+			return err
+		}
+		result.AppendString(id.String())
+	}
+	return nil
+}
+
+func (b *builtinUUIDVersionSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUUIDVersionSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	for i := range n {
+		if result.IsNull(i) {
+			continue
+		}
+		val := buf.GetString(i)
+		u, err := uuid.Parse(val)
+		if err != nil {
+			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_version")
+		}
+		i64s[i] = int64(u.Version())
+	}
+	return nil
+}
+
+func (b *builtinUUIDTimestampSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinUUIDTimestampSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeDecimal(n, false)
+	result.MergeNulls(buf)
+	d := result.Decimals()
+	for i := range n {
+		if result.IsNull(i) {
+			continue
+		}
+		val := buf.GetString(i)
+		u, err := uuid.Parse(val)
+		if err != nil {
+			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_timestamp")
+		}
+		switch u.Version() {
+		case 1, 6, 7:
+		default:
+			result.SetNull(i, true)
+			continue
+		}
+
+		s, ns := u.Time().UnixTime()
+		d[i].FromInt((s * 1000000) + (ns / 1000))
+		err = d[i].Shift(-6)
+		if err != nil {
+			return err
+		}
+		err = d[i].Round(&d[i], 6, types.ModeHalfUp)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -257,23 +380,23 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
+			continue
+		}
+		// Note that the input should be IP address in byte format.
+		// For IPv4, it should be byte slice with 4 bytes.
+		// For IPv6, it should be byte slice with 16 bytes.
+		// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
+		ipAddress := buf.GetBytes(i)
+		if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
+			// Not an IPv6 address, return false
 			i64s[i] = 0
 		} else {
-			// Note that the input should be IP address in byte format.
-			// For IPv4, it should be byte slice with 4 bytes.
-			// For IPv6, it should be byte slice with 16 bytes.
-			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
-			ipAddress := buf.GetBytes(i)
-			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixCompat) {
-				// Not an IPv6 address, return false
-				i64s[i] = 0
-			} else {
-				i64s[i] = 1
-			}
+			i64s[i] = 1
 		}
 	}
 	return nil
@@ -323,7 +446,7 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	i64s := result.Int64s()
 
 	ec := errCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		isNull := buf.IsNull(i)
 		val := buf.GetFloat64(i)
 
@@ -395,23 +518,23 @@ func (b *builtinIsIPv4MappedSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ResizeInt64(n, false)
+	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	prefixMapped := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
+			continue
+		}
+		// Note that the input should be IP address in byte format.
+		// For IPv4, it should be byte slice with 4 bytes.
+		// For IPv6, it should be byte slice with 16 bytes.
+		// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
+		ipAddress := buf.GetBytes(i)
+		if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
+			// Not an IPv6 address, return false
 			i64s[i] = 0
 		} else {
-			// Note that the input should be IP address in byte format.
-			// For IPv4, it should be byte slice with 4 bytes.
-			// For IPv6, it should be byte slice with 16 bytes.
-			// See example https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
-			ipAddress := buf.GetBytes(i)
-			if len(ipAddress) != net.IPv6len || !bytes.HasPrefix(ipAddress, prefixMapped) {
-				// Not an IPv6 address, return false
-				i64s[i] = 0
-			} else {
-				i64s[i] = 1
-			}
+			i64s[i] = 1
 		}
 	}
 	return nil
@@ -456,7 +579,7 @@ func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		res   []byte
 	)
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -533,7 +656,7 @@ func (b *builtinInetAtonSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -600,7 +723,7 @@ func (b *builtinInet6NtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if val.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -647,7 +770,7 @@ func (b *builtinVitessHashSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	r64s := result.Uint64s()
 	result.MergeNulls(column)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if column.IsNull(i) {
 			continue
 		}
@@ -693,12 +816,17 @@ func (b *builtinUUIDToBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		i64s = flagBuf.Int64s()
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if valBuf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		val := valBuf.GetString(i)
+		// MySQL's UUID_TO_BIN is strict and doesn't trim spaces, unlike Go's uuid.Parse
+		// We need to check if the string has leading/trailing spaces before parsing
+		if strings.TrimSpace(val) != val {
+			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
+		}
 		u, err := uuid.Parse(val)
 		if err != nil {
 			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
@@ -751,7 +879,7 @@ func (b *builtinBinToUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		i64s = flagBuf.Int64s()
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if valBuf.IsNull(i) {
 			result.AppendNull()
 			continue

@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -24,16 +25,16 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"go.uber.org/zap"
 )
 
@@ -80,6 +82,9 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
+	if e.Level.Level == ast.GrantLevelDB {
+		dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
+	}
 
 	// For table & column level, check whether table exists and privilege is valid
 	if e.Level.Level == ast.GrantLevelTable {
@@ -95,9 +100,9 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				}
 			}
 		}
-		dbNameStr := model.NewCIStr(dbName)
-		schema := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-		tbl, err := schema.TableByName(ctx, dbNameStr, model.NewCIStr(e.Level.TableName))
+		dbNameStr := ast.NewCIStr(dbName)
+		schema := e.Ctx().GetDomain().(*domain.Domain).InfoSchema()
+		tbl, err := schema.TableByName(ctx, dbNameStr, ast.NewCIStr(e.Level.TableName))
 		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
 			allowed := false
@@ -118,9 +123,17 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if tbl != nil && tbl.Meta().Name.L != strings.ToLower(e.Level.TableName) {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		}
+		if tbl != nil {
+			// Use the real table name from schema metadata.
+			// This makes `t` and `T` write to the same privilege row.
+			e.Level.TableName = tbl.Meta().Name.O
+		}
+		db, succ := schema.SchemaByName(dbNameStr)
+		if succ {
+			dbName = db.Name.O
+		}
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
-			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
 				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 			}
@@ -155,19 +168,26 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 
-	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
 	if err != nil {
 		return err
 	}
 	// Check which user is not exist.
 	for _, user := range e.Users {
-		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
+		if user.User.CurrentUser {
+			user.User.Username = e.Ctx().GetSessionVars().User.AuthUsername
+			user.User.Hostname = e.Ctx().GetSessionVars().User.AuthHostname
+		}
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
 		if !exists {
 			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
 				return exeerrors.ErrCantCreateUserWithGrant
+			}
+			if err := keyspace.GetUsernamePolicy().ValidateUsername(user.User.Username); err != nil {
+				return err
 			}
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0
@@ -421,8 +441,8 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 		case ast.Cipher:
 			gp.SSLType = privileges.SslTypeSpecified
 			if len(opt.Value) > 0 {
-				if _, ok := util.SupportCipher[opt.Value]; !ok {
-					err = errors.Errorf("Unsupported cipher suit: %s", opt.Value)
+				if _, ok := tlsutil.SupportCipher[opt.Value]; !ok {
+					err = errors.Errorf("Unsupported cipher suite: %s", opt.Value)
 					return
 				}
 				gp.SSLCipher = opt.Value
@@ -480,7 +500,7 @@ func (e *GrantExec) grantLevelPriv(ctx context.Context, priv *ast.PrivElem, user
 		return e.grantDBLevel(priv, user, internalSession)
 	case ast.GrantLevelTable:
 		if len(priv.Cols) == 0 {
-			return e.grantTableLevel(priv, user, internalSession)
+			return e.grantTableLevel(ctx, priv, user, internalSession)
 		}
 		return e.grantColumnLevel(ctx, priv, user, internalSession)
 	default:
@@ -526,16 +546,15 @@ func (*GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, inter
 
 // grantDBLevel manipulates mysql.db table.
 func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	for _, v := range mysql.StaticGlobalOnlyPrivs {
-		if v == priv.Priv {
-			return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
-		}
+	if slices.Contains(mysql.StaticGlobalOnlyPrivs, priv.Priv) {
+		return exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")
 	}
 
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
+	dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
 
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.DBTable)
@@ -551,23 +570,28 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 }
 
 // grantTableLevel manipulates mysql.tables_priv table.
-func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	dbName := e.Level.DBName
-	if len(dbName) == 0 {
-		dbName = e.Ctx().GetSessionVars().CurrentDB
+func (e *GrantExec) grantTableLevel(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
+	// Earlier validation may allow GRANT on a missing table, for example CREATE/ALL.
+	// Keep that behavior here: ignore ErrTableNotExists and continue with the input table name.
+	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+		return err
 	}
 	tblName := e.Level.TableName
+	if tbl != nil {
+		tblName = tbl.Meta().Name.O
+	}
 
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
-	err := composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName)
+	err = composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName)
 	if err != nil {
 		return err
 	}
 	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user.User.Username, user.User.Hostname, dbName, tblName)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, sql.String())
 	return err
 }
 
@@ -772,6 +796,22 @@ func getColumnPriv(sctx sessionctx.Context, name string, host string, db string,
 	return cPriv, nil
 }
 
+// getTargetSchemaName returns the real schema name from infoschema when it exists.
+// Keep the original input for non-existent schemas so GRANT/REVOKE on them preserves
+// the current behavior.
+func getTargetSchemaName(sctx sessionctx.Context, dbName string, is infoschema.InfoSchema) string {
+	if len(dbName) == 0 {
+		dbName = sctx.GetSessionVars().CurrentDB
+	}
+	if len(dbName) == 0 {
+		return ""
+	}
+	if db, ok := is.SchemaByName(ast.NewCIStr(dbName)); ok {
+		return db.Name.O
+	}
+	return dbName
+}
+
 // getTargetSchemaAndTable finds the schema and table by dbName and tableName.
 func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbName, tableName string, is infoschema.InfoSchema) (string, table.Table, error) {
 	if len(dbName) == 0 {
@@ -780,8 +820,9 @@ func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbNam
 			return "", nil, errors.New("miss DB name for grant privilege")
 		}
 	}
-	name := model.NewCIStr(tableName)
-	tbl, err := is.TableByName(ctx, model.NewCIStr(dbName), name)
+	dbName = getTargetSchemaName(sctx, dbName, is)
+	name := ast.NewCIStr(tableName)
+	tbl, err := is.TableByName(ctx, ast.NewCIStr(dbName), name)
 	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return dbName, nil, err
 	}

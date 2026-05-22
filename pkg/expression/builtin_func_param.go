@@ -40,10 +40,6 @@ func (re *funcParam) setStrVal(val string) {
 	re.defaultStrVal = val
 }
 
-func (re *funcParam) setIntVal(val int64) {
-	re.defaultIntVal = val
-}
-
 func (re *funcParam) setCol(newCol *chunk.Column) {
 	re.col = newCol
 }

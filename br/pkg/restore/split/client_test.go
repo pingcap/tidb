@@ -14,7 +14,21 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func TestGetCodecPDClient(t *testing.T) {
+	require.Nil(t, (&pdClient{}).GetCodecPDClient())
+	require.Nil(t, (&pdClient{client: NewMockPDClientForSplit()}).GetCodecPDClient())
+	codecPDClient := &tikv.CodecPDClient{}
+	require.Nil(t, (&pdClient{client: codecPDClient}).GetCodecPDClient())
+	require.Same(t, codecPDClient, (&pdClient{client: codecPDClient, isCodecPDClient: true}).GetCodecPDClient())
+	require.Same(t, codecPDClient, NewCodecAwareClient(codecPDClient, nil, nil, 0, 0).GetCodecPDClient())
+	require.Nil(t, NewFakeSplitClient().GetCodecPDClient())
+	require.Nil(t, NewTestClient(nil, nil, 0).GetCodecPDClient())
+}
 
 func TestBatchSplit(t *testing.T) {
 	backup := maxBatchSplitSize
@@ -228,7 +242,7 @@ func TestScanRegionEmptyResult(t *testing.T) {
 	mockPDClient := NewMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("")}
 	mockPDClient.SetRegions(keys)
-	mockPDClient.scanRegions.errors = []error{nil, nil, nil, nil}
+	mockPDClient.scanRegions.errors = []error{nil, nil, nil, nil, nil, nil, nil, nil}
 	mockClient := &pdClient{
 		client:           mockPDClient,
 		splitBatchKeyCnt: 100,
@@ -300,4 +314,22 @@ func TestSplitMeetErrorAndRetry(t *testing.T) {
 	}
 	_, err = mockClient.SplitKeysAndScatter(ctx, [][]byte{{'d'}})
 	require.ErrorContains(t, err, "no valid key")
+}
+
+func TestPDErrorCanRetry(t *testing.T) {
+	// non-gRPC error should not retry
+	err := errors.New("random failure")
+	require.False(t, PdErrorCanRetry(err))
+
+	e1 := status.Error(codes.Unknown, "region 42 is not fully replicated")
+	require.True(t, PdErrorCanRetry(e1))
+
+	e2 := status.Error(codes.Unknown, "operator canceled because cannot add an operator to the execute queue")
+	require.True(t, PdErrorCanRetry(e2))
+
+	e3 := status.Error(codes.Unknown, "unable to create operator, failed to create scatter region operator for region 13813282")
+	require.True(t, PdErrorCanRetry(e3))
+
+	e4 := status.Error(codes.Unknown, "should be false")
+	require.False(t, PdErrorCanRetry(e4))
 }

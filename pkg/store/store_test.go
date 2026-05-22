@@ -24,10 +24,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
-	kv2 "github.com/tikv/client-go/v2/kv"
 )
 
 const (
@@ -59,7 +60,7 @@ func mustDel(t *testing.T, txn kv.Transaction) {
 }
 
 func encodeInt(n int) []byte {
-	return []byte(fmt.Sprintf("%010d", n))
+	return fmt.Appendf(nil, "%010d", n)
 }
 
 func decodeInt(s []byte) int {
@@ -131,7 +132,7 @@ func mustGet(t *testing.T, txn kv.Transaction) {
 		s := encodeInt(i * indexStep)
 		val, err := txn.Get(context.TODO(), s)
 		require.NoError(t, err)
-		require.Equal(t, string(s), string(val))
+		require.Equal(t, kv.NewValueEntry(s, 0), val)
 	}
 }
 
@@ -504,7 +505,7 @@ func TestConditionIfNotExist(t *testing.T) {
 	b := []byte("1")
 	var wg sync.WaitGroup
 	wg.Add(cnt)
-	for i := 0; i < cnt; i++ {
+	for range cnt {
 		go func() {
 			defer wg.Done()
 			txn, err := store.Begin()
@@ -551,7 +552,7 @@ func TestConditionIfEqual(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	for i := 0; i < cnt; i++ {
+	for range cnt {
 		go func() {
 			defer wg.Done()
 			// Use txn1/err1 instead of txn/err is
@@ -649,10 +650,10 @@ func TestIsolationInc(t *testing.T) {
 	var wg sync.WaitGroup
 
 	wg.Add(threadCnt)
-	for i := 0; i < threadCnt; i++ {
+	for range threadCnt {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				var id int64
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 				err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -694,18 +695,18 @@ func TestIsolationMultiInc(t *testing.T) {
 	keyCnt := 4
 
 	keys := make([][]byte, 0, keyCnt)
-	for i := 0; i < keyCnt; i++ {
-		keys = append(keys, []byte(fmt.Sprintf("test_key_%d", i)))
+	for i := range keyCnt {
+		keys = append(keys, fmt.Appendf(nil, "test_key_%d", i))
 	}
 
 	var wg sync.WaitGroup
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	wg.Add(threadCnt)
-	for i := 0; i < threadCnt; i++ {
+	for range threadCnt {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < incCnt; j++ {
+			for range incCnt {
 				err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 					for _, key := range keys {
 						_, err1 := kv.IncInt64(txn, key, 1)
@@ -760,108 +761,25 @@ func TestRegister(t *testing.T) {
 	require.ErrorContains(t, err, "already registered")
 }
 
-func TestSetAssertion(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
+func TestInitStorage(t *testing.T) {
+	require.NoError(t, Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
+	bak := *config.GetGlobalConfig()
+	config.GetGlobalConfig().Path = t.TempDir()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&bak)
+	})
+	if kerneltype.IsClassic() {
+		storage := MustInitStorage("")
+		defer storage.Close()
+		require.Nil(t, GetSystemStorage())
+	} else {
+		config.GetGlobalConfig().KeyspaceName = keyspace.System
+		storage := MustInitStorage(keyspace.System)
+		require.NotNil(t, GetSystemStorage())
+		defer storage.Close()
+		require.Same(t, storage, GetSystemStorage())
 
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	mustHaveAssertion := func(key []byte, assertion kv.FlagsOp) {
-		f, err1 := txn.GetMemBuffer().GetFlags(key)
-		require.NoError(t, err1)
-		if assertion == kv.SetAssertExist {
-			require.True(t, f.HasAssertExists())
-			require.False(t, f.HasAssertUnknown())
-		} else if assertion == kv.SetAssertNotExist {
-			require.True(t, f.HasAssertNotExists())
-			require.False(t, f.HasAssertUnknown())
-		} else if assertion == kv.SetAssertUnknown {
-			require.True(t, f.HasAssertUnknown())
-		} else if assertion == kv.SetAssertNone {
-			require.False(t, f.HasAssertionFlags())
-		} else {
-			require.FailNow(t, "unreachable")
-		}
+		// for user keyspace, we need to init 2 store with different PATH, we cannot
+		// do it for uni-store, so skip it.
 	}
-
-	testUnchangeable := func(key []byte, expectAssertion kv.FlagsOp) {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
-		require.NoError(t, err)
-		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.SetAssertNotExist)
-		require.NoError(t, err)
-		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
-		require.NoError(t, err)
-		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.SetAssertNone)
-		require.NoError(t, err)
-		mustHaveAssertion(key, expectAssertion)
-	}
-
-	k1 := []byte("k1")
-	err = txn.SetAssertion(k1, kv.SetAssertExist)
-	require.NoError(t, err)
-	mustHaveAssertion(k1, kv.SetAssertExist)
-	testUnchangeable(k1, kv.SetAssertExist)
-
-	k2 := []byte("k2")
-	err = txn.SetAssertion(k2, kv.SetAssertNotExist)
-	require.NoError(t, err)
-	mustHaveAssertion(k2, kv.SetAssertNotExist)
-	testUnchangeable(k2, kv.SetAssertNotExist)
-
-	k3 := []byte("k3")
-	err = txn.SetAssertion(k3, kv.SetAssertUnknown)
-	require.NoError(t, err)
-	mustHaveAssertion(k3, kv.SetAssertUnknown)
-	testUnchangeable(k3, kv.SetAssertUnknown)
-
-	k4 := []byte("k4")
-	err = txn.SetAssertion(k4, kv.SetAssertNone)
-	require.NoError(t, err)
-	mustHaveAssertion(k4, kv.SetAssertNone)
-	err = txn.SetAssertion(k4, kv.SetAssertExist)
-	require.NoError(t, err)
-	mustHaveAssertion(k4, kv.SetAssertExist)
-	testUnchangeable(k4, kv.SetAssertExist)
-
-	k5 := []byte("k5")
-	err = txn.Set(k5, []byte("v5"))
-	require.NoError(t, err)
-	mustHaveAssertion(k5, kv.SetAssertNone)
-	err = txn.SetAssertion(k5, kv.SetAssertNotExist)
-	require.NoError(t, err)
-	mustHaveAssertion(k5, kv.SetAssertNotExist)
-	testUnchangeable(k5, kv.SetAssertNotExist)
-
-	k6 := []byte("k6")
-	err = txn.SetAssertion(k6, kv.SetAssertNotExist)
-	require.NoError(t, err)
-	err = txn.GetMemBuffer().SetWithFlags(k6, []byte("v6"), kv.SetPresumeKeyNotExists)
-	require.NoError(t, err)
-	mustHaveAssertion(k6, kv.SetAssertNotExist)
-	testUnchangeable(k6, kv.SetAssertNotExist)
-	flags, err := txn.GetMemBuffer().GetFlags(k6)
-	require.NoError(t, err)
-	require.True(t, flags.HasPresumeKeyNotExists())
-	err = txn.GetMemBuffer().DeleteWithFlags(k6, kv.SetNeedLocked)
-	mustHaveAssertion(k6, kv.SetAssertNotExist)
-	testUnchangeable(k6, kv.SetAssertNotExist)
-	flags, err = txn.GetMemBuffer().GetFlags(k6)
-	require.NoError(t, err)
-	require.True(t, flags.HasPresumeKeyNotExists())
-	require.True(t, flags.HasNeedLocked())
-
-	k7 := []byte("k7")
-	lockCtx := kv2.NewLockCtx(txn.StartTS(), 2000, time.Now())
-	err = txn.LockKeys(context.Background(), lockCtx, k7)
-	require.NoError(t, err)
-	mustHaveAssertion(k7, kv.SetAssertNone)
-
-	require.NoError(t, txn.Rollback())
 }

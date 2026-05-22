@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
@@ -33,6 +34,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -52,7 +55,9 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/standby"
 	"github.com/pingcap/tidb/pkg/statistics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -65,14 +70,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
+	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/servicescope"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -120,6 +127,12 @@ const (
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
 	nmTempDir          = "temp-dir"
+	nmClusterCa        = "cluster-ca"
+	nmClusterCert      = "cluster-cert"
+	nmClusterKey       = "cluster-key"
+	nmSQLCA            = "sql-ca"
+	nmSQLCert          = "sql-cert"
+	nmSQLKey           = "sql-key"
 
 	nmRedact = "redact"
 
@@ -134,6 +147,16 @@ const (
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 	nmKeyspaceName                = "keyspace-name"
 	nmTiDBServiceScope            = "tidb-service-scope"
+
+	nmStandby           = "standby"
+	nmActivationTimeout = "activation-timeout"
+	nmMaxIdleSeconds    = "max-idle-seconds"
+)
+
+const (
+	exitCodeOK  = 0
+	exitCodeErr = 1
+	exitCodeInt = 128 + int(syscall.SIGINT)
 )
 
 var (
@@ -160,6 +183,12 @@ var (
 	repairMode       *bool
 	repairList       *string
 	tempDir          *string
+	clusterCA        *string
+	clusterCert      *string
+	clusterKey       *string
+	sqlCA            *string
+	sqlCert          *string
+	sqlKey           *string
 
 	// Log
 	logLevel     *string
@@ -190,6 +219,11 @@ var (
 	keyspaceName                *string
 	serviceScope                *string
 	help                        *bool
+
+	// Standby
+	standbyMode       *bool
+	activationTimeout *uint
+	maxIdleSeconds    *uint
 )
 
 func initFlagSet() *flag.FlagSet {
@@ -216,6 +250,12 @@ func initFlagSet() *flag.FlagSet {
 	repairMode = flagBoolean(fset, nmRepairMode, false, "enable admin repair mode")
 	repairList = fset.String(nmRepairList, "", "admin repair table list")
 	tempDir = fset.String(nmTempDir, config.DefTempDir, "tidb temporary directory")
+	clusterCA = fset.String(nmClusterCa, "", "cluster CA file path")
+	clusterCert = fset.String(nmClusterCert, "", "cluster cert file path")
+	clusterKey = fset.String(nmClusterKey, "", "cluster key file path")
+	sqlCA = fset.String(nmSQLCA, "", "SQL CA file path")
+	sqlCert = fset.String(nmSQLCert, "", "SQL cert file path")
+	sqlKey = fset.String(nmSQLKey, "", "SQL key file path")
 
 	// Log
 	logLevel = fset.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -231,7 +271,7 @@ func initFlagSet() *flag.FlagSet {
 	metricsInterval = fset.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
 
 	// subcommand collect-log
-	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs, if `./tidb-server --redact=xxx collect-log <input> <output>` subcommand is used")
+	redactFlag = flagBoolean(fset, nmRedact, false, "remove sensitive words from marked tidb logs when using collect-log subcommand, e.g. ./tidb-server --redact=xxx collect-log <input> <output>")
 
 	// PROXY Protocol
 	proxyProtocolNetworks = fset.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
@@ -246,6 +286,12 @@ func initFlagSet() *flag.FlagSet {
 	keyspaceName = fset.String(nmKeyspaceName, "", "keyspace name.")
 	serviceScope = fset.String(nmTiDBServiceScope, "", "tidb service scope")
 	help = fset.Bool("help", false, "show the usage")
+
+	// Standby
+	standbyMode = flagBoolean(fset, nmStandby, false, "start tidb-server as standby")
+	activationTimeout = fset.Uint(nmActivationTimeout, 0, "max time in second allowed for tidb to activate from standby, 0 means no limit")
+	maxIdleSeconds = fset.Uint(nmMaxIdleSeconds, 0, "max idle seconds for a connection, 0 means no limit")
+
 	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
 	// nolint:errcheck
@@ -255,6 +301,10 @@ func initFlagSet() *flag.FlagSet {
 		os.Exit(0)
 	}
 	return fset
+}
+
+func initDeployMode(cfg *config.Config) error {
+	return deploymode.Set(cfg.DeployMode)
 }
 
 func main() {
@@ -270,24 +320,63 @@ func main() {
 		}
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
+	if kerneltype.IsNextGen() {
+		terror.MustNil(initDeployMode(config.GetGlobalConfig()))
+	}
 	if *version {
-		setVersions()
+		mustInitVersions()
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
-	registerStores()
-	err := metricsutil.RegisterMetrics()
+	// we cannot add this check inside config.Valid(), as previous '-V' also relies
+	// on initialized global config.
+	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 && !config.GetGlobalConfig().Standby.StandByMode {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is required for nextgen TiDB")
+		os.Exit(0)
+	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().Standby.StandByMode) {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is not supported for classic TiDB")
+		os.Exit(0)
+	}
+
+	var standbyController server.StandbyController
+	if config.GetGlobalConfig().Standby.StandByMode {
+		standbyController = standby.NewLoadKeyspaceController()
+	}
+
+	var err error
+
+	// If running standby mode, wait for activate request.
+	if standbyController != nil {
+		standbyController.WaitForActivate()
+		// EndStandby only execute once. If server is created
+		// successfully, the defer has no effect. If panics
+		// before server is created, the defer makes sure to
+		// notify the activate caller.
+		defer standbyController.EndStandby(err)
+		// need to validate config again in case of config change via standby
+		terror.MustNil(config.GetGlobalConfig().Valid())
+	}
+
+	signal.SetupUSR1Handler()
+	err = registerStores()
+	terror.MustNil(err)
+	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
 
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
-		err := disk.InitializeTempDir()
+		err = disk.InitializeTempDir()
 		terror.MustNil(err)
-		checkTempStorageQuota()
+		err = checkTempStorageQuota()
+		terror.MustNil(err)
 	}
-	setupLog()
-	memory.InitMemoryHook()
-	setupExtensions()
+	err = setupLog()
+	terror.MustNil(err)
+
+	err = memory.InitMemoryHook()
+	terror.MustNil(err)
+	_, err = setupExtensions()
+	terror.MustNil(err)
 	setupStmtSummary()
 
 	err = cpuprofile.StartCPUProfiler()
@@ -309,64 +398,107 @@ func main() {
 		logutil.BgLogger().Warn(warnMsg)
 		tikv.EnableFailpoints()
 	}
+	// UniStore is a mock store for tests. It uses store addresses like "store1" which are not a valid
+	// host:port for gRPC. client-go's store liveness check uses gRPC health check on the store address,
+	// which may mistakenly mark the UniStore as unreachable and make tests hang.
+	// Force the liveness check to always return reachable for UniStore.
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+		tikv.EnableFailpoints()
+		if err := failpoint.Enable("tikvclient/injectLiveness", `return("reachable")`); err != nil {
+			logutil.BgLogger().Warn("failed to enable tikvclient/injectLiveness for unistore", zap.Error(err))
+		}
+	}
+	if intest.EnableInternalCheck {
+		logutil.BgLogger().Warn("internal check is enabled, this should NOT happen in the production environment")
+	}
 	setGlobalVars()
-	setCPUAffinity()
+	setupSEM()
+	err = setCPUAffinity()
+	terror.MustNil(err)
 	cgmon.StartCgroupMonitor()
-	setupTracing() // Should before createServer and after setup config.
+	err = setupTracing() // Should before createServer and after setup config.
+	terror.MustNil(err)
 	printInfo()
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	terror.MustNil(err)
 	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)
+	if standbyController != nil {
+		standbyController.EndStandby(nil)
+
+		svr.StandbyController = standbyController
+		svr.StandbyController.OnServerCreated(svr)
+	}
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func() {
+	exitCode := exitCodeOK
+	signal.SetupSignalHandler(func(sig os.Signal) {
 		svr.Close()
 		resourcemanager.InstanceResourceManager.Stop()
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		executor.Stop()
+		exitCode = exitCodeForSignal(sig)
 		close(exited)
 	})
-	topsql.SetupTopSQL(svr)
+	topsql.SetupTopProfiling(keyspace.GetKeyspaceNameBytesBySettings(), svr, dom)
 	terror.MustNil(svr.Run(dom))
 	<-exited
-	syncLog()
+	if err := syncLog(); err != nil {
+		// Log sync failure means shutdown did not finish cleanly, so keep
+		// reporting it as a generic non-zero exit instead of a successful exit.
+		exitCode = exitCodeErr
+	}
+	if exitCode != exitCodeOK {
+		os.Exit(exitCode)
+	}
 }
 
-func syncLog() {
+func exitCodeForSignal(sig os.Signal) int {
+	// Standby force shutdown uses SIGINT. Return 128+SIGINT so deployment scripts
+	// can identify this force-shutdown path.
+	if sig == syscall.SIGINT {
+		return exitCodeInt
+	}
+	return exitCodeOK
+}
+
+func syncLog() error {
 	if err := log.Sync(); err != nil {
 		// Don't complain about /dev/stdout as Fsync will return EINVAL.
 		if pathErr, ok := err.(*fs.PathError); ok {
 			if pathErr.Path == "/dev/stdout" {
-				os.Exit(0)
+				return nil
 			}
 		}
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }
 
-func checkTempStorageQuota() {
+func checkTempStorageQuota() error {
 	// check capacity and the quota when EnableTmpStorageOnOOM is enabled
 	c := config.GetGlobalConfig()
 	if c.TempStorageQuota >= 0 {
 		capacityByte, err := storageSys.GetTargetDirectoryCapacity(c.TempStoragePath)
 		if err != nil {
-			log.Fatal(err.Error())
+			return err
 		} else if capacityByte < uint64(c.TempStorageQuota) {
-			log.Fatal(fmt.Sprintf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath))
+			return fmt.Errorf("value of [tmp-storage-quota](%d byte) exceeds the capacity(%d byte) of the [%s] directory", c.TempStorageQuota, capacityByte, c.TempStoragePath)
 		}
 	}
+	return nil
 }
 
-func setCPUAffinity() {
+func setCPUAffinity() error {
 	if affinityCPU == nil || len(*affinityCPU) == 0 {
-		return
+		return nil
 	}
 	var cpu []int
 	for _, af := range strings.Split(*affinityCPU, ",") {
@@ -375,7 +507,7 @@ func setCPUAffinity() {
 			c, err := strconv.Atoi(af)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "wrong affinity cpu config: %s", *affinityCPU)
-				os.Exit(1)
+				return err
 			}
 			cpu = append(cpu, c)
 		}
@@ -383,42 +515,60 @@ func setCPUAffinity() {
 	err := linux.SetAffinity(cpu)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
-		os.Exit(1)
+		return err
 	}
 	if len(cpu) < runtime.GOMAXPROCS(0) {
 		log.Info("cpu number less than maxprocs", zap.Int("cpu number ", len(cpu)), zap.Int("maxprocs", runtime.GOMAXPROCS(0)))
 		runtime.GOMAXPROCS(len(cpu))
 	}
+	return nil
 }
 
-func registerStores() {
-	err := kvstore.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
-	terror.MustNil(err)
-	err = kvstore.Register(config.StoreTypeMockTiKV, mockstore.MockTiKVDriver{})
-	terror.MustNil(err)
-	err = kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{})
-	terror.MustNil(err)
-}
-
-func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
-	cfg := config.GetGlobalConfig()
-	var fullPath string
-	if keyspaceName == "" {
-		fullPath = fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
-	} else {
-		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
+func registerStores() error {
+	err := kvstore.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
+	if err != nil {
+		return err
 	}
-	var err error
-	storage, err := kvstore.New(fullPath)
-	terror.MustNil(err)
+	err = kvstore.Register(config.StoreTypeMockTiKV, mockstore.MockTiKVDriver{})
+	if err != nil {
+		return err
+	}
+	err = kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{})
+	return err
+}
+
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, error) {
+	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+		kv.StandAloneTiDB = true
+	}
+	storage := kvstore.MustInitStorage(keyspaceName)
+	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
+		pdhttpCli := tikvStore.GetPDHTTPClient()
+		// unistore also implements kv.StorageWithPD, but it does not have PD client.
+		if pdhttpCli != nil {
+			pdStatus, err := pdhttpCli.GetStatus(context.Background())
+			if err != nil {
+				return nil, nil, err
+			}
+			if !kerneltype.IsMatch(pdStatus.KernelType) {
+				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
+					zap.String("tidb", kerneltype.Name()))
+				return nil, nil, errors.New("kernel type mismatch")
+			}
+		}
+	}
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
-	err = ddl.StartOwnerManager(context.Background(), storage)
-	terror.MustNil(err)
+	err := ddl.StartOwnerManager(context.Background(), storage)
+	if err != nil {
+		return nil, nil, err
+	}
 	dom, err := session.BootstrapSession(storage)
-	terror.MustNil(err)
-	return storage, dom
+	if err != nil {
+		return nil, nil, err
+	}
+	return storage, dom, nil
 }
 
 // Prometheus push.
@@ -551,6 +701,49 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	if actualFlags[nmTempDir] {
 		cfg.TempDir = *tempDir
 	}
+	if cfg.DeployMode == deploymode.Starter {
+		clusterTLSOverridden := actualFlags[nmClusterCa] || actualFlags[nmClusterCert] || actualFlags[nmClusterKey]
+		if actualFlags[nmClusterCa] {
+			cfg.Security.ClusterSSLCA = *clusterCA
+		}
+		if actualFlags[nmClusterCert] {
+			cfg.Security.ClusterSSLCert = *clusterCert
+		}
+		if actualFlags[nmClusterKey] {
+			cfg.Security.ClusterSSLKey = *clusterKey
+		}
+		if clusterTLSOverridden {
+			if actualFlags[nmClusterCert] != actualFlags[nmClusterKey] {
+				err = fmt.Errorf("cluster-cert and cluster-key must be set together")
+				terror.MustNil(err)
+			}
+			if cfg.Security.ClusterSSLCA != "" && (cfg.Security.ClusterSSLCert == "" || cfg.Security.ClusterSSLKey == "") {
+				err = fmt.Errorf("cluster-ca requires both cluster-cert and cluster-key")
+				terror.MustNil(err)
+			}
+		}
+
+		sqlTLSOverridden := actualFlags[nmSQLCA] || actualFlags[nmSQLCert] || actualFlags[nmSQLKey]
+		if actualFlags[nmSQLCA] {
+			cfg.Security.SSLCA = *sqlCA
+		}
+		if actualFlags[nmSQLCert] {
+			cfg.Security.SSLCert = *sqlCert
+		}
+		if actualFlags[nmSQLKey] {
+			cfg.Security.SSLKey = *sqlKey
+		}
+		if sqlTLSOverridden {
+			if actualFlags[nmSQLCert] != actualFlags[nmSQLKey] {
+				err = fmt.Errorf("sql-cert and sql-key must be set together")
+				terror.MustNil(err)
+			}
+			if cfg.Security.SSLCA != "" && (cfg.Security.SSLCert == "" || cfg.Security.SSLKey == "") {
+				err = fmt.Errorf("sql-ca requires both sql-cert and sql-key")
+				terror.MustNil(err)
+			}
+		}
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -637,23 +830,70 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 
 	if actualFlags[nmTiDBServiceScope] {
-		err = servicescope.CheckServiceScope(*serviceScope)
+		err = naming.Check(*serviceScope)
 		terror.MustNil(err)
 		cfg.Instance.TiDBServiceScope = *serviceScope
 	}
+
+	if actualFlags[nmStandby] {
+		cfg.Standby.StandByMode = *standbyMode
+	}
+
+	if actualFlags[nmActivationTimeout] {
+		cfg.Standby.ActivationTimeout = *activationTimeout
+	}
+
+	if actualFlags[nmMaxIdleSeconds] {
+		cfg.Standby.MaxIdleSeconds = *maxIdleSeconds
+	}
 }
 
-func setVersions() {
-	cfg := config.GetGlobalConfig()
-	if len(cfg.ServerVersion) > 0 {
-		mysql.ServerVersion = cfg.ServerVersion
+func validateVersionConfigPolicy(cfg *config.Config) error {
+	// allow users to set version info is a bad feature, we forbid it in next-gen.
+	if kerneltype.IsNextGen() && (len(cfg.TiDBEdition) > 0 || len(cfg.TiDBReleaseVersion) > 0 || len(cfg.ServerVersion) > 0) {
+		return errors.New("config options tidb-edition, tidb-release-version and server-version are not allowed to set in nextgen kernel")
 	}
+	return nil
+}
+
+func deriveRuntimeVersionsFromBuildInfo(releaseVersion string) (normalizedReleaseVersion string, serverVersion string, err error) {
+	normalizedReleaseVersion = mysql.NormalizeTiDBReleaseVersionForNextGen(releaseVersion)
+	serverVersion, err = mysql.BuildTiDBXServerVersion(normalizedReleaseVersion)
+	if err != nil {
+		return "", "", errors.Annotate(err, "invalid tidb release version for nextgen kernel")
+	}
+	return normalizedReleaseVersion, serverVersion, nil
+}
+
+func initVersions(cfg *config.Config) error {
+	if err := validateVersionConfigPolicy(cfg); err != nil {
+		return err
+	}
+	if kerneltype.IsNextGen() {
+		normalizedReleaseVersion, serverVersion, err := deriveRuntimeVersionsFromBuildInfo(mysql.TiDBReleaseVersion)
+		if err != nil {
+			return err
+		}
+		mysql.TiDBReleaseVersion = normalizedReleaseVersion
+		mysql.ServerVersion = serverVersion
+		return nil
+	}
+
 	if len(cfg.TiDBEdition) > 0 {
 		versioninfo.TiDBEdition = cfg.TiDBEdition
 	}
 	if len(cfg.TiDBReleaseVersion) > 0 {
 		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
 	}
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+	}
+	return nil
+}
+
+func mustInitVersions() {
+	cfg := config.GetGlobalConfig()
+	terror.MustNil(initVersions(cfg))
 }
 
 func setGlobalVars() {
@@ -717,11 +957,11 @@ func setGlobalVars() {
 			zap.String("lease", schemaLeaseDuration.String()))
 		schemaLeaseDuration = config.DefSchemaLease
 	}
-	session.SetSchemaLease(schemaLeaseDuration)
+	vardef.SetSchemaLease(schemaLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
-	session.SetStatsLease(statsLeaseDuration)
+	vardef.SetStatsLease(statsLeaseDuration)
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
-	session.SetPlanReplayerGCLease(planReplayerGCLease)
+	vardef.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	if cfg.SplitTable {
@@ -741,56 +981,69 @@ func setGlobalVars() {
 	kv.TxnEntrySizeLimit.Store(cfg.Performance.TxnEntrySizeLimit)
 
 	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
-	variable.ForcePriority = int32(priority)
+	vardef.ForcePriority = int32(priority)
 
-	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
-	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
-	variable.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
-	variable.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)
-	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
-	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
-	atomic.StoreUint64(&variable.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
+	vardef.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
+	vardef.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
+	vardef.EnableRCReadCheckTS.Store(cfg.Instance.TiDBRCReadCheckTS)
+	vardef.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)
+	atomic.StoreUint32(&vardef.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
+	atomic.StoreUint64(&vardef.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
+	atomic.StoreUint64(&vardef.ExpensiveTxnTimeThreshold, cfg.Instance.ExpensiveTxnTimeThreshold)
 
-	if len(cfg.ServerVersion) > 0 {
-		mysql.ServerVersion = cfg.ServerVersion
-		variable.SetSysVar(variable.Version, cfg.ServerVersion)
-	}
+	terror.MustNil(initVersions(cfg))
+	variable.SetSysVar(vardef.Version, mysql.ServerVersion)
 
 	if len(cfg.TiDBEdition) > 0 {
-		versioninfo.TiDBEdition = cfg.TiDBEdition
-		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
+		variable.SetSysVar(vardef.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 8.0 compatible")
 	}
 	if len(cfg.VersionComment) > 0 {
-		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)
-	}
-	if len(cfg.TiDBReleaseVersion) > 0 {
-		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
+		variable.SetSysVar(vardef.VersionComment, cfg.VersionComment)
 	}
 
-	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
-	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
-	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
-	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
+	// set instance variables
+	setInstanceVar := func(name string, value string) {
+		if value == "" || value == "0" {
+			return
+		}
+		old := variable.GetSysVar(name)
+		tmp := *old
+		tmp.Value = value
+		tmp.IsInitedFromConfig = true
+		variable.RegisterSysVar(&tmp)
+	}
+	{
+		setInstanceVar(vardef.TiDBStmtSummaryMaxStmtCount, strconv.FormatUint(cfg.Instance.StmtSummaryMaxStmtCount, 10))
+		setInstanceVar(vardef.TiDBServerMemoryLimit, cfg.Instance.ServerMemoryLimit)
+		setInstanceVar(vardef.TiDBMemArbitratorMode, cfg.Instance.MemArbitratorMode)
+		setInstanceVar(vardef.TiDBMemArbitratorSoftLimit, cfg.Instance.MemArbitratorSoftLimit)
+		setInstanceVar(vardef.TiDBServerMemoryLimitGCTrigger, cfg.Instance.ServerMemoryLimitGCTrigger)
+		setInstanceVar(vardef.TiDBInstancePlanCacheMaxMemSize, cfg.Instance.InstancePlanCacheMaxMemSize)
+		setInstanceVar(vardef.TiDBStatsCacheMemQuota, strconv.FormatUint(cfg.Instance.StatsCacheMemQuota, 10))
+		setInstanceVar(vardef.TiDBMemQuotaBindingCache, strconv.FormatUint(cfg.Instance.MemQuotaBindingCache, 10))
+		setInstanceVar(vardef.TiDBSchemaCacheSize, cfg.Instance.SchemaCacheSize)
+	}
+
+	variable.SetSysVar(vardef.TiDBForcePriority, mysql.Priority2Str[priority])
+	variable.SetSysVar(vardef.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
+	variable.SetSysVar(vardef.TiDBOptProjectionPushDown, variable.BoolToOnOff(cfg.Performance.ProjectionPushDown))
+	variable.SetSysVar(vardef.Port, fmt.Sprintf("%d", cfg.Port))
 	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
-	variable.SetSysVar(variable.Socket, cfg.Socket)
-	variable.SetSysVar(variable.DataDir, cfg.Path)
-	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
-	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
-	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
-	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
-	variable.SetSysVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.BoolToOnOff(cfg.PessimisticTxn.ConstraintCheckInPlacePessimistic))
+	variable.SetSysVar(vardef.Socket, cfg.Socket)
+	variable.SetSysVar(vardef.DataDir, cfg.Path)
+	variable.SetSysVar(vardef.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
+	variable.SetSysVar(vardef.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
+	variable.SetSysVar(vardef.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
+	vardef.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
+	variable.SetSysVar(vardef.TiDBConstraintCheckInPlacePessimistic, variable.BoolToOnOff(cfg.PessimisticTxn.ConstraintCheckInPlacePessimistic))
 	if hostname, err := os.Hostname(); err == nil {
-		variable.SetSysVar(variable.Hostname, hostname)
+		variable.SetSysVar(vardef.Hostname, hostname)
 	}
-	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
-
-	if cfg.Security.EnableSEM {
-		sem.Enable()
-	}
+	vardef.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
 
 	// For CI environment we default enable prepare-plan-cache.
 	if config.CheckTableBeforeDrop { // only for test
-		variable.SetSysVar(variable.TiDBEnablePrepPlanCache, variable.BoolToOnOff(true))
+		variable.SetSysVar(vardef.TiDBEnablePrepPlanCache, variable.BoolToOnOff(true))
 	}
 	// use server-memory-quota as max-plan-cache-memory
 	plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)
@@ -827,27 +1080,34 @@ func setGlobalVars() {
 	chunk.InitChunkAllocSize(cfg.TiDBMaxReuseChunk, cfg.TiDBMaxReuseColumn)
 
 	if len(cfg.Instance.TiDBServiceScope) > 0 {
-		variable.ServiceScope.Store(strings.ToLower(cfg.Instance.TiDBServiceScope))
+		vardef.ServiceScope.Store(strings.ToLower(cfg.Instance.TiDBServiceScope))
 	}
 }
 
-func setupLog() {
+func setupLog() error {
 	cfg := config.GetGlobalConfig()
 	err := logutil.InitLogger(cfg.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace())
-	terror.MustNil(err)
+	if err != nil {
+		return err
+	}
 
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
+	return nil
 }
 
-func setupExtensions() *extension.Extensions {
+func setupExtensions() (*extension.Extensions, error) {
 	err := extension.Setup()
-	terror.MustNil(err)
+	if err != nil {
+		return nil, err
+	}
 
 	extensions, err := extension.GetExtensions()
-	terror.MustNil(err)
+	if err != nil {
+		return nil, err
+	}
 
-	return extensions
+	return extensions, nil
 }
 
 func printInfo() {
@@ -888,25 +1148,31 @@ func setupMetrics() {
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
 
-func setupTracing() {
+func setupTracing() error {
 	cfg := config.GetGlobalConfig()
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracingCfg.ServiceName = "TiDB"
 	tracer, _, err := tracingCfg.NewTracer()
 	if err != nil {
-		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
+		log.Error("setup jaeger tracer failed", zap.String("error message", err.Error()))
+		return err
 	}
 	opentracing.SetGlobalTracer(tracer)
+	return nil
 }
 
 func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
-	ddl.CloseOwnerManager()
+	ddl.CloseOwnerManager(storage)
 	copr.GlobalMPPFailedStoreProber.Stop()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
+	if kv.IsUserKS(storage) {
+		err = kvstore.GetSystemStorage().Close()
+		terror.Log(errors.Annotate(err, "close system storage"))
+	}
 }
 
 // The amount of time we wait for the ongoing txt to finished.
@@ -926,10 +1192,10 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
 	repository.StopRepository()
+	topsql.Close()
 	closeDDLOwnerMgrDomainAndStorage(storage, dom)
 	disk.CleanUp()
 	closeStmtSummary()
-	topsql.Close()
 	cgmon.StopCgroupMonitor()
 }
 
@@ -987,6 +1253,21 @@ func enablePyroscope() {
 		})
 		if err != nil {
 			log.Fatal("fail to start pyroscope", zap.Error(err))
+		}
+	}
+}
+
+func setupSEM() {
+	cfg := config.GetGlobalConfig()
+
+	if cfg.Security.EnableSEM {
+		if cfg.Security.SEMConfig != "" {
+			err := semv2.Enable(cfg.Security.SEMConfig)
+			if err != nil {
+				logutil.BgLogger().Fatal("failed to enable SEM", zap.Error(err))
+			}
+		} else {
+			sem.Enable()
 		}
 	}
 }

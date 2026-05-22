@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -282,7 +283,7 @@ func (c *concatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
-	for i := 0; i < len(args); i++ {
+	for range args {
 		argTps = append(argTps, types.ETString)
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
@@ -349,7 +350,7 @@ func (c *concatWSFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
-	for i := 0; i < len(args); i++ {
+	for range args {
 		argTps = append(argTps, types.ETString)
 	}
 
@@ -2205,8 +2206,11 @@ func (b *builtinLpadSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	}
 	padLength := len(padStr)
 
-	if targetLength < 0 || targetLength > b.tp.GetFlen() || (byteLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength > b.tp.GetFlen() {
 		return "", true, nil
+	}
+	if byteLength < targetLength && padLength == 0 {
+		return "", false, nil
 	}
 
 	if tailLen := targetLength - byteLength; tailLen > 0 {
@@ -2253,8 +2257,11 @@ func (b *builtinLpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
 		return "", true, nil
+	}
+	if runeLength < targetLength && padLength == 0 {
+		return "", false, nil
 	}
 
 	if tailLen := targetLength - runeLength; tailLen > 0 {
@@ -2329,8 +2336,11 @@ func (b *builtinRpadSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	}
 	padLength := len(padStr)
 
-	if targetLength < 0 || targetLength > b.tp.GetFlen() || (byteLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength > b.tp.GetFlen() {
 		return "", true, nil
+	}
+	if byteLength < targetLength && padLength == 0 {
+		return "", false, nil
 	}
 
 	if tailLen := targetLength - byteLength; tailLen > 0 {
@@ -2377,8 +2387,11 @@ func (b *builtinRpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength > mysql.MaxBlobWidth || targetLength*4 > b.tp.GetFlen() {
 		return "", true, nil
+	}
+	if runeLength < targetLength && padLength == 0 {
+		return "", false, nil
 	}
 
 	if tailLen := targetLength - runeLength; tailLen > 0 {
@@ -2439,7 +2452,7 @@ func (c *charFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		return nil, err
 	}
 	argTps := make([]types.EvalType, 0, len(args))
-	for i := 0; i < len(args)-1; i++ {
+	for range len(args) - 1 {
 		argTps = append(argTps, types.ETInt)
 	}
 	argTps = append(argTps, types.ETString)
@@ -2509,7 +2522,7 @@ func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
 func (b *builtinCharSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	bigints := make([]int64, 0, len(b.args)-1)
 
-	for i := 0; i < len(b.args)-1; i++ {
+	for i := range len(b.args) - 1 {
 		val, IsNull, err := b.args[i].EvalInt(ctx, row)
 		if err != nil {
 			return "", true, err
@@ -2616,23 +2629,96 @@ func (c *findInSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(3)
-	sig := &builtinFindInSetSig{bf}
+	sig := &builtinFindInSetSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FindInSet)
 	return sig, nil
 }
 
+type findInSetCachedLookup struct {
+	lookup   map[string]int64
+	isNull   bool
+	memUsage int64
+}
+
 type builtinFindInSetSig struct {
 	baseBuiltinFunc
-
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
 	// as this expression may be shared across sessions.
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+	constStrlistLookupCache builtinFuncCache[findInSetCachedLookup]
 }
 
 func (b *builtinFindInSetSig) Clone() builtinFunc {
 	newSig := &builtinFindInSetSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func buildFindInSetLookup(strlist string, collator collate.Collator) (map[string]int64, int64) {
+	if len(strlist) == 0 {
+		return nil, 0
+	}
+	lookup := make(map[string]int64, strings.Count(strlist, ",")+1)
+	memUsage := int64(0)
+	position := int64(1)
+	for {
+		strInSet, remain, found := strings.Cut(strlist, ",")
+		key := string(collator.KeyWithoutTrimRightSpace(strInSet))
+		if _, exists := lookup[key]; !exists {
+			lookup[key] = position
+			memUsage += size.SizeOfString + size.SizeOfInt64 + int64(len(key))
+		}
+		if !found {
+			break
+		}
+		position++
+		strlist = remain
+	}
+	return lookup, memUsage
+}
+
+func findInSetByKey(strKey []byte, strlist string, collator collate.Collator) int64 {
+	position := int64(1)
+	for {
+		strInSet, remain, found := strings.Cut(strlist, ",")
+		if bytes.Equal(strKey, collator.KeyWithoutTrimRightSpace(strInSet)) {
+			return position
+		}
+		if !found {
+			break
+		}
+		position++
+		strlist = remain
+	}
+	return 0
+}
+
+func (b *builtinFindInSetSig) getConstStrlistLookup(ctx EvalContext) (findInSetCachedLookup, error) {
+	return b.constStrlistLookupCache.getOrInitCache(ctx, func() (findInSetCachedLookup, error) {
+		var cached findInSetCachedLookup
+		strlist, isNull, err := b.args[1].EvalString(ctx, chunk.Row{})
+		if err != nil {
+			return cached, err
+		}
+		if isNull {
+			cached.isNull = true
+			return cached, nil
+		}
+		cached.lookup, cached.memUsage = buildFindInSetLookup(strlist, b.ctor)
+		return cached, nil
+	})
+}
+
+// MemoryUsage returns memory usage of builtinFindInSetSig.
+func (b *builtinFindInSetSig) MemoryUsage() (sum int64) {
+	if b == nil {
+		return
+	}
+	sum = b.baseBuiltinFunc.MemoryUsage()
+	if cached := b.constStrlistLookupCache.cached.Load(); cached != nil {
+		sum += cached.item.memUsage
+	}
+	return
 }
 
 // evalInt evals FIND_IN_SET(str,strlist).
@@ -2645,6 +2731,23 @@ func (b *builtinFindInSetSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		return 0, isNull, err
 	}
 
+	if b.args[1].ConstLevel() >= ConstOnlyInContext {
+		cached, err := b.getConstStrlistLookup(ctx)
+		if err != nil {
+			return 0, false, err
+		}
+		if cached.isNull {
+			return 0, true, nil
+		}
+		if len(cached.lookup) == 0 {
+			return 0, false, nil
+		}
+		if pos, exists := cached.lookup[string(hack.String(b.ctor.KeyWithoutTrimRightSpace(str)))]; exists {
+			return pos, false, nil
+		}
+		return 0, false, nil
+	}
+
 	strlist, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -2654,12 +2757,7 @@ func (b *builtinFindInSetSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		return 0, false, nil
 	}
 
-	for i, strInSet := range strings.Split(strlist, ",") {
-		if b.ctor.Compare(str, strInSet) == 0 {
-			return int64(i + 1), false, nil
-		}
-	}
-	return 0, false, nil
+	return findInSetByKey(b.ctor.KeyWithoutTrimRightSpace(str), strlist, b.ctor), false, nil
 }
 
 type fieldFunctionClass struct {
@@ -2981,6 +3079,11 @@ func (b *builtinOctStringSig) evalString(ctx EvalContext, row chunk.Row) (string
 		return "", isNull, err
 	}
 
+	// for issue #59446 should return NULL for empty string
+	if len(val) == 0 {
+		return "", true, nil
+	}
+
 	negative, overflow := false, false
 	val = getValidPrefix(strings.TrimSpace(val), 10)
 	if len(val) == 0 {
@@ -3275,10 +3378,7 @@ func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	// Calculate the flen as MySQL does.
-	l := args[1].GetType(ctx.GetEvalCtx()).GetFlen()
-	if args[2].GetType(ctx.GetEvalCtx()).GetFlen() > l {
-		l = args[2].GetType(ctx.GetEvalCtx()).GetFlen()
-	}
+	l := max(args[2].GetType(ctx.GetEvalCtx()).GetFlen(), args[1].GetType(ctx.GetEvalCtx()).GetFlen())
 	sepL := 1
 	if len(args) > 3 {
 		sepL = args[3].GetType(ctx.GetEvalCtx()).GetFlen()
@@ -3302,13 +3402,13 @@ func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func exportSet(bits int64, on, off, separator string, numberOfBits int64) string {
 	result := ""
-	for i := uint64(0); i < uint64(numberOfBits); i++ {
+	for i := range numberOfBits {
 		if (bits & (1 << i)) > 0 {
 			result += on
 		} else {
 			result += off
 		}
-		if i < uint64(numberOfBits)-1 {
+		if i < numberOfBits-1 {
 			result += separator
 		}
 	}
@@ -3594,11 +3694,13 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 	tc := typeCtx(ctx)
 	if isNull {
 		tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
+		locale = "en_US"
+	}
+	formatString, found, err := mysql.FormatByLocale(x, d, locale)
+	// If locale was not NULL and not found, warn unknown locale.
+	if !isNull && !found {
 		tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 	}
-	locale = "en_US"
-	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
 	return formatString, false, err
 }
 
@@ -3623,7 +3725,7 @@ func (b *builtinFormatSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	formatString, err := mysql.GetLocaleFormatFunction("en_US")(x, d)
+	formatString, _, err := mysql.FormatByLocale(x, d, "en_US")
 	return formatString, false, err
 }
 
@@ -4375,10 +4477,7 @@ func (b *builtinTranslateUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (d 
 func buildTranslateMap4UTF8(from, to []rune) map[rune]rune {
 	mp := make(map[rune]rune)
 	lenFrom, lenTo := len(from), len(to)
-	minLen := lenTo
-	if lenFrom < lenTo {
-		minLen = lenFrom
-	}
+	minLen := min(lenFrom, lenTo)
 	for idx := lenFrom - 1; idx >= lenTo; idx-- {
 		mp[from[idx]] = invalidRune
 	}
@@ -4391,10 +4490,7 @@ func buildTranslateMap4UTF8(from, to []rune) map[rune]rune {
 func buildTranslateMap4Binary(from, to []byte) map[byte]uint16 {
 	mp := make(map[byte]uint16)
 	lenFrom, lenTo := len(from), len(to)
-	minLen := lenTo
-	if lenFrom < lenTo {
-		minLen = lenFrom
-	}
+	minLen := min(lenFrom, lenTo)
 	for idx := lenFrom - 1; idx >= lenTo; idx-- {
 		mp[from[idx]] = invalidByte
 	}

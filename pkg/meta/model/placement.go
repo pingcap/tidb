@@ -19,13 +19,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
-	ID   int64       `json:"id"`
-	Name model.CIStr `json:"name"`
+	ID   int64     `json:"id"`
+	Name ast.CIStr `json:"name"`
 }
 
 // PlacementSettings is the settings of the placement
@@ -131,7 +131,7 @@ func writeSettingItemToBuilder(sb *strings.Builder, item string, separatorFns ..
 type PolicyInfo struct {
 	*PlacementSettings
 	ID    int64       `json:"id"`
-	Name  model.CIStr `json:"name"`
+	Name  ast.CIStr   `json:"name"`
 	State SchemaState `json:"state"`
 }
 

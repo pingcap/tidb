@@ -27,12 +27,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -241,6 +241,9 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		"metric.job",
 		"name",
 		"peer-urls",
+		"initial-cluster",
+		"initial-cluster-state",
+		"join",
 
 		// TiKV
 		"server.addr",
@@ -251,6 +254,9 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		"raftstore.raftdb-path",
 		"storage.data-dir",
 		"storage.block-cache.capacity",
+
+		// TiProxy
+		"proxy.advertise-addr",
 	}
 	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in (%?) group by type, `key` having c > 1", ignoreConfigKey)
@@ -444,6 +450,7 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 	if rate != 1 && len(sizeStr) > 3 {
 		sizeStr = sizeStr[:len(sizeStr)-3]
 	}
+	sizeStr = strings.TrimSuffix(sizeStr, "B")
 	size, err := strconv.Atoi(sizeStr)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -619,7 +626,7 @@ func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx
 			}
 			sql.Reset()
 			fmt.Fprintf(sql, "select `%[1]s`,sum(value) as total from `%[2]s`.`%[3]s` %[4]s group by `%[1]s` having total>=1.0",
-				strings.Join(def.Labels, "`,`"), util.MetricSchemaName.L, rule.tbl, condition)
+				strings.Join(def.Labels, "`,`"), metadef.MetricSchemaName.L, rule.tbl, condition)
 			rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 			if err != nil {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("execute '%s' failed: %v", sql, err))

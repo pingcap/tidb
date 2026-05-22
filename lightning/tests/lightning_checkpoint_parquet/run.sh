@@ -48,7 +48,7 @@ check_contains "sum(iVal): 0"
 
 # check chunk offset and update checkpoint current row id to a higher value so that
 # if parse read from start, the generated rows will be different
-run_sql "UPDATE checkpoint_test_parquet.chunk_v5 SET prev_rowid_max = prev_rowid_max + 1000, rowid_max = rowid_max + 1000;"
+run_sql "UPDATE checkpoint_test_parquet.chunk_v6 SET prev_rowid_max = prev_rowid_max + 1000, rowid_max = rowid_max + 1000;"
 
 # restart lightning from checkpoint, the second line should be written successfully
 export GO_FAILPOINTS=

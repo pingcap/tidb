@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -42,6 +43,19 @@ func NewSession(s sessionctx.Context) *Session {
 // Begin starts a transaction.
 func (s *Session) Begin(ctx context.Context) error {
 	err := sessiontxn.NewTxn(ctx, s.Context)
+	if err != nil {
+		return err
+	}
+	s.GetSessionVars().SetInTxn(true)
+	return nil
+}
+
+// BeginPessimistic starts a pessimistic transaction.
+func (s *Session) BeginPessimistic(ctx context.Context) error {
+	err := sessiontxn.GetTxnManager(s.Context).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+		Type:    sessiontxn.EnterNewTxnDefault,
+		TxnMode: ast.Pessimistic,
+	})
 	if err != nil {
 		return err
 	}

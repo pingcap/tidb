@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/rowcodec",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/mysql",
@@ -29,12 +30,14 @@ go_test(
     timeout = "short",
     srcs = [
         "bench_test.go",
+        "common_test.go",
         "main_test.go",
         "rowcodec_test.go",
     ],
     embed = [":rowcodec"],
     flaky = True,
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/mysql",
@@ -46,6 +49,7 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/intest",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

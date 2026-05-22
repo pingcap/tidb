@@ -4,6 +4,7 @@ package gluetidb
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -16,12 +17,15 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -37,6 +41,9 @@ const brComment = `/*from(br)*/`
 // New makes a new tidb glue.
 func New() Glue {
 	log.Debug("enabling no register config")
+	// Set schema lease to production value (45s) instead of test default (1s)
+	// to prevent BR from getting stuck when PD TSO slightly lags wall clock.
+	vardef.SetSchemaLease(config.DefSchemaLease)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
@@ -47,30 +54,56 @@ func New() Glue {
 	}
 }
 
+func FilterLoadSysDBs(name ast.CIStr) bool {
+	return metadef.IsSystemDB(name.L) || metadef.IsBRRelatedDB(name.O)
+}
+
+func FilterLoadSpecifiedDBAndSysDBs(extraDBNames []string) func(dbName ast.CIStr) bool {
+	dbNameSet := make(map[string]struct{})
+	for _, name := range extraDBNames {
+		ciName := ast.NewCIStr(name)
+		dbNameSet[ciName.L] = struct{}{}
+	}
+	return func(name ast.CIStr) bool {
+		_, exists := dbNameSet[name.L]
+		shouldLoad := exists || metadef.IsSystemDB(name.L) || metadef.IsBRRelatedDB(name.O)
+		return shouldLoad
+	}
+}
+
 // Glue is an implementation of glue.Glue using a new TiDB session.
 type Glue struct {
 	glue.StdIOGlue
 
 	tikvGlue      gluetikv.Glue
 	startDomainMu *sync.Mutex
+
+	InfoSchemaFilter issyncer.Filter
+}
+
+func WrapSession(se sessionapi.Session) glue.Session {
+	return &tidbSession{se: se}
 }
 
 type tidbSession struct {
-	se sessiontypes.Session
+	se sessionapi.Session
+}
+
+func (g Glue) getDomainInner(store kv.Storage) (*domain.Domain, error) {
+	return session.GetOrCreateDomainWithFilter(store, g.InfoSchemaFilter)
 }
 
 // GetDomain implements glue.Glue.
 func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
-	existDom, _ := session.GetDomain(nil)
-	initStatsSe, err := g.createTypesSession(store)
-	if err != nil {
+	// Intentionally pass nil here to probe whether a domain already exists before starting
+	// one for the given store. This avoids re-running initialization logic below when a
+	// domain has already been created elsewhere.
+	existDom, _ := g.getDomainInner(nil)
+	if err := g.startDomainAsNeeded(store); err != nil {
 		return nil, errors.Trace(err)
 	}
-	se, err := g.createTypesSession(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	dom, err := session.GetDomain(store)
+
+	dom, err := g.getDomainInner(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -80,7 +113,7 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 		// create stats handler for backup and restore.
-		err = dom.UpdateTableStatsLoop(se, initStatsSe)
+		err = dom.UpdateTableStatsLoop()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -103,21 +136,21 @@ func (g Glue) CreateSession(store kv.Storage) (glue.Session, error) {
 func (g Glue) startDomainAsNeeded(store kv.Storage) error {
 	g.startDomainMu.Lock()
 	defer g.startDomainMu.Unlock()
-	existDom, _ := session.GetDomain(nil)
+	existDom, _ := g.getDomainInner(nil)
 	if existDom != nil {
 		return nil
 	}
 	if err := ddl.StartOwnerManager(context.Background(), store); err != nil {
 		return errors.Trace(err)
 	}
-	dom, err := session.GetDomain(store)
+	dom, err := g.getDomainInner(store)
 	if err != nil {
 		return err
 	}
-	return dom.Start(ddl.Normal)
+	return dom.Start(ddl.BR)
 }
 
-func (g Glue) createTypesSession(store kv.Storage) (sessiontypes.Session, error) {
+func (g Glue) createTypesSession(store kv.Storage) (sessionapi.Session, error) {
 	if err := g.startDomainAsNeeded(store); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -163,7 +196,7 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 		log.Info("one shot session closed")
 	}()
 	// dom will be created during create session.
-	dom, err := session.GetDomain(store)
+	dom, err := g.getDomainInner(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -230,8 +263,8 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 	return nil
 }
 
-// CreateDatabase implements glue.Session.
-func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
+// CreateDatabaseOnExistError implements glue.Session.
+func (gs *tidbSession) CreateDatabaseOnExistError(ctx context.Context, schema *model.DBInfo) error {
 	return errors.Trace(executor.BRIECreateDatabase(gs.se, schema, brComment))
 }
 
@@ -250,7 +283,7 @@ func (gs *tidbSession) CreateTables(_ context.Context,
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(_ context.Context, dbName pmodel.CIStr,
+func (gs *tidbSession) CreateTable(_ context.Context, dbName ast.CIStr,
 	table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
 }
@@ -260,11 +293,47 @@ func (gs *tidbSession) Close() {
 	gs.se.Close()
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
+// GetGlobalSysVar gets the global system variable value for name.
+func (gs *tidbSession) GetGlobalSysVar(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
+}
+
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
 	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
+}
+
+func (gs *tidbSession) AlterTableMode(
+	_ context.Context,
+	schemaID int64,
+	tableID int64,
+	tableMode model.TableMode) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("ALTER TABLE MODE SCHEMA_ID=%d TABLE_ID=%d TO %s", schemaID, tableID, tableMode.String()))
+	args := &model.AlterTableModeArgs{
+		SchemaID:  schemaID,
+		TableID:   tableID,
+		TableMode: tableMode,
+	}
+	return d.AlterTableMode(gs.se, args)
+}
+
+// RefreshMeta submits a refresh meta job to update the info schema with the latest metadata.
+func (gs *tidbSession) RefreshMeta(
+	_ context.Context,
+	args *model.RefreshMetaArgs) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d INVOLVED_DB=%s INVOLVED_TABLE=%s",
+			args.SchemaID, args.TableID, args.InvolvedDB, args.InvolvedTable))
+	return d.RefreshMeta(gs.se, args)
 }

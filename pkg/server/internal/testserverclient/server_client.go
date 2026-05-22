@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -522,7 +523,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandom(t *testing.T) {
 
 	cksum1 := 0
 	cksum2 := 0
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		n1 := rand.Intn(1000)
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
@@ -577,7 +578,7 @@ func (cli *TestServerClient) RunTestLoadDataAutoRandomWithSpecialTerm(t *testing
 
 	cksum1 := 0
 	cksum2 := 0
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		n1 := rand.Intn(1000)
 		n2 := rand.Intn(1000)
 		str1 := strconv.Itoa(n1)
@@ -1021,7 +1022,7 @@ func (cli *TestServerClient) RunTestLoadDataWithColumnList(t *testing.T, _ *serv
 func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []string) {
 	require.Equal(t, len(columns), len(expected))
 
-	for i := 0; i < len(columns); i++ {
+	for i := range columns {
 		require.Equal(t, expected[i], columns[i].String)
 	}
 }
@@ -1802,7 +1803,10 @@ func (cli *TestServerClient) RunTestExplainForConn(t *testing.T) {
 		err := rows.Scan(&connID)
 		require.NoError(t, err)
 		require.NoError(t, rows.Close())
-		dbt.MustQuery("select * from t where a=1")
+		// Seed the statement inspected by EXPLAIN FOR CONNECTION, then close rows so
+		// database/sql releases the connection.
+		rows = dbt.MustQuery("select * from t where a=1")
+		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("explain for connection " + strconv.Itoa(int(connID)))
 		require.True(t, rows.Next())
 		row := make([]string, 9)
@@ -1876,13 +1880,7 @@ func checkErrorCode(t *testing.T, e error, codes ...uint16) {
 	if len(codes) == 1 {
 		require.Equal(t, codes[0], me.Number)
 	}
-	isMatchCode := false
-	for _, code := range codes {
-		if me.Number == code {
-			isMatchCode = true
-			break
-		}
-	}
+	isMatchCode := slices.Contains(codes, me.Number)
 	require.Truef(t, isMatchCode, "got err %v, expected err codes %v", me, codes)
 }
 
@@ -2421,6 +2419,8 @@ func (cli *TestServerClient) RunReloadTLS(t *testing.T, overrider configOverride
 
 func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.GetDB().SetMaxOpenConns(1)
+		dbt.GetDB().SetMaxIdleConns(1)
 		dbt.MustExec("create table sumavg (a int, b decimal, c double)")
 		dbt.MustExec("insert sumavg values (1, 1, 1)")
 		rows := dbt.MustQuery("select sum(a), sum(b), sum(c) from sumavg")
@@ -2431,6 +2431,7 @@ func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 		require.Equal(t, 1.0, outA)
 		require.Equal(t, 1.0, outB)
 		require.Equal(t, 1.0, outC)
+		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select avg(a), avg(b), avg(c) from sumavg")
 		require.True(t, rows.Next())
 		err = rows.Scan(&outA, &outB, &outC)
@@ -2438,6 +2439,7 @@ func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 		require.Equal(t, 1.0, outA)
 		require.Equal(t, 1.0, outB)
 		require.Equal(t, 1.0, outC)
+		require.NoError(t, rows.Close())
 	})
 }
 
@@ -2581,6 +2583,10 @@ func (cli *TestServerClient) RunTestInitConnect(t *testing.T) {
 // and not internal SQL statements. Thus, this test is in the server-test suite.
 func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
 	cli.RunTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@tidb_enable_cache_prepare_stmt = off")
+		defer func() {
+			dbt.MustExec("set @@tidb_enable_cache_prepare_stmt = default")
+		}()
 		clientErrors := []struct {
 			stmt              string
 			incrementWarnings bool
@@ -2702,7 +2708,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 
 		// start 100 connections
 		conns := make([]*sql.Conn, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			conn, err := dbt.GetDB().Conn(ctx)
 			require.NoError(t, err)
 			conns[i] = conn
@@ -2710,7 +2716,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 		resourceGroupConnCountReached(t, "default", 100.0)
 
 		// close 50 connections
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			err := conns[i].Close()
 			require.NoError(t, err)
 		}
@@ -2766,7 +2772,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 
 		// start 100 connections
 		conns := make([]*sql.Conn, 100)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			conn, err := dbt.GetDB().Conn(ctx)
 			require.NoError(t, err)
 			conns[i] = conn
@@ -2781,7 +2787,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 		resourceGroupConnCountReached(t, "test", 75.0)
 
 		// close the rest of them
-		for i := 0; i < 75; i++ {
+		for i := range 75 {
 			err := conns[i].Close()
 			require.NoError(t, err)
 		}

@@ -9,7 +9,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/tiflashcompute",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/errno",
+        "//pkg/sessionctx/vardef",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

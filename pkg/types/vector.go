@@ -18,7 +18,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	jsoniter "github.com/json-iterator/go"
@@ -219,6 +221,12 @@ func ZeroCopyDeserializeVectorFloat32(b []byte) (VectorFloat32, []byte, error) {
 
 // ParseVectorFloat32 parses a string into a vector.
 func ParseVectorFloat32(s string) (VectorFloat32, error) {
+	// issue #57143 jsoniter parse null will return as []
+	// Trim whitespace and check for null string and reject it
+	if strings.TrimSpace(s) == "null" {
+		return ZeroVectorFloat32, errors.Errorf("Invalid vector text: %s", s)
+	}
+
 	var values []float32
 	var valueError error
 	// We explicitly use a JSON float parser to reject other JSON types.
@@ -233,6 +241,11 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 			valueError = errors.Errorf("infinite value not allowed in vector")
 			return false
 		}
+		// Check if the value can be safely converted to float32
+		if v < -math.MaxFloat32 || v > math.MaxFloat32 {
+			valueError = errors.Errorf("value %v out of range for float32", v)
+			return false
+		}
 		values = append(values, float32(v))
 		return true
 	})
@@ -241,6 +254,17 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 	}
 	if valueError != nil {
 		return ZeroVectorFloat32, valueError
+	}
+
+	// Check if there are any remaining characters after the JSON array
+	// This ensures we reject strings like "[1,2,3]extra"
+	remaining := parser.SkipAndReturnBytes()
+	if len(remaining) > 0 {
+		// Check if the remaining bytes are only whitespace
+		trimmed := strings.TrimSpace(string(remaining))
+		if len(trimmed) > 0 {
+			return ZeroVectorFloat32, errors.Errorf("Invalid vector text: %s", s)
+		}
 	}
 
 	dim := len(values)
@@ -255,9 +279,7 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 
 // Clone returns a deep copy of the vector.
 func (v VectorFloat32) Clone() VectorFloat32 {
-	data := make([]byte, len(v.data))
-	copy(data, v.data)
-	return VectorFloat32{data: data}
+	return VectorFloat32{data: slices.Clone(v.data)}
 }
 
 // IsZeroValue returns true if the vector is a zero value (which length is zero).

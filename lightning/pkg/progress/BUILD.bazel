@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "progress",
+    srcs = ["progress.go"],
+    importpath = "github.com/pingcap/tidb/lightning/pkg/progress",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//lightning/pkg/checkpoints",
+        "//pkg/lightning/common",
+        "//pkg/lightning/mydump",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)

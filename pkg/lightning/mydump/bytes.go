@@ -15,7 +15,7 @@ type byteSet [8]uint32
 
 // makeByteSet creates a set of byte value.
 func makeByteSet(chars []byte) (as byteSet) {
-	for i := 0; i < len(chars); i++ {
+	for i := range chars {
 		c := chars[i]
 		as[c>>5] |= 1 << uint(c&31)
 	}

@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // ConstantPropagationSolver can support constant propagated cross-query block.
@@ -51,14 +50,14 @@ type ConstantPropagationSolver struct {
 // which is mainly implemented in the interface "constantPropagation" of LogicalPlan.
 // Currently only the Logical Join implements this function. (Used for the subquery in FROM List)
 // In the future, the Logical Apply will implements this function. (Used for the subquery in WHERE or SELECT list)
-func (cp *ConstantPropagationSolver) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (cp *ConstantPropagationSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	// constant propagation root plan
-	newRoot := p.ConstantPropagation(nil, 0, opt)
+	newRoot := p.ConstantPropagation(nil, 0)
 
 	// recursive optimize
 	for i, children := range p.Children() {
-		cp.execOptimize(children, p, i, opt)
+		cp.execOptimize(children, p, i)
 	}
 
 	if newRoot == nil {
@@ -68,16 +67,16 @@ func (cp *ConstantPropagationSolver) Optimize(_ context.Context, p base.LogicalP
 }
 
 // execOptimize optimize constant propagation exclude root plan node
-func (cp *ConstantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) {
+func (cp *ConstantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, parentPlan base.LogicalPlan, currentChildIdx int) {
 	if parentPlan == nil {
 		// Attention: The function 'execOptimize' could not handle the root plan, so the parent plan could not be nil.
 		return
 	}
 	// constant propagation
-	currentPlan.ConstantPropagation(parentPlan, currentChildIdx, opt)
+	currentPlan.ConstantPropagation(parentPlan, currentChildIdx)
 	// recursive optimize
 	for i, children := range currentPlan.Children() {
-		cp.execOptimize(children, currentPlan, i, opt)
+		cp.execOptimize(children, currentPlan, i)
 	}
 }
 

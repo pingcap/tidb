@@ -25,16 +25,16 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // Plan Should be used as embedded struct in Plan implementations.
 type Plan struct {
-	ctx     planctx.PlanContext
-	stats   *property.StatsInfo `plan-cache-clone:"shallow"`
-	tp      string
-	id      int
-	qbBlock int // Query Block offset
+	ctx                planctx.PlanContext
+	stats              *property.StatsInfo `plan-cache-clone:"shallow"`
+	tp                 string
+	id                 int
+	qbBlock            int // Query Block offset
+	NoncacheableReason string
 }
 
 // NewBasePlan creates a new base plan.
@@ -46,6 +46,14 @@ func NewBasePlan(ctx planctx.PlanContext, tp string, qbBlock int) Plan {
 		ctx:     ctx,
 		qbBlock: qbBlock,
 	}
+}
+
+// ReAlloc4Cascades is to reset the plan for cascades.
+func (p *Plan) ReAlloc4Cascades(tp string) {
+	p.tp = tp
+	p.id = int(p.ctx.GetSessionVars().PlanID.Add(1))
+	p.stats = nil
+	// the context and qb should keep the same.
 }
 
 // SCtx is to get the sessionctx from the plan.
@@ -90,8 +98,8 @@ func (*Plan) ExplainInfo() string {
 }
 
 // ExplainID is to get the explain ID.
-func (p *Plan) ExplainID() fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+func (p *Plan) ExplainID(_ ...bool) fmt.Stringer {
+	return stringutil.StringerFunc(func() string {
 		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.tp
 		}
@@ -100,7 +108,7 @@ func (p *Plan) ExplainID() fmt.Stringer {
 }
 
 // TP is to get the tp.
-func (p *Plan) TP() string {
+func (p *Plan) TP(_ ...bool) string {
 	return p.tp
 }
 
@@ -132,12 +140,6 @@ func (p *Plan) MemoryUsage() (sum int64) {
 	return sum
 }
 
-// BuildPlanTrace is to build the plan trace.
-func (p *Plan) BuildPlanTrace() *tracing.PlanTrace {
-	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
-	return planTrace
-}
-
 // CloneWithNewCtx clones the plan with new context.
 func (p *Plan) CloneWithNewCtx(newCtx base.PlanContext) *Plan {
 	cloned := new(Plan)
@@ -149,4 +151,16 @@ func (p *Plan) CloneWithNewCtx(newCtx base.PlanContext) *Plan {
 // CloneForPlanCache clones the plan for Plan Cache.
 func (*Plan) CloneForPlanCache(base.PlanContext) (cloned base.Plan, ok bool) {
 	return nil, false
+}
+
+// SetNoncacheableReason sets the reason why the plan is non-cacheable.
+func (p *Plan) SetNoncacheableReason(reason string) {
+	if p.NoncacheableReason == "" {
+		p.NoncacheableReason = reason
+	}
+}
+
+// GetNoncacheableReason returns the reason why the plan is non-cacheable.
+func (p *Plan) GetNoncacheableReason() string {
+	return p.NoncacheableReason
 }

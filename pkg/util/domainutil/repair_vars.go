@@ -15,6 +15,7 @@
 package domainutil
 
 import (
+	"slices"
 	"strings"
 	"sync"
 
@@ -50,6 +51,30 @@ func (r *repairInfo) GetRepairTableList() []string {
 	r.RLock()
 	defer r.RUnlock()
 	return r.repairTableList
+}
+
+// GetMustLoadRepairTableListByDB gets must load repair table ID list.
+func (r *repairInfo) GetMustLoadRepairTableListByDB(dbName string, tableName2ID map[string]int64) []int64 {
+	r.RLock()
+	defer r.RUnlock()
+	dbNamePrefix := dbName + "."
+	repairTableSet := make(map[string]struct{}, len(r.repairTableList))
+	for _, fullTableName := range r.repairTableList {
+		lowerFullTableName := strings.ToLower(fullTableName)
+		if strings.HasPrefix(lowerFullTableName, dbNamePrefix) {
+			repairTableSet[lowerFullTableName] = struct{}{}
+		}
+	}
+
+	var tableIDList []int64
+	// tableName2ID is case sensitive and needs to be traversed to match the table id
+	for tableName, id := range tableName2ID {
+		fullName := dbName + "." + tableName
+		if _, ok := repairTableSet[strings.ToLower(fullName)]; ok {
+			tableIDList = append(tableIDList, id)
+		}
+	}
+	return tableIDList
 }
 
 // SetRepairTableList sets repairing table list.
@@ -119,7 +144,7 @@ func (r *repairInfo) RemoveFromRepairInfo(schemaLowerName, tableLowerName string
 	defer r.Unlock()
 	for i, rt := range r.repairTableList {
 		if strings.ToLower(rt) == repairedLowerName {
-			r.repairTableList = append(r.repairTableList[:i], r.repairTableList[i+1:]...)
+			r.repairTableList = slices.Delete(r.repairTableList, i, i+1)
 			break
 		}
 	}
@@ -129,7 +154,7 @@ func (r *repairInfo) RemoveFromRepairInfo(schemaLowerName, tableLowerName string
 			tables := db.Deprecated.Tables
 			for j, t := range tables {
 				if t.Name.L == tableLowerName {
-					tables = append(tables[:j], tables[j+1:]...)
+					tables = slices.Delete(tables, j, j+1)
 					break
 				}
 			}

@@ -87,8 +87,7 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 		}
 		return nil, []string{fieldPath}
 	}
-
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		fieldName := t.Field(i).Name
 		if fieldPath != "" {
 			fieldName = fieldPath + "." + fieldName

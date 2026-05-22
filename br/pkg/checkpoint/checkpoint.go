@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -41,7 +41,7 @@ import (
 
 const CheckpointDir = "checkpoints"
 
-type flushPosition struct {
+type flushPath struct {
 	CheckpointDataDir     string
 	CheckpointChecksumDir string
 	CheckpointLockPath    string
@@ -91,7 +91,7 @@ type CheckpointMessage[K KeyType, V ValueType] struct {
 // with multi-ranges in the ChecksumData.
 
 type RangeGroup[K KeyType, V ValueType] struct {
-	GroupKey K   `json:"group-key"`
+	GroupKey K   `json:"group-key,omitempty"`
 	Group    []V `json:"groups"`
 }
 
@@ -613,7 +613,7 @@ func parseCheckpointData[K KeyType, V ValueType](
 	content []byte,
 	pastDureTime *time.Duration,
 	cipher *backuppb.CipherInfo,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) error {
 	checkpointData := &CheckpointData{}
 	if err := json.Unmarshal(content, checkpointData); err != nil {
@@ -645,7 +645,9 @@ func parseCheckpointData[K KeyType, V ValueType](
 		}
 
 		for _, g := range group.Group {
-			fn(group.GroupKey, g)
+			if err := fn(group.GroupKey, g); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -655,14 +657,14 @@ func parseCheckpointData[K KeyType, V ValueType](
 // and return the total time cost in the past executions
 func walkCheckpointFile[K KeyType, V ValueType](
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 	subDir string,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storeapi.WalkOption{SubDir: subDir}, func(path string, size int64) error {
 		if strings.HasSuffix(path, ".cpt") {
 			content, err := s.ReadFile(ctx, path)
 			if err != nil {
@@ -679,7 +681,7 @@ func walkCheckpointFile[K KeyType, V ValueType](
 }
 
 // load checkpoint meta data from external storage and unmarshal back
-func loadCheckpointMeta[T any](ctx context.Context, s storage.ExternalStorage, path string, m *T) error {
+func loadCheckpointMeta[T any](ctx context.Context, s storeapi.Storage, path string, m *T) error {
 	data, err := s.ReadFile(ctx, path)
 	if err != nil {
 		return errors.Trace(err)
@@ -730,12 +732,12 @@ func parseCheckpointChecksum(
 // walk the whole checkpoint checksum files and retrieve checksum information of tables calculated
 func loadCheckpointChecksum(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	subDir string,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
 	var pastDureTime time.Duration = 0
 	checkpointChecksum := make(map[int64]*ChecksumItem)
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storeapi.WalkOption{SubDir: subDir}, func(path string, size int64) error {
 		data, err := s.ReadFile(ctx, path)
 		if err != nil {
 			return errors.Trace(err)
@@ -748,7 +750,7 @@ func loadCheckpointChecksum(
 	return checkpointChecksum, pastDureTime, errors.Trace(err)
 }
 
-func saveCheckpointMetadata[T any](ctx context.Context, s storage.ExternalStorage, meta *T, path string) error {
+func saveCheckpointMetadata[T any](ctx context.Context, s storeapi.Storage, meta *T, path string) error {
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return errors.Trace(err)
@@ -758,7 +760,7 @@ func saveCheckpointMetadata[T any](ctx context.Context, s storage.ExternalStorag
 	return errors.Trace(err)
 }
 
-func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir string) error {
+func removeCheckpointData(ctx context.Context, s storeapi.Storage, subDir string) error {
 	var (
 		// Generate one file every 30 seconds, so there are only 1200 files in 10 hours.
 		removedFileNames = make([]string, 0, 1200)
@@ -766,7 +768,7 @@ func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir
 		removeCnt  int   = 0
 		removeSize int64 = 0
 	)
-	err := s.WalkDir(ctx, &storage.WalkOption{SubDir: subDir}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storeapi.WalkOption{SubDir: subDir}, func(path string, size int64) error {
 		if !strings.HasSuffix(path, ".cpt") && !strings.HasSuffix(path, ".meta") && !strings.HasSuffix(path, ".lock") {
 			return nil
 		}

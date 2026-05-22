@@ -16,16 +16,18 @@ package mock
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -56,14 +58,14 @@ type DBSourceData struct {
 type ImportSource struct {
 	dbSrcDataMap  map[string]*DBSourceData
 	dbFileMetaMap map[string]*mydump.MDDatabaseMeta
-	srcStorage    storage.ExternalStorage
+	srcStorage    storeapi.Storage
 }
 
 // NewImportSource creates a ImportSource object.
 func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, error) {
 	ctx := context.Background()
 	dbFileMetaMap := make(map[string]*mydump.MDDatabaseMeta)
-	mapStore := storage.NewMemStorage()
+	mapStore := objstore.NewMemStorage()
 	for dbName, dbData := range dbSrcDataMap {
 		dbFileInfo := mydump.FileInfo{
 			TableName: filter.Table{
@@ -149,7 +151,7 @@ func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, erro
 }
 
 // GetStorage gets the External Storage object on the mock source.
-func (m *ImportSource) GetStorage() storage.ExternalStorage {
+func (m *ImportSource) GetStorage() storeapi.Storage {
 	return m.srcStorage
 }
 
@@ -218,7 +220,7 @@ func (t *TargetInfo) SetTableInfo(schemaName string, tableName string, tblInfo *
 func (t *TargetInfo) FetchRemoteDBModels(_ context.Context) ([]*model.DBInfo, error) {
 	resultInfos := []*model.DBInfo{}
 	for dbName := range t.dbTblInfoMap {
-		resultInfos = append(resultInfos, &model.DBInfo{Name: pmodel.NewCIStr(dbName)})
+		resultInfos = append(resultInfos, &model.DBInfo{Name: ast.NewCIStr(dbName)})
 	}
 	return resultInfos, nil
 }
@@ -249,11 +251,7 @@ func (t *TargetInfo) FetchRemoteTableModels(
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 // It implements the TargetInfoGetter interface.
 func (t *TargetInfo) GetTargetSysVariablesForImport(_ context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
-	result := make(map[string]string)
-	for k, v := range t.sysVarMap {
-		result[k] = v
-	}
-	return result
+	return maps.Clone(t.sysVarMap)
 }
 
 // GetMaxReplica implements the TargetInfoGetter interface.
@@ -296,7 +294,7 @@ func (t *TargetInfo) GetEmptyRegionsInfo(_ context.Context) (*pdhttp.RegionsInfo
 	totalEmptyRegionCount := 0
 	for storeID, storeEmptyRegionCount := range t.EmptyRegionCountMap {
 		regions := make([]pdhttp.RegionInfo, storeEmptyRegionCount)
-		for i := 0; i < storeEmptyRegionCount; i++ {
+		for i := range storeEmptyRegionCount {
 			regions[i] = pdhttp.RegionInfo{
 				Peers: []pdhttp.RegionPeer{
 					{

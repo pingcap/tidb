@@ -184,7 +184,7 @@ func TestConstantPropagation(t *testing.T) {
 			for _, cd := range tt.conditions {
 				conds = append(conds, FoldConstant(ctx, cd))
 			}
-			newConds := solver.PropagateConstant(ctx, conds)
+			newConds := solver.PropagateConstant(ctx, false, nil, nil, nil, conds)
 			var result []string
 			for _, v := range newConds {
 				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
@@ -244,6 +244,18 @@ func TestConstantFolding(t *testing.T) {
 			},
 			nullRejectCheck: true,
 			result:          "concat_ws(cast(Column#0, var_string(20)), <nil>)",
+		},
+		{
+			condition: func(ctx BuildContext) Expression {
+				expr := newFunction(ctx, ast.Field,
+					newColumn(0),
+					&Constant{Value: types.NewFloat64Datum(0), RetType: types.NewFieldType(mysql.TypeDouble)},
+					NewNull(),
+				)
+				return expr
+			},
+			nullRejectCheck: true,
+			result:          "field(cast(Column#0, double BINARY), 0, <nil>)",
 		},
 	}
 	for _, tt := range tests {
@@ -469,7 +481,7 @@ func TestVectorizedConstant(t *testing.T) {
 		{RetType: newIntFieldType(), Value: types.NewIntDatum(2333)},
 		{RetType: newIntFieldType(), DeferredExpr: &Constant{RetType: newIntFieldType(), Value: types.NewIntDatum(2333)}}} {
 		chk := chunk.New([]*types.FieldType{newIntFieldType()}, 1024, 1024)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			chk.AppendInt64(0, int64(i))
 		}
 		col := chunk.NewColumn(newIntFieldType(), 1024)
@@ -496,7 +508,7 @@ func TestVectorizedConstant(t *testing.T) {
 		{RetType: newStringFieldType(), Value: types.NewStringDatum("hello")},
 		{RetType: newStringFieldType(), DeferredExpr: &Constant{RetType: newStringFieldType(), Value: types.NewStringDatum("hello")}}} {
 		chk := chunk.New([]*types.FieldType{newIntFieldType()}, 1024, 1024)
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			chk.AppendInt64(0, int64(i))
 		}
 		cst = &Constant{DeferredExpr: nil, RetType: newStringFieldType(), Value: types.NewStringDatum("hello")}
@@ -504,7 +516,7 @@ func TestVectorizedConstant(t *testing.T) {
 		col := chunk.NewColumn(newStringFieldType(), 1024)
 		ctx := mock.NewContext()
 		require.Nil(t, cst.VecEvalString(ctx, chk, col))
-		for i := 0; i < 1024; i++ {
+		for i := range 1024 {
 			require.Equal(t, "hello", col.GetString(i))
 		}
 

@@ -18,9 +18,13 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strconv"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -99,6 +103,12 @@ func (*Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, err
 	return tableContents, nil
 }
 
+func (*Domain) overrideSysVarWithConfig(tableContent map[string]string) {
+	if _, exist := tableContent[vardef.MaxAllowedPacket]; exist {
+		tableContent[vardef.MaxAllowedPacket] = strconv.FormatUint(config.GetMaxAllowedPacket(), 10)
+	}
+}
+
 // rebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
 func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
@@ -121,9 +131,14 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 		return err
 	}
 
+	if deploymode.IsStarter() {
+		do.overrideSysVarWithConfig(tableContents)
+	}
+
 	for _, sv := range variable.GetSysVars() {
 		sVal := sv.Value
-		if _, ok := tableContents[sv.Name]; ok {
+		// NOTE: instance variable use values stored in this instance
+		if _, ok := tableContents[sv.Name]; ok && !sv.IsInitedFromConfig {
 			sVal = tableContents[sv.Name]
 		}
 		// session cache stores non-skippable variables, which essentially means session scope.
@@ -139,7 +154,7 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 			// This ensures it is run on all tidb servers.
 			// This does not apply to INSTANCE scoped vars (HasGlobalScope() is false)
 			if sv.SetGlobal != nil && !sv.SkipSysvarCache() {
-				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, variable.ScopeGlobal)
+				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, vardef.ScopeGlobal)
 				err = sv.SetGlobal(context.Background(), ctx.GetSessionVars(), sVal)
 				if err != nil {
 					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
@@ -154,6 +169,6 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	defer do.sysVarCache.Unlock()
 	do.sysVarCache.session = newSessionCache
 	do.sysVarCache.global = newGlobalCache
-	do.infoCache.ReSize(int(variable.SchemaVersionCacheLimit.Load()))
+	do.infoCache.ReSize(int(vardef.SchemaVersionCacheLimit.Load()))
 	return nil
 }

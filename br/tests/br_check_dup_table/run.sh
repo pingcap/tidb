@@ -37,7 +37,7 @@ run_sql "CREATE TABLE $DB.usertable2 ( \
 run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
 # backup db
 echo "backup start..."
-run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB"
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB"
 
 run_sql "DROP DATABASE $DB;"
 
@@ -56,13 +56,41 @@ echo "restore start..."
 LOG_OUTPUT=$(run_br restore db --db "$DB" -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR" 2>&1 || true)
 
 # Check if the log contains 'ErrTableAlreadyExisted'
-if ! echo "$LOG_OUTPUT" | grep -q "BR:Restore:ErrTablesAlreadyExisted"; then
+if ! echo "$LOG_OUTPUT" | grep -q "ErrTablesAlreadyExisted"; then
+    echo "Error: 'ErrTableAlreadyExisted' not found in logs."
+    echo "Log output:"
+    echo "$LOG_OUTPUT"
+    exit 1 
+else
+    echo "restore failed as expect" 
+fi
+
+# restore with full -f option
+echo "restore full start with -f option..."
+LOG_OUTPUT=$(run_br restore full -f "$DB.*" -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR" 2>&1 || true)
+
+# Check if the log contains 'ErrTableAlreadyExisted'
+if ! echo "$LOG_OUTPUT" | grep -q "ErrTablesAlreadyExisted"; then
     echo "Error: 'ErrTableAlreadyExisted' not found in logs."
     echo "Log output:"
     echo "$LOG_OUTPUT"
     exit 1
 else
     echo "restore failed as expect" 
+fi
+
+# cleanup
+echo "cleanup..."
+run_sql "DROP DATABASE $DB;"
+
+# restore with full -f option after cleanup
+echo "restore full start with -f option after cleanup..."
+run_br restore full -f "$DB.*" -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR"
+
+table_count=$(run_sql "use $DB; show tables;" | grep "Tables_in" | wc -l)
+if [ "$table_count" -ne "2" ];then
+    echo "TEST: [$TEST_NAME] failed!"
+    exit 1
 fi
 
 run_sql "DROP DATABASE $DB;"

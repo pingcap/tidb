@@ -15,10 +15,10 @@ import (
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"go.uber.org/zap"
 )
@@ -56,7 +56,7 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 			// not support placement policy, just ignore it
 			log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
 		} else {
-			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
+			log.Debug("set tidb_placement_mode success", zap.String("mode", policyMode))
 			supportPolicy = true
 		}
 	}
@@ -80,13 +80,15 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 	dbInfo := ddlJob.BinlogInfo.DBInfo
 	switch ddlJob.Type {
 	case model.ActionCreateSchema:
-		err = db.se.CreateDatabase(ctx, dbInfo)
-		if err != nil {
+		err = db.se.CreateDatabaseOnExistError(ctx, dbInfo)
+		if err != nil && !infoschema.ErrDatabaseExists.Equal(err) {
 			log.Error("create database failed", zap.Stringer("db", dbInfo.Name), zap.Error(err))
+			return errors.Trace(err)
 		}
-		return errors.Trace(err)
+		return nil
 	case model.ActionCreateTable:
-		err = db.se.CreateTable(ctx, pmodel.NewCIStr(ddlJob.SchemaName), tableInfo)
+		infoCloned := tableInfo.Clone()
+		err = db.se.CreateTable(ctx, ast.NewCIStr(ddlJob.SchemaName), infoCloned)
 		if err != nil {
 			log.Error("create table failed",
 				zap.Stringer("db", dbInfo.Name),
@@ -125,28 +127,6 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 	return errors.Trace(err)
 }
 
-// UpdateStatsMeta update count and snapshot ts in mysql.stats_meta
-func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint64, count uint64) error {
-	sysDB := mysql.SystemDB
-	statsMetaTbl := "stats_meta"
-
-	// set restoreTS to snapshot and version which is used to update stats_meta
-	err := db.se.ExecuteInternal(
-		ctx,
-		"update %n.%n set snapshot = %?, version = %?, count = %? where table_id = %?",
-		sysDB,
-		statsMetaTbl,
-		restoreTS,
-		restoreTS,
-		count,
-		tableID,
-	)
-	if err != nil {
-		log.Error("execute update sql failed", zap.Error(err))
-	}
-	return nil
-}
-
 // CreatePlacementPolicy check whether cluster support policy and create the policy.
 func (db *DB) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
 	err := db.se.CreatePlacementPolicy(ctx, policy)
@@ -158,7 +138,7 @@ func (db *DB) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInf
 }
 
 // CreateDatabase executes a CREATE DATABASE SQL.
-func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportPolicy bool, policyMap *sync.Map) error {
+func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportPolicy bool, policyMap *sync.Map) (bool, error) {
 	log.Info("create database", zap.Stringer("name", schema.Name))
 
 	if !supportPolicy {
@@ -169,15 +149,18 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportP
 
 	if schema.PlacementPolicyRef != nil {
 		if err := db.ensurePlacementPolicy(ctx, schema.PlacementPolicyRef.Name, policyMap); err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 	}
 
-	err := db.se.CreateDatabase(ctx, schema)
+	err := db.se.CreateDatabaseOnExistError(ctx, schema)
 	if err != nil {
+		if infoschema.ErrDatabaseExists.Equal(err) {
+			return true, nil
+		}
 		log.Error("create database failed", zap.Stringer("db", schema.Name), zap.Error(err))
 	}
-	return errors.Trace(err)
+	return false, errors.Trace(err)
 }
 
 func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error {
@@ -281,29 +264,15 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
-func (db *DB) canReuseTableID(ti *model.TableInfo) bool {
-	if db.preallocedIDs == nil {
-		return false
-	}
-	prealloced := db.preallocedIDs.PreallocedFor(ti)
-	if prealloced {
-		log.Info("reusing table ID", zap.Stringer("table", ti.Name))
-	}
-	return prealloced
-}
-
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	if db.preallocedIDs == nil {
+		return errors.New("preallocedIDs is nil")
+	}
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
-		idReusableTbls := map[string][]*model.TableInfo{}
-		idNonReusableTbls := map[string][]*model.TableInfo{}
+		clonedInfos := make(map[string][]*model.TableInfo)
 		for _, table := range tables {
-			if db.canReuseTableID(table.Info) {
-				idReusableTbls[table.DB.Name.L] = append(idReusableTbls[table.DB.Name.L], table.Info)
-			} else {
-				idNonReusableTbls[table.DB.Name.L] = append(idNonReusableTbls[table.DB.Name.L], table.Info)
-			}
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
@@ -317,14 +286,14 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
 				ttlInfo.Enable = false
 			}
-		}
-		if len(idReusableTbls) > 0 {
-			if err := batchSession.CreateTables(ctx, idReusableTbls, ddl.WithIDAllocated(true)); err != nil {
-				return err
+			infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+			if err != nil {
+				return errors.Trace(err)
 			}
+			clonedInfos[table.DB.Name.L] = append(clonedInfos[table.DB.Name.L], infoClone)
 		}
-		if len(idNonReusableTbls) > 0 {
-			if err := batchSession.CreateTables(ctx, idNonReusableTbls); err != nil {
+		if len(clonedInfos) > 0 {
+			if err := batchSession.CreateTables(ctx, clonedInfos, ddl.WithIDAllocated(true)); err != nil {
 				return err
 			}
 		}
@@ -356,8 +325,11 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		ttlInfo.Enable = false
 	}
 
-	reuseID := db.canReuseTableID(table.Info)
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, ddl.WithIDAllocated(reuseID))
+	infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = db.se.CreateTable(ctx, table.DB.Name, infoClone, ddl.WithIDAllocated(true))
 	if err != nil {
 		log.Error("create table failed",
 			zap.Stringer("db", table.DB.Name),
@@ -379,7 +351,7 @@ func (db *DB) Close() {
 	db.se.Close()
 }
 
-func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName pmodel.CIStr, policies *sync.Map) error {
+func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName ast.CIStr, policies *sync.Map) error {
 	if policies == nil {
 		return nil
 	}

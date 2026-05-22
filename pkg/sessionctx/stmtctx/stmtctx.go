@@ -16,8 +16,10 @@ package stmtctx
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,13 +27,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -48,9 +52,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 	"golang.org/x/sync/singleflight"
 )
+
+// PlanIDFunc is used to get the plan ID from stmt.plan.
+// This function is used to avoid import cycle between planner and sessionctx.
+var PlanIDFunc func(plan any) (planID int, ok bool)
 
 var taskIDAlloc uint64
 
@@ -62,10 +69,24 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
-type jsonSQLWarn struct {
-	Level  string        `json:"level"`
-	SQLErr *terror.Error `json:"err,omitempty"`
-	Msg    string        `json:"msg,omitempty"`
+// LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
+// building a logical plan from AST.
+type LogicalPlanBuildState struct {
+	warnings             []SQLWarn
+	extraWarnings        []SQLWarn
+	tables               []TableEntry
+	tableStats           map[int64]any
+	lockTableIDs         map[int64]struct{}
+	tblInfo2UnionScan    map[*model.TableInfo]bool
+	useDynamicPruneMode  bool
+	viewDepth            int32
+	colRefFromUpdatePlan intset.FastIntSet
+	// plan cache related stuff
+	planCacheUseCache    bool
+	planCacheType        contextutil.PlanCacheType
+	planCacheUnqualified string
+	planCacheForce       bool
+	planCacheAlwaysWarn  bool
 }
 
 // ReferenceCount indicates the reference count of StmtCtx.
@@ -131,6 +152,75 @@ func (r *ReservedRowIDAlloc) Exhausted() bool {
 	return r.base >= r.max
 }
 
+type stmtCtxMu struct {
+	sync.Mutex
+
+	foundRows uint64
+
+	/*
+		These variables serve a similar purpose to those in MySQL's `COPY_INFO`,
+		they are used to count rows for INSERT/REPLACE/UPDATE queries:
+		  If a row is inserted then the copied variable is incremented.
+		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
+		     new data differs from the old one then the copied and the updated
+		     variables are incremented.
+		  The touched variable is incremented if a row was touched by the update part
+		     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
+		     was actually changed or not.
+
+		see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
+	*/
+	records uint64
+	deleted uint64
+	updated uint64
+	copied  uint64
+	touched uint64
+
+	message string
+}
+
+func (mu *stmtCtxMu) reset() *stmtCtxMu {
+	if mu == nil {
+		return &stmtCtxMu{}
+	}
+	mu.copied = 0
+	mu.deleted = 0
+	mu.foundRows = 0
+	mu.message = ""
+	mu.records = 0
+	mu.touched = 0
+	mu.updated = 0
+	return mu
+}
+
+type staleTSOProvider struct {
+	sync.Mutex
+	value *uint64
+	eval  func() (uint64, error)
+}
+
+func (s *staleTSOProvider) reset() *staleTSOProvider {
+	if s == nil {
+		return &staleTSOProvider{}
+	}
+	s.value = nil
+	s.eval = nil
+	return s
+}
+
+type stmtCache struct {
+	mu   sync.Mutex
+	data map[StmtCacheKey]any
+}
+
+func (s *stmtCache) reset() *stmtCache {
+	if s == nil {
+		return &stmtCache{}
+	}
+	s.data = nil
+	return s
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -174,8 +264,11 @@ type StatementContext struct {
 	hint.StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
-	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage,
+	// and it can be handled by the DDL worker.
+	// we will use this field to skip connections which are doing DDL when reporting
+	// the min start TS to PD.
+	IsDDLJobInQueue        atomic.Bool
 	DDLJobID               int64
 	InInsertStmt           bool
 	InUpdateStmt           bool
@@ -187,7 +280,6 @@ type StatementContext struct {
 	ExplainFormat          string
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
 	InShowWarning          bool
 
 	contextutil.PlanCacheTracker
@@ -202,33 +294,10 @@ type StatementContext struct {
 	InRestrictedSQL bool
 	ViewDepth       int32
 	// mu struct holds variables that change during execution.
-	mu struct {
-		sync.Mutex
+	mu *stmtCtxMu
+	// affectedRows is lifted from mu for performance reason.
+	affectedRows atomic.Uint64
 
-		affectedRows uint64
-		foundRows    uint64
-
-		/*
-			following variables are ported from 'COPY_INFO' struct of MySQL server source,
-			they are used to count rows for INSERT/REPLACE/UPDATE queries:
-			  If a row is inserted then the copied variable is incremented.
-			  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
-			     new data differs from the old one then the copied and the updated
-			     variables are incremented.
-			  The touched variable is incremented if a row was touched by the update part
-			     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
-			     was actually changed or not.
-
-			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
-		*/
-		records uint64
-		deleted uint64
-		updated uint64
-		copied  uint64
-		touched uint64
-
-		message string
-	}
 	WarnHandler contextutil.WarnHandlerExt
 	// ExtraWarnHandler record the extra warnings and are only used by the slow log only now.
 	// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
@@ -257,11 +326,13 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
+	MemSensitive bool // whether this statement is memory sensitive
 	DiskTracker  *disk.Tracker
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
 	RunawayChecker      resourcegroup.RunawayChecker
+	IsTiKV              atomic2.Bool
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
@@ -277,6 +348,20 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
+
+	// MatchSQLBindingCacheKey is the AST node used to match the sql binding. It is the key of the MatchSQLBindingCache.
+	MatchSQLBindingCacheKey ast.StmtNode
+	// MatchSQLBindingCache is to cache the bindinfo to avoid getting bindinfo from bind cache again.
+	MatchSQLBindingCache any
+
+	// ExecRetryCount records the number of retries for executing the statement.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecRetryCount uint64
+	// ExecSuccess indicates whether the statement execution succeeded.
+	// It is set after ExecStmt execution and currently only used in the Slow Log phase
+	// after LogSlowQuery is called.
+	ExecSuccess bool
 
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
@@ -298,23 +383,17 @@ type StatementContext struct {
 	// plan should be a plannercore.Plan if it's not nil
 	plan any
 
-	Tables                []TableEntry
-	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
-	PessimisticLockWaited int32
-	LockKeysDuration      int64
-	LockKeysCount         int32
-	LockTableIDs          map[int64]struct{} // table IDs need to be locked, empty for lock all tables
-	TblInfo2UnionScan     map[*model.TableInfo]bool
-	TaskID                uint64 // unique ID for an execution of a statement
-	TaskMapBakTS          uint64 // counter for
+	Tables            []TableEntry
+	lockWaitStartTime int64              // LockWaitStartTime stores the pessimistic lock wait start time
+	LockTableIDs      map[int64]struct{} // table IDs need to be locked, empty for lock all tables
+	TblInfo2UnionScan map[*model.TableInfo]bool
+	TaskID            uint64 // unique ID for an execution of a statement
+	TaskMapBakTS      uint64 // counter for
 
 	// stmtCache is used to store some statement-related values.
 	// add mutex to protect stmtCache concurrent access
 	// https://github.com/pingcap/tidb/issues/36159
-	stmtCache struct {
-		mu   sync.Mutex
-		data map[StmtCacheKey]any
-	}
+	stmtCache *stmtCache
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
@@ -393,10 +472,50 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
+	// AlternativeLogicalPlanDecorrelatedApply indicates whether the current logical
+	// optimization round decorrelated at least one Apply into Join.
+	AlternativeLogicalPlanDecorrelatedApply bool
+	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
+	// round already produced a same-order index join candidate for a decorrelated Apply.
+	AlternativeLogicalPlanSameOrderIndexJoin bool
+	// AlternativeLogicalPlanOrderAwareJoinReorder indicates whether at least one
+	// logical build round produced an order-aware join reorder candidate that is
+	// worth exploring in a dedicated alternative round.
+	AlternativeLogicalPlanOrderAwareJoinReorder bool
+	// AlternativeLogicalPlanPreferCorrelate indicates whether the current logical
+	// build round encountered a non-correlated IN subquery eligible for the
+	// correlate-to-Apply alternative.
+	AlternativeLogicalPlanPreferCorrelate bool
+	// AlternativeLogicalPlanFTSLikeFallback is a mode flag controlling how the
+	// expression rewriter handles MATCH...AGAINST in predicate contexts. When
+	// false (the default, matching Alt-disabled behavior) the rewriter emits
+	// the native FTSMysqlMatchAgainst builtin. When true, the rewriter emits
+	// ILIKE-based predicates instead.
+	//
+	// Round 1 always runs with this flag false. The "fts-like-fallback"
+	// alternative round flips it to true (via its setup/cleanup) while it
+	// builds a competing ILIKE-based plan; the cost-cheapest plan wins via the
+	// normal alt-rounds cost comparison. If round 1's build records a
+	// predicate-context MATCH that cannot be served natively (no FTS index on a
+	// matched column / no TiFlash replica / modifier not pushdown-supported),
+	// optimize.go additionally invalidates round 1's plan and forces this flag
+	// true outside the round so any intervening rounds (correlate, etc.) also
+	// produce executable LIKE-based plans.
+	AlternativeLogicalPlanFTSLikeFallback bool
+	// AlternativeLogicalPlanHasPredicateContextMatch indicates that round 1
+	// encountered a direct-boolean-context MATCH...AGAINST. The round driver
+	// uses this to enable the fts-like-fallback round for cost competition even
+	// when round 1's native plan is executable.
+	AlternativeLogicalPlanHasPredicateContextMatch bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
+	// InsertRowsAsRUV2Recorded tracks whether the statement-level insert-row RUv2 cost has already been
+	// applied to RUV2Metrics. This must stay idempotent because EXPLAIN ANALYZE INSERT snapshots RU before
+	// FinishExecuteStmt runs, while FinishExecuteStmt still needs to reuse the same accounting path for the
+	// final slow-log and resource-group reporting.
+	InsertRowsAsRUV2Recorded bool
 
 	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
 	InHandleForeignKeyTrigger bool
@@ -423,14 +542,10 @@ type StatementContext struct {
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
-	StaleTSOProvider struct {
-		sync.Mutex
-		value *uint64
-		eval  func() (uint64, error)
-	}
+	StaleTSOProvider *staleTSOProvider
 
-	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
-	MDLRelatedTableIDs map[int64]struct{}
+	// RelatedTableIDs stores the IDs of tables used in statement.
+	RelatedTableIDs map[int64]struct{}
 
 	// ForShareLockEnabledByNoop indicates whether the current statement contains `for share` clause
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
@@ -456,7 +571,11 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
-		ctxID: contextutil.GenContextID(),
+		ctxID:                contextutil.GenContextID(),
+		mu:                   &stmtCtxMu{},
+		stmtCache:            &stmtCache{},
+		StaleTSOProvider:     &staleTSOProvider{},
+		MatchSQLBindingCache: nil,
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -468,18 +587,44 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 }
 
 // Reset resets a statement context
-func (sc *StatementContext) Reset() {
+func (sc *StatementContext) Reset() bool {
+	// make sure no other goroutines still get locks.
+	if sc.mu != nil {
+		if !sc.mu.TryLock() {
+			return false
+		}
+		defer sc.mu.Unlock()
+	}
+	if sc.stmtCache != nil {
+		if !sc.stmtCache.mu.TryLock() {
+			return false
+		}
+		defer sc.stmtCache.mu.Unlock()
+	}
+	if sc.StaleTSOProvider != nil {
+		if !sc.StaleTSOProvider.TryLock() {
+			return false
+		}
+		defer sc.StaleTSOProvider.Unlock()
+	}
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
 		LockTableIDs:        sc.LockTableIDs,
 		TableStats:          sc.TableStats,
-		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		RelatedTableIDs:     sc.RelatedTableIDs,
 		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
 		WarnHandler:         sc.WarnHandler,
 		ExtraWarnHandler:    sc.ExtraWarnHandler,
 		IndexUsageCollector: sc.IndexUsageCollector,
+		mu:                  sc.mu,
+		stmtCache:           sc.stmtCache,
+		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
+	sc.mu = sc.mu.reset()
+	sc.affectedRows.Store(0)
+	sc.stmtCache = sc.stmtCache.reset()
+	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
@@ -494,6 +639,81 @@ func (sc *StatementContext) Reset() {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
+	return true
+}
+
+// SaveLogicalPlanBuildState captures the statement-scoped planner state before building
+// another logical plan candidate from the same AST.
+func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
+	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
+	return LogicalPlanBuildState{
+		warnings:             slices.Clone(sc.GetWarnings()),
+		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
+		tables:               slices.Clone(sc.Tables),
+		tableStats:           maps.Clone(sc.TableStats),
+		lockTableIDs:         maps.Clone(sc.LockTableIDs),
+		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
+		useDynamicPruneMode:  sc.UseDynamicPruneMode,
+		viewDepth:            sc.ViewDepth,
+		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
+		planCacheUseCache:    planCacheUseCache,
+		planCacheType:        planCacheType,
+		planCacheUnqualified: planCacheUnqualified,
+		planCacheForce:       planCacheForce,
+		planCacheAlwaysWarn:  planCacheAlwaysWarn,
+	}
+}
+
+// RestoreLogicalPlanBuildState restores the statement-scoped planner state after a
+// discarded logical plan build attempt.
+func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildState) {
+	sc.SetWarnings(slices.Clone(state.warnings))
+	sc.SetExtraWarnings(slices.Clone(state.extraWarnings))
+	sc.Tables = slices.Clone(state.tables)
+	sc.TableStats = maps.Clone(state.tableStats)
+	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
+	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
+	sc.UseDynamicPruneMode = state.useDynamicPruneMode
+	sc.ViewDepth = state.viewDepth
+	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
+	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+}
+
+// ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
+// alternative logical plan feature.
+func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = false
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
+	sc.AlternativeLogicalPlanFTSLikeFallback = false
+	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
+	sc.AlternativeLogicalPlanPreferCorrelate = false
+}
+
+// MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
+// been decorrelated into a Join in the current round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = true
+}
+
+// MarkAlternativeLogicalPlanSameOrderIndexJoin records that the current first round
+// has already produced a same-order index join candidate for a decorrelated Apply.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
+}
+
+// MarkAlternativeLogicalPlanOrderAwareJoinReorder records that the current
+// logical build round produced an order-aware join reorder candidate.
+func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = true
+}
+
+// MarkAlternativeLogicalPlanPreferCorrelate records that the current logical
+// build round encountered a non-correlated IN subquery that is eligible for
+// the correlate-to-Apply alternative.
+func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
+	sc.AlternativeLogicalPlanPreferCorrelate = true
 }
 
 // CtxID returns the context id of the statement
@@ -694,7 +914,7 @@ func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 
 // GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.
 func (sc *StatementContext) GetResourceGroupTagger() *kv.ResourceGroupTagBuilder {
-	tagger := kv.NewResourceGroupTagBuilder().SetPlanDigest(sc.planDigest)
+	tagger := kv.NewResourceGroupTagBuilder(keyspace.GetKeyspaceNameBytesBySettings()).SetPlanDigest(sc.planDigest)
 	normalized, digest := sc.SQLDigest()
 	if len(normalized) > 0 {
 		tagger.SetSQLDigest(digest)
@@ -770,15 +990,6 @@ func (sc *StatementContext) SetIndexForce() {
 // PlanCacheType is the flag of plan cache
 type PlanCacheType int
 
-const (
-	// DefaultNoCache no cache
-	DefaultNoCache PlanCacheType = iota
-	// SessionPrepared session prepared plan cache
-	SessionPrepared
-	// SessionNonPrepared session non-prepared plan cache
-	SessionNonPrepared
-)
-
 // SetHintWarning sets the hint warning and records the reason.
 func (sc *StatementContext) SetHintWarning(reason string) {
 	sc.AppendWarning(plannererrors.ErrInternal.FastGen(reason))
@@ -801,29 +1012,24 @@ func (sc *StatementContext) AddAffectedRows(rows uint64) {
 		// For compatibility with MySQL, not add the affected row cause by the foreign key trigger.
 		return
 	}
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	sc.mu.affectedRows += rows
+	sc.affectedRows.Add(rows)
 }
 
 // SetAffectedRows sets affected rows.
 func (sc *StatementContext) SetAffectedRows(rows uint64) {
-	sc.mu.Lock()
-	sc.mu.affectedRows = rows
-	sc.mu.Unlock()
+	sc.affectedRows.Store(rows)
 }
 
 // AffectedRows gets affected rows.
 func (sc *StatementContext) AffectedRows() uint64 {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return sc.mu.affectedRows
+	return sc.affectedRows.Load()
 }
 
 // FoundRows gets found rows.
 func (sc *StatementContext) FoundRows() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	failpoint.InjectCall("afterFoundRowsLocked", sc)
 	return sc.mu.foundRows
 }
 
@@ -1000,7 +1206,7 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	sc.mu.affectedRows = 0
+	sc.affectedRows.Store(0)
 	sc.mu.foundRows = 0
 	sc.mu.records = 0
 	sc.mu.deleted = 0
@@ -1017,7 +1223,6 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
-	sc.SyncExecDetails.Reset()
 	sc.WarnHandler.TruncateWarnings(0)
 	sc.ExtraWarnHandler.TruncateWarnings(0)
 
@@ -1031,7 +1236,6 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	details = sc.SyncExecDetails.GetExecDetails()
-	details.LockKeysDuration = time.Duration(atomic.LoadInt64(&sc.LockKeysDuration))
 	return details
 }
 
@@ -1093,6 +1297,11 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 		WithAllowNegativeToUnsigned(!sc.InInsertStmt))
 }
 
+// PessimisticLockStarted returns if the statement pessimistic lock wait start time is set
+func (sc *StatementContext) PessimisticLockStarted() bool {
+	return atomic.LoadInt64(&sc.lockWaitStartTime) > 0
+}
+
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
 func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	startTime := atomic.LoadInt64(&sc.lockWaitStartTime)
@@ -1121,10 +1330,13 @@ func (sc *StatementContext) DetachMemDiskTracker() {
 	}
 }
 
-// SetStaleTSOProvider sets the stale TSO provider.
-func (sc *StatementContext) SetStaleTSOProvider(eval func() (uint64, error)) {
+// SetStaleTSOProviderIfNotExist sets the stale TSO provider.
+func (sc *StatementContext) SetStaleTSOProviderIfNotExist(eval func() (uint64, error)) {
 	sc.StaleTSOProvider.Lock()
 	defer sc.StaleTSOProvider.Unlock()
+	if sc.StaleTSOProvider.eval != nil {
+		return
+	}
 	sc.StaleTSOProvider.value = nil
 	sc.StaleTSOProvider.eval = eval
 }
@@ -1152,7 +1364,10 @@ func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
 	if sc.SetVarHintRestore == nil {
 		sc.SetVarHintRestore = make(map[string]string)
 	}
-	sc.SetVarHintRestore[name] = val
+
+	if _, found := sc.SetVarHintRestore[name]; !found {
+		sc.SetVarHintRestore[name] = val
+	}
 }
 
 // GetUsedStatsInfo returns the map for recording the used stats during query.
@@ -1218,6 +1433,18 @@ func (sc *StatementContext) GetOrInitBuildPBCtxFromCache(create func() any) any 
 	return sc.buildPBCtxCache.bctx
 }
 
+// GetResultRowsCount returns the number of result rows from the runtime stats collection.
+func (sc *StatementContext) GetResultRowsCount() (resultRows int64) {
+	if sc == nil || sc.RuntimeStatsColl == nil {
+		return 0
+	}
+	planID, ok := PlanIDFunc(sc.GetPlan())
+	if !ok {
+		return 0
+	}
+	return sc.RuntimeStatsColl.GetPlanActRows(planID)
+}
+
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnAppender) errctx.Context {
 	l := errctx.LevelError
 	if flags := tc.Flags(); flags.IgnoreTruncateErr() {
@@ -1266,7 +1493,7 @@ func (s *UsedStatsInfoForTable) FormatForExplain() string {
 	b.WriteString(strings.Join(strs, ", "))
 	if len(statusCnt) > 0 {
 		b.WriteString("...(more: ")
-		keys := maps.Keys(statusCnt)
+		keys := slices.Collect(maps.Keys(statusCnt))
 		slices.Sort(keys)
 		var cntStrs []string
 		for _, key := range keys {
@@ -1280,14 +1507,14 @@ func (s *UsedStatsInfoForTable) FormatForExplain() string {
 }
 
 // WriteToSlowLog format the content in the format expected to be printed to the slow log, then write to w.
-// The format is table name partition name:version[realtime row count;modify count][index load status][column load status].
+// The format is table name partition name:stats_meta_version=<ver>[realtime_count=<n>;modify_count=<m>][index load status][column load status].
 func (s *UsedStatsInfoForTable) WriteToSlowLog(w io.Writer) {
 	ver := "pseudo"
 	// statistics.PseudoVersion == 0
 	if s.Version != 0 {
 		ver = strconv.FormatUint(s.Version, 10)
 	}
-	fmt.Fprintf(w, "%s:%s[%d;%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
+	fmt.Fprintf(w, "%s:stats_meta_version=%s[realtime_count=%d;modify_count=%d]", s.Name, ver, s.RealtimeCount, s.ModifyCount)
 	if ver == "pseudo" {
 		return
 	}
@@ -1315,7 +1542,7 @@ func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
 	} else {
 		status = s.IndexStatsLoadStatus
 	}
-	keys := maps.Keys(status)
+	keys := slices.Collect(maps.Keys(status))
 	slices.Sort(keys)
 	strs := make([]string, 0, len(status))
 	for _, id := range keys {
@@ -1417,4 +1644,22 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(", err:")
 	b.WriteString(r.Error.Error())
 	return b.String()
+}
+
+type stmtLabelKeyType struct{}
+
+var stmtLabelKey stmtLabelKeyType
+
+// WithStmtLabel sets the label for the statement node.
+func WithStmtLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, stmtLabelKey, label)
+}
+
+// GetStmtLabel returns the label for the statement node.
+// context with stmtLabelKey will return the label if it exists.
+func GetStmtLabel(ctx context.Context, node ast.StmtNode) string {
+	if val := ctx.Value(stmtLabelKey); val != nil {
+		return val.(string)
+	}
+	return ast.GetStmtLabel(node)
 }

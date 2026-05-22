@@ -25,15 +25,51 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
+const (
+	CheckpointRestoreDirFormat                = CheckpointDir + "/restore-%s"
+	CheckpointDataDirForRestoreFormat         = CheckpointRestoreDirFormat + "/data"
+	CheckpointChecksumDirForRestoreFormat     = CheckpointRestoreDirFormat + "/checksum"
+	CheckpointMetaPathForRestoreFormat        = CheckpointRestoreDirFormat + "/checkpoint.meta"
+	CheckpointProgressPathForRestoreFormat    = CheckpointRestoreDirFormat + "/progress.meta"
+	CheckpointIngestIndexPathForRestoreFormat = CheckpointRestoreDirFormat + "/ingest_index.meta"
+)
+
+func flushPathForRestore(taskName string) flushPath {
+	return flushPath{
+		CheckpointDataDir:     getCheckpointDataDirByName(taskName),
+		CheckpointChecksumDir: getCheckpointChecksumDirByName(taskName),
+	}
+}
+
+func getCheckpointMetaPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointMetaPathForRestoreFormat, taskName)
+}
+
+func getCheckpointDataDirByName(taskName string) string {
+	return fmt.Sprintf(CheckpointDataDirForRestoreFormat, taskName)
+}
+
+func getCheckpointChecksumDirByName(taskName string) string {
+	return fmt.Sprintf(CheckpointChecksumDirForRestoreFormat, taskName)
+}
+
+func getCheckpointProgressPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointProgressPathForRestoreFormat, taskName)
+}
+
+func getCheckpointIngestIndexPathByName(taskName string) string {
+	return fmt.Sprintf(CheckpointIngestIndexPathForRestoreFormat, taskName)
+}
+
 type externalCheckpointStorage struct {
-	flushPosition
-	storage storage.ExternalStorage
+	flushPath
+	storage storeapi.Storage
 
 	lockId uint64
 	timer  GlobalTimer
@@ -41,13 +77,14 @@ type externalCheckpointStorage struct {
 
 func newExternalCheckpointStorage(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	timer GlobalTimer,
+	flushPath flushPath,
 ) (*externalCheckpointStorage, error) {
 	checkpointStorage := &externalCheckpointStorage{
-		flushPosition: flushPositionForBackup(),
-		storage:       s,
-		timer:         timer,
+		flushPath: flushPath,
+		storage:   s,
+		timer:     timer,
 	}
 	if timer != nil {
 		if err := checkpointStorage.initialLock(ctx); err != nil {
@@ -101,7 +138,7 @@ func (s *externalCheckpointStorage) flushLock(ctx context.Context, p int64) erro
 		LockId:   s.lockId,
 		ExpireAt: p + lockTimeToLive.Milliseconds(),
 	}
-	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", p),
+	log.Debug("start to flush the checkpoint lock", zap.Int64("lock-at", p),
 		zap.Int64("expire-at", lock.ExpireAt))
 	data, err := json.Marshal(lock)
 	if err != nil {

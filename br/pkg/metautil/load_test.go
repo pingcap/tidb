@@ -22,9 +22,9 @@ import (
 	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
@@ -39,11 +39,11 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 
 func TestLoadBackupMeta(t *testing.T) {
 	testDir := t.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
-	tblName := pmodel.NewCIStr("t1")
-	dbName := pmodel.NewCIStr("test")
+	tblName := ast.NewCIStr("t1")
+	dbName := ast.NewCIStr("test")
 	tblID := int64(123)
 	mockTbl := &model.TableInfo{
 		ID:   tblID,
@@ -110,17 +110,18 @@ func TestLoadBackupMeta(t *testing.T) {
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
-	require.Len(t, tbl.Files, 1)
-	require.Equal(t, "1.sst", tbl.Files[0].Name)
+	require.Len(t, tbl.FilesOfPhysicals, 1)
+	require.Len(t, tbl.FilesOfPhysicals[tblID], 1)
+	require.Equal(t, "1.sst", tbl.FilesOfPhysicals[tblID][0].Name)
 }
 
 func TestLoadBackupMetaPartionTable(t *testing.T) {
 	testDir := t.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
-	tblName := pmodel.NewCIStr("t1")
-	dbName := pmodel.NewCIStr("test")
+	tblName := ast.NewCIStr("t1")
+	dbName := ast.NewCIStr("test")
 	tblID := int64(123)
 	partID1 := int64(124)
 	partID2 := int64(125)
@@ -207,11 +208,18 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
-	require.Len(t, tbl.Files, 3)
+	require.Len(t, tbl.FilesOfPhysicals, 2)
+	count := 0
+	for _, files := range tbl.FilesOfPhysicals {
+		count += len(files)
+	}
+	require.Equal(t, 3, count)
 	contains := func(name string) bool {
-		for i := range tbl.Files {
-			if tbl.Files[i].Name == name {
-				return true
+		for i := range tbl.FilesOfPhysicals {
+			for _, file := range tbl.FilesOfPhysicals[i] {
+				if file.Name == name {
+					return true
+				}
 			}
 		}
 		return false
@@ -222,7 +230,7 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 }
 
 func buildTableAndFiles(name string, tableID, fileCount int) (*model.TableInfo, []*backuppb.File) {
-	tblName := pmodel.NewCIStr(name)
+	tblName := ast.NewCIStr(name)
 	tblID := int64(tableID)
 	mockTbl := &model.TableInfo{
 		ID:   tblID,
@@ -230,11 +238,11 @@ func buildTableAndFiles(name string, tableID, fileCount int) (*model.TableInfo, 
 	}
 
 	mockFiles := make([]*backuppb.File, 0, fileCount)
-	for i := 0; i < fileCount; i++ {
+	for i := range fileCount {
 		mockFiles = append(mockFiles, &backuppb.File{
 			Name:     fmt.Sprintf("%d-%d.sst", tableID, i),
-			StartKey: tablecodec.EncodeRowKey(tblID, []byte(fmt.Sprintf("%09d", i))),
-			EndKey:   tablecodec.EncodeRowKey(tblID, []byte(fmt.Sprintf("%09d", i+1))),
+			StartKey: tablecodec.EncodeRowKey(tblID, fmt.Appendf(nil, "%09d", i)),
+			EndKey:   tablecodec.EncodeRowKey(tblID, fmt.Appendf(nil, "%09d", i+1)),
 		})
 	}
 	return mockTbl, mockFiles
@@ -249,7 +257,7 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 
 		mockDB := model.DBInfo{
 			ID:   1,
-			Name: pmodel.NewCIStr(dbName),
+			Name: ast.NewCIStr(dbName),
 		}
 		mockDB.Deprecated.Tables = []*model.TableInfo{
 			mockTbl,
@@ -268,7 +276,7 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 
 func BenchmarkLoadBackupMeta64(b *testing.B) {
 	testDir := b.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 64, 64)
@@ -301,7 +309,7 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 
 func BenchmarkLoadBackupMeta1024(b *testing.B) {
 	testDir := b.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 1024, 64)
@@ -334,7 +342,7 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 
 func BenchmarkLoadBackupMeta10240(b *testing.B) {
 	testDir := b.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 10240, 64)

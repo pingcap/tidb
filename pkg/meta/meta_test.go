@@ -25,14 +25,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
@@ -62,7 +64,7 @@ func TestPlacementPolicy(t *testing.T) {
 	// test the meta storage of placemnt policy.
 	policy := &model.PolicyInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("aa"),
+		Name: ast.NewCIStr("aa"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion:      "my primary",
 			Regions:            "my regions",
@@ -87,7 +89,7 @@ func TestPlacementPolicy(t *testing.T) {
 	require.Equal(t, policy, val)
 
 	// mock updating the placement policy.
-	policy.Name = pmodel.NewCIStr("bb")
+	policy.Name = ast.NewCIStr("bb")
 	policy.LearnerConstraints = "+zone=nanjing"
 	err = m.UpdatePolicy(policy)
 	require.NoError(t, err)
@@ -109,6 +111,79 @@ func TestPlacementPolicy(t *testing.T) {
 
 	m = meta.NewMutator(txn)
 	val, err = m.GetPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+}
+
+func TestMaskingPolicy(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMutator(txn)
+	policy := &model.MaskingPolicyInfo{
+		ID:          1,
+		Name:        ast.NewCIStr("mp1"),
+		TableID:     10,
+		ColumnID:    11,
+		MaskingType: model.MaskingPolicyTypeMaskFull,
+		Expression:  "mask_full(c)",
+		RestrictOps: ast.MaskingPolicyRestrictOpInsertIntoSelect | ast.MaskingPolicyRestrictOpDeleteSelect,
+		Status:      model.MaskingPolicyStatusEnabled,
+		CreatedBy:   "root@%",
+		UpdatedBy:   "root@%",
+		State:       model.StatePublic,
+	}
+	err = m.CreateMaskingPolicy(policy)
+	require.NoError(t, err)
+	require.Equal(t, policy.ID, int64(1))
+
+	err = m.CreateMaskingPolicy(policy)
+	require.Error(t, err)
+	require.True(t, meta.ErrMaskingPolicyExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy already exists")
+	require.ErrorContains(t, err, "masking policy id : 1 already exists")
+
+	_, err = m.GetMaskingPolicy(2)
+	require.Error(t, err)
+	require.True(t, meta.ErrMaskingPolicyNotExists.Equal(err))
+	require.ErrorContains(t, err, "masking policy doesn't exist")
+	require.ErrorContains(t, err, "masking policy id : 2 doesn't exist")
+
+	val, err := m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	policy.Expression = "mask_partial(c, 0, 2, '*')"
+	policy.Status = model.MaskingPolicyStatusDisabled
+	err = m.UpdateMaskingPolicy(policy)
+	require.NoError(t, err)
+
+	val, err = m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	ps, err := m.ListMaskingPolicies()
+	require.NoError(t, err)
+	require.Equal(t, []*model.MaskingPolicyInfo{policy}, ps)
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+
+	m = meta.NewMutator(txn)
+	val, err = m.GetMaskingPolicy(1)
 	require.NoError(t, err)
 	require.Equal(t, policy, val)
 	err = txn.Commit(context.Background())
@@ -142,7 +217,7 @@ func TestResourceGroup(t *testing.T) {
 
 	rg := &model.ResourceGroupInfo{
 		ID:   groupID,
-		Name: pmodel.NewCIStr("aa"),
+		Name: ast.NewCIStr("aa"),
 		ResourceGroupSettings: &model.ResourceGroupSettings{
 			RURate: 100,
 		},
@@ -213,7 +288,7 @@ func TestMeta(t *testing.T) {
 
 	dbInfo := &model.DBInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("a"),
+		Name: ast.NewCIStr("a"),
 	}
 	err = m.CreateDatabase(dbInfo)
 	require.NoError(t, err)
@@ -226,7 +301,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dbInfo, v)
 
-	dbInfo.Name = pmodel.NewCIStr("aa")
+	dbInfo.Name = ast.NewCIStr("aa")
 	err = m.UpdateDatabase(dbInfo)
 	require.NoError(t, err)
 
@@ -240,7 +315,7 @@ func TestMeta(t *testing.T) {
 
 	tbInfo := &model.TableInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("t"),
+		Name: ast.NewCIStr("t"),
 		DBID: dbInfo.ID,
 	}
 	err = m.CreateTableOrView(1, tbInfo)
@@ -258,7 +333,7 @@ func TestMeta(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
-	tbInfo.Name = pmodel.NewCIStr("tt")
+	tbInfo.Name = ast.NewCIStr("tt")
 	err = m.UpdateTable(1, tbInfo)
 	require.NoError(t, err)
 
@@ -278,7 +353,7 @@ func TestMeta(t *testing.T) {
 
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
-		Name: pmodel.NewCIStr("bb"),
+		Name: ast.NewCIStr("bb"),
 		DBID: dbInfo.ID,
 	}
 	err = m.CreateTableOrView(1, tbInfo2)
@@ -344,7 +419,7 @@ func TestMeta(t *testing.T) {
 	tid := int64(100)
 	tbInfo100 := &model.TableInfo{
 		ID:   tid,
-		Name: pmodel.NewCIStr("t_rename"),
+		Name: ast.NewCIStr("t_rename"),
 	}
 	// Create table.
 	err = m.CreateTableOrView(1, tbInfo100)
@@ -371,7 +446,7 @@ func TestMeta(t *testing.T) {
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
-		Name: pmodel.NewCIStr("tbl3"),
+		Name: ast.NewCIStr("tbl3"),
 	}
 	err = m.CreateTableAndSetAutoID(1, tbInfo3, model.AutoIDGroup{RowID: 123, IncrementID: 0})
 	require.NoError(t, err)
@@ -551,7 +626,7 @@ func BenchmarkGenGlobalIDOneByOne(b *testing.B) {
 	b.ResetTimer()
 	var id int64
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			id, _ = m.GenGlobalID()
 		}
 	}
@@ -624,6 +699,57 @@ func TestAutoRandomTableIDKey(b *testing.T) {
 	require.Equal(b, tableID, id)
 }
 
+func TestIterDatabases(t *testing.T) {
+	// Create a new mock store and a transaction
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMutator(txn)
+
+	// Prepare multiple databases
+	db1 := &model.DBInfo{ID: 1, Name: ast.NewCIStr("db1")}
+	db2 := &model.DBInfo{ID: 2, Name: ast.NewCIStr("db2")}
+	db3 := &model.DBInfo{ID: 3, Name: ast.NewCIStr("db3")}
+
+	require.NoError(t, m.CreateDatabase(db1))
+	require.NoError(t, m.CreateDatabase(db2))
+	require.NoError(t, m.CreateDatabase(db3))
+
+	// Iterate all databases and collect names
+	var names []string
+	err = m.IterDatabases(func(info *model.DBInfo) error {
+		names = append(names, info.Name.O)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, names, 3)
+	sort.Strings(names)
+	require.Equal(t, []string{"db1", "db2", "db3"}, names)
+
+	// Verify early stop behavior by returning a sentinel error from the callback
+	count := 0
+	sentinel := errors.New("stop")
+	err = m.IterDatabases(func(info *model.DBInfo) error {
+		count++
+		if count == 2 {
+			return sentinel
+		}
+		return nil
+	})
+	require.Error(t, err)
+	require.True(t, errors.ErrorEqual(err, sentinel))
+	require.Equal(t, 2, count)
+
+	// Commit the transaction to ensure no side effects remain
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
 func TestSequenceKey(b *testing.T) {
 	var tableID int64 = 10
 	key := meta.SequenceKey(tableID)
@@ -648,7 +774,11 @@ func TestCreateMySQLDatabase(t *testing.T) {
 
 	dbID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
-	require.Greater(t, dbID, int64(0))
+	if kerneltype.IsNextGen() {
+		require.Equal(t, metadef.SystemDatabaseID, dbID)
+	} else {
+		require.EqualValues(t, 1, dbID)
+	}
 
 	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
@@ -664,6 +794,16 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 		State:   model.StatePublic,
 	}
 	b, err := json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		Affinity: &model.TableAffinityInfo{
+			Level: "s",
+		},
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
@@ -707,6 +847,33 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.True(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = nil
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = make([]*model.FKInfo, 0)
+	tableInfo = tableInfo.Clone()
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = nil
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo.ForeignKeys = make([]*model.FKInfo, 0)
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
 	tableInfo = &model.TableInfo{
 		TempTableType: model.TempTableGlobal,
 		State:         model.StatePublic,
@@ -735,17 +902,19 @@ func TestIsTableInfoMustLoadSubStringsOrder(t *testing.T) {
 	// The order matter!
 	// IsTableInfoMustLoad relies on the order of the json marshal result,
 	// or the internal of the json marshal in other words.
-	// This test cover the invariance, if Go std library changes, we can catch it.
-	tableInfo := &model.TableInfo{}
+	// This test covers the invariance, if Go std library changes, we can catch it.
+	tableInfo := &model.TableInfo{
+		Affinity: &model.TableAffinityInfo{Level: "s"},
+	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
-	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"revision":0}`
-	require.Equal(t, string(b), expect)
+	expect := `{"id":0,"name":{"O":"","L":""},"charset":"","collate":"","cols":null,"index_info":null,"constraint_info":null,"fk_info":null,"state":0,"pk_is_handle":false,"is_common_handle":false,"common_handle_version":0,"comment":"","auto_inc_id":0,"auto_id_cache":0,"auto_rand_id":0,"max_col_id":0,"max_idx_id":0,"max_fk_id":0,"max_cst_id":0,"update_timestamp":0,"ShardRowIDBits":0,"max_shard_row_id_bits":0,"auto_random_bits":0,"auto_random_range_bits":0,"pre_split_regions":0,"partition":null,"compression":"","view":null,"sequence":null,"Lock":null,"version":0,"tiflash_replica":null,"is_columnar":false,"temp_table_type":0,"cache_table_status":0,"policy_ref_info":null,"stats_options":null,"exchange_partition_info":null,"ttl_info":null,"affinity":{"level":"s"},"revision":0}`
+	require.Equal(t, expect, string(b))
 }
 
 func TestTableNameExtract(t *testing.T) {
 	var tbl model.TableInfo
-	tbl.Name = pmodel.NewCIStr(`a`)
+	tbl.Name = ast.NewCIStr(`a`)
 	b, err := json.Marshal(tbl)
 	require.NoError(t, err)
 
@@ -754,28 +923,28 @@ func TestTableNameExtract(t *testing.T) {
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, "a", nameLMatch[1])
 
-	tbl.Name = pmodel.NewCIStr(`"a"`)
+	tbl.Name = ast.NewCIStr(`"a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = pmodel.NewCIStr(`""a"`)
+	tbl.Name = ast.NewCIStr(`""a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `""a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = pmodel.NewCIStr(`"\"a"`)
+	tbl.Name = ast.NewCIStr(`"\"a"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
 	require.Len(t, nameLMatch, 2)
 	require.Equal(t, `"\"a"`, meta.Unescape(nameLMatch[1]))
 
-	tbl.Name = pmodel.NewCIStr(`"\"啊"`)
+	tbl.Name = ast.NewCIStr(`"\"啊"`)
 	b, err = json.Marshal(tbl)
 	require.NoError(t, err)
 	nameLMatch = nameLRegex.FindStringSubmatch(string(b))
@@ -931,48 +1100,44 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	// create database
 	dbInfo := &model.DBInfo{
 		ID:    10001,
-		Name:  pmodel.NewCIStr("sc"),
+		Name:  ast.NewCIStr("sc"),
 		State: model.StatePublic,
 	}
 
 	// create table with special attributes
 	tblInfo := &model.TableInfo{
 		ID:    10002,
-		Name:  pmodel.NewCIStr("cs"),
+		Name:  ast.NewCIStr("cs"),
 		State: model.StatePublic,
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
-				{ID: 11, Name: pmodel.NewCIStr("p1")},
-				{ID: 22, Name: pmodel.NewCIStr("p2")},
+				{ID: 11, Name: ast.NewCIStr("p1")},
+				{ID: 22, Name: ast.NewCIStr("p2")},
 			},
 			Enable: true,
 		},
-		ForeignKeys: []*model.FKInfo{{
-			ID:       1,
-			Name:     pmodel.NewCIStr("fk"),
-			RefTable: pmodel.NewCIStr("t"),
-			RefCols:  []pmodel.CIStr{pmodel.NewCIStr("a")},
-			Cols:     []pmodel.CIStr{pmodel.NewCIStr("t_a")},
-		}},
 		TiFlashReplica: &model.TiFlashReplicaInfo{
 			Count:          0,
 			LocationLabels: []string{"a,b,c"},
 			Available:      true,
 		},
 		Lock: &model.TableLockInfo{
-			Tp:    pmodel.TableLockRead,
+			Tp:    ast.TableLockRead,
 			State: model.TableLockStatePreLock,
 			TS:    0,
 		},
 		PlacementPolicyRef: &model.PolicyRefInfo{
 			ID:   1,
-			Name: pmodel.NewCIStr("r1"),
+			Name: ast.NewCIStr("r1"),
 		},
 		TTLInfo: &model.TTLInfo{
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitDay),
 			Enable:           true,
 			JobInterval:      "1h",
+		},
+		Affinity: &model.TableAffinityInfo{
+			Level: "1",
 		},
 	}
 
@@ -995,10 +1160,6 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
-	// foreign key info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.ForeignKeysAttribute)
-	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
-	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
 	// tiflash replica info
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
@@ -1015,6 +1176,10 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
+	// affinity
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.AffinityAttribute)
+	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
+	require.Equal(t, tblInfo.Affinity, tblInfoRes[0].TableInfos[0].Affinity)
 }
 
 func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
@@ -1027,7 +1192,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	// create database
 	dbInfo := &model.DBInfo{
 		ID:      10001,
-		Name:    pmodel.NewCIStr("sc"),
+		Name:    ast.NewCIStr("sc"),
 		Charset: "utf8",
 		Collate: "utf8_general_ci",
 		State:   model.StatePublic,
@@ -1036,13 +1201,13 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	// create table with partition info
 	tblInfo := &model.TableInfo{
 		ID:      10002,
-		Name:    pmodel.NewCIStr("cs"),
+		Name:    ast.NewCIStr("cs"),
 		Charset: "latin1",
 		Collate: "latin1_bin",
 		State:   model.StatePublic,
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
-				{ID: 1, Name: pmodel.NewCIStr("p1")},
+				{ID: 1, Name: ast.NewCIStr("p1")},
 			},
 			Enable: true,
 		},
@@ -1070,7 +1235,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
 	//byName, traverse byName and load from store,
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("sc"), pmodel.NewCIStr("cs"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("sc"), ast.NewCIStr("cs"))
 	require.NoError(t, err)
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
@@ -1080,7 +1245,7 @@ func TestInfoSchemaV2DataFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, tbl.Meta().ID, tblInfo.ID)
 
 	//schemaMap, traverse schemaMap find dbInfo
-	db, ok := is.SchemaByName(pmodel.NewCIStr("sc"))
+	db, ok := is.SchemaByName(ast.NewCIStr("sc"))
 	require.True(t, ok)
 	require.Equal(t, db.ID, dbInfo.ID)
 
@@ -1109,12 +1274,12 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 
 	dbInfo := &model.DBInfo{
 		ID:    10001,
-		Name:  pmodel.NewCIStr("sc"),
+		Name:  ast.NewCIStr("sc"),
 		State: model.StatePublic,
 	}
 	policy := &model.PolicyInfo{
 		ID:   2,
-		Name: pmodel.NewCIStr("policy_1"),
+		Name: ast.NewCIStr("policy_1"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion: "r1",
 			Regions:       "r1,r2",
@@ -1122,18 +1287,19 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	}
 	group := &model.ResourceGroupInfo{
 		ID:   3,
-		Name: pmodel.NewCIStr("groupName_1"),
+		Name: ast.NewCIStr("groupName_1"),
 	}
 	tblInfo := &model.TableInfo{
 		ID:    10002,
-		Name:  pmodel.NewCIStr("cs"),
+		Name:  ast.NewCIStr("cs"),
 		State: model.StatePublic,
 		ForeignKeys: []*model.FKInfo{{
 			ID:        1,
-			Name:      pmodel.NewCIStr("fk_1"),
-			RefSchema: pmodel.NewCIStr("t1"),
-			RefTable:  pmodel.NewCIStr("parent"),
+			Name:      ast.NewCIStr("fk_1"),
+			RefSchema: ast.NewCIStr("t1"),
+			RefTable:  ast.NewCIStr("parent"),
 			Version:   1,
+			RefCols:   []ast.CIStr{ast.NewCIStr("id")},
 		}},
 		PlacementPolicyRef: &model.PolicyRefInfo{
 			ID:   policy.ID,
@@ -1142,7 +1308,7 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	}
 	tblInfo1 := &model.TableInfo{
 		ID:            10003,
-		Name:          pmodel.NewCIStr("cs"),
+		Name:          ast.NewCIStr("cs"),
 		State:         model.StatePublic,
 		TempTableType: model.TempTableLocal,
 	}
@@ -1188,4 +1354,109 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 	require.Equal(t, referredFk[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
 	// temp table
 	require.True(t, is.HasTemporaryTable())
+}
+
+func TestIsDatabaseExist(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		exist, err := m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.False(t, exist)
+
+		require.NoError(t, m.CreateSysDatabaseByID("aaa", 123))
+		exist, err = m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.True(t, exist)
+		return nil
+	}))
+}
+
+func TestBootTableVersion(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		ver, err := m.GetNextGenBootTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.InitNextGenBootTableVersion, ver)
+
+		require.NoError(t, m.SetNextGenBootTableVersion(meta.BaseNextGenBootTableVersion))
+		ver, err = m.GetNextGenBootTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.BaseNextGenBootTableVersion, ver)
+		// make sure we use correct key
+		ddlVer, err := m.GetDDLTableVersion()
+		require.NoError(t, err)
+		require.EqualValues(t, meta.InitDDLTableVersion, ddlVer)
+		return nil
+	}))
+}
+
+func TestCreateSysDatabaseByIDIfNotExists(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		err = m.CreateSysDatabaseByIDIfNotExists("aaa", 123)
+		require.NoError(t, err)
+		exist, err := m.IsDatabaseExist(123)
+		require.NoError(t, err)
+		require.True(t, exist)
+		err = m.CreateSysDatabaseByIDIfNotExists("aaa", 123)
+		require.NoError(t, err)
+		return nil
+	}))
+}
+
+func TestSetGetDXFScheduleTuneFactors(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for next-gen")
+	}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	// not set yet
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		factors, err := m.GetDXFScheduleTuneFactors(store.GetKeyspace())
+		require.NoError(t, err)
+		require.Nil(t, factors)
+		return nil
+	}))
+	// set it
+	factors := &schstatus.TTLTuneFactors{
+		TTLInfo:     schstatus.TTLInfo{TTL: time.Hour},
+		TuneFactors: schstatus.TuneFactors{AmplifyFactor: 1.5},
+	}
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		err := m.SetDXFScheduleTuneFactors(store.GetKeyspace(), factors)
+		require.NoError(t, err)
+		return nil
+	}))
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		got, err := m.GetDXFScheduleTuneFactors(store.GetKeyspace())
+		require.NoError(t, err)
+		require.EqualValues(t, factors, got)
+		return nil
+	}))
 }

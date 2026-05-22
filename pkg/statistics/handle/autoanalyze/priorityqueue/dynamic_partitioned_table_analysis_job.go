@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -49,6 +49,8 @@ type DynamicPartitionedTableAnalysisJob struct {
 	Indicators
 	// Analyze table with this version of statistics.
 	TableStatsVer int
+	// Whether auto-analyze should record that legacy statistics are being rewritten.
+	NeedVersionRewriteWarn bool
 	// Weight is used to calculate the priority of the job.
 	Weight float64
 
@@ -72,15 +74,17 @@ func NewDynamicPartitionedTableAnalysisJob(
 	partitionIDs map[int64]struct{},
 	partitionIndexIDs map[int64][]int64,
 	tableStatsVer int,
+	needVersionRewriteWarn bool,
 	changePercentage float64,
 	tableSize float64,
 	lastAnalysisDuration time.Duration,
 ) *DynamicPartitionedTableAnalysisJob {
 	return &DynamicPartitionedTableAnalysisJob{
-		GlobalTableID:     tableID,
-		PartitionIDs:      partitionIDs,
-		PartitionIndexIDs: partitionIndexIDs,
-		TableStatsVer:     tableStatsVer,
+		GlobalTableID:          tableID,
+		PartitionIDs:           partitionIDs,
+		PartitionIndexIDs:      partitionIndexIDs,
+		TableStatsVer:          tableStatsVer,
+		NeedVersionRewriteWarn: needVersionRewriteWarn,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,
 			TableSize:            tableSize,
@@ -162,7 +166,7 @@ func (j *DynamicPartitionedTableAnalysisJob) ValidateAndPrepare(
 			j.failureHook(j, needRetry)
 		}
 	}
-	is := sctx.GetDomainInfoSchema()
+	is := sctx.GetLatestInfoSchema()
 	tableInfo, ok := is.TableInfoByID(j.GlobalTableID)
 	if !ok {
 		callFailureHook(false)
@@ -271,21 +275,18 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
+	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(j.PartitionNames))
 	for _, partition := range j.PartitionNames {
 		needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
 	}
 	for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 		start := i
-		end := start + analyzePartitionBatchSize
-		if end >= len(needAnalyzePartitionNames) {
-			end = len(needAnalyzePartitionNames)
-		}
+		end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
 		params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
-		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
 		if !success {
 			return false
 		}
@@ -299,11 +300,9 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) (success bool) {
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	// For version 2, analyze one index will analyze all other indexes and columns.
-	// For version 1, analyze one index will only analyze the specified index.
-	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
-
+	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
+	// Analyze version 2 refreshes the partition columns and other indexes when analyzing one index.
+	// Therefore, to avoid redundancy, stop after the first index.
 	for indexName, partitionNames := range j.PartitionIndexNames {
 		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
 		for _, partition := range partitionNames {
@@ -311,26 +310,17 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 		}
 		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
-			end := start + analyzePartitionBatchSize
-			if end >= len(needAnalyzePartitionNames) {
-				end = len(needAnalyzePartitionNames)
-			}
+			end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
 			params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
-			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
 			if !success {
 				return false
 			}
 		}
-		// For version 1, we need to analyze all indexes.
-		if analyzeVersion != 1 {
-			// Halt execution after analyzing one index.
-			// This is because analyzing a single index also analyzes all other indexes and columns.
-			// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
-			break
-		}
+		break
 	}
 	return
 }
@@ -347,7 +337,7 @@ func (j *DynamicPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 func getPartitionSQL(prefix, suffix string, numPartitions int) string {
 	var sqlBuilder strings.Builder
 	sqlBuilder.WriteString(prefix)
-	for i := 0; i < numPartitions; i++ {
+	for i := range numPartitions {
 		if i != 0 {
 			sqlBuilder.WriteString(",")
 		}

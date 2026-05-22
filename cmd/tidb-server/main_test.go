@@ -16,10 +16,14 @@ package main
 
 import (
 	"os"
+	"syscall"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -49,11 +53,40 @@ func TestRunMain(t *testing.T) {
 	}
 }
 
+func TestExitCodeForSignal(t *testing.T) {
+	tests := []struct {
+		name string
+		sig  os.Signal
+		want int
+	}{
+		{name: "SIGINT", sig: syscall.SIGINT, want: exitCodeInt},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: exitCodeOK},
+		{name: "SIGHUP", sig: syscall.SIGHUP, want: exitCodeOK},
+		{name: "SIGQUIT", sig: syscall.SIGQUIT, want: exitCodeOK},
+		{name: "nil", sig: nil, want: exitCodeOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, exitCodeForSignal(tt.sig))
+		})
+	}
+}
+
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
-	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
-	require.Equal(t, "1073741824", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
-	require.NotEqual(t, "test", variable.GetSysVar(variable.Version).Value)
+	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value)
+	require.Equal(t, "1073741824", variable.GetSysVar(vardef.TiDBMemQuotaQuery).Value)
+	require.NotEqual(t, "test", variable.GetSysVar(vardef.Version).Value)
+
+	// test setInstanceVar
+	require.False(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).HasInstanceScope())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.InstancePlanCacheMaxMemSize = "444"
+	})
+	setGlobalVars()
+	require.Equal(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).Value, "444")
+	require.True(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).HasInstanceScope())
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
@@ -61,9 +94,9 @@ func TestSetGlobalVars(t *testing.T) {
 	})
 	setGlobalVars()
 
-	require.Equal(t, "tikv,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
-	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
-	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+	require.Equal(t, "tikv,tidb", variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value)
+	require.Equal(t, "test", variable.GetSysVar(vardef.Version).Value)
+	require.Equal(t, variable.GetSysVar(vardef.Version).Value, mysql.ServerVersion)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.ServerVersion = ""
@@ -71,13 +104,101 @@ func TestSetGlobalVars(t *testing.T) {
 	setGlobalVars()
 
 	// variable.Version won't change when len(conf.ServerVersion) == 0
-	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
-	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+	require.Equal(t, "test", variable.GetSysVar(vardef.Version).Value)
+	require.Equal(t, variable.GetSysVar(vardef.Version).Value, mysql.ServerVersion)
 
 	cfg := config.GetGlobalConfig()
-	require.Equal(t, cfg.Socket, variable.GetSysVar(variable.Socket).Value)
+	require.Equal(t, cfg.Socket, variable.GetSysVar(vardef.Socket).Value)
 
 	if hostname, err := os.Hostname(); err == nil {
-		require.Equal(t, variable.GetSysVar(variable.Hostname).Value, hostname)
+		require.Equal(t, variable.GetSysVar(vardef.Hostname).Value, hostname)
 	}
+}
+
+func TestInitDeployMode(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	original := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(original))
+	})
+
+	cfg := config.NewConfig()
+	cfg.DeployMode = deploymode.PremiumReserved
+	require.NoError(t, initDeployMode(cfg))
+	require.Equal(t, deploymode.PremiumReserved, deploymode.Get())
+
+	cfg.DeployMode = deploymode.Mode(100)
+	require.ErrorContains(t, initDeployMode(cfg), "invalid deploy mode")
+
+	t.Run("starter TLS flags can override cert and key only", func(t *testing.T) {
+		fset := initFlagSet()
+		require.NoError(t, fset.Parse([]string{
+			"--cluster-cert=/tmp/flag-cluster-cert.pem",
+			"--cluster-key=/tmp/flag-cluster-key.pem",
+			"--sql-cert=/tmp/flag-sql-cert.pem",
+			"--sql-key=/tmp/flag-sql-key.pem",
+		}))
+
+		cfg := config.NewConfig()
+		cfg.DeployMode = deploymode.Starter
+		cfg.Security.ClusterSSLCA = "/tmp/config-cluster-ca.pem"
+		cfg.Security.ClusterSSLCert = "/tmp/config-cluster-cert.pem"
+		cfg.Security.ClusterSSLKey = "/tmp/config-cluster-key.pem"
+		cfg.Security.SSLCA = "/tmp/config-sql-ca.pem"
+		cfg.Security.SSLCert = "/tmp/config-sql-cert.pem"
+		cfg.Security.SSLKey = "/tmp/config-sql-key.pem"
+
+		overrideConfig(cfg, fset)
+		require.Equal(t, "/tmp/config-cluster-ca.pem", cfg.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/flag-cluster-cert.pem", cfg.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/flag-cluster-key.pem", cfg.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/config-sql-ca.pem", cfg.Security.SSLCA)
+		require.Equal(t, "/tmp/flag-sql-cert.pem", cfg.Security.SSLCert)
+		require.Equal(t, "/tmp/flag-sql-key.pem", cfg.Security.SSLKey)
+	})
+}
+
+func TestSetVersionByConfigInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	cfg := config.GetGlobalConfig()
+	originCfgEdition := cfg.TiDBEdition
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TiDBEdition = originCfgEdition
+		})
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiDBEdition = "Starter"
+	})
+	require.ErrorContains(t, initVersions(config.GetGlobalConfig()), "are not allowed to set in nextgen kernel")
+}
+
+func TestSetVersionByConfigInvalidNextGenReleaseVersion(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	originReleaseVersion := mysql.TiDBReleaseVersion
+	t.Cleanup(func() {
+		mysql.TiDBReleaseVersion = originReleaseVersion
+	})
+
+	mysql.TiDBReleaseVersion = "v26.13.1"
+	err := initVersions(config.GetGlobalConfig())
+	require.ErrorContains(t, err, "invalid tidb release version for nextgen kernel")
+}
+
+func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	require.NoError(t, initVersions(config.GetGlobalConfig()))
+	require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
+	require.Equal(t, "8.0.11-TiDB-CLOUD.202603.0", mysql.ServerVersion)
 }

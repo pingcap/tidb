@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
@@ -62,6 +61,7 @@ var (
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 	_ StmtNode = &TrafficStmt{}
+	_ StmtNode = &RecommendIndexStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -212,6 +212,13 @@ type ExplainStmt struct {
 	Stmt    StmtNode
 	Format  string
 	Analyze bool
+
+	// Explore indicates whether to use EXPLAIN EXPLORE.
+	Explore bool
+	// SQLDigest to explain, used in `EXPLAIN EXPLORE <sql_digest>`.
+	SQLDigest string
+	// PlanDigest to explain, used in `EXPLAIN [ANALYZE] <plan_digest>`.
+	PlanDigest string
 }
 
 // Restore implements Node interface.
@@ -233,14 +240,24 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
-	if !n.Analyze || strings.ToLower(n.Format) != "row" {
+	if n.Explore {
+		ctx.WriteKeyWord("EXPLORE ")
+		if n.SQLDigest != "" {
+			ctx.WriteString(n.SQLDigest)
+		}
+	} else if !n.Analyze || strings.ToLower(n.Format) != "row" {
 		ctx.WriteKeyWord("FORMAT ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Format)
 		ctx.WritePlain(" ")
 	}
-	if err := n.Stmt.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore ExplainStmt.Stmt")
+	if n.PlanDigest != "" {
+		ctx.WriteString(n.PlanDigest)
+	}
+	if n.Stmt != nil {
+		if err := n.Stmt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ExplainStmt.Stmt")
+		}
 	}
 	return nil
 }
@@ -252,11 +269,13 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExplainStmt)
-	node, ok := n.Stmt.Accept(v)
-	if !ok {
-		return n, false
+	if n.Stmt != nil {
+		node, ok := n.Stmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Stmt = node.(StmtNode)
 	}
-	n.Stmt = node.(StmtNode)
 	return v.Leave(n)
 }
 
@@ -281,6 +300,10 @@ type PlanReplayerStmt struct {
 	// 1. plan replayer load 'file';
 	// 2. plan replayer dump explain <analyze> 'file'
 	File string
+
+	// StmtList is used for PLAN REPLAYER DUMP EXPLAIN [ANALYZE] ( "sql1", "sql2", ... )
+	// When non-nil, multiple SQL strings are dumped in one command.
+	StmtList []string
 
 	// Fields below are currently useless.
 
@@ -327,6 +350,17 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EXPLAIN ANALYZE ")
 	} else {
 		ctx.WriteKeyWord("EXPLAIN ")
+	}
+	if len(n.StmtList) > 0 {
+		ctx.WritePlain("(")
+		for i, s := range n.StmtList {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteString(s)
+		}
+		ctx.WritePlain(")")
+		return nil
 	}
 	if n.Stmt == nil {
 		if len(n.File) > 0 {
@@ -441,6 +475,8 @@ const (
 	TrafficOptionReadOnly
 )
 
+var _ SensitiveStmtNode = (*TrafficStmt)(nil)
+
 // TrafficStmt is traffic operation statement.
 type TrafficStmt struct {
 	stmtNode
@@ -512,6 +548,34 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// SecureText implements SensitiveStatement interface.
+func (n *TrafficStmt) SecureText() string {
+	trafficStmt := n
+	opts := n.Options
+	switch n.OpType {
+	case TrafficOpReplay:
+		opts = make([]*TrafficOption, 0, len(n.Options))
+		for _, opt := range n.Options {
+			if opt.OptionType == TrafficOptionPassword {
+				newOpt := *opt
+				newOpt.StrValue = "xxxxxx"
+				opt = &newOpt
+			}
+			opts = append(opts, opt)
+		}
+		fallthrough
+	case TrafficOpCapture:
+		trafficStmt = &TrafficStmt{
+			OpType:  n.OpType,
+			Options: opts,
+			Dir:     RedactURL(n.Dir),
+		}
+	}
+	var sb strings.Builder
+	_ = trafficStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
+}
+
 // Accept implements Node Accept interface.
 func (n *TrafficStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -540,7 +604,7 @@ type CompactTableStmt struct {
 	stmtNode
 
 	Table          *TableName
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 	ReplicaKind    CompactReplicaKind
 }
 
@@ -667,8 +731,9 @@ type ExecuteStmt struct {
 
 	Name       string
 	UsingVars  []ExprNode
-	BinaryArgs interface{}
-	PrepStmt   interface{} // the corresponding prepared statement
+	BinaryArgs any
+	PrepStmt   any // the corresponding prepared statement
+	PrepStmtId uint32
 	IdxInMulti int
 
 	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
@@ -902,15 +967,19 @@ const (
 	SetCharset = "SetCharset"
 	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// CloudStorageURI is similar to above tidb var, but it's used in import into
+	// to set a separate param for a single import job.
+	CloudStorageURI = "cloud_storage_uri"
 )
 
 // VariableAssignment is a variable assignment struct.
 type VariableAssignment struct {
 	node
-	Name     string
-	Value    ExprNode
-	IsGlobal bool
-	IsSystem bool
+	Name       string
+	Value      ExprNode
+	IsInstance bool
+	IsGlobal   bool
+	IsSystem   bool
 
 	// ExtendValue is a way to store extended info.
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
@@ -925,6 +994,8 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("@@")
 		if n.IsGlobal {
 			ctx.WriteKeyWord("GLOBAL")
+		} else if n.IsInstance {
+			ctx.WriteKeyWord("INSTANCE")
 		} else {
 			ctx.WriteKeyWord("SESSION")
 		}
@@ -983,6 +1054,7 @@ const (
 	FlushHosts
 	FlushLogs
 	FlushClientErrorsSummary
+	FlushStatsDelta
 )
 
 // LogType is the log type used in FLUSH statement.
@@ -1007,6 +1079,8 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
+	IsCluster       bool           // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	FlushObjects    []*StatsObject // For FlushStatsDelta, scoped objects (db.tbl, db.*, *.*). Always non-empty.
 }
 
 // Restore implements Node interface.
@@ -1066,6 +1140,22 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(logType)
 	case FlushClientErrorsSummary:
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
+	case FlushStatsDelta:
+		ctx.WriteKeyWord("STATS_DELTA")
+		for i, obj := range n.FlushObjects {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := obj.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FlushStmt.FlushObjects[%d]", i)
+			}
+		}
+		if n.IsCluster {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("CLUSTER")
+		}
 	default:
 		return errors.New("Unsupported type of FlushStmt")
 	}
@@ -1345,41 +1435,6 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SetPwdStmt)
-	return v.Leave(n)
-}
-
-type ChangeStmt struct {
-	stmtNode
-
-	NodeType string
-	State    string
-	NodeID   string
-}
-
-// Restore implements Node interface.
-func (n *ChangeStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CHANGE ")
-	ctx.WriteKeyWord(n.NodeType)
-	ctx.WriteKeyWord(" TO NODE_STATE ")
-	ctx.WritePlain("=")
-	ctx.WriteString(n.State)
-	ctx.WriteKeyWord(" FOR NODE_ID ")
-	ctx.WriteString(n.NodeID)
-	return nil
-}
-
-// SecureText implements SensitiveStatement interface.
-func (n *ChangeStmt) SecureText() string {
-	return fmt.Sprintf("change %s to node_state='%s' for node_id '%s'", strings.ToLower(n.NodeType), n.State, n.NodeID)
-}
-
-// Accept implements Node Accept interface.
-func (n *ChangeStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ChangeStmt)
 	return v.Leave(n)
 }
 
@@ -1954,7 +2009,7 @@ func (n *AlterInstanceStmt) Accept(v Visitor) (Node, bool) {
 // AlterRangeStmt modifies range configuration.
 type AlterRangeStmt struct {
 	stmtNode
-	RangeName       model.CIStr
+	RangeName       CIStr
 	PlacementOption *PlacementOption
 }
 
@@ -2093,7 +2148,7 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	case "show":
-		ctx.WriteKeyWord(" SHOW")
+		ctx.WriteKeyWord(" SHOW OPTION")
 	case "apply":
 		ctx.WriteKeyWord(" APPLY ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
@@ -2523,6 +2578,9 @@ const (
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
 	AdminWorkloadRepoCreate
+	AdminReloadClusterBindings
+	// adminTpCount is the total number of admin statement types.
+	adminTpCount
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2788,6 +2846,8 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
+	case AdminReloadClusterBindings:
+		ctx.WriteKeyWord("RELOAD CLUSTER BINDINGS")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -2860,8 +2920,8 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 
 // RoleOrPriv is a temporary structure to be further processed into auth.RoleIdentity or PrivElem
 type RoleOrPriv struct {
-	Symbols string      // hold undecided symbols
-	Node    interface{} // hold auth.RoleIdentity or PrivElem that can be sure when parsing
+	Symbols string // hold undecided symbols
+	Node    any    // hold auth.RoleIdentity or PrivElem that can be sure when parsing
 }
 
 func (n *RoleOrPriv) ToRole() (*auth.RoleIdentity, error) {
@@ -3457,6 +3517,8 @@ const (
 	BRIEKindShowJob
 	BRIEKindShowQuery
 	BRIEKindShowBackupMeta
+	// brieKindCount is the total number of BRIE kinds.
+	brieKindCount
 	// common BRIE options
 	BRIEOptionRateLimit BRIEOptionType = iota + 1
 	BRIEOptionConcurrency
@@ -3771,17 +3833,34 @@ func RedactURL(str string) string {
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
 	})
+
+	var redactKeys map[string]struct{}
 	switch strings.ToLower(scheme) {
-	case "s3", "ks3":
+	case "s3", "ks3", "oss":
+		redactKeys = map[string]struct{}{
+			"access-key":        {},
+			"secret-access-key": {},
+			"session-token":     {},
+		}
+	case "azure", "azblob":
+		redactKeys = map[string]struct{}{
+			"account-key":    {},
+			"encryption-key": {},
+			"sas-token":      {},
+		}
+	}
+
+	if len(redactKeys) > 0 {
 		values := u.Query()
 		for k := range values {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" || normalizedKey == "session-token" {
+			if _, ok := redactKeys[normalizedKey]; ok {
 				values[k] = []string{"xxxxxx"}
 			}
 		}
+		// In go1.25.5, url.Values.Encode() will sort the keys.
 		u.RawQuery = values.Encode()
 	}
 	return u.String()
@@ -3831,10 +3910,27 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// CancelDistributionJobStmt represent CANCEL DISTRIBUTION JOB statement.
+type CancelDistributionJobStmt struct {
+	stmtNode
+	JobID int64
+}
+
+func (n *CancelDistributionJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+func (n *CancelDistributionJobStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CANCEL DISTRIBUTION JOB ")
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
 // Ident is the table identifier composed of schema name and table name.
 type Ident struct {
-	Schema model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Name   CIStr
 }
 
 // String implements fmt.Stringer interface.
@@ -3865,7 +3961,7 @@ type TableOptimizerHint struct {
 	// HintName is the name or alias of the table(s) which the hint will affect.
 	// Table hints has no schema info
 	// It allows only table name or alias (if table has an alias)
-	HintName model.CIStr
+	HintName CIStr
 	// HintData is the payload of the hint. The actual type of this field
 	// is defined differently as according `HintName`. Define as following:
 	//
@@ -3881,17 +3977,27 @@ type TableOptimizerHint struct {
 	// - READ_FROM_STORAGE   => CIStr
 	// - USE_TOJA            => bool
 	// - NTH_PLAN            => int64
-	HintData interface{}
+	HintData any
 	// QBName is the default effective query block of this hint.
-	QBName  model.CIStr
+	QBName  CIStr
 	Tables  []HintTable
-	Indexes []model.CIStr
+	Indexes []CIStr
 }
 
 // HintTimeRange is the payload of `TIME_RANGE` hint
 type HintTimeRange struct {
 	From string
 	To   string
+}
+
+// LeadingList represents a nested structure in LEADING hints.
+// It could be *HintTable or LeadingList
+//
+//	eg: LEADING(a, (b, c), d)
+//	will be parsed into a LeadingList like:
+//	Items = [HintTable("a"), LeadingList{[HintTable("b"), HintTable("c")]}, HintTable("d")]
+type LeadingList struct {
+	Items []interface{}
 }
 
 // HintSetVar is the payload of `SET_VAR` hint
@@ -3902,10 +4008,29 @@ type HintSetVar struct {
 
 // HintTable is table in the hint. It may have query block info.
 type HintTable struct {
-	DBName        model.CIStr
-	TableName     model.CIStr
-	QBName        model.CIStr
-	PartitionList []model.CIStr
+	DBName        CIStr
+	TableName     CIStr
+	QBName        CIStr
+	PartitionList []CIStr
+}
+
+// FlattenLeadingList collects all HintTable nodes from a possibly nested LeadingList into a flat slice.
+// Note:
+//   - Only table names are preserved.
+func FlattenLeadingList(list *LeadingList) []HintTable {
+	if list == nil {
+		return nil
+	}
+	var result []HintTable
+	for _, item := range list.Items {
+		switch t := item.(type) {
+		case *HintTable:
+			result = append(result, *t)
+		case *LeadingList:
+			result = append(result, FlattenLeadingList(t)...)
+		}
+	}
+	return result
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
@@ -3933,11 +4058,52 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	}
 }
 
+func (lt *LeadingList) RestoreWithQB(ctx *format.RestoreCtx, qbName CIStr, needParen bool, isTop bool, qbOnTable bool) error {
+	if lt == nil || len(lt.Items) == 0 {
+		return nil
+	}
+	if needParen {
+		ctx.WritePlain("(")
+	}
+
+	currentQBName := qbName // hint level QBName
+
+	for i, item := range lt.Items {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+
+		switch t := item.(type) {
+		case *HintTable:
+			if i == 0 && currentQBName.L != "" && !qbOnTable {
+				ctx.WriteKeyWord("@")
+				ctx.WriteName(currentQBName.String())
+				ctx.WritePlain(" ")
+				t.Restore(ctx)
+				currentQBName = CIStr{}
+			} else {
+				t.Restore(ctx)
+			}
+		case *LeadingList:
+			if err := t.RestoreWithQB(ctx, currentQBName, true, false, qbOnTable); err != nil {
+				return err
+			}
+			currentQBName = CIStr{}
+		default:
+			return fmt.Errorf("unexpected type in LeadingList: %T", t)
+		}
+	}
+	if needParen {
+		ctx.WritePlain(")")
+	}
+	return nil
+}
+
 // Restore implements Node interface.
 func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
 	ctx.WritePlain("(")
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		if n.HintName.L != "qb_name" {
 			ctx.WriteKeyWord("@")
 		}
@@ -3949,11 +4115,11 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "use_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}
-	if n.QBName.L != "" {
+	if n.HintName.L != "leading" && n.QBName.L != "" {
 		ctx.WritePlain(" ")
 	}
 	// Hints with args except query block.
@@ -3964,8 +4130,26 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
+	case "leading":
+		if list, ok := n.HintData.(*LeadingList); ok && list != nil {
+			// if table level QBName or not
+			qbOnTable := false
+			if len(n.Tables) > 0 && n.Tables[0].QBName.L != "" {
+				qbOnTable = true
+			}
+			if err := list.RestoreWithQB(ctx, n.QBName, false, true, qbOnTable); err != nil {
+				return err
+			}
+		} else {
+			for i, table := range n.Tables {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				table.Restore(ctx)
+			}
+		}
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
-		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "no_hash_join", "no_merge_join",
 		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
@@ -3973,7 +4157,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown", "no_index_lookup_pushdown":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {
@@ -3999,11 +4183,11 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("FALSE")
 		}
 	case "query_type":
-		ctx.WriteKeyWord(n.HintData.(model.CIStr).String())
+		ctx.WriteKeyWord(n.HintData.(CIStr).String())
 	case "memory_quota":
 		ctx.WritePlainf("%d MB", n.HintData.(int64)/1024/1024)
 	case "read_from_storage":
-		ctx.WriteKeyWord(n.HintData.(model.CIStr).String())
+		ctx.WriteKeyWord(n.HintData.(CIStr).String())
 		for i, table := range n.Tables {
 			if i == 0 {
 				ctx.WritePlain("[")
@@ -4051,18 +4235,18 @@ type BinaryLiteral interface {
 }
 
 // NewDecimal creates a types.Decimal value, it's provided by parser driver.
-var NewDecimal func(string) (interface{}, error)
+var NewDecimal func(string) (any, error)
 
 // NewHexLiteral creates a types.HexLiteral value, it's provided by parser driver.
-var NewHexLiteral func(string) (interface{}, error)
+var NewHexLiteral func(string) (any, error)
 
 // NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
-var NewBitLiteral func(string) (interface{}, error)
+var NewBitLiteral func(string) (any, error)
 
 // SetResourceGroupStmt is a statement to set the resource group name for current session.
 type SetResourceGroupStmt struct {
 	stmtNode
-	Name model.CIStr
+	Name CIStr
 }
 
 func (n *SetResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
@@ -4215,12 +4399,25 @@ func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
 // DropQueryWatchStmt is a statement to drop a runaway watch item.
 type DropQueryWatchStmt struct {
 	stmtNode
-	IntValue int64
+	IntValue      int64
+	GroupNameStr  CIStr
+	GroupNameExpr ExprNode
 }
 
 func (n *DropQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("QUERY WATCH REMOVE ")
-	ctx.WritePlainf("%d", n.IntValue)
+	switch {
+	case n.GroupNameStr.String() != "":
+		ctx.WriteKeyWord("RESOURCE GROUP ")
+		ctx.WriteName(n.GroupNameStr.String())
+	case n.GroupNameExpr != nil:
+		ctx.WriteKeyWord("RESOURCE GROUP ")
+		if err := n.GroupNameExpr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore expr: [%v]", n.GroupNameExpr)
+		}
+	default:
+		ctx.WritePlainf("%d", n.IntValue)
+	}
 	return nil
 }
 
@@ -4333,7 +4530,7 @@ func CheckQueryWatchAppend(ops []*QueryWatchOption, newOp *QueryWatchOption) boo
 
 // QueryWatchResourceGroupOption is used for parsing the query watch resource group name.
 type QueryWatchResourceGroupOption struct {
-	GroupNameStr  model.CIStr
+	GroupNameStr  CIStr
 	GroupNameExpr ExprNode
 }
 
@@ -4352,7 +4549,7 @@ func (n *QueryWatchResourceGroupOption) restore(ctx *format.RestoreCtx) error {
 // QueryWatchTextOption is used for parsing the query watch text option.
 type QueryWatchTextOption struct {
 	node
-	Type          model.RunawayWatchType
+	Type          RunawayWatchType
 	PatternExpr   ExprNode
 	TypeSpecified bool
 }
@@ -4365,9 +4562,9 @@ func (n *QueryWatchTextOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" TO ")
 	} else {
 		switch n.Type {
-		case model.WatchSimilar:
+		case WatchSimilar:
 			ctx.WriteKeyWord("SQL DIGEST ")
-		case model.WatchPlan:
+		case WatchPlan:
 			ctx.WriteKeyWord("PLAN DIGEST ")
 		}
 	}

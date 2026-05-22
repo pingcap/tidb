@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +29,7 @@ func TestEventString(t *testing.T) {
 			Tp: model.ActionAddColumn,
 			TableInfo: &model.TableInfo{
 				ID:   1,
-				Name: pmodel.NewCIStr("Table1"),
+				Name: ast.NewCIStr("Table1"),
 			},
 			AddedPartInfo: &model.PartitionInfo{
 				Definitions: []model.PartitionDefinition{
@@ -39,7 +39,7 @@ func TestEventString(t *testing.T) {
 			},
 			OldTableInfo: &model.TableInfo{
 				ID:   4,
-				Name: pmodel.NewCIStr("Table2"),
+				Name: ast.NewCIStr("Table2"),
 			},
 			DroppedPartInfo: &model.PartitionInfo{
 				Definitions: []model.PartitionDefinition{
@@ -48,12 +48,12 @@ func TestEventString(t *testing.T) {
 				},
 			},
 			Columns: []*model.ColumnInfo{
-				{ID: 7, Name: pmodel.NewCIStr("Column1")},
-				{ID: 8, Name: pmodel.NewCIStr("Column2")},
+				{ID: 7, Name: ast.NewCIStr("Column1")},
+				{ID: 8, Name: ast.NewCIStr("Column2")},
 			},
 			Indexes: []*model.IndexInfo{
-				{ID: 9, Name: pmodel.NewCIStr("Index1")},
-				{ID: 10, Name: pmodel.NewCIStr("Index2")},
+				{ID: 9, Name: ast.NewCIStr("Index1")},
+				{ID: 10, Name: ast.NewCIStr("Index2")},
 			},
 		},
 	}

@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
@@ -77,7 +77,7 @@ type testCase struct {
 }
 
 func runTests(t *testing.T, tests []testCase) {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -133,7 +133,7 @@ func TestCaseWhen(t *testing.T) {
 		Value:       valExpr,
 		WhenClauses: []*ast.WhenClause{whenClause},
 	}
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -159,7 +159,7 @@ func TestCast(t *testing.T) {
 		Tp:   f,
 	}
 
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -200,6 +200,52 @@ func TestCast(t *testing.T) {
 	require.Equal(t, types.KindNull, v.Kind())
 	v = buildExprAndEval(t, ctx, expr)
 	require.Equal(t, types.KindNull, v.Kind())
+}
+
+func TestCastRetTypeDoesNotShareASTFieldType(t *testing.T) {
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTp.AddFlag(mysql.NotNullFlag)
+
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
+
+	tbl := &model.TableInfo{
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+	}
+	expr := parseExpr(t, "cast(a as signed)").(*ast.FuncCastExpr)
+	expr.Tp = targetTp
+
+	built1, err := buildExpr(t, ctx, expr, expression.WithTableInfo("", tbl))
+	require.NoError(t, err)
+	sf1, ok := built1.(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.NotSame(t, targetTp, sf1.RetType)
+	require.True(t, mysql.HasNotNullFlag(targetTp.GetFlag()))
+
+	sf1.RetType.SetType(mysql.TypeString)
+	sf1.RetType.AddFlag(mysql.UnsignedFlag)
+
+	built2, err := buildExpr(t, ctx, expr, expression.WithTableInfo("", tbl))
+	require.NoError(t, err)
+	sf2, ok := built2.(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.NotSame(t, sf1.RetType, sf2.RetType)
+	require.Equal(t, mysql.TypeLonglong, targetTp.GetType())
+	require.True(t, mysql.HasNotNullFlag(targetTp.GetFlag()))
+	require.Equal(t, mysql.TypeLonglong, sf2.RetType.GetType())
+	require.False(t, mysql.HasNotNullFlag(sf2.RetType.GetFlag()))
+	require.False(t, mysql.HasUnsignedFlag(sf2.RetType.GetFlag()))
 }
 
 func TestPatternIn(t *testing.T) {
@@ -386,7 +432,7 @@ func TestBuildExpression(t *testing.T) {
 	tbl := &model.TableInfo{
 		Columns: []*model.ColumnInfo{
 			{
-				Name:          pmodel.NewCIStr("id"),
+				Name:          ast.NewCIStr("id"),
 				Offset:        0,
 				State:         model.StatePublic,
 				FieldType:     *types.NewFieldType(mysql.TypeString),
@@ -394,13 +440,13 @@ func TestBuildExpression(t *testing.T) {
 				DefaultValue:  "uuid()",
 			},
 			{
-				Name:      pmodel.NewCIStr("a"),
+				Name:      ast.NewCIStr("a"),
 				Offset:    1,
 				State:     model.StatePublic,
 				FieldType: *types.NewFieldType(mysql.TypeLonglong),
 			},
 			{
-				Name:         pmodel.NewCIStr("b"),
+				Name:         ast.NewCIStr("b"),
 				Offset:       2,
 				State:        model.StatePublic,
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
@@ -411,7 +457,7 @@ func TestBuildExpression(t *testing.T) {
 
 	ctx := exprstatic.NewExprContext()
 	evalCtx := ctx.GetStaticEvalCtx()
-	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, pmodel.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
+	cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, ast.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
 	require.NoError(t, err)
 	schema := expression.NewSchema(cols...)
 

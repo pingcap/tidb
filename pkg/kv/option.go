@@ -116,6 +116,8 @@ const (
 	SessionID
 	// BackgroundGoroutineLifecycleHooks is the hooks to track the start and end of background goroutine
 	BackgroundGoroutineLifecycleHooks
+	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
+	PrewriteEncounterLockPolicy
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option
@@ -195,8 +197,12 @@ const (
 	InternalTxnStats = "stats"
 	// InternalTxnBindInfo is the type of bind info txn.
 	InternalTxnBindInfo = InternalTxnOthers
+	// InternalTxnWorkloadLearning is the type of workload-based learning txn.
+	InternalTxnWorkloadLearning = "WorkloadLearning"
 	// InternalTxnSysVar is the type of sys var txn.
 	InternalTxnSysVar = InternalTxnOthers
+	// InternalTxnTelemetry is the type of telemetry.
+	InternalTxnTelemetry = InternalTxnOthers
 	// InternalTxnAdmin is the type of admin operations.
 	InternalTxnAdmin = "admin"
 	// InternalTxnPrivilege is the type of privilege txn.

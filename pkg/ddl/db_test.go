@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,27 +29,31 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -114,6 +120,9 @@ func TestGetTimeZone(t *testing.T) {
 }
 
 func TestIssue22819(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -317,13 +326,13 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 		rows := tk.MustQuery("show tables").Rows()
-		for i := 0; i < len(rows); i++ {
+		for i := range rows {
 			sysTables = append(sysTables, rows[i][0].(string))
 		}
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
 			if db == "MySQL" || db == "SYS" {
-				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(one))
+				tbl, err1 := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(one))
 				require.NoError(t, err1)
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
@@ -409,7 +418,7 @@ func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	}()
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
-	originalVal := variable.GetDDLErrorCountLimit()
+	originalVal := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", originalVal))
 
@@ -503,6 +512,48 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 	tk.MustQuery("show count(*) errors").Check(tk.MustQuery("select @@session.error_count").Rows())
 }
 
+func TestIssue60047(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (
+		a INT,
+		b INT,
+		c VARCHAR(10),
+		unique key idx(a, c)
+	) partition by range columns(c) (
+	partition p0 values less than ('30'),
+	partition p1 values less than ('60'),
+	partition p2 values less than ('90'));`)
+
+	// initialize the data.
+	for i := range 90 {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+
+	// parallel execute `insert ... on duplicate key update` and `alter table ... add column after ...`
+	var err error
+	hookFunc := func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			val := 30 + rand.Intn(60)
+			insertSQL := fmt.Sprintf("insert into t(a, b, c) values(%v, %v, %v) on duplicate key update a=values(a), b=values(b), c=values(c)",
+				val, rand.Intn(90), strconv.FormatInt(int64(val), 10))
+			err = tk1.ExecToErr(insertSQL)
+		}
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", hookFunc)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	ddlSQL := "alter table t add column `d` decimal(20,4) not null default '0'"
+	tk2.MustExec(ddlSQL)
+
+	require.NoError(t, err)
+}
+
 // Close issue #24172.
 // See https://github.com/pingcap/tidb/issues/24172
 func TestCancelJobWriteConflict(t *testing.T) {
@@ -557,6 +608,9 @@ func TestCancelJobWriteConflict(t *testing.T) {
 }
 
 func TestTxnSavepointWithDDL(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -589,7 +643,8 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	tk2.MustExec("alter table t2 add index idx2(c2)")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
-	tk.MustExec("admin check table t1, t2")
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 
 	prepareFn()
 	tk.MustExec("truncate table t1")
@@ -605,7 +660,8 @@ func TestTxnSavepointWithDDL(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, ".*8028.*Information schema is changed during the execution of the statement.*", err.Error())
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	tk.MustExec("admin check table t1, t2")
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 }
 
 func TestSnapshotVersion(t *testing.T) {
@@ -627,9 +683,10 @@ func TestSnapshotVersion(t *testing.T) {
 
 	// For updating the self schema version.
 	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err := dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion())
+	sum, err := dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion(), false)
 	cancel()
 	require.NoError(t, err)
+	require.EqualValues(t, &schemaver.SyncSummary{ServerCount: 1}, sum)
 
 	snapIs, err := dom.GetSnapshotInfoSchema(snapTS)
 	require.NotNil(t, snapIs)
@@ -637,9 +694,10 @@ func TestSnapshotVersion(t *testing.T) {
 
 	// Make sure that the self schema version doesn't be changed.
 	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err = dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion())
+	sum, err = dd.SchemaSyncer().WaitVersionSynced(goCtx, 0, is.SchemaMetaVersion(), false)
 	cancel()
 	require.NoError(t, err)
+	require.EqualValues(t, &schemaver.SyncSummary{ServerCount: 1}, sum)
 
 	// for GetSnapshotInfoSchema
 	currSnapTS := oracle.GoTimeToTS(time.Now())
@@ -649,10 +707,10 @@ func TestSnapshotVersion(t *testing.T) {
 	require.Equal(t, is.SchemaMetaVersion(), currSnapIs.SchemaMetaVersion())
 
 	// for GetSnapshotMeta
-	dbInfo, ok := currSnapIs.SchemaByName(pmodel.NewCIStr("test2"))
+	dbInfo, ok := currSnapIs.SchemaByName(ast.NewCIStr("test2"))
 	require.True(t, ok)
 
-	tbl, err := currSnapIs.TableByName(context.Background(), pmodel.NewCIStr("test2"), pmodel.NewCIStr("t"))
+	tbl, err := currSnapIs.TableByName(context.Background(), ast.NewCIStr("test2"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	m := dom.GetSnapshotMeta(snapTS)
@@ -686,37 +744,37 @@ func TestSchemaValidator(t *testing.T) {
 	require.NoError(t, err)
 
 	ts := ver.Ver
-	_, res := dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	_, res := dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)
+	require.Equal(t, validatorapi.ResultSucc, res)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
 
 	err = dom.Reload()
 	require.Error(t, err)
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	_, res = dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)
+	require.Equal(t, validatorapi.ResultSucc, res)
 	time.Sleep(dbTestLease)
 
 	ver, err = store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
 	ts = ver.Ver
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultUnknown, res)
+	_, res = dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)
+	require.Equal(t, validatorapi.ResultUnknown, res)
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"))
 	err = dom.Reload()
 	require.NoError(t, err)
 
-	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
-	require.Equal(t, domain.ResultSucc, res)
+	_, res = dom.GetSchemaValidator().Check(ts, schemaVer, nil, true)
+	require.Equal(t, validatorapi.ResultSucc, res)
 
 	// For schema check, it tests for getting the result of "ResultUnknown".
 	is := dom.InfoSchema()
-	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil, true)
+	schemaChecker := domain.NewSchemaChecker(dom.GetSchemaValidator(), is.SchemaMetaVersion(), nil, true)
 	// Make sure it will retry one time and doesn't take a long time.
 	domain.SchemaOutOfDateRetryTimes.Store(1)
 	domain.SchemaOutOfDateRetryInterval.Store(time.Millisecond * 1)
-	dom.SchemaValidator.Stop()
+	dom.GetSchemaValidator().Stop()
 	_, err = schemaChecker.Check(uint64(123456))
 	require.EqualError(t, err, domain.ErrInfoSchemaExpired.Error())
 }
@@ -773,25 +831,25 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 
 	infoSyncer := dom.InfoSyncer()
 	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+		PS: make([]*sessmgr.ProcessInfo, 0),
 	}
 	infoSyncer.SetSessionManager(sm)
 	beforeTS := oracle.GoTimeToTS(time.Now())
-	infoSyncer.ReportMinStartTS(dom.Store())
+	infoSyncer.ReportMinStartTS(dom.Store(), nil)
 	afterTS := oracle.GoTimeToTS(time.Now())
 	require.False(t, infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS)
 
 	now := time.Now()
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
 	lowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
-	sm.PS = []*util.ProcessInfo{
+	sm.PS = []*sessmgr.ProcessInfo{
 		{CurTxnStartTS: 0},
 		{CurTxnStartTS: math.MaxUint64},
 		{CurTxnStartTS: lowerLimit},
 		{CurTxnStartTS: validTS},
 	}
 	infoSyncer.SetSessionManager(sm)
-	infoSyncer.ReportMinStartTS(dom.Store())
+	infoSyncer.ReportMinStartTS(dom.Store(), nil)
 	require.Equal(t, validTS, infoSyncer.GetMinStartTS())
 }
 
@@ -997,13 +1055,15 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 }
 
 func TestMDLTruncateTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
-	tk3 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	originalTableID := tbl.Meta().ID
 	tk.MustExec("begin")
 	tk.MustExec("select * from t for update")
 
@@ -1012,30 +1072,57 @@ func TestMDLTruncateTable(t *testing.T) {
 	wg.Add(2)
 	var timetk2 time.Time
 	var timetk3 time.Time
+	var errtk2 error
+	var errtk3 error
 
-	one := false
+	waitTableIDChanged := func() error {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			if err == nil && tbl.Meta().ID != originalTableID {
+				return nil
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return errors.New("timed out waiting for truncated table ID to refresh")
+	}
+
+	var once sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if one {
+		if job.Type != model.ActionTruncateTable {
 			return
 		}
-		one = true
-		go func() {
-			tk3.MustExec("truncate table test.t")
-			timetk3 = time.Now()
-			wg.Done()
-		}()
+		once.Do(func() {
+			go func() {
+				defer wg.Done()
+				if err := waitTableIDChanged(); err != nil {
+					errtk3 = err
+					return
+				}
+				tk3 := testkit.NewTestKit(t, store)
+				tk3.MustExec("use test")
+				errtk3 = tk3.ExecToErr("truncate table test.t")
+				if errtk3 == nil {
+					timetk3 = time.Now()
+				}
+			}()
+		})
 	})
 
 	go func() {
-		tk2.MustExec("truncate table test.t")
-		timetk2 = time.Now()
-		wg.Done()
+		defer wg.Done()
+		errtk2 = tk2.ExecToErr("truncate table test.t")
+		if errtk2 == nil {
+			timetk2 = time.Now()
+		}
 	}()
 
 	time.Sleep(2 * time.Second)
 	timeMain := time.Now()
 	tk.MustExec("commit")
 	wg.Wait()
+	require.NoError(t, errtk2)
+	require.NoError(t, errtk3)
 	require.True(t, timetk2.After(timeMain))
 	require.True(t, timetk3.After(timeMain))
 }
@@ -1155,32 +1242,39 @@ func deleteJobMetaByID(tk *testkit.TestKit, jobID int64) {
 }
 
 func TestAdminAlterDDLJobUpdateSysTable(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("resource params are calculated automatically on nextgen for add-index, we don't support alter them")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int);")
 
-	job := model.Job{
-		ID:        1,
-		Type:      model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{},
+	for _, useCloudStorage := range []bool{true, false} {
+		job := model.Job{
+			ID:   1,
+			Type: model.ActionAddIndex,
+			ReorgMeta: &model.DDLReorgMeta{
+				UseCloudStorage: useCloudStorage,
+			},
+		}
+		job.ReorgMeta.Concurrency.Store(4)
+		job.ReorgMeta.BatchSize.Store(128)
+		insertMockJob2Table(tk, &job)
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
+		j := getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 8, j.ReorgMeta.GetConcurrency())
+
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
+		j = getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 256, j.ReorgMeta.GetBatchSize())
+
+		tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
+		j = getJobMetaByID(t, tk, job.ID)
+		require.Equal(t, 16, j.ReorgMeta.GetConcurrency())
+		require.Equal(t, 512, j.ReorgMeta.GetBatchSize())
+		deleteJobMetaByID(tk, job.ID)
 	}
-	job.ReorgMeta.Concurrency.Store(4)
-	job.ReorgMeta.BatchSize.Store(128)
-	insertMockJob2Table(tk, &job)
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
-	j := getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), 8)
-
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d batch_size = 256;", job.ID))
-	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), 256)
-
-	tk.MustExec(fmt.Sprintf("admin alter ddl jobs %d thread = 16, batch_size = 512;", job.ID))
-	j = getJobMetaByID(t, tk, job.ID)
-	require.Equal(t, j.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), 16)
-	require.Equal(t, j.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), 512)
-	deleteJobMetaByID(tk, job.ID)
 }
 
 func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
@@ -1231,24 +1325,27 @@ func TestAdminAlterDDLJobUnsupportedCases(t *testing.T) {
 	insertMockJob2Table(tk, &job)
 	// unsupported job type
 	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
+		"unsupported DDL operation: add column. Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
 	deleteJobMetaByID(tk, 1)
 
-	job = model.Job{
-		ID:   1,
-		Type: model.ActionAddIndex,
-		ReorgMeta: &model.DDLReorgMeta{
-			IsDistReorg: true,
-		},
+	if kerneltype.IsNextGen() {
+		job := model.Job{
+			ID:   2,
+			Type: model.ActionAddIndex,
+		}
+		insertMockJob2Table(tk, &job)
+		// unsupported job type
+		err := tk.ExecToErr(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID))
+		require.ErrorIs(t, err, variable.ErrNotSupportedInNextGen)
+		require.ErrorContains(t, err, "Altering ADD INDEX job")
+		deleteJobMetaByID(tk, 2)
 	}
-	insertMockJob2Table(tk, &job)
-	// unsupported job type
-	tk.MustGetErrMsg(fmt.Sprintf("admin alter ddl jobs %d thread = 8;", job.ID),
-		"unsupported DDL operation: add index. Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION")
-	deleteJobMetaByID(tk, 1)
 }
 
 func TestAdminAlterDDLJobCommitFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("resource params are calculated automatically on nextgen for add-index, we don't support alter them")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1269,4 +1366,72 @@ func TestAdminAlterDDLJobCommitFailed(t *testing.T) {
 	j := getJobMetaByID(t, tk, job.ID)
 	require.Equal(t, j.ReorgMeta, job.ReorgMeta)
 	deleteJobMetaByID(tk, job.ID)
+}
+
+func TestGetAllTableInfos(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	for i := range 113 {
+		tk.MustExec(fmt.Sprintf("create database test%d", i))
+		tk.MustExec(fmt.Sprintf("use test%d", i))
+		tk.MustExec("create table t1 (a int)")
+		tk.MustExec("create table t2 (a int)")
+		tk.MustExec("create table t3 (a int)")
+	}
+
+	tblInfos1 := make([]*model.TableInfo, 0)
+	tblInfos2 := make([]*model.TableInfo, 0)
+	dbs := dom.InfoSchema().AllSchemas()
+	for _, db := range dbs {
+		if infoschema.IsSpecialDB(db.Name.L) {
+			continue
+		}
+		info, err := dom.InfoSchema().SchemaTableInfos(context.Background(), db.Name)
+		require.NoError(t, err)
+		tblInfos1 = append(tblInfos1, info...)
+	}
+
+	err := meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), 13, func(tblInfo *model.TableInfo) error {
+		tblInfos2 = append(tblInfos2, tblInfo)
+		return nil
+	})
+	require.NoError(t, err)
+
+	slices.SortFunc(tblInfos1, func(i, j *model.TableInfo) int {
+		return int(i.ID - j.ID)
+	})
+	slices.SortFunc(tblInfos2, func(i, j *model.TableInfo) int {
+		return int(i.ID - j.ID)
+	})
+
+	require.Equal(t, len(tblInfos1), len(tblInfos2))
+	for i := range tblInfos1 {
+		require.Equal(t, tblInfos1[i].ID, tblInfos2[i].ID)
+		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
+	}
+
+	require.NoError(t, meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), 0, func(tblInfo *model.TableInfo) error {
+		return nil
+	}))
+	require.NoError(t, meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), -999, func(tblInfo *model.TableInfo) error {
+		return nil
+	}))
+}
+
+func TestGetVersionFailed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_metadata_lock=0")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	// Simulate the failure of getting the current version twice.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockGetCurrentVersionFailed", "2*return(true)")
+
+	tk.MustExec("alter table t add column b int")
 }

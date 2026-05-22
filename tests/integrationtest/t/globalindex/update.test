@@ -32,9 +32,9 @@ rollback;
 insert into t values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);
 update t set a = 2 where a = 11;
 update t set a = 13 where a = 12;
-explain select * from t use index(idx) order by a;
+explain format='plan_tree' select * from t use index(idx) order by a;
 select * from t use index(idx) order by a;
-explain select * from t use index(idx1) order by a;
+explain format='plan_tree' select * from t use index(idx1) order by a;
 select * from t use index(idx1) order by a;
 
 # https://github.com/pingcap/tidb/issues/53750
@@ -42,4 +42,15 @@ drop table t;
 create table t(a varchar(70), b mediumint(9), unique index idx_a(a) global, unique index idx_b(b)) partition by key(b) partitions 5;
 insert into t values ('',826534 );
 replace into t values ('',826536 );
+select * from t;
+
+# For global index + non-unique index
+drop table t;
+create table t(a int, b int, index idx(a) global) partition by hash(b) partitions 5;
+insert into t values (1, 2), (1, 3), (1, 4);
+
+# Replace will not affects, `idx` is a non-unique index.
+replace into t values (2, 3);
+update t set a = 3, b = 4 where a = 1;
+--sorted_result
 select * from t;

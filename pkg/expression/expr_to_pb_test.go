@@ -17,6 +17,7 @@ package expression
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -544,6 +545,11 @@ func TestJsonPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// json_object
+	function, err = NewFunction(mock.NewContext(), ast.JSONObject, types.NewFieldType(mysql.TypeJSON), stringColumn, jsonColumn, stringColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// json_depth
 	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
@@ -684,6 +690,19 @@ func TestExprPushDownToFlash(t *testing.T) {
 	uintColumn.RetType.AddFlag(mysql.UnsignedFlag)
 
 	function, err := NewFunction(mock.NewContext(), ast.Lpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// truncate
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeLong), intColumn, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1412,7 +1431,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	// Grouping
-	init := func(groupingFunc *ScalarFunction) (Expression, error) {
+	init := func(groupingFunc *ScalarFunction) (*ScalarFunction, error) {
 		var err error
 		if groupingFunc.FuncName.L == ast.Grouping {
 			err = groupingFunc.Function.(*BuiltinGroupingImplSig).
@@ -1822,6 +1841,61 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{stringColumn, intColumn, NewStrConst("hour")},
 		},
+		{
+			functionName: ast.FromUnixTime,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{decimalColumn},
+		},
+		{
+			functionName: ast.FromUnixTime,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{decimalColumn, stringColumn},
+		},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDatetime),
+		//	args:         []Expression{stringColumn, stringColumn},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDuration),
+		//	args:         []Expression{stringColumn, NewStrConst("%h")},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDate),
+		//	args:         []Expression{stringColumn, NewStrConst("%y")},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDatetime),
+		//	args:         []Expression{stringColumn, NewStrConst("%h%y")},
+		//},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("Second"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("DAY"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("year"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.UnixTimestamp,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{datetimeColumn},
+		},
+		{
+			functionName: ast.UnixTimestamp,
+			retType:      types.NewFieldType(mysql.TypeNewDecimal),
+			args:         []Expression{stringColumn},
+		},
 	}
 
 	ctx = mock.NewContext()
@@ -2054,6 +2128,36 @@ func TestPushDownSwitcher(t *testing.T) {
 	for i, pbExpr := range pbExprs {
 		require.Equalf(t, cases[i].sig, pbExpr.Sig, "function: %s, sig: %v", cases[i].name, cases[i].sig)
 	}
+
+	// Negative-zero float constants must not be pushed down because protobuf
+	// encoding loses the sign bit and changes the behavior of ATAN2.
+	negZero := &Constant{
+		Value:   types.NewFloat64Datum(math.Copysign(0, -1)),
+		RetType: types.NewFieldType(mysql.TypeDouble),
+	}
+	atan2WithNegZero, err := NewFunction(
+		mock.NewContext(),
+		ast.Atan2,
+		types.NewFieldType(mysql.TypeDouble),
+		genColumn(mysql.TypeDouble, 1),
+		negZero,
+	)
+	require.NoError(t, err)
+	require.Nil(t, (&PbConverter{client: client, ctx: ctx}).ExprToPB(atan2WithNegZero))
+
+	posZero := &Constant{
+		Value:   types.NewFloat64Datum(0),
+		RetType: types.NewFieldType(mysql.TypeDouble),
+	}
+	atan2WithPosZero, err := NewFunction(
+		mock.NewContext(),
+		ast.Atan2,
+		types.NewFieldType(mysql.TypeDouble),
+		genColumn(mysql.TypeDouble, 1),
+		posZero,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, (&PbConverter{client: client, ctx: ctx}).ExprToPB(atan2WithPosZero))
 
 	// All disabled
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/PushDownTestSwitcher", `return("")`))

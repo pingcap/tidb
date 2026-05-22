@@ -24,22 +24,34 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
-var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
-	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
+func execOptionForAnalyzeVersion(statsVer int, needVersionRewriteWarn bool, sql string, params ...any) sqlexec.OptionFuncAlias {
+	if needVersionRewriteWarn {
+		escapedSQL, err := sqlescape.EscapeSQL(sql, params...)
+		intest.Assert(err == nil, "sql escaping should not fail")
+		// No need to fail the analyze task if the SQL escaping fails, just log the original SQL.
+		if err != nil {
+			escapedSQL = sql
+		}
+		statslogutil.StatsLogger().Warn(
+			"auto analyze rewrites legacy statistics version 1 to version 2",
+			zap.String("sql", escapedSQL),
+		)
+	}
+	intest.Assert(statsVer == statistics.Version2, "auto analyze should use stats version 2")
+	return sqlexec.ExecOptionAnalyzeVer2
 }
 
 // AutoAnalyze executes the auto analyze task.
@@ -48,11 +60,12 @@ func AutoAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
+	needVersionRewriteWarn bool,
 	sql string,
 	params ...any,
 ) bool {
 	startTime := time.Now()
-	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
+	_, _, err := RunAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -60,7 +73,7 @@ func AutoAnalyze(
 		if err1 != nil {
 			escaped = ""
 		}
-		statslogutil.StatsLogger().Error(
+		statslogutil.StatsErrVerboseSampleLogger().Error(
 			"auto analyze failed",
 			zap.String("sql", escaped),
 			zap.Duration("cost_time", dur),
@@ -79,6 +92,7 @@ func RunAnalyzeStmt(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
+	needVersionRewriteWarn bool,
 	sql string,
 	params ...any,
 ) ([]chunk.Row, []*resolve.ResultField, error) {
@@ -87,7 +101,7 @@ func RunAnalyzeStmt(
 	autoAnalyzeTracker := statsutil.NewAutoAnalyzeTracker(sysProcTracker.Track, sysProcTracker.UnTrack)
 	autoAnalyzeProcID := statsHandle.AutoAnalyzeProcID()
 	optFuncs := []sqlexec.OptionFuncAlias{
-		execOptionForAnalyze[statsVer],
+		execOptionForAnalyzeVersion(statsVer, needVersionRewriteWarn, sql, params...),
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
 		sqlexec.GetPartitionPruneModeOption(pruneMode),
 		sqlexec.ExecOptionUseCurSession,
@@ -105,7 +119,7 @@ func RunAnalyzeStmt(
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
 func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
-	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
+	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, vardef.TiDBAutoAnalyzeRatio, vardef.TiDBAutoAnalyzeStartTime, vardef.TiDBAutoAnalyzeEndTime)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -120,24 +134,24 @@ func GetAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 func ParseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
 	if err != nil {
-		return variable.DefAutoAnalyzeRatio
+		return vardef.DefAutoAnalyzeRatio
 	}
 	return math.Max(autoAnalyzeRatio, 0)
 }
 
 // ParseAutoAnalysisWindow parses the time window for auto analysis.
 // It parses the times in UTC location.
-func ParseAutoAnalysisWindow(start, end string) (time.Time, time.Time, error) {
+func ParseAutoAnalysisWindow(start, end string) (_, _ time.Time, err error) {
 	if start == "" {
-		start = variable.DefAutoAnalyzeStartTime
+		start = vardef.DefAutoAnalyzeStartTime
 	}
 	if end == "" {
-		end = variable.DefAutoAnalyzeEndTime
+		end = vardef.DefAutoAnalyzeEndTime
 	}
-	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
+	s, err := time.ParseInLocation(vardef.FullDayTimeFormat, start, time.UTC)
 	if err != nil {
 		return s, s, errors.Trace(err)
 	}
-	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
+	e, err := time.ParseInLocation(vardef.FullDayTimeFormat, end, time.UTC)
 	return s, e, err
 }

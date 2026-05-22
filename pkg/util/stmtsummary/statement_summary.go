@@ -19,7 +19,6 @@ import (
 	"cmp"
 	"container/list"
 	"fmt"
-	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -29,8 +28,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -94,6 +93,8 @@ type stmtSummaryByDigestMap struct {
 
 	// other stores summary of evicted data.
 	other *stmtSummaryByDigestEvicted
+	// currentWindowEvictedCount counts LRU evictions observed in the current interval.
+	currentWindowEvictedCount int64
 }
 
 // StmtSummaryByDigestMap is a global map containing all statement summaries.
@@ -117,6 +118,8 @@ type stmtSummaryByDigest struct {
 	normalizedSQL string
 	tableNames    string
 	isInternal    bool
+	bindingSQL    string
+	bindingDigest string
 }
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
@@ -235,9 +238,16 @@ type stmtSummaryStats struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+	StmtNetworkTrafficSummary
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+
+	storageKV  bool // query read from TiKV
+	storageMPP bool // query read from TiFlash
+
+	sumMemArbitration float64
+	maxMemArbitration float64
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -258,6 +268,7 @@ type StmtExecInfo struct {
 	CopTasks       *execdetails.CopTasksSummary
 	ExecDetail     execdetails.ExecDetails
 	MemMax         int64
+	MemArbitration float64
 	DiskMax        int64
 	StartTime      time.Time
 	IsInternal     bool
@@ -268,12 +279,13 @@ type StmtExecInfo struct {
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
 	ResultRows        int64
-	TiKVExecDetails   util.ExecDetails
+	TiKVExecDetails   *util.ExecDetails
 	Prepared          bool
 	KeyspaceName      string
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+	TotalRUV2         float64
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
@@ -287,6 +299,7 @@ type StmtExecLazyInfo interface {
 	GetEncodedPlan() (string, string, any)
 	GetBinaryPlan() string
 	GetPlanDigest() string
+	GetBindingSQLAndDigest() (string, string)
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -308,10 +321,11 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		optHistoryEnabled:      atomic2.NewBool(true),
 		optRefreshInterval:     atomic2.NewInt64(1800),
 		optHistorySize:         atomic2.NewInt32(24),
-		optMaxSQLLength:        atomic2.NewInt32(4096),
+		optMaxSQLLength:        atomic2.NewInt32(32768),
 		other:                  ssbde,
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		newSsMap.currentWindowEvictedCount++
 		historySize := newSsMap.historySize()
 		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
@@ -345,46 +359,51 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
 	var exist bool
-	// Enclose the block in a function to ensure the lock will always be released.
-	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
-		ssMap.Lock()
-		defer ssMap.Unlock()
 
-		// Check again. Statements could be added before disabling the flag and after Clear().
-		if !ssMap.Enabled() {
-			return nil, 0
-		}
-		if sei.IsInternal && !ssMap.EnabledInternal() {
-			return nil, 0
-		}
+	// Using a global lock here instead of fine-grained locks because:
+	// 1. The critical sections are very short, making lock overhead potentially higher
+	// than the protected code execution time.
+	// 2. Previous implementation with layered locks reveals significant contention and
+	// poorer performance in benchmarks.
+	// A single coarse-grained lock reduces overall contention and may provide better
+	// performance in this specific case.
+	ssMap.Lock()
+	defer ssMap.Unlock()
 
-		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
-			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
-			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
-			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-		}
+	// Check again. Statements could be added before disabling the flag and after Clear().
+	if !ssMap.Enabled() {
+		return
+	}
+	if sei.IsInternal && !ssMap.EnabledInternal() {
+		return
+	}
 
-		beginTime := ssMap.beginTimeForCurInterval
-		var value kvcache.Value
-		value, exist = ssMap.summaryMap.Get(key)
-		var summary *stmtSummaryByDigest
-		if !exist {
-			// Lazy initialize it to release ssMap.mutex ASAP.
-			summary = new(stmtSummaryByDigest)
-			ssMap.summaryMap.Put(key, summary)
-		} else {
-			summary = value.(*stmtSummaryByDigest)
-		}
-		summary.isInternal = summary.isInternal && sei.IsInternal
-		return summary, beginTime
-	}()
-	// Lock a single entry, not the whole cache.
+	if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
+		// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
+		// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
+		ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+		ssMap.currentWindowEvictedCount = 0
+	}
+
+	beginTime := ssMap.beginTimeForCurInterval
+	var value kvcache.Value
+	value, exist = ssMap.summaryMap.Get(key)
+	var summary *stmtSummaryByDigest
+	if !exist {
+		// Lazy initialize it to release ssMap.mutex ASAP.
+		summary = new(stmtSummaryByDigest)
+		ssMap.summaryMap.Put(key, summary)
+	} else {
+		summary = value.(*stmtSummaryByDigest)
+	}
+	summary.isInternal = summary.isInternal && sei.IsInternal
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
 	}
 	if exist {
 		StmtDigestKeyPool.Put(key)
 	}
+	ssMap.updateMetricsLocked()
 }
 
 // Clear removes all statement summaries.
@@ -395,6 +414,8 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.summaryMap.DeleteAll()
 	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
+	ssMap.currentWindowEvictedCount = 0
+	ssMap.updateMetricsLocked()
 }
 
 // clearInternal removes all statement summaries which are internal summaries.
@@ -411,6 +432,7 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 			ssMap.summaryMap.Delete(key)
 		}
 	}
+	ssMap.updateMetricsLocked()
 }
 
 // clearHistory removes history for all statement summaries, leaving only the current interval.
@@ -427,59 +449,6 @@ func (ssMap *stmtSummaryByDigestMap) clearHistory() {
 		ssbd.history = newHistory
 		ssbd.Unlock()
 	}
-}
-
-// BindableStmt is a wrapper struct for a statement that is extracted from statements_summary and can be
-// created binding on.
-type BindableStmt struct {
-	Schema    string
-	Query     string
-	PlanHint  string
-	Charset   string
-	Collation string
-	Users     map[string]struct{} // which users have processed this stmt
-}
-
-// GetMoreThanCntBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
-func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*BindableStmt {
-	ssMap.Lock()
-	values := ssMap.summaryMap.Values()
-	ssMap.Unlock()
-
-	stmts := make([]*BindableStmt, 0, len(values))
-	for _, value := range values {
-		ssbd := value.(*stmtSummaryByDigest)
-		func() {
-			ssbd.Lock()
-			defer ssbd.Unlock()
-			if ssbd.initialized && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") {
-				if ssbd.history.Len() > 0 {
-					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-					ssElement.Lock()
-
-					// Empty auth users means that it is an internal queries.
-					if len(ssElement.authUsers) > 0 && (int64(ssbd.history.Len()) > cnt || ssElement.execCount > cnt) {
-						stmt := &BindableStmt{
-							Schema:    ssbd.schemaName,
-							Query:     ssElement.sampleSQL,
-							PlanHint:  ssElement.planHint,
-							Charset:   ssElement.charset,
-							Collation: ssElement.collation,
-							Users:     maps.Clone(ssElement.authUsers),
-						}
-						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
-						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
-						if ssElement.prepared {
-							stmt.Query = ssbd.normalizedSQL
-						}
-						stmts = append(stmts, stmt)
-					}
-					ssElement.Unlock()
-				}
-			}
-		}()
-	}
-	return stmts
 }
 
 // SetEnabled enables or disables statement summary
@@ -556,13 +525,23 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxStmtCount(value uint) error {
 
 	ssMap.Lock()
 	defer ssMap.Unlock()
-	return ssMap.summaryMap.SetCapacity(value)
+	err := ssMap.summaryMap.SetCapacity(value)
+	ssMap.updateMetricsLocked()
+	return err
 }
 
 // Used by tests
 // nolint: unused
 func (ssMap *stmtSummaryByDigestMap) maxStmtCount() int {
 	return int(ssMap.optMaxStmtCount.Load())
+}
+
+func (ssMap *stmtSummaryByDigestMap) updateMetricsLocked() {
+	metrics.SetStmtSummaryWindowMetrics(
+		metrics.StmtSummaryTypeV1,
+		float64(ssMap.summaryMap.Size()),
+		float64(ssMap.currentWindowEvictedCount),
+	)
 }
 
 // SetHistorySize sets the history size for all summaries.
@@ -573,33 +552,6 @@ func (ssMap *stmtSummaryByDigestMap) SetMaxSQLLength(value int) error {
 
 func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 	return int(ssMap.optMaxSQLLength.Load())
-}
-
-// GetBindableStmtFromCluster gets users' select/update/delete SQL.
-func GetBindableStmtFromCluster(rows []chunk.Row) *BindableStmt {
-	for _, row := range rows {
-		user := row.GetString(3)
-		stmtType := row.GetString(0)
-		if user != "" && (stmtType == "Select" || stmtType == "Delete" || stmtType == "Update" || stmtType == "Insert" || stmtType == "Replace") {
-			// Empty auth users means that it is an internal queries.
-			stmt := &BindableStmt{
-				Schema:    row.GetString(1), //schemaName
-				Query:     row.GetString(5), //sampleSQL
-				PlanHint:  row.GetString(8), //planHint
-				Charset:   row.GetString(6), //charset
-				Collation: row.GetString(7), //collation
-			}
-			// If it is SQL command prepare / execute, we should remove the arguments
-			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
-			if row.GetInt64(4) == 1 {
-				if idx := strings.LastIndex(stmt.Query, "[arguments:"); idx != -1 {
-					stmt.Query = stmt.Query[:idx]
-				}
-			}
-			return stmt
-		}
-	}
-	return nil
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
@@ -635,10 +587,13 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.tableNames = tableNames
 	ssbd.history = list.New()
 	ssbd.initialized = true
+	ssbd.bindingSQL, ssbd.bindingDigest = sei.LazyInfo.GetBindingSQLAndDigest()
 }
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
 	// Enclose this block in a function to ensure the lock will always be released.
+	warningCount := int(sei.StmtCtx.WarningCount())
+	affectedRows := sei.StmtCtx.AffectedRows()
 	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
 		ssbd.Lock()
 		defer ssbd.Unlock()
@@ -646,7 +601,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if !ssbd.initialized {
 			ssbd.init(sei, beginTime, intervalSeconds, historySize)
 		}
-		ssbd.cumulative.add(sei)
+		ssbd.cumulative.add(sei, warningCount, affectedRows)
 
 		var ssElement *stmtSummaryByDigestElement
 		isElementNew := true
@@ -662,7 +617,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		}
 		if isElementNew {
 			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
-			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
+			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds, warningCount, affectedRows)
 			if ssElement == nil {
 				return nil, isElementNew
 			}
@@ -680,7 +635,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 
 	// Lock a single entry, not the whole `ssbd`.
 	if !isElementNew {
-		ssElement.add(sei, intervalSeconds)
+		ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	}
 }
 
@@ -746,12 +701,12 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	}
 }
 
-func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, warningCount int, affectedRows uint64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:        beginTime,
 		stmtSummaryStats: *newStmtSummaryStats(sei),
 	}
-	ssElement.add(sei, intervalSeconds)
+	ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	return ssElement
 }
 
@@ -773,7 +728,7 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 	}
 }
 
-func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
+func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affectedRows uint64) {
 	// add user to auth users set
 	if len(sei.User) > 0 {
 		ssStats.authUsers[sei.User] = struct{}{}
@@ -783,7 +738,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	if !sei.Succeed {
 		ssStats.sumErrors++
 	}
-	ssStats.sumWarnings += int(sei.StmtCtx.WarningCount())
+	ssStats.sumWarnings += warningCount
 
 	// latency
 	ssStats.sumLatency += sei.TotalLatency
@@ -941,11 +896,17 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	}
 
 	// other
-	ssStats.sumAffectedRows += sei.StmtCtx.AffectedRows()
+	ssStats.sumAffectedRows += affectedRows
 	ssStats.sumMem += sei.MemMax
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
 	}
+
+	ssStats.sumMemArbitration += sei.MemArbitration
+	if sei.MemArbitration > ssStats.maxMemArbitration {
+		ssStats.maxMemArbitration = sei.MemArbitration
+	}
+
 	ssStats.sumDisk += sei.DiskMax
 	if sei.DiskMax > ssStats.maxDisk {
 		ssStats.maxDisk = sei.DiskMax
@@ -978,17 +939,23 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	ssStats.sumTidbCPU += sei.CPUUsages.TidbCPUTime
 	ssStats.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
+	// network traffic
+	ssStats.StmtNetworkTrafficSummary.Add(sei.TiKVExecDetails)
+
 	// request-units
-	ssStats.StmtRUSummary.Add(sei.RUDetail)
+	ssStats.StmtRUSummary.Add(sei.RUDetail, sei.TotalRUV2)
+
+	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
+	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
 }
 
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
+func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	ssElement.stmtSummaryStats.add(sei)
+	ssElement.stmtSummaryStats.add(sei, warningCount, affectedRows)
 }
 
 // Truncate SQL to maxSQLLength.
@@ -1001,7 +968,7 @@ func formatSQL(sql string) string {
 		fmt.Fprintf(&result, "(len:%d)", length)
 		return result.String()
 	}
-	return sql
+	return strings.Clone(sql)
 }
 
 // Format the backoffType map to a string or nil.
@@ -1072,10 +1039,12 @@ type StmtRUSummary struct {
 	MaxRRU            float64       `json:"max_rru"`
 	MaxWRU            float64       `json:"max_wru"`
 	MaxRUWaitDuration time.Duration `json:"max_ru_wait_duration"`
+	SumRUV2           float64       `json:"sum_ruv2"`
+	MaxRUV2           float64       `json:"max_ruv2"`
 }
 
 // Add add a new sample value to the ru summary record.
-func (s *StmtRUSummary) Add(info *util.RUDetails) {
+func (s *StmtRUSummary) Add(info *util.RUDetails, totalRUV2 float64) {
 	if info != nil {
 		rru := info.RRU()
 		s.SumRRU += rru
@@ -1093,6 +1062,10 @@ func (s *StmtRUSummary) Add(info *util.RUDetails) {
 			s.MaxRUWaitDuration = ruWaitDur
 		}
 	}
+	s.SumRUV2 += totalRUV2
+	if s.MaxRUV2 < totalRUV2 {
+		s.MaxRUV2 = totalRUV2
+	}
 }
 
 // Merge merges the value of 2 ru summary records.
@@ -1108,5 +1081,51 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
+	}
+	s.SumRUV2 += other.SumRUV2
+	if s.MaxRUV2 < other.MaxRUV2 {
+		s.MaxRUV2 = other.MaxRUV2
+	}
+}
+
+// StmtNetworkTrafficSummary is the network traffic summary for each type of statements.
+type StmtNetworkTrafficSummary struct {
+	UnpackedBytesSentTiKVTotal            int64 `json:"unpacked_bytes_send_tikv_total"`
+	UnpackedBytesReceivedTiKVTotal        int64 `json:"unpacked_bytes_received_tikv_total"`
+	UnpackedBytesSentTiKVCrossZone        int64 `json:"unpacked_bytes_send_tikv_cross_zone"`
+	UnpackedBytesReceivedTiKVCrossZone    int64 `json:"unpacked_bytes_received_tikv_cross_zone"`
+	UnpackedBytesSentTiFlashTotal         int64 `json:"unpacked_bytes_send_tiflash_total"`
+	UnpackedBytesReceivedTiFlashTotal     int64 `json:"unpacked_bytes_received_tiflash_total"`
+	UnpackedBytesSentTiFlashCrossZone     int64 `json:"unpacked_bytes_send_tiflash_cross_zone"`
+	UnpackedBytesReceivedTiFlashCrossZone int64 `json:"unpacked_bytes_received_tiflash_cross_zone"`
+}
+
+// Merge merges the value of 2 network traffic summary records.
+func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
+	if other == nil {
+		return
+	}
+	s.UnpackedBytesSentTiKVTotal += other.UnpackedBytesSentTiKVTotal
+	s.UnpackedBytesReceivedTiKVTotal += other.UnpackedBytesReceivedTiKVTotal
+	s.UnpackedBytesSentTiKVCrossZone += other.UnpackedBytesSentTiKVCrossZone
+	s.UnpackedBytesReceivedTiKVCrossZone += other.UnpackedBytesReceivedTiKVCrossZone
+	s.UnpackedBytesSentTiFlashTotal += other.UnpackedBytesSentTiFlashTotal
+	s.UnpackedBytesReceivedTiFlashTotal += other.UnpackedBytesReceivedTiFlashTotal
+	s.UnpackedBytesSentTiFlashCrossZone += other.UnpackedBytesSentTiFlashCrossZone
+	s.UnpackedBytesReceivedTiFlashCrossZone += other.UnpackedBytesReceivedTiFlashCrossZone
+}
+
+// Add add a new sample value to the ru summary record.
+func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
+	if info != nil {
+		snapshot := execdetails.LoadTiKVExecDetails(info)
+		s.UnpackedBytesSentTiKVTotal += snapshot.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedTiKVTotal += snapshot.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentTiKVCrossZone += snapshot.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedTiKVCrossZone += snapshot.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentTiFlashTotal += snapshot.UnpackedBytesSentMPPTotal
+		s.UnpackedBytesReceivedTiFlashTotal += snapshot.UnpackedBytesReceivedMPPTotal
+		s.UnpackedBytesSentTiFlashCrossZone += snapshot.UnpackedBytesSentMPPCrossZone
+		s.UnpackedBytesReceivedTiFlashCrossZone += snapshot.UnpackedBytesReceivedMPPCrossZone
 	}
 }

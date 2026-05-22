@@ -15,9 +15,14 @@
 package keyspace
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,11 +38,20 @@ func TestSetKeyspaceNameInConf(t *testing.T) {
 	c1.KeyspaceName = keyspaceNameInCfg
 
 	getKeyspaceName := GetKeyspaceNameBySettings()
-
-	// Check the keyspaceName which get from GetKeyspaceNameBySettings, equals keyspaceNameInCfg which is in conf.
+	// Check the keyspaceName which get from GetKeyspaceNameBytesBySettings, equals keyspaceNameInCfg which is in conf.
 	// The cfg.keyspaceName get higher weights than KEYSPACE_NAME in system env.
 	require.Equal(t, keyspaceNameInCfg, getKeyspaceName)
 	require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
+
+	// Make sure genKeyspaceNameOnce is called only once in this test.
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
+	getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+	if kerneltype.IsNextGen() {
+		require.Equal(t, []byte(keyspaceNameInCfg), getKeyspaceNameByte)
+	} else {
+		require.Nil(t, getKeyspaceNameByte)
+	}
 }
 
 func TestNoKeyspaceNameSet(t *testing.T) {
@@ -46,7 +60,73 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	})
 
 	getKeyspaceName := GetKeyspaceNameBySettings()
-
 	require.Equal(t, "", getKeyspaceName)
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
+
+	// Make sure genKeyspaceNameOnce is called only once in this test.
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
+	getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+	if kerneltype.IsNextGen() {
+		require.Equal(t, []byte(""), getKeyspaceNameByte)
+	} else {
+		require.Nil(t, getKeyspaceNameByte)
+	}
+}
+
+func TestUsernamePolicy(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		restoreConfig()
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(originalMode))
+		}
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "ks"
+	})
+
+	policy := GetUsernamePolicy()
+	require.NoError(t, policy.ValidateUsername("user"))
+	require.Empty(t, policy.GetUsernameVariants("user"))
+	require.Empty(t, policy.GetOriginalUsername("ks.user"))
+
+	if !kerneltype.IsNextGen() {
+		return
+	}
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	policy = GetUsernamePolicy()
+	require.NoError(t, policy.ValidateUsername("ks.user"))
+	require.True(t, policy.ValidateUsernameFormat("other.user"))
+	require.False(t, policy.ValidateUsernameFormat("other.user.extra"))
+	require.True(t, terror.ErrorEqual(policy.ValidateUsername("user"), exeerrors.ErrUserNameNeedPrefix))
+	require.Equal(t, []string{"ks.user"}, policy.GetUsernameVariants("user"))
+	require.Empty(t, policy.GetUsernameVariants("ks.user"))
+	require.Equal(t, []string{"ks.other.user"}, policy.GetUsernameVariants("other.user"))
+	require.Equal(t, []string{"ks.other.user.extra"}, policy.GetUsernameVariants("other.user.extra"))
+	require.Equal(t, "user", policy.GetOriginalUsername("ks.user"))
+}
+
+func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
+	if !kerneltype.IsNextGen() {
+		b.Skip("NextGen is not enabled, skipping benchmark")
+		return
+	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "benchmark_keyspace"
+	})
+
+	var result []byte
+	keyspaceNameBytes = nil
+	genKeyspaceNameOnce = sync.Once{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result = GetKeyspaceNameBytesBySettings()
+	}
+	_ = result
 }

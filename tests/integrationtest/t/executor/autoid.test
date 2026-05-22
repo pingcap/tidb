@@ -507,3 +507,27 @@ select * from issue52465;
 insert into issue52465 (k) values (11);
 select * from issue52465;
 drop table issue52465;
+
+# Test for issue https://github.com/pingcap/tidb/issues/58631
+drop table if exists issue58631;
+set tidb_enable_clustered_index=off;
+create table t(id bigint unsigned auto_increment primary key);
+insert into t values(123);
+select _tidb_rowid, id from t;
+## insert into t values(18446744073709551615); # cannot insert 18446744073709551615 because rowid also consumes 1 autoid
+## insert into t values(18446744073709551614); # cannot do the either
+insert into t values(18446744073709551613); # this is the maxinum value that can be insert
+select _tidb_rowid, id from t;
+-- error 1467
+insert into t values();
+
+# also cover auto_id_cache=1
+drop table t;
+create table t(id bigint unsigned auto_increment primary key) auto_id_cache=1;
+insert into t values(123);
+select _tidb_rowid, id from t;
+insert into t values(18446744073709551615);
+select _tidb_rowid, id from t;
+-- error 1105
+insert into t values();
+set tidb_enable_clustered_index=default;

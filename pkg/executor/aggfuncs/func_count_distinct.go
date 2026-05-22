@@ -414,7 +414,7 @@ func evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = codec.EncodeCompactBytes(encodedBytes, collator.Key(val))
+		encodedBytes = codec.EncodeCompactBytes(encodedBytes, collator.ImmutableKey(val))
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}
@@ -567,7 +567,7 @@ func (p *partialResult4ApproxCountDistinct) resize(newSizeDegree uint8) {
 	p.sizeDegree = newSizeDegree
 
 	// Move some items to new locations.
-	for i := uint32(0); i < oldSize; i++ {
+	for i := range oldSize {
 		x := oldBuf[i]
 		if x != 0 {
 			p.reinsertImpl(x)
@@ -599,7 +599,7 @@ func (p *partialResult4ApproxCountDistinct) readAndMerge(rb []byte) error {
 		p.resize(newSizeDegree)
 	}
 
-	for i := uint32(0); i < uint32(rhsSize); i++ {
+	for range rhsSize {
 		x := *(*approxCountDistinctHashValue)(unsafe.Pointer(&rb[0]))
 		rb = rb[4:]
 		p.insertHash(x)
@@ -684,14 +684,14 @@ func (p *partialResult4ApproxCountDistinct) maxFill() uint32 {
 
 // Delete all values whose hashes do not divide by 2 ^ skip_degree
 func (p *partialResult4ApproxCountDistinct) rehash() {
-	for i := uint32(0); i < p.bufSize(); i++ {
+	for i := range p.bufSize() {
 		if p.buf[i] != 0 && !p.good(p.buf[i]) {
 			p.buf[i] = 0
 			p.size--
 		}
 	}
 
-	for i := uint32(0); i < p.bufSize(); i++ {
+	for i := range p.bufSize() {
 		if p.buf[i] != 0 && i != p.place(p.buf[i]) {
 			x := p.buf[i]
 			p.buf[i] = 0
@@ -724,7 +724,7 @@ func (p *partialResult4ApproxCountDistinct) merge(tar *partialResult4ApproxCount
 		p.shrinkIfNeed()
 	}
 
-	for i := uint32(0); i < tar.bufSize(); i++ {
+	for i := range tar.bufSize() {
 		if tar.buf[i] != 0 && p.good(tar.buf[i]) {
 			p.insertImpl(tar.buf[i])
 			p.shrinkIfNeed()
@@ -744,7 +744,7 @@ func (p *partialResult4ApproxCountDistinct) Serialize() []byte {
 		res = append(res, buf[:]...)
 	}
 
-	for i := uint32(0); i < p.bufSize(); i++ {
+	for i := range p.bufSize() {
 		if p.buf[i] != 0 {
 			binary.LittleEndian.PutUint32(buf[:], uint32(p.buf[i]))
 			res = append(res, buf[:]...)

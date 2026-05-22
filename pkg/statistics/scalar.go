@@ -108,7 +108,7 @@ func (hg *Histogram) PreCalculateScalar() {
 	case types.KindMysqlDecimal, types.KindMysqlTime:
 		var lower, upper types.Datum
 		hg.Scalars = make([]scalar, l)
-		for i := 0; i < l; i++ {
+		for i := range l {
 			// It's read-only, so we don't need to allocate new datum each time.
 			hg.LowerToDatum(i, &lower)
 			hg.UpperToDatum(i, &upper)
@@ -118,7 +118,7 @@ func (hg *Histogram) PreCalculateScalar() {
 	case types.KindBytes, types.KindString:
 		var lower, upper types.Datum
 		hg.Scalars = make([]scalar, l)
-		for i := 0; i < l; i++ {
+		for i := range l {
 			// It's read-only, so we don't need to allocate new datum each time.
 			hg.LowerToDatum(i, &lower)
 			hg.UpperToDatum(i, &upper)
@@ -161,7 +161,7 @@ func commonPrefixLength(strs ...[]byte) int {
 			minLen = len(str)
 		}
 	}
-	for i := 0; i < minLen; i++ {
+	for i := range minLen {
 		a := strs[0][i]
 		for _, str := range strs {
 			if str[i] != a {
@@ -174,9 +174,30 @@ func commonPrefixLength(strs ...[]byte) int {
 
 func convertBytesToScalar(value []byte) float64 {
 	// Bytes type is viewed as a base-256 value, so we only consider at most 8 bytes.
-	var buf [8]byte
-	copy(buf[:], value)
-	return float64(binary.BigEndian.Uint64(buf[:]))
+	switch len(value) {
+	case 0:
+		return 0
+	case 1:
+		return float64(uint64(value[0]) << 56)
+	case 2:
+		return float64(uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 3:
+		return float64(uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 4:
+		return float64(
+			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 5:
+		return float64(uint64(value[4])<<24 |
+			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 6:
+		return float64(uint64(value[5])<<16 | uint64(value[4])<<24 |
+			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	case 7:
+		return float64(uint64(value[6])<<8 | uint64(value[5])<<16 | uint64(value[4])<<24 |
+			uint64(value[3])<<32 | uint64(value[2])<<40 | uint64(value[1])<<48 | uint64(value[0])<<56)
+	default:
+		return float64(binary.BigEndian.Uint64(value))
+	}
 }
 
 func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
@@ -236,7 +257,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		if lowExclude {
 			startValue++
 		}
-		for i := int64(0); i < remaining; i++ {
+		for i := range remaining {
 			values = append(values, types.NewIntDatum(startValue+i))
 		}
 		return values
@@ -254,7 +275,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		if lowExclude {
 			startValue++
 		}
-		for i := uint64(0); i < remaining; i++ {
+		for i := range remaining {
 			values = append(values, types.NewUintDatum(startValue+i))
 		}
 		return values
@@ -272,7 +293,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			startValue += stepSize
 		}
 		values := make([]types.Datum, 0, remaining)
-		for i := int64(0); i < remaining; i++ {
+		for i := range remaining {
 			values = append(values, types.NewDurationDatum(types.Duration{Duration: time.Duration(startValue + i*stepSize), Fsp: fsp}))
 		}
 		return values
@@ -309,7 +330,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			}
 		}
 		values := make([]types.Datum, 0, remaining)
-		for i := int64(0); i < remaining; i++ {
+		for i := range remaining {
 			value, err := startValue.Add(typeCtx, types.Duration{Duration: time.Duration(i * stepSize), Fsp: fsp})
 			if err != nil {
 				return nil

@@ -16,6 +16,7 @@ package collector
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,7 +101,7 @@ func TestProcessProfCPUProfile(t *testing.T) {
 	topsqlstate.EnableTopSQL()
 	updater := &mockUpdater{}
 	updater.dataCh = make(chan bool, 10)
-	updater.connIDSet = make(map[uint64]uint64)
+	updater.resetConnIDSet()
 	mc := &mockCollector{
 		dataCh: make(chan []SQLCPUTimeRecord, 10),
 	}
@@ -113,10 +114,12 @@ func TestProcessProfCPUProfile(t *testing.T) {
 	defer cancel()
 	testutil.MockCPULoadV2(ctx, "0_0", "1_0", "2_1")
 	<-updater.dataCh
+	updater.rwlock.RLock()
 	require.Len(t, updater.connIDSet, 3)
 	require.Equal(t, updater.connIDSet[0], uint64(0))
 	require.Equal(t, updater.connIDSet[1], uint64(0))
 	require.Equal(t, updater.connIDSet[2], uint64(1))
+	updater.rwlock.RUnlock()
 
 	// Test disable then re-enable.
 	topsqlstate.DisableTopSQL()
@@ -124,10 +127,12 @@ func TestProcessProfCPUProfile(t *testing.T) {
 	for len(updater.dataCh) > 0 {
 		<-updater.dataCh
 	}
-	updater.connIDSet = make(map[uint64]uint64)
+	updater.resetConnIDSet()
 	time.Sleep(interval * 2)
 	require.Equal(t, 0, len(updater.dataCh))
+	updater.rwlock.RLock()
 	require.Equal(t, 0, len(updater.connIDSet))
+	updater.rwlock.RUnlock()
 
 	topsqlstate.EnableTopSQL()
 	ticker := time.NewTicker(interval * 8)
@@ -135,19 +140,32 @@ func TestProcessProfCPUProfile(t *testing.T) {
 	case <-ticker.C:
 	case <-updater.dataCh:
 	}
+	updater.rwlock.RLock()
 	require.Len(t, updater.connIDSet, 3)
 	require.Equal(t, updater.connIDSet[0], uint64(0))
 	require.Equal(t, updater.connIDSet[1], uint64(0))
 	require.Equal(t, updater.connIDSet[2], uint64(1))
+	updater.rwlock.RUnlock()
 }
 
 type mockUpdater struct {
 	dataCh    chan bool
+	rwlock    sync.RWMutex
 	connIDSet map[uint64]uint64
+}
+
+func (s *mockUpdater) resetConnIDSet() {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+
+	s.connIDSet = make(map[uint64]uint64)
 }
 
 // UpdateProcessCPUTime implements ProcessCPUTimeUpdater interface
 func (s *mockUpdater) UpdateProcessCPUTime(connID uint64, sqlID uint64, _ time.Duration) {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+
 	s.connIDSet[connID] = sqlID
 	if len(s.connIDSet) == 3 {
 		s.dataCh <- true

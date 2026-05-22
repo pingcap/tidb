@@ -56,6 +56,17 @@ func MakeKVChecksum(bytes uint64, kvs uint64, checksum uint64) KVChecksum {
 	}
 }
 
+// MakeKVChecksumWithKeyspace creates a new KVChecksum with the given keyspace, bytes, kvs, and checksum.
+func MakeKVChecksumWithKeyspace(keyspace []byte, bytes uint64, kvs uint64, checksum uint64) KVChecksum {
+	return KVChecksum{
+		base:      crc64.Update(0, ecmaTable, keyspace),
+		prefixLen: len(keyspace),
+		bytes:     bytes,
+		kvs:       kvs,
+		checksum:  checksum,
+	}
+}
+
 // UpdateOne updates the checksum with a single key-value pair.
 func (c *KVChecksum) UpdateOne(kv common.KvPair) {
 	sum := crc64.Update(c.base, ecmaTable, kv.Key)
@@ -96,6 +107,13 @@ func (c *KVChecksum) Add(other *KVChecksum) {
 	c.checksum ^= other.checksum
 }
 
+// Sub subtracts the checksum of another KVChecksum.
+func (c *KVChecksum) Sub(other *KVChecksum) {
+	c.bytes -= other.bytes
+	c.kvs -= other.kvs
+	c.checksum ^= other.checksum
+}
+
 // Sum returns the checksum.
 func (c *KVChecksum) Sum() uint64 {
 	return c.checksum
@@ -123,6 +141,12 @@ func (c *KVChecksum) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 func (c *KVChecksum) MarshalJSON() ([]byte, error) {
 	result := fmt.Sprintf(`{"checksum":%d,"size":%d,"kvs":%d}`, c.checksum, c.bytes, c.kvs)
 	return []byte(result), nil
+}
+
+// String implements the fmt.Stringer interface.
+func (c *KVChecksum) String() string {
+	json, _ := c.MarshalJSON()
+	return string(json)
 }
 
 // KVGroupChecksum is KVChecksum(s) each for a data KV group or index KV groups.

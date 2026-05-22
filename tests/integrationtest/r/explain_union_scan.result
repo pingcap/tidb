@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 drop table if exists city;
 CREATE TABLE `city` (
 `id` varchar(70) NOT NULL,
@@ -11,22 +10,22 @@ load stats "s/explain_union_scan.json";
 insert into city values("06766b3ef41d484d8878606393f1ed0b", 88, "chongqing", "chongqing city");
 begin;
 update city set province_id = 77 where id="06766b3ef41d484d8878606393f1ed0b";
-explain format = 'brief' select t1.*, t2.province_id as provinceID, t2.city_name as cityName, t3.description as description from city t1 inner join city t2 on t1.id = t2.id left join city t3 on t1.province_id = t3.province_id where t1.province_id > 1 and t1.province_id < 100 limit 10;
-id	estRows	task	access object	operator info
-Limit	10.00	root		offset:0, count:10
-└─HashJoin	10.00	root		left outer join, left side:Limit, equal:[eq(explain_union_scan.city.province_id, explain_union_scan.city.province_id)]
-  ├─Limit(Build)	10.00	root		offset:0, count:10
-  │ └─IndexJoin	10.00	root		inner join, inner:UnionScan, outer key:explain_union_scan.city.id, inner key:explain_union_scan.city.id, equal cond:eq(explain_union_scan.city.id, explain_union_scan.city.id)
-  │   ├─UnionScan(Build)	10.00	root		
-  │   │ └─TableReader	10.00	root		data:TableFullScan
-  │   │   └─TableFullScan	10.00	cop[tikv]	table:t2	keep order:false
-  │   └─UnionScan(Probe)	10.00	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
-  │     └─IndexLookUp	10.00	root		
-  │       ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(explain_union_scan.city.id, explain_union_scan.city.id)], keep order:false
-  │       └─Selection(Probe)	10.00	cop[tikv]		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
-  │         └─TableRowIDScan	10.00	cop[tikv]	table:t1	keep order:false
-  └─UnionScan(Probe)	536284.00	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100), not(isnull(explain_union_scan.city.province_id))
-    └─TableReader	536284.00	root		data:Selection
-      └─Selection	536284.00	cop[tikv]		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100), not(isnull(explain_union_scan.city.province_id))
-        └─TableFullScan	536284.00	cop[tikv]	table:t3	keep order:false
+explain format = 'plan_tree' select t1.*, t2.province_id as provinceID, t2.city_name as cityName, t3.description as description from city t1 inner join city t2 on t1.id = t2.id left join city t3 on t1.province_id = t3.province_id where t1.province_id > 1 and t1.province_id < 100 limit 10;
+id	task	access object	operator info
+Limit	root		offset:0, count:10
+└─HashJoin	root		left outer join, left side:Limit, equal:[eq(explain_union_scan.city.province_id, explain_union_scan.city.province_id)]
+  ├─Limit(Build)	root		offset:0, count:10
+  │ └─IndexJoin	root		inner join, inner:UnionScan, outer key:explain_union_scan.city.id, inner key:explain_union_scan.city.id, equal cond:eq(explain_union_scan.city.id, explain_union_scan.city.id)
+  │   ├─UnionScan(Build)	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
+  │   │ └─TableReader	root		data:Selection
+  │   │   └─Selection	cop[tikv]		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100)
+  │   │     └─TableFullScan	cop[tikv]	table:t1	keep order:false
+  │   └─UnionScan(Probe)	root		
+  │     └─IndexLookUp	root		
+  │       ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:PRIMARY(id)	range: decided by [eq(explain_union_scan.city.id, explain_union_scan.city.id)], keep order:false
+  │       └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false
+  └─UnionScan(Probe)	root		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100), not(isnull(explain_union_scan.city.province_id))
+    └─TableReader	root		data:Selection
+      └─Selection	cop[tikv]		gt(explain_union_scan.city.province_id, 1), lt(explain_union_scan.city.province_id, 100), not(isnull(explain_union_scan.city.province_id))
+        └─TableFullScan	cop[tikv]	table:t3	keep order:false
 commit;

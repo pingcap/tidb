@@ -16,6 +16,7 @@ package domain_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,22 +24,22 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
 
 func TestWriteRUStatistics(t *testing.T) {
-	tz, _ := time.LoadLocation("Asia/Shanghai")
-	testWriteRUStatisticsTz(t, tz)
-
+	tzShanghai, _ := time.LoadLocation("Asia/Shanghai")
 	// test with DST timezone.
-	tz, _ = time.LoadLocation("Australia/Lord_Howe")
-	testWriteRUStatisticsTz(t, tz)
+	tzLord, _ := time.LoadLocation("Australia/Lord_Howe")
 
-	testWriteRUStatisticsTz(t, time.Local)
-	testWriteRUStatisticsTz(t, time.UTC)
+	for i, tz := range []*time.Location{tzShanghai, tzLord, time.Local, time.UTC} {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			testWriteRUStatisticsTz(t, tz)
+		})
+	}
 }
 
 func testWriteRUStatisticsTz(t *testing.T, tz *time.Location) {
@@ -67,11 +68,11 @@ func testWriteRUStatisticsTz(t *testing.T, tz *time.Location) {
 	infoGroups := make(map[string]*model.ResourceGroupInfo, 2)
 	infoGroups["default"] = &model.ResourceGroupInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("default"),
+		Name: ast.NewCIStr("default"),
 	}
 	infoGroups["test"] = &model.ResourceGroupInfo{
 		ID:   2,
-		Name: pmodel.NewCIStr("test"),
+		Name: ast.NewCIStr("test"),
 	}
 	testInfo := &testInfoschema{
 		groups: infoGroups,
@@ -133,7 +134,7 @@ type testInfoschema struct {
 	groups map[string]*model.ResourceGroupInfo
 }
 
-func (is *testInfoschema) ResourceGroupByName(name pmodel.CIStr) (*model.ResourceGroupInfo, bool) {
+func (is *testInfoschema) ResourceGroupByName(name ast.CIStr) (*model.ResourceGroupInfo, bool) {
 	g, ok := is.groups[name.L]
 	return g, ok
 }

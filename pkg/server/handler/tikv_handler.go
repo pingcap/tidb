@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -176,6 +176,11 @@ func (*TikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, values 
 	return data, nil
 }
 
+// FormValue2DatumRow converts URL query string to a Datum Row.
+func (t *TikvHandlerTool) FormValue2DatumRow(sc *stmtctx.StatementContext, values url.Values, idxCols []*model.ColumnInfo) ([]types.Datum, error) {
+	return t.formValue2DatumRow(sc, values, idxCols)
+}
+
 // GetTableID gets the table ID by the database name and table name.
 func (t *TikvHandlerTool) GetTableID(dbName, tableName string) (int64, error) {
 	tbl, err := t.GetTable(dbName, tableName)
@@ -192,7 +197,7 @@ func (t *TikvHandlerTool) GetTable(dbName, tableName string) (table.PhysicalTabl
 		return nil, errors.Trace(err)
 	}
 	tableName, partitionName := ExtractTableAndPartitionName(tableName)
-	tableVal, err := schema.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+	tableVal, err := schema.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

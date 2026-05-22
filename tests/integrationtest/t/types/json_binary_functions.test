@@ -1,0 +1,14 @@
+drop table if exists t;
+CREATE TABLE `t` (
+    `id` int NOT NULL AUTO_INCREMENT,
+    `value` json DEFAULT NULL,
+    `value_custom` json DEFAULT NULL,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+INSERT INTO `t` (`value`, `value_custom`) VALUES ('{\"emo\\ud83e\\udd21\'ji\": \"some value\", \"escape\\uffff\'seq\'\\uffffue\\uffff\'nce\": \"some value\"}', NULL);
+
+SELECT 1 FROM `t` WHERE JSON_CONTAINS_PATH(`t`.`value`, 'one', '$."emo\\ud83e\\udd21\'ji"');
+
+SELECT 1 FROM `t` WHERE JSON_CONTAINS_PATH(`t`.`value`, 'one', '$."escape\\uffff\'seq\'\\uffffue\\uffff\'nce"');
+
+SELECT 1 FROM `t` WHERE JSON_CONTAINS_PATH(`t`.`value`, 'one', '$."escape\\uffff\'seq\'\\ufffdue\\uffff\'nce"');

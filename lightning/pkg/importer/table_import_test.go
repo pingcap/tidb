@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,32 +33,34 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	restoremock "github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -66,6 +69,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
 )
 
@@ -79,12 +83,12 @@ type tableRestoreSuiteBase struct {
 	tr  *TableImporter
 	cfg *config.Config
 
-	tableInfo  *checkpoints.TidbTableInfo
-	dbInfo     *checkpoints.TidbDBInfo
+	tableInfo  *importdef.TableInfo
+	dbInfo     *importdef.DBInfo
 	tableMeta  *mydump.MDTableMeta
 	tableMeta2 *mydump.MDTableMeta
 
-	store storage.ExternalStorage
+	store storeapi.Storage
 }
 
 func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.TableInfo {
@@ -105,7 +109,7 @@ func mockTiflashTableInfo(t *testing.T, sql string, replica uint64) *model.Table
 }
 
 func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
-	web.EnableCurrentProgress()
+	progress.EnableCurrentProgress()
 
 	core := mockTiflashTableInfo(t, `CREATE TABLE "table" (
 		a INT,
@@ -123,10 +127,10 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 )
 `, tiflashReplica2)
 
-	s.tableInfo = &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-	s.dbInfo = &checkpoints.TidbDBInfo{
+	s.tableInfo = &importdef.TableInfo{Name: "table", DB: "db", Core: core}
+	s.dbInfo = &importdef.DBInfo{
 		Name: "db",
-		Tables: map[string]*checkpoints.TidbTableInfo{
+		Tables: map[string]*importdef.TableInfo{
 			"table":  s.tableInfo,
 			"table2": {Name: "table2", DB: "db", Core: core2},
 		},
@@ -134,7 +138,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 
 	// Write some sample SQL dump
 	fakeDataDir := t.TempDir()
-	store, err := storage.NewLocalStorage(fakeDataDir)
+	store, err := objstore.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
 	s.store = store
 
@@ -232,10 +236,7 @@ func (s *tableRestoreSuite) SetupTest() {
 }
 
 func (s *tableRestoreSuite) TestPopulateChunks() {
-	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
-	}()
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
 
 	cp := &checkpoints.TableCheckpoint{
 		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
@@ -368,7 +369,7 @@ func (w errorLocalWriter) IsSynced() bool {
 	return true
 }
 
-func (w errorLocalWriter) Close(context.Context) (backend.ChunkFlushStatus, error) {
+func (w errorLocalWriter) Close(context.Context) (common.ChunkFlushStatus, error) {
 	return nil, nil
 }
 
@@ -418,8 +419,9 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
-		Return(realEncBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})).
-		AnyTimes()
+		DoAndReturn(func(_ context.Context, _ *encode.EncodingConfig) (encode.Encoder, error) {
+			return realEncBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: tbl})
+		}).AnyTimes()
 	mockEncBuilder.EXPECT().MakeEmptyRows().Return(realEncBuilder.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(mockEngineWriter, nil)
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), indexUUID).
@@ -457,7 +459,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	fakeDataDir := s.T().TempDir()
 
-	store, err := storage.NewLocalStorage(fakeDataDir)
+	store, err := objstore.NewLocalStorage(fakeDataDir)
 	require.NoError(s.T(), err)
 
 	fakeDataFiles := make([]mydump.FileInfo, 0)
@@ -493,10 +495,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		DataFiles:  fakeDataFiles,
 	}
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
-	}()
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
 
 	cp := &checkpoints.TableCheckpoint{
 		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
@@ -529,7 +528,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 						Offset:       0,
 						EndOffset:    14,
 						PrevRowIDMax: 0,
-						RowIDMax:     4, // 37 bytes with 3 columns can store at most 7 rows.
+						RowIDMax:     4,
 					},
 					Timestamp: 1234567897,
 				},
@@ -550,23 +549,23 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{0, 1, 2, -1},
 					Chunk: mydump.Chunk{
 						Offset:       6,
-						EndOffset:    52,
+						EndOffset:    42,
 						PrevRowIDMax: 7,
-						RowIDMax:     20,
+						RowIDMax:     19,
 						Columns:      []string{"a", "b", "c"},
 					},
 
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 52},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 42},
 					FileMeta:          tableMeta.DataFiles[2].FileMeta,
 					ColumnPermutation: []int{0, 1, 2, -1},
 					Chunk: mydump.Chunk{
-						Offset:       52,
+						Offset:       42,
 						EndOffset:    60,
-						PrevRowIDMax: 20,
-						RowIDMax:     22,
+						PrevRowIDMax: 19,
+						RowIDMax:     25,
 						Columns:      []string{"a", "b", "c"},
 					},
 					Timestamp: 1234567897,
@@ -578,8 +577,8 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Chunk: mydump.Chunk{
 						Offset:       6,
 						EndOffset:    48,
-						PrevRowIDMax: 22,
-						RowIDMax:     35,
+						PrevRowIDMax: 25,
+						RowIDMax:     39,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -595,22 +594,22 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{1, 2, 0, -1},
 					Chunk: mydump.Chunk{
 						Offset:       48,
-						EndOffset:    101,
-						PrevRowIDMax: 35,
+						EndOffset:    75,
+						PrevRowIDMax: 39,
 						RowIDMax:     48,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 101},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 75},
 					FileMeta:          tableMeta.DataFiles[3].FileMeta,
 					ColumnPermutation: []int{1, 2, 0, -1},
 					Chunk: mydump.Chunk{
-						Offset:       101,
+						Offset:       75,
 						EndOffset:    102,
 						PrevRowIDMax: 48,
-						RowIDMax:     48,
+						RowIDMax:     57,
 						Columns:      []string{"c", "a", "b"},
 					},
 					Timestamp: 1234567897,
@@ -621,27 +620,22 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					ColumnPermutation: []int{-1, 0, 1, -1},
 					Chunk: mydump.Chunk{
 						Offset:       4,
-						EndOffset:    59,
-						PrevRowIDMax: 48,
-						RowIDMax:     61,
+						EndOffset:    42,
+						PrevRowIDMax: 57,
+						RowIDMax:     69,
 						Columns:      []string{"b", "c"},
 					},
 					Timestamp: 1234567897,
 				},
-			},
-		},
-		2: {
-			Status: checkpoints.CheckpointStatusLoaded,
-			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 59},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 42},
 					FileMeta:          tableMeta.DataFiles[4].FileMeta,
 					ColumnPermutation: []int{-1, 0, 1, -1},
 					Chunk: mydump.Chunk{
-						Offset:       59,
+						Offset:       42,
 						EndOffset:    60,
-						PrevRowIDMax: 61,
-						RowIDMax:     61,
+						PrevRowIDMax: 69,
+						RowIDMax:     75,
 						Columns:      []string{"b", "c"},
 					},
 					Timestamp: 1234567897,
@@ -761,7 +755,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
-		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
+		tableInfo := &importdef.TableInfo{Name: "table", DB: "db", Core: core}
 		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
@@ -774,7 +768,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 
 func MockDoChecksumCtx(db *sql.DB) context.Context {
 	ctx := context.Background()
-	manager := local.NewTiDBChecksumExecutor(db)
+	manager := ingestctrl.NewTiDBChecksumExecutor(db)
 	return context.WithValue(ctx, &checksumManagerKey, manager)
 }
 
@@ -974,7 +968,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		ioWorkers:        ioWorkers,
 	}
 	preInfoGetter.Init()
-	dbInfos := map[string]*checkpoints.TidbDBInfo{
+	dbInfos := map[string]*importdef.DBInfo{
 		s.tableInfo.DB: s.dbInfo,
 	}
 	mockChunkFlushStatus := mock.NewMockChunkFlushStatus(controller)
@@ -1029,7 +1023,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
 		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 
-	web.BroadcastInitProgress(rc.dbMetas)
+	progress.BroadcastInitProgress(rc.dbMetas)
 
 	err = rc.importTables(ctx)
 	require.NoError(s.T(), err)
@@ -1052,11 +1046,11 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/SlowDownCheckpointUpdate")
 	}()
 
-	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
+	progress.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
 		Name:   "test",
 		Tables: []*mydump.MDTableMeta{{DB: "test", Name: "tbl"}},
 	}})
-	web.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
+	progress.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
 
 	saveCpCh := make(chan saveCp)
 
@@ -1176,7 +1170,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 	}
 	_, err = f.Write(buf)
 	require.NoError(s.T(), err)
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
@@ -1205,7 +1199,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			pdHTTPCli:           cli,
 		}
 		var sourceSize int64
-		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		err = rc.store.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 			sourceSize += size
 			return nil
 		})
@@ -1250,6 +1244,10 @@ func (m *mockPDClient) GetLeaderAddr() string {
 	return m.leaderAddr
 }
 
+func (m *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
+}
+
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
 		stores         pdhttp.StoresInfo
@@ -1260,7 +1258,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 
 	makeRegions := func(regionCnt int, storeID int64) []pdhttp.RegionInfo {
 		var regions []pdhttp.RegionInfo
-		for i := 0; i < regionCnt; i++ {
+		for range regionCnt {
 			regions = append(regions, pdhttp.RegionInfo{Peers: []pdhttp.RegionPeer{{StoreID: storeID}}})
 		}
 		return regions
@@ -1272,7 +1270,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: pdhttp.MetaStore{ID: 1}, Status: pdhttp.StoreStatus{RegionCount: 200}},
 			}},
 			emptyRegions: pdhttp.RegionsInfo{
-				Regions: append([]pdhttp.RegionInfo(nil), makeRegions(100, 1)...),
+				Regions: slices.Clone(makeRegions(100, 1)),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
 			expectErrorCnt: 0,
@@ -1284,10 +1282,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 				{Store: pdhttp.MetaStore{ID: 3}, Status: pdhttp.StoreStatus{RegionCount: 2500}},
 			}},
 			emptyRegions: pdhttp.RegionsInfo{
-				Regions: append(append(append([]pdhttp.RegionInfo(nil),
-					makeRegions(600, 1)...),
-					makeRegions(300, 2)...),
-					makeRegions(1200, 3)...),
+				Regions: slices.Concat(makeRegions(600, 1), makeRegions(300, 2), makeRegions(1200, 3)),
 			},
 			expectMsgs: []string{
 				".*TiKV stores \\(3\\) contains more than 1000 empty regions respectively.*",
@@ -1338,7 +1333,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			taskMgr:             mockTaskMetaMgr{},
 			checkTemplate:       template,
 			preInfoGetter:       preInfoGetter,
-			dbInfos:             make(map[string]*checkpoints.TidbDBInfo),
+			dbInfos:             make(map[string]*importdef.DBInfo),
 			precheckItemBuilder: theCheckBuilder,
 			pdHTTPCli:           cli,
 		}
@@ -1417,7 +1412,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	}
 	dir := s.T().TempDir()
 
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1466,7 +1461,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 			Tables: []*mydump.MDTableMeta{s.tableMeta, s.tableMeta2},
 		},
 	}
-	dbInfos := map[string]*checkpoints.TidbDBInfo{
+	dbInfos := map[string]*importdef.DBInfo{
 		"db1": s.dbInfo,
 	}
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
@@ -1517,7 +1512,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 	ctx := context.Background()
 
 	case1File := "db1.table1.csv"
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 	err = mockStore.WriteFile(ctx, case1File, []byte(`"a"`))
 	require.NoError(s.T(), err)
@@ -1536,7 +1531,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// MsgNum == 0 means the check passed.
 		MsgNum    int
 		hasHeader bool
-		dbInfos   map[string]*checkpoints.TidbDBInfo
+		dbInfos   map[string]*importdef.DBInfo
 		tableMeta *mydump.MDTableMeta
 	}{
 		// Case 1:
@@ -1545,13 +1540,13 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// we expect the check failed.
 		{
 			nil,
-			"TiDB schema `db1`.`table1` has 2 columns,and data file has 1 columns, but column colb are missing(.*)",
+			"TiDB schema `db1`.`table1` has 2 columns, and data file has 1 columns, but column colb is missing(.*)",
 			1,
 			false,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table1": {
 							ID:   1,
 							DB:   "db1",
@@ -1560,12 +1555,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colA has the default value
-										Name:          pmodel.NewCIStr("colA"),
+										Name:          ast.NewCIStr("colA"),
 										DefaultIsExpr: true,
 									},
 									{
 										// colB doesn't have the default value
-										Name:      pmodel.NewCIStr("colB"),
+										Name:      ast.NewCIStr("colB"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
@@ -1597,10 +1592,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2` doesn't have column cola,(.*)use tables.ignoreColumns to ignore(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1609,7 +1604,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1648,10 +1643,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1660,7 +1655,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1700,10 +1695,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2` doesn't have the default value for colc(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1712,12 +1707,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 									{
 										// colC doesn't have the default value
-										Name:      pmodel.NewCIStr("colC"),
+										Name:      ast.NewCIStr("colC"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
@@ -1756,10 +1751,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2`'s column colb cannot be ignored(.*)",
 			2,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1768,12 +1763,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB doesn't have the default value
-										Name:      pmodel.NewCIStr("colB"),
+										Name:      ast.NewCIStr("colB"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 									{
 										// colC has the default value
-										Name:          pmodel.NewCIStr("colC"),
+										Name:          ast.NewCIStr("colC"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1810,10 +1805,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table3` doesn't exists(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"": {},
 					},
 				},
@@ -1846,10 +1841,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1858,7 +1853,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1906,10 +1901,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column colA is also assigned in ignore-column(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -1917,10 +1912,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -1965,10 +1960,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column colA is contained in table(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -1976,10 +1971,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2013,10 +2008,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"row count 2 adding with extend column length 1 is larger than columnCount 2 plus ignore column count 0 for(.*)",
 			1,
 			false,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2024,10 +2019,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2061,10 +2056,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column \\[colC\\] don't exist in target table(.*)",
 			1,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2072,10 +2067,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2126,10 +2121,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints.TidbDBInfo{
+			map[string]*importdef.DBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints.TidbTableInfo{
+					Tables: map[string]*importdef.TableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2137,14 +2132,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 									{
-										Name: pmodel.NewCIStr("colC"),
+										Name: ast.NewCIStr("colC"),
 									},
 								},
 							},
@@ -2189,14 +2184,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			Mydumper: config.MydumperRuntime{
 				ReadBlockSize: config.ReadBlockSize,
 				CSV: config.CSVConfig{
-					Separator:         ",",
-					Delimiter:         `"`,
-					Header:            ca.hasHeader,
-					HeaderSchemaMatch: true,
-					NotNull:           false,
-					Null:              []string{`\N`},
-					EscapedBy:         `\`,
-					TrimLastSep:       false,
+					FieldsTerminatedBy: ",",
+					FieldsEnclosedBy:   `"`,
+					Header:             ca.hasHeader,
+					HeaderSchemaMatch:  true,
+					NotNull:            false,
+					FieldNullDefinedBy: []string{`\N`},
+					FieldsEscapedBy:    `\`,
+					TrimLastEmptyField: false,
 				},
 				IgnoreColumns: ca.ignoreColumns,
 			},
@@ -2225,14 +2220,14 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 			DataCharacterSet:       "gb18030",
 			DataInvalidCharReplace: string(utf8.RuneError),
 			CSV: config.CSVConfig{
-				Separator:         "，",
-				Delimiter:         `"`,
-				Header:            true,
-				HeaderSchemaMatch: true,
-				NotNull:           false,
-				Null:              []string{`\N`},
-				EscapedBy:         `\`,
-				TrimLastSep:       false,
+				FieldsTerminatedBy: "，",
+				FieldsEnclosedBy:   `"`,
+				Header:             true,
+				HeaderSchemaMatch:  true,
+				NotNull:            false,
+				FieldNullDefinedBy: []string{`\N`},
+				FieldsEscapedBy:    `\`,
+				TrimLastEmptyField: false,
 			},
 			IgnoreColumns: nil,
 		},
@@ -2240,7 +2235,7 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
 	require.NoError(s.T(), err)
 	dir := s.T().TempDir()
-	mockStore, err := storage.NewLocalStorage(dir)
+	mockStore, err := objstore.NewLocalStorage(dir)
 	require.NoError(s.T(), err)
 	csvContent, err := charsetConvertor.Encode(string([]byte("\"colA\"，\"colB\"\n\"a\"，\"b\"")))
 	require.NoError(s.T(), err)
@@ -2249,10 +2244,10 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
 	require.NoError(s.T(), err)
 
-	dbInfos := map[string]*checkpoints.TidbDBInfo{
+	dbInfos := map[string]*importdef.DBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"gbk_table": {
 					ID:   1,
 					DB:   "db1",
@@ -2260,11 +2255,11 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 					Core: &model.TableInfo{
 						Columns: []*model.ColumnInfo{
 							{
-								Name:      pmodel.NewCIStr("colA"),
+								Name:      ast.NewCIStr("colA"),
 								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 							{
-								Name:      pmodel.NewCIStr("colB"),
+								Name:      ast.NewCIStr("colB"),
 								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 						},
@@ -2397,40 +2392,4 @@ func TestGetDDLStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.JobStateRunning, status.state)
 	require.Equal(t, int64(123)+int64(456), status.rowCount)
-}
-
-func TestGetChunkCompressedSizeForParquet(t *testing.T) {
-	dir := "./testdata/"
-	fileName := "000000_0.parquet"
-	store, err := storage.NewLocalStorage(dir)
-	require.NoError(t, err)
-
-	dataFiles := make([]mydump.FileInfo, 0)
-	dataFiles = append(dataFiles, mydump.FileInfo{
-		TableName: filter.Table{Schema: "db", Name: "table"},
-		FileMeta: mydump.SourceFileMeta{
-			Path:        fileName,
-			Type:        mydump.SourceTypeParquet,
-			Compression: mydump.CompressionNone,
-			SortKey:     "99",
-			FileSize:    192,
-		},
-	})
-
-	chunk := checkpoints.ChunkCheckpoint{
-		Key:      checkpoints.ChunkCheckpointKey{Path: dataFiles[0].FileMeta.Path, Offset: 0},
-		FileMeta: dataFiles[0].FileMeta,
-		Chunk: mydump.Chunk{
-			Offset:       0,
-			EndOffset:    192,
-			PrevRowIDMax: 0,
-			RowIDMax:     100,
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	compressedSize, err := getChunkCompressedSizeForParquet(ctx, &chunk, store)
-	require.NoError(t, err)
-	require.Equal(t, compressedSize, int64(192))
 }

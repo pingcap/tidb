@@ -25,6 +25,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -32,9 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	tidbtls "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,7 +76,7 @@ func TestUserVars(t *testing.T) {
 		tk2 := testkit.NewTestKit(t, store)
 		namesNum := strings.Count(tt, "%s")
 		names := make([]any, 0, namesNum)
-		for i := 0; i < namesNum; i++ {
+		for i := range namesNum {
 			names = append(names, fmt.Sprintf("a%d", i))
 		}
 		var sql string
@@ -93,6 +96,11 @@ func TestUserVars(t *testing.T) {
 }
 
 func TestSystemVars(t *testing.T) {
+	testSystemVars(t, sem.V1)
+	testSystemVars(t, sem.V2)
+}
+
+func testSystemVars(t *testing.T, semVer string) {
 	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
@@ -105,37 +113,37 @@ func TestSystemVars(t *testing.T) {
 		{
 			// normal variable
 			inSessionStates: true,
-			varName:         variable.TiDBMaxTiFlashThreads,
-			expectedValue:   strconv.Itoa(variable.DefTiFlashMaxThreads),
+			varName:         vardef.TiDBMaxTiFlashThreads,
+			expectedValue:   strconv.Itoa(vardef.DefTiFlashMaxThreads),
 		},
 		{
 			// hidden variable
 			inSessionStates: true,
-			varName:         variable.TiDBTxnReadTS,
+			varName:         vardef.TiDBTxnReadTS,
 			expectedValue:   "",
 		},
 		{
 			// none-scoped variable
 			inSessionStates: false,
-			varName:         variable.DataDir,
+			varName:         vardef.DataDir,
 			expectedValue:   "/usr/local/mysql/data/",
 		},
 		{
 			// instance-scoped variable
 			inSessionStates: false,
-			varName:         variable.TiDBGeneralLog,
+			varName:         vardef.TiDBGeneralLog,
 			expectedValue:   "0",
 		},
 		{
 			// global-scoped variable
 			inSessionStates: false,
-			varName:         variable.TiDBAutoAnalyzeStartTime,
-			expectedValue:   variable.DefAutoAnalyzeStartTime,
+			varName:         vardef.TiDBAutoAnalyzeStartTime,
+			expectedValue:   vardef.DefAutoAnalyzeStartTime,
 		},
 		{
 			// sem invisible variable
 			inSessionStates: false,
-			varName:         variable.TiDBConfig,
+			varName:         vardef.TiDBConfig,
 		},
 		{
 			// noop variables
@@ -152,25 +160,25 @@ func TestSystemVars(t *testing.T) {
 		},
 		{
 			inSessionStates: false,
-			varName:         variable.Timestamp,
+			varName:         vardef.Timestamp,
 		},
 		{
 			stmts:           []string{"set timestamp=100"},
 			inSessionStates: true,
-			varName:         variable.Timestamp,
+			varName:         vardef.Timestamp,
 			expectedValue:   "100",
 		},
 		{
 			stmts:           []string{"set rand_seed1=10000000, rand_seed2=1000000"},
 			inSessionStates: true,
-			varName:         variable.RandSeed1,
+			varName:         vardef.RandSeed1,
 			checkStmt:       "select rand()",
 			expectedValue:   "0.028870999839968048",
 		},
 		{
 			stmts:           []string{"set rand_seed1=10000000, rand_seed2=1000000", "select rand()"},
 			inSessionStates: true,
-			varName:         variable.RandSeed1,
+			varName:         vardef.RandSeed1,
 			checkStmt:       "select rand()",
 			expectedValue:   "0.11641535266900002",
 		},
@@ -182,7 +190,7 @@ func TestSystemVars(t *testing.T) {
 				"set @@tidb_enforce_mpp=1",
 			},
 			inSessionStates: true,
-			varName:         variable.TiDBEnforceMPPExecution,
+			varName:         vardef.TiDBEnforceMPPExecution,
 			expectedValue:   "1",
 		},
 		{
@@ -193,15 +201,12 @@ func TestSystemVars(t *testing.T) {
 				"set @@tx_read_only=1",
 			},
 			inSessionStates: true,
-			varName:         variable.TxReadOnly,
+			varName:         vardef.TxReadOnly,
 			expectedValue:   "1",
 		},
 	}
 
-	if !sem.IsEnabled() {
-		sem.Enable()
-		defer sem.Disable()
-	}
+	defer sem.SwitchToSEMForTest(t, semVer)()
 	for _, tt := range tests {
 		tk1 := testkit.NewTestKit(t, store)
 		for _, stmt := range tt.stmts {
@@ -241,6 +246,11 @@ func TestSystemVars(t *testing.T) {
 }
 
 func TestInvisibleVars(t *testing.T) {
+	testInvisibleVars(t, sem.V1)
+	testInvisibleVars(t, sem.V2)
+}
+
+func testInvisibleVars(t *testing.T, semVer string) {
 	tests := []struct {
 		hasPriv       bool
 		stmt          string
@@ -268,21 +278,21 @@ func TestInvisibleVars(t *testing.T) {
 			// The value is changed and the user has the privilege.
 			hasPriv:       true,
 			stmt:          "set tidb_opt_write_row_id=true",
-			varName:       variable.TiDBOptWriteRowID,
+			varName:       vardef.TiDBOptWriteRowID,
 			expectedValue: "1",
 		},
 		{
 			// The value has a global scope.
 			hasPriv:       true,
 			stmt:          "set tidb_row_format_version=1",
-			varName:       variable.TiDBRowFormatVersion,
+			varName:       vardef.TiDBRowFormatVersion,
 			expectedValue: "1",
 		},
 		{
 			// The global value is changed, so the session value is still different with global.
 			hasPriv:       true,
 			stmt:          "set global tidb_row_format_version=1",
-			varName:       variable.TiDBRowFormatVersion,
+			varName:       vardef.TiDBRowFormatVersion,
 			cleanStmt:     "set global tidb_row_format_version=2",
 			expectedValue: "2",
 		},
@@ -297,10 +307,7 @@ func TestInvisibleVars(t *testing.T) {
 
 	sessionstates.SetupSigningCertForTest(t)
 	store := testkit.CreateMockStore(t)
-	if !sem.IsEnabled() {
-		sem.Enable()
-		defer sem.Disable()
-	}
+	defer sem.SwitchToSEMForTest(t, semVer)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER u1, u2")
 	tk.MustExec("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* to u1")
@@ -341,12 +348,33 @@ func TestIssue47665(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
-	originSEM := config.GetGlobalConfig().Security.EnableSEM
-	config.GetGlobalConfig().Security.EnableSEM = true
+	originCfg := *config.GetGlobalConfig()
+	originalDeployMode := deploymode.Get()
+	originRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&originCfg)
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(originalDeployMode))
+		}
+		tidbtls.RequireSecureTransport.Store(originRequireSecureTransport)
+	})
+	semCfg := originCfg
+	semCfg.Security.EnableSEM = true
+	config.StoreGlobalConfig(&semCfg)
 	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
-	config.GetGlobalConfig().Security.EnableSEM = originSEM
+	config.StoreGlobalConfig(&originCfg)
 	tk.MustExec("set @@global.require_secure_transport = on")
 	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
+	if kerneltype.IsNextGen() {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		tk.MustQuery("select @@global.require_secure_transport").Check(testkit.Rows("1"))
+		tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set in starter mode")
+		tk.MustGetErrMsg("set @@global.require_secure_transport = off", "require_secure_transport can not be set in starter mode")
+		require.NoError(t, deploymode.Set(originalDeployMode))
+	}
+	config.StoreGlobalConfig(&originCfg)
+	// StoreGlobalConfig does not restore the TLS atomic; it is restored by t.Cleanup.
+	tk.MustQuery("select @@global.require_secure_transport").Check(testkit.Rows("0"))
 }
 
 func TestSessionCtx(t *testing.T) {
@@ -579,10 +607,10 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
-					`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
-					`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(
+					`TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender`,
+					`└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+					`  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -594,9 +622,9 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_5 10000.00 root  data:TableFullScan_4`,
-					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(
+					`TableReader 10000.00 root  data:TableFullScan`,
+					`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -611,8 +639,8 @@ func TestSessionCtx(t *testing.T) {
 					"  `id` int(11) DEFAULT NULL,\n" +
 					"  KEY `hypo_id` (`id`) /* HYPO INDEX */\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
-					`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(`IndexReader 10000.00 root  index:IndexFullScan`,
+					`└─IndexFullScan 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -627,8 +655,8 @@ func TestSessionCtx(t *testing.T) {
 				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 					"  `id` int(11) DEFAULT NULL\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`TableReader_5 10000.00 root  data:TableFullScan_4`,
-					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(`TableReader 10000.00 root  data:TableFullScan`,
+					`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -1293,9 +1321,7 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("drop table test.t1")
 				return nil
 			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
-			},
+			restoreErr: errno.ErrNoSuchTable,
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
 			},
@@ -1310,9 +1336,7 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("drop database test1")
 				return nil
 			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
-			},
+			restoreErr: errno.ErrNoSuchTable,
 		},
 		{
 			// alter the table
@@ -1321,9 +1345,7 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("alter table test.t1 drop index name")
 				return nil
 			},
-			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
-			},
+			restoreErr: errno.ErrKeyDoesNotExist,
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("alter table test.t1 add index name(name)")
 			},
@@ -1697,7 +1719,7 @@ func getExecuteBytes(stmtID uint32, useCursor bool, newParam bool, params ...par
 	if newParam {
 		buf[pos] = 1
 		pos++
-		for i := 0; i < len(params); i++ {
+		for range params {
 			buf[pos] = mysql.TypeLong
 			pos++
 			buf[pos] = 0

@@ -16,8 +16,6 @@ package set
 
 import (
 	"strings"
-
-	"golang.org/x/exp/maps"
 )
 
 // StringSet is a string set.
@@ -83,7 +81,7 @@ func (s StringSet) Empty() bool {
 
 // Clear clears the set.
 func (s StringSet) Clear() {
-	maps.Clear(s)
+	clear(s)
 }
 
 // IterateWith iterate items in StringSet and pass it to `fn`.

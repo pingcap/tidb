@@ -18,7 +18,7 @@ func keyEq(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := 0; i < len(a); i++ {
+	for i := range a {
 		if a[i] != b[i] {
 			return false
 		}
@@ -39,7 +39,7 @@ func keyCmp(a, b []byte) int {
 		length = len(b)
 		chosen = 1
 	}
-	for i := 0; i < length; i++ {
+	for i := range length {
 		if a[i] < b[i] {
 			return -1
 		} else if a[i] > b[i] {

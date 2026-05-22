@@ -8,6 +8,6 @@ go_library(
     deps = [
         "//pkg/ddl/placement",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
     ],
 )

@@ -94,7 +94,7 @@ func (is *LogicalIndexScan) ExplainInfo() string {
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.PKOrUK = nil
-	for _, path := range is.Source.PossibleAccessPaths {
+	for _, path := range is.Source.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}
@@ -123,23 +123,31 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
+func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ []bool) (*property.StatsInfo, bool, error) {
 	return utilfuncp.DeriveStats4LogicalIndexScan(is, selfSchema)
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiFlash := false
+	if is.Source != nil {
+		hasTiFlash = is.Source.HasTiFlash() && is.SCtx().GetSessionVars().IsMPPAllowed()
+	}
+	is.hasTiFlash = hasTiFlash
 	if len(is.IdxCols) == 0 {
-		return nil
+		return &base.PossiblePropertiesInfo{HasTiFlash: is.hasTiFlash}
 	}
 	result := make([][]*expression.Column, 0, is.EqCondCount+1)
 	for i := 0; i <= is.EqCondCount; i++ {
 		result = append(result, make([]*expression.Column, len(is.IdxCols)-i))
 		copy(result[i], is.IdxCols[i:])
 	}
-	return result
+	return &base.PossiblePropertiesInfo{
+		Orders:     result,
+		HasTiFlash: is.hasTiFlash,
+	}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.

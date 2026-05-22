@@ -34,13 +34,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -347,7 +347,7 @@ func (c *Locker) lockBatch(ctx context.Context, keys [][]byte, primary []byte) (
 func randStr() string {
 	length := rand.Intn(128)
 	res := ""
-	for i := 0; i < length; i++ {
+	for range length {
 		res += strconv.Itoa(rand.Intn(10))
 	}
 	return res

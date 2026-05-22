@@ -73,7 +73,7 @@ func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 		last   = 0
 	)
 	// reference: https://gist.github.com/siddontang/8875771
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		escape = 0
 
 		switch s[i] {
@@ -115,7 +115,7 @@ func escapeBackslashCSV(s []byte, bf *bytes.Buffer, opt *csvOption) {
 		specCmt = opt.separator[0] // if csv's delimiter is "", we should escape the separator to avoid error
 	}
 
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		escape = 0
 
 		switch s[i] {
@@ -230,6 +230,16 @@ func (r *RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bo
 	}
 }
 
+// GetRawBytes implements Stringer.GetRawBytes.
+func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
+	rawBytes := make([]sql.RawBytes, len(r.receivers))
+	for i, receiver := range r.receivers {
+		raw := receiver.GetRawBytes()
+		rawBytes[i] = raw[0]
+	}
+	return rawBytes
+}
+
 // SQLTypeNumber implements RowReceiverStringer which represents numeric type columns in database
 type SQLTypeNumber struct {
 	SQLTypeString
@@ -251,6 +261,11 @@ func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool, opt *csvOpti
 	} else {
 		bf.WriteString(opt.nullValue)
 	}
+}
+
+// GetRawBytes implements Stringer.GetRawBytes.
+func (s *SQLTypeNumber) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }
 
 // SQLTypeString implements RowReceiverStringer which represents string type columns in database
@@ -283,6 +298,11 @@ func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash boo
 	} else {
 		bf.WriteString(opt.nullValue)
 	}
+}
+
+// GetRawBytes implements Stringer.GetRawBytes.
+func (s *SQLTypeString) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }
 
 // SQLTypeBytes implements RowReceiverStringer which represents bytes type columns in database
@@ -320,4 +340,9 @@ func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool
 	} else {
 		bf.WriteString(opt.nullValue)
 	}
+}
+
+// GetRawBytes implements Stringer.GetRawBytes.
+func (s *SQLTypeBytes) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }

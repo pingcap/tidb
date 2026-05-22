@@ -75,7 +75,7 @@ loop:
 			return ctx.Err()
 		case ch <- clientv3.WatchResponse{}:
 		default:
-			unsent = make([]chan clientv3.WatchResponse, len(watchers), 0)
+			unsent = make([]chan clientv3.WatchResponse, len(watchers))
 			copy(unsent, watchers[i:])
 			break loop
 		}

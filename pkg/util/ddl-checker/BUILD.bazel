@@ -12,7 +12,7 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/session",
-        "//pkg/session/types",
+        "//pkg/session/sessionapi",
         "//pkg/store/mockstore",
         "//pkg/util/dbutil",
         "//pkg/util/logutil",

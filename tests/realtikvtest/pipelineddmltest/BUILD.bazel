@@ -9,10 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+    shard_count = 18,
     deps = [
         "//pkg/config",
         "//pkg/kv",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",

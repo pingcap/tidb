@@ -17,19 +17,22 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -39,8 +42,8 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists table_id_resued1")
-	tk.MustExec("drop table if exists table_id_resued2")
+	tk.MustExec("drop table if exists table_id_reused1")
+	tk.MustExec("drop table if exists table_id_reused2")
 	tk.MustExec("drop table if exists table_id_new")
 
 	d := dom.DDL()
@@ -49,24 +52,28 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	infos1 := []*model.TableInfo{}
 	infos1 = append(infos1, &model.TableInfo{
 		ID:   124,
-		Name: pmodel.NewCIStr("table_id_resued1"),
+		Name: ast.NewCIStr("table_id_reused1"),
 	})
 	infos1 = append(infos1, &model.TableInfo{
 		ID:   125,
-		Name: pmodel.NewCIStr("table_id_resued2"),
+		Name: ast.NewCIStr("table_id_reused2"),
 	})
+	querys1 := []string{
+		"create table test.table_id_reused1 (id int)",
+		"create table test.table_id_reused2 (id int)",
+	}
 
 	sctx := tk.Session()
 
 	// keep/reused table id verification
-	sctx.SetValue(sessionctx.QueryString, "skip")
-	err := executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos1, ddl.WithIDAllocated(true))
+	sctx.SetValue(sessionctx.QueryString, "TODO")
+	err := executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos1, querys1, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
-	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
+	require.Equal(t, "create table test.table_id_reused1 (id int);create table test.table_id_reused2 (id int);", sctx.Value(sessionctx.QueryString))
 
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_reused1'").
 		Check(testkit.Rows("124"))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_reused2'").
 		Check(testkit.Rows("125"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
@@ -85,13 +92,14 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	infos2 := []*model.TableInfo{}
 	infos2 = append(infos2, &model.TableInfo{
 		ID:   124,
-		Name: pmodel.NewCIStr("table_id_new"),
+		Name: ast.NewCIStr("table_id_new"),
 	})
+	querys2 := []string{"create table test.table_id_new (id int)"}
 
-	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos2)
+	tk.Session().SetValue(sessionctx.QueryString, "TODO")
+	err = executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos2, querys2)
 	require.NoError(t, err)
-	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
+	require.Equal(t, "create table test.table_id_new (id int);", sctx.Value(sessionctx.QueryString))
 
 	idGen, ok := tk.MustQuery(
 		"select tidb_table_id from information_schema.tables where table_name = 'table_id_new'").
@@ -103,11 +111,11 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 
 	// a empty table info with len(info3) = 0
 	infos3 := []*model.TableInfo{}
+	querys3 := []string{}
 
-	originQueryString := sctx.Value(sessionctx.QueryString)
-	err = executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos3, ddl.WithIDAllocated(true))
+	err = executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos3, querys3, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
-	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
+	require.Equal(t, "", sctx.Value(sessionctx.QueryString))
 }
 
 // batch create table with table id reused
@@ -125,25 +133,29 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
 		ID:   1234,
-		Name: pmodel.NewCIStr("tables_1"),
+		Name: ast.NewCIStr("tables_1"),
 	})
 	infos = append(infos, &model.TableInfo{
 		ID:   1235,
-		Name: pmodel.NewCIStr("tables_2"),
+		Name: ast.NewCIStr("tables_2"),
 	})
 	infos = append(infos, &model.TableInfo{
 		ID:   1236,
-		Name: pmodel.NewCIStr("tables_3"),
+		Name: ast.NewCIStr("tables_3"),
 	})
+	querys := []string{
+		"create table test.tables_1 (id int)",
+		"create table test.tables_2 (id int)",
+		"create table test.tables_3 (id int)"}
 
 	sctx := tk.Session()
 
 	// keep/reused table id verification
-	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	tk.Session().SetValue(sessionctx.QueryString, "TODO")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(1)"))
-	err := executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos, ddl.WithIDAllocated(true))
+	err := executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos, querys, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
-	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
+	require.Equal(t, "create table test.tables_3 (id int);", sctx.Value(sessionctx.QueryString))
 
 	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
 	jobs := tk.MustQuery("admin show ddl jobs").Rows()
@@ -194,21 +206,25 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_1"),
+		Name: ast.NewCIStr("tables_1"),
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_2"),
+		Name: ast.NewCIStr("tables_2"),
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_3"),
+		Name: ast.NewCIStr("tables_3"),
 	})
+	querys := []string{
+		"create table test.tables_1 (id int)",
+		"create table test.tables_2 (id int)",
+		"create table test.tables_3 (id int)"}
 
 	sctx := tk.Session()
 
-	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	tk.Session().SetValue(sessionctx.QueryString, "TODO")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(0)"))
-	err := executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos)
-	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
+	err := executor.SplitBatchCreateTableForTest(sctx, ast.NewCIStr("test"), infos, querys)
+	require.Equal(t, "create table test.tables_1 (id int);", sctx.Value(sessionctx.QueryString))
 	require.True(t, kv.ErrEntryTooLarge.Equal(err))
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge"))
@@ -227,7 +243,7 @@ func TestBRIECreateDatabase(t *testing.T) {
 	originQueryString := sctx.Value(sessionctx.QueryString)
 	schema1 := &model.DBInfo{
 		ID:      1230,
-		Name:    pmodel.NewCIStr("db_1"),
+		Name:    ast.NewCIStr("db_1"),
 		Charset: "utf8mb4",
 		Collate: "utf8mb4_bin",
 		State:   model.StatePublic,
@@ -237,7 +253,7 @@ func TestBRIECreateDatabase(t *testing.T) {
 
 	schema2 := &model.DBInfo{
 		ID:      1240,
-		Name:    pmodel.NewCIStr("db_2"),
+		Name:    ast.NewCIStr("db_2"),
 		Charset: "utf8mb4",
 		Collate: "utf8mb4_bin",
 		State:   model.StatePublic,
@@ -270,14 +286,14 @@ func TestBRIECreateTable(t *testing.T) {
 
 	sctx := tk.Session()
 	originQueryString := sctx.Value(sessionctx.QueryString)
-	dbName := pmodel.NewCIStr("test")
+	dbName := ast.NewCIStr("test")
 	tableInfo := mockTableInfo(t, sctx, "create table test.table_1 (a int primary key, b json, c varchar(20))")
 	tableInfo.ID = 1230
 	err := executor.BRIECreateTable(sctx, dbName, tableInfo, "/* from test */")
 	require.NoError(t, err)
 
 	tableInfo.ID = 1240
-	tableInfo.Name = pmodel.NewCIStr("table_2")
+	tableInfo.Name = ast.NewCIStr("table_2")
 	err = executor.BRIECreateTable(sctx, dbName, tableInfo, "")
 	require.NoError(t, err)
 	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
@@ -310,4 +326,98 @@ func TestBRIECreateTables(t *testing.T) {
 	for i := range tableInfos {
 		tk.MustExec(fmt.Sprintf("desc table_%d", i))
 	}
+}
+
+type fakeDDLExecutor struct {
+	ddl.Executor
+	queryList        map[string][]string
+	successQueryList map[string][]string
+	maxCount         int
+}
+
+func (f *fakeDDLExecutor) BatchCreateTableWithInfo(
+	sctx sessionctx.Context,
+	schema ast.CIStr,
+	info []*model.TableInfo,
+	cs ...ddl.CreateTableOption,
+) error {
+	f.queryList[schema.O] = append(f.queryList[schema.O], sctx.Value(sessionctx.QueryString).(string))
+	if len(info) > f.maxCount {
+		switch rand.Int() % 2 {
+		case 0:
+			return kv.ErrTxnTooLarge
+		case 1:
+			return kv.ErrEntryTooLarge
+		}
+	}
+	f.successQueryList[info[0].Name.O] = append(f.successQueryList[info[0].Name.O], sctx.Value(sessionctx.QueryString).(string))
+	return nil
+}
+
+type fakeSessionContext struct {
+	sessionapi.Session
+	ddlexecutor *fakeDDLExecutor
+	values      map[string]any
+	vars        *variable.SessionVars
+}
+
+func newFakeSessionContext(ddlexecutor *fakeDDLExecutor) *fakeSessionContext {
+	return &fakeSessionContext{
+		ddlexecutor: ddlexecutor,
+		values:      make(map[string]any),
+		vars:        &variable.SessionVars{},
+	}
+}
+
+func (f *fakeSessionContext) GetDomain() any {
+	dom := &domain.Domain{}
+	dom.SetDDL(nil, f.ddlexecutor)
+	return dom
+}
+
+func (f *fakeSessionContext) Value(key fmt.Stringer) any {
+	return f.values[key.String()]
+}
+
+func (f *fakeSessionContext) SetValue(key fmt.Stringer, value any) {
+	f.values[key.String()] = value
+}
+
+func (f *fakeSessionContext) GetSessionVars() *variable.SessionVars {
+	return f.vars
+}
+
+func TestSplitTablesQueryMatch(t *testing.T) {
+	ddlexecutor := &fakeDDLExecutor{
+		maxCount:         1,
+		queryList:        make(map[string][]string),
+		successQueryList: make(map[string][]string),
+	}
+	sctx := newFakeSessionContext(ddlexecutor)
+	tables := map[string][]*model.TableInfo{
+		"test": {
+			{Name: ast.NewCIStr("t1")},
+			{Name: ast.NewCIStr("t2")},
+		},
+		"test2": {
+			{Name: ast.NewCIStr("t3")},
+		},
+	}
+
+	err := executor.BRIECreateTables(sctx, tables, "/*from(br)*/")
+	require.NoError(t, err)
+	require.Len(t, ddlexecutor.queryList, 2)
+	require.Len(t, ddlexecutor.queryList["test"], 3)
+	require.Len(t, ddlexecutor.queryList["test2"], 1)
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][0])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t1` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][1])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t2` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test"][2])
+	require.Equal(t, "/*from(br)*/CREATE TABLE `t3` (\n\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", ddlexecutor.queryList["test2"][0])
+	require.Len(t, ddlexecutor.successQueryList, 3)
+	require.Len(t, ddlexecutor.successQueryList["t1"], 1)
+	require.Len(t, ddlexecutor.successQueryList["t2"], 1)
+	require.Len(t, ddlexecutor.successQueryList["t3"], 1)
+	require.Equal(t, ddlexecutor.queryList["test"][1], ddlexecutor.successQueryList["t1"][0])
+	require.Equal(t, ddlexecutor.queryList["test"][2], ddlexecutor.successQueryList["t2"][0])
+	require.Equal(t, ddlexecutor.queryList["test2"][0], ddlexecutor.successQueryList["t3"][0])
 }

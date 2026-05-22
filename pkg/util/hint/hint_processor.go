@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -117,6 +116,47 @@ func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler hintWarnHandler) [
 		return result
 	default:
 		return nil
+	}
+}
+
+func containTableHint(hints []*ast.TableOptimizerHint, hintName string) bool {
+	for _, hint := range hints {
+		if hint.HintName.L == hintName {
+			return true
+		}
+	}
+	return false
+}
+
+// ContainTableHintInStmtNode checks whether the statement contains the target table hint.
+func ContainTableHintInStmtNode(node ast.Node, hintName string) bool {
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		return containTableHint(x.TableHints, hintName)
+	case *ast.UpdateStmt:
+		return containTableHint(x.TableHints, hintName)
+	case *ast.DeleteStmt:
+		return containTableHint(x.TableHints, hintName)
+	case *ast.InsertStmt:
+		if containTableHint(x.TableHints, hintName) {
+			return true
+		}
+		if x.Select == nil {
+			return false
+		}
+		return ContainTableHintInStmtNode(x.Select, hintName)
+	case *ast.SetOprStmt:
+		if x.SelectList == nil {
+			return false
+		}
+		for _, s := range x.SelectList.Selects {
+			if ContainTableHintInStmtNode(s, hintName) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
 	}
 }
 
@@ -318,7 +358,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			}
 			for i, tbl := range tblHint.Tables {
 				if tbl.DBName.String() == "" {
-					tblHint.Tables[i].DBName = model.NewCIStr(db)
+					tblHint.Tables[i].DBName = ast.NewCIStr(db)
 				}
 			}
 			newHints = append(newHints, tblHint)
@@ -387,7 +427,7 @@ func CheckBindingFromHistoryComplete(node ast.Node, hintStr string) (complete bo
 
 	checker := bindableChecker{
 		complete: true,
-		tables:   make(map[model.CIStr]struct{}, 2),
+		tables:   make(map[ast.CIStr]struct{}, 2),
 	}
 	node.Accept(&checker)
 	return checker.complete, checker.reason
@@ -397,7 +437,7 @@ func CheckBindingFromHistoryComplete(node ast.Node, hintStr string) (complete bo
 type bindableChecker struct {
 	complete bool
 	reason   string
-	tables   map[model.CIStr]struct{}
+	tables   map[ast.CIStr]struct{}
 }
 
 // Enter implements Visitor interface.

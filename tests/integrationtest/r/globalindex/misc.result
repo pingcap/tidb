@@ -58,16 +58,16 @@ PARTITION p0 VALUES LESS THAN (10),
 PARTITION p1 VALUES LESS THAN (MAXVALUE)
 );
 insert into test_t1 values (1,1,1);
-explain format='brief' select * from test_t1 where a = 1;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:test_t1, index:p_a(a)	
+explain format='plan_tree' select * from test_t1 where a = 1;
+id	task	access object	operator info
+Point_Get	root	table:test_t1, index:p_a(a)	
 select * from test_t1 where a = 1;
 a	b	c
 1	1	1
 analyze table test_t1;
-explain format='brief' select * from test_t1 where a = 1;
-id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:test_t1, index:p_a(a)	
+explain format='plan_tree' select * from test_t1 where a = 1;
+id	task	access object	operator info
+Point_Get	root	table:test_t1, index:p_a(a)	
 select * from test_t1 where a = 1;
 a	b	c
 1	1	1
@@ -118,11 +118,11 @@ select a from t partition (p1) order by a;
 a
 bbb
 bbc
-explain format = 'brief' select a from t partition (p1) order by a;
-id	estRows	task	access object	operator info
-IndexReader	3.00	root	partition:p1	index:Selection
-└─Selection	3.00	cop[tikv]	NULL	in(_tidb_tid, tid1)
-  └─IndexFullScan	3.00	cop[tikv]	table:t, index:a(a)	keep order:true
+explain format = 'plan_tree' select a from t partition (p1) order by a;
+id	task	access object	operator info
+IndexReader	root	partition:p1	index:Selection
+└─Selection	cop[tikv]	NULL	in(_tidb_tid, tid1)
+  └─IndexFullScan	cop[tikv]	table:t, index:a(a)	keep order:true
 drop table if exists t;
 create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED, unique index (a) global) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
 insert into t (a) values  ('aaa'),('abc'),('acd');
@@ -170,11 +170,11 @@ select a from t partition (p1) order by a;
 a
 bbb
 bbc
-explain format = 'brief' select a from t partition (p1) order by a;
-id	estRows	task	access object	operator info
-IndexReader	3.00	root	partition:p1	index:Selection
-└─Selection	3.00	cop[tikv]	NULL	in(_tidb_tid, tid1)
-  └─IndexFullScan	3.00	cop[tikv]	table:t, index:a(a)	keep order:true
+explain format = 'plan_tree' select a from t partition (p1) order by a;
+id	task	access object	operator info
+IndexReader	root	partition:p1	index:Selection
+└─Selection	cop[tikv]	NULL	in(_tidb_tid, tid1)
+  └─IndexFullScan	cop[tikv]	table:t, index:a(a)	keep order:true
 drop table if exists t;
 create table t (a int, b int, unique key idx_b (b)) partition by hash (a) partitions 3;
 Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption

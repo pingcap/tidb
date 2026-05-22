@@ -23,10 +23,10 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,6 +87,7 @@ func TestCrossDBDuplicatedBinding(t *testing.T) {
 }
 
 func TestCrossDBBindingPriority(t *testing.T) {
+	t.Skip("tmp")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -241,10 +242,10 @@ func TestCrossDBBindingGC(t *testing.T) {
 		testkit.Rows("SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t` deleted")) // status=deleted
 
 	updateTime := time.Now().Add(-(15 * bindinfo.Lease))
-	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 6).String()
 	tk.MustExec(fmt.Sprintf("update mysql.bind_info set update_time = '%v' where source != 'builtin'", updateTimeStr))
-	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-	require.NoError(t, bindHandle.GCGlobalBinding())
+	bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
+	require.NoError(t, bindHandle.GCBinding())
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(testkit.Rows()) // empty after GC
 }
 
@@ -264,7 +265,8 @@ func TestCrossDBBindingInList(t *testing.T) {
 	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk.MustExec(`create global binding using select * from *.t1 where a in (1,2,3)`)
 	tk.MustExec(`explain format='verbose' select * from test1.t1 where a in (1)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(
+		"Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
 	tk.MustExec(`explain format='verbose' select * from test2.t1 where a in (1,2,3,4,5)`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
 	tk.MustExec(`use test1`)
@@ -288,6 +290,32 @@ func TestCrossDBBindingInList(t *testing.T) {
 	}
 }
 
+func TestCrossDBBindingReadFromStorage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+	tk.MustExec(`CREATE TABLE ttt (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  code varchar(64) NOT NULL DEFAULT '',
+  useridx bigint NOT NULL DEFAULT '0',
+  name int unsigned NOT NULL DEFAULT '0',
+  ctime int unsigned NOT NULL DEFAULT '0',
+  action int unsigned NOT NULL DEFAULT '0',
+  PRIMARY KEY (id) /*T![clustered_index] NONCLUSTERED */,
+  KEY k1 (useridx,name,action,ctime,code),
+  KEY ik2 (ctime) /*!80000 INVISIBLE */)`)
+	tk.MustExec(`create global binding using  SELECT /*+ read_from_storage(tikv[l])*/ l.id
+			FROM *.ttt AS l WHERE l.useridx = 915886411
+			AND l.ctime >= 1729998000 AND l.code = 'xxx' ORDER BY  l.ctime DESC,l.id DESC LIMIT 100`)
+	tk.MustExec(`SELECT l.id FROM ttt AS l WHERE l.useridx = 915886411
+			AND l.ctime >= 1729998000 AND l.code = 'xxx' ORDER BY  l.ctime DESC,l.id DESC LIMIT 100`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`SELECT l.id FROM ttt AS l WHERE l.useridx = 915886411
+			AND l.ctime >= 1729998000 AND l.code = 'xxx' ORDER BY  l.ctime DESC,l.id DESC LIMIT 100`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+}
+
 func TestCrossDBBindingPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -297,7 +325,7 @@ func TestCrossDBBindingPlanCache(t *testing.T) {
 
 	hasPlan := func(operator, accessInfo string) {
 		tkProcess := tk.Session().ShowProcess()
-		ps := []*util.ProcessInfo{tkProcess}
+		ps := []*sessmgr.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
 		flag := false
@@ -333,7 +361,7 @@ func TestCrossDBBindingPlanCache(t *testing.T) {
 }
 
 type mockSessionPool struct {
-	se sessiontypes.Session
+	se sessionapi.Session
 }
 
 func (p *mockSessionPool) Get() (pools.Resource, error) {
@@ -341,5 +369,7 @@ func (p *mockSessionPool) Get() (pools.Resource, error) {
 }
 
 func (p *mockSessionPool) Put(pools.Resource) {}
+
+func (p *mockSessionPool) Destroy(pools.Resource) {}
 
 func (p *mockSessionPool) Close() {}

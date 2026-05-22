@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -56,7 +57,7 @@ type aggTest struct {
 
 func (p *aggTest) genSrcChk() *chunk.Chunk {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
-	for i := 0; i < p.numRows; i++ {
+	for i := range p.numRows {
 		dt := p.dataGen(i)
 		srcChk.AppendDatum(0, &dt)
 	}
@@ -66,7 +67,7 @@ func (p *aggTest) genSrcChk() *chunk.Chunk {
 
 // messUpChunk messes up the chunk for testing memory reference.
 func (p *aggTest) messUpChunk(c *chunk.Chunk) {
-	for i := 0; i < p.numRows; i++ {
+	for i := range p.numRows {
 		raw := c.Column(0).GetRaw(i)
 		for i := range raw {
 			raw[i] = 255
@@ -86,8 +87,8 @@ type multiArgsAggTest struct {
 
 func (p *multiArgsAggTest) genSrcChk() *chunk.Chunk {
 	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		for j := 0; j < len(p.dataGens); j++ {
+	for i := range p.numRows {
+		for j := range p.dataGens {
 			fdt := p.dataGens[j](i)
 			srcChk.AppendDatum(j, &fdt)
 		}
@@ -98,8 +99,8 @@ func (p *multiArgsAggTest) genSrcChk() *chunk.Chunk {
 
 // messUpChunk messes up the chunk for testing memory reference.
 func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
-	for i := 0; i < p.numRows; i++ {
-		for j := 0; j < len(p.dataGens); j++ {
+	for i := range p.numRows {
+		for j := range p.dataGens {
 			raw := c.Column(j).GetRaw(i)
 			for i := range raw {
 				raw[i] = 255
@@ -112,7 +113,7 @@ type updateMemDeltaGens func(*chunk.Chunk, *types.FieldType) (memDeltas []int64,
 
 func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for range srcChk.NumRows() {
 		memDeltas = append(memDeltas, int64(0))
 	}
 	return memDeltas, nil
@@ -123,7 +124,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 
 	buf := make([]byte, 8)
 	p := aggfuncs.NewPartialResult4ApproxCountDistinct()
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, int64(0))
@@ -153,7 +154,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	memDeltas = make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for i := range srcChk.NumRows() {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, int64(0))
@@ -207,7 +208,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 
 func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
+	for range srcChk.NumRows() {
 		memDelta := aggfuncs.DefRowSize
 		memDeltas = append(memDeltas, memDelta)
 	}
@@ -378,7 +379,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx *mock.Context, p multiArg
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	args := make([]expression.Expression, len(p.dataTypes))
-	for k := 0; k < len(p.dataTypes); k++ {
+	for k := range p.dataTypes {
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 
@@ -450,7 +451,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx *mock.Context, p multiArg
 // for multiple args in aggfuncs such as json_objectagg(c1, c2)
 func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, results ...any) multiArgsAggTest {
 	fts := make([]*types.FieldType, len(tps))
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		fts[i] = types.NewFieldType(tps[i])
 	}
 	return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldType(rt), numRows, results...)
@@ -458,7 +459,7 @@ func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, 
 
 func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldType, rt *types.FieldType, numRows int, results ...any) multiArgsAggTest {
 	dataGens := make([]func(i int) types.Datum, len(fts))
-	for i := 0; i < len(fts); i++ {
+	for i := range fts {
 		dataGens[i] = getDataGenFunc(fts[i])
 	}
 	mt := multiArgsAggTest{
@@ -670,7 +671,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx *mock.Context, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
 
 	args := make([]expression.Expression, len(p.dataTypes))
-	for k := 0; k < len(p.dataTypes); k++ {
+	for k := range p.dataTypes {
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
@@ -761,7 +762,7 @@ func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
 	ctx := mock.NewContext()
 
 	args := make([]expression.Expression, len(p.multiArgsAggTest.dataTypes))
-	for k := 0; k < len(p.multiArgsAggTest.dataTypes); k++ {
+	for k := range p.multiArgsAggTest.dataTypes {
 		args[k] = &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k}
 	}
 	if p.multiArgsAggTest.funcName == ast.AggFuncGroupConcat {
@@ -792,7 +793,7 @@ func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
 
 func benchmarkAggFunc(b *testing.B, ctx *mock.Context, p aggTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
-	for i := 0; i < p.numRows; i++ {
+	for i := range p.numRows {
 		dt := p.dataGen(i)
 		srcChk.AppendDatum(0, &dt)
 	}
@@ -840,8 +841,8 @@ func benchmarkAggFunc(b *testing.B, ctx *mock.Context, p aggTest) {
 
 func benchmarkMultiArgsAggFunc(b *testing.B, ctx *mock.Context, p multiArgsAggTest) {
 	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
-	for i := 0; i < p.numRows; i++ {
-		for j := 0; j < len(p.dataGens); j++ {
+	for i := range p.numRows {
+		for j := range p.dataGens {
 			fdt := p.dataGens[j](i)
 			srcChk.AppendDatum(j, &fdt)
 		}
@@ -849,7 +850,7 @@ func benchmarkMultiArgsAggFunc(b *testing.B, ctx *mock.Context, p multiArgsAggTe
 	srcChk.AppendDatum(0, &types.Datum{})
 
 	args := make([]expression.Expression, len(p.dataTypes))
-	for k := 0; k < len(p.dataTypes); k++ {
+	for k := range p.dataTypes {
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
@@ -905,4 +906,25 @@ func baseBenchmarkAggFunc(b *testing.B, ctx aggfuncs.AggFuncUpdateContext, final
 		output.Reset()
 		b.StartTimer()
 	}
+}
+
+func TestAggApproxCountDistinctPushDown(t *testing.T) {
+	ctx := mock.NewContext()
+
+	args := make([]expression.Expression, 0)
+	args = append(args, &expression.Column{
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+		ID:      1,
+		Index:   int(1),
+	})
+
+	aggDesc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncApproxCountDistinct, args, false)
+
+	require.NoError(t, err)
+
+	// can only pushdown to TiFlash
+	require.True(t, aggregation.CheckAggPushDown(ctx, aggDesc, kv.TiFlash))
+	require.False(t, aggregation.CheckAggPushDown(ctx, aggDesc, kv.TiKV))
+	require.False(t, aggregation.CheckAggPushDown(ctx, aggDesc, kv.TiDB))
+	require.False(t, aggregation.CheckAggPushDown(ctx, aggDesc, kv.UnSpecified))
 }

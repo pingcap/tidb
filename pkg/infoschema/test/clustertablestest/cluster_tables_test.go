@@ -15,7 +15,6 @@
 package clustertablestest
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -33,7 +32,9 @@ import (
 	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -41,22 +42,20 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client/http"
@@ -169,10 +168,10 @@ func TestTestDataLockWaits(t *testing.T) {
 	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
 	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
-		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
+		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
+		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
 		// Invalid digests
-		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
+		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).EncodeTagWithKey([]byte(""))},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
 	tk := s.newTestKitWithRoot(t)
@@ -227,7 +226,7 @@ func TestSelectClusterTable(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", &testkit.MockSessionManager{
-		PS: []*util.ProcessInfo{
+		PS: []*sessmgr.ProcessInfo{
 			{
 				ID:           1,
 				User:         "root",
@@ -293,6 +292,55 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
 }
 
+func TestClusterSlowQuerySessionConnectAttrs(t *testing.T) {
+	// setup suite
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	f, err := os.CreateTemp("", "tidb-cluster-slow-*.log")
+	require.NoError(t, err)
+	_, err = f.WriteString(`# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+select * from t;
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	defer func() { require.NoError(t, os.Remove(f.Name())) }()
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = f.Name()
+	})
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("use information_schema")
+	tk.MustExec("set time_zone = '+08:00';")
+
+	rows := tk.MustQuery("select Session_connect_attrs from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").Rows()
+	require.Len(t, rows, 1)
+	attrsStr := rows[0][0].(string)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, attrsStr)
+
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$._client_name') from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"Go-MySQL-Driver"`))
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$.app_name') from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"test_app"`))
+}
+
 func TestSelectClusterTablePrivilege(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
@@ -327,7 +375,7 @@ select * from t3;
 	tk.MustQuery("select count(*) from `SLOW_QUERY`").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(
-		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0    <nil> 0 0", "")))
+		":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 <nil> <nil> <nil> 0    <nil> 0 0", "")))
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	user1 := testkit.NewTestKit(t, s.store)
@@ -419,18 +467,18 @@ func TestStmtSummaryIssue35340(t *testing.T) {
 	tk := s.newTestKitWithRoot(t)
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
 	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		user := "user" + strconv.Itoa(i)
 		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
 	}
 	tk.MustExec("flush privileges")
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tk := s.newTestKitWithRoot(t)
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				user := "user" + strconv.Itoa(j)
 				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 					Username: user,
@@ -730,7 +778,7 @@ select * from t1;
 	for _, quota := range memQuotas {
 		checkFn(quota)
 	}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		quota := rand.Int()%8192 + 1
 		checkFn(quota)
 	}
@@ -743,13 +791,13 @@ select * from t1;
 	tk.MustQuery("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 }
 
-func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm util.SessionManager) (*grpc.Server, string) {
+func (s *clusterTablesSuite) setUpRPCService(t *testing.T, addr string, sm sessmgr.Manager) (*grpc.Server, string) {
 	lis, err := net.Listen("tcp", addr)
 	require.NoError(t, err)
 	// Fix issue 9836
 	if sm == nil {
-		sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 1)}
-		sm.(*testkit.MockSessionManager).PS[0] = &util.ProcessInfo{
+		sm = &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 1)}
+		sm.(*testkit.MockSessionManager).PS[0] = &sessmgr.ProcessInfo{
 			ID:      1,
 			User:    "root",
 			Host:    "127.0.0.1",
@@ -870,7 +918,9 @@ func TestMDLView(t *testing.T) {
 			tkDDL := s.newTestKitWithRoot(t)
 			tk3 := s.newTestKitWithRoot(t)
 			tk.MustExec("use test")
-			tk.MustExec("set global tidb_enable_metadata_lock=1")
+			if kerneltype.IsClassic() {
+				tk.MustExec("set global tidb_enable_metadata_lock=1")
+			}
 			for _, cr := range c.createTable {
 				if strings.Contains(c.name, "err") {
 					_, _ = tk.Exec(cr)
@@ -1029,7 +1079,7 @@ func TestQuickBinding(t *testing.T) {
 		{`select /*+ use_index_merge(t2, k_a, k_bc) */ * from t2 where a<? or b<1 and c<1`, "use_index_merge(@`sel_1` `t2` `k_a`, `k_bc`)", nil},
 
 		{`select /*+ leading(t3,t4,t2,t1) */ * from t1 join t2 join t3 join t4 where t1.a = t2.a and t2.b = t3.b and t3.a = t4.a and t2.c = ?`,
-			"inl_hash_join(`test`.`t1`), leading(`test`.`t3`, `test`.`t4`, `test`.`t2`, `test`.`t1`), hash_join_build(`test`.`t2`), hash_join_build(`test`.`t3`), use_index(@`sel_1` `test`.`t3` ), use_index(@`sel_1` `test`.`t4` ), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`), use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`)",
+			"inl_hash_join(`test`.`t1`), leading(`test`.`t3`, `test`.`t4`, `test`.`t2`, `test`.`t1`), hash_join_build(`test`.`t3`), use_index(@`sel_1` `test`.`t3` `k_bc`), no_order_index(@`sel_1` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` ), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`), use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`)",
 			nil,
 		},
 
@@ -1044,27 +1094,27 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select /*+ leading(t2,t1) */ * from t1 join t2 where t1.a = t2.a and t2.b in (select a from t3 where t3.b = 1) and t1.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t2`, `test`.`t1`, `test`.`t3`@`sel_2`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), agg_to_cop(@`sel_2`)",
 			nil,
 		},
 
 		{`update /*+ leading(t2,t1,t4@sel_2) */ t1 join t2 set t1.a = 1 where t1.a = t2.a and t2.b in (select a from t3 where t3.b = 1) and t1.b in (select b from t4 where t4.b = 1) and t1.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`), inl_hash_join(`test`.`t2`), use_index(@`upd_1` `test`.`t2` `k_a`), no_order_index(@`upd_1` `test`.`t2` `k_a`), use_index(@`upd_1` `test`.`t1` `k_bc`), order_index(@`upd_1` `test`.`t1` `k_bc`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t4` `k_bc`), order_index(@`sel_2` `test`.`t4` `k_bc`), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t3` `k_bc`), no_order_index(@`sel_1` `test`.`t3` `k_bc`), agg_to_cop(@`sel_1`)",
+			"leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`), hash_join_build(`test`.`t2`), use_index(@`upd_1` `test`.`t2` `k_bc`), no_order_index(@`upd_1` `test`.`t2` `k_bc`), use_index(@`upd_1` `test`.`t1` `k_bc`), no_order_index(@`upd_1` `test`.`t1` `k_bc`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t4` `k_bc`), order_index(@`sel_2` `test`.`t4` `k_bc`), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t3` `k_bc`), no_order_index(@`sel_1` `test`.`t3` `k_bc`), agg_to_cop(@`sel_1`)",
 			nil,
 		},
 
 		{`select (select sum(b) from t3 where t2.b=t3.a) from t1 join t2 where t1.a = t2.a and t1.c = ?`,
-			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), no_order_index(@`sel_2` `test`.`t3` `k_a`), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t1`, `test`.`t2`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_a`), order_index(@`sel_2` `test`.`t3` `k_a`)",
 			nil,
 		},
 
 		{`select /*+ leading(t2,t1) */ * from t1 join t2 join (select * from t3) n join t4 where t1.a = t2.a and t2.b = n.b and n.a = t4.a and n.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`n`, `test`.`t4`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` `k_a`), no_order_index(@`sel_1` `test`.`t4` `k_a`)",
+			"leading(`test`.`t2`, `test`.`t1`, `test`.`n`, `test`.`t4`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` `k_a`), no_order_index(@`sel_1` `test`.`t4` `k_a`)",
 			nil,
 		},
 
-		{`update /*+ hash_join(t1),leading(t1,t2@sel_2) */ t1 set b = 1 where c in (select a from t2 where c = 1) and c in (select a from t2 where c = ?)`,
-			"leading(`test`.`t1`, `test`.`t2`@`sel_2`, `test`.`t2`@`sel_1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` ), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t2` ), agg_to_cop(@`sel_1`)",
+		{`update /*+ leading(t2@sel_1,t1,t2@sel_2) */ t1 set b = 1 where c in (select a from t2 where c = 1) and c in (select a from t2 where c = ?)`,
+			"leading(`test`.`t2`@`sel_1`, `test`.`t1`, `test`.`t2`@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t2` ), agg_to_cop(@`sel_1`), use_index(@`upd_1` `test`.`t1` ), no_order_index(@`upd_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` ), agg_to_cop(@`sel_2`)",
 			nil,
 		},
 	}
@@ -1103,7 +1153,7 @@ func TestQuickBinding(t *testing.T) {
 		prepStmt = fmt.Sprintf("prepare st from '%v'", sql)
 		nParam := strings.Count(sql, "?")
 		var x, y []string
-		for i := 0; i < nParam; i++ {
+		for i := range nParam {
 			x = append(x, fmt.Sprintf("@a%d=%v", i, randValue()))
 			y = append(y, fmt.Sprintf("@a%d", i))
 		}
@@ -1124,7 +1174,7 @@ func TestQuickBinding(t *testing.T) {
 
 		// normal test
 		sqlWithoutHint := removeHint(tc.template)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			testSQL := fillValues(sqlWithoutHint)
 			tk.MustExec(testSQL)
@@ -1134,7 +1184,7 @@ func TestQuickBinding(t *testing.T) {
 		}
 
 		// test with prepared / execute protocol
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			prepStmt, setStmt, execStmt := genPrepSQL(tc.template)
 			tk.MustExec(prepStmt)
@@ -1165,7 +1215,7 @@ func TestQuickBinding(t *testing.T) {
 
 			// normal test
 			sqlWithoutHint := removeHint(temp)
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				stmtsummary.StmtSummaryByDigestMap.Clear()
 				testSQL := fillValues(sqlWithoutHint)
 				tk.MustExec(testSQL)
@@ -1531,7 +1581,11 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	sql = "select * from t where t.a = 1"
 	tk.MustExec(sql)
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-
+	bindinfo.MaxWriteInterval = 1 * time.Microsecond
+	time.Sleep(1 * time.Second)
+	require.NoError(t, s.dom.BindingHandle().UpdateBindingUsageInfoToStorage())
+	tk.MustQuery(fmt.Sprintf(`select last_used_date from mysql.bind_info where original_sql != '%s' and last_used_date is null`,
+		bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows())
 	sqlDigest := tk.MustQuery("show global bindings").Rows()
 	tk.MustExec(fmt.Sprintf("set binding disabled for sql digest '%s'", sqlDigest[0][9]))
 	tk.MustExec(sql)
@@ -1770,7 +1824,7 @@ func testIndexUsageTable(t *testing.T, clusterTable bool) {
 	tk.MustExec("create table t1(id1 int unique, id2 int unique)")
 	tk.MustExec("create table t2(id1 int unique, id2 int unique)")
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		for j := 1; j <= 2; j++ {
 			tk.MustExec(fmt.Sprintf("insert into t%d values (?, ?)", j), i, i)
 		}
@@ -1866,7 +1920,7 @@ func TestUnusedIndexView(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id1 int unique, id2 int unique)")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -1901,24 +1955,13 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
-	bigID := tbl.Meta().ID * 10
 	bigTableName := ""
-	// set a hard limitation on 10000 to avoid using too much resource
-	for i := 0; i < 10000; i++ {
+	// set a hard limitation on 500 to avoid using too much resource
+	for i := range 500 {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
-
-		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(bigTableName))
-		require.NoError(t, err)
-
-		require.LessOrEqual(t, tbl.Meta().ID, bigID)
-		if tbl.Meta().ID == bigID {
-			break
-		}
 	}
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec(fmt.Sprintf("insert into %s values (1)", bigTableName))

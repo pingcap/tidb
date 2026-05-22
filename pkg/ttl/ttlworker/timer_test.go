@@ -24,7 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -145,9 +145,9 @@ func triggerTestTimer(t *testing.T, store *timerapi.TimerStore, timerID string) 
 }
 
 func clearTTLWindowAndEnable() {
-	variable.EnableTTLJob.Store(true)
-	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 0, 0, 0, 0, time.UTC))
-	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 23, 59, 0, 0, time.UTC))
+	vardef.EnableTTLJob.Store(true)
+	vardef.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 0, 0, 0, 0, time.UTC))
+	vardef.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 23, 59, 0, 0, time.UTC))
 }
 
 func makeTTLSummary(t *testing.T, requestID string) (*ttlTimerSummary, []byte) {
@@ -200,7 +200,7 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	adapter.AssertExpectations(t)
 
 	// global ttl job disabled
-	variable.EnableTTLJob.Store(false)
+	vardef.EnableTTLJob.Store(false)
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
@@ -210,7 +210,7 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	now := time.Date(2023, 1, 1, 15, 10, 0, 0, time.UTC)
 	adapter.On("Now").Return(now, nil).Once()
 	clearTTLWindowAndEnable()
-	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
+	vardef.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
@@ -218,7 +218,7 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	clearTTLWindowAndEnable()
 	adapter.On("Now").Return(now, nil).Once()
-	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
+	vardef.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
@@ -228,8 +228,8 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 	clearTTLWindowAndEnable()
 	adapter.On("Now").Return(now, nil).Once()
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
-	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
-	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
+	vardef.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
+	vardef.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{}, r)

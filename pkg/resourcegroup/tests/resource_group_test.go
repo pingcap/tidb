@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,8 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -62,14 +64,23 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
 	// test default resource group.
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM YES <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM UNLIMITED <nil> <nil>"))
 	tk.MustExec("alter resource group `default` PRIORITY=LOW")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED LOW YES <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED LOW UNLIMITED <nil> <nil>"))
 	tk.MustExec("alter resource group `default` ru_per_sec=1000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW YES <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW UNLIMITED <nil> <nil>"))
+	tk.MustExec("alter resource group `default` BURSTABLE")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> <nil>"))
+	tk.MustExec("alter resource group `default` BURSTABLE=OFF")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW OFF <nil> <nil>"))
+	tk.MustExec("alter resource group `default` BURSTABLE=MODERATED")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> <nil>"))
+	tk.MustExec("alter resource group `default` BURSTABLE=UNLIMITED")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW UNLIMITED <nil> <nil>"))
+
 	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
 
-	tk.MustExec("create resource group x RU_PER_SEC=1000")
+	tk.MustExec("create resource group x RU_PER_SEC=1000 BURSTABLE=UNLIMITED")
 	checkFunc := func(groupInfo *model.ResourceGroupInfo) {
 		require.Equal(t, true, groupInfo.ID != 0)
 		require.Equal(t, "x", groupInfo.Name.L)
@@ -103,34 +114,45 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION DRYRUN WATCH SIMILAR DURATION '10m0s')")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RURate)
-	re.Equal(int64(-1), g.BurstLimit)
+	re.Equal(int64(-2), g.GetBurstLimitAdjusted())
 	re.Equal(uint64(time.Second*15/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
-	re.Equal(pmodel.RunawayActionDryRun, g.Runaway.Action)
-	re.Equal(pmodel.WatchSimilar, g.Runaway.WatchType)
+	re.Equal(ast.RunawayActionDryRun, g.Runaway.Action)
+	re.Equal(ast.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
-	tk.MustExec("alter resource group x QUERY_LIMIT=(EXEC_ELAPSED='20s' ACTION DRYRUN WATCH SIMILAR) BURSTABLE=FALSE")
+	tk.MustExec("alter resource group x QUERY_LIMIT=(EXEC_ELAPSED='20s' ACTION DRYRUN WATCH SIMILAR) BURSTABLE=OFF")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(2000), g.RURate)
-	re.Equal(int64(2000), g.BurstLimit)
+	re.Equal(int64(2000), g.GetBurstLimitAdjusted())
 	re.Equal(uint64(time.Second*20/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
-	re.Equal(pmodel.RunawayActionDryRun, g.Runaway.Action)
-	re.Equal(pmodel.WatchSimilar, g.Runaway.WatchType)
+	re.Equal(ast.RunawayActionDryRun, g.Runaway.Action)
+	re.Equal(ast.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(0), g.Runaway.WatchDurationMs)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM NO EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
+	tk.MustExec("alter resource group x BURSTABLE=UNLIMITED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+	tk.MustExec("alter resource group x BURSTABLE=MODERATED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(-2), g.GetBurstLimitAdjusted())
+	tk.MustExec("alter resource group x BURSTABLE=OFF")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(2000), g.GetBurstLimitAdjusted())
+
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM OFF EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
 
 	tk.MustExec("alter resource group x RU_PER_SEC= unlimited QUERY_LIMIT=(EXEC_ELAPSED='15s' ACTION SWITCH_GROUP(y) WATCH SIMILAR DURATION '10m0s')")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
 	re.Equal(uint64(math.MaxInt32), g.RURate)
-	re.Equal(int64(-1), g.BurstLimit)
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
 	re.Equal(uint64(time.Second*15/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
-	re.Equal(pmodel.RunawayActionSwitchGroup, g.Runaway.Action)
+	re.Equal(ast.RunawayActionSwitchGroup, g.Runaway.Action)
 	re.Equal("y", g.Runaway.SwitchGroupName)
-	re.Equal(pmodel.WatchSimilar, g.Runaway.WatchType)
+	re.Equal(ast.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x UNLIMITED MEDIUM YES EXEC_ELAPSED='15s', ACTION=SWITCH_GROUP(y), WATCH=SIMILAR DURATION='10m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x UNLIMITED MEDIUM OFF EXEC_ELAPSED='15s', ACTION=SWITCH_GROUP(y), WATCH=SIMILAR DURATION='10m0s' <nil>"))
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
 
 	tk.MustExec("drop resource group x")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
@@ -147,7 +169,7 @@ func TestResourceGroupBasic(t *testing.T) {
 		re.Equal("y", groupInfo.Name.L)
 		re.Equal(groupID.Load(), groupInfo.ID)
 		re.Equal(uint64(4000), groupInfo.RURate)
-		re.Equal(int64(4000), groupInfo.BurstLimit)
+		re.Equal(int64(4000), groupInfo.GetBurstLimitAdjusted())
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
@@ -158,7 +180,7 @@ func TestResourceGroupBasic(t *testing.T) {
 		re.Equal("y", groupInfo.Name.L)
 		re.Equal(groupID.Load(), groupInfo.ID)
 		re.Equal(uint64(4000), groupInfo.RURate)
-		re.Equal(int64(4000), groupInfo.BurstLimit)
+		re.Equal(int64(4000), groupInfo.GetBurstLimitAdjusted())
 		re.Equal(uint64(16), groupInfo.Priority)
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
@@ -169,7 +191,7 @@ func TestResourceGroupBasic(t *testing.T) {
 		re.Equal("y", groupInfo.Name.L)
 		re.Equal(groupID.Load(), groupInfo.ID)
 		re.Equal(uint64(6000), groupInfo.RURate)
-		re.Equal(int64(6000), groupInfo.BurstLimit)
+		re.Equal(int64(6000), groupInfo.GetBurstLimitAdjusted())
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
@@ -179,25 +201,15 @@ func TestResourceGroupBasic(t *testing.T) {
 		re.Equal("y", groupInfo.Name.L)
 		re.Equal(groupID.Load(), groupInfo.ID)
 		re.Equal(uint64(5000), groupInfo.RURate)
-		re.Equal(int64(-1), groupInfo.BurstLimit)
+		re.Equal(int64(-2), groupInfo.GetBurstLimitAdjusted())
 		re.Equal(uint64(time.Second*15/time.Millisecond), groupInfo.Runaway.ExecElapsedTimeMs)
-		re.Equal(pmodel.RunawayActionKill, groupInfo.Runaway.Action)
+		re.Equal(ast.RunawayActionKill, groupInfo.Runaway.Action)
 		re.Equal(int64(0), groupInfo.Runaway.WatchDurationMs)
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	checkFunc(g)
-	tk.MustExec("alter resource group y RU_PER_SEC=6000 BURSTABLE=false")
-	checkFunc = func(groupInfo *model.ResourceGroupInfo) {
-		re.Equal(true, groupInfo.ID != 0)
-		re.Equal("y", groupInfo.Name.L)
-		re.Equal(groupID.Load(), groupInfo.ID)
-		re.Equal(uint64(6000), groupInfo.RURate)
-		re.Equal(int64(6000), groupInfo.BurstLimit)
-	}
-	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
-	checkFunc(g)
 	tk.MustExec("alter resource group y RU_PER_SEC=5000 BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 5000 HIGH YES EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 5000 HIGH MODERATED EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
 	tk.MustExec("drop resource group y")
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
 	re.Nil(g)
@@ -206,10 +218,15 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 ru_per_sec=200, ru_per_sec=300", "Dupliated options specified")
 	tk.MustGetErrCode("create resource group x burstable, burstable", mysql.ErrParse)
 	tk.MustContainErrMsg("create resource group x burstable, burstable", "Dupliated options specified")
+	tk.MustContainErrMsg("create resource group x burstable, burstable=off", "Dupliated options specified")
+	tk.MustContainErrMsg("create resource group x burstable, burstable=moderated", "Dupliated options specified")
+	tk.MustContainErrMsg("create resource group x burstable=unlimited, burstable", "Dupliated options specified")
 	tk.MustGetErrCode("create resource group x  ru_per_sec=1000, burstable, burstable", mysql.ErrParse)
-	tk.MustContainErrMsg("create resource group x  ru_per_sec=1000, burstable, burstable", "Dupliated options specified")
+	tk.MustContainErrMsg("create resource group x ru_per_sec=1000, burstable, burstable", "Dupliated options specified")
 	tk.MustGetErrCode("create resource group x  burstable, ru_per_sec=1000, burstable", mysql.ErrParse)
 	tk.MustContainErrMsg("create resource group x burstable, ru_per_sec=1000, burstable", "Dupliated options specified")
+	tk.MustGetErrCode("create resource group x  burstable=unlimited, ru_per_sec=1000, burstable", mysql.ErrParse)
+	tk.MustContainErrMsg("create resource group x burstable=unlimited, ru_per_sec=1000, burstable", "Dupliated options specified")
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 burstable QUERY_LIMIT=(EXEC_ELAPSED='15s' action kill action cooldown)", "Dupliated runaway options specified")
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15s') burstable priority=Low, QUERY_LIMIT=(EXEC_ELAPSED='15s')", "Dupliated options specified")
 	tk.MustContainErrMsg("create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED='15s') QUERY_LIMIT=(EXEC_ELAPSED='15s')", "Dupliated options specified")
@@ -224,41 +241,55 @@ func TestResourceGroupBasic(t *testing.T) {
 
 	// Check information schema table information_schema.resource_groups
 	tk.MustExec("create resource group x RU_PER_SEC=1000 PRIORITY=LOW")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 LOW NO <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 1000 LOW OFF <nil> <nil>"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 action kill)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW YES EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW MODERATED EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
+	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE=UNLIMITED QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 action kill)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW UNLIMITED EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
+	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE=MODERATEd QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 action kill)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW MODERATED EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
+	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE=OFF QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 action kill)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW OFF EXEC_ELAPSED='15s', PROCESSED_KEYS=100, ACTION=KILL <nil>"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED='15s' PROCESSED_KEYS=100 RU=100 action kill)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW YES EXEC_ELAPSED='15s', PROCESSED_KEYS=100, RU=100, ACTION=KILL <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW MODERATED EXEC_ELAPSED='15s', PROCESSED_KEYS=100, RU=100, ACTION=KILL <nil>"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(PROCESSED_KEYS=200 RU=300 action kill)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW YES PROCESSED_KEYS=200, RU=300, ACTION=KILL <nil>"))
-	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=2000, PRIORITY=LOW, BURSTABLE, QUERY_LIMIT=(PROCESSED_KEYS=200 RU=300 ACTION=KILL)"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW MODERATED PROCESSED_KEYS=200, RU=300, ACTION=KILL <nil>"))
+	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=2000, PRIORITY=LOW, BURSTABLE(MODERATED), QUERY_LIMIT=(PROCESSED_KEYS=200 RU=300 ACTION=KILL)"))
 	tk.MustExec("alter resource group x RU_PER_SEC=2000 BURSTABLE QUERY_LIMIT=(EXEC_ELAPSED='15s' action kill)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW YES EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
-	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=2000, PRIORITY=LOW, BURSTABLE, QUERY_LIMIT=(EXEC_ELAPSED=\"15s\" ACTION=KILL)"))
-	tk.MustExec("CREATE RESOURCE GROUP `x_new` RU_PER_SEC=2000 PRIORITY=LOW BURSTABLE=true QUERY_LIMIT=(EXEC_ELAPSED=\"15s\" ACTION=KILL)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x_new'").Check(testkit.Rows("x_new 2000 LOW YES EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
-	tk.MustExec("alter resource group x BURSTABLE=false RU_PER_SEC=3000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 LOW NO EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 LOW MODERATED EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
+	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=2000, PRIORITY=LOW, BURSTABLE(MODERATED), QUERY_LIMIT=(EXEC_ELAPSED=\"15s\" ACTION=KILL)"))
+	tk.MustExec("CREATE RESOURCE GROUP `x_new` RU_PER_SEC=2000 PRIORITY=LOW BURSTABLE=UNLIMITED QUERY_LIMIT=(EXEC_ELAPSED=\"15s\" ACTION=KILL)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x_new'").Check(testkit.Rows("x_new 2000 LOW UNLIMITED EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
+	tk.MustExec("alter resource group x BURSTABLE=OFF RU_PER_SEC=3000")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 3000 LOW OFF EXEC_ELAPSED='15s', ACTION=KILL <nil>"))
 	tk.MustQuery("show create resource group x").Check(testkit.Rows("x CREATE RESOURCE GROUP `x` RU_PER_SEC=3000, PRIORITY=LOW, QUERY_LIMIT=(EXEC_ELAPSED=\"15s\" ACTION=KILL)"))
 
 	tk.MustExec("create resource group y BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='1s' action COOLDOWN WATCH EXACT duration '1h')")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 MEDIUM YES EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
-	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000, PRIORITY=MEDIUM, BURSTABLE, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 2000 MEDIUM MODERATED EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=2000, PRIORITY=MEDIUM, BURSTABLE(MODERATED), QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 	tk.MustExec("CREATE RESOURCE GROUP `y_new` RU_PER_SEC=2000 PRIORITY=MEDIUM QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH EXACT DURATION=\"1h0m0s\")")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 2000 MEDIUM NO EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 2000 MEDIUM OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 	tk.MustExec("alter resource group y_new RU_PER_SEC=3000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 3000 MEDIUM NO EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y_new'").Check(testkit.Rows("y_new 3000 MEDIUM OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
 
 	tk.MustExec("CREATE RESOURCE GROUP `z` RU_PER_SEC=2000 PRIORITY=MEDIUM QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH PLAN DURATION=\"1h0m0s\")")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'z'").Check(testkit.Rows("z 2000 MEDIUM NO EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=PLAN DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'z'").Check(testkit.Rows("z 2000 MEDIUM OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=PLAN DURATION='1h0m0s' <nil>"))
 
 	tk.MustExec("alter resource group y RU_PER_SEC=4000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 MEDIUM YES EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
-	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=MEDIUM, BURSTABLE, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 MEDIUM MODERATED EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=MEDIUM, BURSTABLE(MODERATED), QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 
-	tk.MustExec("alter resource group y RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH YES EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
-	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, BURSTABLE, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
+	tk.MustExec("alter resource group y RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE=UNLIMITED")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH UNLIMITED EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, BURSTABLE(UNLIMITED), QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
+
+	tk.MustExec("alter resource group y RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE=MODERATED")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH MODERATED EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, BURSTABLE(MODERATED), QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
+
+	tk.MustExec("alter resource group y RU_PER_SEC=4000 PRIORITY=HIGH BURSTABLE=OFF")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'y'").Check(testkit.Rows("y 4000 HIGH OFF EXEC_ELAPSED='1s', ACTION=COOLDOWN, WATCH=EXACT DURATION='1h0m0s' <nil>"))
+	tk.MustQuery("show create resource group y").Check(testkit.Rows("y CREATE RESOURCE GROUP `y` RU_PER_SEC=4000, PRIORITY=HIGH, QUERY_LIMIT=(EXEC_ELAPSED=\"1s\" ACTION=COOLDOWN WATCH=EXACT DURATION=\"1h0m0s\")"))
 
 	tk.MustQuery("select count(*) from information_schema.resource_groups").Check(testkit.Rows("6"))
 	tk.MustGetErrCode("create user usr_fail resource group nil_group", mysql.ErrResourceGroupNotExists)
@@ -277,8 +308,8 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustQuery("select user_attributes from mysql.user where user = 'usr3'").Check(testkit.Rows(`{"resource_group": "default"}`))
 
 	tk.MustExec("alter resource group default ru_per_sec = 1000, priority = medium, background = (task_types = 'lightning, BR');")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> TASK_TYPES='lightning,br'"))
-	tk.MustQuery("show create resource group default").Check(testkit.Rows("default CREATE RESOURCE GROUP `default` RU_PER_SEC=1000, PRIORITY=MEDIUM, BURSTABLE, BACKGROUND=(TASK_TYPES='lightning,br')"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM UNLIMITED <nil> TASK_TYPES='lightning,br'"))
+	tk.MustQuery("show create resource group default").Check(testkit.Rows("default CREATE RESOURCE GROUP `default` RU_PER_SEC=1000, PRIORITY=MEDIUM, BURSTABLE(UNLIMITED), BACKGROUND=(TASK_TYPES='lightning,br')"))
 	g = testResourceGroupNameFromIS(t, tk.Session(), "default")
 	require.EqualValues(t, g.Background.JobTypes, []string{"lightning", "br"})
 
@@ -287,11 +318,11 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustGetErrCode("alter resource group default background=(task_types='a,b,c')", mysql.ErrResourceGroupInvalidBackgroundTaskName)
 
 	tk.MustExec("alter resource group `default` BACKGROUND=(task_types='br,ddl')")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> TASK_TYPES='br,ddl'"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM UNLIMITED <nil> TASK_TYPES='br,ddl'"))
 	tk.MustExec("alter resource group `default` BACKGROUND=(utilization_limit=30)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> UTILIZATION_LIMIT=30"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM UNLIMITED <nil> UTILIZATION_LIMIT=30"))
 	tk.MustExec("alter resource group `default` BACKGROUND=(task_types='br,ddl',utilization_limit=30)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM YES <nil> TASK_TYPES='br,ddl', UTILIZATION_LIMIT=30"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 MEDIUM UNLIMITED <nil> TASK_TYPES='br,ddl', UTILIZATION_LIMIT=30"))
 }
 
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
@@ -299,16 +330,18 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	require.NoError(t, err)
-	g, _ := dom.InfoSchema().ResourceGroupByName(pmodel.NewCIStr(name))
+	g, _ := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(name))
 	return g
 }
 
 func TestResourceGroupRunaway(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	// Keep GC fast enough for this test, but not so aggressive that records disappear
+	// before assertions can observe them on loaded CI.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 
@@ -317,25 +350,26 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 
 	tk.MustExec("set global tidb_enable_resource_control='on'")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
-	tk.MustExec("create resource group rg2 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1s')")
-	tk.MustExec("create resource group rg3 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM YES EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION='1s' <nil>"))
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg3'").Check(testkit.Rows("rg3 2000 MEDIUM YES EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION=UNLIMITED <nil>"))
+	// Create resource groups without query limit first, since the `EXEC_ELAPSED='50ms'` threshold
+	// can be exceeded on slow/loaded CI machines even for a simple query.
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
+	tk.MustExec("create resource group rg2 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=()")
+	tk.MustExec("create resource group rg3 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=()")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ resource_group(rg3) */ * from t").Check(testkit.Rows("1"))
-
-	require.Eventually(t, func() bool {
-		return dom.RunawayManager().IsSyncerInitialized()
-	}, 20*time.Second, 300*time.Millisecond)
+	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+	tk.MustExec("alter resource group rg2 RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1s')")
+	tk.MustExec("alter resource group rg3 RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION='1s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg3'").Check(testkit.Rows("rg3 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION=UNLIMITED <nil>"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", fmt.Sprintf("return(%d)", 60)))
 	err := tk.QueryToErr("select /*+ resource_group(rg1) */ * from t")
 	require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query")
 
 	tryInterval := time.Millisecond * 100
-	maxWaitDuration := time.Second * 5
+	maxWaitDuration := time.Second * 10
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg1 select /*+ resource_group(rg1) */ * from t identify"), maxWaitDuration, tryInterval)
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, start_time from mysql.tidb_runaway_queries", nil,
@@ -352,8 +386,10 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t identify",
 			"rg2 select /*+ resource_group(rg2) */ * from t watch"), maxWaitDuration, tryInterval)
-	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch").
-		Check(testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t"))
+	// Watch records are flushed asynchronously; under loaded CI the watch row may not be
+	// visible immediately after the query returns.
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch", nil,
+		testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t"), maxWaitDuration, tryInterval)
 	// wait for the runaway watch to be cleaned up
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch", nil, testkit.Rows(), maxWaitDuration, tryInterval)
 	err = tk.QueryToErr("select /*+ resource_group(rg2) */ * from t")
@@ -376,8 +412,8 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustGetErrCode("select /*+ resource_group(rg3) */ * from t", mysql.ErrResourceGroupQueryRunawayQuarantine)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest"))
 
-	tk.MustExec("create resource group rg4 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", fmt.Sprintf("return(%d)", 50)))
+	tk.MustExec("create resource group rg4 BURSTABLE=UNLIMITED RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", fmt.Sprintf("return(%d)", 20)))
 	tk.MustQuery("select /*+ resource_group(rg4) */ * from t").Check(testkit.Rows("1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds"))
 
@@ -389,7 +425,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 		testkit.Rows("rg3 select /*+ resource_group(rg3) */ * from t", "rg4 select /*+ resource_group(rg4) */ * from t"), maxWaitDuration, tryInterval)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds"))
 
-	tk.MustExec("create resource group rg5 BURSTABLE RU_PER_SEC=2000 QUERY_LIMIT=(PROCESSED_KEYS=10 action KILL WATCH EXACT)")
+	tk.MustExec("create resource group rg5 BURSTABLE=UNLIMITED RU_PER_SEC=2000 QUERY_LIMIT=(PROCESSED_KEYS=10 action KILL WATCH EXACT)")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/checkThresholds", "return(true)"))
 	err = tk.QueryToErr("select /*+ resource_group(rg5) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
@@ -398,7 +434,8 @@ func TestResourceGroupRunaway(t *testing.T) {
 }
 
 func TestResourceGroupRunawayExceedTiDBSide(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	// Use a longer expired duration to avoid the record being deleted too fast, 2500 means 2.5 seconds.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
@@ -419,27 +456,111 @@ func TestResourceGroupRunawayExceedTiDBSide(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 
-	require.Eventually(t, func() bool {
-		return dom.RunawayManager().IsSyncerInitialized()
-	}, 20*time.Second, 300*time.Millisecond)
-
-	err := tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.5) from t")
+	runawayQuery := "select /*+ resource_group(rg1) */ sleep(1) from t"
+	err := tk.QueryToErr(runawayQuery)
 	require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query")
 
 	tryInterval := time.Millisecond * 100
 	maxWaitDuration := time.Second * 5
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
-		testkit.Rows("rg1 select /*+ resource_group(rg1) */ sleep(0.5) from t identify"), maxWaitDuration, tryInterval)
+		testkit.Rows(fmt.Sprintf("rg1 %s identify", runawayQuery)), maxWaitDuration, tryInterval)
+
+	for i := range 20 {
+		err := tk.QueryToErr(runawayQuery)
+		require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query", i)
+	}
+	// Due to the expired duration is set to 2.5 seconds at the beginning, so all the records should be deleted within the 5 seconds of `maxWaitDuration`.
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, start_time from mysql.tidb_runaway_queries", nil,
 		nil, maxWaitDuration, tryInterval)
 }
 
-func TestResourceGroupRunawayFlood(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+func TestRunawayRecordFlushLoopAddAndFlush(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(20000)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("create table t_flush(a int)")
+	tk.MustExec("insert into t_flush values(1)")
+	tk.MustExec("set global tidb_enable_resource_control='on'")
+	tk.MustExec("create resource group rg_flush RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='24h' action KILL)")
+	tk.MustExec("set resource group rg_flush")
+	runawayQuery := "select * from test.t_flush"
+	// Seed one watch record through SQL path so the loop can consume it from manager cache/system table.
+	tk.MustQuery(fmt.Sprintf("query watch add resource group rg_flush action KILL sql text exact to '%s'", runawayQuery))
+
+	tryInterval := 100 * time.Millisecond
+	maxWaitDuration := 10 * time.Second
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE resource_group_name, watch_text, action, watch from information_schema.runaway_watches where resource_group_name = 'rg_flush'",
+		nil,
+		testkit.Rows(fmt.Sprintf("rg_flush %s Kill Exact", runawayQuery)),
+		maxWaitDuration,
+		tryInterval,
+	)
+
+	// Ensure runaway record table starts empty, then trigger one watched query.
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_queries").Check(testkit.Rows("0"))
+	tk.MustGetErrCode(runawayQuery, mysql.ErrResourceGroupQueryRunawayQuarantine)
+
+	// Verify record Add/Flush for runaway-record flusher and quarantine-record flusher.
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries where resource_group_name = 'rg_flush'",
+		nil,
+		testkit.Rows(fmt.Sprintf("rg_flush %s watch", runawayQuery)),
+		maxWaitDuration,
+		tryInterval,
+	)
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch where resource_group_name = 'rg_flush'",
+		nil,
+		testkit.Rows(fmt.Sprintf("rg_flush %s", runawayQuery)),
+		maxWaitDuration,
+		tryInterval,
+	)
+
+	idStr := tk.MustQuery(
+		"select SQL_NO_CACHE id from mysql.tidb_runaway_watch where resource_group_name = 'rg_flush' and watch_text = '" + runawayQuery + "'",
+	).Rows()[0][0].(string)
+	watchID, err := strconv.ParseInt(idStr, 10, 64)
+	require.NoError(t, err)
+
+	rm := domain.GetDomain(tk.Session()).RunawayManager()
+	require.NotNil(t, rm)
+	// Cover stale-quarantine branch: ID=0 should be skipped.
+	rm.AddWatch(&runaway.QuarantineRecord{
+		ID:                0,
+		ResourceGroupName: "rg_flush",
+		EndTime:           time.Now().UTC().Add(-time.Second),
+		WatchText:         runawayQuery,
+	})
+	// Cover stale-quarantine branch: expired record with valid ID should be flushed as delete.
+	rm.AddWatch(&runaway.QuarantineRecord{
+		ID:                watchID,
+		ResourceGroupName: "rg_flush",
+		EndTime:           time.Now().UTC().Add(-time.Second),
+		WatchText:         runawayQuery,
+	})
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch where id = "+strconv.FormatInt(watchID, 10),
+		nil,
+		testkit.Rows("0"),
+		maxWaitDuration,
+		tryInterval,
+	)
+}
+
+func TestResourceGroupRunawayFlood(t *testing.T) {
+	// Avoid 1ms retention: it can make observation windows too short under CI load.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
+	}()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 
@@ -447,11 +568,9 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set global tidb_enable_resource_control='on'")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
-	require.Eventually(t, func() bool {
-		return dom.RunawayManager().IsSyncerInitialized()
-	}, 20*time.Second, 300*time.Millisecond)
+	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", fmt.Sprintf("return(%d)", 60)))
 	defer func() {
@@ -467,17 +586,17 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	// wait for the runaway watch to be cleaned up
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, repeats from mysql.tidb_runaway_queries", nil,
 		nil, maxWaitDuration, tryInterval)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush", `return(1)`))
 	// check thrice to make sure the runaway query be regarded as a repeated query.
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.2) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.3) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
-	// using FastRunawayGC to trigger flush
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.4) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
+	// resume the flush to ensure an aggregated record can be queried later.
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush"))
 	// only have one runaway query
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, repeats, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg1 select /*+ resource_group(rg1) */ sleep(0.2) from t 3 identify"), maxWaitDuration, tryInterval)
@@ -608,7 +727,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 		input: &model.ResourceGroupSettings{
 			Runaway: &model.ResourceGroupRunawaySettings{
 				ExecElapsedTimeMs: 1000,
-				Action:            pmodel.RunawayActionSwitchGroup,
+				Action:            ast.RunawayActionSwitchGroup,
 				SwitchGroupName:   "",
 			},
 		},
@@ -652,4 +771,92 @@ func TestBindHints(t *testing.T) {
 	re.Equal("", tk.Session().GetSessionVars().StmtCtx.ResourceGroup)
 	re.Equal("default", tk.Session().GetSessionVars().StmtCtx.ResourceGroupName)
 	re.Equal("default", tk.Session().GetSessionVars().ResourceGroupName)
+}
+
+func TestResourceGroupBurstLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	re := require.New(t)
+
+	// test default
+	g := testResourceGroupNameFromIS(t, tk.Session(), "default")
+	re.Equal(uint64(math.MaxInt32), g.RURate)
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+
+	// case 1: RU_PER_SEC=1000
+	tk.MustExec("create resource group x RU_PER_SEC=1000")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(1000), g.RURate)
+	re.Equal(int64(1000), g.GetBurstLimitAdjusted()) // default is off
+
+	tk.MustExec("alter resource group x BURSTABLE=UNLIMITED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(1000), g.RURate)
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+
+	tk.MustExec("alter resource group x BURSTABLE=MODERATED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(1000), g.RURate)
+	re.Equal(int64(-2), g.GetBurstLimitAdjusted())
+
+	tk.MustExec("alter resource group x BURSTABLE=OFF")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(1000), g.RURate)
+	re.Equal(int64(1000), g.GetBurstLimitAdjusted())
+
+	// case 2: RU_PER_SEC=UNLIMITED
+	tk.MustExec("alter resource group x RU_PER_SEC=UNLIMITED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(math.MaxInt32), g.RURate)
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+
+	tk.MustExec("alter resource group x BURSTABLE=UNLIMITED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+
+	tk.MustExec("alter resource group x BURSTABLE=MODERATED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+
+	tk.MustExec("alter resource group x BURSTABLE=OFF")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+
+	// case 3: change RU_PER_SEC from UNLIMITED to 1000, and check burstable mode is set independently
+	tk.MustExec("alter resource group x RU_PER_SEC=UNLIMITED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(math.MaxInt32), g.RURate)
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+	tk.MustExec("alter resource group x BURSTABLE=MODERATED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+	tk.MustExec("alter resource group x RU_PER_SEC=1000")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(1000), g.RURate)
+	re.Equal(int64(-2), g.GetBurstLimitAdjusted())
+
+	tk.MustExec("alter resource group x RU_PER_SEC=UNLIMITED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(math.MaxInt32), g.RURate)
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+	tk.MustExec("alter resource group x BURSTABLE=OFF")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+	tk.MustExec("alter resource group x RU_PER_SEC=1000")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(1000), g.RURate)
+	re.Equal(int64(1000), g.GetBurstLimitAdjusted())
+
+	tk.MustExec("alter resource group x RU_PER_SEC=UNLIMITED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(math.MaxInt32), g.RURate)
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+	tk.MustExec("alter resource group x BURSTABLE=UNLIMITED")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
+	tk.MustExec("alter resource group x RU_PER_SEC=1000")
+	g = testResourceGroupNameFromIS(t, tk.Session(), "x")
+	re.Equal(uint64(1000), g.RURate)
+	re.Equal(int64(-1), g.GetBurstLimitAdjusted())
 }

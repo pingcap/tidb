@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -39,21 +41,26 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -62,9 +69,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -94,6 +102,17 @@ type SimpleExec struct {
 
 	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
 	staleTxnStartTS uint64
+}
+
+// resourceOptionsInfo represents the resource infomations to limit user.
+// It contains 'MAX_QUERIES_PER_HOUR', 'MAX_UPDATES_PER_HOUR', 'MAX_CONNECTIONS_PER_HOUR' and 'MAX_USER_CONNECTIONS'.
+// It only implements the option of 'MAX_USER_CONNECTIONS' now.
+// To do: implement the other three options.
+type resourceOptionsInfo struct {
+	maxQueriesPerHour     int64
+	maxUpdatesPerHour     int64
+	maxConnectionsPerHour int64
+	maxUserConnections    int64
 }
 
 type passwordOrLockOptionsInfo struct {
@@ -143,7 +162,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
-		err = e.executeFlush(x)
+		err = e.executeFlush(ctx, x)
 	case *ast.AlterInstanceStmt:
 		err = e.executeAlterInstance(x)
 	case *ast.BeginStmt:
@@ -170,6 +189,8 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeSetSessionStates(ctx, x)
 	case *ast.KillStmt:
 		err = e.executeKillStmt(ctx, x)
+	case *ast.RefreshStatsStmt:
+		err = e.executeRefreshStats(ctx, x)
 	case *ast.BinlogStmt:
 		// We just ignore it.
 		return nil
@@ -196,33 +217,37 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	return err
 }
 
-func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
+func (e *SimpleExec) setDefaultRoleNone(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
+	if deploymode.IsStarter() {
+		for _, u := range s.UserList {
+			if _, err := userExistsWithRetryVariants(ctx, e.Ctx(), &u.Username, u.Hostname); err != nil {
+				return err
+			}
+		}
+	}
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	defer e.ReleaseSysSession(ctx, restrictedCtx)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
 	sqlExecutor := restrictedCtx.GetSQLExecutor()
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
 		return err
 	}
 	sql := new(strings.Builder)
 	for _, u := range s.UserList {
-		if u.Hostname == "" {
-			u.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
-		if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
-			if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
+			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 				return rollbackErr
 			}
 			return err
 		}
 	}
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
 		return err
 	}
 	return nil
@@ -230,7 +255,7 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 
 func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
 	for _, user := range s.UserList {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -239,7 +264,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 		}
 	}
 	for _, role := range s.RoleList {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -260,9 +285,6 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		if user.Hostname == "" {
-			user.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -300,7 +322,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 
 func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
 	for _, user := range s.UserList {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -320,9 +342,6 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		if user.Hostname == "" {
-			user.Hostname = "%"
-		}
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
@@ -351,9 +370,6 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 func (e *SimpleExec) setDefaultRoleForCurrentUser(ctx context.Context, s *ast.SetDefaultRoleStmt) (err error) {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user := s.UserList[0]
-	if user.Hostname == "" {
-		user.Hostname = "%"
-	}
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -447,7 +463,7 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	case ast.SetRoleAll:
 		err = e.setDefaultRoleAll(ctx, s)
 	case ast.SetRoleNone:
-		err = e.setDefaultRoleNone(s)
+		err = e.setDefaultRoleNone(ctx, s)
 	case ast.SetRoleRegular:
 		err = e.setDefaultRoleRegular(ctx, s)
 	}
@@ -506,7 +522,7 @@ func (e *SimpleExec) setRoleAllExcept(ctx context.Context, s *ast.SetRoleStmt) e
 
 	filter := func(arr []*auth.RoleIdentity, f func(*auth.RoleIdentity) bool) []*auth.RoleIdentity {
 		i, j := 0, 0
-		for i = 0; i < len(arr); i++ {
+		for i = range arr {
 			if f(arr[i]) {
 				arr[j] = arr[i]
 				j++
@@ -585,7 +601,7 @@ func (e *SimpleExec) dbAccessDenied(dbname string) error {
 }
 
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
-	dbname := model.NewCIStr(s.DBName)
+	dbname := ast.NewCIStr(s.DBName)
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
@@ -609,7 +625,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// collation if this one is not supported.
 	// The SetSystemVar will also update the CharsetDatabase
 	dbCollate = collate.SubstituteMissingCollationToDefault(dbCollate)
-	return sessionVars.SetSystemVarWithoutValidation(variable.CollationDatabase, dbCollate)
+	return sessionVars.SetSystemVarWithoutValidation(vardef.CollationDatabase, dbCollate)
 }
 
 func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
@@ -686,7 +702,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -714,7 +730,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 		curUser, curHost = user.AuthUsername, user.AuthHostname
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -748,9 +764,9 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 
 			// delete from activeRoles
 			if curUser == user.Username && curHost == user.Hostname {
-				for i := 0; i < len(activeRoles); i++ {
+				for i := range activeRoles {
 					if activeRoles[i].Username == role.Username && activeRoles[i].Hostname == role.Hostname {
-						activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+						activeRoles = slices.Delete(activeRoles, i, i+1)
 						break
 					}
 				}
@@ -817,18 +833,34 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	return nil
 }
 
+func (info *resourceOptionsInfo) loadResourceOptions(userResource []*ast.ResourceOption) error {
+	for _, option := range userResource {
+		switch option.Type {
+		case ast.MaxQueriesPerHour:
+			info.maxQueriesPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxUpdatesPerHour:
+			info.maxUpdatesPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxConnectionsPerHour:
+			info.maxConnectionsPerHour = min(option.Count, math.MaxInt16)
+		case ast.MaxUserConnections:
+			info.maxUserConnections = min(option.Count, math.MaxInt16)
+		}
+	}
+	return nil
+}
+
 func whetherSavePasswordHistory(plOptions *passwordOrLockOptionsInfo) bool {
 	var passwdSaveNum, passwdSaveTime int64
 	// If the user specifies a default, read the global variable.
 	if plOptions.passwordHistoryChange && plOptions.passwordHistory != notSpecified {
 		passwdSaveNum = plOptions.passwordHistory
 	} else {
-		passwdSaveNum = variable.PasswordHistory.Load()
+		passwdSaveNum = vardef.PasswordHistory.Load()
 	}
 	if plOptions.passwordReuseIntervalChange && plOptions.passwordReuseInterval != notSpecified {
 		passwdSaveTime = plOptions.passwordReuseInterval
 	} else {
-		passwdSaveTime = variable.PasswordReuseInterval.Load()
+		passwdSaveTime = vardef.PasswordReuseInterval.Load()
 	}
 	return passwdSaveTime > 0 || passwdSaveNum > 0
 }
@@ -946,12 +978,7 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,7 +1039,7 @@ func deletePasswordLockingAttribute(ctx context.Context, sqlExecutor sqlexec.SQL
 }
 
 func (e *SimpleExec) isValidatePasswordEnabled() bool {
-	validatePwdEnable, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	validatePwdEnable, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.ValidatePasswordEnable)
 	if err != nil {
 		return false
 	}
@@ -1042,6 +1069,18 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
+	if err != nil {
+		return err
+	}
+
+	userResource := &resourceOptionsInfo{
+		maxQueriesPerHour:     0,
+		maxUpdatesPerHour:     0,
+		maxConnectionsPerHour: 0,
+		maxUserConnections:    0,
+	}
+
+	err = userResource.loadResourceOptions(s.ResourceOptions)
 	if err != nil {
 		return err
 	}
@@ -1077,7 +1116,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 
 	if s.ResourceGroupNameOption != nil {
-		if !variable.EnableResourceControl.Load() {
+		if !vardef.EnableResourceControl.Load() {
 			return infoschema.ErrResourceGroupSupportDisabled
 		}
 		if s.IsCreateRole {
@@ -1088,7 +1127,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 		// check if specified resource group exists
 		if resourceGroupName != resourcegroup.DefaultResourceGroupName && resourceGroupName != "" {
-			_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+			_, exists := e.is.ResourceGroupByName(ast.NewCIStr(resourceGroupName))
 			if !exists {
 				return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
 			}
@@ -1114,20 +1153,23 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime,  Password_reuse_time, Password_reuse_history) VALUES "
-	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?"
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Max_user_connections, Password_reuse_time, Password_reuse_history) VALUES "
+	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
 	if savePasswdHistory {
 		sqlescape.MustFormatSQL(sqlPasswordHistory, `INSERT INTO %n.%n (Host, User, Password) VALUES `, mysql.SystemDB, mysql.PasswordHistoryTable)
 	}
-	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if err := keyspace.GetUsernamePolicy().ValidateUsername(spec.User.Username); err != nil {
+			return err
+		}
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
@@ -1200,7 +1242,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		}
 
 		hostName := strings.ToLower(spec.User.Hostname)
-		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime)
+		sqlescape.MustFormatSQL(sql, valueTemplate, hostName, spec.User.Username, pwd, authPlugin, userAttributesStr, plOptions.lockAccount, recordTokenIssuer, plOptions.passwordExpired, plOptions.passwordLifetime, userResource.maxUserConnections)
 		// add Password_reuse_time value.
 		if plOptions.passwordReuseIntervalChange && (plOptions.passwordReuseInterval != notSpecified) {
 			sqlescape.MustFormatSQL(sql, `, %?`, plOptions.passwordReuseInterval)
@@ -1292,12 +1334,7 @@ func isRole(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host str
 	if err != nil {
 		return false, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 1)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 1)
 	if err != nil {
 		return false, err
 	}
@@ -1314,12 +1351,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -1327,12 +1359,12 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if !row.IsNull(0) {
 			res.passwordHistory = int64(row.GetUint64(0))
 		} else {
-			res.passwordHistory = variable.PasswordHistory.Load()
+			res.passwordHistory = vardef.PasswordHistory.Load()
 		}
 		if !row.IsNull(1) {
 			res.passwordReuseInterval = int64(row.GetUint64(1))
 		} else {
-			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+			res.passwordReuseInterval = vardef.PasswordReuseInterval.Load()
 		}
 	}
 	if plOptions.passwordHistoryChange {
@@ -1340,7 +1372,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if plOptions.passwordHistory != notSpecified {
 			res.passwordHistory = plOptions.passwordHistory
 		} else {
-			res.passwordHistory = variable.PasswordHistory.Load()
+			res.passwordHistory = vardef.PasswordHistory.Load()
 		}
 	}
 	if plOptions.passwordReuseIntervalChange {
@@ -1348,7 +1380,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 		if plOptions.passwordReuseInterval != notSpecified {
 			res.passwordReuseInterval = plOptions.passwordReuseInterval
 		} else {
-			res.passwordReuseInterval = variable.PasswordReuseInterval.Load()
+			res.passwordReuseInterval = vardef.PasswordReuseInterval.Load()
 		}
 	}
 	return res, nil
@@ -1358,10 +1390,7 @@ func getUserPasswordLimit(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 func getValidTime(sctx sessionctx.Context, passwordReuse *passwordReuseInfo) string {
 	nowTime := time.Now().In(sctx.GetSessionVars().TimeZone)
 	nowTimeS := nowTime.Unix()
-	beforeTimeS := nowTimeS - passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second)
-	if beforeTimeS < 0 {
-		beforeTimeS = 0
-	}
+	beforeTimeS := max(nowTimeS-passwordReuse.passwordReuseInterval*24*int64(time.Hour/time.Second), 0)
 	return time.Unix(beforeTimeS, 0).Format("2006-01-02 15:04:05.999999999")
 }
 
@@ -1439,12 +1468,7 @@ func getUserPasswordNum(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, us
 	if err != nil {
 		return 0, err
 	}
-	defer func() {
-		if closeErr := recordSet.Close(); closeErr != nil {
-			err = closeErr
-		}
-	}()
-	rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+	rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 	if err != nil {
 		return 0, err
 	}
@@ -1465,12 +1489,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1485,12 +1504,7 @@ func fullRecordCheck(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, userD
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1513,12 +1527,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1535,12 +1544,7 @@ func checkPasswordHistoryRule(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1562,12 +1566,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, 3)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, 3)
 		if err != nil {
 			return false, err
 		}
@@ -1581,12 +1580,7 @@ func checkPasswordTimeRule(ctx context.Context, sqlExecutor sqlexec.SQLExecutor,
 		if err != nil {
 			return false, err
 		}
-		defer func() {
-			if closeErr := recordSet.Close(); closeErr != nil {
-				err = closeErr
-			}
-		}()
-		rows, err := sqlexec.DrainRecordSet(ctx, recordSet, variable.DefMaxChunkSize)
+		rows, err := sqlexec.DrainRecordSetAndClose(ctx, recordSet, vardef.DefMaxChunkSize)
 		if err != nil {
 			return false, err
 		}
@@ -1604,10 +1598,7 @@ func passwordVerification(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, 
 	}
 
 	// the maximum number of records that can be deleted.
-	canDeleteNum := passwordNum - passwordReuse.passwordHistory + 1
-	if canDeleteNum < 0 {
-		canDeleteNum = 0
-	}
+	canDeleteNum := max(passwordNum-passwordReuse.passwordHistory+1, 0)
 
 	if passwordReuse.passwordHistory <= 0 && passwordReuse.passwordReuseInterval <= 0 {
 		return true, canDeleteNum, nil
@@ -1695,6 +1686,20 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		s.Specs = []*ast.UserSpec{spec}
 	}
 
+	userResource := &resourceOptionsInfo{
+		maxQueriesPerHour:     0,
+		maxUpdatesPerHour:     0,
+		maxConnectionsPerHour: 0,
+		// can't set 0 to maxUserConnections as default, because user could set 0 to this field.
+		// so we use -1(invalid value) as default.
+		maxUserConnections: -1,
+	}
+
+	err = userResource.loadResourceOptions(s.ResourceOptions)
+	if err != nil {
+		return err
+	}
+
 	plOptions := passwordOrLockOptionsInfo{
 		lockAccount:                 "",
 		passwordExpired:             "",
@@ -1755,10 +1760,19 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 	for _, spec := range s.Specs {
 		user := e.Ctx().GetSessionVars().User
-		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
+		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
+		alterPassword := false
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
+			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
+				alterPassword = true
+			}
+		}
+		if alterCurrentUser && alterPassword {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
-		} else {
+		}
+		needAdminPrivCheck := !(alterCurrentUser && alterPassword)
+		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
 			// The MySQL manual states:
 			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
@@ -1778,15 +1792,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
-			}
-			if sem.IsEnabled() && !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
-			}
 		}
 
-		exists, currentAuthPlugin, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+		exists, currentAuthPlugin, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1794,6 +1802,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
 			continue
+		}
+		if needAdminPrivCheck {
+			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+			}
+			if sem.IsEnabled() && !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
+			}
 		}
 
 		type AuthTokenOptionHandler int
@@ -1924,6 +1940,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			fields = append(fields, alterField{"password_lifetime=%?", plOptions.passwordLifetime})
 		}
 
+		if userResource.maxUserConnections >= 0 {
+			// need `CREATE USER` privilege for the operation of modifying max_user_connections.
+			if !hasCreateUserPriv {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+			fields = append(fields, alterField{"max_user_connections=%?", userResource.maxUserConnections})
+		}
+
 		var newAttributes []string
 		if s.CommentOrAttributeOption != nil {
 			if s.CommentOrAttributeOption.Type == ast.UserCommentType {
@@ -1933,7 +1957,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if s.ResourceGroupNameOption != nil {
-			if !variable.EnableResourceControl.Load() {
+			if !vardef.EnableResourceControl.Load() {
 				return infoschema.ErrResourceGroupSupportDisabled
 			}
 			is, err := isRole(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
@@ -1947,7 +1971,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// check if specified resource group exists
 			resourceGroupName := strings.ToLower(s.ResourceGroupNameOption.Value)
 			if resourceGroupName != resourcegroup.DefaultResourceGroupName && s.ResourceGroupNameOption.Value != "" {
-				_, exists := e.is.ResourceGroupByName(model.NewCIStr(resourceGroupName))
+				_, exists := e.is.ResourceGroupByName(ast.NewCIStr(resourceGroupName))
 				if !exists {
 					return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(resourceGroupName)
 				}
@@ -2068,7 +2092,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2077,7 +2101,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		}
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2135,6 +2159,9 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	}
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
+		if err := keyspace.GetUsernamePolicy().ValidateUsername(newUser.Username); err != nil {
+			return err
+		}
 		if len(newUser.Username) > auth.UserNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
 		}
@@ -2252,7 +2279,7 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 }
 
 func (e *SimpleExec) executeDropQueryWatch(s *ast.DropQueryWatchStmt) error {
-	return querywatch.ExecDropQueryWatch(e.Ctx(), s.IntValue)
+	return querywatch.ExecDropQueryWatch(e.Ctx(), s)
 }
 
 func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
@@ -2406,9 +2433,9 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 		// delete from activeRoles
 		if s.IsDropRole {
-			for i := 0; i < len(activeRoles); i++ {
+			for i := range activeRoles {
 				if activeRoles[i].Username == user.Username && activeRoles[i].Hostname == user.Hostname {
-					activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+					activeRoles = slices.Delete(activeRoles, i, i+1)
 					break
 				}
 			}
@@ -2446,6 +2473,49 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 		return false, err
 	}
 	return len(rows) > 0, nil
+}
+
+// userExistsWithRetryVariants reports whether (*name, host) exists in mysql.user.
+// If a username policy variant matches, it rewrites *name to the resolved variant.
+func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, name *string, host string) (bool, error) {
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
+		exists, err := userExists(ctx, sctx, variant, host)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			*name = variant
+			return true, nil
+		}
+	}
+	if skipExactUsernameLookup(*name) {
+		return false, nil
+	}
+	return userExists(ctx, sctx, *name, host)
+}
+
+// userExistsInternalWithRetryVariants behaves like userExistsWithRetryVariants
+// using the supplied SQL executor and also returns the resolved auth plugin.
+func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (bool, string, error) {
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
+		exists, authPlugin, err := userExistsInternal(ctx, sqlExecutor, variant, host)
+		if err != nil {
+			return false, "", err
+		}
+		if exists {
+			*name = variant
+			return true, authPlugin, nil
+		}
+	}
+	if skipExactUsernameLookup(*name) {
+		return false, "", nil
+	}
+	return userExistsInternal(ctx, sqlExecutor, *name, host)
+}
+
+func skipExactUsernameLookup(name string) bool {
+	policy := keyspace.GetUsernamePolicy()
+	return policy.ValidateUsername(name) != nil && policy.ValidateUsernameFormat(name)
 }
 
 // use the same internal executor to read within the same transaction, otherwise same as userExists
@@ -2614,7 +2684,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
 		if x.FnName.L == ast.ConnectionID {
 			sm := e.Ctx().GetSessionManager()
-			sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false, false)
+			killBySQLStmt(sm, e.Ctx().GetSessionVars().ConnectionID, s.Query, false)
 			return nil
 		}
 		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
@@ -2626,7 +2696,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			if sm == nil {
 				return nil
 			}
-			sm.Kill(s.ConnectionID, s.Query, false, false)
+			killBySQLStmt(sm, s.ConnectionID, s.Query, false)
 		} else {
 			err := errors.NewNoStackError("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
@@ -2641,7 +2711,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if e.IsFromRemote {
 		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.Ctx().GetSessionVars().SourceAddr.IP.String()))
-		sm.Kill(s.ConnectionID, s.Query, false, false)
+		killBySQLStmt(sm, s.ConnectionID, s.Query, true)
 		return nil
 	}
 
@@ -2667,10 +2737,21 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
-		sm.Kill(s.ConnectionID, s.Query, false, false)
+		killBySQLStmt(sm, s.ConnectionID, s.Query, false)
 	}
 
 	return nil
+}
+
+func killBySQLStmt(sm sessmgr.Manager, connectionID uint64, query bool, fromRemote bool) {
+	normalCloseMsg := ""
+	if !query {
+		normalCloseMsg = sessmgr.NormalCloseMsgKillStmt
+		if fromRemote {
+			normalCloseMsg = sessmgr.NormalCloseMsgKillStmtFromRemote
+		}
+	}
+	sessmgr.KillWithNormalCloseMsg(sm, connectionID, query, false, false, normalCloseMsg)
 }
 
 func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalconn.GCID, query bool) error {
@@ -2724,7 +2805,319 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	return err
 }
 
-func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
+func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.RefreshObjects {
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Refresh stats broadcast requires database-qualified names")
+	// Note: Restore the statement to a SQL string so we can broadcast fully qualified
+	// table names to every instance. For example, `REFRESH STATS tbl` executed in
+	// database `db` must be sent as `REFRESH STATS db.tbl`; otherwise a peer without
+	// that current database would skip the table.
+	sql, err := restoreRefreshStatsSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format refresh stats statement", zap.Error(err))
+		return err
+	}
+	if e.IsFromRemote {
+		if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully refreshed statistics from remote", zap.String("sql", sql))
+		return nil
+	}
+	if s.IsClusterWide {
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast refresh stats command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
+	}
+	if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully refreshed statistics on the current instance", zap.String("sql", sql))
+	return nil
+}
+
+func restoreRefreshStatsSQL(s *ast.RefreshStatsStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+func restoreFlushStatsDeltaSQL(s *ast.FlushStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.RefreshObjects)
+		s.Dedup()
+		return origCount == len(s.RefreshObjects)
+	}, "RefreshObjects should be deduplicated in the building phase")
+	tableIDs := make([]int64, 0, len(s.RefreshObjects))
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, refreshObject := range s.RefreshObjects {
+			switch refreshObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
+				exists := is.SchemaExists(refreshObject.DBName)
+				if !exists {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, refreshObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					// Note: We do not warn about databases without tables because we cannot issue a warning
+					// for every such database when refreshing with `REFRESH STATS *.*`.(Technically, we can, but no point to do so.)
+					// Instead, we simply log the information to remain consistent across all cases.
+					statslogutil.StatsLogger().Info("No table in the database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				for _, table := range tables {
+					tableIDs = append(tableIDs, table.ID)
+				}
+			case ast.StatsObjectScopeTable:
+				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if table == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+					continue
+				}
+				tableIDs = append(tableIDs, table.ID)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		// If all specified databases or tables do not exist, we do nothing.
+		if len(tableIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to refresh stats")
+			return nil
+		}
+	}
+	// Note: tableIDs is empty means to refresh all tables.
+	h := domain.GetDomain(e.Ctx()).StatsHandle()
+	if s.RefreshMode != nil {
+		if *s.RefreshMode == ast.RefreshStatsModeLite {
+			return h.InitStatsLite(ctx, tableIDs...)
+		}
+		return h.InitStats(ctx, is, tableIDs...)
+	}
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	if liteInitStats {
+		return h.InitStatsLite(ctx, tableIDs...)
+	}
+	return h.InitStats(ctx, is, tableIDs...)
+}
+
+func appendStatsDeltaTargetTableIDs(targetIDs []int64, tableInfo *model.TableInfo) []int64 {
+	targetIDs = append(targetIDs, tableInfo.ID)
+	if partitionInfo := tableInfo.GetPartitionInfo(); partitionInfo != nil {
+		for _, def := range partitionInfo.Definitions {
+			targetIDs = append(targetIDs, def.ID)
+		}
+	}
+	return targetIDs
+}
+
+func (e *SimpleExec) executeFlushStatsDelta(ctx context.Context, s *ast.FlushStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.FlushObjects {
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Flush stats delta broadcast requires database-qualified names")
+	// Note: broadcast serializes the statement back to SQL and every peer reparses it
+	// through the broadcast query path, which does not rerun plan building to fill in
+	// the current database for unqualified table names. `FLUSH STATS_DELTA tbl`
+	// executed in database `db` therefore has to be restored as
+	// `FLUSH STATS_DELTA db.tbl`; otherwise a peer without that current database
+	// cannot resolve the target table.
+	sql, err := restoreFlushStatsDeltaSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format flush stats delta statement", zap.Error(err))
+		return err
+	}
+	if e.IsFromRemote {
+		if err := e.executeFlushStatsDeltaOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV from remote", zap.String("sql", sql))
+		return nil
+	}
+	if s.IsCluster {
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast flush stats delta command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
+	}
+	// This is the local, non-CLUSTER path: remote requests are handled above to
+	// avoid rebroadcasting, and without CLUSTER we flush only the current TiDB
+	// instance because pending stats deltas are buffered per instance.
+	if err := e.executeFlushStatsDeltaOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV on the current instance", zap.String("sql", sql))
+	return nil
+}
+
+func (e *SimpleExec) executeFlushStatsDeltaOnCurrentInstance(ctx context.Context, s *ast.FlushStmt) error {
+	intest.Assert(len(s.FlushObjects) > 0, "FlushObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.FlushObjects)
+		s.DedupFlushObjects()
+		return origCount == len(s.FlushObjects)
+	}, "FlushObjects should be deduplicated in the building phase")
+
+	targetIDs := make([]int64, 0, len(s.FlushObjects))
+	isGlobalScope := len(s.FlushObjects) == 1 && s.FlushObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, flushObject := range s.FlushObjects {
+			switch flushObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
+				if !is.SchemaExists(flushObject.DBName) {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(flushObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when flushing stats delta", zap.String("db", flushObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, flushObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					statslogutil.StatsLogger().Info("No table in the database when flushing stats delta", zap.String("db", flushObject.DBName.O))
+					continue
+				}
+				for _, tableInfo := range tables {
+					targetIDs = appendStatsDeltaTargetTableIDs(targetIDs, tableInfo)
+				}
+			case ast.StatsObjectScopeTable:
+				tableInfo, err := is.TableInfoByName(flushObject.DBName, flushObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(flushObject.DBName, flushObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when flushing stats delta", zap.String("db", flushObject.DBName.O), zap.String("table", flushObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if tableInfo == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(flushObject.DBName, flushObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when flushing stats delta", zap.String("db", flushObject.DBName.O), zap.String("table", flushObject.TableName.O))
+					continue
+				}
+				targetIDs = appendStatsDeltaTargetTableIDs(targetIDs, tableInfo)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		if len(targetIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to flush stats delta")
+			return nil
+		}
+	}
+	return domain.GetDomain(e.Ctx()).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+}
+
+func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	broadcastExec := &tipb.Executor{
+		Tp: tipb.ExecType_TypeBroadcastQuery,
+		BroadcastQuery: &tipb.BroadcastQuery{
+			Query: &sql,
+		},
+	}
+	dagReq := &tipb.DAGRequest{}
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sctx.GetSessionVars().Location())
+	sc := sctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
+	dagReq.Flags = sc.PushDownFlags()
+	dagReq.Executors = []*tipb.Executor{broadcastExec}
+
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.
+		SetDAGRequest(dagReq).
+		SetFromSessionVars(sctx.GetDistSQLCtx()).
+		SetFromInfoSchema(sctx.GetInfoSchema()).
+		SetStoreType(kv.TiDB).
+		// Send to all TiDB instances.
+		SetTiDBServerID(0).
+		SetStartTS(math.MaxUint64).
+		Build()
+	if err != nil {
+		return err
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return err
+	}
+
+	// Must consume & close the response, otherwise coprocessor task will leak.
+	defer func() {
+		_ = resp.Close()
+	}()
+	for {
+		subset, err := resp.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if subset == nil {
+			break // all remote tasks finished cleanly
+		}
+	}
+
+	return nil
+}
+
+func (e *SimpleExec) executeFlush(ctx context.Context, s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
 		if s.ReadLock {
@@ -2741,8 +3134,12 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 				return err
 			}
 		}
+	case ast.FlushStatus:
+		e.Ctx().GetSessionVars().KeysExamined = 0
 	case ast.FlushClientErrorsSummary:
 		errno.FlushStats()
+	case ast.FlushStatsDelta:
+		return e.executeFlushStatsDelta(ctx, s)
 	}
 	return nil
 }
@@ -2795,7 +3192,7 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 			}
 		}
 	}
-	if err := h.DeleteTableStatsFromKV(statsIDs); err != nil {
+	if err := h.DeleteTableStatsFromKV(statsIDs, true); err != nil {
 		return err
 	}
 	return h.Update(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
@@ -2868,13 +3265,13 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 	if err := decoder.Decode(&sessionStates); err != nil {
 		return errors.Trace(err)
 	}
-	return e.Ctx().DecodeSessionStates(ctx, e.Ctx(), &sessionStates)
+	return e.Ctx().DecodeStates(ctx, &sessionStates)
 }
 
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	switch s.Tp {
 	case ast.AdminReloadStatistics:
-		return e.executeAdminReloadStatistics(s)
+		return e.executeAdminReloadStatistics()
 	case ast.AdminFlushPlanCache:
 		return e.executeAdminFlushPlanCache(s)
 	case ast.AdminSetBDRRole:
@@ -2885,14 +3282,8 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
-	if s.Tp != ast.AdminReloadStatistics {
-		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
-	}
-	if !e.Ctx().GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	return domain.GetDomain(e.Ctx()).StatsHandle().ReloadExtendedStatistics()
+func (*SimpleExec) executeAdminReloadStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
 func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
@@ -2960,7 +3351,7 @@ func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
 		return errors.New("only support alter range policy")
 	}
 	bundle := &placement.Bundle{}
-	policyName := model.NewCIStr(s.PlacementOption.StrValue)
+	policyName := ast.NewCIStr(s.PlacementOption.StrValue)
 	if policyName.L != placement.DefaultKwd {
 		policy, ok := e.is.PolicyByName(policyName)
 		if !ok {

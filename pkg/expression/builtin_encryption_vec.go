@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -81,7 +82,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 
 	result.ReserveString(n)
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// According to doc: If either function argument is NULL, the function returns NULL.
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
 			result.AppendNull()
@@ -165,7 +166,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// According to doc: If either function argument is NULL, the function returns NULL.
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) || ivBuf.IsNull(i) {
 			result.AppendNull()
@@ -227,7 +228,7 @@ func (b *builtinDecodeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -266,7 +267,7 @@ func (b *builtinEncodeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -338,7 +339,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// According to doc: If either function argument is NULL, the function returns NULL.
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) || ivBuf.IsNull(i) {
 			result.AppendNull()
@@ -394,7 +395,7 @@ func (b *builtinRandomBytesSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	var dst bytes.Buffer
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -431,7 +432,7 @@ func (b *builtinMD5Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resul
 	result.ReserveString(n)
 
 	digest := md5.New() // #nosec G401
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -479,7 +480,7 @@ func (b *builtinSHA2Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 		hasher384 hash.Hash
 		hasher512 hash.Hash
 	)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -541,7 +542,7 @@ func (b *builtinSM3Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resul
 	}
 	result.ReserveString(n)
 	hasher := auth.NewSM3()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -595,7 +596,7 @@ func (b *builtinCompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	}
 
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -680,7 +681,7 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 
 	tc := typeCtx(ctx)
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// According to doc: If either function argument is NULL, the function returns NULL.
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
 			result.AppendNull()
@@ -722,7 +723,7 @@ func (b *builtinPasswordSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendString("")
 			continue
@@ -760,7 +761,7 @@ func (b *builtinSHA1Sig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	result.ReserveString(n)
 	hasher := sha1.New() // #nosec G401
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -795,7 +796,7 @@ func (b *builtinUncompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 
 	result.ReserveString(n)
 	tc := typeCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -851,7 +852,7 @@ func (b *builtinUncompressedLengthSig) vecEvalInt(ctx EvalContext, input *chunk.
 	result.ResizeInt64(nr, false)
 	result.MergeNulls(payloadBuf)
 	i64s := result.Int64s()
-	for i := 0; i < nr; i++ {
+	for i := range nr {
 		if result.IsNull(i) {
 			continue
 		}
@@ -900,12 +901,12 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *
 	i64s := result.Int64s()
 	globalVars := vars.GlobalVarsAccessor
 	enableValidation := false
-	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	validation, err := globalVars.GetGlobalSysVar(vardef.ValidatePasswordEnable)
 	if err != nil {
 		return err
 	}
 	enableValidation = variable.TiDBOptOn(validation)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}

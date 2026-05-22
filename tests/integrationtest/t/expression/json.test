@@ -242,6 +242,17 @@ select
 		json_keys('{"a": 1, "b": 2}'),
 		json_keys('{"a": {"c": 3}, "b": 2}'),
 		json_keys('{"a": {"c": 3}, "b": 2}', "$.a");
+
+# issue 56788
+SELECT JSON_KEYS('[{"X": 1}, {"Y": 2}]', '$[1]');
+SELECT JSON_KEYS('[{"A1": 1, "B1": 2, "C1": 3}, {"A2": 10, "B2": 20, "C2": {"D": 4}}, {"A3": 1, "B3": 2, "C3": 6}]', '$[1]');
+SELECT JSON_KEYS('[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]', '$[last].C');
+SELECT JSON_KEYS('[{"A": 1, "B": 2, "C": {"D": 3}}, {"A": 10, "B": 20, "C": {"D": 4}}, {"A": 1, "B": 2, "C": [{"D": 5}, {"E": 55}]}]', '$[last].C[1]');
+SELECT JSON_KEYS('[{"A": 1, "B": 2}, {"C": 3, "D": [{"F": 5}, {"E": 55}]}]', '$[1].D[1]');
+SELECT JSON_KEYS('[{"X": 1}, {"Y": {"a": 1, "b": 2, "c": 3}}]', '$[1].Y');
+-- error 3140
+SELECT JSON_KEYS('[{"X": 1}, {"Y": [a,b,c]}]', '$.Y');
+
 select
 		json_length('1'),
 		json_length('{}'),
@@ -538,3 +549,68 @@ SELECT JSON_SCHEMA_VALID(b2, '{}') FROM t1;
 prepare stmt from 'select json_object(?, ?)';
 set @a=1;
 execute stmt using @a, @a;
+
+# TestIssue58888
+select json_extract("0.0", "$");
+select json_extract("[1E17]", "$");
+
+# TestIssue58894
+select json_extract('[1E27]', '$');
+
+# TestIssue58897
+select json_extract("{\"\\b\":\"\"}", "$");
+select json_extract("{\"\\f\":\"\"}", "$");
+
+# TestJSONExtractObjectFromLast
+select json_extract('{"a":"b"}', '$[0]');
+select json_extract('{"a":"b"}', '$[last]');
+select json_set('{"a":"b"}', '$[last]', 1);
+
+# TestIssue59465
+SELECT JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3));
+
+# TestIssue59463
+# should return NULL because the path is NULL
+set tidb_enable_vectorized_expression = 'ON';
+select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
+set tidb_enable_vectorized_expression = 'OFF';
+select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
+set tidb_enable_vectorized_expression = default;
+
+# TestIssue60906
+--error 1582
+select json_memberof();
+
+# TestJSONSumCrc32
+# unsigned array
+drop table if exists unsignedTable;
+CREATE TABLE unsignedTable(i INT PRIMARY KEY, j JSON);
+insert into unsignedTable values(1, "[5, 7]"), (4, "[0, 8]");
+select json_sum_crc32(j AS UNSIGNED ARRAY) as sum_crc32 from unsignedTable;
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from unsignedTable;
+select json_sum_crc32(j AS DOUBLE ARRAY) as sum_crc32 from unsignedTable;
+
+# signed array
+drop table if exists signedTable;
+CREATE TABLE signedTable(i INT PRIMARY KEY, j JSON);
+insert into signedTable values(1, "[-1, -2]"), (4, "[3, 4]");
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from signedTable;
+select json_sum_crc32(j AS DOUBLE ARRAY) as sum_crc32 from signedTable;
+-- error 1690
+select json_sum_crc32(j AS UNSIGNED ARRAY) as sum_crc32 from signedTable;
+
+# double array
+drop table if exists doubleTable;
+CREATE TABLE doubleTable(i INT, j JSON);
+insert into doubleTable values (1, null), (2, "[2.1, 3.2]");
+select json_sum_crc32(j AS double ARRAY) as sum_crc32 from doubleTable;
+-- error 1105
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from doubleTable;
+
+# char array
+drop table if exists charTable;
+CREATE TABLE charTable(i INT, j JSON);
+insert into charTable values (2, '["a"]'), (4, null), (3, '["c"]');
+select json_sum_crc32(j AS char(10) ARRAY) from charTable;
+-- error 1105
+select json_sum_crc32(j AS double ARRAY) from charTable;

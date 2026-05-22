@@ -24,7 +24,9 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -68,35 +70,42 @@ func TestConcurrent(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key auto_increment);")
 	is := dom.InfoSchema()
-	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
 	to := dest{dbID: dbInfo.ID, tblID: tbInfo.ID}
 
+	var keyspaceID uint32
+	if kerneltype.IsClassic() {
+		keyspaceID = uint32(tikv.NullspaceID)
+	} else {
+		// use keyspace ID of SYSTEM
+		keyspaceID = uint32(0xFFFFFF - 1)
+	}
 	const concurrency = 30
 	notify := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			defer wg.Done()
 			<-notify
-			autoIDRequest(t, cli, to, false, 1, uint32(tikv.NullspaceID))
+			autoIDRequest(t, cli, to, false, 1, keyspaceID)
 		}()
 	}
 
 	// Rebase to some value
 	rebaseRequest(t, cli, to, true, 666).check("")
-	checkCurrValue(t, cli, to, 666, 666, uint32(tikv.NullspaceID))
+	checkCurrValue(t, cli, to, 666, 666, keyspaceID)
 	// And +1 concurrently for 30 times
 	close(notify)
 	wg.Wait()
 	// Check the result is increased by 30
-	checkCurrValue(t, cli, to, 666+concurrency, 666+concurrency, uint32(tikv.NullspaceID))
+	checkCurrValue(t, cli, to, 666+concurrency, 666+concurrency, keyspaceID)
 }
 
 type dest struct {
@@ -139,14 +148,19 @@ func rebaseRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 }
 
 func TestAPI(t *testing.T) {
-	// Testing scenarios without keyspace.
-	testAPIWithKeyspace(t, nil)
+	if kerneltype.IsClassic() {
+		// Testing scenarios without keyspace.
+		testAPIWithKeyspace(t, nil)
+	}
 
-	// Testing scenarios with keyspace.
-	keyspaceMeta := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta.Id = 2
-	keyspaceMeta.Name = "test_ks_name2"
-	testAPIWithKeyspace(t, &keyspaceMeta)
+	if kerneltype.IsNextGen() {
+		// Testing scenarios with keyspace.
+		keyspaceMeta := keyspacepb.KeyspaceMeta{
+			Id:   uint32(0xFFFFFF) - 1,
+			Name: keyspace.System,
+		}
+		testAPIWithKeyspace(t, &keyspaceMeta)
+	}
 }
 
 func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
@@ -157,17 +171,17 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 		reqKeyspaceID = keyspaceMeta.Id
 	}
 
-	opts := mockstore.WithKeyspaceMeta(keyspaceMeta)
+	opts := mockstore.WithCurrentKeyspaceMeta(keyspaceMeta)
 	store, dom := testkit.CreateMockStoreAndDomain(t, opts)
 	tk := testkit.NewTestKit(t, store)
 	cli := MockForTest(store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int key auto_increment);")
 	is := dom.InfoSchema()
-	dbInfo, ok := is.SchemaByName(model.NewCIStr("test"))
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbInfo := tbl.Meta()
 
@@ -214,7 +228,8 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 
 	rebaseRequest(t, cli, to, true, -1).check("")
 	checkCurrValue(t, cli, to, -1, -1, reqKeyspaceID)
-	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).check(-1, 0)
+	// rebase to max value, the next request should fail
+	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).checkErrmsg()
 }
 
 func TestGRPC(t *testing.T) {
@@ -252,6 +267,13 @@ func TestGRPC(t *testing.T) {
 	grpcConn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	cli := autoid.NewAutoIDAllocClient(grpcConn)
+	var keyspaceID uint32
+	if kerneltype.IsClassic() {
+		keyspaceID = uint32(tikv.NullspaceID)
+	} else {
+		// use keyspace ID of SYSTEM
+		keyspaceID = uint32(0xFFFFFF - 1)
+	}
 	_, err = cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{
 		DbID:       0,
 		TblID:      0,
@@ -259,7 +281,7 @@ func TestGRPC(t *testing.T) {
 		Increment:  1,
 		Offset:     1,
 		IsUnsigned: false,
-		KeyspaceID: uint32(tikv.NullspaceID),
+		KeyspaceID: keyspaceID,
 	})
 	require.NoError(t, err)
 }

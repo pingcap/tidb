@@ -15,6 +15,8 @@
 package exec
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -42,7 +44,8 @@ func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 }
 
 // ReportCopIndexUsageForHandle wraps around `ReportCopIndexUsageForTable` to get the `indexID` automatically
-// from the `table.Table` if the table has a clustered index or integer primary key.
+// from the `table.Table` if the table has a clustered index or clustered integer primary key.
+// If the table has a non-clustered PK or no PK, this function simply returns without reporting index usage.
 func (e *IndexUsageReporter) ReportCopIndexUsageForHandle(tbl table.Table, planID int) {
 	idxID, ok := getClusterIndexID(tbl.Meta())
 	if !ok {
@@ -70,6 +73,7 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
+		// Index usage for pseudo stats is not reported.
 		return
 	}
 
@@ -97,8 +101,10 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.Ta
 func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, kvRequestTotal, rows int64) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		// skip if the table is empty or the stats is not valid
-		return
+		// it's possible that the point get doesn't have the table stats. In this case, we always
+		// report the tableRowCount as `math.MaxInt32`, so that it'll be recorded in the smallest
+		// non-zero bucket if the rows is greater than 0.
+		tableRowCount = math.MaxInt32
 	}
 
 	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(rows), uint64(tableRowCount))
@@ -107,6 +113,10 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTab
 
 // getTableRowCount returns the `RealtimeCount` of a table
 func (e *IndexUsageReporter) getTableRowCount(tableID int64) (int64, bool) {
+	if e.statsMap == nil {
+		return 0, false
+	}
+
 	stats := e.statsMap.GetUsedInfo(tableID)
 	if stats == nil {
 		return 0, false
@@ -127,6 +137,7 @@ func getClusterIndexID(tblInfo *model.TableInfo) (int64, bool) {
 		for _, idx := range tblInfo.Indices {
 			if idx.Primary {
 				idxID = idx.ID
+				break
 			}
 		}
 	} else {

@@ -18,21 +18,23 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -51,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -131,6 +132,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		sctx:               sctx,
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
+		lockSelectCtxStack: make([]lockSelectCtx, 0),
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
 		varsMutable:        make(map[string]struct{}),
 		varsReadonly:       make(map[string]struct{}),
@@ -161,7 +163,7 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, and BR restore.
+	// rename table, alter table add foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -178,9 +180,6 @@ const (
 	// inAnalyze is set when visiting an analyze statement.
 	inAnalyze
 )
-
-// Make linter happy.
-var _ = PreprocessorReturn{}.initedLastSnapshotTS
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
@@ -240,6 +239,11 @@ type preprocessor struct {
 	tableAliasInJoin []map[string]any
 	preprocessWith   *preprocessWith
 
+	// lockSelectCtxStack tracks lock-clause resolution state for each SELECT. Each level keeps both
+	// the LockInfo TableName nodes that should skip normal preprocess resolution and the FROM-clause
+	// table references collected during traversal for later lock-target binding.
+	lockSelectCtxStack []lockSelectCtx
+
 	staleReadProcessor staleread.Processor
 
 	varsMutable  map[string]struct{}
@@ -264,6 +268,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
 		p.checkSelectNoopFuncs(node)
+		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
+		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
+		p.pushLockSelectCtx(node)
 	case *ast.SetOprStmt:
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
@@ -297,10 +304,17 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
+		// Used in CREATE INDEX ...
 		p.stmtTp = TypeCreate
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
 		p.stmtTp = TypeAlter
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
@@ -392,7 +406,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.TableSource:
 		isModeOracle := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
-		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+		_, isSelectStmt := node.Source.(*ast.SelectStmt)
+		_, isSetOprStmt := node.Source.(*ast.SetOprStmt)
+		if (isSelectStmt || isSetOprStmt) && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = dbterror.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
@@ -429,15 +445,29 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.AnalyzeTableStmt:
 		p.flag |= inAnalyze
 	case *ast.VariableExpr:
+		// Use lowercase for consistency with how user variables are stored (session.go) and
+		// looked up in convertReadonlyVarToConst (builtin_other.go), which uses the lowercased
+		// name from the GetVar expression. Otherwise @customerId vs @customerid would have
+		// different plans: only the latter would be converted to constant for index range.
+		nameLower := strings.ToLower(node.Name)
 		if node.Value != nil {
-			p.varsMutable[node.Name] = struct{}{}
-			delete(p.varsReadonly, node.Name)
+			p.varsMutable[nameLower] = struct{}{}
+			delete(p.varsReadonly, nameLower)
 		} else if p.stmtTp == TypeSelect {
 			// Only check the variable in select statement.
-			_, ok := p.varsMutable[node.Name]
+			_, ok := p.varsMutable[nameLower]
 			if !ok {
-				p.varsReadonly[node.Name] = struct{}{}
+				p.varsReadonly[nameLower] = struct{}{}
 			}
+		}
+	case *ast.Constraint:
+		// Used in ALTER TABLE or CREATE TABLE
+		p.checkConstraintGrammar(node)
+	case *ast.ColumnName:
+		if node.Name.L == model.ExtraCommitTSName.L &&
+			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) {
+			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
+				model.ExtraCommitTSName.O)
 		}
 	default:
 		p.flag &= ^parentIsJoin
@@ -516,7 +546,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	if currentDB == "" {
 		return nil, errors.Trace(plannererrors.ErrNoDB)
 	}
-	sName := pmodel.NewCIStr(currentDB)
+	sName := ast.NewCIStr(currentDB)
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
@@ -594,8 +624,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	aliasChecker := &aliasChecker{}
 	originNode.Accept(aliasChecker)
 	hintedNode.Accept(aliasChecker)
-	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
-	hintedSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()), false)
+	originSQL, _ := bindinfo.NormalizeStmtForBinding(originNode, defaultDB, false)
+	hintedSQL, _ := bindinfo.NormalizeStmtForBinding(hintedNode, defaultDB, false)
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -627,11 +657,23 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				break
 			}
 		}
-		if !valid {
+		if x.Format != "" && !valid {
 			p.err = plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
 		}
 	case *ast.TableName:
+		// Skip resolving TableName nodes that come from locking clauses; they are bound later against FROM aliases.
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+			if _, ok := lockCtx.lockClauseTables[x]; ok {
+				break
+			}
+		}
 		p.handleTableName(x)
+	case *ast.TableSource:
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+			if v, ok := x.Source.(*ast.TableName); ok {
+				lockCtx.collect(v, x.AsName)
+			}
+		}
 	case *ast.Join:
 		if len(p.tableAliasInJoin) > 0 {
 			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
@@ -691,6 +733,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.SelectStmt:
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
+		}
+		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
+			p.checkLockClauseTables(x, lockCtx)
+			p.popLockSelectCtx()
 		}
 	case *ast.SetOprStmt:
 		if x.With != nil {
@@ -874,7 +920,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if stmt.ReferTable != nil {
-		schema := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+		schema := ast.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
@@ -1050,7 +1096,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
-	currentDB := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+	currentDB := ast.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if util.IsInCorrectIdentifierName(t.Name.String()) {
 			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -1115,7 +1161,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]any) 
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
-					tabName = pmodel.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
+					tabName = ast.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
 				} else {
 					tabName = tableNode.Name
 				}
@@ -1154,6 +1200,64 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 	return isPrimary, nil
 }
 
+func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
+	if isColumnar && indexOptions == nil {
+		return dbterror.ErrUnsupportedIndexType.FastGen("COLUMNAR INDEX must specify 'USING <index_type>'")
+	}
+	if indexOptions == nil {
+		return nil
+	}
+	if isColumnar {
+		switch indexOptions.Tp {
+		case ast.IndexTypeVector, ast.IndexTypeInverted:
+			// Accepted
+		case ast.IndexTypeFulltext:
+			if indexOptions.ParserName.L != "" && model.GetFullTextParserTypeBySQLName(indexOptions.ParserName.L) == model.FullTextParserTypeInvalid {
+				return dbterror.ErrUnsupportedIndexType.FastGen("Unsupported parser '%s'", indexOptions.ParserName.O)
+			}
+		case ast.IndexTypeInvalid:
+			return dbterror.ErrUnsupportedIndexType.FastGen("COLUMNAR INDEX must specify 'USING <index_type>'")
+		default:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for COLUMNAR INDEX", indexOptions.Tp)
+		}
+		if indexOptions.Visibility == ast.IndexVisibilityInvisible {
+			return dbterror.ErrUnsupportedIndexType.FastGen("INVISIBLE can not be used in %s INDEX", indexOptions.Tp)
+		}
+	} else {
+		switch indexOptions.Tp {
+		case ast.IndexTypeHNSW:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING HNSW' can be only used for VECTOR INDEX")
+		case ast.IndexTypeVector, ast.IndexTypeInverted, ast.IndexTypeFulltext:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' can be only used for COLUMNAR INDEX", indexOptions.Tp)
+		default:
+			// Accepted
+		}
+	}
+
+	return nil
+}
+
+func checkIndexSpecs(indexOptions *ast.IndexOption, partSpecs []*ast.IndexPartSpecification) error {
+	if indexOptions == nil {
+		return nil
+	}
+	switch indexOptions.Tp {
+	case ast.IndexTypeVector:
+		if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))")
+		}
+	case ast.IndexTypeInverted:
+		if len(partSpecs) != 1 || partSpecs[0].Column == nil {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("COLUMNAR INDEX of INVERTED type must specify one column name")
+		}
+	case ast.IndexTypeFulltext:
+		if len(partSpecs) != 1 || partSpecs[0].Column == nil {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index must specify one column name")
+		}
+	}
+	return nil
+}
+
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
 	if util.IsInCorrectIdentifierName(tName) {
@@ -1165,6 +1269,60 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+	if p.err != nil {
+		return
+	}
+
+	// Rewrite CREATE VECTOR INDEX into CREATE COLUMNAR INDEX
+	if stmt.KeyType == ast.IndexKeyTypeVector {
+		if stmt.IndexOption.Tp != ast.IndexTypeInvalid && stmt.IndexOption.Tp != ast.IndexTypeHNSW {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for VECTOR INDEX", stmt.IndexOption.Tp)
+			return
+		}
+		stmt.KeyType = ast.IndexKeyTypeColumnar
+		stmt.IndexOption.Tp = ast.IndexTypeVector
+	}
+	// Rewrite CREATE FULLTEXT INDEX into CREATE COLUMNAR INDEX
+	if stmt.KeyType == ast.IndexKeyTypeFulltext {
+		if stmt.IndexOption.Tp != ast.IndexTypeInvalid {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for FULLTEXT INDEX", stmt.IndexOption.Tp)
+			return
+		}
+		stmt.KeyType = ast.IndexKeyTypeColumnar
+		stmt.IndexOption.Tp = ast.IndexTypeFulltext
+	}
+
+	p.err = checkIndexOptions(stmt.KeyType == ast.IndexKeyTypeColumnar, stmt.IndexOption)
+	if p.err != nil {
+		return
+	}
+	p.err = checkIndexSpecs(stmt.IndexOption, stmt.IndexPartSpecifications)
+}
+
+func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
+	// Rewrite VECTOR INDEX into COLUMNAR INDEX
+	if stmt.Tp == ast.ConstraintVector {
+		if stmt.Option.Tp != ast.IndexTypeInvalid && stmt.Option.Tp != ast.IndexTypeHNSW {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for VECTOR INDEX", stmt.Option.Tp)
+			return
+		}
+		stmt.Tp = ast.ConstraintColumnar
+		stmt.Option.Tp = ast.IndexTypeVector
+	}
+	if stmt.Tp == ast.ConstraintFulltext {
+		if stmt.Option.Tp != ast.IndexTypeInvalid {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for FULLTEXT INDEX", stmt.Option.Tp)
+			return
+		}
+		stmt.Tp = ast.ConstraintColumnar
+		stmt.Option.Tp = ast.IndexTypeFulltext
+	}
+
+	p.err = checkIndexOptions(stmt.Tp == ast.ConstraintColumnar, stmt.Option)
+	if p.err != nil {
+		return
+	}
+	p.err = checkIndexSpecs(stmt.Option, stmt.Keys)
 }
 
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
@@ -1377,6 +1535,9 @@ var mysqlValidTableEngineNames = map[string]struct{}{
 	"myisam":     {},
 	"ndb":        {},
 	"heap":       {},
+	"aria":       {}, // https://mariadb.com/docs/server/server-usage/storage-engines/aria/aria-storage-engine
+	"myrocks":    {}, // https://mariadb.com/docs/server/server-usage/storage-engines/myrocks
+	"tokudb":     {}, // https://mariadb.com/docs/server/server-usage/storage-engines/legacy-storage-engines/tokudb
 }
 
 func checkTableEngine(engineName string) error {
@@ -1589,11 +1750,9 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		for _, cte := range p.preprocessWith.cteCanUsed {
-			if cte == tn.Name.L {
-				p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
-				return
-			}
+		if slices.Contains(p.preprocessWith.cteCanUsed, tn.Name.L) {
+			p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
+			return
 		}
 
 		currentDB := p.sctx.GetSessionVars().CurrentDB
@@ -1602,7 +1761,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 
-		tn.Schema = pmodel.NewCIStr(currentDB)
+		tn.Schema = ast.NewCIStr(currentDB)
 	}
 
 	if p.flag&inCreateOrDropTable > 0 {
@@ -1640,7 +1799,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), pmodel.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), ast.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1663,6 +1822,174 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	})
 }
 
+// lockRef records the FROM table and its alias (if any) for lock-clause name resolution.
+type lockRef struct {
+	table *ast.TableName
+	alias ast.CIStr
+}
+
+type lockSelectCtx struct {
+	// lockClauseTables are the TableName nodes that syntactically belong to this SELECT's locking
+	// clause. They skip handleTableName because they are resolved later against the FROM clause.
+	lockClauseTables map[*ast.TableName]struct{}
+	aliasMap         map[string]lockRef
+	qualifiedMap     map[string]lockRef
+	// orderedRefs preserves the left-to-right FROM order for unqualified OF fallback.
+	// For example, `FROM db1.t, db2.t` records `db1.t` before `db2.t`, so fallback resolution for `FOR UPDATE OF t` will try `db1.t` first.
+	// When both aliased and unaliased entries share the same base name, checkLockClauseTables first
+	// searches orderedRefs for an exact unaliased match, and only then falls back to aliased entries
+	// for backward compatibility.
+	orderedRefs []lockRef
+}
+
+func newLockSelectCtx(lockTables []*ast.TableName) lockSelectCtx {
+	lockClauseTables := make(map[*ast.TableName]struct{}, len(lockTables))
+	for _, tn := range lockTables {
+		lockClauseTables[tn] = struct{}{}
+	}
+	return lockSelectCtx{
+		lockClauseTables: lockClauseTables,
+		aliasMap:         make(map[string]lockRef),
+		qualifiedMap:     make(map[string]lockRef),
+		orderedRefs:      make([]lockRef, 0),
+	}
+}
+
+func (c *lockSelectCtx) collect(tableName *ast.TableName, asName ast.CIStr) {
+	ref := lockRef{
+		table: tableName,
+		alias: asName,
+	}
+	if asName.L != "" {
+		c.aliasMap[asName.L] = ref
+	}
+	if tableName.Schema.L != "" {
+		qualifiedKey := tableName.Schema.L + "." + tableName.Name.L
+		// Prefer an exact unaliased `schema.table` entry. If only aliased references exist in FROM,
+		// keep one as the backward-compatibility fallback for `OF schema.table`.
+		if asName.L == "" || c.qualifiedMap[qualifiedKey].table == nil {
+			c.qualifiedMap[qualifiedKey] = ref
+		}
+		if asName.L != "" {
+			// Keep backward compatibility for `OF schema.table` while also supporting `OF schema.alias`.
+			c.qualifiedMap[tableName.Schema.L+"."+asName.L] = ref
+		}
+	}
+	c.orderedRefs = append(c.orderedRefs, ref)
+}
+
+func (p *preprocessor) pushLockSelectCtx(sel *ast.SelectStmt) {
+	var lockTables []*ast.TableName
+	if sel.LockInfo != nil {
+		lockTables = sel.LockInfo.Tables
+	}
+	p.lockSelectCtxStack = append(p.lockSelectCtxStack, newLockSelectCtx(lockTables))
+}
+
+func (p *preprocessor) getLockSelectCtxStackTop() *lockSelectCtx {
+	if len(p.lockSelectCtxStack) == 0 {
+		return nil
+	}
+	return &p.lockSelectCtxStack[len(p.lockSelectCtxStack)-1]
+}
+
+func (p *preprocessor) popLockSelectCtx() {
+	if len(p.lockSelectCtxStack) == 0 {
+		return
+	}
+	p.lockSelectCtxStack = p.lockSelectCtxStack[:len(p.lockSelectCtxStack)-1]
+}
+
+// checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
+// It binds lock targets to the tables in FROM and keeps backward compatibility by accepting
+// base-table names even when aliases exist, with a warning to guide users to explicit aliases.
+func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lockSelectCtx) {
+	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone || len(stmt.LockInfo.Tables) == 0 {
+		return
+	}
+	if lockCtx == nil {
+		emptyCtx := newLockSelectCtx(nil)
+		lockCtx = &emptyCtx
+	}
+	warnedCompatRefs := make(map[string]struct{})
+
+	for _, ref := range stmt.LockInfo.Tables {
+		name := ref.Name.L
+		var matched lockRef
+		var matchedByAlias bool
+
+		if ref.Schema.L != "" {
+			name = ref.Schema.L + "." + ref.Name.L
+			matched = lockCtx.qualifiedMap[name]
+			matchedByAlias = matched.alias.L != "" && ref.Name.L == matched.alias.L
+			if matchedByAlias {
+				ref.IsAlias = true
+			}
+		} else if t, ok := lockCtx.aliasMap[name]; ok {
+			ref.IsAlias = true
+			matched = t
+			matchedByAlias = true
+		}
+
+		// If still not found and the lock clause is unqualified, first try an exact unaliased match.
+		// For example, `SELECT * FROM db.t AS a, db.t FOR UPDATE OF t` should resolve `t` to the
+		// unaliased `db.t`, not to `a`. Only if no unaliased entry exists do we fall back to aliased
+		// entries for backward compatibility. `SELECT * FROM db1.t, db2.t FOR UPDATE OF t` still
+		// resolves `t` to `db1.t` because lockCtx.orderedRefs preserves the left-to-right FROM order.
+		if matched.table == nil && ref.Schema.L == "" {
+			for _, tblRef := range lockCtx.orderedRefs {
+				if tblRef.alias.L == "" && tblRef.table.Name.L == name {
+					matched = tblRef
+					break
+				}
+			}
+			if matched.table == nil {
+				for _, tblRef := range lockCtx.orderedRefs {
+					if tblRef.alias.L != "" && tblRef.table.Name.L == name {
+						matched = tblRef
+						break
+					}
+				}
+			}
+		}
+
+		if matched.table == nil {
+			if ref.Schema.L != "" {
+				name = ref.Schema.O + "." + ref.Name.O
+			} else {
+				name = ref.Name.O
+			}
+			p.err = plannererrors.ErrUnknownTable.GenWithStackByArgs(name, "locking clause")
+			break
+		}
+
+		// Keep backward compatibility: if an aliased table is referenced by its base name
+		// in OF, accept it and emit a warning to guide users to the alias form.
+		if !matchedByAlias && matched.alias.L != "" {
+			warnKey := ref.Schema.L + "." + ref.Name.L + "->" + matched.alias.L
+			if _, seen := warnedCompatRefs[warnKey]; !seen {
+				p.sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+					"FOR UPDATE OF references the base table name while the table is aliased. Use the alias '%s' in OF to make the lock target explicit.",
+					matched.alias.O,
+				))
+				warnedCompatRefs[warnKey] = struct{}{}
+			}
+		}
+
+		tNameW := p.resolveCtx.GetTableName(matched.table)
+		if tNameW == nil {
+			// CTE has no *model.HintedTable, we need to skip it.
+			continue
+		}
+
+		p.resolveCtx.AddTableName(&resolve.TableNameW{
+			TableName: ref,
+			DBInfo:    tNameW.DBInfo,
+			TableInfo: tNameW.TableInfo,
+		})
+	}
+}
+
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
 	if dbInfo == nil {
@@ -1675,7 +2002,7 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	// Check the whether the repaired table is system table.
-	if util.IsMemOrSysDB(tn.Schema.L) {
+	if metadef.IsMemOrSysDB(tn.Schema.L) {
 		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
 		return
 	}
@@ -1701,7 +2028,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.DBName = p.sctx.GetSessionVars().CurrentDB
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
-		node.Table.Schema = pmodel.NewCIStr(node.DBName)
+		node.Table.Schema = ast.NewCIStr(node.DBName)
 	}
 	if node.User != nil && node.User.CurrentUser {
 		// Fill the Username and Hostname with the current user.
@@ -1746,7 +2073,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
 			table := spec.Constraint.Refer.Table
 			if table.Schema.L == "" && node.Table.Schema.L != "" {
-				table.Schema = pmodel.NewCIStr(node.Table.Schema.L)
+				table.Schema = ast.NewCIStr(node.Table.Schema.L)
 			}
 			if spec.Constraint.Tp == ast.ConstraintForeignKey {
 				// when foreign_key_checks is off, should ignore err when refer table is not exists.
@@ -1861,9 +2188,8 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName ast.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
 	skipLock := false
-	shouldLockMDL := false
 	var lockedID int64
 
 	defer func() {
@@ -1878,8 +2204,11 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			}
 		}
 
-		if shouldLockMDL && err == nil && !skipLock {
-			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[retTbl.Meta().ID] = struct{}{}
+		if err == nil {
+			if sctx.GetSessionVars().StmtCtx.RelatedTableIDs == nil {
+				sctx.GetSessionVars().StmtCtx.RelatedTableIDs = make(map[int64]struct{})
+			}
+			sctx.GetSessionVars().StmtCtx.RelatedTableIDs[retTbl.Meta().ID] = struct{}{}
 		}
 
 		if lockedID != 0 && err != nil {
@@ -1910,7 +2239,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
-	shouldLockMDL = true
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -1927,10 +2255,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
 			lockedID = tableInfo.ID
 		}
-		dom := domain.GetDomain(sctx)
-		domainSchema := dom.InfoSchema()
-		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		tbl, err = domainSchema.TableByName(ctx, dbName, tableInfo.Name)
+		latestIS := sctx.GetLatestISWithoutSessExt().(infoschema.InfoSchema)
+		domainSchemaVer := latestIS.SchemaMetaVersion()
+		tbl, err = latestIS.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -1957,8 +2284,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 						copyTableInfo = tbl.Meta().Clone()
 					}
 					copyTableInfo.Indices[i].State = model.StateWriteReorganization
-					dbInfo, _ := domainSchema.SchemaByName(dbName)
-					allocs := autoid.NewAllocatorsFromTblInfo(dom, dbInfo.ID, copyTableInfo)
+					dbInfo, _ := latestIS.SchemaByName(dbName)
+					allocs := autoid.NewAllocatorsFromTblInfo(latestIS.GetAutoIDRequirement(), dbInfo.ID, copyTableInfo)
 					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
 					if err != nil {
 						return nil, err
@@ -1989,7 +2316,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
 			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
-		db, _ := infoschema.SchemaByTable(domainSchema, tbl.Meta())
+		db, _ := infoschema.SchemaByTable(latestIS, tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
 			return nil, err
@@ -2025,7 +2352,7 @@ type aliasChecker struct{}
 func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
 		// 1. check the tableRefs of deleteStmt to find the alias
-		var aliases []*pmodel.CIStr
+		var aliases []*ast.CIStr
 		if deleteStmt.TableRefs != nil && deleteStmt.TableRefs.TableRefs != nil {
 			tableRefs := deleteStmt.TableRefs.TableRefs
 			if val := getTableRefsAlias(tableRefs.Left); val != nil {
@@ -2054,7 +2381,7 @@ func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func getTableRefsAlias(tableRefs ast.ResultSetNode) *pmodel.CIStr {
+func getTableRefsAlias(tableRefs ast.ResultSetNode) *ast.CIStr {
 	switch v := tableRefs.(type) {
 	case *ast.Join:
 		if v.Left != nil {

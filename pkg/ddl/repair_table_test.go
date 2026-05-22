@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,7 +42,7 @@ func TestRepairTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable"))
 	}()
 
-	store := testkit.CreateMockStoreWithSchemaLease(t, repairTableLease)
+	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, repairTableLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -87,6 +90,22 @@ func TestRepairTable(t *testing.T) {
 	tk.MustExec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2));")
 	repairTable := external.GetTableByName(t, tk, "test", "otHeR_tAbLe") //nolint:typecheck
 	require.Equal(t, "otHeR_tAbLe", repairTable.Meta().Name.O)
+
+	// Test cannot repair table before fetch all schemas
+	tk.MustExec("CREATE TABLE otHer_tAblE2 (a int, b varchar(1));")
+	domainutil.RepairInfo.SetRepairMode(true)
+	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
+	tk.MustGetErrMsg("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2))", "[ddl:8215]Failed to repair table: database test is not in repair")
+
+	// Test can repair table after fetch all schemas
+	domainutil.RepairInfo.SetRepairMode(true)
+	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
+	snapshot := store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
+	m := meta.NewReader(snapshot)
+	dbs, err := domain.FetchAllSchemasWithTables(m)
+	require.NoError(t, err)
+	require.Equal(t, len(dbs), 3)
+	tk.MustExec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2));")
 
 	// Test memory and system database is not for repair.
 	domainutil.RepairInfo.SetRepairMode(true)

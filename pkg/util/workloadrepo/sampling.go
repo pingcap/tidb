@@ -16,9 +16,11 @@ package workloadrepo
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -45,7 +47,9 @@ func (w *worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 func (w *worker) startSample(ctx context.Context) func() {
 	return func() {
 		w.Lock()
-		w.samplingTicker = time.NewTicker(time.Duration(w.samplingInterval) * time.Second)
+		if w.samplingTicker != nil {
+			w.resetSamplingInterval(w.samplingInterval)
+		}
 		w.Unlock()
 
 		for {
@@ -56,8 +60,8 @@ func (w *worker) startSample(ctx context.Context) func() {
 				// sample thread
 				var wg util.WaitGroupWrapper
 
-				for rtIdx := range workloadTables {
-					rt := &workloadTables[rtIdx]
+				for rtIdx := range w.workloadTables {
+					rt := &w.workloadTables[rtIdx]
 					if rt.tableType != samplingTable {
 						continue
 					}
@@ -73,10 +77,6 @@ func (w *worker) startSample(ctx context.Context) func() {
 }
 
 func (w *worker) resetSamplingInterval(newRate int32) {
-	if w.samplingTicker == nil {
-		return
-	}
-
 	if newRate == 0 {
 		w.samplingTicker.Stop()
 	} else {
@@ -86,8 +86,13 @@ func (w *worker) resetSamplingInterval(newRate int32) {
 
 func (w *worker) changeSamplingInterval(_ context.Context, d string) error {
 	n, err := strconv.Atoi(d)
+
+	failpoint.Inject("FastRunawayGC", func() {
+		err = errors.New("fake error")
+	})
+
 	if err != nil {
-		return err
+		return errWrongValueForVar.GenWithStackByArgs(repositorySamplingInterval, d)
 	}
 
 	w.Lock()
@@ -95,7 +100,9 @@ func (w *worker) changeSamplingInterval(_ context.Context, d string) error {
 
 	if int32(n) != w.samplingInterval {
 		w.samplingInterval = int32(n)
-		w.resetSamplingInterval(w.samplingInterval)
+		if w.samplingTicker != nil {
+			w.resetSamplingInterval(w.samplingInterval)
+		}
 	}
 
 	return nil

@@ -19,18 +19,18 @@ import (
 	"net"
 	"runtime"
 	"strconv"
-	"sync/atomic"
 
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -41,17 +41,24 @@ func genConfig(
 	ctx context.Context,
 	jobSortPath string,
 	memRoot MemRoot,
-	unique bool,
+	checkDup bool,
 	resourceGroup string,
+	keyspace string,
 	concurrency int,
 	maxWriteSpeed int,
-) (*local.BackendConfig, error) {
-	cfg := &local.BackendConfig{
+	globalSort bool,
+) *ingestctrl.BackendConfig {
+	workerConcurrency := int32(concurrency * 2)
+	if ImporterRangeConcurrencyForTest != nil {
+		workerConcurrency = ImporterRangeConcurrencyForTest.Load() * 2
+	}
+
+	cfg := &ingestctrl.BackendConfig{
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
-		WorkerConcurrency: concurrency * 2,
-		KeyspaceName:      tidb.GetGlobalKeyspaceName(),
+		WorkerConcurrency: *atomic.NewInt32(workerConcurrency),
+		KeyspaceName:      keyspace,
 		// We disable the switch TiKV mode feature for now, because the impact is not
 		// fully tested.
 		ShouldCheckWriteStall: true,
@@ -71,19 +78,15 @@ func genConfig(
 		DisableAutomaticCompactions: true,
 		StoreWriteBWLimit:           maxWriteSpeed,
 	}
-	// Each backend will build a single dir in lightning dir.
-	if ImporterRangeConcurrencyForTest != nil {
-		cfg.WorkerConcurrency = int(ImporterRangeConcurrencyForTest.Load()) * 2
-	}
+
 	adjustImportMemory(ctx, memRoot, cfg)
-	if unique {
+	if checkDup && !globalSort {
 		cfg.DupeDetectEnabled = true
 		cfg.DuplicateDetectOpt = common.DupDetectOpt{ReportErrOnDup: true}
-	} else {
-		cfg.DupeDetectEnabled = false
 	}
+	cfg.TiKVWorkerURL = tidb.GetGlobalConfig().TiKVWorkerURL
 
-	return cfg, nil
+	return cfg
 }
 
 // CopReadBatchSize is the batch size of coprocessor read.
@@ -93,17 +96,7 @@ func CopReadBatchSize(hintSize int) int {
 	if hintSize > 0 {
 		return hintSize
 	}
-	return 10 * int(variable.GetDDLReorgBatchSize())
-}
-
-// CopReadChunkPoolSize is the size of chunk pool, which
-// represents the max concurrent ongoing coprocessor requests.
-// It multiplies the tidb_ddl_reorg_worker_cnt by 10.
-func CopReadChunkPoolSize(hintConc int) int {
-	if hintConc > 0 {
-		return 10 * hintConc
-	}
-	return 10 * int(variable.GetDDLReorgWorkerCounter())
+	return 10 * int(vardef.GetDDLReorgBatchSize())
 }
 
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.
@@ -132,26 +125,26 @@ func generateLocalEngineConfig(ts uint64) *backend.EngineConfig {
 			CompactConcurrency: compactConcurrency,
 			BlockSize:          16 * 1024, // using default for DDL
 		},
-		TableInfo:   &checkpoints.TidbTableInfo{},
+		TableInfo:   &importdef.TableInfo{},
 		KeepSortDir: true,
 		TS:          ts,
 	}
 }
 
 // adjustImportMemory adjusts the lightning memory parameters according to the memory root's max limitation.
-func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *local.BackendConfig) {
+func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.BackendConfig) {
 	var scale int64
 	// Try aggressive resource usage successful.
 	if tryAggressiveMemory(ctx, memRoot, cfg) {
 		return
 	}
 
-	defaultMemSize := int64(int(cfg.LocalWriterMemCacheSize) * cfg.WorkerConcurrency / 2)
+	defaultMemSize := int64(int(cfg.LocalWriterMemCacheSize) * cfg.GetWorkerConcurrency() / 2)
 	defaultMemSize += 4 * int64(cfg.MemTableSize)
 	logutil.Logger(ctx).Info(LitInfoInitMemSetting,
 		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
 		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.WorkerConcurrency))
+		zap.Int("worker concurrency", cfg.GetWorkerConcurrency()))
 
 	maxLimit := memRoot.MaxMemoryQuota()
 	scale = defaultMemSize / maxLimit
@@ -166,13 +159,13 @@ func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *local.Backend
 	logutil.Logger(ctx).Info(LitInfoChgMemSetting,
 		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
 		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.WorkerConcurrency))
+		zap.Int("worker concurrency", cfg.GetWorkerConcurrency()))
 }
 
 // tryAggressiveMemory lightning memory parameters according memory root's max limitation.
-func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *local.BackendConfig) bool {
+func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.BackendConfig) bool {
 	var defaultMemSize int64
-	defaultMemSize = int64(int(cfg.LocalWriterMemCacheSize) * cfg.WorkerConcurrency / 2)
+	defaultMemSize = int64(int(cfg.LocalWriterMemCacheSize) * cfg.GetWorkerConcurrency() / 2)
 	defaultMemSize += int64(cfg.MemTableSize)
 
 	if (defaultMemSize + memRoot.CurrentUsage()) > memRoot.MaxMemoryQuota() {
@@ -181,7 +174,7 @@ func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *local.Backen
 	logutil.Logger(ctx).Info(LitInfoChgMemSetting,
 		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
 		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.WorkerConcurrency))
+		zap.Int("worker concurrency", cfg.GetWorkerConcurrency()))
 	return true
 }
 

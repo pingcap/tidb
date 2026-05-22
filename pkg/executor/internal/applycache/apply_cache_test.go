@@ -36,7 +36,7 @@ func TestApplyCache(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	value := make([]*chunk.List, 3)
 	key := make([][]byte, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		value[i] = chunk.NewList(fields, 1, 1)
 		srcChunk := chunk.NewChunkWithCapacity(fields, 1)
 		srcChunk.AppendInt64(0, int64(i))
@@ -88,7 +88,7 @@ func TestApplyCacheConcurrent(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	value := make([]*chunk.List, 2)
 	key := make([][]byte, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		value[i] = chunk.NewList(fields, 1, 1)
 		srcChunk := chunk.NewChunkWithCapacity(fields, 1)
 		srcChunk.AppendInt64(0, int64(i))
@@ -104,7 +104,7 @@ func TestApplyCacheConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	var func1 = func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			for {
 				result, err := applyCache.Get(key[0])
 				require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestApplyCacheConcurrent(t *testing.T) {
 		wg.Done()
 	}
 	var func2 = func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			for {
 				result, err := applyCache.Get(key[1])
 				require.NoError(t, err)

@@ -18,9 +18,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -32,9 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -56,7 +60,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 
 // TiDBContext implements QueryCtx.
 type TiDBContext struct {
-	sessiontypes.Session
+	sessionapi.Session
 	stmts map[int]*TiDBStatement
 }
 
@@ -150,6 +154,7 @@ func (ts *TiDBStatement) Reset() error {
 	}
 	ts.hasActiveCursor = false
 
+	resultset.ReportCursorRUV2Delta(ts.rs, 0)
 	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
 		ts.rs.GetRowIterator().Close()
 	}
@@ -173,6 +178,7 @@ func (ts *TiDBStatement) Reset() error {
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
+	resultset.ReportCursorRUV2Delta(ts.rs, 0)
 	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
 		ts.rs.GetRowIterator().Close()
 	}
@@ -248,6 +254,12 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	}
 	se.SetClientCapability(capability)
 	se.SetConnectionID(connID)
+	if deploymode.IsStarter() {
+		err = se.GetSessionVars().SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
+		if err != nil {
+			return nil, err
+		}
+	}
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),

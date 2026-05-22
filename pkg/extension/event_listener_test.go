@@ -494,7 +494,7 @@ func getExecuteBytes(stmtID uint32, useCursor bool, newParam bool, params ...par
 	if newParam {
 		buf[pos] = 1
 		pos++
-		for i := 0; i < len(params); i++ {
+		for range params {
 			buf[pos] = mysql.TypeLong
 			pos++
 			buf[pos] = 0

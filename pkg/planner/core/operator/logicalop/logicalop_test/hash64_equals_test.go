@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	plannerbase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -444,13 +444,13 @@ func TestLogicalMemTableHash64Equals(t *testing.T) {
 	require.False(t, m1.Equals(m2))
 
 	m2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
-	m2.DBName = pmodel.NewCIStr("d1")
+	m2.DBName = ast.NewCIStr("d1")
 	hasher2.Reset()
 	m2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, m1.Equals(m2))
 
-	m2.DBName = pmodel.NewCIStr("")
+	m2.DBName = ast.NewCIStr("")
 	m2.TableInfo = &model.TableInfo{ID: 1}
 	hasher2.Reset()
 	m2.Hash64(hasher2)
@@ -693,7 +693,7 @@ func TestLogicalApplyHash64Equals(t *testing.T) {
 	eq, err := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col1, col2)
 	require.Nil(t, err)
 	join := &logicalop.LogicalJoin{
-		JoinType:        logicalop.InnerJoin,
+		JoinType:        plannerbase.InnerJoin,
 		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
 	}
 	la1 := &logicalop.LogicalApply{
@@ -746,11 +746,11 @@ func TestLogicalJoinHash64Equals(t *testing.T) {
 	eq, err := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col1, col2)
 	require.Nil(t, err)
 	la1 := &logicalop.LogicalJoin{
-		JoinType:        logicalop.InnerJoin,
+		JoinType:        plannerbase.InnerJoin,
 		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
 	}
 	la2 := &logicalop.LogicalJoin{
-		JoinType:        logicalop.InnerJoin,
+		JoinType:        plannerbase.InnerJoin,
 		EqualConditions: []*expression.ScalarFunction{eq.(*expression.ScalarFunction)},
 	}
 	hasher1 := base.NewHashEqualer()
@@ -760,13 +760,13 @@ func TestLogicalJoinHash64Equals(t *testing.T) {
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, la1.Equals(la2))
 
-	la2.JoinType = logicalop.AntiSemiJoin
+	la2.JoinType = plannerbase.AntiSemiJoin
 	hasher2.Reset()
 	la2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, la1.Equals(la2))
 
-	la2.JoinType = logicalop.InnerJoin
+	la2.JoinType = plannerbase.InnerJoin
 	eq2, err2 := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), col2, col1)
 	require.Nil(t, err2)
 	la2.EqualConditions = []*expression.ScalarFunction{eq2.(*expression.ScalarFunction)}
@@ -810,14 +810,18 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
 	require.Nil(t, err)
 	la1 := &logicalop.LogicalAggregation{
-		AggFuncs:           []*aggregation.AggFuncDesc{desc},
-		GroupByItems:       []expression.Expression{col},
-		PossibleProperties: [][]*expression.Column{{col}},
+		AggFuncs:     []*aggregation.AggFuncDesc{desc},
+		GroupByItems: []expression.Expression{col},
+		PossibleProperties: plannerbase.PossiblePropertiesInfo{
+			Orders: [][]*expression.Column{{col}},
+		},
 	}
 	la2 := &logicalop.LogicalAggregation{
-		AggFuncs:           []*aggregation.AggFuncDesc{desc},
-		GroupByItems:       []expression.Expression{col},
-		PossibleProperties: [][]*expression.Column{{col}},
+		AggFuncs:     []*aggregation.AggFuncDesc{desc},
+		GroupByItems: []expression.Expression{col},
+		PossibleProperties: plannerbase.PossiblePropertiesInfo{
+			Orders: [][]*expression.Column{{col}},
+		},
 	}
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
@@ -833,11 +837,22 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	require.False(t, la1.Equals(la2))
 
 	la2.GroupByItems = []expression.Expression{col}
-	la2.PossibleProperties = [][]*expression.Column{{}}
+	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
+		Orders: [][]*expression.Column{{}},
+	}
 	hasher2.Reset()
 	la2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, la1.Equals(la2))
+
+	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
+		Orders:     [][]*expression.Column{{col}},
+		HasTiFlash: true,
+	}
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, la1.Equals(la2))
 }
 
 func MockFunc(sctx expression.EvalContext, lhsArg, rhsArg expression.Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
@@ -945,6 +960,28 @@ func TestFrameBoundHash64Equals(t *testing.T) {
 	require.False(t, fb1.Equals(fb2))
 }
 
+func TestFrameBoundClonePreservesNilSlicesForHashEquals(t *testing.T) {
+	original := &logicalop.FrameBound{
+		Type:            ast.Preceding,
+		UnBounded:       true,
+		Num:             1,
+		CmpFuncs:        []expression.CompareFunc{MockFunc},
+		CmpDataType:     1,
+		IsExplicitRange: false,
+	}
+	cloned := original.Clone()
+
+	require.Nil(t, cloned.CalcFuncs)
+	require.Nil(t, cloned.CompareCols)
+
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	original.Hash64(hasher1)
+	cloned.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, original.Equals(cloned))
+}
+
 func TestWindowFrameHash64Equals(t *testing.T) {
 	col := &expression.Column{
 		Index:   0,
@@ -994,9 +1031,8 @@ func TestHandleColsHash64Equals(t *testing.T) {
 		UniqueID: 2,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
-	ctx := mock.NewContext()
-	handles1 := util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
-	handles2 := util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles1 := util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 := util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
@@ -1005,31 +1041,31 @@ func TestHandleColsHash64Equals(t *testing.T) {
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 2}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 2}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 2}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 2}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col1})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col2, col1})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, handles1.Equals(handles2))
 
-	handles2 = util.NewCommonHandlesColsWithoutColsAlign(ctx.GetSessionVars().StmtCtx, &model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
+	handles2 = util.NewCommonHandlesColsWithoutColsAlign(&model.TableInfo{ID: 1}, &model.IndexInfo{ID: 1}, []*expression.Column{col1, col2})
 	hasher2.Reset()
 	handles2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())

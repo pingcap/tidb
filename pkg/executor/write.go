@@ -30,12 +30,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -235,6 +236,15 @@ func updateRecord(
 		}
 	}
 
+	// Null value can be inserted into not nullable generated column by ON DUPLICATE KEY UPDATE.
+	// But we don't allow to update this record later. So we return an error for null value.
+	for i, col := range t.Cols() {
+		if col.IsVirtualGenerated() && oldData[i].IsNull() &&
+			(mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag())) {
+			return false, false, plannererrors.ErrBadNull.GenWithStackByArgs(col.Name.O)
+		}
+	}
+
 	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.
 	if ignoreErr {
 		ignored, err := checkFKIgnoreErr(ctx, sctx, fkChecks, newData)
@@ -370,7 +380,7 @@ func addUnchangedKeysForLockByRow(
 	}
 	if keySet&lockRowKey > 0 {
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
-		txnCtx.AddUnchangedKeyForLock(unchangedRowKey)
+		txnCtx.AddUnchangedKeyForLock(unchangedRowKey, false)
 		count++
 	}
 	if keySet&lockUniqueKeys > 0 {
@@ -385,20 +395,34 @@ func addUnchangedKeysForLockByRow(
 			if err != nil {
 				return count, err
 			}
+			idxTblID := physicalID
+			fullHandle := h
+			if meta.Global {
+				idxTblID = t.Meta().ID
+				if pi := t.Meta().GetPartitionInfo(); pi != nil && pi.NewTableID != 0 {
+					if isNew, ok := pi.DDLChangedIndex[meta.ID]; ok && isNew {
+						idxTblID = pi.NewTableID
+					}
+				}
+				if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
+					meta.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+					fullHandle = kv.NewPartitionHandle(physicalID, fullHandle)
+				}
+			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
 				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,
-				physicalID,
+				idxTblID,
 				ukVals,
-				h,
+				fullHandle,
 				nil,
 			)
 			err = stmtCtx.HandleError(err)
 			if err != nil {
 				return count, err
 			}
-			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey)
+			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey, false)
 			count++
 		}
 	}
@@ -436,7 +460,7 @@ func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 // checkRowForExchangePartition is only used for ExchangePartition by non-partitionTable during write only state.
 // It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
 func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tbl *model.TableInfo) error {
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	pt, tableFound := is.TableByID(context.Background(), tbl.ExchangePartitionInfo.ExchangePartitionTableID)
 	if !tableFound {
 		return errors.Errorf("exchange partition process table by id failed")
@@ -456,8 +480,8 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 	if err != nil {
 		return err
 	}
-	if variable.EnableCheckConstraint.Load() {
-		if err = table.CheckRowConstraintWithDatum(evalCtx, pt.WritableConstraint(), row); err != nil {
+	if vardef.EnableCheckConstraint.Load() {
+		if err = table.CheckRowConstraintWithDatum(sctx.GetExprCtx(), pt.WritableConstraint(), row, tbl); err != nil {
 			// TODO: make error include ExchangePartition info.
 			return err
 		}

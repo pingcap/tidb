@@ -22,14 +22,13 @@ import (
 
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -70,12 +69,12 @@ type SchemaImporter struct {
 	logger      log.Logger
 	db          *sql.DB
 	sqlMode     mysql.SQLMode
-	store       storage.ExternalStorage
+	store       storeapi.Storage
 	concurrency int
 }
 
 // NewSchemaImporter creates a new SchemaImporter instance.
-func NewSchemaImporter(logger log.Logger, sqlMode mysql.SQLMode, db *sql.DB, store storage.ExternalStorage, concurrency int) *SchemaImporter {
+func NewSchemaImporter(logger log.Logger, sqlMode mysql.SQLMode, db *sql.DB, store storeapi.Storage, concurrency int) *SchemaImporter {
 	return &SchemaImporter{
 		logger:      logger,
 		db:          db,
@@ -113,7 +112,7 @@ func (si *SchemaImporter) importDatabases(ctx context.Context, dbMetas []*MDData
 
 	ch := make(chan *MDDatabaseMeta)
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := 0; i < si.concurrency; i++ {
+	for range si.concurrency {
 		eg.Go(func() error {
 			p := parser.New()
 			p.SetSQLMode(si.sqlMode)
@@ -155,7 +154,7 @@ func (si *SchemaImporter) importDatabases(ctx context.Context, dbMetas []*MDData
 func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabaseMeta) error {
 	ch := make(chan *MDTableMeta)
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := 0; i < si.concurrency; i++ {
+	for range si.concurrency {
 		eg.Go(func() error {
 			p := parser.New()
 			p.SetSQLMode(si.sqlMode)
@@ -257,7 +256,9 @@ func (si *SchemaImporter) importViews(ctx context.Context, dbMetas []*MDDatabase
 }
 
 func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
-	stmts, err := createIfNotExistsStmt(p, job.sqlStr, job.dbName, job.tblName)
+	// Table schema restore should preserve session directives but must not drop
+	// downstream objects from source schema files.
+	stmts, err := createIfNotExistsStmtWithMode(p, job.sqlStr, job.dbName, job.tblName, true)
 	if err != nil {
 		// if the schema supplied by the user is un-parsable by TiDB, we allow
 		// user to create the table by themselves, then import data.
@@ -376,6 +377,14 @@ func (si *SchemaImporter) getExistingSchemas(ctx context.Context, query string) 
 }
 
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
+	return createIfNotExistsStmtWithMode(p, createTable, dbName, tblName, false)
+}
+
+func createIfNotExistsStmtWithMode(
+	p *parser.Parser,
+	createTable, dbName, tblName string,
+	ignoreDestructiveDDL bool,
+) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
 		return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
@@ -388,21 +397,27 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
 		case *ast.CreateDatabaseStmt:
-			node.Name = model.NewCIStr(dbName)
+			node.Name = ast.NewCIStr(dbName)
 			node.IfNotExists = true
 		case *ast.DropDatabaseStmt:
-			node.Name = model.NewCIStr(dbName)
+			if ignoreDestructiveDDL {
+				continue
+			}
+			node.Name = ast.NewCIStr(dbName)
 			node.IfExists = true
 		case *ast.CreateTableStmt:
-			node.Table.Schema = model.NewCIStr(dbName)
-			node.Table.Name = model.NewCIStr(tblName)
+			node.Table.Schema = ast.NewCIStr(dbName)
+			node.Table.Name = ast.NewCIStr(tblName)
 			node.IfNotExists = true
 		case *ast.CreateViewStmt:
-			node.ViewName.Schema = model.NewCIStr(dbName)
-			node.ViewName.Name = model.NewCIStr(tblName)
+			node.ViewName.Schema = ast.NewCIStr(dbName)
+			node.ViewName.Name = ast.NewCIStr(tblName)
 		case *ast.DropTableStmt:
-			node.Tables[0].Schema = model.NewCIStr(dbName)
-			node.Tables[0].Name = model.NewCIStr(tblName)
+			if ignoreDestructiveDDL {
+				continue
+			}
+			node.Tables[0].Schema = ast.NewCIStr(dbName)
+			node.Tables[0].Name = ast.NewCIStr(tblName)
 			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {

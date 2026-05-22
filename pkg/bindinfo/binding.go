@@ -15,39 +15,48 @@
 package bindinfo
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 const (
-	// Enabled is the bind info's in enabled status.
+	// StatusEnabled is the bind info's in enabled status.
 	// It is the same as the previous 'Using' status.
 	// Only use 'Enabled' status in the future, not the 'Using' status.
 	// The 'Using' status is preserved for compatibility.
-	Enabled = "enabled"
-	// Disabled is the bind info's in disabled status.
-	Disabled = "disabled"
-	// Using is the bind info's in use status.
+	StatusEnabled = "enabled"
+	// StatusDisabled is the bind info's in disabled status.
+	StatusDisabled = "disabled"
+	// StatusUsing is the bind info's in use status.
 	// The 'Using' status is preserved for compatibility.
-	Using = "using"
-	// deleted is the bind info's deleted status.
-	deleted = "deleted"
-	// Manual indicates the binding is created by SQL like "create binding for ...".
-	Manual = "manual"
-	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
-	Builtin = "builtin"
-	// History indicate the binding is created from statement summary by plan digest
-	History = "history"
+	StatusUsing = "using"
+	// StatusDeleted is the bind info's deleted status.
+	StatusDeleted = "deleted"
+	// StatusBuiltin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
+	StatusBuiltin = "builtin"
+	// SourceManual indicates the binding is created by SQL like "create binding for ...".
+	SourceManual = "manual"
+	// SourceHistory indicate the binding is created from statement summary by plan digest
+	SourceHistory = "history"
 )
 
 // Binding stores the basic bind hint info.
@@ -73,11 +82,15 @@ type Binding struct {
 
 	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`
+
+	// UsageInfo is to track the usage information `last_used_time` of this binding
+	// and it will be updated when this binding is used.
+	UsageInfo bindingInfoUsageInfo
 }
 
 // IsBindingEnabled returns whether the binding is enabled.
 func (b *Binding) IsBindingEnabled() bool {
-	return b.Status == Enabled || b.Status == Using
+	return b.Status == StatusEnabled || b.Status == StatusUsing
 }
 
 // size calculates the memory size of a bind info.
@@ -86,10 +99,31 @@ func (b *Binding) size() float64 {
 	return float64(res)
 }
 
+// UpdateLastUsedAt is to update binding usage info when this binding is used.
+func (b *Binding) UpdateLastUsedAt() {
+	now := time.Now()
+	b.UsageInfo.LastUsedAt.Store(&now)
+}
+
+// UpdateLastSavedAt is to update the last saved time
+func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
+	b.UsageInfo.LastSavedAt.Store(ts)
+}
+
+type bindingInfoUsageInfo struct {
+	// LastUsedAt records the last time when this binding is used.
+	// It is nil if this binding has never been used.
+	// It is updated when this binding is used.
+	// It is used to update the `last_used_time` field in mysql.bind_info table.
+	LastUsedAt atomic.Pointer[time.Time]
+	// LastSavedAt records the last time when this binding is saved into storage.
+	LastSavedAt atomic.Pointer[time.Time]
+}
+
 var (
-	// GetGlobalBindingHandle is a function to get the global binding handle.
+	// GetBindingHandle is a function to get the global binding handle.
 	// It is mainly used to resolve cycle import issue.
-	GetGlobalBindingHandle func(sctx sessionctx.Context) GlobalBindingHandle
+	GetBindingHandle func(sctx sessionctx.Context) BindingHandle
 )
 
 // BindingMatchInfo records necessary information for cross-db binding matching.
@@ -99,23 +133,15 @@ type BindingMatchInfo struct {
 	TableNames []*ast.TableName
 }
 
-// MatchSQLBindingForPlanCache matches binding for plan cache.
-func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string, ignoreBinding bool) {
-	binding, matched, _ := matchSQLBinding(sctx, stmtNode, info)
-	if matched {
-		bindingSQL = binding.BindSQL
-		ignoreBinding = binding.Hint.ContainTableHint(hint.HintIgnorePlanCache)
-	}
-	return
-}
-
 // MatchSQLBinding returns the matched binding for this statement.
 func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
-	return matchSQLBinding(sctx, stmtNode, nil)
+	return MatchSQLBindingWithCache(sctx, stmtNode, nil)
 }
 
-func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
+// MatchSQLBindingWithCache matches binding with optional normalization cache.
+func MatchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
+	sessionVars := sctx.GetSessionVars()
+	useBinding := sessionVars.UsePlanBaselines
 	if !useBinding || stmtNode == nil {
 		return
 	}
@@ -123,12 +149,52 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	if sctx.Value(SessionBindInfoKeyType) == nil {
 		return
 	}
+	cache := getMatchSQLBindingCache(sessionVars, stmtNode)
+	if intest.InTest {
+		binding, matched, scope = matchSQLBindingCore(sctx, sessionVars, stmtNode, nil)
+		assertMatchSQLBinding(cache, matched, binding, scope)
+		return
+	}
+	if cache != nil {
+		return cache.binding, cache.matched, cache.scope
+	}
+	return matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
+}
 
+func getMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (cache *BindingCacheItem) {
+	if item := sessionVars.StmtCtx.MatchSQLBindingCacheKey; item != nil && item == stmtNode {
+		// We only use this temp bindinfo cache once to avoid retaining it after drop prepare.
+		cache = sessionVars.StmtCtx.MatchSQLBindingCache.(*BindingCacheItem)
+		intest.Assert(sessionVars.StmtCtx.MatchSQLBindingCache != nil)
+		return cache
+	}
+	return
+}
+
+func setMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode, matched bool, binding *Binding, scope string) {
+	if matched {
+		sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
+		sessionVars.StmtCtx.MatchSQLBindingCache = &BindingCacheItem{
+			binding: binding,
+			matched: matched,
+			scope:   scope}
+		return
+	}
+	sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
+	sessionVars.StmtCtx.MatchSQLBindingCache = &BindingCacheItem{
+		binding: nil,
+		matched: false}
+}
+
+func matchSQLBindingCore(sctx sessionctx.Context, sessionVars *variable.SessionVars, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
+	defer func(begin time.Time) {
+		sessionVars.DurationOptimizer.BindingMatch = time.Since(begin)
+	}(time.Now())
 	// record the normalization result into info to avoid repeat normalization next time.
 	var noDBDigest string
 	var tableNames []*ast.TableName
 	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
-		_, noDBDigest = NormalizeStmtForBinding(stmtNode, WithoutDB(true))
+		_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {
 			info.NoDBDigest = noDBDigest
@@ -141,18 +207,45 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
 	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
+		setMatchSQLBindingCache(sessionVars, stmtNode, matched, binding, metrics.ScopeSession)
 		return binding, matched, metrics.ScopeSession
 	}
-	globalHandle := GetGlobalBindingHandle(sctx)
+	globalHandle := GetBindingHandle(sctx)
 	if globalHandle == nil {
 		return
 	}
-	binding, matched = globalHandle.MatchGlobalBinding(sctx, noDBDigest, tableNames)
+	binding, matched = globalHandle.MatchingBinding(sctx, noDBDigest, tableNames)
 	if matched {
+		if vardef.EnableBindingUsage.Load() {
+			// After hitting the cache, update the usage time of the bind.
+			binding.UpdateLastUsedAt()
+		}
+		setMatchSQLBindingCache(sessionVars, stmtNode, matched, binding, metrics.ScopeGlobal)
 		return binding, matched, metrics.ScopeGlobal
 	}
-
+	setMatchSQLBindingCache(sessionVars, stmtNode, false, nil, "")
 	return
+}
+
+func assertMatchSQLBinding(cache *BindingCacheItem, hit bool, binding *Binding, scope string) {
+	intest.AssertFunc(func() bool {
+		if cache == nil {
+			return true
+		}
+		if hit {
+			return cache.matched &&
+				cache.binding == binding &&
+				cache.scope == scope
+		}
+		return cache == nil || !cache.matched
+	})
+}
+
+// BindingCacheItem is to cache the bindinfo to avoid getting bindinfo from bind cache again.
+type BindingCacheItem struct {
+	binding *Binding
+	matched bool
+	scope   string
 }
 
 func noDBDigestFromBinding(binding *Binding) (string, error) {
@@ -161,7 +254,7 @@ func noDBDigestFromBinding(binding *Binding) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, WithoutDB(true))
+	_, bindingNoDBDigest := NormalizeStmtForBinding(stmt, "", true)
 	return bindingNoDBDigest, nil
 }
 
@@ -169,6 +262,10 @@ func crossDBMatchBindings(sctx sessionctx.Context, tableNames []*ast.TableName, 
 	leastWildcards := len(tableNames) + 1
 	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, binding := range bindings {
+		if !binding.IsBindingEnabled() {
+			// because of cross-db bindings, there might be multiple bindings for the same SQL, skip disabled ones.
+			continue
+		}
 		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 		if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
 			continue // cross-db binding is disabled, skip this binding
@@ -264,7 +361,7 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func prepareHints(_ sessionctx.Context, binding *Binding) (rerr error) {
+func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			rerr = errors.Errorf("panic when preparing hints for binding %v, panic: %v", binding.BindSQL, r)
@@ -272,7 +369,7 @@ func prepareHints(_ sessionctx.Context, binding *Binding) (rerr error) {
 	}()
 
 	p := parser.New()
-	if (binding.Hint != nil && binding.ID != "") || binding.Status == deleted {
+	if (binding.Hint != nil && binding.ID != "") || binding.Status == StatusDeleted {
 		return nil
 	}
 	dbName := binding.Db
@@ -286,9 +383,15 @@ func prepareHints(_ sessionctx.Context, binding *Binding) (rerr error) {
 		dbName = "*" // ues '*' for universal bindings
 	}
 
-	hintsSet, _, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
+	hintsSet, stmt, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
 	if err != nil {
 		return err
+	}
+	if !isCrossDB && !hasParam(stmt) {
+		// TODO: how to check cross-db binding and bindings with parameters?
+		if err = checkBindingValidation(sctx, binding.BindSQL); err != nil {
+			return err
+		}
 	}
 	hintsStr, err := hintsSet.Restore()
 	if err != nil {
@@ -343,7 +446,7 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 	// filter deleted bindings
 	n = 0
 	for _, binding := range bindings {
-		if binding.Status != deleted {
+		if binding.Status != StatusDeleted {
 			bindings[n] = binding
 			n++
 		}
@@ -357,44 +460,19 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 	return bindings[0]
 }
 
-type option struct {
-	specifiedDB string
-	noDB        bool
-}
-
-type optionFunc func(*option)
-
-// WithoutDB specifies whether to eliminate schema names.
-func WithoutDB(noDB bool) optionFunc {
-	return func(user *option) {
-		user.noDB = noDB
-	}
-}
-
-// WithSpecifiedDB specifies the specified DB name.
-func WithSpecifiedDB(specifiedDB string) optionFunc {
-	return func(user *option) {
-		user.specifiedDB = specifiedDB
-	}
-}
-
-// NormalizeStmtForBinding normalizes a statement for binding.
-// when noDB is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
-// when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, options ...optionFunc) (normalizedStmt, exactSQLDigest string) {
-	opt := &option{}
-	for _, option := range options {
-		option(opt)
-	}
-	return normalizeStmt(stmtNode, opt.specifiedDB, opt.noDB)
+// RestoreDBForBinding restores the DB name for the binding.
+func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
+	return utilparser.RestoreWithDefaultDB(node, defaultDB, node.Text())
 }
 
 // NormalizeStmtForBinding normalizes a statement for binding.
 // This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
 // For normal bindings, DB name will be completed automatically:
+// when noDB is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
+// when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
@@ -459,4 +537,60 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 	if len(sql) > 0 && sql[len(sql)-1] == ';' {
 		stmt.SetText(nil, sql[:len(sql)-1])
 	}
+}
+
+type paramChecker struct {
+	hasParam bool
+}
+
+func (e *paramChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParam = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*paramChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// hasParam checks whether the statement contains any parameters.
+// For example, `create binding using select * from t where a=?` contains a parameter '?'.
+func hasParam(stmt ast.Node) bool {
+	p := new(paramChecker)
+	stmt.Accept(p)
+	return p.hasParam
+}
+
+// CheckBindingStmt checks whether the statement is valid.
+func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
+	origVals := sctx.GetSessionVars().UsePlanBaselines
+	sctx.GetSessionVars().UsePlanBaselines = false
+
+	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
+	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
+	// the statement won't be able to "break out" from EXPLAIN.
+	rs, err := exec(sctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", bindingSQL))
+	sctx.GetSessionVars().UsePlanBaselines = origVals
+	if rs != nil {
+		defer func() {
+			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
+			origin := sctx.GetSessionVars().InRestrictedSQL
+			sctx.GetSessionVars().InRestrictedSQL = true
+			if rerr := rs.Close(); rerr != nil {
+				bindingLogger().Error("close result set failed", zap.Error(rerr), zap.String("binding_sql", bindingSQL))
+			}
+			sctx.GetSessionVars().InRestrictedSQL = origin
+		}()
+	}
+	if err != nil {
+		return err
+	}
+	chk := rs.NewChunk(nil)
+	err = rs.Next(context.TODO(), chk)
+	if err != nil {
+		return err
+	}
+	return nil
 }

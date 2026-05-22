@@ -42,7 +42,7 @@ func (t *TaskManager) pauseTask() {
 
 func (t *TaskManager) iter(fn func(m *Meta, maxv time.Time) (bool, bool)) (tid uint64, result *Meta) {
 	var compareTS time.Time
-	for i := 0; i < shard; i++ {
+	for i := range shard {
 		breakFind := func(int) (breakFind bool) {
 			t.task[i].rw.RLock()
 			defer t.task[i].rw.RUnlock()

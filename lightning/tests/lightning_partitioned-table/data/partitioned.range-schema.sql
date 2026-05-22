@@ -1,1 +1,1 @@
-create table `range` (a int, b varchar(16), c int, KEY key_b (`b`), unique index key_c(`c`) global) partition by range(a) (partition pNeg values less than (0), partition pMax values less than (maxvalue));
+create table `range` (a int, b varchar(16), c int, KEY key_b (`b`), unique index key_c(`c`) global, index key_a(`a`) global) partition by range(a) (partition pNeg values less than (0), partition pMax values less than (maxvalue));

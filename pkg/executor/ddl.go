@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -63,7 +63,7 @@ type DDLExec struct {
 func (e *DDLExec) toErr(err error) error {
 	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.Ctx())
-	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil, true)
+	checker := domain.NewSchemaChecker(dom.GetSchemaValidator(), e.is.SchemaMetaVersion(), nil, true)
 	txn, err1 := e.Ctx().Txn(true)
 	if err1 != nil {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err1))
@@ -76,7 +76,7 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
-func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr) (table.Table, bool, error) {
+func (e *DDLExec) getLocalTemporaryTable(schema ast.CIStr, table ast.CIStr) (table.Table, bool, error) {
 	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), schema, table)
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil, false, nil
@@ -120,6 +120,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			}
 			if ok {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
+				// TODO: investigate why this does not work instead:
+				//s.Tables = slices.Delete(s.Tables, tbIdx, tbIdx+1)
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
 		}
@@ -151,7 +153,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 
 	defer func() {
-		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue = false
+		e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Store(false)
 		e.Ctx().GetSessionVars().StmtCtx.DDLJobID = 0
 	}()
 
@@ -229,8 +231,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
 		// otherwise, ErrTableNotExists can be returned before putting this DDL job to the job queue.
-		if (e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) ||
-			!e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue {
+		isDDLJobInQueue := e.Ctx().GetSessionVars().StmtCtx.IsDDLJobInQueue.Load()
+		if (isDDLJobInQueue && infoschema.ErrTableNotExists.Equal(err)) || !isDDLJobInQueue {
 			return e.toErr(err)
 		}
 		return err
@@ -354,18 +356,18 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	// Protect important system table from been dropped by a mistake.
 	// I can hardly find a case that a user really need to do this.
 	if dbName.L == "mysql" {
-		return errors.New("Drop 'mysql' database is forbidden")
+		return dbterror.ErrForbiddenDDL.FastGenByArgs("Drop 'mysql' database")
 	}
 
 	err := e.ddlExecutor.DropSchema(e.Ctx(), s)
 	sessionVars := e.Ctx().GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = sessionVars.SetSystemVar(variable.CharsetDatabase, mysql.DefaultCharset)
+		err = sessionVars.SetSystemVar(vardef.CharsetDatabase, mysql.DefaultCharset)
 		if err != nil {
 			return err
 		}
-		err = sessionVars.SetSystemVar(variable.CollationDatabase, mysql.DefaultCollationName)
+		err = sessionVars.SetSystemVar(vardef.CollationDatabase, mysql.DefaultCollationName)
 		if err != nil {
 			return err
 		}
@@ -447,7 +449,8 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", tblInfo.Name.O, tbl.Meta().Name.O)
 	}
 
-	m := domain.GetDomain(e.Ctx()).GetSnapshotMeta(job.StartTS)
+	snapshotTS := ddl.GetRecoverSnapshotTS(job)
+	m := domain.GetDomain(e.Ctx()).GetSnapshotMeta(snapshotTS)
 	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
@@ -457,7 +460,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
-		SnapshotTS:    job.StartTS,
+		SnapshotTS:    snapshotTS,
 		AutoIDs:       autoIDs,
 		OldSchemaName: job.SchemaName,
 		OldTableName:  tblInfo.Name.L,
@@ -485,14 +488,15 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 		return nil, nil, errors.Errorf("Job %v type is %v, not dropped/truncated table", job.ID, job.Type)
 	}
 
+	snapshotTS := ddl.GetRecoverSnapshotTS(job)
 	// Check GC safe point for getting snapshot infoSchema.
-	err = gcutil.ValidateSnapshot(e.Ctx(), job.StartTS)
+	err = gcutil.ValidateSnapshot(e.Ctx(), snapshotTS)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Get the snapshot infoSchema before drop table.
-	snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
+	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -512,7 +516,7 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 }
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
-// it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
+// it will use the recover snapshot of DDL job to get the dropped/truncated table information.
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	getTable := func(startTS uint64, schemaID int64, tableID int64) (*model.TableInfo, error) {
 		snapMeta := dom.GetSnapshotMeta(startTS)
@@ -602,7 +606,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
-		tblInfo.Name = pmodel.NewCIStr(s.NewName)
+		tblInfo.Name = ast.NewCIStr(s.NewName)
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -611,7 +615,8 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
-	m := domain.GetDomain(e.Ctx()).GetSnapshotMeta(job.StartTS)
+	snapshotTS := ddl.GetRecoverSnapshotTS(job)
+	m := domain.GetDomain(e.Ctx()).GetSnapshotMeta(snapshotTS)
 	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
@@ -621,7 +626,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
-		SnapshotTS:    job.StartTS,
+		SnapshotTS:    snapshotTS,
 		AutoIDs:       autoIDs,
 		OldSchemaName: job.SchemaName,
 		OldTableName:  s.Table.Name.L,
@@ -637,7 +642,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	dbName := s.DBName
 	if len(s.NewName) > 0 {
-		dbName = pmodel.NewCIStr(s.NewName)
+		dbName = ast.NewCIStr(s.NewName)
 	}
 	// Check the Schema Name was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -658,7 +663,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
+func (e *DDLExec) getRecoverDBByName(schemaName ast.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, err
@@ -670,15 +675,17 @@ func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo
 	dom := domain.GetDomain(e.Ctx())
 	fn := func(jobs []*model.Job) (bool, error) {
 		for _, job := range jobs {
-			// Check GC safe point for getting snapshot infoSchema.
-			err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
-			if err != nil {
-				return false, err
-			}
 			if job.Type != model.ActionDropSchema {
 				continue
 			}
-			snapMeta := dom.GetSnapshotMeta(job.StartTS)
+
+			snapshotTS := ddl.GetRecoverSnapshotTS(job)
+			// Check GC safe point for getting snapshot infoSchema.
+			err = gcutil.ValidateSnapshotWithGCSafePoint(snapshotTS, gcSafePoint)
+			if err != nil {
+				return false, err
+			}
+			snapMeta := dom.GetSnapshotMeta(snapshotTS)
 			schemaInfo, err := snapMeta.GetDatabase(job.SchemaID)
 			if err != nil {
 				return false, err
@@ -696,7 +703,7 @@ func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo
 				DBInfo:              schemaInfo,
 				LoadTablesOnExecute: true,
 				DropJobID:           job.ID,
-				SnapshotTS:          job.StartTS,
+				SnapshotTS:          snapshotTS,
 				OldSchemaName:       schemaName,
 			}
 			return true, nil
@@ -782,21 +789,21 @@ func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) e
 }
 
 func (e *DDLExec) executeCreateResourceGroup(s *ast.CreateResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.AddResourceGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterResourceGroup(s *ast.AlterResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.AlterResourceGroup(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropResourceGroup(s *ast.DropResourceGroupStmt) error {
-	if !variable.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
+	if !vardef.EnableResourceControl.Load() && !e.Ctx().GetSessionVars().InRestrictedSQL {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.DropResourceGroup(e.Ctx(), s)

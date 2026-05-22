@@ -16,27 +16,21 @@ package sessionctx
 
 import (
 	"context"
-	"iter"
 	"sync"
 
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/extension"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
-	"github.com/pingcap/tidb/pkg/util"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -84,81 +78,33 @@ type InstancePlanCache interface {
 
 // Context is an interface for transaction and executive args environment.
 type Context interface {
-	SessionStatesHandler
-	contextutil.ValueStoreContext
+	planctx.Common
+	// EncodeStates encodes session states into a JSON.
+	EncodeStates(context.Context, *sessionstates.SessionStates) error
+	// DecodeStates decodes a map into session states.
+	DecodeStates(context.Context, *sessionstates.SessionStates) error
 	tablelock.TableLockContext
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
 	// buffered KV changes will be discarded, call StmtCommit if you want to commit them.
 	CommitTxn(ctx context.Context) error
-	// Txn returns the current transaction which is created before executing a statement.
-	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
-	// If the active parameter is true, call this function will wait for the pending txn
-	// to become valid.
-	Txn(active bool) (kv.Transaction, error)
-
-	// GetClient gets a kv.Client.
-	GetClient() kv.Client
-
-	// GetMPPClient gets a kv.MPPClient.
-	GetMPPClient() kv.MPPClient
-
-	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
-	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	// If you want to get the latest infoschema use `GetDomainInfoSchema`
-	GetInfoSchema() infoschema.MetaOnlyInfoSchema
-
-	// GetDomainInfoSchema returns the latest information schema in domain
-	// Different with `domain.InfoSchema()`, the information schema returned by this method
-	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
-
-	GetSessionVars() *variable.SessionVars
-
-	// GetSQLExecutor returns the sqlexec.SQLExecutor.
-	GetSQLExecutor() sqlexec.SQLExecutor
-
-	// GetRestrictedSQLExecutor returns the sqlexec.RestrictedSQLExecutor.
-	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
-
-	// GetExprCtx returns the expression context of the session.
-	GetExprCtx() exprctx.ExprContext
-
+	// GetSchemaValidator returns the schema validator.
+	GetSchemaValidator() validatorapi.Validator
+	// GetSQLServer returns the sqlsvrapi.Server.
+	GetSQLServer() sqlsvrapi.Server
 	// GetTableCtx returns the table.MutateContext
 	GetTableCtx() tblctx.MutateContext
-
 	// GetPlanCtx gets the plan context of the current session.
 	GetPlanCtx() planctx.PlanContext
-
 	// GetDistSQLCtx gets the distsql ctx of the current session
 	GetDistSQLCtx() *distsqlctx.DistSQLContext
-
-	// GetRangerCtx returns the context used in `ranger` related functions
-	GetRangerCtx() *rangerctx.RangerContext
-
-	// GetBuildPBCtx gets the ctx used in `ToPB` of the current session
-	GetBuildPBCtx() *planctx.BuildPBContext
-
-	GetSessionManager() util.SessionManager
-
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
-
-	// GetStore returns the store of session.
-	GetStore() kv.Storage
-
 	// GetSessionPlanCache returns the session-level cache of the physical plan.
 	GetSessionPlanCache() SessionPlanCache
-
-	// UpdateColStatsUsage updates the column stats usage.
-	UpdateColStatsUsage(predicateColumns iter.Seq[model.TableItemID])
-
-	// HasDirtyContent checks whether there's dirty update on the given table.
-	HasDirtyContent(tid int64) bool
-
 	// StmtCommit flush all changes by the statement to the underlying transaction.
 	// it must be called before CommitTxn, else all changes since last StmtCommit
 	// will be lost. For SQL statement, StmtCommit or StmtRollback is called automatically.
@@ -181,10 +127,13 @@ type Context interface {
 	GetPreparedTxnFuture() TxnFuture
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
+	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
+	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
+	GetBuiltinFunctionUsage() map[string]uint32
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
-	ShowProcess() *util.ProcessInfo
+	ShowProcess() *sessmgr.ProcessInfo
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
 	GetAdvisoryLock(string, int64) error
 	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
@@ -210,6 +159,11 @@ type Context interface {
 	GetCursorTracker() cursor.Tracker
 	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
 	GetCommitWaitGroup() *sync.WaitGroup
+	// GetTraceCtx returns the context bind with trace information.
+	// The trace information is set when entering server/conn.dispatch and reset after dispatch returns.
+	// The context only contains the initial trace information, which is used to track the execution of the current statement.
+	// During the execution of the statement, additional information may be added to the context, like context.WithValue(), that is not included.
+	GetTraceCtx() context.Context
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

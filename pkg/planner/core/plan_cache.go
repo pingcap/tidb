@@ -20,18 +20,20 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -58,6 +60,18 @@ type PlanCacheKeyTestClone struct{}
 
 // PlanCacheKeyEnableInstancePlanCache is only for test.
 type PlanCacheKeyEnableInstancePlanCache struct{}
+
+const planCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
+
+func containUsePlanCacheHintInPreparedSQLOrBinding(stmt *PlanCacheStmt, matchedBinding *bindinfo.Binding, bindingMatched bool) bool {
+	if stmt.HasUsePlanCacheHint {
+		return true
+	}
+	return bindingMatched &&
+		matchedBinding != nil &&
+		matchedBinding.Hint != nil &&
+		matchedBinding.Hint.ContainTableHint(hint.HintUsePlanCache)
+}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -86,14 +100,6 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 		}
 		vars.PlanCacheParams.Append(val)
 	}
-	if vars.StmtCtx.EnableOptimizerDebugTrace && len(vars.PlanCacheParams.AllParamValues()) > 0 {
-		vals := vars.PlanCacheParams.AllParamValues()
-		valStrs := make([]string, len(vals))
-		for i, val := range vals {
-			valStrs[i] = val.String()
-		}
-		debugtrace.RecordAnyValuesWithNames(sctx, "Parameter datums for EXECUTE", valStrs)
-	}
 	vars.PlanCacheParams.SetForNonPrepCache(isNonPrep)
 	return nil
 }
@@ -115,7 +121,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
-	for i := 0; i < len(stmt.dbName); i++ {
+	for i := range stmt.dbName {
 		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
 		if !ok {
 			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
@@ -182,7 +188,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	for _, tbl := range stmt.tbls {
 		tblInfo := tbl.Meta()
 		if tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
-			sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan[tblInfo] = true
+			if vars.StmtCtx.TblInfo2UnionScan == nil {
+				vars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+			}
+			vars.StmtCtx.TblInfo2UnionScan[tblInfo] = true
 		}
 	}
 
@@ -203,12 +212,27 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
+	var (
+		matchedBinding *bindinfo.Binding
+		bindingMatched bool
+	)
 	if isNonPrepared {
 		stmtCtx.SetCacheType(contextutil.SessionNonPrepared)
 		cacheEnabled = sessVars.EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.SetCacheType(contextutil.SessionPrepared)
 		cacheEnabled = sessVars.EnablePreparedPlanCache
+	}
+	if cacheEnabled && stmt.UncacheableReason == "" &&
+		sessVars.PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+		!stmt.HasUsePlanCacheHint {
+		if stmt.PreparedAst != nil {
+			matchedBinding, bindingMatched, _ = bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+		}
+		if !containUsePlanCacheHintInPreparedSQLOrBinding(stmt, matchedBinding, bindingMatched) {
+			cacheEnabled = false
+			stmtCtx.WarnSkipPlanCache(planCacheHintOnlyNoHintReason)
+		}
 	}
 	if stmt.StmtCacheable && cacheEnabled {
 		stmtCtx.EnablePlanCache()
@@ -220,7 +244,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	var cacheKey, binding, reason string
 	var cacheable bool
 	if stmtCtx.UseCache() {
-		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
+		cacheKey, binding, cacheable, reason, err = newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding, bindingMatched)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -254,10 +278,10 @@ func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}(time.Now())
 	fastPoint := stmt.PointGet.Executor != nil // this case is specially handled
-	pointPlan, isPoint := plan.(*PointGetPlan)
+	pointPlan, isPoint := plan.(*physicalop.PointGetPlan)
 	if fastPoint && isPoint { // special optimization for fast point plans
 		if stmt.PointGet.FastPlan == nil {
-			stmt.PointGet.FastPlan = new(PointGetPlan)
+			stmt.PointGet.FastPlan = new(physicalop.PointGetPlan)
 		}
 		FastClonePointGetForPlanCache(sctx.GetPlanCtx(), pointPlan, stmt.PointGet.FastPlan)
 		clonedPlan = stmt.PointGet.FastPlan
@@ -277,7 +301,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	if intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil {
 		return true
 	}
-	enableInstancePlanCache := variable.EnableInstancePlanCache.Load()
+	enableInstancePlanCache := vardef.EnableInstancePlanCache.Load()
 	return enableInstancePlanCache
 }
 
@@ -340,10 +364,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	stmtCtx := sessVars.StmtCtx
 
 	core_metrics.GetPlanCacheMissCounter(isNonPrepared).Inc()
-	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = true
 	nodeW := resolve.NewNodeWWithCtx(stmtAst.Stmt, stmt.ResolveCtx)
-	p, names, err := OptimizeAstNode(ctx, sctx, nodeW, is)
-	sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding = false
+	p, names, err := OptimizeAstNodeNoCache(ctx, sctx, nodeW, is)
 	if err != nil {
 		return nil, nil, err
 	}

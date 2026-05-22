@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -409,7 +409,7 @@ func TestInstancePlanCachePlan(t *testing.T) {
 	tk.MustExec(`create table t1 (a int, b int, c int, d int, primary key(a), key(b), unique key(c))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, d int, primary key(a), key(b), unique key(c))`)
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
+	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	sessionID := tkProcess.ID
 	tk2 := testkit.NewTestKit(t, store)
@@ -650,4 +650,36 @@ func TestInstancePlanCacheIssue58395(t *testing.T) {
 
 	tk.MustExec(`set @i0 = 'a', @i1 = 'b'`)
 	tk.MustExec(`execute p4 using @i0, @i1`)
+}
+
+func TestInstancePlanCacheWithDualTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	// Explicitly disable instance plan cache first
+	tk.MustExec(`set global tidb_enable_instance_plan_cache = 0`)
+
+	// First test: without instance plan cache enabled
+	tk.MustExec(`prepare stmt from 'select 1 from dual'`)
+	tk.MustExec(`execute stmt`)
+	tk.MustExec(`execute stmt`)
+
+	// Should hit plan cache
+	result := tk.MustQuery(`select @@last_plan_from_cache`)
+	result.Check(testkit.Rows("1"))
+
+	// Now enable instance plan cache
+	tk.MustExec(`set global tidb_enable_instance_plan_cache = 1`)
+
+	// Execute the same prepared statement again
+	tk.MustExec(`execute stmt`)
+	tk.MustExec(`execute stmt`)
+
+	// Should still hit plan cache with instance plan cache enabled
+	result = tk.MustQuery(`select @@last_plan_from_cache`)
+	result.Check(testkit.Rows("1"))
+
+	// Clean up
+	tk.MustExec(`set global tidb_enable_instance_plan_cache = 0`)
 }
