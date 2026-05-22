@@ -47,6 +47,17 @@ func TestChooseBestGreedyStart(t *testing.T) {
 		require.Equal(t, 1, startIdx)
 		require.Equal(t, float64(10), best.cumCost)
 	})
+
+	t.Run("keep earlier start for floating point noise", func(t *testing.T) {
+		best, startIdx, err := chooseBestGreedyStart(2, func(startIdx int) (*Node, error) {
+			costs := []float64{14166.666666666668, 14166.666666666666}
+			return &Node{cumCost: costs[startIdx]}, nil
+		})
+		require.NoError(t, err)
+		require.NotNil(t, best)
+		require.Equal(t, 0, startIdx)
+		require.Equal(t, 14166.666666666668, best.cumCost)
+	})
 }
 
 func TestCloneNodesForGreedyStartIsolation(t *testing.T) {

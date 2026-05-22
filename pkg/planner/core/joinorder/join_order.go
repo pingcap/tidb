@@ -647,12 +647,20 @@ func chooseBestGreedyStart(startCount int, runner func(startIdx int) (*Node, err
 		if err != nil {
 			return nil, -1, err
 		}
-		if candidate != nil && (best == nil || candidate.cumCost < best.cumCost) {
+		if candidate != nil && (best == nil || cumCostSignificantlyLess(candidate.cumCost, best.cumCost)) {
 			best = candidate
 			bestStartIdx = startIdx
 		}
 	}
 	return best, bestStartIdx, nil
+}
+
+func cumCostSignificantlyLess(cost, bestCost float64) bool {
+	if cost >= bestCost {
+		return false
+	}
+	scale := math.Max(1, math.Max(math.Abs(cost), math.Abs(bestCost)))
+	return bestCost-cost > scale*1e-12
 }
 
 func moveGreedyStartToFront(nodes []*Node, startIdx int) []*Node {
