@@ -244,7 +244,9 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 		case *ast.SetStmt:
 			// keep session setup statements
 		default:
-			return nil, common.ErrInvalidSchemaStmt.GenWithStackByArgs("unsupported statement in view schema")
+			// Preserve any additional parseable statements for compatibility with
+			// the old view restore path, which tolerated them as long as the file
+			// still contained a valid CREATE VIEW statement.
 		}
 
 		if err := stmt.Restore(restoreCtx); err != nil {

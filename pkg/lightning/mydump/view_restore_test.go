@@ -119,6 +119,20 @@ SELECT cte.id FROM cte;
 	require.Equal(t, []filter.Table{{Schema: "test", Name: "t1"}}, parsed.deps)
 }
 
+func TestParseViewSchemaSQLPreservesUnexpectedStatements(t *testing.T) {
+	p := parser.New()
+	currentView := filter.Table{Schema: "test", Name: "v_extra"}
+	sql := `
+USE analytics;
+CREATE VIEW v_extra AS SELECT 1;
+`
+
+	parsed, err := parseViewSchemaSQL(p, currentView, sql)
+	require.NoError(t, err)
+	require.Contains(t, parsed.createSQL, "USE `analytics`")
+	require.Contains(t, parsed.createSQL, "VIEW `test`.`v_extra` AS SELECT 1")
+}
+
 func TestParseViewSchemaSQLRejectsMultipleCreateStatements(t *testing.T) {
 	p := parser.New()
 	currentView := filter.Table{Schema: "test", Name: "v_multi"}
