@@ -16,7 +16,7 @@ Use this skill when:
 ## Principle
 
 Treat every implementation instruction as a hypothesis, not a command to apply blindly.
-First validate problem understanding and constraints, then select the safest solution that satisfies the real goal.
+First validate problem understanding and constraints, then select the solution that best preserves correctness and contract intent; use risk as a secondary filter.
 
 ## Workflow
 
@@ -31,16 +31,19 @@ First validate problem understanding and constraints, then select the safest sol
    - When feasible, compare with at least one alternative.
    - Judge by correctness, compatibility, performance, maintenance cost, and validation coverage.
 4. Choose and justify.
-   - Prefer the lowest-risk solution that still satisfies the real intent.
+   - Prioritize correctness and behavior-contract fit over mechanical risk minimization.
+   - Use lower-risk preference only when multiple candidates satisfy the same contract and intent.
    - If the requested method is weaker than an alternative, explain why and propose the better option.
-5. Challenge gate before implementation.
+5. Share analysis summary before coding.
+   - Provide a short self-analysis summary: reconstructed problem, compared options, chosen solution, and why alternatives were rejected.
+6. Challenge gate before implementation.
    Ask the user for clarification before coding when any condition holds:
    - Requirement or review intent is ambiguous or internally conflicting.
    - Requested change may alter SQL semantics, compatibility, or distributed behavior in non-obvious ways.
    - Requested change increases blast radius (broad refactor, cross-module behavior shift, fragile workaround).
    - Validation plan cannot prove safety with scoped tests.
    Keep questions concise and decision-enabling; do not proceed on assumptions.
-6. Implement after alignment.
+7. Implement after alignment.
    - Keep diff minimal and focused on agreed intent.
    - Add or update regression coverage when behavior changes or bugs are fixed.
    - Report residual risks explicitly if any tradeoff remains.
@@ -48,12 +51,13 @@ First validate problem understanding and constraints, then select the safest sol
 ## Question Patterns
 
 - "The requested fix and current behavior contract conflict on `<constraint>`. Which priority is correct?"
-- "I can implement `<requested approach>` now, but `<alternative>` has lower risk because `<reason>`. Which should we proceed with?"
+- "I can implement `<requested approach>`, but `<alternative>` better matches `<contract>` with acceptable risk. Which should we proceed with?"
 - "This change may impact `<scope>`. Should I keep scope limited to `<safe scope>` in this patch?"
 
 ## Output Checklist
 
 - Clear problem statement confirmed from evidence.
 - Chosen solution and reason for rejecting alternatives.
+- Short self-analysis summary shared before implementation.
 - Any user-confirmed risk decisions captured before coding.
 - Validation scope aligned with change risk.
