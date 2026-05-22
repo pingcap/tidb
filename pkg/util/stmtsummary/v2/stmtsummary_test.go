@@ -83,12 +83,12 @@ func TestStmtSummary(t *testing.T) {
 	require.Equal(t, 0, w.lru.Size())
 }
 
-func TestStmtSummaryLogEvicted(t *testing.T) {
+func TestStmtSummaryPersistEvicted(t *testing.T) {
 	storage := &mockStmtStorage{}
 	ss := NewStmtSummary4Test(2)
 	ss.storage = storage
 	defer ss.Close()
-	require.NoError(t, ss.SetLogEvicted(true))
+	require.NoError(t, ss.SetPersistEvicted(true))
 
 	// With capacity 2, the 3rd and later distinct digests evict older entries
 	// and should each land in storage.evicted.
@@ -110,7 +110,7 @@ func TestStmtSummaryLogEvicted(t *testing.T) {
 	require.ElementsMatch(t, []string{"digest1", "digest2"}, digests)
 
 	// Disable and verify no further log writes.
-	require.NoError(t, ss.SetLogEvicted(false))
+	require.NoError(t, ss.SetPersistEvicted(false))
 	ss.Add(GenerateStmtExecInfo4Test("digest5")) // evicts digest3
 	require.Never(t, func() bool {
 		storage.Lock()

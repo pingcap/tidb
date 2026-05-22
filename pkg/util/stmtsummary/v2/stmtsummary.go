@@ -45,6 +45,13 @@ const (
 	// evictedLogChanCap bounds the buffer of per-record evicted entries waiting
 	// to be logged. When full, new evictions are dropped so Add() never blocks.
 	evictedLogChanCap = 1024
+
+	// evictedLogBatchSize and evictedLogFlushInterval bound the async logger's
+	// batching. They reduce write frequency under eviction bursts while keeping
+	// single-record latency low.
+	evictedLogBatchSize       = 64
+	evictedLogFlushInterval   = 100 * time.Millisecond
+	evictedDropReportInterval = 30 * time.Second
 )
 
 var (
@@ -90,7 +97,7 @@ type StmtSummary struct {
 	optMaxStmtCount        *atomic2.Uint32
 	optMaxSQLLength        *atomic2.Uint32
 	optRefreshInterval     *atomic2.Uint32
-	optLogEvicted          *atomic2.Bool
+	optPersistEvicted      *atomic2.Bool
 
 	window     *stmtWindow
 	windowLock sync.Mutex
@@ -123,7 +130,7 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
-		optLogEvicted:          atomic2.NewBool(false),
+		optPersistEvicted:      atomic2.NewBool(false),
 		storage: newStmtLogStorage(&log.Config{
 			File: log.FileLogConfig{
 				Filename:   cfg.Filename,
@@ -163,7 +170,7 @@ func NewStmtSummary4Test(maxStmtCount uint) *StmtSummary {
 		optMaxStmtCount:        atomic2.NewUint32(defaultMaxStmtCount),
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(60 * 60 * 24 * 365), // 1 year
-		optLogEvicted:          atomic2.NewBool(false),
+		optPersistEvicted:      atomic2.NewBool(false),
 		storage:                &mockStmtStorage{},
 		evictedCh:              make(chan *StmtRecord, evictedLogChanCap),
 	}
@@ -260,14 +267,14 @@ func (s *StmtSummary) SetRefreshInterval(v uint32) error {
 	return nil
 }
 
-// LogEvicted reports whether per-record evictions are logged.
-func (s *StmtSummary) LogEvicted() bool {
-	return s.optLogEvicted.Load()
+// PersistEvicted reports whether per-record evictions are persisted.
+func (s *StmtSummary) PersistEvicted() bool {
+	return s.optPersistEvicted.Load()
 }
 
-// SetLogEvicted enables or disables per-record eviction logging.
-func (s *StmtSummary) SetLogEvicted(v bool) error {
-	s.optLogEvicted.Store(v)
+// SetPersistEvicted enables or disables per-record eviction persistence.
+func (s *StmtSummary) SetPersistEvicted(v bool) error {
+	s.optPersistEvicted.Store(v)
 	return nil
 }
 
@@ -428,7 +435,7 @@ func (s *StmtSummary) rotate(now time.Time) {
 // fields we need and hand the clone off to the async log goroutine. A
 // non-blocking send is used so the hot Add() path never stalls on log I/O.
 func (s *StmtSummary) onEvict(_ *stmtsummary.StmtDigestKey, r *StmtRecord) {
-	if !s.optLogEvicted.Load() {
+	if !s.optPersistEvicted.Load() {
 		return
 	}
 	if s.evictedCh == nil {
@@ -446,9 +453,14 @@ func (s *StmtSummary) onEvict(_ *stmtsummary.StmtDigestKey, r *StmtRecord) {
 // When group_by_user is also enabled, each logged record represents exactly
 // one (digest, user) group that fell out of the LRU.
 func (s *StmtSummary) evictedLogLoop() {
-	const dropReportInterval = 30 * time.Second
-	ticker := time.NewTicker(dropReportInterval)
-	defer ticker.Stop()
+	reportTicker := time.NewTicker(evictedDropReportInterval)
+	defer reportTicker.Stop()
+
+	flushTimer := time.NewTimer(evictedLogFlushInterval)
+	if !flushTimer.Stop() {
+		<-flushTimer.C
+	}
+	defer flushTimer.Stop()
 
 	var lastDropReport uint64
 	report := func() {
@@ -462,6 +474,47 @@ func (s *StmtSummary) evictedLogLoop() {
 		}
 	}
 
+	stopFlushTimer := func() {
+		if !flushTimer.Stop() {
+			select {
+			case <-flushTimer.C:
+			default:
+			}
+		}
+	}
+
+	batch := make([]*StmtRecord, 0, evictedLogBatchSize)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		s.storage.logEvicted(batch)
+		for i := range batch {
+			batch[i] = nil
+		}
+		batch = batch[:0]
+		stopFlushTimer()
+	}
+	appendRecord := func(r *StmtRecord) {
+		batch = append(batch, r)
+		if len(batch) == 1 {
+			flushTimer.Reset(evictedLogFlushInterval)
+		}
+		if len(batch) >= evictedLogBatchSize {
+			flush()
+		}
+	}
+	drainAvailable := func() {
+		for len(batch) > 0 && len(batch) < evictedLogBatchSize {
+			select {
+			case r := <-s.evictedCh:
+				appendRecord(r)
+			default:
+				return
+			}
+		}
+	}
+
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -471,15 +524,19 @@ func (s *StmtSummary) evictedLogLoop() {
 			for {
 				select {
 				case r := <-s.evictedCh:
-					s.storage.logEvicted(r)
+					appendRecord(r)
 				default:
+					flush()
 					report()
 					return
 				}
 			}
 		case r := <-s.evictedCh:
-			s.storage.logEvicted(r)
-		case <-ticker.C:
+			appendRecord(r)
+			drainAvailable()
+		case <-flushTimer.C:
+			flush()
+		case <-reportTicker.C:
 			report()
 		}
 	}
@@ -529,10 +586,10 @@ func (w *stmtWindow) clear() {
 
 type stmtStorage interface {
 	persist(w *stmtWindow, end time.Time)
-	// logEvicted writes a single evicted record to durable storage. It may be
+	// logEvicted writes evicted records to durable storage. It may be
 	// called concurrently with persist; implementations must be safe to call
 	// from the evictedLogLoop goroutine.
-	logEvicted(r *StmtRecord)
+	logEvicted(records []*StmtRecord)
 	sync() error
 }
 
@@ -588,9 +645,9 @@ func (s *mockStmtStorage) persist(w *stmtWindow, _ time.Time) {
 	s.Unlock()
 }
 
-func (s *mockStmtStorage) logEvicted(r *StmtRecord) {
+func (s *mockStmtStorage) logEvicted(records []*StmtRecord) {
 	s.Lock()
-	s.evicted = append(s.evicted, r)
+	s.evicted = append(s.evicted, records...)
 	s.Unlock()
 }
 
@@ -696,11 +753,12 @@ func SetMaxSQLLength(v int) error {
 	return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(v)
 }
 
-// SetLogEvicted toggles per-record eviction logging. Only v2 (persistent)
-// honors this flag; v1 has no log sink, so the call is a no-op for it.
-func SetLogEvicted(v bool) error {
+// SetPersistEvicted toggles per-record eviction persistence. Only v2
+// (persistent) honors this flag; v1 has no log sink, so the call is a no-op
+// for it.
+func SetPersistEvicted(v bool) error {
 	if GlobalStmtSummary != nil {
-		return GlobalStmtSummary.SetLogEvicted(v)
+		return GlobalStmtSummary.SetPersistEvicted(v)
 	}
 	return nil
 }

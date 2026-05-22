@@ -17,6 +17,7 @@ package stmtsummary
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/log"
@@ -70,16 +71,26 @@ func (s *stmtLogStorage) sync() error {
 	return s.logger.Sync()
 }
 
-// logEvicted writes a single evicted record to the stmt log with an
-// `"evicted":true` marker so downstream consumers can distinguish per-record
-// eviction events from rotated-window records.
-func (s *stmtLogStorage) logEvicted(r *StmtRecord) {
-	b, err := json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
-	if err != nil {
-		logutil.BgLogger().Warn("failed to marshal evicted statement summary", zap.Error(err))
+// logEvicted writes evicted records to the stmt log with an `"evicted":true`
+// marker so downstream consumers can distinguish per-record eviction events
+// from rotated-window records.
+func (s *stmtLogStorage) logEvicted(records []*StmtRecord) {
+	var builder strings.Builder
+	for _, r := range records {
+		b, err := json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
+		if err != nil {
+			logutil.BgLogger().Warn("failed to marshal evicted statement summary", zap.Error(err))
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('\n')
+		}
+		_, _ = builder.Write(b)
+	}
+	if builder.Len() == 0 {
 		return
 	}
-	s.logger.Info(string(b))
+	s.logger.Info(builder.String())
 }
 
 // evictedStmtRecord embeds *StmtRecord and adds an "evicted" JSON tag.
