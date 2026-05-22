@@ -391,7 +391,6 @@ func (s *BaseScheduler) onPending() error {
 	task := s.getTaskClone()
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
-	nextStepInput := task.Step
 	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
 		if err := s.Extension.OnPrepare(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
@@ -405,9 +404,13 @@ func (s *BaseScheduler) onPending() error {
 		}
 		task.Step = proto.StepPrepared
 		s.task.Store(task)
-		nextStepInput = proto.StepInit
+		// fall through to switch to next step to avoid wait another tick to
+		// schedule subtasks after prepare.
+		// NOTE: no real business task enables prepare mode yet, so StepPrepared
+		// is only exercised by framework tests for now. Business GetNextStep
+		// StepPrepared integration will be done in a follow-up PR.
 	}
-	return s.switch2NextStepWithInputStep(nextStepInput)
+	return s.switch2NextStep()
 }
 
 // handle task in running state, check all running subtasks finishes.
@@ -496,14 +499,8 @@ func (s *BaseScheduler) onFinished() {
 }
 
 func (s *BaseScheduler) switch2NextStep() error {
-	return s.switch2NextStepWithInputStep(s.GetTask().Step)
-}
-
-func (s *BaseScheduler) switch2NextStepWithInputStep(nextStepInput proto.Step) error {
 	task := s.getTaskClone()
-	taskBase4Next := task.TaskBase
-	taskBase4Next.Step = nextStepInput
-	nextStep := s.GetNextStep(&taskBase4Next)
+	nextStep := s.GetNextStep(&task.TaskBase)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),

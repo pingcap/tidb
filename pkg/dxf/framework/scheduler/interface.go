@@ -153,7 +153,8 @@ type Extension interface {
 	// If task runs successfully, business progression should go from StepInit to
 	// business steps, then to StepDone, and scheduler will mark it as finished.
 	// In prepare mode, on the pending+init path after OnPrepare, scheduler
-	// resolves this method from StepInit.
+	// persists task step as StepPrepared, then calls this method with current
+	// task step.
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step
