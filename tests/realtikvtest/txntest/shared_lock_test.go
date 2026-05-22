@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -50,6 +51,13 @@ func enableSharedLockUpgrade(tks ...*testkit.TestKit) {
 	for _, tk := range tks {
 		tk.MustExec("set @@tidb_enable_shared_lock_upgrade = ON")
 	}
+}
+
+func requireTxnLockAcquiring(t *testing.T, waitingTk *testkit.TestKit) {
+	require.Eventuallyf(t, func() bool {
+		info := waitingTk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnLockAcquiring && info.BlockStartTime.Valid
+	}, 10*time.Second, 100*time.Millisecond, "expected session %d to be waiting on lock acquisition", waitingTk.Session().GetSessionVars().ConnectionID)
 }
 
 func TestForeignKeySharedLockOptimisticReverseReferenceOrder(t *testing.T) {
@@ -258,11 +266,7 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 			upgraderDone <- tk1.ExecToErr("update parent set v = v + 1 where id = 1")
 		}()
 
-		select {
-		case <-time.After(500 * time.Millisecond):
-		case err := <-upgraderDone:
-			require.FailNow(t, fmt.Sprintf("tk1 should be blocked while waiting to upgrade its shared lock: %v", err))
-		}
+		requireTxnLockAcquiring(t, tk1)
 
 		tk2.MustExec("commit")
 		require.NoError(t, <-upgraderDone)
@@ -298,14 +302,11 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 			upgraderDone <- tk1.ExecToErr("update parent set v = v + 1 where id = 1")
 		}()
 
-		select {
-		case <-time.After(500 * time.Millisecond):
-		case err := <-upgraderDone:
-			require.FailNow(t, fmt.Sprintf("tk1 should be blocked while waiting to upgrade its shared lock: %v", err))
-		}
+		requireTxnLockAcquiring(t, tk1)
 
 		tk2.MustGetErrCode("update parent set v = v + 2 where id = 1", errno.ErrLockDeadlock)
-		tk2.MustExec("rollback")
+		require.False(t, tk2.Session().GetSessionVars().InTxn())
+		require.Nil(t, tk2.Session().TxnInfo())
 		require.NoError(t, <-upgraderDone)
 		tk1.MustExec("commit")
 
