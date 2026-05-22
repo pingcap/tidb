@@ -239,6 +239,9 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 	}
 
 	if job.IsPausedBySystem() {
+		if job.HasPauseReason(model.JobPauseReasonKVDiskFull) {
+			return false, nil
+		}
 		var errs []error
 		errs, err = ResumeJobsBySystem(sess.Session(), []int64{job.ID})
 		if len(errs) > 0 && errs[0] != nil {

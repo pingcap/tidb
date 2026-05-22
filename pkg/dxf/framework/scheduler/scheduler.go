@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -423,6 +424,15 @@ func (s *BaseScheduler) onRunning() error {
 		}
 		if len(subTaskErrs) > 0 {
 			s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
+			if shouldPauseOnKVDiskFull(task, cntByStates, subTaskErrs) {
+				if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
+					return errors.Trace(err)
+				}
+				task.State = proto.TaskStatePausing
+				task.Error = subTaskErrs[0]
+				s.task.Store(task)
+				return nil
+			}
 			// we only store the first error as task error.
 			return s.revertTaskOrManualRecover(subTaskErrs[0])
 		}
@@ -434,6 +444,21 @@ func (s *BaseScheduler) onRunning() error {
 	s.OnTick(s.ctx, task)
 	s.logger.Debug("on running state, this task keeps current state", zap.Stringer("state", task.State))
 	return nil
+}
+
+func shouldPauseOnKVDiskFull(task *proto.Task, cntByStates map[proto.SubtaskState]int64, subTaskErrs []error) bool {
+	if !task.ExtraParams.PauseOnKVDiskFull || cntByStates[proto.SubtaskStateCanceled] > 0 || len(subTaskErrs) == 0 {
+		return false
+	}
+	if cntByStates[proto.SubtaskStateFailed] != int64(len(subTaskErrs)) {
+		return false
+	}
+	for _, err := range subTaskErrs {
+		if !errdef.IsKVDiskFullError(err) {
+			return false
+		}
+	}
+	return true
 }
 
 // onModifying is called when task is in modifying state.

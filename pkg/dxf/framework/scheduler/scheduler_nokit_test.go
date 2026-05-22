@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	schmock "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
@@ -248,6 +249,35 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 			state: 1,
 		}))
 	}
+}
+
+func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	taskErr := errdef.ErrKVDiskFull.GenWithStack("store 1 disk full")
+	task := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			State: proto.TaskStateRunning,
+			Step:  proto.StepOne,
+			ExtraParams: proto.ExtraParams{
+				PauseOnKVDiskFull: true,
+			},
+		},
+	}
+	sch := createScheduler(&task, true, taskMgr, ctrl)
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 1,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr}, nil)
+	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, task.State, task.Step, taskErr).Return(nil)
+
+	require.NoError(t, sch.onRunning())
+	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
 }
 
 func TestSchedulerNotAllocateSlots(t *testing.T) {

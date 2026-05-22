@@ -60,6 +60,8 @@ type TaskManager interface {
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// PauseTaskOnError updates task state to pausing and records the task error.
+	PauseTaskOnError(ctx context.Context, taskID int64, taskState proto.TaskState, step proto.Step, taskErr error) error
 	// PausedTask updated task state to 'paused'.
 	PausedTask(ctx context.Context, taskID int64) error
 	// ResumedTask updated task state from resuming to running.

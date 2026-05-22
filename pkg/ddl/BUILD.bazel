@@ -114,6 +114,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/ingestor/engineapi",
+        "//pkg/ingestor/errdef",
         "//pkg/ingestor/globalsort",
         "//pkg/ingestor/ingestctrl",
         "//pkg/ingestor/simplesst",

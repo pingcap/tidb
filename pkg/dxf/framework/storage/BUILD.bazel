@@ -55,6 +55,7 @@ go_test(
         "//pkg/dxf/framework/schstatus",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/framework/testutil",
+        "//pkg/ingestor/errdef",
         "//pkg/kv",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",

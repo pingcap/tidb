@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -2033,7 +2034,7 @@ func runReorgJobAndHandleErr(
 		return w.addTableIndex(jobCtx, tbl, reorgInfo)
 	})
 	if err != nil {
-		if dbterror.ErrPausedDDLJob.Equal(err) {
+		if dbterror.ErrPausedDDLJob.Equal(err) || dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err) {
 			return false, ver, nil
 		}
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
@@ -3097,6 +3098,18 @@ func TaskKey(jobID int64, mergeTempIdx bool) string {
 	return strings.Join(labels, "/")
 }
 
+func autoPauseAddIndexJobOnKVDiskFull(job *model.Job, taskID int64, taskErr error) error {
+	message := fmt.Sprintf("DXF add-index task %d hit TiKV disk full", taskID)
+	if taskErr != nil {
+		message = fmt.Sprintf("%s: %s", message, taskErr.Error())
+	}
+	job.State = model.JobStatePausing
+	job.AdminOperator = model.AdminCommandBySystem
+	job.SetPauseReason(model.JobPauseReasonKVDiskFull, message)
+	job.Error = toTError(dbterror.ErrDDLAutoPausedByKVDiskFull.FastGenByArgs(job.ID, message))
+	return dbterror.ErrDDLAutoPausedByKVDiskFull.GenWithStackByArgs(job.ID, message)
+}
+
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
@@ -3120,6 +3133,21 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	task, err := taskManager.GetTaskByKeyWithHistory(w.workCtx, taskKey)
 	if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
 		return err
+	}
+
+	waitTaskDoneOrAutoPause := func(taskID int64) error {
+		found, err := handle.WaitTaskDoneOrPausedWithResult(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		if found.State == proto.TaskStatePaused && errdef.IsKVDiskFullError(found.Error) {
+			logutil.DDLLogger().Warn("auto pause add-index DDL job because DXF task hit TiKV disk full",
+				zap.Int64("job-id", reorgInfo.Job.ID),
+				zap.Int64("task-id", taskID),
+				zap.Error(found.Error))
+			return autoPauseAddIndexJobOnKVDiskFull(reorgInfo.Job, taskID, found.Error)
+		}
+		return nil
 	}
 
 	var (
@@ -3155,7 +3183,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			if err != nil {
 				return err
 			}
-			err = handle.WaitTaskDoneOrPaused(ctx, task.ID)
+			err = waitTaskDoneOrAutoPause(task.ID)
 			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
@@ -3192,7 +3220,8 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 		targetScope := reorgInfo.ReorgMeta.TargetScope
 		maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
-		task, err := handle.SubmitTask(ctx, taskKey, taskType, w.store.GetKeyspace(), requiredSlots, targetScope, maxNodeCnt, metaData)
+		task, err := handle.SubmitTaskWithExtraParams(ctx, taskKey, taskType, w.store.GetKeyspace(),
+			requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{PauseOnKVDiskFull: true}, metaData)
 		if err != nil {
 			return err
 		}
@@ -3204,7 +3233,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 		g.Go(func() error {
 			defer close(done)
-			err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
+			err := waitTaskDoneOrAutoPause(task.ID)
 			failpoint.InjectCall("pauseAfterDistTaskFinished")
 			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
