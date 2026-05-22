@@ -1281,6 +1281,11 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 
 		// acquire xlocks
 		keys = txnCtx.CollectUnchangedKeysForXLock(keys)
+		sharedKeys := txnCtx.CollectUnchangedKeysForSLock(nil)
+		keys, sharedKeys, err = moveWrittenSharedLockKeysToExclusive(ctx, txn, keys, sharedKeys)
+		if err != nil {
+			return err
+		}
 		if ex, err := tryLockKeys(e, keys, false); err != nil {
 			return err
 		} else if ex != nil {
@@ -1289,9 +1294,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 
 		// acquire slocks
-		keys = txnCtx.CollectUnchangedKeysForSLock(keys[:0])
 		startLock := time.Now()
-		if ex, err := tryLockKeys(e, keys, true); err != nil {
+		if ex, err := tryLockKeys(e, sharedKeys, true); err != nil {
 			return err
 		} else if ex != nil {
 			e = ex
@@ -1301,6 +1305,52 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 
 		return nil
 	}
+}
+
+func moveWrittenSharedLockKeysToExclusive(
+	ctx context.Context,
+	txn kv.Transaction,
+	exclusiveKeys []kv.Key,
+	sharedKeys []kv.Key,
+) (finalExclusiveKeys []kv.Key, finalSharedKeys []kv.Key, err error) {
+	if len(sharedKeys) == 0 {
+		return exclusiveKeys, sharedKeys, nil
+	}
+
+	exclusiveKeySet := make(map[string]struct{}, len(exclusiveKeys))
+	for _, key := range exclusiveKeys {
+		exclusiveKeySet[string(key)] = struct{}{}
+	}
+
+	memBuffer := txn.GetMemBuffer()
+	memBuffer.RLock()
+	defer memBuffer.RUnlock()
+
+	// sharedKeys is collected locally for this lock phase, so reuse its buffer
+	// for the filtered shared-only result.
+	sharedOnlyKeys := sharedKeys[:0]
+	for _, key := range sharedKeys {
+		if _, ok := exclusiveKeySet[string(key)]; ok {
+			continue
+		}
+
+		// A key written by this transaction must not be protected only by a
+		// shared pessimistic lock, otherwise commit prewrite would put over
+		// its own shared pessimistic lock.
+		_, err := memBuffer.GetLocal(ctx, key)
+		if err == nil {
+			exclusiveKeys = append(exclusiveKeys, key)
+			exclusiveKeySet[string(key)] = struct{}{}
+			continue
+		}
+		if !kv.ErrNotExist.Equal(err) {
+			return nil, nil, err
+		}
+
+		sharedOnlyKeys = append(sharedOnlyKeys, key)
+	}
+
+	return exclusiveKeys, sharedOnlyKeys, nil
 }
 
 // updateFKCheckLockStats updates the Lock stats of FK check executors after the deferred
