@@ -31,6 +31,12 @@ import (
 	"golang.org/x/exp/maps"
 )
 
+// LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
+func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
+	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
+	return err
+}
+
 func requireMigrationsEqual(t *testing.T, miga, migb *backuppb.Migration) {
 	require.NotNil(t, miga)
 	require.NotNil(t, migb)

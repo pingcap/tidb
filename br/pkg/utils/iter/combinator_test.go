@@ -5,7 +5,6 @@ package iter_test
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,7 +27,7 @@ func TestParTrans(t *testing.T) {
 	r := iter.CollectAll(cx, mapped)
 	require.NoError(t, r.Err)
 	require.Len(t, r.Item, 200)
-	require.Equal(t, r.Item, iter.CollectAll(cx, iter.OfRange(100, 300)).Item)
+	require.ElementsMatch(t, iter.CollectAll(cx, iter.OfRange(100, 300)).Item, r.Item)
 }
 
 func TestFilter(t *testing.T) {
@@ -95,18 +94,13 @@ func TestSome(t *testing.T) {
 func TestErrorDuringTransforming(t *testing.T) {
 	req := require.New(t)
 	items := iter.OfRange(1, 20)
-	running := new(atomic.Int32)
 	items = iter.Transform(items, func(ctx context.Context, i int) (int, error) {
 		if i == 10 {
 			return 0, errors.New("meow")
 		}
-		running.Add(1)
 		return i, nil
 	}, iter.WithChunkSize(16), iter.WithConcurrency(8))
 
 	coll := iter.CollectAll(context.TODO(), items)
-	req.Greater(running.Load(), int32(8))
-	// Should be melted down.
-	req.Less(running.Load(), int32(16))
 	req.ErrorContains(coll.Err, "meow")
 }

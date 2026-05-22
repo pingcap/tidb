@@ -771,6 +771,34 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[2].Path, "f3")
 	require.Equal(t, files[3].Path, "f4")
 	require.Equal(t, files[4].Path, "f5")
+
+	files = []*backuppb.DataFileInfo{
+		{
+			Path: "write-put",
+			Cf:   consts.WriteCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "write-delete",
+			Cf:   consts.WriteCF,
+			Type: backuppb.FileType_Delete,
+		},
+		{
+			Path: "default-put",
+			Cf:   consts.DefaultCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "default-delete",
+			Cf:   consts.DefaultCF,
+			Type: backuppb.FileType_Delete,
+		},
+	}
+	defaultFiles, writeFiles := logclient.SeparateAndSortFilesByCF(files)
+	require.Len(t, defaultFiles, 1)
+	require.Equal(t, "default-put", defaultFiles[0].Path)
+	require.Len(t, writeFiles, 2)
+	require.Equal(t, 3, logclient.TEST_CountReadableMetaKVFiles(files))
 }
 
 func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) logclient.LogIter {

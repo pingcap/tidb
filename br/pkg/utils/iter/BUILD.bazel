@@ -14,7 +14,6 @@ go_library(
     deps = [
         "//pkg/util",
         "@org_golang_x_exp//constraints",
-        "@org_golang_x_sync//errgroup",
     ],
 )
 
