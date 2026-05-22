@@ -38,8 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -180,7 +180,7 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 
 	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*local.Backend) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*ingestctrl.Backend) {
 		once.Do(func() {
 			row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 			require.Equal(t, 1, len(row))
@@ -259,7 +259,7 @@ func TestAddIndexDistCancel(t *testing.T) {
 	enter := make(chan struct{})
 	testfailpoint.EnableCall(
 		t,
-		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
+		"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
 		func(ctx context.Context) {
 			close(enter)
 			select {
@@ -304,7 +304,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 
 	var syncChan = make(chan struct{})
 	var counter atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*local.Backend) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*ingestctrl.Backend) {
 		if counter.Add(1) <= 3 {
 			row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 			require.Equal(t, 1, len(row))
@@ -481,7 +481,7 @@ func TestAddIndexScheduleAway(t *testing.T) {
 		close(afterCancel)
 	})
 	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*local.Backend) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(*ingestctrl.Backend) {
 		once.Do(func() {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")

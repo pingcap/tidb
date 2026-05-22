@@ -293,18 +293,26 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	return
 }
 
-// ResolveAnalyzeVersion returns the analyze version to use for the table and whether it
-// matches the requested session version.
-func (sa *statsAnalyze) ResolveAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, requestedVersion int) (int, bool) {
-	// We simply choose one physical id to get its stats.
-	var tbl *statistics.Table
-	for _, pid := range physicalIDs {
-		tbl = sa.statsHandle.GetPhysicalTableStats(pid, tblInfo)
-		if !tbl.Pseudo {
-			break
+// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
+// session version. For partitioned tables it checks the global stats and every partition;
+// for non-partitioned tables it checks the table stats alone.
+func (sa *statsAnalyze) AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
+	globalStats := sa.statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	if !statistics.AnalyzeVersionMatchesForTableStats(globalStats, requestedVersion) {
+		return false
+	}
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return true
+	}
+	for _, def := range pi.Definitions {
+		partitionStats := sa.statsHandle.GetPhysicalTableStats(def.ID, tblInfo)
+		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats, requestedVersion) {
+			return false
 		}
 	}
-	return statistics.ResolveAnalyzeVersionOnTable(tbl, requestedVersion)
+	return true
 }
 
 // GetPriorityQueueSnapshot returns the stats priority queue snapshot.
@@ -548,7 +556,8 @@ func tryAutoAnalyzeTable(
 	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < statistics.AutoAnalyzeMinCnt {
 		return false
 	}
-	tableStatsVer, versionMatches := resolveAutoAnalyzeVersion(sctx.GetSessionVars().AnalyzeVersion, statsTbl)
+	requestedVersion := sctx.GetSessionVars().AnalyzeVersion
+	versionMatches := analyzeVersionMatches(requestedVersion, statsTbl)
 
 	// Check if the table needs to analyze.
 	if needAnalyze, reason := NeedAnalyzeTable(
@@ -565,7 +574,7 @@ func tryAutoAnalyzeTable(
 			zap.String("reason", reason),
 		)
 
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, !versionMatches, sql, params...)
+		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
 
 		return true
 	}
@@ -588,7 +597,7 @@ func tryAutoAnalyzeTable(
 				"auto analyze for unanalyzed indexes",
 				zap.String("sql", escaped),
 			)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, !versionMatches, sqlWithIdx, paramsWithIdx...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -633,8 +642,9 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	db string,
 	ratio float64,
 ) bool {
-	tableStatsVer, versionMatches := resolveAutoAnalyzeVersionForPartitions(
-		sctx.GetSessionVars().AnalyzeVersion,
+	requestedVersion := sctx.GetSessionVars().AnalyzeVersion
+	versionMatches := analyzeVersionMatchesForPartitions(
+		requestedVersion,
 		partitionDefs,
 		partitionStats,
 	)
@@ -700,7 +710,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, !versionMatches, sql, params...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
 		}
 
 		return true
@@ -741,7 +751,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, !versionMatches, sql, params...)
+				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
 			}
 
 			return true
@@ -751,21 +761,21 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	return false
 }
 
-func resolveAutoAnalyzeVersion(requestedVersion int, tblStats *statistics.Table) (resolvedVersion int, versionMatches bool) {
-	return statistics.ResolveAnalyzeVersionOnTable(tblStats, requestedVersion)
+func analyzeVersionMatches(requestedVersion int, tblStats *statistics.Table) bool {
+	return statistics.AnalyzeVersionMatchesForTableStats(tblStats, requestedVersion)
 }
 
-func resolveAutoAnalyzeVersionForPartitions(
+func analyzeVersionMatchesForPartitions(
 	requestedVersion int,
 	partitionDefs []model.PartitionDefinition,
 	partitionStats map[int64]*statistics.Table,
-) (resolvedVersion int, versionMatches bool) {
+) bool {
 	for _, def := range partitionDefs {
-		if _, versionMatches := statistics.ResolveAnalyzeVersionOnTable(partitionStats[def.ID], requestedVersion); !versionMatches {
-			return requestedVersion, false
+		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats[def.ID], requestedVersion) {
+			return false
 		}
 	}
-	return requestedVersion, true
+	return true
 }
 
 // insertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

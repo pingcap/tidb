@@ -1,13 +1,13 @@
 module github.com/pingcap/tidb
 
-go 1.25.8
+go 1.25.9
 
 require (
 	cloud.google.com/go/kms v1.15.8
 	cloud.google.com/go/storage v1.39.1
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.14.0
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.7.0
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.0.0
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.3
 	github.com/BurntSushi/toml v1.6.0
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Masterminds/semver v1.5.0
@@ -19,7 +19,7 @@ require (
 	github.com/apache/arrow-go/v18 v18.0.0
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
-	github.com/ashanbrown/forbidigo/v2 v2.1.0
+	github.com/ashanbrown/forbidigo/v2 v2.3.0
 	github.com/ashanbrown/makezero v1.2.0
 	github.com/aws/aws-sdk-go-v2 v1.38.1
 	github.com/aws/aws-sdk-go-v2/config v1.31.2
@@ -37,7 +37,7 @@ require (
 	github.com/blacktear23/go-proxyprotocol v1.0.6
 	github.com/butuzov/mirror v1.3.0
 	github.com/carlmjohnson/flagext v0.21.0
-	github.com/charithe/durationcheck v0.0.10
+	github.com/charithe/durationcheck v0.0.11
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
 	github.com/ckaznocha/intrange v0.3.1
@@ -63,15 +63,15 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
-	github.com/golangci/golangci-lint/v2 v2.4.0
+	github.com/golangci/golangci-lint/v2 v2.11.3
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
-	github.com/golangci/misspell v0.7.0
+	github.com/golangci/misspell v0.8.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
 	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20250903194437-c28834ac2320
 	github.com/google/skylark v0.0.0-20181101142754-a5f7082aabed
 	github.com/google/uuid v1.6.1-0.20241114170450-2d3c2a9cc518
-	github.com/gordonklaus/ineffassign v0.1.0
+	github.com/gordonklaus/ineffassign v0.2.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gostaticanalysis/forcetypeassert v0.2.0
 	github.com/grafana/pyroscope-go v1.2.7
@@ -83,13 +83,13 @@ require (
 	github.com/jingyugao/rowserrcheck v1.1.1
 	github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
-	github.com/karamaru-alpha/copyloopvar v1.2.1
-	github.com/kisielk/errcheck v1.9.0
+	github.com/karamaru-alpha/copyloopvar v1.2.2
+	github.com/kisielk/errcheck v1.10.0
 	github.com/klauspost/compress v1.18.0
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
 	github.com/ldez/exptostd v0.4.5
 	github.com/lestrrat-go/jwx/v2 v2.0.21
-	github.com/mgechev/revive v1.14.0
+	github.com/mgechev/revive v1.15.0
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/nishanths/predeclared v0.2.2
@@ -98,15 +98,15 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20241015064302-38533b6cbf8d
-	github.com/pingcap/errors v0.11.5-0.20260310054046-9c8b3586e4b2
+	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260309153435-8478a5610086
+	github.com/pingcap/kvproto v0.0.0-20260414083400-4388bfaaedab
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
-	github.com/pingcap/metering_sdk v0.0.0-20251110022152-dac449ac5389
+	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20260210113932-1447c9d7e9fe
+	github.com/pingcap/tipb v0.0.0-20260515142222-a4d204a193b4
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
@@ -115,17 +115,16 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.6
 	github.com/shirou/gopsutil/v3 v3.24.5
-	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/afero v1.15.0
-	github.com/spf13/cobra v1.9.1
-	github.com/spf13/pflag v1.0.7
+	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.10
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260316081220-602cdf086c43
-	github.com/tikv/pd/client v0.0.0-20260228084044-4f5039d43753
+	github.com/tikv/client-go/v2 v2.0.8-0.20260511022933-fb7ee09992a7
+	github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -144,21 +143,21 @@ require (
 	go.uber.org/mock v0.5.2
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.1
-	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-	golang.org/x/net v0.50.0
+	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
+	golang.org/x/net v0.54.0
 	golang.org/x/oauth2 v0.33.0
-	golang.org/x/sync v0.19.0
-	golang.org/x/sys v0.41.0
-	golang.org/x/term v0.40.0
-	golang.org/x/text v0.34.0
+	golang.org/x/sync v0.20.0
+	golang.org/x/sys v0.44.0
+	golang.org/x/term v0.43.0
+	golang.org/x/text v0.37.0
 	golang.org/x/time v0.14.0
-	golang.org/x/tools v0.42.0
+	golang.org/x/tools v0.44.0
 	google.golang.org/api v0.170.0
 	google.golang.org/grpc v1.75.1
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.12
-	honnef.co/go/tools v0.6.1
+	honnef.co/go/tools v0.7.0
 	k8s.io/api v0.29.11
 	modernc.org/mathutil v1.7.1
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
@@ -200,7 +199,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
-	github.com/ldez/grignotin v0.10.0 // indirect
+	github.com/ldez/grignotin v0.10.1 // indirect
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
@@ -214,7 +213,7 @@ require (
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260209163413-e7419c687ee4 // indirect
+	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
@@ -224,12 +223,12 @@ require (
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
 	cloud.google.com/go/iam v1.1.7 // indirect
 	cloud.google.com/go/pubsub v1.37.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.10.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
-	github.com/AzureAD/microsoft-authentication-library-for-go v1.2.2 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 // indirect
 	github.com/DataDog/zstd v1.5.5 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
-	github.com/Masterminds/semver/v3 v3.3.1 // indirect
+	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/Masterminds/sprig/v3 v3.2.2 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
@@ -257,7 +256,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.4 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/golang/glog v1.2.5 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
@@ -309,7 +308,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/xattr v0.4.9 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
+	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/procfs v0.19.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
@@ -321,12 +320,12 @@ require (
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20230704072500-f1e31cf0ba5c // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
-	github.com/sirupsen/logrus v1.9.3 // indirect
+	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a
-	github.com/tklauser/go-sysconf v0.3.15 // indirect
-	github.com/tklauser/numcpus v0.10.0 // indirect
+	github.com/tklauser/go-sysconf v0.3.16 // indirect
+	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20220101234140-673ab2c3ae75 // indirect
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
 	github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 // indirect
@@ -344,9 +343,9 @@ require (
 	go.opentelemetry.io/otel/sdk v1.37.0 // indirect
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/exp/typeparams v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/mod v0.33.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/exp/typeparams v0.0.0-20260209203927-2842357ff358 // indirect
+	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto v0.0.0-20240401170217-c3f982113cda // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250707201910-8d1bb00bc6a7 // indirect
@@ -369,7 +368,6 @@ replace (
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0

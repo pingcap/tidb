@@ -123,6 +123,11 @@ id	task	access object	operator info
 Projection	root		md5(planner__core__casetest__pushdown__push_down.t.s)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from t where sha2(s, 256) = 'abc';
+id	task	access object	operator info
+TableReader	root		data:Selection
+└─Selection	cop[tikv]		eq(sha2(planner__core__casetest__pushdown__push_down.t.s, 256), "abc")
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select c from t where a+1=3;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__pushdown__push_down.t.c

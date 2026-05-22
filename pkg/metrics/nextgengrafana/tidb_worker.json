@@ -413,6 +413,13 @@
               "intervalFactor": 2,
               "legendFormat": "total",
               "refId": "B"
+            },
+            {
+              "expr": "sum(rate(tidb_server_slow_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "SlowQuery",
+              "refId": "C"
             }
           ],
           "thresholds": [],
@@ -2816,8 +2823,8 @@
           "targets": [
             {
               "editorMode": "code",
-              "expr": "rate(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}[1m])",
-              "legendFormat": "gc-rate - {{instance}}",
+              "expr": "increase(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}[1m])",
+              "legendFormat": "gc-increase(1m) - {{instance}}",
               "range": true,
               "refId": "A"
             },
@@ -2830,7 +2837,7 @@
               "refId": "B"
             }
           ],
-          "title": "Runtime GC Rate And GOMEMLIMIT",
+          "title": "Runtime GC Increase(1m) And GOMEMLIMIT",
           "type": "timeseries"
         },
         {

@@ -1079,7 +1079,8 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
-	IsCluster       bool // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	IsCluster       bool           // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	FlushObjects    []*StatsObject // For FlushStatsDelta, scoped objects (db.tbl, db.*, *.*). Always non-empty.
 }
 
 // Restore implements Node interface.
@@ -1141,6 +1142,16 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
 	case FlushStatsDelta:
 		ctx.WriteKeyWord("STATS_DELTA")
+		for i, obj := range n.FlushObjects {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := obj.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FlushStmt.FlushObjects[%d]", i)
+			}
+		}
 		if n.IsCluster {
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord("CLUSTER")
@@ -3833,7 +3844,9 @@ func RedactURL(str string) string {
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
-			"sas-token": {},
+			"account-key":    {},
+			"encryption-key": {},
+			"sas-token":      {},
 		}
 	}
 
@@ -4102,7 +4115,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "use_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}

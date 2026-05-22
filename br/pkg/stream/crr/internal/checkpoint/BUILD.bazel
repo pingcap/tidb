@@ -1,0 +1,52 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "checkpoint",
+    srcs = [
+        "calculator.go",
+        "doc.go",
+        "progress.go",
+        "storage.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint",
+    visibility = ["//br/pkg/stream/crr:__subpackages__"],
+    deps = [
+        "//br/pkg/stream",
+        "//br/pkg/stream/backupmetas",
+        "//br/pkg/streamhelper",
+        "//pkg/objstore/storeapi",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_log//:log",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "checkpoint_test",
+    timeout = "short",
+    srcs = [
+        "checkpoint_calculator_test.go",
+        "integration_test.go",
+        "randomized_integration_test.go",
+        "storage_internal_test.go",
+    ],
+    embed = [":checkpoint"],
+    flaky = True,
+    shard_count = 21,
+    deps = [
+        "//br/pkg/stream",
+        "//br/pkg/streamhelper",
+        "//br/pkg/streamhelper/config",
+        "//br/pkg/utiltest/crr",
+        "//br/pkg/utiltest/syncpoint",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)

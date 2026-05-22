@@ -139,10 +139,11 @@ type tableScanExec struct {
 	ndvs          []int64
 	rowCnt        int64
 
-	chk    *chunk.Chunk
-	result chan scanResult
-	done   chan struct{}
-	wg     util.WaitGroupWrapper
+	chk      *chunk.Chunk
+	result   chan scanResult
+	done     chan struct{}
+	wg       util.WaitGroupWrapper
+	stopOnce sync.Once
 
 	decoder *rowcodec.ChunkDecoder
 	desc    bool
@@ -264,11 +265,14 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 }
 
 func (e *tableScanExec) stop() error {
-	// just in case the channel is not initialized
-	if e.done != nil {
-		close(e.done)
-	}
-	e.wg.Wait()
+	e.stopOnce.Do(func() {
+		// stop() can be called from multiple teardown paths.
+		// Make close/wait idempotent to avoid closing an already-closed channel.
+		if e.done != nil {
+			close(e.done)
+		}
+		e.wg.Wait()
+	})
 	return nil
 }
 

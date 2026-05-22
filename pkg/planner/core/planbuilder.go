@@ -261,6 +261,9 @@ type PlanBuilder struct {
 	partitionedTable []table.PartitionedTable
 	// buildingViewStack is used to check whether there is a recursive view.
 	buildingViewStack set.StringSet
+	// ignoreTruncateErrForViewPredicateFolding narrows truncate relaxation to
+	// constant predicate folding while expanding a view.
+	ignoreTruncateErrForViewPredicateFolding bool
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
 	// isCreateView indicates whether the query is create view.
@@ -311,10 +314,63 @@ type PlanBuilder struct {
 	// noDecorrelate indicates whether decorrelation should be disabled for correlated aggregates in subqueries
 	noDecorrelate bool
 
+	// buildingLateralSubquery indicates we're currently building a LATERAL derived table
+	// This allows resolving column references against the left side of the join
+	buildingLateralSubquery bool
+
+	// lateralOuterCount tracks how many of the last entries in outerSchemas
+	// were pushed by buildJoin for LATERAL purposes. Non-LATERAL derived tables
+	// must not see these entries, so buildResultSetNode temporarily hides them.
+	lateralOuterCount int
+
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+
+	// nonViableFTSMatch is set during build when the expression rewriter
+	// encounters a predicate-context MATCH...AGAINST whose native form
+	// (FTSMysqlMatchAgainst) cannot be executed — the matched columns lack a
+	// public FULLTEXT index on a TiFlash-backed table, or the modifier is not
+	// supported by pushdown. The flag is read by the alternative-rounds driver
+	// after the round to invalidate the round's plan and trigger the
+	// fts-like-fallback round (see optimize.go).
+	nonViableFTSMatch bool
+
+	// predicateMatchSeen is set during build when the expression rewriter
+	// encounters a direct-boolean-context MATCH...AGAINST (one whose 0/1 boolean
+	// result is consumed directly as a predicate). The alternative-rounds driver
+	// uses this to enable the fts-like-fallback round even when round 1's
+	// native plan is executable, so the LIKE-based plan can compete on cost.
+	predicateMatchSeen bool
+}
+
+// HasNonViableFTSMatch reports whether the most recent build round saw a
+// predicate-context MATCH...AGAINST that could not be served by the native
+// FTSMysqlMatchAgainst builtin. The caller (optimize.go) uses this to
+// invalidate the round's plan and trigger the fts-like-fallback round.
+func (b *PlanBuilder) HasNonViableFTSMatch() bool {
+	return b.nonViableFTSMatch
+}
+
+// MarkNonViableFTSMatch records that a predicate-context MATCH...AGAINST in
+// the current build cannot be served natively. See HasNonViableFTSMatch.
+func (b *PlanBuilder) MarkNonViableFTSMatch() {
+	b.nonViableFTSMatch = true
+}
+
+// HasPredicateMatch reports whether the most recent build round saw a
+// direct-boolean-context MATCH...AGAINST. The caller (optimize.go) uses this
+// to decide whether to run the fts-like-fallback round for cost competition,
+// independent of whether round 1's native plan is executable.
+func (b *PlanBuilder) HasPredicateMatch() bool {
+	return b.predicateMatchSeen
+}
+
+// MarkPredicateMatch records that the current build encountered a
+// direct-boolean-context MATCH...AGAINST. See HasPredicateMatch.
+func (b *PlanBuilder) MarkPredicateMatch() {
+	b.predicateMatchSeen = true
 }
 
 type handleColHelper struct {
@@ -526,6 +582,14 @@ func (b *PlanBuilder) HandleUnusedViewHints() {
 	b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 }
 
+func (b *PlanBuilder) recordPlanBuilderMetric() {
+	if b.ctx != nil {
+		if vars := b.ctx.GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
+			vars.RUV2Metrics.AddPlanCnt(1)
+		}
+	}
+}
+
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
 	err := b.checkSEMStmt(node.Node)
@@ -537,6 +601,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
+	// Count every recursive build invocation because RU v2 charges plan work per build step.
+	b.recordPlanBuilderMetric()
 	switch x := node.Node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -1223,6 +1289,9 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 		unSupportedReason = "stale read is not supported"
 	} else if sessionVars.SnapshotTS != 0 {
 		unSupportedReason = "historical read is not supported"
+	} else if sessionVars.MaxKeysRead > 0 {
+		// https://github.com/tikv/tikv/pull/19518#discussion_r3263461617
+		unSupportedReason = "tidb_max_keys_read is set"
 	}
 
 	if unSupportedReason != "" {
@@ -1261,17 +1330,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	publicPaths = append(publicPaths, tablePath)
 
 	// consider hypo TiFlash replicas
-	isHypoTiFlashReplica := false
-	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
-		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
-		originalTableName := tblInfo.Name.L
-		if hypoReplicas[dbName.L] != nil {
-			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
-				isHypoTiFlashReplica = true
-			}
-		}
-	}
-
+	isHypoTiFlashReplica := logicalop.UsedHypoTiFlashReplicas(ctx.GetSessionVars(), dbName, tblInfo)
 	if tblInfo.TiFlashReplica == nil {
 		if isHypoTiFlashReplica {
 			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
@@ -1488,7 +1547,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = publicPaths
 	}
 
-	available = removeIgnoredPaths(available, ignored, tblInfo)
+	available = removeIgnoredPaths(available, ignored)
 
 	// global index must not use partition pruning optimization, as LogicalPartitionAll not suitable for global index.
 	// ignore global index if flagPartitionProcessor exists.
@@ -1519,13 +1578,18 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	return available, nil
 }
 
-func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
+func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTiKVTablePath() || path.IsTiFlashSimpleTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
+		// ignoredPaths already stores the resolved access paths from the hint.
+		// Re-matching them by prefix here can incorrectly remove sibling indexes that share a prefix.
+		isIgnored := path.Index != nil && slices.ContainsFunc(ignoredPaths, func(ignoredPath *util.AccessPath) bool {
+			return ignoredPath.Index != nil && ignoredPath.Index.Name.L == path.Index.Name.L
+		})
+		if path.IsTiKVTablePath() || path.IsTiFlashSimpleTablePath() || !isIgnored {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
@@ -2377,6 +2441,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 
 	return nil, nil, nil
 }
+
 func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
 	tbl *resolve.TableNameW,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
@@ -2638,10 +2703,30 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	}
 
 	var predicateCols, mustAnalyzedCols calcOnceMap
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	isPartitioned := tbl.TableInfo.GetPartitionInfo() != nil
+	targetPhysicalIDsVersionMatch := b.analyzeVersionMatchesForPhysicalIDs(tbl.TableInfo, physicalIDs, version)
+	if !isAnalyzeTable && dynamicPrune && isPartitioned {
+		// Dynamic partition analyze later merges all partitions into table-level stats, so this
+		// rewrite decision must follow table-level/global stats compatibility rather than only the
+		// requested partition IDs.
+		tableVersionMatches := domain.GetDomain(b.ctx).StatsHandle().AnalyzeVersionMatchesForTable(tbl.TableInfo, version)
+		if !tableVersionMatches {
+			// Reanalyze all partitions so the global merge rewrites table-level stats with the
+			// session-selected version.
+			physicalIDs, partitionNames, err = GetPhysicalIDsAndPartitionNames(tbl.TableInfo, nil)
+			if err != nil {
+				return err
+			}
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+				"The analyze version from the session is not compatible with the existing statistics of the table. TiDB will analyze all partitions to rewrite the table statistics with the session-selected version",
+			))
+			// Force downstream logic to rewrite all stats after expanding to all partitions.
+			targetPhysicalIDsVersionMatch = false
+		}
+	}
 	// If the statistics of the table is version 1, we must analyze all columns to overwrites all of old statistics.
-	_, versionMatches := statsHandle.ResolveAnalyzeVersion(tbl.TableInfo, physicalIDs, version)
-	mustAllColumns := !versionMatches
+	mustAllColumns := !targetPhysicalIDsVersionMatch
 
 	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns, true)
 	if err != nil {
@@ -2916,6 +3001,23 @@ func pickColumnList(astColChoice ast.ColumnChoice, astColList []*model.ColumnInf
 	return tblSavedColChoice, tblSavedColList
 }
 
+func (b *PlanBuilder) analyzeVersionMatchesForPhysicalIDs(tblInfo *model.TableInfo, physicalIDs []int64, requestedVersion int) bool {
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	intest.Assert(statsHandle != nil, "statsHandle should not be nil")
+	for _, physicalID := range physicalIDs {
+		if !statistics.AnalyzeVersionMatchesForTableStats(statsHandle.GetPhysicalTableStats(physicalID, tblInfo), requestedVersion) {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *PlanBuilder) appendAnalyzeVersionOverwriteWarning() {
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+		"The analyze version from the session is not compatible with the existing statistics of the table. The session-selected version will overwrite the existing version instead",
+	))
+}
+
 // buildAnalyzeTable constructs analyze tasks for each table.
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
 	p := &Analyze{Opts: opts}
@@ -2946,37 +3048,29 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 }
 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-	if statsHandle == nil {
-		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
-	}
 	tnW := b.resolveCtx.GetTableName(as.TableNames[0])
 	tblInfo := tnW.TableInfo
 	physicalIDs, _, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
-	_, versionIsSame := statsHandle.ResolveAnalyzeVersion(tblInfo, physicalIDs, version)
+	versionIsSame := b.analyzeVersionMatchesForPhysicalIDs(tblInfo, physicalIDs, version)
 	if !versionIsSame {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The analyze version from the session is not compatible with the existing statistics of the table. The session-selected version will overwrite the existing version instead"))
+		b.appendAnalyzeVersionOverwriteWarning()
 	}
 	return b.buildAnalyzeTable(as, opts, version)
 }
 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-	if statsHandle == nil {
-		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
-	}
 	tnW := b.resolveCtx.GetTableName(as.TableNames[0])
 	tblInfo := tnW.TableInfo
 	physicalIDs, _, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
-	_, versionIsSame := statsHandle.ResolveAnalyzeVersion(tblInfo, physicalIDs, version)
+	versionIsSame := b.analyzeVersionMatchesForPhysicalIDs(tblInfo, physicalIDs, version)
 	if !versionIsSame {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The analyze version from the session is not compatible with the existing statistics of the table. The session-selected version will overwrite the existing version instead"))
+		b.appendAnalyzeVersionOverwriteWarning()
 	}
 	return b.buildAnalyzeTable(as, opts, version)
 }
@@ -3624,6 +3718,14 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 
 	switch raw := node.(type) {
 	case *ast.FlushStmt:
+		if raw.Tp == ast.FlushStatsDelta {
+			if err := fillDefaultDBForStatsObjects(b.ctx, raw.FlushObjects); err != nil {
+				return nil, err
+			}
+			raw.DedupFlushObjects()
+			b.requireSelectPrivForStatsObjects(raw.FlushObjects)
+			break
+		}
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RELOAD")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReloadPriv, "", "", "", err)
 	case *ast.AlterInstanceStmt:
@@ -3965,12 +4067,19 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
-		originalVal := b.allowBuildCastArray
-		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
-		b.allowBuildCastArray = originalVal
-		if err != nil {
-			return igc, err
+		var expr expression.Expression
+		// Fast path: pure value literals (e.g. GENERATED ALWAYS AS (NULL) VIRTUAL) contain no
+		// column references and need no rewriting. Skip the expensive Clone()+rewrite() for them.
+		if valExpr, ok := column.GeneratedExpr.Internal().(*driver.ValueExpr); ok {
+			expr = &expression.Constant{Value: valExpr.Datum, RetType: column.FieldType.Clone()}
+		} else {
+			originalVal := b.allowBuildCastArray
+			b.allowBuildCastArray = true
+			expr, _, err = b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
+			b.allowBuildCastArray = originalVal
+			if err != nil {
+				return igc, err
+			}
 		}
 
 		igc.Exprs = append(igc.Exprs, expr)
@@ -4618,15 +4727,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
 		importFromServer = objstore.IsLocal(u)
-		// for SEM v2, they are checked by configured rules.
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
-			}
-			if kerneltype.IsNextGen() && objstore.IsS3Like(u) {
-				if err := checkNextGenS3PathWithSem(u); err != nil {
-					return nil, err
-				}
 			}
 		}
 		// a nextgen cluster might be shared by multiple tenants, and they might
@@ -4634,6 +4737,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+			if err := checkNextGenS3PathWithSem(u); err != nil {
+				return nil, err
+			}
 			values := u.Query()
 			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
@@ -4771,11 +4877,11 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 }
 
 func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, error) {
-	if err := fillDefaultDBForRefreshStats(b.ctx, rs); err != nil {
+	if err := fillDefaultDBForStatsObjects(b.ctx, rs.RefreshObjects); err != nil {
 		return nil, err
 	}
 	rs.Dedup()
-	b.requireSelectOrRestoreAdminPrivForRefreshStats(rs)
+	b.requireSelectOrRestoreAdminPrivForStatsObjects(rs.RefreshObjects)
 	p := &Simple{
 		Statement:    rs,
 		IsFromRemote: false,
@@ -4784,14 +4890,14 @@ func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, er
 	return p, nil
 }
 
-func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt) error {
-	if len(rs.RefreshObjects) == 0 {
+func fillDefaultDBForStatsObjects(ctx base.PlanContext, objects []*ast.StatsObject) error {
+	if len(objects) == 0 {
 		return nil
 	}
 
 	currentDB := ctx.GetSessionVars().CurrentDB
-	for _, obj := range rs.RefreshObjects {
-		if obj.RefreshObjectScope != ast.RefreshObjectScopeTable {
+	for _, obj := range objects {
+		if obj.StatsObjectScope != ast.StatsObjectScopeTable {
 			continue
 		}
 		if obj.DBName.L != "" {
@@ -4805,9 +4911,9 @@ func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt
 	return nil
 }
 
-func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.RefreshStatsStmt) {
-	if len(rs.RefreshObjects) == 0 {
-		intest.Assert(len(rs.RefreshObjects) > 0, "RefreshStatsStmt.RefreshObjects should not be empty")
+func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
 		return
 	}
 
@@ -4819,10 +4925,19 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 		}
 	}
 
+	b.requireSelectPrivForStatsObjects(objects)
+}
+
+func (b *PlanBuilder) requireSelectPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
+		return
+	}
+
 	user := b.ctx.GetSessionVars().User
-	for _, obj := range rs.RefreshObjects {
-		switch obj.RefreshObjectScope {
-		case ast.RefreshObjectScopeGlobal:
+	for _, obj := range objects {
+		switch obj.StatsObjectScope {
+		case ast.StatsObjectScopeGlobal:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs("SELECT")
@@ -4831,19 +4946,18 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, "", "", "", err)
 			return
-		case ast.RefreshObjectScopeDatabase:
+		case ast.StatsObjectScopeDatabase:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, obj.DBName.O)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, "", "", err)
-		case ast.RefreshObjectScopeTable:
-			dbName := obj.DBName.L
+		case ast.StatsObjectScopeTable:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, obj.TableName.O)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, obj.TableName.L, "", err)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, obj.TableName.L, "", err)
 		}
 	}
 }
@@ -6272,15 +6386,29 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
-// and we will use the keyspace name as the S3 external ID.
+// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
+// disallow explicit S3 external ID. The keyspace name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
+	hasAccessKey := false
+	hasSecretAccessKey := false
+	hasRoleARN := false
 	for k := range values {
-		lowerK := strings.ToLower(k)
-		if lowerK == s3like.S3ExternalID {
+		normalizedK := objstore.NormalizeQueryParameterKey(k)
+		switch normalizedK {
+		case s3like.S3ExternalID:
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+		case s3like.S3AccessKey:
+			hasAccessKey = hasAccessKey || values.Get(k) != ""
+		case s3like.S3SecretAccessKey:
+			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
+		case s3like.S3RoleARN:
+			hasRoleARN = hasRoleARN || values.Get(k) != ""
 		}
+	}
+
+	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil

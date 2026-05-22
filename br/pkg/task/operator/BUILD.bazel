@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "operator",
@@ -6,6 +6,7 @@ go_library(
         "base64ify.go",
         "checksum_table.go",
         "config.go",
+        "crr_checkpoint.go",
         "force_flush.go",
         "list_migration.go",
         "migrate_to.go",
@@ -27,6 +28,9 @@ go_library(
         "//br/pkg/pdutil",
         "//br/pkg/restore/log_client",
         "//br/pkg/stream",
+        "//br/pkg/stream/crr/config",
+        "//br/pkg/stream/crr/service",
+        "//br/pkg/streamhelper",
         "//br/pkg/task",
         "//br/pkg/utils",
         "//pkg/domain",
@@ -52,10 +56,24 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//opt",
+        "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "operator_test",
+    timeout = "short",
+    srcs = ["crr_checkpoint_test.go"],
+    embed = [":operator"],
+    flaky = True,
+    deps = [
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "@com_github_stretchr_testify//require",
     ],
 )

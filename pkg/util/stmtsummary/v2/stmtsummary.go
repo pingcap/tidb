@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -285,6 +286,11 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 
 	// Add info to the current statistics window.
 	s.windowLock.Lock()
+	if s.closed.Load() {
+		s.windowLock.Unlock()
+		stmtsummary.StmtDigestKeyPool.Put(k)
+		return
+	}
 	var record *lockedStmtRecord
 	v, exist := s.window.lru.Get(k)
 	if exist {
@@ -341,11 +347,17 @@ func (s *StmtSummary) ClearInternal() {
 
 // Close closes the work of StmtSummary.
 func (s *StmtSummary) Close() {
+	s.windowLock.Lock()
+	if !s.closed.CompareAndSwap(false, true) {
+		s.windowLock.Unlock()
+		return
+	}
+	s.windowLock.Unlock()
+
 	if s.cancel != nil {
 		s.cancel()
 		s.closeWg.Wait()
 	}
-	s.closed.Store(true)
 	s.flush()
 }
 
@@ -381,9 +393,20 @@ func (s *StmtSummary) rotateLoop() {
 			if now.After(s.window.begin.Add(time.Duration(s.RefreshInterval()) * time.Second)) {
 				s.rotate(now)
 			}
+			s.updateMetrics()
 			s.windowLock.Unlock()
 		}
 	}
+}
+
+// updateMetrics reports the current window's record count and eviction count
+// to Prometheus gauges. Must be called with windowLock held.
+func (s *StmtSummary) updateMetrics() {
+	metrics.SetStmtSummaryWindowMetrics(
+		metrics.StmtSummaryTypeV2,
+		float64(s.window.lru.Size()),
+		float64(s.window.evictedCount.Load()),
+	)
 }
 
 func (s *StmtSummary) rotate(now time.Time) {
@@ -442,7 +465,9 @@ func (s *StmtSummary) evictedLogLoop() {
 	for {
 		select {
 		case <-s.ctx.Done():
-			// Drain remaining buffered records synchronously, then exit.
+			// Close sets closed while holding windowLock before canceling this
+			// context, and Add rechecks closed under the same lock. At this
+			// point no Add can enqueue more evicted records.
 			for {
 				select {
 				case r := <-s.evictedCh:
@@ -465,9 +490,10 @@ func (s *StmtSummary) evictedLogLoop() {
 // according to the LRU strategy. All evicted data will be aggregated
 // into stmtEvicted.
 type stmtWindow struct {
-	begin   time.Time
-	lru     *kvcache.SimpleLRUCache // *StmtDigestKey => *lockedStmtRecord
-	evicted *stmtEvicted
+	begin        time.Time
+	lru          *kvcache.SimpleLRUCache // *StmtDigestKey => *lockedStmtRecord
+	evicted      *stmtEvicted
+	evictedCount atomic.Int64 // total number of LRU evictions in this window
 }
 
 // onEvictFn is invoked for every LRU eviction after the evicted stats have
@@ -482,6 +508,7 @@ func newStmtWindow(begin time.Time, capacity uint, onEvict onEvictFn) *stmtWindo
 		evicted: newStmtEvicted(),
 	}
 	w.lru.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+		w.evictedCount.Add(1)
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		defer r.Unlock()
@@ -497,6 +524,7 @@ func newStmtWindow(begin time.Time, capacity uint, onEvict onEvictFn) *stmtWindo
 func (w *stmtWindow) clear() {
 	w.lru.DeleteAll()
 	w.evicted = newStmtEvicted()
+	w.evictedCount.Store(0)
 }
 
 type stmtStorage interface {
