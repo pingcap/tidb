@@ -321,22 +321,20 @@ func (rc *LogClient) rewriteRulesFor(sst SSTs, rules *restoreutils.RewriteRules)
 	return rules, nil
 }
 
-func (rc *LogClient) RestoreSSTFiles(
+// CollectSSTFileSets collects all items from the iterator in advance to avoid blocking during restoration.
+// This approach ensures that we have all necessary data ready for processing,
+// preventing any potential delays caused by waiting for the iterator to yield more items.
+func (rc *LogClient) CollectSSTFileSets(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
-	importModeSwitcher *restore.ImportModeSwitcher,
-	onProgress func(int64),
-) error {
-	begin := time.Now()
-	backupFileSets := make([]restore.BackupFileSet, 0, 8)
-	// Collect all items from the iterator in advance to avoid blocking during restoration.
-	// This approach ensures that we have all necessary data ready for processing,
-	// preventing any potential delays caused by waiting for the iterator to yield more items.
+) (restore.BatchBackupFileSet, int64, error) {
+	backupFileSets := make(restore.BatchBackupFileSet, 0, 8)
+	totalKVs := int64(0)
 	start := time.Now()
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
-			return r.Err
+			return nil, 0, r.Err
 		}
 		i := r.Item
 
@@ -351,16 +349,36 @@ func (rc *LogClient) RestoreSSTFiles(
 		}
 		newRules, err := rc.rewriteRulesFor(i, rewriteRules)
 		if err != nil {
-			return err
+			return nil, 0, err
 		}
 
+		sstFiles := i.GetSSTs()
+		for _, f := range sstFiles {
+			totalKVs += int64(f.TotalKvs)
+		}
 		set := restore.BackupFileSet{
 			TableID:      i.TableID(),
-			SSTFiles:     i.GetSSTs(),
+			SSTFiles:     sstFiles,
 			RewriteRules: newRules,
 		}
 		backupFileSets = append(backupFileSets, set)
 	}
+	log.Info("[Compacted SST Restore] Collected SST files",
+		zap.Int("sst-file-count", len(backupFileSets)),
+		zap.Int64("total-kvs", totalKVs),
+		zap.Duration("iterate-take", time.Since(start)))
+	return backupFileSets, totalKVs, nil
+
+}
+
+// RestoreSSTFileSets restores pre-collected SST file sets.
+func (rc *LogClient) RestoreSSTFileSets(
+	ctx context.Context,
+	backupFileSets restore.BatchBackupFileSet,
+	importModeSwitcher *restore.ImportModeSwitcher,
+	onProgress func(int64),
+) error {
+	begin := time.Now()
 	if len(backupFileSets) == 0 {
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
@@ -377,10 +395,9 @@ func (rc *LogClient) RestoreSSTFiles(
 	}()
 
 	log.Info("[Compacted SST Restore] Start to restore SST files",
-		zap.Int("sst-file-count", len(backupFileSets)), zap.Duration("iterate-take", time.Since(start)))
-	start = time.Now()
+		zap.Int("sst-file-count", len(backupFileSets)))
 	defer func() {
-		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(start)))
+		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(begin)))
 	}()
 
 	// To optimize performance and minimize cross-region downloads,
@@ -548,6 +565,7 @@ func (rc *LogClient) InitClients(
 	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	concurrency uint,
 	concurrencyPerStore uint,
+	retainLatestMVCCVersion bool,
 ) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
@@ -574,10 +592,16 @@ func (rc *LogClient) InitClients(
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckBatchDownloadSupport(ctx, stores)
 	})
+	if retainLatestMVCCVersion {
+		createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
+			return importer.CheckBatchDownloadLatestMVCCSupport(ctx, stores)
+		})
+	}
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore,
+		retainLatestMVCCVersion, createCallBacks, closeCallBacks,
 	)
 	fileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)
