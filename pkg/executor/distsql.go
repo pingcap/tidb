@@ -868,6 +868,34 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		indexTypes := e.getRetTpsForIndexReader()
 
 		if !needMerge {
+			if len(kvRanges) == 1 {
+				result, err := e.buildIndexSelectResultForRange(
+					ctx,
+					0,
+					kvRanges[0],
+					tblScanIdxForRewritePartitionID,
+					tps,
+					idxID,
+					tracker,
+					len(kvRanges),
+					worker.batchSize,
+					0,
+					nil,
+				)
+				if err != nil {
+					result.Close()
+					worker.syncErr(err)
+					return
+				}
+				ctx1, cancel := context.WithCancel(ctx)
+				selResultList := newSelectResultList([]distsql.SelectResult{result})
+				err = worker.fetchHandles(ctx1, selResultList, indexTypes)
+				cancel()
+				if err != nil {
+					worker.syncErr(err)
+				}
+				return
+			}
 			maxInFlight := getIndexScanMaxInFlight(e.dctx.DistSQLConcurrency)
 			nextRange := 0
 			pushDownIntermediateTypes := [][]*types.FieldType{indexTypes}
