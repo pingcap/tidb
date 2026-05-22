@@ -53,7 +53,6 @@ func TestStep(t *testing.T) {
 
 	// unknown type
 	require.Equal(t, "unknown type 123", Step2Str(TaskType("123"), 123))
-
 }
 
 func TestIsValidStep(t *testing.T) {
