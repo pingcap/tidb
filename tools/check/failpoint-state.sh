@@ -28,6 +28,8 @@ Arguments:
 
 Environment:
   FAILPOINT_LOCK_WAIT_SECONDS  Lock wait timeout (default: 600).
+  FAILPOINT_LOG_CHANNEL        Log channel: stderr|stdout|both (default: stderr).
+  FAILPOINT_LOG_COLOR          Color mode: auto|always|never (default: auto).
   BAZEL_GLOBAL_CONFIG          Optional bazel global flags.
   BAZEL_CMD_CONFIG             Optional bazel command flags.
 EOF
@@ -74,6 +76,26 @@ lock_dir="${state_dir}/lock"
 lock_pid_file="${lock_dir}/pid"
 refcount_file="${state_dir}/refcount"
 lock_wait_seconds="${FAILPOINT_LOCK_WAIT_SECONDS:-600}"
+log_channel="${FAILPOINT_LOG_CHANNEL:-stderr}"
+log_color_mode="${FAILPOINT_LOG_COLOR:-auto}"
+
+case "${log_channel}" in
+	stdout|stderr|both)
+		;;
+	*)
+		echo "invalid FAILPOINT_LOG_CHANNEL: ${log_channel} (expected stdout|stderr|both)" >&2
+		exit 1
+		;;
+esac
+
+case "${log_color_mode}" in
+	auto|always|never)
+		;;
+	*)
+		echo "invalid FAILPOINT_LOG_COLOR: ${log_color_mode} (expected auto|always|never)" >&2
+		exit 1
+		;;
+esac
 
 mkdir -p "${state_dir}"
 
@@ -94,6 +116,95 @@ read_refcount() {
 write_refcount() {
 	local count="$1"
 	printf '%s\n' "${count}" > "${refcount_file}"
+}
+
+log_state() {
+	local message="$1"
+	case "${log_channel}" in
+		stdout)
+			emit_log_to_fd 1 "${message}"
+			;;
+		stderr)
+			emit_log_to_fd 2 "${message}"
+			;;
+		both)
+			emit_log_to_fd 1 "${message}"
+			emit_log_to_fd 2 "${message}"
+			;;
+	esac
+}
+
+emit_log_to_fd() {
+	local fd="$1"
+	local message="$2"
+	if [ "${fd}" -eq 1 ]; then
+		printf '[failpoint-state] %s\n' "${message}"
+	else
+		printf '[failpoint-state] %s\n' "${message}" >&2
+	fi
+}
+
+use_color_for_fd() {
+	local fd="$1"
+	case "${log_color_mode}" in
+		always)
+			return 0
+			;;
+		never)
+			return 1
+			;;
+		auto)
+			[ -z "${NO_COLOR:-}" ] || return 1
+			[ "${TERM:-}" != "dumb" ] || return 1
+			[ -t "${fd}" ]
+			return
+			;;
+	esac
+}
+
+format_decision_for_fd() {
+	local fd="$1"
+	local message="$2"
+	local line="[DECISION] >>> ${message} <<<"
+	local color_reset=$'\033[0m'
+	local color_decision
+	case "${message}" in
+		decision=run-*)
+			color_decision=$'\033[1;32m'
+			;;
+		decision=skip-*)
+			color_decision=$'\033[1;33m'
+			;;
+		*)
+			color_decision=$'\033[1;36m'
+			;;
+	esac
+	if use_color_for_fd "${fd}"; then
+		printf '%s%s%s' "${color_decision}" "${line}" "${color_reset}"
+	else
+		printf '%s' "${line}"
+	fi
+}
+
+log_decision() {
+	local message="$1"
+	local formatted
+	case "${log_channel}" in
+		stdout)
+			formatted="$(format_decision_for_fd 1 "${message}")"
+			emit_log_to_fd 1 "${formatted}"
+			;;
+		stderr)
+			formatted="$(format_decision_for_fd 2 "${message}")"
+			emit_log_to_fd 2 "${formatted}"
+			;;
+		both)
+			formatted="$(format_decision_for_fd 1 "${message}")"
+			emit_log_to_fd 1 "${formatted}"
+			formatted="$(format_decision_for_fd 2 "${message}")"
+			emit_log_to_fd 2 "${formatted}"
+			;;
+	esac
 }
 
 collect_target_dirs() {
@@ -178,22 +289,33 @@ trap release_lock EXIT INT TERM
 acquire_lock
 
 refcount="$(read_refcount)"
+log_state "action=${action} backend=${backend} log_channel=${log_channel} log_color=${log_color_mode} refcount=${refcount}"
 case "${action}" in
 	enable)
 		if [ "${refcount}" -eq 0 ]; then
+			log_decision "decision=run-enable reason=refcount-is-zero"
 			run_failpoint_ctl enable
+		else
+			log_decision "decision=skip-enable reason=already-enabled"
 		fi
-		write_refcount "$((refcount + 1))"
+		new_refcount=$((refcount + 1))
+		write_refcount "${new_refcount}"
+		log_state "new_refcount=${new_refcount}"
 		;;
 	disable)
 		if [ "${refcount}" -le 0 ]; then
 			write_refcount 0
+			log_decision "decision=skip-disable reason=refcount-non-positive new_refcount=0"
 			exit 0
 		fi
 		new_refcount=$((refcount - 1))
 		if [ "${new_refcount}" -eq 0 ]; then
+			log_decision "decision=run-disable reason=refcount-reaches-zero"
 			run_failpoint_ctl disable
+		else
+			log_decision "decision=skip-disable reason=still-referenced"
 		fi
 		write_refcount "${new_refcount}"
+		log_state "new_refcount=${new_refcount}"
 		;;
 esac
