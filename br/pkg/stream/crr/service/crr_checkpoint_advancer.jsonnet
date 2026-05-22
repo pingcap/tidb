@@ -30,7 +30,7 @@ local MappingType = {
 };
 
 local newDash = dashboard.new(
-    title='Test-Cluster-CRR-Checkpoint-Advancer',
+    title='Test-Cluster-CRPiTR',
     editable=true,
     graphTooltip='shared_crosschair',
     refresh='30s',
