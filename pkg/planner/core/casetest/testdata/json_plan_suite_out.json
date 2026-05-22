@@ -3,24 +3,162 @@
     "Name": "TestJSONPlanInExplain",
     "Cases": [
       {
-        "SQL": "",
-        "JSONPlan": null
+        "SQL": "explain format = tidb_json update t2 set id = 1 where id =2",
+        "JSONPlan": [
+          {
+            "id": "Update_4",
+            "estRows": "N/A",
+            "taskType": "root",
+            "operatorInfo": "N/A",
+            "subOperators": [
+              {
+                "id": "IndexReader_7",
+                "estRows": "10.00",
+                "taskType": "root",
+                "operatorInfo": "index:IndexRangeScan_6",
+                "subOperators": [
+                  {
+                    "id": "IndexRangeScan_6",
+                    "estRows": "10.00",
+                    "taskType": "cop[tikv]",
+                    "accessObject": "table:t2, index:id(id)",
+                    "operatorInfo": "range:[2,2], keep order:false, stats:pseudo"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       {
-        "SQL": "",
-        "JSONPlan": null
+        "SQL": "explain format = tidb_json insert into t1 values(1)",
+        "JSONPlan": [
+          {
+            "id": "Insert_1",
+            "estRows": "N/A",
+            "taskType": "root",
+            "operatorInfo": "N/A"
+          }
+        ]
       },
       {
-        "SQL": "",
-        "JSONPlan": null
+        "SQL": "explain format = tidb_json select count(*) from t1",
+        "JSONPlan": [
+          {
+            "id": "HashAgg_12",
+            "estRows": "1.00",
+            "taskType": "root",
+            "operatorInfo": "funcs:count(Column#5)->Column#3",
+            "subOperators": [
+              {
+                "id": "IndexReader_13",
+                "estRows": "1.00",
+                "taskType": "root",
+                "operatorInfo": "index:HashAgg_5",
+                "subOperators": [
+                  {
+                    "id": "HashAgg_5",
+                    "estRows": "1.00",
+                    "taskType": "cop[tikv]",
+                    "operatorInfo": "funcs:count(1)->Column#5",
+                    "subOperators": [
+                      {
+                        "id": "IndexFullScan_11",
+                        "estRows": "10000.00",
+                        "taskType": "cop[tikv]",
+                        "accessObject": "table:t1, index:id(id)",
+                        "operatorInfo": "keep order:false, stats:pseudo"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       {
-        "SQL": "",
-        "JSONPlan": null
+        "SQL": "explain format = tidb_json select * from t1",
+        "JSONPlan": [
+          {
+            "id": "IndexReader_7",
+            "estRows": "10000.00",
+            "taskType": "root",
+            "operatorInfo": "index:IndexFullScan_6",
+            "subOperators": [
+              {
+                "id": "IndexFullScan_6",
+                "estRows": "10000.00",
+                "taskType": "cop[tikv]",
+                "accessObject": "table:t1, index:id(id)",
+                "operatorInfo": "keep order:false, stats:pseudo"
+              }
+            ]
+          }
+        ]
       },
       {
-        "SQL": "",
-        "JSONPlan": null
+        "SQL": "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id",
+        "JSONPlan": [
+          {
+            "id": "MergeJoin_10",
+            "estRows": "12487.50",
+            "actRows": "0",
+            "taskType": "root",
+            "executeInfo": "time:154.7µs, loops:1",
+            "operatorInfo": "inner join, left key:test.t1.id, right key:test.t2.id",
+            "memoryInfo": "760 Bytes",
+            "diskInfo": "0 Bytes",
+            "subOperators": [
+              {
+                "id": "IndexReader_36(Build)",
+                "estRows": "9990.00",
+                "actRows": "0",
+                "taskType": "root",
+                "executeInfo": "time:94.1µs, loops:1, cop_task: {num: 1, max: 58.2µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 1.08µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:50.5µs}}",
+                "operatorInfo": "index:IndexFullScan_35",
+                "memoryInfo": "174 Bytes",
+                "diskInfo": "N/A",
+                "subOperators": [
+                  {
+                    "id": "IndexFullScan_35",
+                    "estRows": "9990.00",
+                    "actRows": "0",
+                    "taskType": "cop[tikv]",
+                    "accessObject": "table:t2, index:id(id)",
+                    "executeInfo": "tikv_task:{time:38.1µs, loops:0}",
+                    "operatorInfo": "keep order:true, stats:pseudo",
+                    "memoryInfo": "N/A",
+                    "diskInfo": "N/A"
+                  }
+                ]
+              },
+              {
+                "id": "IndexReader_34(Probe)",
+                "estRows": "9990.00",
+                "actRows": "0",
+                "taskType": "root",
+                "executeInfo": "time:56.7µs, loops:1, cop_task: {num: 1, max: 43.5µs, proc_keys: 0, copr_cache_hit_ratio: 0.00, build_task_duration: 3.62µs, max_distsql_concurrency: 1}, rpc_info:{Cop:{num_rpc:1, total_time:36.8µs}}",
+                "operatorInfo": "index:IndexFullScan_33",
+                "memoryInfo": "174 Bytes",
+                "diskInfo": "N/A",
+                "subOperators": [
+                  {
+                    "id": "IndexFullScan_33",
+                    "estRows": "9990.00",
+                    "actRows": "0",
+                    "taskType": "cop[tikv]",
+                    "accessObject": "table:t1, index:id(id)",
+                    "executeInfo": "tikv_task:{time:27.2µs, loops:0}",
+                    "operatorInfo": "keep order:true, stats:pseudo",
+                    "memoryInfo": "N/A",
+                    "diskInfo": "N/A"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     ]
   }
