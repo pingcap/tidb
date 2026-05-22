@@ -557,18 +557,22 @@ func (a *AggregationPushDownSolver) aggPushDown(p base.LogicalPlan) (_ base.Logi
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
 				ctx := p.SCtx()
-				noSideEffects := true
+				// The aggregate may not reference every projection expression, for example count(*) over
+				// a derived table. Keep side-effect projections in place so their expressions are executed.
+				noSideEffects := !expression.ExprsHasSideEffects(proj.Exprs)
 				newGbyItems := make([]expression.Expression, 0, len(agg.GroupByItems))
-				for _, gbyItem := range agg.GroupByItems {
-					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), gbyItem, proj.Schema(), proj.Exprs, true)
-					if failed {
-						noSideEffects = false
-						break
-					}
-					newGbyItems = append(newGbyItems, groupBy)
-					if expression.ExprsHasSideEffects(newGbyItems) {
-						noSideEffects = false
-						break
+				if noSideEffects {
+					for _, gbyItem := range agg.GroupByItems {
+						_, failed, groupBy := expression.ColumnSubstituteImpl(ctx.GetExprCtx(), gbyItem, proj.Schema(), proj.Exprs, true)
+						if failed {
+							noSideEffects = false
+							break
+						}
+						newGbyItems = append(newGbyItems, groupBy)
+						if expression.ExprsHasSideEffects(newGbyItems) {
+							noSideEffects = false
+							break
+						}
 					}
 				}
 				oldAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
