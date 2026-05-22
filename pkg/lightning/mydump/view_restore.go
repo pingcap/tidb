@@ -35,9 +35,6 @@ import (
 type tableNameSet map[filter.Table]struct{}
 
 func (s tableNameSet) add(tbl filter.Table) {
-	if s == nil {
-		return
-	}
 	s[normalizeTableName(tbl.Schema, tbl.Name)] = struct{}{}
 }
 
