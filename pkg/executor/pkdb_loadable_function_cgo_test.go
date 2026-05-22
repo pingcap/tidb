@@ -16,7 +16,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -160,7 +159,7 @@ func TestLoadableFunctionMockedCreatePrivilegeDenied(t *testing.T) {
 	tk.MustExec("drop function udf_priv_create")
 }
 
-func TestLoadableFunctionMockedExecutePrivilege(t *testing.T) {
+func TestLoadableFunctionMockedExecutePrivilegeCompatibility(t *testing.T) {
 	restore := expression.SetLoadUDFHookForTest(expression.MockLoadUDFForTest)
 	t.Cleanup(restore)
 
@@ -173,9 +172,7 @@ func TestLoadableFunctionMockedExecutePrivilege(t *testing.T) {
 	tkUser := testkit.NewTestKit(t, store)
 	tkUser.InProcedure()
 	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "udf_user", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
-	tkUser.MustGetErrCode("select udf_exec(1)", mysql.ErrSpecificAccessDenied)
-
-	tkRoot.MustExec(`grant execute on *.* to 'udf_user'@'%'`)
+	// Match MySQL: loadable UDF invocation is not gated by GRANT EXECUTE ON *.*.
 	tkUser.MustQuery("select udf_exec(1)").Check(testkit.Rows("2"))
 }
 
