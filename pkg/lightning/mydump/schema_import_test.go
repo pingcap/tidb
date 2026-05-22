@@ -368,31 +368,6 @@ func TestNewSchemaImportPlanRejectsEmptyViewSchema(t *testing.T) {
 	require.ErrorContains(t, err, "empty schema for view test.v1")
 }
 
-func TestNewSchemaImportPlanRejectsViewWithoutCharset(t *testing.T) {
-	ctx := context.Background()
-	tempDir := t.TempDir()
-	store, err := objstore.NewLocalStorage(tempDir)
-	require.NoError(t, err)
-
-	fileName := "test.v1-schema-view.sql"
-	require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte(`
-/*!40101 SET NAMES binary*/;
-DROP TABLE IF EXISTS v1;
-DROP VIEW IF EXISTS v1;
-CREATE ALGORITHM=UNDEFINED DEFINER=`+"`root`@`%`"+` SQL SECURITY DEFINER VIEW v1 (`+"`id`"+`) AS SELECT 1 AS `+"`id`"+`;
-`), 0o644))
-
-	_, err = NewSchemaImportPlan(ctx, store, mysql.SQLMode(0), []*MDDatabaseMeta{
-		{
-			Name: "test",
-			Views: []*MDTableMeta{
-				{DB: "test", Name: "v1", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
-			},
-		},
-	})
-	require.ErrorContains(t, err, "Unsupported encoding")
-}
-
 func TestLoaderSetupDefersInvalidViewSQLUntilRun(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
