@@ -1022,9 +1022,14 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 	argExpr, argExprTp := args[0], args[0].GetType(ctx.GetEvalCtx())
 	_, intOverflow := c.typeInfer(ctx.GetEvalCtx(), argExpr)
+	argIsParamMarker := false
+	if con, ok := argExpr.(*Constant); ok && con.ParamMarker != nil {
+		argIsParamMarker = true
+	}
 
 	var bf baseBuiltinFunc
 	evalType := argExprTp.EvalType()
+	usesDecimalSig := false
 	switch evalType {
 	case types.ETInt:
 		if intOverflow {
@@ -1032,6 +1037,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			if err != nil {
 				return nil, err
 			}
+			usesDecimalSig = true
 			sig = &builtinUnaryMinusDecimalSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
@@ -1064,6 +1070,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 				return nil, err
 			}
 			bf.tp.SetDecimalUnderLimit(argExprTp.GetDecimal())
+			usesDecimalSig = true
 			sig = &builtinUnaryMinusDecimalSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
@@ -1075,7 +1082,16 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}
 	}
-	bf.tp.SetFlenUnderLimit(argExprTp.GetFlen() + 1)
+	if usesDecimalSig &&
+		argIsParamMarker &&
+		argExprTp.GetFlen() < mysql.MaxIntWidth+1 {
+		// Execute-time parameters can need one more digit after negation,
+		// for example -(-9223372036854775808). Keep the inferred decimal
+		// width large enough for callers.
+		bf.tp.SetFlen(mysql.MaxIntWidth + 1)
+	} else {
+		bf.tp.SetFlenUnderLimit(argExprTp.GetFlen() + 1)
+	}
 	return sig, err
 }
 

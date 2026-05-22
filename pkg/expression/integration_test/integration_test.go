@@ -4207,6 +4207,22 @@ func TestIssue16205(t *testing.T) {
 	require.NotEqual(t, rows1[0][0].(string), rows2[0][0].(string))
 }
 
+func TestPreparedCeilFloorWithUnaryMinusMinInt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @a = -9223372036854775808")
+	expectedRows := testkit.Rows("9223372036854775808")
+
+	for _, fn := range []string{"ceiling", "floor"} {
+		// Parameter width is unknown at prepare time, but -MinInt64 needs
+		// decimal output.
+		tk.MustExec(fmt.Sprintf("prepare stmt from 'select %s((- (?)))'", fn))
+		tk.MustQuery("execute stmt using @a").Check(expectedRows)
+		tk.MustExec("deallocate prepare stmt")
+	}
+}
+
 func calculateChecksum(cols ...any) string {
 	buf := make([]byte, 0, 64)
 	for _, col := range cols {
