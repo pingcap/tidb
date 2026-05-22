@@ -3,6 +3,7 @@ create table t(a int, b int, c int);
 desc format='brief' select a, b, avg(c) from t group by a, b, c having
 (a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3);
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Projection	711.11	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b, Column#5->Column#8
 └─Selection	711.11	root		gt(Column#5, 3)
   └─HashAgg	888.89	root		group by:Column#14, Column#15, Column#16, funcs:avg(Column#13)->Column#5, funcs:firstrow(Column#14)->agg_predicate_pushdown.t.a, funcs:firstrow(Column#15)->agg_predicate_pushdown.t.b
@@ -50,3 +51,15 @@ Projection	6393.60	root		agg_predicate_pushdown.t.a, agg_predicate_pushdown.t.b,
       └─TableReader	9990.00	root		data:Selection
         └─Selection	9990.00	cop[tikv]		or(gt(agg_predicate_pushdown.t.a, 1), lt(agg_predicate_pushdown.t.a, 3))
           └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+=======
+Projection	6.40	root		agg_predicate_pushdown.t.id, agg_predicate_pushdown.t.tran_id
+└─Selection	6.40	root		eq(agg_predicate_pushdown.t.id, Column#5)
+  └─HashAgg	8.00	root		group by:agg_predicate_pushdown.t.id, funcs:firstrow(agg_predicate_pushdown.t.id)->agg_predicate_pushdown.t.id, funcs:firstrow(agg_predicate_pushdown.t.tran_id)->agg_predicate_pushdown.t.tran_id, funcs:max(agg_predicate_pushdown.t.id)->Column#5
+    └─HashJoin	12.50	root		left outer join, left side:TableReader, equal:[eq(agg_predicate_pushdown.t.tran_id, agg_predicate_pushdown.t.tran_id)]
+      ├─TableReader(Build)	10.00	root		data:Selection
+      │ └─Selection	10.00	cop[tikv]		eq(1540776, agg_predicate_pushdown.t.tran_id)
+      │   └─TableFullScan	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
+      └─TableReader(Probe)	10.00	root		data:Selection
+        └─Selection	10.00	cop[tikv]		eq(agg_predicate_pushdown.t.tran_id, 1540776)
+          └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+>>>>>>> 5fac8052721 (planner: always keep join keys by default (#63470))

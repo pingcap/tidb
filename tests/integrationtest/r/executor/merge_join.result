@@ -45,6 +45,7 @@ Selection	9990.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
 c1	c2	c1	c2
+<<<<<<< HEAD
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
 id	estRows	task	access object	operator info
 MergeJoin	12.50	root		inner join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
@@ -56,6 +57,19 @@ MergeJoin	12.50	root		inner join, left key:executor__merge_join.t.c1, right key:
   └─TableReader	10.00	root		data:Selection
     └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t.c1)), or(eq(executor__merge_join.t.c1, 3), 0)
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+=======
+explain format = 'plan_tree' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+├─Sort(Build)	root		executor__merge_join.t1.c1
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		eq(executor__merge_join.t1.c1, 3)
+│     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Sort(Probe)	root		executor__merge_join.t.c1
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		eq(executor__merge_join.t.c1, 3)
+      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+>>>>>>> 5fac8052721 (planner: always keep join keys by default (#63470))
 select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
 c1	c2	c1	c2
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
@@ -318,6 +332,7 @@ Selection	9990.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_
           └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
 c1	c2	c1	c2
+<<<<<<< HEAD
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
 id	estRows	task	access object	operator info
 Shuffle	12.50	root		execution info: concurrency:4, data sources:[TableReader TableReader]
@@ -332,6 +347,22 @@ Shuffle	12.50	root		execution info: concurrency:4, data sources:[TableReader Tab
       └─TableReader	10.00	root		data:Selection
         └─Selection	10.00	cop[tikv]		not(isnull(executor__merge_join.t.c1)), or(eq(executor__merge_join.t.c1, 3), 0)
           └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+=======
+explain format = 'plan_tree' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
+id	task	access object	operator info
+Shuffle	root		execution info: concurrency:4, data sources:[TableReader TableReader]
+└─MergeJoin	root		inner join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+  ├─Sort(Build)	root		executor__merge_join.t1.c1
+  │ └─ShuffleReceiver	root		
+  │   └─TableReader	root		data:Selection
+  │     └─Selection	cop[tikv]		eq(executor__merge_join.t1.c1, 3)
+  │       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Sort(Probe)	root		executor__merge_join.t.c1
+    └─ShuffleReceiver	root		
+      └─TableReader	root		data:Selection
+        └─Selection	cop[tikv]		eq(executor__merge_join.t.c1, 3)
+          └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+>>>>>>> 5fac8052721 (planner: always keep join keys by default (#63470))
 select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false;
 c1	c2	c1	c2
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
