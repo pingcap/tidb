@@ -542,7 +542,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("test StepPrepared mapping in next-step resolution", func(t *testing.T) {
+	t.Run("test onPending prepared step resolves next-step from init", func(t *testing.T) {
 		taskWithPrepared := task
 		taskWithPrepared.Step = proto.StepPrepared
 		taskWithPrepared.ExtraParams.PrepareMode = proto.PrepareModeRequired
@@ -561,7 +561,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 
 		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
-		require.NoError(t, scheduler.switch2NextStep())
+		require.NoError(t, scheduler.onPending())
 		taskWithPrepared.Step = proto.StepOne
 		taskWithPrepared.State = proto.TaskStateRunning
 		require.Equal(t, taskWithPrepared, *scheduler.GetTask())

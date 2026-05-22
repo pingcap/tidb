@@ -391,6 +391,7 @@ func (s *BaseScheduler) onPending() error {
 	task := s.getTaskClone()
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	nextStepInput := task.Step
 	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
 		if err := s.Extension.OnPrepare(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
@@ -404,8 +405,13 @@ func (s *BaseScheduler) onPending() error {
 		}
 		task.Step = proto.StepPrepared
 		s.task.Store(task)
+		nextStepInput = proto.StepInit
+	} else if task.Step == proto.StepPrepared {
+		// During the framework-only rollout, pending+prepared tasks still resolve
+		// business next-step from StepInit.
+		nextStepInput = proto.StepInit
 	}
-	return s.switch2NextStep()
+	return s.switch2NextStepWithInputStep(nextStepInput)
 }
 
 // handle task in running state, check all running subtasks finishes.
@@ -493,21 +499,14 @@ func (s *BaseScheduler) onFinished() {
 	s.logger.Debug("schedule task, task is finished", zap.Stringer("state", task.State))
 }
 
-// stepForNextStepResolution converts framework-only marker steps to the
-// business-step view used by GetNextStep.
-// StepPrepared means "prepare finished", so next-step resolution should
-// continue from the business progression rooted at StepInit.
-func stepForNextStepResolution(step proto.Step) proto.Step {
-	if step == proto.StepPrepared {
-		return proto.StepInit
-	}
-	return step
+func (s *BaseScheduler) switch2NextStep() error {
+	return s.switch2NextStepWithInputStep(s.GetTask().Step)
 }
 
-func (s *BaseScheduler) switch2NextStep() error {
+func (s *BaseScheduler) switch2NextStepWithInputStep(nextStepInput proto.Step) error {
 	task := s.getTaskClone()
 	taskBase4Next := task.TaskBase
-	taskBase4Next.Step = stepForNextStepResolution(taskBase4Next.Step)
+	taskBase4Next.Step = nextStepInput
 	nextStep := s.GetNextStep(&taskBase4Next)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
