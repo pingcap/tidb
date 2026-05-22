@@ -220,7 +220,7 @@ func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabas
 // as the view, and a view-schema sql file which drops the table and creates the view.
 func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPlan) error {
 	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
-	if plan == nil || plan.viewPlan == nil {
+	if plan.viewPlan == nil {
 		return nil
 	}
 	existingNonViews, existingViews, err := si.loadExistingViewDependencies(ctx, plan.viewPlan)
