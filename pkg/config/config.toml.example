@@ -453,9 +453,9 @@ executor-l1 = 0.00013278
 executor-l2 = 0.00000383
 # executor-l3 covers heavier operators: Sort and StreamAgg.
 executor-l3 = 0.00141739
-# executor-l5-insert-rows is the per-row insert weight. Level 4 is
-# intentionally unused today because only L1/L2/L3 executor groups and this
-# insert-specific tier are currently modeled.
+# executor-l5-insert-rows is the weight for insert rows multiplied by inserted
+# column count. Level 4 is intentionally unused today because only L1/L2/L3
+# executor groups and this insert-specific tier are currently modeled.
 executor-l5-insert-rows = 0.00472572
 plan-cnt = 0.15392217
 plan-derive-stats-paths = 0.24968182

@@ -69,3 +69,32 @@ func TestNextIOAccAddInputCountsRowsWithZeroCols(t *testing.T) {
 		require.True(t, needNextIOAcc(false, parentAcc, 1))
 	})
 }
+
+func TestRUV2ExecutorMetricByTypeIncludesConcreteExecutorTypes(t *testing.T) {
+	cases := map[string]ruv2ExecutorMetric{
+		"*executor.ProjectionExec":      {level: 2, label: "ProjectionExec", useCells: true},
+		"*join.HashJoinV1Exec":          {level: 2, label: "HashJoinV1Exec", useCells: false},
+		"*join.HashJoinV2Exec":          {level: 2, label: "HashJoinV2Exec", useCells: false},
+		"*join.IndexLookUpJoin":         {level: 2, label: "IndexLookUpJoin", useCells: true},
+		"*join.IndexLookUpMergeJoin":    {level: 2, label: "IndexLookUpMergeJoin", useCells: true},
+		"*join.IndexNestedLoopHashJoin": {level: 2, label: "IndexNestedLoopHashJoin", useCells: true},
+		"*join.MergeJoinExec":           {level: 2, label: "MergeJoinExec", useCells: false},
+		"*sortexec.SortExec":            {level: 3, label: "SortExec", useCells: true},
+		"*sortexec.TopNExec":            {level: 2, label: "TopNExec", useCells: true},
+	}
+
+	for typ, expected := range cases {
+		actual, ok := ruv2ExecutorMetricByType[typ]
+		require.True(t, ok, typ)
+		require.Equal(t, expected, actual)
+	}
+
+	for _, staleType := range []string{
+		"*executor.HashJoinExec",
+		"*executor.IndexLookUpJoin",
+		"*executor.SortExec",
+	} {
+		_, ok := ruv2ExecutorMetricByType[staleType]
+		require.False(t, ok, staleType)
+	}
+}
