@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -49,6 +50,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
@@ -1204,7 +1206,7 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logInfo, err := getLogRangeWithStorage(ctx, s)
+	logInfo, err := getLogRangeWithStorage(ctx, s, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1255,6 +1257,9 @@ func RunStreamRestore(
 	cfg.tiflashRecorder = recorder
 	// restore full snapshot.
 	if checkInfo.NeedFullRestore {
+		if cfg.RestorePhase == 2 {
+			return errors.Errorf("invalid phase for full restore because full restore is not finished, please specify 1 for full restore")
+		}
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
@@ -1413,12 +1418,6 @@ func restoreStream(
 	if err != nil {
 		return err
 	}
-	migs, err := client.GetLockedMigrations(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	client.BuildMigrations(migs.Migs)
-	defer migs.ReadLock.UnlockOnCleanUp(ctx)
 
 	// get full backup meta storage to generate rewrite rules.
 	fullBackupStorage, err := parseFullBackupTablesStorage(cfg)
@@ -1463,13 +1462,31 @@ func restoreStream(
 	if err != nil {
 		return err
 	}
+	filesInDefaultCF, filesInWriteCF, err := client.BuildMetaKVFiles(ctx, ddlFiles, schemasReplace)
+	if err != nil {
+		return err
+	}
+	if cfg.RestorePhase == 1 {
+		log.Info("full restore phase completed and id map persisted, stop before log restore in restore phase 1")
+		if _, err := glue.GetConsole(g).Out().Write([]byte("full restore phase completed, stop before log restore (restore-phase=1)\n")); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
+		return client.RestoreMetaKVFiles(ctx, filesInDefaultCF, filesInWriteCF, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
+
+	migs, err := client.GetLockedMigrations(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	client.BuildMigrations(migs.Migs)
+	defer migs.ReadLock.UnlockOnCleanUp(ctx)
 
 	rewriteRules := initRewriteRules(schemasReplace)
 
@@ -1711,12 +1728,14 @@ func getLogRange(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	return getLogRangeWithStorage(ctx, s)
+	return getLogRangeWithStorage(ctx, s, false, "")
 }
 
 func getLogRangeWithStorage(
 	ctx context.Context,
 	s storage.ExternalStorage,
+	fromReplicationStorage bool,
+	replicationStatusSubPrefix string,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1743,9 +1762,19 @@ func getLogRangeWithStorage(
 	logMinTS := max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, s)
-	if err != nil {
-		return backupLogInfo{}, errors.Trace(err)
+	var logMaxTS uint64
+	if fromReplicationStorage {
+		ts, err := getGlobalCheckpointFromReplicationStorage(ctx, s, replicationStatusSubPrefix)
+		if err != nil {
+			return backupLogInfo{}, errors.Trace(err)
+		}
+		logMaxTS = ts
+	} else {
+		ts, err := getGlobalCheckpointFromStorage(ctx, s)
+		if err != nil {
+			return backupLogInfo{}, errors.Trace(err)
+		}
+		logMaxTS = ts
 	}
 	logMaxTS = max(logMinTS, logMaxTS)
 
@@ -1773,6 +1802,23 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStora
 		return nil
 	})
 	return globalCheckPointTS, errors.Trace(err)
+}
+
+func getGlobalCheckpointFromReplicationStorage(ctx context.Context, s storage.ExternalStorage, replicationStatusSubPrefix string) (uint64, error) {
+	// parse the replication status
+	statusFileName, err := service.GetStatusFileName(replicationStatusSubPrefix)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	statusContent, err := s.ReadFile(ctx, statusFileName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	var state service.PersistentState
+	if err := json.Unmarshal(statusContent, &state); err != nil {
+		return 0, fmt.Errorf("decode persisted resume state %s: %w", statusFileName, err)
+	}
+	return state.LastCheckpoint, nil
 }
 
 // getFullBackupTS gets the snapshot-ts of full backup

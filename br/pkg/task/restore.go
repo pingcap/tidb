@@ -85,6 +85,10 @@ const (
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
 
+	// FlagFromReplicationStorage is used for PITR from the replication external storage
+	FlagReplicationStatusSubPrefix = "replication-status-sub-prefix"
+	// FlagRestorePhase is used for the restore phase of PITR
+	FlagRestorePhase = "restore-phase"
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
@@ -270,6 +274,12 @@ type RestoreConfig struct {
 	upstreamClusterID uint64 `json:"-" toml:"-"`
 	WaitTiflashReady  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
+	// for PITR from the replication external storage
+	ReplicationStatusSubPrefix string `json:"replication-status-sub-prefix" toml:"replication-status-sub-prefix"`
+	RestorePhase               uint64 `json:"restore-phase" toml:"restore-phase"`
+	FromReplicationStorage     bool   `json:"-" toml:"-"`
+	RestoreInPhase             bool   `json:"-" toml:"-"`
+
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
 	Prepare             bool                  `json:"prepare" toml:"prepare"`
@@ -296,6 +306,9 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
+
+	flags.String(FlagReplicationStatusSubPrefix, "", "specify the sub prefix of the replication status")
+	flags.Uint64(FlagRestorePhase, 0, "specify the phase of the restore, 1 for full restore, 2 for log restore")
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
@@ -435,6 +448,24 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
+	cfg.ReplicationStatusSubPrefix, err = flags.GetString(FlagReplicationStatusSubPrefix)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagReplicationStatusSubPrefix)
+	}
+	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
+	}
+	cfg.RestoreInPhase = flags.Changed(FlagRestorePhase) || cfg.RestorePhase > 0
+	if cfg.RestoreInPhase && cfg.RestorePhase != 1 && cfg.RestorePhase != 2 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v is an invalid value, please specify 1 or 2",
+			FlagRestorePhase)
+	}
+	if cfg.RestoreInPhase && !cfg.UseCheckpoint {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
+			FlagRestorePhase, flagUseCheckpoint)
+	}
+	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStatusSubPrefix) || len(cfg.ReplicationStatusSubPrefix) > 0
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -734,6 +765,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	// Clear the checkpoint data
 	if cfg.UseCheckpoint {
+		// For restore phase 1, we intentionally keep restore registration
+		// and checkpoint data for the subsequent phase 2 run.
+		if IsStreamRestore(cmdName) && cfg.RestorePhase == 1 {
+			log.Info("restore phase 1 finished, paused restore task and kept checkpoint data")
+			return nil
+		}
 		se, err := g.CreateSession(mgr.GetStorage())
 		if err != nil {
 			log.Warn("failed to remove checkpoint data", zap.Error(err))

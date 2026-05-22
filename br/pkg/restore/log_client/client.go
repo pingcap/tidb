@@ -1174,14 +1174,11 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 	return files
 }
 
-// RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
-func (rc *LogClient) RestoreMetaKVFiles(
+func (rc *LogClient) BuildMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
-	updateStats func(kvCount uint64, size uint64),
-	progressInc func(),
-) error {
+) ([]*backuppb.DataFileInfo, []*backuppb.DataFileInfo, error) {
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 	filesInDefaultCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
@@ -1209,12 +1206,6 @@ func (rc *LogClient) RestoreMetaKVFiles(
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
 	})
-
-	log.Info("start to restore meta files",
-		zap.Int("total files", len(files)),
-		zap.Int("default files", len(filesInDefaultCF)),
-		zap.Int("write files", len(filesInWriteCF)))
-
 	if schemasReplace.NeedConstructIdMap() {
 		// Preconstruct the map and save it into external storage.
 		if err := rc.PreConstructAndSaveIDMap(
@@ -1223,12 +1214,29 @@ func (rc *LogClient) RestoreMetaKVFiles(
 			filesInDefaultCF,
 			schemasReplace,
 		); err != nil {
-			return errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
+
 	}
 	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
 	})
+	log.Info("prepared meta files to be restored",
+		zap.Int("total files", len(files)),
+		zap.Int("default files", len(filesInDefaultCF)),
+		zap.Int("write files", len(filesInWriteCF)),
+	)
+	return filesInDefaultCF, filesInWriteCF, nil
+}
+
+// RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
+func (rc *LogClient) RestoreMetaKVFiles(
+	ctx context.Context,
+	filesInDefaultCF, filesInWriteCF []*backuppb.DataFileInfo,
+	schemasReplace *stream.SchemasReplace,
+	updateStats func(kvCount uint64, size uint64),
+	progressInc func(),
+) error {
 
 	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := RestoreMetaKVFilesWithBatchMethod(
