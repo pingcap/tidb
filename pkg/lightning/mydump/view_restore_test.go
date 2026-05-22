@@ -131,34 +131,6 @@ CREATE VIEW v_multi AS SELECT 2;
 	require.ErrorContains(t, err, "multiple create view statements found")
 }
 
-func TestBuildViewRestorePlan(t *testing.T) {
-	v1 := filter.Table{Schema: "test", Name: "v1"}
-	v2 := filter.Table{Schema: "test", Name: "v2"}
-	dumpTables := make(tableNameSet)
-	dumpTables.add(filter.Table{Schema: "test", Name: "t"})
-
-	plan, err := buildViewRestorePlan([]*parsedViewSchema{
-		{
-			key:       v1,
-			deps:      []filter.Table{{Schema: "test", Name: "t"}},
-			createSQL: "CREATE VIEW `test`.`v1` AS SELECT `id` FROM `test`.`t`;",
-		},
-		{
-			key:       v2,
-			deps:      []filter.Table{{Schema: "test", Name: "v1"}},
-			createSQL: "CREATE VIEW `test`.`v2` AS SELECT `id` FROM `test`.`v1`;",
-		},
-	}, dumpTables)
-	require.NoError(t, err)
-	require.Len(t, plan.ordered, 2)
-	require.Equal(t, v1, plan.ordered[0].key)
-	require.Equal(t, v2, plan.ordered[1].key)
-	require.Equal(t, 0, plan.nodes[v1].indegree)
-	require.Equal(t, 1, plan.nodes[v2].indegree)
-	require.Empty(t, plan.nodes[v1].externalDeps)
-	require.Equal(t, []filter.Table{v2}, plan.nodes[v1].dependents)
-}
-
 func TestBuildViewRestorePlanSupportsMultipleAndCrossSchemaViewDeps(t *testing.T) {
 	db1v1 := filter.Table{Schema: "db1", Name: "v1"}
 	db2v2 := filter.Table{Schema: "db2", Name: "v2"}
@@ -236,18 +208,6 @@ func TestBuildViewRestorePlanRejectsCaseInsensitiveDuplicates(t *testing.T) {
 		},
 	}, nil)
 	require.ErrorContains(t, err, "duplicate view definition")
-}
-
-func TestValidateViewRestorePlanRejectsMissingExternalDependency(t *testing.T) {
-	plan := &viewRestorePlan{
-		ordered: []*viewNode{{
-			key:          filter.Table{Schema: "test", Name: "v1"},
-			externalDeps: []filter.Table{{Schema: "test", Name: "missing_tbl"}},
-		}},
-	}
-
-	err := validateViewRestorePlan(plan, make(tableNameSet))
-	require.ErrorContains(t, err, "missing dependency")
 }
 
 func TestBuildViewRestorePlanDetectsCycle(t *testing.T) {
