@@ -807,5 +807,38 @@
         "Warn": null
       }
     ]
+  },
+  {
+    "Name": "TestTiCIMPPIndexScanPartitionPruning",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select e.id, e.fname, s.name from employees partition(p1) e use index(h_idx) join stores s on e.store_id = s.id where e.id > 101",
+        "Plan": [
+          "TableReader 12500.00 root partition:p1 MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.employees.id, test.employees.fname, test.stores.name",
+          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.employees.store_id, test.stores.id)]",
+          "      ├─ExchangeReceiver(Build) 1000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─IndexRangeScan 1000.00 mpp[tiflash] table:e, index:h_idx(id, fname, store_id, body) range:[NULL,+inf], search func:gt(test.employees.id, 101), keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select e.id, e.fname, s.name from employees e use index(h_idx) join stores s on e.store_id = s.id where e.id > 101",
+        "Plan": [
+          "TableReader 12500.00 root partition:p1,p2 MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12500.00 mpp[tiflash]  test.employees.id, test.employees.fname, test.stores.name",
+          "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.employees.store_id, test.stores.id)]",
+          "      ├─ExchangeReceiver(Build) 1000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─IndexRangeScan 1000.00 mpp[tiflash] table:e, index:h_idx(id, fname, store_id, body) range:[NULL,+inf], search func:gt(test.employees.id, 101), keep order:false, stats:pseudo",
+          "      └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]
