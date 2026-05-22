@@ -318,8 +318,8 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 		sortTableNames(node.externalDeps)
 	}
 
-	// Kahn's algorithm with a deterministic ready queue keeps view creation
-	// order stable across runs when multiple nodes become ready together.
+	// Kahn's algorithm with a sorted initial ready set and sorted dependent
+	// lists keeps view creation order stable across runs.
 	remainingIndegree := make(map[filter.Table]int, len(plan.nodes))
 	ready := make([]filter.Table, 0, len(plan.nodes))
 	for key, node := range plan.nodes {
@@ -342,7 +342,6 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 				ready = append(ready, dependent)
 			}
 		}
-		sortTableNames(ready)
 	}
 
 	if len(plan.ordered) != len(plan.nodes) {
