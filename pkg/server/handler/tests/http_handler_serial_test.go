@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -473,6 +474,10 @@ func TestDebugRoutes(t *testing.T) {
 }
 
 func TestAutoIDOwnerRouteNotRegisteredOutsideStarter(t *testing.T) {
+	if deploymode.IsStarter() {
+		t.Skip("auto-id owner route is registered in Starter mode")
+	}
+
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)

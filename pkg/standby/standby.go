@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -69,6 +70,7 @@ type LoadKeyspaceController struct {
 	startServerErr error
 	endOnce        sync.Once
 	mgrCli         tidbmanager.Client
+	closeConnWait  atomic.Int64
 
 	lastActive int64
 }
@@ -331,9 +333,7 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 					signal.TiDBExit(syscall.SIGINT)
 					return
 				}
-				if wait > 0 {
-					_ = os.Setenv("GracefulCloseConnectionsTimeout", fmt.Sprintf("%ds", wait))
-				}
+				c.setCloseConnWait(wait)
 				if !needMgrFree {
 					w.WriteHeader(http.StatusOK)
 					signal.TiDBExit(syscall.SIGINT)
@@ -405,6 +405,18 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logutil.BgLogger().Error("failed to write response", zap.Error(err))
 	}
+}
+
+func (c *LoadKeyspaceController) setCloseConnWait(waitSeconds int64) {
+	if waitSeconds <= 0 {
+		c.closeConnWait.Store(0)
+		return
+	}
+	c.closeConnWait.Store(int64(time.Duration(waitSeconds) * time.Second))
+}
+
+func (c *LoadKeyspaceController) getCloseConnWait() time.Duration {
+	return time.Duration(c.closeConnWait.Load())
 }
 
 var httpServer *http.Server
@@ -524,11 +536,7 @@ func (c *LoadKeyspaceController) OnServerShutdown(svr *server.Server) {
 		return
 	}
 
-	maxWaitTime, err := time.ParseDuration(os.Getenv("GracefulCloseConnectionsTimeout"))
-	if err != nil {
-		logutil.BgLogger().Info("failed to parse GracefulCloseConnectionsTimeout env", zap.Error(err))
-		return
-	}
+	maxWaitTime := c.getCloseConnWait()
 	if maxWaitTime <= 0 {
 		return
 	}

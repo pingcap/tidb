@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -32,11 +33,11 @@ import (
 func TestOnServerShutdownStarterReportsFree(t *testing.T) {
 	resetStandbyTestState(t)
 
+	originalMode := deploymode.Get()
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(deploymode.Premium))
+		require.NoError(t, deploymode.Set(originalMode))
 	})
-	t.Setenv("GracefulCloseConnectionsTimeout", "1ms")
 
 	require.NoError(t, os.WriteFile(tidbNormalRestartLogPath, []byte("keyspace-1:idle"), 0644))
 	t.Cleanup(func() {
@@ -58,9 +59,10 @@ func TestOnServerShutdownStarterReportsFree(t *testing.T) {
 func TestStatusReturnsExportIDForStarter(t *testing.T) {
 	resetStandbyTestState(t)
 
+	originalMode := deploymode.Get()
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(deploymode.Premium))
+		require.NoError(t, deploymode.Set(originalMode))
 	})
 
 	mu.Lock()
@@ -135,4 +137,11 @@ func TestExitRejectsInvalidQueryParams(t *testing.T) {
 			require.Equal(t, tt.want, recorder.Body.String())
 		})
 	}
+
+	t.Run("close connection wait is instance scoped", func(t *testing.T) {
+		controller.setCloseConnWait(3)
+		require.Equal(t, 3*time.Second, controller.getCloseConnWait())
+		controller.setCloseConnWait(0)
+		require.Zero(t, controller.getCloseConnWait())
+	})
 }

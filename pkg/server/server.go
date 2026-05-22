@@ -641,8 +641,16 @@ func (s *Server) startShutdown() {
 		time.Sleep(waitTime)
 	}
 	if deploymode.IsStarter() && s.StandbyController != nil {
+		s.enterShutdownMode()
 		s.OnServerShutdown(s)
 	}
+}
+
+func (s *Server) enterShutdownMode() {
+	if s.inShutdownMode == nil {
+		s.inShutdownMode = uatomic.NewBool(false)
+	}
+	s.inShutdownMode.Store(true)
 }
 
 func (s *Server) closeListener() {
@@ -712,7 +720,7 @@ func (s *Server) Close() {
 	s.startShutdown()
 	s.rwlock.Lock() // // prevent new connections
 	defer s.rwlock.Unlock()
-	s.inShutdownMode.Store(true)
+	s.enterShutdownMode()
 	s.closeListener()
 }
 

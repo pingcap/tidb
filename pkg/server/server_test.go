@@ -222,8 +222,9 @@ func TestServerShutdownFlags(t *testing.T) {
 }
 
 type mockStandbyController struct {
-	serverHealth bool
-	called       chan struct{}
+	serverHealth         bool
+	serverInShutdownMode bool
+	called               chan struct{}
 }
 
 func (c *mockStandbyController) WaitForActivate() {}
@@ -240,6 +241,7 @@ func (c *mockStandbyController) OnServerCreated(_ *Server) {}
 
 func (c *mockStandbyController) OnServerShutdown(svr *Server) {
 	c.serverHealth = svr.Health()
+	c.serverInShutdownMode = svr.inShutdownMode.Load()
 	close(c.called)
 }
 
@@ -256,12 +258,14 @@ func TestStartShutdownMarksUnhealthyBeforeStarterCallback(t *testing.T) {
 
 	svr := NewTestServer(util.NewTestConfig())
 	svr.health = uatomic.NewBool(true)
+	svr.inShutdownMode = uatomic.NewBool(false)
 	svr.StandbyController = &mockStandbyController{called: make(chan struct{})}
 
 	svr.startShutdown()
 
 	controller := svr.StandbyController.(*mockStandbyController)
 	require.False(t, controller.serverHealth)
+	require.True(t, controller.serverInShutdownMode)
 	select {
 	case <-controller.called:
 	default:
