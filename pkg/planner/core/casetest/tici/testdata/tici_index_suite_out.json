@@ -615,10 +615,17 @@
       {
         "SQL": "explain format='brief' select id from t1 where match(title) against ('-banana' IN BOOLEAN MODE)",
         "Plan": [
-          "Projection 10000.00 root  test.t1.id",
-          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:0, keep order:false, stats:pseudo"
+          "TableDual 1.00 root  rows:0"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 use index(idx_field1) where field1 = 1 and not match(title) against ('-banana' IN BOOLEAN MODE)",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:idx_field1(field1) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -635,10 +642,7 @@
       {
         "SQL": "explain format='brief' select id from t1 where match(title) against ('\"\"' IN BOOLEAN MODE)",
         "Plan": [
-          "Projection 10000.00 root  test.t1.id",
-          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t1, index:idx_title(title) range:[-inf,+inf], search func:0, keep order:false, stats:pseudo"
+          "TableDual 1.00 root  rows:0"
         ],
         "Warn": null
       },
@@ -702,10 +706,7 @@
       {
         "SQL": "explain format='brief' select id from t6 where match(title) against ('\"\"' IN BOOLEAN MODE)",
         "Plan": [
-          "Projection 10000.00 root  test.t6.id",
-          "└─TableReader 1000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─IndexRangeScan 1000.00 mpp[tiflash] table:t6, index:idx_title(title) range:[0,+inf], search func:0, keep order:false, stats:pseudo"
+          "TableDual 1.00 root  rows:0"
         ],
         "Warn": null
       },
