@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -215,30 +217,37 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	return err
 }
 
-func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
+func (e *SimpleExec) setDefaultRoleNone(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
+	if deploymode.IsStarter() {
+		for _, u := range s.UserList {
+			if _, err := userExistsWithRetryVariants(ctx, e.Ctx(), &u.Username, u.Hostname); err != nil {
+				return err
+			}
+		}
+	}
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	defer e.ReleaseSysSession(ctx, restrictedCtx)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
 	sqlExecutor := restrictedCtx.GetSQLExecutor()
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
 		return err
 	}
 	sql := new(strings.Builder)
 	for _, u := range s.UserList {
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
-		if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
-			if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
+			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 				return rollbackErr
 			}
 			return err
 		}
 	}
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
 		return err
 	}
 	return nil
@@ -246,7 +255,7 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 
 func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
 	for _, user := range s.UserList {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -255,7 +264,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 		}
 	}
 	for _, role := range s.RoleList {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -313,7 +322,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 
 func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
 	for _, user := range s.UserList {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -454,7 +463,7 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	case ast.SetRoleAll:
 		err = e.setDefaultRoleAll(ctx, s)
 	case ast.SetRoleNone:
-		err = e.setDefaultRoleNone(s)
+		err = e.setDefaultRoleNone(ctx, s)
 	case ast.SetRoleRegular:
 		err = e.setDefaultRoleRegular(ctx, s)
 	}
@@ -693,7 +702,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -721,7 +730,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 		curUser, curHost = user.AuthUsername, user.AuthHostname
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1158,6 +1167,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if err := keyspace.GetUsernamePolicy().ValidateUsername(spec.User.Username); err != nil {
+			return err
+		}
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
@@ -1758,7 +1770,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if alterCurrentUser && alterPassword {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
-		} else {
+		}
+		needAdminPrivCheck := !(alterCurrentUser && alterPassword)
+		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
 			// The MySQL manual states:
 			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
@@ -1778,15 +1792,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
-			}
-			if sem.IsEnabled() && !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
-			}
 		}
 
-		exists, currentAuthPlugin, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+		exists, currentAuthPlugin, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1794,6 +1802,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
 			continue
+		}
+		if needAdminPrivCheck {
+			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+			}
+			if sem.IsEnabled() && !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
+			}
 		}
 
 		type AuthTokenOptionHandler int
@@ -2076,7 +2092,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2085,7 +2101,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		}
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2143,6 +2159,9 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	}
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
+		if err := keyspace.GetUsernamePolicy().ValidateUsername(newUser.Username); err != nil {
+			return err
+		}
 		if len(newUser.Username) > auth.UserNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
 		}
@@ -2454,6 +2473,49 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 		return false, err
 	}
 	return len(rows) > 0, nil
+}
+
+// userExistsWithRetryVariants reports whether (*name, host) exists in mysql.user.
+// If a username policy variant matches, it rewrites *name to the resolved variant.
+func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, name *string, host string) (bool, error) {
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
+		exists, err := userExists(ctx, sctx, variant, host)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			*name = variant
+			return true, nil
+		}
+	}
+	if skipExactUsernameLookup(*name) {
+		return false, nil
+	}
+	return userExists(ctx, sctx, *name, host)
+}
+
+// userExistsInternalWithRetryVariants behaves like userExistsWithRetryVariants
+// using the supplied SQL executor and also returns the resolved auth plugin.
+func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (bool, string, error) {
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
+		exists, authPlugin, err := userExistsInternal(ctx, sqlExecutor, variant, host)
+		if err != nil {
+			return false, "", err
+		}
+		if exists {
+			*name = variant
+			return true, authPlugin, nil
+		}
+	}
+	if skipExactUsernameLookup(*name) {
+		return false, "", nil
+	}
+	return userExistsInternal(ctx, sqlExecutor, *name, host)
+}
+
+func skipExactUsernameLookup(name string) bool {
+	policy := keyspace.GetUsernamePolicy()
+	return policy.ValidateUsername(name) != nil && policy.ValidateUsernameFormat(name)
 }
 
 // use the same internal executor to read within the same transaction, otherwise same as userExists

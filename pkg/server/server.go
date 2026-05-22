@@ -812,9 +812,9 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	sslVersion := ""
 	if cc.isUnixSocket {
 		connType = variable.ConnTypeUnixSocket
-	} else if cc.tlsConn != nil {
+	} else if tlsState := cc.getTLSState(); tlsState != nil {
 		connType = variable.ConnTypeTLS
-		sslVersionNum := cc.tlsConn.ConnectionState().Version
+		sslVersionNum := tlsState.Version
 		switch sslVersionNum {
 		case tls.VersionTLS12:
 			sslVersion = "TLSv1.2"
@@ -1261,8 +1261,7 @@ func (s *Server) GetStatusVars() map[uint64]map[string]string {
 	rs := make(map[uint64]map[string]string)
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
-			if client.tlsConn != nil {
-				connState := client.tlsConn.ConnectionState()
+			if connState := client.getTLSState(); connState != nil {
 				rs[pi.ID] = map[string]string{
 					"Ssl_cipher":  tlsutil.CipherSuiteName(connState.CipherSuite),
 					"Ssl_version": tlsutil.VersionName(connState.Version),

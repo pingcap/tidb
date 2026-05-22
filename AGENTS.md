@@ -36,7 +36,7 @@ When writing complex features or significant refactors, use an ExecPlan from des
 
 | Task | Required action |
 | --- | --- |
-| Added/moved/renamed/removed Go files, added a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
+| Added/moved/renamed/removed Go files, changed the import section of an existing Go file, added a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
 | Running package unit tests | SHOULD run targeted tests and avoid full-package runs unless needed (see `docs/agents/testing-flow.md` -> `Unit tests`). |
 | Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`). |
 | Recording integration tests | MUST use the recording command in `docs/agents/testing-flow.md` -> `Integration tests` (not `-record`; `-record` is for unit-test suites that explicitly support it). |
@@ -97,6 +97,7 @@ Run `make bazel_prepare` before building when any of the following is true:
 - New workspace or fresh clone.
 - Bazel-related files changed (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
 - Any Go source file is added/removed/renamed/moved in the PR.
+- The import section changed in any existing Go source file (including `*_test.go`).
 - A code change adds a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file.
 - Go module dependencies changed (for example `go.mod`, `go.sum`), including adding third-party dependencies.
 - Bazel test targets were updated (for example `shard_count` changed, test `srcs` list edited, or `tests/realtikvtest/**/BUILD.bazel` modified).
