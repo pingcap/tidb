@@ -493,9 +493,21 @@ func (s *BaseScheduler) onFinished() {
 	s.logger.Debug("schedule task, task is finished", zap.Stringer("state", task.State))
 }
 
+// stepForNextStepResolution converts framework-only marker steps to the
+// business-step view used by GetNextStep.
+// StepPrepared means "prepare finished", so next-step resolution should
+// continue from the business progression rooted at StepInit.
+func stepForNextStepResolution(step proto.Step) proto.Step {
+	if step == proto.StepPrepared {
+		return proto.StepInit
+	}
+	return step
+}
+
 func (s *BaseScheduler) switch2NextStep() error {
 	task := s.getTaskClone()
 	taskBase4Next := task.TaskBase
+	taskBase4Next.Step = stepForNextStepResolution(taskBase4Next.Step)
 	nextStep := s.GetNextStep(&taskBase4Next)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),

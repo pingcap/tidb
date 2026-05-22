@@ -219,7 +219,7 @@ func getUserStoreAndTable(
 // GetNextStep implements scheduler.Extension interface.
 func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
-	case proto.StepInit, proto.StepPrepared:
+	case proto.StepInit:
 		if sch.MergeTempIndex {
 			return proto.BackfillStepMergeTempIndex
 		}

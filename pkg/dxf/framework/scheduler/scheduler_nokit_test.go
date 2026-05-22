@@ -542,7 +542,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("test StepPrepared passed to next-step resolution", func(t *testing.T) {
+	t.Run("test StepPrepared mapping in next-step resolution", func(t *testing.T) {
 		taskWithPrepared := task
 		taskWithPrepared.Step = proto.StepPrepared
 		taskWithPrepared.ExtraParams.PrepareMode = proto.PrepareModeRequired
@@ -550,7 +550,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 
 		nextStepExt := schmock.NewMockExtension(ctrl)
 		nextStepExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(func(base *proto.TaskBase) proto.Step {
-			require.Equal(t, proto.StepPrepared, base.Step)
+			require.Equal(t, proto.StepInit, base.Step)
 			return proto.StepOne
 		})
 		nextStepExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{":4000"}, nil)

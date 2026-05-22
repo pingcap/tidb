@@ -93,7 +93,7 @@ func (*schedulerImpl) IsRetryableErr(error) bool {
 
 func (*schedulerImpl) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
-	case proto.StepInit, proto.StepPrepared:
+	case proto.StepInit:
 		return proto.StepOne
 	case proto.StepOne:
 		return proto.StepTwo

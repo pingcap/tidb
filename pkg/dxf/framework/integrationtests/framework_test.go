@@ -383,9 +383,8 @@ func TestMaxRuntimeSlots(t *testing.T) {
 		var stepOneTaskSeen atomic.Int32
 
 		stepTransition := map[proto.Step]proto.Step{
-			proto.StepInit:     proto.StepOne,
-			proto.StepPrepared: proto.StepOne,
-			proto.StepOne:      proto.StepDone,
+			proto.StepInit: proto.StepOne,
+			proto.StepOne:  proto.StepDone,
 		}
 		schedulerExt := mockDispatch.NewMockExtension(c.MockCtrl)
 		schedulerExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()

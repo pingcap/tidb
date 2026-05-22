@@ -516,7 +516,7 @@ func (*importScheduler) IsRetryableErr(err error) bool {
 // GetNextStep implements scheduler.Extension interface.
 func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
-	case proto.StepInit, proto.StepPrepared:
+	case proto.StepInit:
 		if sch.GlobalSort {
 			return proto.ImportStepEncodeAndSort
 		}

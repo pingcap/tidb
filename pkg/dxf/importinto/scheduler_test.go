@@ -139,8 +139,6 @@ func (s *importIntoSuite) TestGetNextStep() {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
-	task.Step = proto.StepPrepared
-	s.Equal(proto.ImportStepImport, ext.GetNextStep(task))
 
 	task.Step = proto.StepInit
 	ext = &importScheduler{GlobalSort: true}
@@ -150,8 +148,6 @@ func (s *importIntoSuite) TestGetNextStep() {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
-	task.Step = proto.StepPrepared
-	s.Equal(proto.ImportStepEncodeAndSort, ext.GetNextStep(task))
 }
 
 func (s *importIntoSuite) TestGetStepOfEncode() {
