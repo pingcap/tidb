@@ -202,11 +202,6 @@ func TestIndexJoinWithOrderedWindowInner(t *testing.T) {
 		tk.MustExec("insert into probe_rows values ('K001', '2026-02-04 10:00:00', 'filter_001', 0, 0, 0), ('K002', '2026-02-04 11:00:00', 'filter_001', 0, 0, 0), ('K003', '2026-02-04 12:00:00', 'filter_001', 0, 0, 0), ('K004', '2026-02-04 13:00:00', 'filter_002', 0, 0, 0)")
 		tk.MustExec("insert into inner_rows values ('K001', '2026-02-04 09:00:00', 4, 2, 'old_payload_1'), ('K001', '2026-02-04 15:00:00', 4, 2, 'new_payload_1'), ('K002', '2026-02-04 08:00:00', 3, 2, 'old_payload_2'), ('K002', '2026-02-04 16:00:00', 4, 1, 'new_payload_2'), ('K004', '2026-02-04 17:00:00', 4, 2, 'new_payload_4')")
 		tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=1")
-		tk.MustExec("set @@tidb_opt_index_join_cost_factor=0.1")
-		tk.MustExec("set @@tidb_opt_hash_join_cost_factor=100")
-		tk.MustExec("set @@tidb_opt_merge_join_cost_factor=100")
-		tk.Session().GetSessionVars().InitChunkSize = 1
-		tk.Session().GetSessionVars().MaxChunkSize = 1
 
 		var input []string
 		var output []struct {
