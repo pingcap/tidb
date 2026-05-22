@@ -109,8 +109,8 @@ const (
 
 	// FlagFromReplicationStorage is used for PITR from the replication external storage
 	FlagReplicationStatusSubPrefix = "replication-status-sub-prefix"
-	// FlagReplicationStoragePhase is used for the restore phase of PITR from the replication external storage
-	FlagReplicationStoragePhase = "replication-storage-phase"
+	// FlagRestorePhase is used for the restore phase of PITR
+	FlagRestorePhase = "restore-phase"
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
@@ -320,8 +320,9 @@ type RestoreConfig struct {
 
 	// for PITR from the replication external storage
 	ReplicationStatusSubPrefix string `json:"replication-status-sub-prefix" toml:"replication-status-sub-prefix"`
-	ReplicationStoragePhase    uint64 `json:"replication-storage-phase" toml:"replication-storage-phase"`
+	RestorePhase               uint64 `json:"restore-phase" toml:"restore-phase"`
 	FromReplicationStorage     bool   `json:"-" toml:"-"`
+	RestoreInPhase             bool   `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -387,7 +388,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 
 	flags.String(flagCheckpointStorage, "", "specify the external storage url where checkpoint data is saved, eg, s3://bucket/path/prefix")
 	flags.String(FlagReplicationStatusSubPrefix, "", "specify the sub prefix of the replication status")
-	flags.Uint64(FlagReplicationStoragePhase, 0, "specify the phase of the replication storage, 1 for full restore, 2 for log restore")
+	flags.Uint64(FlagRestorePhase, 0, "specify the phase of the restore, 1 for full restore, 2 for log restore")
 
 	flags.Bool(FlagWaitTiFlashReady, false, "whether wait tiflash replica ready if tiflash exists")
 	flags.Bool(flagAllowPITRFromIncremental, true, "whether make incremental restore compatible with later log restore"+
@@ -546,19 +547,20 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagReplicationStatusSubPrefix)
 	}
-	cfg.ReplicationStoragePhase, err = flags.GetUint64(FlagReplicationStoragePhase)
+	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
 	if err != nil {
-		return errors.Annotatef(err, "failed to get flag %s", FlagReplicationStoragePhase)
+		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
 	}
-	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStoragePhase) || cfg.ReplicationStoragePhase > 0
-	if cfg.FromReplicationStorage && cfg.ReplicationStoragePhase != 1 && cfg.ReplicationStoragePhase != 2 {
+	cfg.RestoreInPhase = flags.Changed(FlagRestorePhase) || cfg.RestorePhase > 0
+	if cfg.RestoreInPhase && cfg.RestorePhase != 1 && cfg.RestorePhase != 2 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v is an invalid value, please specify 1 or 2",
-			FlagReplicationStoragePhase)
+			FlagRestorePhase)
 	}
-	if cfg.FromReplicationStorage && !cfg.UseCheckpoint {
+	if cfg.RestoreInPhase && !cfg.UseCheckpoint {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
-			FlagReplicationStoragePhase, flagUseCheckpoint)
+			FlagRestorePhase, flagUseCheckpoint)
 	}
+	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStatusSubPrefix) || len(cfg.ReplicationStatusSubPrefix) > 0
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -1103,16 +1105,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(restoreErr)
 	}
 
-	// For replication storage phase 1, we intentionally keep restore registration
+	// For restore phase 1, we intentionally keep restore registration
 	// and checkpoint data for the subsequent phase 2 run.
-	if IsStreamRestore(cmdName) && cfg.ReplicationStoragePhase == 1 {
+	if IsStreamRestore(cmdName) && cfg.RestorePhase == 1 {
 		if cfg.RestoreID != 0 {
 			if err := restoreRegistry.PauseTask(c, cfg.RestoreID); err != nil {
-				log.Warn("failed to pause restore task from registry after replication storage phase 1",
+				log.Warn("failed to pause restore task from registry after restore phase 1",
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
 		}
-		log.Info("replication storage phase 1 finished, paused restore task and kept checkpoint data",
+		log.Info("restore phase 1 finished, paused restore task and kept checkpoint data",
 			zap.Uint64("restoreId", cfg.RestoreID))
 		return nil
 	}

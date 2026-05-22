@@ -41,15 +41,15 @@ func TestPhysicalRestoreSysTables(t *testing.T) {
 	}
 }
 
-func TestReplicationStoragePhaseRequiresCheckpoint(t *testing.T) {
+func TestRestorePhaseRequiresCheckpoint(t *testing.T) {
 	flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
 	DefineRestoreFlags(flags)
-	require.NoError(t, flags.Set(FlagReplicationStoragePhase, "1"))
+	require.NoError(t, flags.Set(FlagRestorePhase, "1"))
 	require.NoError(t, flags.Set(flagUseCheckpoint, "false"))
 
 	cfg := &RestoreConfig{}
 	err := cfg.ParseFromFlags(flags, true)
 	require.Error(t, err)
-	require.ErrorContains(t, err, FlagReplicationStoragePhase)
+	require.ErrorContains(t, err, FlagRestorePhase)
 	require.ErrorContains(t, err, flagUseCheckpoint)
 }

@@ -1437,8 +1437,8 @@ func RunStreamRestore(
 
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
-		if cfg.ReplicationStoragePhase == 2 {
-			return errors.Errorf("invalid phase for full restore because full restore is not finished, please specify 1 for full restore from replication storage")
+		if cfg.RestorePhase == 2 {
+			return errors.Errorf("invalid phase for full restore because full restore is not finished, please specify 1 for full restore")
 		}
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
@@ -1606,9 +1606,9 @@ func restoreStream(
 	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg); err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.ReplicationStoragePhase == 1 {
-		log.Info("full restore phase completed and id map persisted, stop before log restore in replication storage phase 1")
-		if err := WriteStringToConsole(g, "full restore phase completed, stop before log restore (replication-storage-phase=1)\n"); err != nil {
+	if cfg.RestorePhase == 1 {
+		log.Info("full restore phase completed and id map persisted, stop before log restore in restore phase 1")
+		if err := WriteStringToConsole(g, "full restore phase completed, stop before log restore (restore-phase=1)\n"); err != nil {
 			return errors.Trace(err)
 		}
 		return nil
