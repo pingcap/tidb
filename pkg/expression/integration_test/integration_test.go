@@ -4319,6 +4319,20 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
 }
 
+func TestIssue66662(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table table1 (active bit, wider bit(10))")
+	tk.MustExec("insert into table1 values (1, 0b10101)")
+
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select hex(cast(coalesce(active) as char)), is_ipv4(coalesce(active)), hex(cast(coalesce(wider) as char)) from table1").Check(testkit.Rows("01 0 0015"))
+		tk.MustQuery("select 1 as c0 from table1 as tom1 where coalesce(is_ipv4(coalesce(tom1.active)))").Check(testkit.Rows())
+	}
+}
+
 func TestIssue43527(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

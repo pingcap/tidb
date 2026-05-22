@@ -55,6 +55,7 @@ var (
 	_ builtinFunc = &builtinCastIntAsIntSig{}
 	_ builtinFunc = &builtinCastIntAsRealSig{}
 	_ builtinFunc = &builtinCastIntAsStringSig{}
+	_ builtinFunc = &builtinCastBitAsStringSig{}
 	_ builtinFunc = &builtinCastIntAsDecimalSig{}
 	_ builtinFunc = &builtinCastIntAsTimeSig{}
 	_ builtinFunc = &builtinCastIntAsDurationSig{}
@@ -315,6 +316,13 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	if ft := args[0].GetType(ctx.GetEvalCtx()); ft.Hybrid() {
 		castBitAsUnBinary := ft.GetType() == mysql.TypeBit && c.tp.GetCharset() != charset.CharsetBin
 		if !castBitAsUnBinary {
+			if ft.GetType() == mysql.TypeBit {
+				if _, ok := args[0].(*ScalarFunction); ok {
+					sig = &builtinCastBitAsStringSig{bf}
+					// This is not equivalent to CastIntAsString because BIT string casts preserve binary bytes.
+					return sig, nil
+				}
+			}
 			sig = &builtinCastStringAsStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 			return sig, nil
@@ -1103,6 +1111,40 @@ func (b *builtinCastIntAsStringSig) evalString(ctx EvalContext, row chunk.Row) (
 		return res, false, err
 	}
 	return padZeroForBinaryType(res, b.tp, ctx)
+}
+
+type builtinCastBitAsStringSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinCastBitAsStringSig) Clone() builtinFunc {
+	newSig := &builtinCastBitAsStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinCastBitAsStringSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalInt(ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+	res = bitIntToBinaryString(val, b.args[0].GetType(ctx))
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, typeCtx(ctx), false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, ctx)
+}
+
+func bitIntToBinaryString(val int64, tp *types.FieldType) string {
+	byteSize := -1
+	if flen := tp.GetFlen(); flen > 0 && flen != types.UnspecifiedLength {
+		byteSize = (flen + 7) / 8
+	}
+	return types.NewBinaryLiteralFromUint(uint64(val), byteSize).ToString()
 }
 
 type builtinCastIntAsTimeSig struct {

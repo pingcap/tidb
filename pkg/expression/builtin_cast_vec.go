@@ -694,6 +694,10 @@ func (*builtinCastIntAsStringSig) vectorized() bool {
 	return true
 }
 
+func (*builtinCastBitAsStringSig) vectorized() bool {
+	return true
+}
+
 func (b *builtinCastIntAsStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
@@ -738,6 +742,44 @@ func (b *builtinCastIntAsStringSig) vecEvalString(ctx EvalContext, input *chunk.
 		} else {
 			result.AppendString(str)
 		}
+	}
+	return nil
+}
+
+func (b *builtinCastBitAsStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalInt(ctx, input, buf); err != nil {
+		return err
+	}
+
+	tp := b.args[0].GetType(ctx)
+	result.ReserveString(n)
+	i64s := buf.Int64s()
+	for i := range n {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := bitIntToBinaryString(i64s[i], tp)
+		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, typeCtx(ctx), false)
+		if err != nil {
+			return err
+		}
+		var isNull bool
+		str, isNull, err = padZeroForBinaryType(str, b.tp, ctx)
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(str)
 	}
 	return nil
 }
