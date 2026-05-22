@@ -339,6 +339,8 @@ func TestBuildRefreshMVFastAsOfTimestampPlanWithMinMaxCarriesFullUpdateSnapshot(
 	tk.MustExec("create table t_mv_refresh_asof_plan (a int not null, b int not null, key idx_a(a))")
 	tk.MustExec("create materialized view log on t_mv_refresh_asof_plan (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_refresh_asof_plan (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_plan group by a")
+	// The refresh implementation may validate the snapshot against GC safe point.
+	tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
 
 	targetTSO := oracle.GoTimeToTS(time.Now().UTC().Add(time.Second))
 	implementStmt := &ast.RefreshMaterializedViewImplementStmt{

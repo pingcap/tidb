@@ -242,6 +242,12 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
+	// This test will downgrade DDL table version and drop DDL-related system tables.
+	// Stop the DDL notifier to avoid its background polling hitting "table doesn't exist"
+	// during the window when those tables are intentionally dropped.
+	if dom.DDLNotifier() != nil {
+		dom.DDLNotifier().Stop()
+	}
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
