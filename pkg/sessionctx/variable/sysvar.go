@@ -3139,10 +3139,27 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(vardef.DefTiDBMergePartitionStatsConcurrency, 10), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
-		SetSession: func(s *SessionVars, val string) error {
-			s.AnalyzePartitionMergeConcurrency = TidbOptInt(val, vardef.DefTiDBMergePartitionStatsConcurrency)
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: "1", Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
+		SetSession: func(_ *SessionVars, _ string) error {
+			// Deprecated: do nothing.
 			return nil
+		},
+		// Both read paths return "1" unconditionally. Validation alone is
+		// not enough: session.GetGlobalSysVar() applies only
+		// ValidateFromType on the persisted value (skipping the
+		// Validation callback), so a cluster upgraded from an older
+		// TiDB with a non-1 value persisted in mysql.global_variables
+		// would otherwise read that stale value.
+		GetSession: func(_ *SessionVars) (string, error) { return "1", nil },
+		GetGlobal:  func(_ context.Context, _ *SessionVars) (string, error) { return "1", nil },
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if normalizedValue != "1" {
+				// Use errWarnDeprecatedSyntax (MySQL code 1287) for
+				// consistency with other deprecated sysvar warnings
+				// such as tidb_index_serial_scan_concurrency.
+				vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGen("tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."))
+			}
+			return "1", nil
 		},
 	},
 	{
