@@ -152,6 +152,7 @@ func (s *BaseScheduler) GetTask() *proto.Task {
 }
 
 // OnPrepare implements Extension with a no-op default.
+// will be removed in later PR.
 func (*BaseScheduler) OnPrepare(context.Context, storage.TaskHandle, *proto.Task) error {
 	return nil
 }
