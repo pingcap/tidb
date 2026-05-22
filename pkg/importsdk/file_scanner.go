@@ -83,7 +83,6 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 		DefaultFileRules: len(cfg.fileRouteRules) == 0,
 		CharacterSet:     cfg.charset,
 		Routes:           cfg.routes,
-		SQLMode:          cfg.sqlMode,
 	}
 
 	var loaderOptions []mydump.MDLoaderSetupOption

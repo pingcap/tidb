@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -245,7 +244,6 @@ type LoaderConfig struct {
 	// If it's true, the default file routing rules will be appended to the FileRouters.
 	// a little confusing, but it's true only when FileRouters is empty.
 	DefaultFileRules bool
-	SQLMode          mysql.SQLMode
 }
 
 // NewLoaderCfg creates loader config from lightning config.
@@ -259,7 +257,6 @@ func NewLoaderCfg(cfg *config.Config) LoaderConfig {
 		FileRouters:      cfg.Mydumper.FileRouters,
 		CaseSensitive:    cfg.Mydumper.CaseSensitive,
 		DefaultFileRules: cfg.Mydumper.DefaultFileRules,
-		SQLMode:          cfg.TiDB.SQLMode,
 	}
 }
 
@@ -271,7 +268,6 @@ type MDLoader struct {
 	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
 	charSet    string
-	sqlMode    mysql.SQLMode
 }
 
 // RawFile store the path and size of a file.
@@ -366,7 +362,6 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		filter:     f,
 		router:     r,
 		charSet:    cfg.CharacterSet,
-		sqlMode:    cfg.SQLMode,
 		fileRouter: fileRouter,
 	}
 
