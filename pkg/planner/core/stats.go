@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -255,6 +256,9 @@ func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
 func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
 	sctx, ok := ds.SCtx().(sessionctx.Context)
 	if !ok || path == nil || path.Index == nil || path.FtsQueryInfo == nil || len(path.Ranges) == 0 {
+		return 0, false
+	}
+	if !vardef.EnableTiCIEstimate.Load() {
 		return 0, false
 	}
 	provider, ok := sctx.GetStore().(kv.TiCIEstimateCountProvider)
