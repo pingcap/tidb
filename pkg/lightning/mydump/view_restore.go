@@ -145,12 +145,12 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 			return n, true
 		}
 
-		schema := node.Schema.O
+		schema := node.Schema.L
 		if schema == "" {
 			// Dumpling may omit the schema for same-database references.
-			schema = c.currentSchema
+			schema = strings.ToLower(c.currentSchema)
 		}
-		c.deps.add(filterTableName(schema, node.Name.O))
+		c.deps.add(filterTableName(schema, node.Name.L))
 		return n, true
 	default:
 		return n, false
