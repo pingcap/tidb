@@ -49,6 +49,9 @@ type CopContextBase struct {
 
 	ColumnInfos []*model.ColumnInfo
 	FieldTypes  []*types.FieldType
+	// PrefixColumnLengths records optional prefix lengths for returned columns.
+	// A zero length means the column must be returned unchanged.
+	PrefixColumnLengths []int
 
 	ExprColumnInfos             []*expression.Column
 	HandleOutputOffsets         []int
@@ -182,6 +185,7 @@ func NewCopContextSingleIndex(
 	if err != nil {
 		return nil, err
 	}
+	base.initPrefixColumnLengths([]*model.IndexInfo{idxInfo})
 	idxOffsets := resolveIndicesForIndex(base.ExprColumnInfos, idxInfo, tblInfo)
 	return &CopContextSingleIndex{
 		CopContextBase:      base,
@@ -256,6 +260,7 @@ func NewCopContextMultiIndex(
 	if err != nil {
 		return nil, err
 	}
+	base.initPrefixColumnLengths(allIdxInfo)
 
 	idxOffsets := make([][]int, 0, len(allIdxInfo))
 	for _, idxInfo := range allIdxInfo {
@@ -349,6 +354,79 @@ func fillUsedColumns(
 		}
 	}
 	return usedCols, nil
+}
+
+// initPrefixColumnLengths marks scan outputs that can be safely returned as
+// SUBSTRING(col, 1, n) for ADD PREFIX INDEX backfill.
+func (c *CopContextBase) initPrefixColumnLengths(allIdxInfo []*model.IndexInfo) {
+	if !canUsePrefixProjection(c, allIdxInfo) {
+		return
+	}
+
+	prefixLens := make(map[int64]int)
+	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle {
+		collectPrefixProjectionRequirements(c.TableInfo, prefixLens, c.PrimaryKeyInfo.Columns)
+	}
+	for _, idxInfo := range allIdxInfo {
+		collectPrefixProjectionRequirements(c.TableInfo, prefixLens, idxInfo.Columns)
+	}
+
+	lengths := make([]int, len(c.ColumnInfos))
+	hasPrefix := false
+	for i, col := range c.ColumnInfos {
+		length := prefixLens[col.ID]
+		if length > 0 {
+			lengths[i] = length
+			hasPrefix = true
+		}
+	}
+	if hasPrefix {
+		c.PrefixColumnLengths = lengths
+	}
+}
+
+func canUsePrefixProjection(c *CopContextBase, allIdxInfo []*model.IndexInfo) bool {
+	if len(c.VirtualColumnsOutputOffsets) > 0 {
+		return false
+	}
+	for _, idxInfo := range allIdxInfo {
+		if idxInfo.HasCondition() || idxInfo.MVIndex {
+			return false
+		}
+	}
+	return true
+}
+
+// fullValueConsumer is a local sentinel in prefixLens. It means at least one
+// consumer needs the original full value, so this column cannot be truncated.
+const fullValueConsumer = -1
+
+func collectPrefixProjectionRequirements(
+	tblInfo *model.TableInfo,
+	prefixLens map[int64]int,
+	idxCols []*model.IndexColumn,
+) {
+	for _, idxCol := range idxCols {
+		col := tblInfo.Columns[idxCol.Offset]
+		if prefixLens[col.ID] == fullValueConsumer {
+			continue
+		}
+		if !canPushPrefixProjection(col, idxCol) {
+			prefixLens[col.ID] = fullValueConsumer
+			continue
+		}
+		prefixLens[col.ID] = max(prefixLens[col.ID], idxCol.Length)
+	}
+}
+
+func canPushPrefixProjection(col *model.ColumnInfo, idxCol *model.IndexColumn) bool {
+	if idxCol.Length == types.UnspecifiedLength || idxCol.Length <= 0 {
+		return false
+	}
+	if col.IsGenerated() {
+		return false
+	}
+	return types.IsString(col.GetType())
 }
 
 func resolveIndicesForIndex(

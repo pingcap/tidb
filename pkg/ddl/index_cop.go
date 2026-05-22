@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -65,7 +67,7 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 }
 
 func buildTableScan(ctx context.Context, c *copr.CopContextBase, distSQLCtx *distsqlctx.DistSQLContext, startTS uint64, start, end kv.Key, selectExpr expression.Expression) (distsql.SelectResult, bool, error) {
-	dagPB, conditionPushed, err := buildDAGPB(ctx, c.ExprCtx, distSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos, selectExpr)
+	dagPB, conditionPushed, err := buildDAGPB(ctx, c.ExprCtx, distSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos, c.PrefixColumnLengths, selectExpr)
 	if err != nil {
 		return nil, false, err
 	}
@@ -173,7 +175,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 	return dtToRestored
 }
 
-func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
+func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, prefixColumnLengths []int, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
 	conditionPushed := false
 
 	dagReq := &tipb.DAGRequest{}
@@ -188,6 +190,7 @@ func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *d
 	}
 
 	var selectionPB *tipb.Executor
+	rootPB := tblScanPB
 	if selectExpr != nil {
 		selectionPB, err = constructSelectionPB(exprCtx, selectExpr, distSQLCtx, tblScanPB)
 	}
@@ -197,6 +200,7 @@ func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *d
 	if err == nil && selectionPB != nil {
 		conditionPushed = true
 		dagReq.Executors = append(dagReq.Executors, tblScanPB, selectionPB)
+		rootPB = selectionPB
 	} else {
 		if selectExpr != nil {
 			selectExprStr := selectExpr.StringWithCtx(exprCtx.GetEvalCtx(), errors.RedactLogDisable)
@@ -206,6 +210,15 @@ func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *d
 				zap.Error(err))
 		}
 		dagReq.Executors = append(dagReq.Executors, tblScanPB)
+	}
+
+	projectionPB, err := constructPrefixProjectionPB(exprCtx, distSQLCtx, colInfos, prefixColumnLengths, rootPB)
+	if err != nil {
+		logutil.Logger(ctx).Info("fail to push down prefix index projection for add index",
+			zap.String("table", tblInfo.Name.O),
+			zap.Error(err))
+	} else if projectionPB != nil {
+		dagReq.Executors = append(dagReq.Executors, projectionPB)
 	}
 
 	distsql.SetEncodeType(distSQLCtx, dagReq)
@@ -219,6 +232,66 @@ func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, co
 	tblScan.TableId = tblInfo.ID
 	err := tables.SetPBColumnsDefaultValue(ctx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
+}
+
+func constructPrefixProjectionPB(
+	ctx exprctx.BuildContext,
+	distSQLCtx *distsqlctx.DistSQLContext,
+	colInfos []*model.ColumnInfo,
+	prefixColumnLengths []int,
+	child *tipb.Executor,
+) (*tipb.Executor, error) {
+	if len(prefixColumnLengths) != len(colInfos) || !hasPrefixProjection(prefixColumnLengths) {
+		return nil, nil
+	}
+
+	exprs := make([]expression.Expression, 0, len(colInfos))
+	for i, colInfo := range colInfos {
+		col := &expression.Column{
+			RetType: &colInfo.FieldType,
+			ID:      colInfo.ID,
+			Index:   i,
+		}
+		if prefixColumnLengths[i] == 0 {
+			exprs = append(exprs, col)
+			continue
+		}
+
+		start := &expression.Constant{
+			Value:   types.NewIntDatum(1),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		length := &expression.Constant{
+			Value:   types.NewIntDatum(int64(prefixColumnLengths[i])),
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		expr, err := expression.NewFunction(ctx, ast.Substring, colInfo.FieldType.Clone(), col, start, length)
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, expr)
+	}
+
+	pbExprs, err := expression.ProjectionExpressionsToPBList(ctx.GetEvalCtx(), exprs, distSQLCtx.Client)
+	if err != nil {
+		return nil, err
+	}
+	return &tipb.Executor{
+		Tp: tipb.ExecType_TypeProjection,
+		Projection: &tipb.Projection{
+			Exprs: pbExprs,
+			Child: child,
+		},
+	}, nil
+}
+
+func hasPrefixProjection(prefixColumnLengths []int) bool {
+	for _, length := range prefixColumnLengths {
+		if length > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func constructSelectionPB(ctx exprctx.BuildContext, expr expression.Expression, distSQLCtx *distsqlctx.DistSQLContext, child *tipb.Executor) (*tipb.Executor, error) {
