@@ -1837,6 +1837,35 @@ func TestTimerJobAfterDropTable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	require.True(t, job.Finished)
+
+	t.Run("leader startup triggers GC immediately", func(t *testing.T) {
+		tk.MustExec("create table t2 (created_at datetime) TTL = created_at + INTERVAL 1 HOUR")
+		tbl2, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+		require.NoError(t, err)
+		tk.MustExec("drop table t2")
+
+		// Simulate stale metadata left by a previous leader after the job state was already
+		// cleared. Startup as leader should GC it immediately instead of waiting for the
+		// default 10-minute gcTicker.
+		tk.MustExec("insert into mysql.tidb_ttl_table_status (table_id, parent_table_id) values (?, ?)", tbl2.Meta().ID, tbl2.Meta().ID)
+		tk.MustExec(`insert into mysql.tidb_ttl_task
+			(job_id, table_id, scan_id, expire_time, created_time)
+			values (?, ?, ?, now(), now())`, "stale-job", tbl2.Meta().ID, 1)
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_table_status where table_id = ?", tbl2.Meta().ID).Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_task where table_id = ?", tbl2.Meta().ID).Check(testkit.Rows("1"))
+
+		startupManager := ttlworker.NewJobManager("test-job-manager-startup-gc", pool, store, nil, func() bool { return true })
+		startupManager.Start()
+		defer func() {
+			startupManager.Stop()
+			require.NoError(t, startupManager.WaitStopped(context.Background(), time.Minute))
+		}()
+
+		require.Eventually(t, func() bool {
+			return tk.MustQuery("select count(*) from mysql.tidb_ttl_table_status where table_id = ?", tbl2.Meta().ID).Rows()[0][0].(string) == "0" &&
+				tk.MustQuery("select count(*) from mysql.tidb_ttl_task where table_id = ?", tbl2.Meta().ID).Rows()[0][0].(string) == "0"
+		}, 5*time.Second, 100*time.Millisecond)
+	})
 }
 
 func testIterationOfRunningJobWithTimeout(t *testing.T, sessionTimeout time.Duration, tableCount int64, sleepPerTable time.Duration) {
