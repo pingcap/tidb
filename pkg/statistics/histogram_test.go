@@ -19,11 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -438,7 +436,8 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			expBucketNumber: 3,
 		},
 	}
-	failpoint.Enable("github.com/pingcap/pkg/statistics/enableTopNNDV", `return(true)`)
+
+	killer := sqlkiller.SQLKiller{}
 
 	for ii, tt := range tests {
 		var expTotColSize int64
@@ -449,17 +448,23 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		}
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
-		poped := make([]TopNMeta, 0, len(tt.popedTopN))
+		// Carry the popedTopN entries on the first partition's TopN with
+		// numTopN=0, every entry flows into Pass 2's leftover-TopN
+		// injection rather than being promoted to global TopN.
+		topNs := make([]*TopN, len(hists))
+		topNs[0] = NewTopN(len(tt.popedTopN))
 		for _, top := range tt.popedTopN {
 			b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(top.data))
 			require.NoError(t, err)
-			tmp := TopNMeta{
-				Encoded: b,
-				Count:   uint64(top.count),
-			}
-			poped = append(poped, tmp)
+			topNs[0].AppendTopN(b, uint64(top.count))
 		}
-		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, int64(tt.expBucketNumber), true, Version2)
+		topNs[0].Sort()
+		for i := 1; i < len(topNs); i++ {
+			topNs[i] = NewTopN(0)
+		}
+		_, globalHist, err := MergePartTopNAndHistToGlobal(
+			sc, &killer, topNs, hists, 0, int64(tt.expBucketNumber), true,
+		)
 		require.NoError(t, err)
 		require.Equal(t, tt.expBucketNumber, len(globalHist.Buckets))
 		for i, b := range tt.expHist {
@@ -471,68 +476,8 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			require.Equal(t, fmt.Sprintf("%v", b.upper), up, "failed at #%d case, %d bucket", ii, i)
 			require.Equal(t, b.count, globalHist.Buckets[i].Count, "failed at #%d case, %d bucket", ii, i)
 			require.Equal(t, b.repeat, globalHist.Buckets[i].Repeat, "failed at #%d case, %d bucket", ii, i)
-			require.Equal(t, b.ndv, globalHist.Buckets[i].NDV, "failed at #%d case, %d bucket", ii, i)
 		}
 		require.Equal(t, expTotColSize, globalHist.TotColSize, "failed at #%d case", ii)
-	}
-	failpoint.Disable("github.com/pingcap/pkg/statistics/enableTopNNDV")
-}
-
-func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
-	l := types.NewIntDatum(lower)
-	r := types.NewIntDatum(upper)
-	return bucket4Merging{
-		lower: &l,
-		upper: &r,
-		Bucket: Bucket{
-			NDV:   ndv,
-			Count: ndv,
-		},
-		disjointNDV: disjointNDV,
-	}
-}
-
-func TestMergeBucketNDV(t *testing.T) {
-	type testData struct {
-		left   bucket4Merging
-		right  bucket4Merging
-		result bucket4Merging
-	}
-	tests := []testData{
-		{
-			left:   genBucket4Merging4Test(1, 2, 2, 0),
-			right:  genBucket4Merging4Test(1, 2, 3, 0),
-			result: genBucket4Merging4Test(1, 2, 3, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 3, 2, 0),
-			right:  genBucket4Merging4Test(2, 3, 2, 0),
-			result: genBucket4Merging4Test(1, 3, 3, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 3, 2, 0),
-			right:  genBucket4Merging4Test(4, 6, 2, 2),
-			result: genBucket4Merging4Test(1, 3, 2, 4),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 5, 5, 0),
-			right:  genBucket4Merging4Test(2, 6, 5, 0),
-			result: genBucket4Merging4Test(1, 6, 6, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(3, 5, 3, 0),
-			right:  genBucket4Merging4Test(2, 6, 4, 0),
-			result: genBucket4Merging4Test(2, 6, 5, 0),
-		},
-	}
-	sc := mock.NewContext().GetSessionVars().StmtCtx
-	for i, tt := range tests {
-		res, err := mergeBucketNDV(sc, &tt.left, &tt.right)
-		require.NoError(t, err, "failed at #%Td case", i)
-		require.Equal(t, res.lower.GetInt64(), tt.result.lower.GetInt64(), "failed at #%Td case", i)
-		require.Equal(t, res.upper.GetInt64(), tt.result.upper.GetInt64(), "failed at #%Td case", i)
-		require.Equal(t, res.NDV, tt.result.NDV, "failed at #%Td case", i)
-		require.Equal(t, res.disjointNDV, tt.result.disjointNDV, "failed at #%Td case", i)
 	}
 }
 
