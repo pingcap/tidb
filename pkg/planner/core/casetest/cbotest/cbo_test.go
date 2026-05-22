@@ -16,11 +16,11 @@ package cbotest
 
 import (
 	"context"
-	"strings"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -712,23 +712,23 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 	tk.MustExec("create database if not exists repro_hash_join_issue")
 	tk.MustExec("use repro_hash_join_issue")
 	tk.MustExec("CREATE TABLE t_small (\n" +
-	"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
-	"  id1 VARCHAR(10) NOT NULL,\n" +
-	"  id2 TINYINT NOT NULL,\n" +
-	"  id3 BIGINT NOT NULL,\n" +
-	"  id4 BIGINT NOT NULL,\n" +
-	"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
-	")")
+		"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+		"  id1 VARCHAR(10) NOT NULL,\n" +
+		"  id2 TINYINT NOT NULL,\n" +
+		"  id3 BIGINT NOT NULL,\n" +
+		"  id4 BIGINT NOT NULL,\n" +
+		"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
+		")")
 	tk.MustExec("CREATE TABLE t_big (\n" +
-	"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
-	"  id1 BIGINT NOT NULL,\n" +
-	"  id2 INT NOT NULL,\n" +
-	"  id3 TINYINT NOT NULL,\n" +
-	"  id4 INT NOT NULL,\n" +
-	"  id5 BIGINT NOT NULL,\n" +
-	"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
-	"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
-	")")
+		"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+		"  id1 BIGINT NOT NULL,\n" +
+		"  id2 INT NOT NULL,\n" +
+		"  id3 TINYINT NOT NULL,\n" +
+		"  id4 INT NOT NULL,\n" +
+		"  id5 BIGINT NOT NULL,\n" +
+		"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+		"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
+		")")
 	tk.MustExec("insert into t_small(id1, id2, id3, id4) values " + buildReproHashJoinIssueSmallRows(1000))
 	tk.MustExec("insert into t_big(id1, id2, id3, id4, id5) values " + buildReproHashJoinIssueBigRows(1000))
 	tk.MustExec("analyze table t_small, t_big all columns")
