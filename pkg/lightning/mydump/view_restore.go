@@ -314,8 +314,10 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 			}
 			node.externalDeps = append(node.externalDeps, normalizedDep)
 		}
-		sortTableNames(node.dependents)
 		sortTableNames(node.externalDeps)
+	}
+	for _, node := range plan.nodes {
+		sortTableNames(node.dependents)
 	}
 
 	// Kahn's algorithm with a sorted initial ready set and sorted dependent
