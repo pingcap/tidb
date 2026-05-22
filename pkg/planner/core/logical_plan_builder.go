@@ -1342,6 +1342,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
 	b.optFlag |= rule.FlagPredicatePushDown
+	b.optFlag |= rule.FlagJoinKeyTypeCast
 	b.optFlag |= rule.FlagDeriveTopNFromWindow
 	b.optFlag |= rule.FlagPredicateSimplification
 	if b.curClause != havingClause {

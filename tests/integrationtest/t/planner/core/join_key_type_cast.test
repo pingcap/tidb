@@ -1,3 +1,101 @@
+# Test implicit cast predicate optimization: WHERE varchar_col = int_const
+# This rule adds OR-of-LIKE prefix predicates so the ranger can build index
+# ranges on the VARCHAR column, while keeping the original CAST equality as
+# a correctness filter.
+
+drop table if exists t_cast;
+create table t_cast (
+  id int primary key,
+  name varchar(20),
+  key idx_name(name)
+);
+
+insert into t_cast values
+  (1, '123'),
+  (2, '0123'),
+  (3, ' 123'),
+  (4, '+123'),
+  (5, '123.0'),
+  (6, '456'),
+  (7, '-123'),
+  (8, NULL),
+  (9, '0'),
+  (10, '+0'),
+  (11, '-0'),
+  (12, '.0'),
+  (13, 'abc'),
+  (14, '999999999999999999'),
+  (15, '9007199254740992'),
+  (16, '09007199254740992'),
+  (17, '');
+
+# Positive integer: should use index with LIKE prefix ranges
+explain format='brief' select * from t_cast where name = 123;
+
+# Verify correctness: all string representations of 123 must be returned
+select * from t_cast where name = 123 order by id;
+
+# Negative integer
+explain format='brief' select * from t_cast where name = -123;
+select * from t_cast where name = -123 order by id;
+
+# Zero: optimization skipped (non-numeric strings like 'abc' also CAST to 0)
+explain format='brief' select * from t_cast where name = 0;
+select * from t_cast where name = 0 order by id;
+
+# Non-integer constant: should NOT trigger the optimization
+explain format='brief' select * from t_cast where name = 123.5;
+
+# String-to-string comparison: should NOT trigger (no CAST involved)
+explain format='brief' select * from t_cast where name = '123';
+
+# Multiple conditions: optimization should apply alongside other predicates
+explain format='brief' select * from t_cast where name = 123 and id > 0;
+
+# NULL constant: should NOT trigger
+explain format='brief' select * from t_cast where name = NULL;
+
+# Large integer beyond 2^53: should NOT trigger optimization (DOUBLE precision loss)
+explain format='brief' select * from t_cast where name = 999999999999999999;
+
+# Large integer at 2^53 boundary: should trigger (DOUBLE exact range)
+explain format='brief' select * from t_cast where name = 9007199254740992;
+select * from t_cast where name = 9007199254740992 order by id;
+
+# 'abc' matches 0 as DOUBLE: should be returned for = 0
+# (already tested above in the zero case)
+
+drop table t_cast;
+
+# ---------------------------------------------------------------------------
+# Join key type cast rewriting: INT col = VARCHAR col
+# Rewrites DOUBLE equality to INT equality, enabling index join.
+# ---------------------------------------------------------------------------
+
+drop table if exists t_int, t_varchar;
+create table t_int (id int primary key, val int, key idx_val(val));
+create table t_varchar (id int primary key, val varchar(20), key idx_val(val));
+
+insert into t_int values (1, 100), (2, 200), (3, 300);
+insert into t_varchar values (1, '100'), (2, '200'), (3, '999');
+
+# Inner join: should rewrite to INT equality and enable index join
+explain format='brief' select * from t_int join t_varchar on t_int.val = t_varchar.val;
+select t_int.id, t_varchar.id from t_int join t_varchar on t_int.val = t_varchar.val order by t_int.id;
+
+# Left join: VARCHAR side is inner (right), guard is safe
+explain format='brief' select * from t_int left join t_varchar on t_int.val = t_varchar.val;
+select t_int.id, t_varchar.id from t_int left join t_varchar on t_int.val = t_varchar.val order by t_int.id;
+
+# Right join: VARCHAR side is preserved (right), guard must NOT be pushed there
+explain format='brief' select * from t_int right join t_varchar on t_int.val = t_varchar.val;
+select t_int.id, t_varchar.id from t_int right join t_varchar on t_int.val = t_varchar.val order by t_varchar.id;
+
+# Reversed: VARCHAR on left, INT on right
+explain format='brief' select * from t_varchar join t_int on t_varchar.val = t_int.val;
+select t_int.id, t_varchar.id from t_varchar join t_int on t_varchar.val = t_int.val order by t_int.id;
+
+drop table t_int, t_varchar;
 # TestJoinKeyTypeCastBasic
 # When joining INT and VARCHAR columns, the planner should rewrite the
 # implicit double-cast join condition into an integer equality with a

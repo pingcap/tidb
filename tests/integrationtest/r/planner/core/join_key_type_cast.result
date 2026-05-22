@@ -1,3 +1,166 @@
+drop table if exists t_cast;
+create table t_cast (
+id int primary key,
+name varchar(20),
+key idx_name(name)
+);
+insert into t_cast values
+(1, '123'),
+(2, '0123'),
+(3, ' 123'),
+(4, '+123'),
+(5, '123.0'),
+(6, '456'),
+(7, '-123'),
+(8, NULL),
+(9, '0'),
+(10, '+0'),
+(11, '-0'),
+(12, '.0'),
+(13, 'abc'),
+(14, '999999999999999999'),
+(15, '9007199254740992'),
+(16, '09007199254740992'),
+(17, '');
+explain format='brief' select * from t_cast where name = 123;
+id	estRows	task	access object	operator info
+IndexReader	1000.00	root		index:Selection
+└─Selection	1000.00	cop[tikv]		eq(cast(planner__core__join_key_type_cast.t_cast.name, double BINARY), 123), or(or(or(like(planner__core__join_key_type_cast.t_cast.name, " %", 92), like(planner__core__join_key_type_cast.t_cast.name, "	%", 92)), or(like(planner__core__join_key_type_cast.t_cast.name, "
+%", 92), or(like(planner__core__join_key_type_cast.t_cast.name, "
+%", 92), like(planner__core__join_key_type_cast.t_cast.name, "%", 92)))), or(or(like(planner__core__join_key_type_cast.t_cast.name, "%", 92), like(planner__core__join_key_type_cast.t_cast.name, "+%", 92)), or(like(planner__core__join_key_type_cast.t_cast.name, ".%", 92), or(like(planner__core__join_key_type_cast.t_cast.name, "0%", 92), like(planner__core__join_key_type_cast.t_cast.name, "1%", 92)))))
+  └─IndexRangeScan	1250.00	cop[tikv]	table:t_cast, index:idx_name(name)	range:["","!"), ["+",","), [".","/"), ["0","1"), ["1","2"), keep order:false, stats:pseudo
+select * from t_cast where name = 123 order by id;
+id	name
+1	123
+2	0123
+3	 123
+4	+123
+5	123.0
+explain format='brief' select * from t_cast where name = -123;
+id	estRows	task	access object	operator info
+IndexReader	400.00	root		index:Selection
+└─Selection	400.00	cop[tikv]		eq(cast(planner__core__join_key_type_cast.t_cast.name, double BINARY), -123), or(or(like(planner__core__join_key_type_cast.t_cast.name, " %", 92), or(like(planner__core__join_key_type_cast.t_cast.name, "	%", 92), like(planner__core__join_key_type_cast.t_cast.name, "
+%", 92))), or(or(like(planner__core__join_key_type_cast.t_cast.name, "
+%", 92), like(planner__core__join_key_type_cast.t_cast.name, "%", 92)), or(like(planner__core__join_key_type_cast.t_cast.name, "%", 92), like(planner__core__join_key_type_cast.t_cast.name, "-%", 92))))
+  └─IndexRangeScan	500.00	cop[tikv]	table:t_cast, index:idx_name(name)	range:["","!"), ["-","."), keep order:false, stats:pseudo
+select * from t_cast where name = -123 order by id;
+id	name
+7	-123
+explain format='brief' select * from t_cast where name = 0;
+id	estRows	task	access object	operator info
+IndexReader	8000.00	root		index:Selection
+└─Selection	8000.00	cop[tikv]		eq(cast(planner__core__join_key_type_cast.t_cast.name, double BINARY), 0)
+  └─IndexFullScan	10000.00	cop[tikv]	table:t_cast, index:idx_name(name)	keep order:false, stats:pseudo
+select * from t_cast where name = 0 order by id;
+id	name
+9	0
+10	+0
+11	-0
+12	.0
+13	abc
+17	
+explain format='brief' select * from t_cast where name = 123.5;
+id	estRows	task	access object	operator info
+IndexReader	8000.00	root		index:Selection
+└─Selection	8000.00	cop[tikv]		eq(cast(planner__core__join_key_type_cast.t_cast.name, double BINARY), 123.5)
+  └─IndexFullScan	10000.00	cop[tikv]	table:t_cast, index:idx_name(name)	keep order:false, stats:pseudo
+explain format='brief' select * from t_cast where name = '123';
+id	estRows	task	access object	operator info
+IndexReader	10.00	root		index:IndexRangeScan
+└─IndexRangeScan	10.00	cop[tikv]	table:t_cast, index:idx_name(name)	range:["123","123"], keep order:false, stats:pseudo
+explain format='brief' select * from t_cast where name = 123 and id > 0;
+id	estRows	task	access object	operator info
+IndexReader	333.33	root		index:Selection
+└─Selection	333.33	cop[tikv]		eq(cast(planner__core__join_key_type_cast.t_cast.name, double BINARY), 123), gt(planner__core__join_key_type_cast.t_cast.id, 0), or(or(or(like(planner__core__join_key_type_cast.t_cast.name, " %", 92), like(planner__core__join_key_type_cast.t_cast.name, "	%", 92)), or(like(planner__core__join_key_type_cast.t_cast.name, "
+%", 92), or(like(planner__core__join_key_type_cast.t_cast.name, "
+%", 92), like(planner__core__join_key_type_cast.t_cast.name, "%", 92)))), or(or(like(planner__core__join_key_type_cast.t_cast.name, "%", 92), like(planner__core__join_key_type_cast.t_cast.name, "+%", 92)), or(like(planner__core__join_key_type_cast.t_cast.name, ".%", 92), or(like(planner__core__join_key_type_cast.t_cast.name, "0%", 92), like(planner__core__join_key_type_cast.t_cast.name, "1%", 92)))))
+  └─IndexRangeScan	1250.00	cop[tikv]	table:t_cast, index:idx_name(name)	range:["","!"), ["+",","), [".","/"), ["0","1"), ["1","2"), keep order:false, stats:pseudo
+explain format='brief' select * from t_cast where name = NULL;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format='brief' select * from t_cast where name = 999999999999999999;
+id	estRows	task	access object	operator info
+IndexReader	8000.00	root		index:Selection
+└─Selection	8000.00	cop[tikv]		eq(cast(planner__core__join_key_type_cast.t_cast.name, double BINARY), 1e+18)
+  └─IndexFullScan	10000.00	cop[tikv]	table:t_cast, index:idx_name(name)	keep order:false, stats:pseudo
+explain format='brief' select * from t_cast where name = 9007199254740992;
+id	estRows	task	access object	operator info
+IndexReader	1000.00	root		index:Selection
+└─Selection	1000.00	cop[tikv]		eq(cast(planner__core__join_key_type_cast.t_cast.name, double BINARY), 9.007199254740992e+15), or(or(or(like(planner__core__join_key_type_cast.t_cast.name, " %", 92), like(planner__core__join_key_type_cast.t_cast.name, "	%", 92)), or(like(planner__core__join_key_type_cast.t_cast.name, "
+%", 92), or(like(planner__core__join_key_type_cast.t_cast.name, "
+%", 92), like(planner__core__join_key_type_cast.t_cast.name, "%", 92)))), or(or(like(planner__core__join_key_type_cast.t_cast.name, "%", 92), like(planner__core__join_key_type_cast.t_cast.name, "+%", 92)), or(like(planner__core__join_key_type_cast.t_cast.name, ".%", 92), or(like(planner__core__join_key_type_cast.t_cast.name, "0%", 92), like(planner__core__join_key_type_cast.t_cast.name, "9%", 92)))))
+  └─IndexRangeScan	1250.00	cop[tikv]	table:t_cast, index:idx_name(name)	range:["","!"), ["+",","), [".","/"), ["0","1"), ["9",":"), keep order:false, stats:pseudo
+select * from t_cast where name = 9007199254740992 order by id;
+id	name
+15	9007199254740992
+16	09007199254740992
+drop table t_cast;
+drop table if exists t_int, t_varchar;
+create table t_int (id int primary key, val int, key idx_val(val));
+create table t_varchar (id int primary key, val varchar(20), key idx_val(val));
+insert into t_int values (1, 100), (2, 200), (3, 300);
+insert into t_varchar values (1, '100'), (2, '200'), (3, '999');
+explain format='brief' select * from t_int join t_varchar on t_int.val = t_varchar.val;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.val, planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.val
+└─HashJoin	10000.00	root		inner join, equal:[eq(Column#2, Column#11)]
+  ├─Projection(Build)	10000.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.val, planner__core__join_key_type_cast.t_int.val->Column#2
+  │ └─IndexReader	10000.00	root		index:IndexFullScan
+  │   └─IndexFullScan	10000.00	cop[tikv]	table:t_int, index:idx_val(val)	keep order:false, stats:pseudo
+  └─Projection(Probe)	8000.00	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.val, cast(planner__core__join_key_type_cast.t_varchar.val, bigint BINARY)->Column#11
+    └─Selection	8000.00	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.val, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.val, double BINARY))
+      └─IndexReader	10000.00	root		index:IndexFullScan
+        └─IndexFullScan	10000.00	cop[tikv]	table:t_varchar, index:idx_val(val)	keep order:false, stats:pseudo
+select t_int.id, t_varchar.id from t_int join t_varchar on t_int.val = t_varchar.val order by t_int.id;
+id	id
+1	1
+2	2
+explain format='brief' select * from t_int left join t_varchar on t_int.val = t_varchar.val;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.val, planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.val
+└─HashJoin	10000.00	root		left outer join, left side:Projection, equal:[eq(Column#2, Column#11)]
+  ├─Projection(Build)	10000.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.val, planner__core__join_key_type_cast.t_int.val->Column#2
+  │ └─IndexReader	10000.00	root		index:IndexFullScan
+  │   └─IndexFullScan	10000.00	cop[tikv]	table:t_int, index:idx_val(val)	keep order:false, stats:pseudo
+  └─Projection(Probe)	8000.00	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.val, cast(planner__core__join_key_type_cast.t_varchar.val, bigint BINARY)->Column#11
+    └─Selection	8000.00	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.val, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.val, double BINARY))
+      └─IndexReader	10000.00	root		index:IndexFullScan
+        └─IndexFullScan	10000.00	cop[tikv]	table:t_varchar, index:idx_val(val)	keep order:false, stats:pseudo
+select t_int.id, t_varchar.id from t_int left join t_varchar on t_int.val = t_varchar.val order by t_int.id;
+id	id
+1	1
+2	2
+3	NULL
+explain format='brief' select * from t_int right join t_varchar on t_int.val = t_varchar.val;
+id	estRows	task	access object	operator info
+HashJoin	12500.00	root		right outer join, left side:Projection, equal:[eq(Column#7, Column#8)]
+├─Projection(Build)	10000.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.val, cast(planner__core__join_key_type_cast.t_int.val, double BINARY)->Column#7
+│ └─IndexReader	10000.00	root		index:IndexFullScan
+│   └─IndexFullScan	10000.00	cop[tikv]	table:t_int, index:idx_val(val)	keep order:false, stats:pseudo
+└─Projection(Probe)	10000.00	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.val, cast(planner__core__join_key_type_cast.t_varchar.val, double BINARY)->Column#8
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t_varchar, index:idx_val(val)	keep order:false, stats:pseudo
+select t_int.id, t_varchar.id from t_int right join t_varchar on t_int.val = t_varchar.val order by t_varchar.id;
+id	id
+1	1
+2	2
+NULL	3
+explain format='brief' select * from t_varchar join t_int on t_varchar.val = t_int.val;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.val, planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.val
+└─HashJoin	10000.00	root		inner join, equal:[eq(Column#5, Column#11)]
+  ├─Projection(Build)	10000.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.val, planner__core__join_key_type_cast.t_int.val->Column#5
+  │ └─IndexReader	10000.00	root		index:IndexFullScan
+  │   └─IndexFullScan	10000.00	cop[tikv]	table:t_int, index:idx_val(val)	keep order:false, stats:pseudo
+  └─Projection(Probe)	8000.00	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.val, cast(planner__core__join_key_type_cast.t_varchar.val, bigint BINARY)->Column#11
+    └─Selection	8000.00	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.val, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.val, double BINARY))
+      └─IndexReader	10000.00	root		index:IndexFullScan
+        └─IndexFullScan	10000.00	cop[tikv]	table:t_varchar, index:idx_val(val)	keep order:false, stats:pseudo
+select t_int.id, t_varchar.id from t_varchar join t_int on t_varchar.val = t_int.val order by t_int.id;
+id	id
+1	1
+2	2
+drop table t_int, t_varchar;
 drop table if exists t_int, t_varchar;
 create table t_int (id int primary key, v int);
 create table t_varchar (id varchar(20) primary key, v int);
