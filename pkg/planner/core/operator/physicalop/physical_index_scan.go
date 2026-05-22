@@ -109,6 +109,10 @@ type PhysicalIndexScan struct {
 
 	FtsQueryInfo *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"`
 
+	// PlanPartInfo carries partition-pruning metadata for TiCI MPP IndexScan.
+	// TiKV IndexScan keeps using the outer IndexReader/IndexLookUpReader's PlanPartInfo.
+	PlanPartInfo *PhysPlanPartInfo `plan-cache-clone:"must-nil"`
+
 	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
@@ -181,6 +185,9 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 	}
 	if p.DataSourceSchema != nil {
 		sum += p.DataSourceSchema.MemoryUsage()
+	}
+	if p.PlanPartInfo != nil {
+		sum += p.PlanPartInfo.MemoryUsage()
 	}
 	// slice memory usage
 	for _, cond := range p.AccessCondition {
