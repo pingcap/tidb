@@ -947,6 +947,17 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// issue-63900-elt-prepared-null-param
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustQuery("select /* issue:63900 */ 1 where elt(1, 1, 'a', null)").Check(testkit.Rows("1"))
+		tk.MustExec("set @d = 'a'")
+		tk.MustExec("set @e = null")
+		tk.MustExec(`prepare prepare_query from "select 1 where elt(1, 1, ?, ?)"`)
+		tk.MustQuery("execute prepare_query using @d, @e").Check(testkit.Rows("1"))
+		tk.MustExec("deallocate prepare prepare_query")
+	}
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
