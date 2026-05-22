@@ -159,6 +159,15 @@ func extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikverr.ErrWriteConflict); ok {
 		return newWriteConflictError(e.WriteConflict)
 	}
+	if e, ok := errors.Cause(err).(*tikverr.ErrLockUpgradeConflict); ok {
+		return errors.WithStack(&tikverr.ErrDeadlock{
+			Deadlock: &kvrpcpb.Deadlock{
+				LockTs:  e.OwnerStartTs,
+				LockKey: e.Key,
+			},
+			IsRetryable: false,
+		})
+	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrRetryable); ok {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
 		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
