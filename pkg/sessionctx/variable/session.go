@@ -873,6 +873,9 @@ type SessionVars struct {
 	// ClientCapability is client's capability.
 	ClientCapability uint32
 
+	// ResultsetMetadata controls whether optional result-set metadata is sent.
+	ResultsetMetadata byte
+
 	// TLSConnectionState is the TLS connection state (nil if not using TLS).
 	TLSConnectionState *tls.ConnectionState
 
@@ -2494,6 +2497,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
+		ResultsetMetadata:                mysql.ResultsetMetadataFull,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))

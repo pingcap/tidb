@@ -2489,11 +2489,13 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	data := cc.alloc.AllocWithLen(4, 1024)
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.Clean()
-	for _, column := range columns {
-		data = data[0:4]
-		data = column.DumpWithDefault(data, cc.rsEncoder)
-		if err := cc.writePacket(data); err != nil {
-			return err
+	if cc.resultsetMetadata() == mysql.ResultsetMetadataFull {
+		for _, column := range columns {
+			data = data[0:4]
+			data = column.DumpWithDefault(data, cc.rsEncoder)
+			if err := cc.writePacket(data); err != nil {
+				return err
+			}
 		}
 	}
 	if err := cc.writeEOF(ctx, cc.ctx.Status()); err != nil {
@@ -2547,11 +2549,33 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 	return false, cc.flush(ctx)
 }
 
+func (cc *clientConn) optionalResultsetMetadataEnabled() bool {
+	return cc.capability&mysql.ClientOptionalResultsetMetadata != 0
+}
+
+func (cc *clientConn) resultsetMetadata() byte {
+	if !cc.optionalResultsetMetadataEnabled() {
+		return mysql.ResultsetMetadataFull
+	}
+	ctx := cc.getCtx()
+	if ctx == nil {
+		return mysql.ResultsetMetadataFull
+	}
+	return ctx.GetSessionVars().ResultsetMetadata
+}
+
 func (cc *clientConn) writeColumnInfo(columns []*column.Info) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dump.LengthEncodedInt(data, uint64(len(columns)))
+	metadata := cc.resultsetMetadata()
+	if cc.optionalResultsetMetadataEnabled() {
+		data = append(data, metadata)
+	}
 	if err := cc.writePacket(data); err != nil {
 		return err
+	}
+	if metadata == mysql.ResultsetMetadataNone {
+		return nil
 	}
 	for _, v := range columns {
 		data = data[0:4]

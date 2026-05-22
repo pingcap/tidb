@@ -871,6 +871,33 @@ func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
 	require.Equal(t, "COST", vars.OptPartialOrderedIndexForTopN)
 }
 
+func TestResultsetMetadata(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustQuery("select @@session.resultset_metadata").Check(testkit.Rows(vardef.ResultsetMetadataFull))
+	require.Equal(t, mysql.ResultsetMetadataFull, tk.Session().GetSessionVars().ResultsetMetadata)
+
+	tk.MustExec("set session resultset_metadata = 'FULL'")
+	tk.MustQuery("select @@session.resultset_metadata").Check(testkit.Rows(vardef.ResultsetMetadataFull))
+	require.Equal(t, mysql.ResultsetMetadataFull, tk.Session().GetSessionVars().ResultsetMetadata)
+
+	err := tk.ExecToErr("set session resultset_metadata = 'NONE'")
+	require.ErrorContains(t, err, "The client doesn't support optional metadata transfer")
+	require.Equal(t, mysql.ResultsetMetadataFull, tk.Session().GetSessionVars().ResultsetMetadata)
+
+	tk.Session().SetClientCapability(mysql.ClientOptionalResultsetMetadata)
+	tk.MustExec("set session resultset_metadata = 'NONE'")
+	tk.MustQuery("select @@session.resultset_metadata").Check(testkit.Rows(vardef.ResultsetMetadataNone))
+	require.Equal(t, mysql.ResultsetMetadataNone, tk.Session().GetSessionVars().ResultsetMetadata)
+
+	err = tk.ExecToErr("set global resultset_metadata = 'NONE'")
+	require.ErrorContains(t, err, "SESSION variable")
+
+	err = tk.ExecToErr("set session resultset_metadata = 'INVALID'")
+	require.Error(t, err)
+}
+
 func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	// Test that the variable exists and has correct properties
 	sv := variable.GetSysVar(vardef.TiDBOptPartialOrderedIndexForTopN)

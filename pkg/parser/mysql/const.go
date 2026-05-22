@@ -230,7 +230,7 @@ const (
 	ClientHandleExpiredPasswords                        // CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS, Not supported: https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_expired_passwords.html
 	ClientSessionTrack                                  // CLIENT_SESSION_TRACK, Not supported: https://github.com/pingcap/tidb/issues/35309
 	ClientDeprecateEOF                                  // CLIENT_DEPRECATE_EOF
-	ClientOptionalResultsetMetadata                     // CLIENT_OPTIONAL_RESULTSET_METADATA, Not supported: https://dev.mysql.com/doc/c-api/8.0/en/c-api-optional-metadata.html
+	ClientOptionalResultsetMetadata                     // CLIENT_OPTIONAL_RESULTSET_METADATA
 	ClientZstdCompressionAlgorithm                      // CLIENT_ZSTD_COMPRESSION_ALGORITHM
 	// 1 << 27 == CLIENT_QUERY_ATTRIBUTES
 	// 1 << 28 == MULTI_FACTOR_AUTHENTICATION
@@ -242,6 +242,12 @@ const (
 // Cache type information.
 const (
 	TypeNoCache byte = 0xff
+)
+
+// Optional result set metadata markers.
+const (
+	ResultsetMetadataNone byte = 0
+	ResultsetMetadataFull byte = 1
 )
 
 // Auth name information.

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
@@ -56,6 +57,69 @@ func (m *mockCursorRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupN
 	m.tikvRUV2 += tikvRUV2
 	m.tidbRUV2 += tidbRUV2
 	m.tiflashRU += tiflashRUV2
+}
+
+func TestOptionalResultsetMetadataPreparedStatement(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	ctx := context.Background()
+	appendUint32 := binary.LittleEndian.AppendUint32
+	c := CreateMockConn(t, srv).(*mockConn)
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+
+	optionalMetadataMode(t, c, tk, mysql.ClientProtocol41, vardef.ResultsetMetadataFull)
+	out := c.GetOutput()
+	require.NoError(t, c.HandleStmtPrepare(ctx, "select ? as a"))
+	payloads := packetPayloads(t, out.Bytes())
+	require.Len(t, payloads[0], 12)
+	require.Equal(t, 2, columnDefinitionPayloadCount(payloads))
+
+	optionalMetadataMode(t, c, tk, mysql.ClientProtocol41|mysql.ClientOptionalResultsetMetadata, vardef.ResultsetMetadataFull)
+	out = c.GetOutput()
+	require.NoError(t, c.HandleStmtPrepare(ctx, "select ? as a"))
+	payloads = packetPayloads(t, out.Bytes())
+	require.Len(t, payloads[0], 13)
+	require.Equal(t, mysql.ResultsetMetadataFull, payloads[0][12])
+	require.Equal(t, 2, columnDefinitionPayloadCount(payloads))
+
+	optionalMetadataMode(t, c, tk, mysql.ClientProtocol41|mysql.ClientOptionalResultsetMetadata, vardef.ResultsetMetadataNone)
+	out = c.GetOutput()
+	require.NoError(t, c.HandleStmtPrepare(ctx, "select ? as a"))
+	payloads = packetPayloads(t, out.Bytes())
+	require.Len(t, payloads, 1)
+	require.Len(t, payloads[0], 13)
+	require.Equal(t, mysql.ResultsetMetadataNone, payloads[0][12])
+
+	stmt, _, _, err := c.Context().Prepare("select 1 as a")
+	require.NoError(t, err)
+	out = c.GetOutput()
+	require.NoError(t, c.Dispatch(ctx, append(appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())), 0x0, 0x1, 0x0, 0x0, 0x0)))
+	payloads = packetPayloads(t, out.Bytes())
+	require.Equal(t, []byte{0x01, mysql.ResultsetMetadataNone}, payloads[0])
+	require.Equal(t, 0, columnDefinitionPayloadCount(payloads))
+
+	cursorStmt, _, _, err := c.Context().Prepare("select * from (select 1 as id union all select 2 as id) t order by id")
+	require.NoError(t, err)
+	out = c.GetOutput()
+	require.NoError(t, c.Dispatch(ctx, append(
+		appendUint32([]byte{mysql.ComStmtExecute}, uint32(cursorStmt.ID())),
+		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
+	)))
+	payloads = packetPayloads(t, out.Bytes())
+	require.Equal(t, []byte{0x01, mysql.ResultsetMetadataNone}, payloads[0])
+	require.Equal(t, 0, columnDefinitionPayloadCount(payloads))
+	require.True(t, mysql.HasCursorExistsFlag(binary.LittleEndian.Uint16(payloads[len(payloads)-1][3:5])))
+
+	out = c.GetOutput()
+	require.NoError(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(cursorStmt.ID())), 1)))
+	require.NoError(t, c.flush(ctx))
+	payloads = packetPayloads(t, out.Bytes())
+	require.Equal(t, 0, columnDefinitionPayloadCount(payloads))
+	require.True(t, mysql.HasCursorExistsFlag(binary.LittleEndian.Uint16(payloads[len(payloads)-1][3:5])))
 }
 
 type mockCursorTrackerRecordSet struct{}

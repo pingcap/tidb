@@ -957,6 +957,109 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	}
 }
 
+func packetPayloads(t *testing.T, data []byte) [][]byte {
+	t.Helper()
+
+	var payloads [][]byte
+	for len(data) > 0 {
+		require.GreaterOrEqual(t, len(data), 4)
+		length := int(data[0]) | int(data[1])<<8 | int(data[2])<<16
+		require.GreaterOrEqual(t, len(data), 4+length)
+		payloads = append(payloads, append([]byte(nil), data[4:4+length]...))
+		data = data[4+length:]
+	}
+	return payloads
+}
+
+func columnDefinitionPayloadCount(payloads [][]byte) int {
+	count := 0
+	for _, payload := range payloads {
+		if len(payload) >= 4 && payload[0] == 0x03 && bytes.Equal(payload[1:4], []byte("def")) {
+			count++
+		}
+	}
+	return count
+}
+
+func optionalMetadataMode(t *testing.T, c *mockConn, tk *testkit.TestKit, capability uint32, mode string) {
+	t.Helper()
+
+	c.capability = capability
+	c.Context().SetClientCapability(capability)
+	tk.MustExec(fmt.Sprintf("set session resultset_metadata = '%s'", mode))
+}
+
+func TestOptionalResultsetMetadata(t *testing.T) {
+	require.NotZero(t, defaultCapability&mysql.ClientOptionalResultsetMetadata)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	ctx := context.Background()
+	c := CreateMockConn(t, srv).(*mockConn)
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+
+	t.Run("text protocol legacy full and none", func(t *testing.T) {
+		optionalMetadataMode(t, c, tk, 0, vardef.ResultsetMetadataFull)
+		out := c.GetOutput()
+		require.NoError(t, c.HandleQuery(ctx, "select 1 as a"))
+		payloads := packetPayloads(t, out.Bytes())
+		require.Equal(t, []byte{0x01}, payloads[0])
+		require.Equal(t, 1, columnDefinitionPayloadCount(payloads))
+
+		optionalMetadataMode(t, c, tk, mysql.ClientOptionalResultsetMetadata, vardef.ResultsetMetadataFull)
+		out = c.GetOutput()
+		require.NoError(t, c.HandleQuery(ctx, "select 1 as a"))
+		payloads = packetPayloads(t, out.Bytes())
+		require.Equal(t, []byte{0x01, mysql.ResultsetMetadataFull}, payloads[0])
+		require.Equal(t, 1, columnDefinitionPayloadCount(payloads))
+
+		optionalMetadataMode(t, c, tk, mysql.ClientOptionalResultsetMetadata, vardef.ResultsetMetadataNone)
+		out = c.GetOutput()
+		require.NoError(t, c.HandleQuery(ctx, "select 1 as a"))
+		payloads = packetPayloads(t, out.Bytes())
+		require.Equal(t, []byte{0x01, mysql.ResultsetMetadataNone}, payloads[0])
+		require.Equal(t, 0, columnDefinitionPayloadCount(payloads))
+	})
+
+	t.Run("multiple result sets include marker for each result", func(t *testing.T) {
+		optionalMetadataMode(t, c, tk, mysql.ClientOptionalResultsetMetadata|mysql.ClientMultiStatements, vardef.ResultsetMetadataNone)
+		out := c.GetOutput()
+		require.NoError(t, c.HandleQuery(ctx, "select 1 as a; select 2 as b"))
+		payloads := packetPayloads(t, out.Bytes())
+		markers := 0
+		for _, payload := range payloads {
+			if bytes.Equal(payload, []byte{0x01, mysql.ResultsetMetadataNone}) {
+				markers++
+			}
+		}
+		require.Equal(t, 2, markers)
+		require.Equal(t, 0, columnDefinitionPayloadCount(payloads))
+	})
+
+	t.Run("field list respects metadata mode", func(t *testing.T) {
+		tk.MustExec("drop table if exists optional_metadata_field_list")
+		tk.MustExec("create table optional_metadata_field_list(a int)")
+
+		optionalMetadataMode(t, c, tk, mysql.ClientOptionalResultsetMetadata, vardef.ResultsetMetadataFull)
+		out := c.GetOutput()
+		require.NoError(t, c.handleFieldList(ctx, "optional_metadata_field_list\x00"))
+		payloads := packetPayloads(t, out.Bytes())
+		require.Equal(t, 1, columnDefinitionPayloadCount(payloads))
+		require.Equal(t, byte(mysql.EOFHeader), payloads[len(payloads)-1][0])
+
+		optionalMetadataMode(t, c, tk, mysql.ClientOptionalResultsetMetadata, vardef.ResultsetMetadataNone)
+		out = c.GetOutput()
+		require.NoError(t, c.handleFieldList(ctx, "optional_metadata_field_list\x00"))
+		payloads = packetPayloads(t, out.Bytes())
+		require.Equal(t, 1, len(payloads))
+		require.Equal(t, byte(mysql.EOFHeader), payloads[0][0])
+	})
+}
+
 func TestGetSessionVarsWaitTimeout(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
