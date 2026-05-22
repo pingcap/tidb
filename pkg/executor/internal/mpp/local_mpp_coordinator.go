@@ -133,6 +133,9 @@ type localMppCoordinator struct {
 	firstErrMsg     string
 
 	mppReqs []*kv.MPPDispatchRequest
+	// For dispatch logging, reused across fragments.
+	dispatchTaskIDs  []int64
+	dispatchStoreIDs []uint64
 
 	planIDs    []int
 	mppQueryID kv.MPPQueryID
@@ -213,8 +216,16 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 	zoneHelper := taskZoneInfoHelper{}
 	zoneHelper.init(allTiFlashStoreInfo)
 	tasks := pf.Sink.GetSelfTasks()
-	taskIDs := make([]int64, 0, len(tasks))
-	storeIDs := make([]uint64, 0, len(tasks))
+	if cap(c.dispatchTaskIDs) < len(tasks) {
+		c.dispatchTaskIDs = make([]int64, 0, len(tasks))
+	} else {
+		c.dispatchTaskIDs = c.dispatchTaskIDs[:0]
+	}
+	if cap(c.dispatchStoreIDs) < len(tasks) {
+		c.dispatchStoreIDs = make([]uint64, 0, len(tasks))
+	} else {
+		c.dispatchStoreIDs = c.dispatchStoreIDs[:0]
+	}
 	rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
 	if !vardef.EnableResourceControl.Load() {
 		rgName = ""
@@ -248,8 +259,8 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 			return errors.Trace(err)
 		}
 
-		taskIDs = append(taskIDs, mppTask.ID)
-		storeIDs = append(storeIDs, allTiFlashStoreInfo[mppTask.Meta.GetAddress()].storeID)
+		c.dispatchTaskIDs = append(c.dispatchTaskIDs, mppTask.ID)
+		c.dispatchStoreIDs = append(c.dispatchStoreIDs, allTiFlashStoreInfo[mppTask.Meta.GetAddress()].storeID)
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
 			Meta:                   mppTask.Meta,
@@ -276,7 +287,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 	if len(tasks) > 0 {
 		firstTask := tasks[0]
 		logutil.BgLogger().Info("Dispatch mpp tasks", zap.Uint64("timestamp", firstTask.StartTs),
-			zap.Int64s("IDs", taskIDs), zap.Uint64s("storeIDs", storeIDs),
+			zap.Int64s("IDs", c.dispatchTaskIDs), zap.Uint64s("storeIDs", c.dispatchStoreIDs),
 			zap.Uint64("QueryTs", firstTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", firstTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", firstTask.MppQueryID.ServerID),
 			zap.String("plan", plannercore.ToString(pf.Sink)),
