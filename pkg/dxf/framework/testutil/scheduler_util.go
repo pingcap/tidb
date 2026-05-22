@@ -72,6 +72,7 @@ func GetMockSchedulerExt(ctrl *gomock.Controller, schedulerInfo SchedulerInfo) s
 		currStep = stepInfo.Step
 		stepInfoMap[stepInfo.Step] = stepInfo
 	}
+	stepTransition[proto.StepPrepared] = stepTransition[proto.StepInit]
 	stepTransition[currStep] = proto.StepDone
 
 	mockScheduler := mockScheduler.NewMockExtension(ctrl)
@@ -162,7 +163,7 @@ func GetPlanErrSchedulerExt(ctrl *gomock.Controller, testContext *TestContext) s
 	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.TaskBase) proto.Step {
 			switch task.Step {
-			case proto.StepInit:
+			case proto.StepInit, proto.StepPrepared:
 				return proto.StepOne
 			case proto.StepOne:
 				return proto.StepTwo

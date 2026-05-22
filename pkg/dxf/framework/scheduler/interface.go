@@ -82,8 +82,10 @@ type TaskManager interface {
 	// partition or owner change.
 	SwitchTaskStepInBatch(ctx context.Context, task *proto.Task, nextState proto.TaskState, nextStep proto.Step, subtasks []*proto.Subtask) error
 	// SwitchTaskStepAfterPrepare atomically persists prepare completion when task
-	// is still pending+init. It updates task to pending+prepared and persists
-	// prepare-computed fields.
+	// is still pending+init. It updates task to pending+prepared and persists:
+	//   - task.Meta
+	//   - task.RequiredSlots (stored in concurrency column)
+	//   - task.MaxNodeCount
 	// Return switched=false means the CAS matched zero rows (benign owner/state race).
 	SwitchTaskStepAfterPrepare(ctx context.Context, task *proto.Task) (switched bool, err error)
 	// GetUsedSlotsOnNodes returns the used slots on nodes that have subtask scheduled.
@@ -148,8 +150,10 @@ type Extension interface {
 	IsRetryableErr(err error) bool
 
 	// GetNextStep is used to get the next step for the task.
-	// if task runs successfully, it should go from StepInit to business steps,
-	// then to StepDone, then scheduler will mark it as finished.
+	// If task runs successfully, business progression should go from StepInit to
+	// business steps, then to StepDone, and scheduler will mark it as finished.
+	// In prepare mode, scheduler may call this method with framework marker
+	// StepPrepared, and extension should return the first business step.
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step

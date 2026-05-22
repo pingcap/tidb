@@ -327,7 +327,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	schExt := schmock.NewMockExtension(ctrl)
 	schExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(func(base *proto.TaskBase) proto.Step {
 		switch base.Step {
-		case proto.StepInit:
+		case proto.StepInit, proto.StepPrepared:
 			return proto.StepOne
 		default:
 			return proto.StepDone
@@ -505,8 +505,13 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 				require.Equal(t, 6, inTask.MaxNodeCount)
 				return true, nil
 			})
+		schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, nil)
+		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
 		require.NoError(t, scheduler.onPending())
-		taskWithPrepare.Step = proto.StepPrepared
+		taskWithPrepare.State = proto.TaskStateRunning
+		taskWithPrepare.Step = proto.StepOne
 		taskWithPrepare.Meta = []byte(`{"prepare":"done"}`)
 		taskWithPrepare.RequiredSlots = 8
 		taskWithPrepare.MaxNodeCount = 6
@@ -537,7 +542,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("test StepPrepared mapping in next-step resolution", func(t *testing.T) {
+	t.Run("test StepPrepared passed to next-step resolution", func(t *testing.T) {
 		taskWithPrepared := task
 		taskWithPrepared.Step = proto.StepPrepared
 		taskWithPrepared.ExtraParams.PrepareMode = proto.PrepareModeRequired
@@ -545,7 +550,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 
 		nextStepExt := schmock.NewMockExtension(ctrl)
 		nextStepExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(func(base *proto.TaskBase) proto.Step {
-			require.Equal(t, proto.StepInit, base.Step)
+			require.Equal(t, proto.StepPrepared, base.Step)
 			return proto.StepOne
 		})
 		nextStepExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{":4000"}, nil)

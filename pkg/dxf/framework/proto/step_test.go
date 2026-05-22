@@ -54,11 +54,6 @@ func TestStep(t *testing.T) {
 	// unknown type
 	require.Equal(t, "unknown type 123", Step2Str(TaskType("123"), 123))
 
-	// framework -> business step mapping
-	require.Equal(t, StepInit, FrameworkStep2BusinessStep(StepPrepared))
-	require.Equal(t, StepInit, FrameworkStep2BusinessStep(StepInit))
-	require.Equal(t, StepDone, FrameworkStep2BusinessStep(StepDone))
-	require.Equal(t, StepOne, FrameworkStep2BusinessStep(StepOne))
 }
 
 func TestIsValidStep(t *testing.T) {
@@ -67,4 +62,10 @@ func TestIsValidStep(t *testing.T) {
 	require.True(t, IsValidStep(Backfill, StepPrepared))
 	require.True(t, IsValidStep(ImportInto, ImportStepWriteAndIngest))
 	require.False(t, IsValidStep(ImportInto, 456))
+
+	require.True(t, IsValidBusinessStep(Backfill, BackfillStepReadIndex))
+	require.False(t, IsValidBusinessStep(Backfill, StepInit))
+	require.False(t, IsValidBusinessStep(Backfill, StepDone))
+	require.False(t, IsValidBusinessStep(Backfill, StepPrepared))
+	require.False(t, IsValidBusinessStep(Backfill, 123))
 }

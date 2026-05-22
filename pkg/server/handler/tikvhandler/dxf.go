@@ -423,7 +423,7 @@ func (*DXFTaskMaxRuntimeSlotsHandler) ServeHTTP(w http.ResponseWriter, req *http
 	}
 	stepStrs := make([]string, 0, len(steps))
 	for _, step := range steps {
-		if !proto.IsValidStep(task.Type, step) {
+		if !proto.IsValidBusinessStep(task.Type, step) {
 			handler.WriteError(w, errors.Errorf("invalid target step %d for task type %s", step, task.Type.String()))
 			return
 		}

@@ -24,7 +24,9 @@ type Step int64
 
 // TaskStep is the step of task.
 // DO NOT change the value of the constants, will break backward compatibility.
-// successfully task MUST go from StepInit to business steps, then StepDone.
+// Successful task has two framework flows:
+//  1. default flow: StepInit -> business steps -> StepDone.
+//  2. prepare-mode flow: StepInit -> StepPrepared -> business steps -> StepDone.
 const (
 	StepInit Step = -1
 	StepDone Step = -2
@@ -63,6 +65,15 @@ func Step2Str(t TaskType, s Step) string {
 func IsValidStep(t TaskType, s Step) bool {
 	str := Step2Str(t, s)
 	return !strings.Contains(str, unknownStepPrefix)
+}
+
+// IsValidBusinessStep returns whether the step is a business step valid for
+// the task type. Framework marker steps are excluded.
+func IsValidBusinessStep(t TaskType, s Step) bool {
+	if s == StepInit || s == StepDone || s == StepPrepared {
+		return false
+	}
+	return IsValidStep(t, s)
 }
 
 // Steps of example task type.
@@ -194,15 +205,4 @@ func backfillStep2Str(s Step) string {
 
 func unknownStepStr(s Step) string {
 	return fmt.Sprintf("%s %d", unknownStepPrefix, s)
-}
-
-// FrameworkStep2BusinessStep converts framework-only marker steps to the
-// business-step view used by scheduler next-step resolution.
-// StepPrepared means "prepare finished", so it should continue business-step
-// progression from StepInit.
-func FrameworkStep2BusinessStep(s Step) Step {
-	if s == StepPrepared {
-		return StepInit
-	}
-	return s
 }

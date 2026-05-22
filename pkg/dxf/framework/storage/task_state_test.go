@@ -167,15 +167,35 @@ func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {
 func TestUpdateTaskExtraParams(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
-	id, err := gm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	id, err := gm.CreateTask(ctx, "key1", "test", "", 4, "", 0, proto.ExtraParams{
+		ManualRecovery: true,
+		PrepareMode:    proto.PrepareModeRequired,
+	}, []byte("test"))
 	require.NoError(t, err)
 	task, err := gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, proto.ExtraParams{}, task.ExtraParams)
+	require.Equal(t, proto.ExtraParams{
+		ManualRecovery: true,
+		PrepareMode:    proto.PrepareModeRequired,
+	}, task.ExtraParams)
 	require.NoError(t, gm.UpdateTaskExtraParams(ctx, id, proto.ExtraParams{MaxRuntimeSlots: 123}))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, proto.ExtraParams{MaxRuntimeSlots: 123}, task.ExtraParams)
+	require.Equal(t, proto.ExtraParams{
+		ManualRecovery:  true,
+		MaxRuntimeSlots: 123,
+		PrepareMode:     proto.PrepareModeRequired,
+	}, task.ExtraParams)
+
+	require.NoError(t, gm.UpdateTaskExtraParams(ctx, id, proto.ExtraParams{TargetSteps: []proto.Step{proto.StepOne}}))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.ExtraParams{
+		ManualRecovery:  true,
+		MaxRuntimeSlots: 123,
+		TargetSteps:     []proto.Step{proto.StepOne},
+		PrepareMode:     proto.PrepareModeRequired,
+	}, task.ExtraParams)
 }
 
 func TestModifyTask(t *testing.T) {

@@ -404,7 +404,6 @@ func (s *BaseScheduler) onPending() error {
 		}
 		task.Step = proto.StepPrepared
 		s.task.Store(task)
-		return nil
 	}
 	return s.switch2NextStep()
 }
@@ -497,7 +496,6 @@ func (s *BaseScheduler) onFinished() {
 func (s *BaseScheduler) switch2NextStep() error {
 	task := s.getTaskClone()
 	taskBase4Next := task.TaskBase
-	taskBase4Next.Step = proto.FrameworkStep2BusinessStep(taskBase4Next.Step)
 	nextStep := s.GetNextStep(&taskBase4Next)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),

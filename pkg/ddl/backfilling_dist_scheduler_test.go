@@ -285,6 +285,8 @@ func TestGetNextStep(t *testing.T) {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
+	task.Step = proto.StepPrepared
+	require.Equal(t, proto.BackfillStepReadIndex, ext.GetNextStep(&task.TaskBase))
 	// 2. global sort mode
 	ext = &ddl.LitBackfillScheduler{GlobalSort: true}
 	task.Step = proto.StepInit
@@ -292,6 +294,8 @@ func TestGetNextStep(t *testing.T) {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
+	task.Step = proto.StepPrepared
+	require.Equal(t, proto.BackfillStepReadIndex, ext.GetNextStep(&task.TaskBase))
 
 	// 3. merge temp index
 	task = &proto.Task{
@@ -302,6 +306,8 @@ func TestGetNextStep(t *testing.T) {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
+	task.Step = proto.StepPrepared
+	require.Equal(t, proto.BackfillStepMergeTempIndex, ext.GetNextStep(&task.TaskBase))
 }
 
 func createAddIndexTask(t *testing.T,
