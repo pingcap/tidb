@@ -394,13 +394,13 @@ func TestIssue38205(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"IndexJoin_10"},
-			{"├─TableReader_19(Build)"},
-			{"│ └─Selection_18"},
-			{"│   └─TableFullScan_17"}, // RangeScan instead of FullScan
-			{"└─IndexReader_9(Probe)"},
-			{"  └─Selection_8"},
-			{"    └─IndexRangeScan_7"},
+            {"IndexJoin_12"},
+			{"├─TableReader_21(Build)"},
+			{"│ └─Selection_20"},
+			{"│   └─TableFullScan_19"},
+			{"└─IndexReader_11(Probe)"},
+			{"  └─Selection_10"},
+			{"    └─IndexRangeScan_9"},
 		})
 
 	tk.MustExec("execute stmt using @a, @b, @c")
