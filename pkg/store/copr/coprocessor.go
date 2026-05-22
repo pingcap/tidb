@@ -1805,20 +1805,16 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		if exit {
 			return nil, nil
 		}
+		defer func() {
+			worker.requestRateLimit.PutToken()
+		}()
 	}
 	// Keep the request-rate token and send attempt in a small scope so the
 	// token is released immediately after the send attempt returns, while
 	// still remaining panic-safe.
-	resp, rpcCtx, storeAddr, err := func() (*tikvrpc.Response, *tikv.RPCContext, string, error) {
-		defer func() {
-			if worker.requestRateLimit != nil {
-				worker.requestRateLimit.PutToken()
-			}
-		}()
-		failpoint.InjectCall("onBeforeSendReqCtx", req)
-		return worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
-			timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
-	}()
+	failpoint.InjectCall("onBeforeSendReqCtx", req)
+	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
+		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)

@@ -883,7 +883,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 					nil,
 				)
 				if err != nil {
-					result.Close()
+					if result != nil {
+						result.Close()
+					}
 					worker.syncErr(err)
 					return
 				}
