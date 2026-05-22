@@ -487,9 +487,31 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		scheduler.Extension = schExt
 
 		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("prepare err"))
+		schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
 		require.ErrorContains(t, scheduler.onPending(), "prepare err")
 		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
 		require.True(t, ctrl.Satisfied())
+
+		nonRetryableErr := errors.New("prepare fatal err")
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(nonRetryableErr)
+		schExt.EXPECT().IsRetryableErr(nonRetryableErr).Return(false)
+		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, proto.TaskStatePending, nonRetryableErr).Return(fmt.Errorf("revert task err"))
+		require.ErrorContains(t, scheduler.onPending(), "revert task err")
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(nonRetryableErr)
+		schExt.EXPECT().IsRetryableErr(nonRetryableErr).Return(false)
+		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, proto.TaskStatePending, nonRetryableErr).Return(nil)
+		require.NoError(t, scheduler.onPending())
+		taskWithPrepare.State = proto.TaskStateReverting
+		taskWithPrepare.Error = nonRetryableErr
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		taskWithPrepare.State = proto.TaskStatePending
+		taskWithPrepare.Error = nil
+		scheduler.task.Store(&taskWithPrepare)
 
 		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {

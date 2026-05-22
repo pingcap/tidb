@@ -393,7 +393,7 @@ func (s *BaseScheduler) onPending() error {
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
 		if err := s.Extension.OnPrepare(s.ctx, s, task); err != nil {
-			return errors.Trace(err)
+			return s.handlePlanErr(err)
 		}
 		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)
 		if err != nil {
@@ -627,7 +627,7 @@ func (s *BaseScheduler) scheduleSubTask(
 
 func (s *BaseScheduler) handlePlanErr(err error) error {
 	task := s.getTaskClone()
-	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
+	s.logger.Warn("prepare or generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
 		dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventRetry).Inc()
 		return err
