@@ -199,7 +199,7 @@ func (m *RUV2Metrics) AddExecutorMetric(level int, label string, delta int64) {
 	}
 }
 
-// AddExecutorL5InsertRows records affected insert rows for RUv2 accounting.
+// AddExecutorL5InsertRows records insert rows multiplied by inserted column count for RUv2 accounting.
 func (m *RUV2Metrics) AddExecutorL5InsertRows(delta int64) {
 	if m.Bypass() {
 		return
@@ -454,7 +454,7 @@ func (m *RUV2Metrics) ResultChunkCells() int64 {
 	return atomic.LoadInt64(&m.resultChunkCells)
 }
 
-// ExecutorL5InsertRows returns affected insert rows for RUv2 accounting.
+// ExecutorL5InsertRows returns insert rows multiplied by inserted column count for RUv2 accounting.
 func (m *RUV2Metrics) ExecutorL5InsertRows() int64 {
 	if m == nil {
 		return 0

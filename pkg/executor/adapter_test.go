@@ -880,3 +880,45 @@ func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
 		})
 	}
 }
+
+func TestInsertRowsColMultiplyRUV2SQLPath(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("create table src(a int primary key, b int, c int)")
+	tk.MustExec("insert into src values (10, 11, 12), (20, 21, 22)")
+
+	runInsert := func(sql string) int64 {
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		tk.MustExecWithContext(ctx, sql)
+		metrics := execdetails.RUV2MetricsFromContext(ctx)
+		require.NotNil(t, metrics)
+		return metrics.ExecutorL5InsertRows()
+	}
+
+	require.Equal(t, int64(6), runInsert("insert into t values (1, 2, 3), (2, 3, 4)"))
+	require.Equal(t, int64(4), runInsert("insert into t(a, c) values (3, 5), (4, 6)"))
+	require.Equal(t, int64(4), runInsert("insert into t(a, b) select a, b from src"))
+
+	oldEnableBatchDML := vardef.EnableBatchDML.Load()
+	vardef.EnableBatchDML.Store(true)
+	defer vardef.EnableBatchDML.Store(oldEnableBatchDML)
+
+	tk.MustExec("set @@session.tidb_batch_insert=1")
+	tk.MustExec("set @@session.tidb_dml_batch_size=2")
+	tk.MustExec("create table batch_t(a int primary key, b int, c int)")
+	tk.MustExec("insert into batch_t values (100, 100, 100)")
+
+	ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+	_, err := tk.ExecWithContext(ctx, "insert into batch_t values (1, 2, 3), (2, 3, 4), (100, 5, 6), (3, 4, 5)")
+	require.Error(t, err)
+	metrics := execdetails.RUV2MetricsFromContext(ctx)
+	require.NotNil(t, metrics)
+	require.Equal(t, int64(12), metrics.ExecutorL5InsertRows())
+	tk.MustQuery("select a, b, c from batch_t order by a").Check(testkit.Rows(
+		"1 2 3",
+		"2 3 4",
+		"100 100 100",
+	))
+}

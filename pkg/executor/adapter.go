@@ -1667,7 +1667,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
-	a.recordInsertRows2Metrics()
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
@@ -1755,30 +1754,14 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func (a *ExecStmt) recordInsertRows2Metrics() {
-	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
-}
-
-func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
-	stmtCtx := sessVars.StmtCtx
-	if stmtCtx.StmtType != "Insert" {
-		return
-	}
-	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
-	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
-	if stmtCtx.InsertRowsAsRUV2Recorded {
-		return
-	}
-
-	affectedRows := stmtCtx.AffectedRows()
-	if affectedRows <= 0 {
+func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
+	if rowsColMultiply <= 0 {
 		return
 	}
 
 	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
+		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
 	}
-	stmtCtx.InsertRowsAsRUV2Recorded = true
 }
 
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {

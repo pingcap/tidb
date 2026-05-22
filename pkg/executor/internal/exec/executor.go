@@ -99,9 +99,10 @@ type ruv2ExecutorMetric struct {
 // by both RU v2 statement metrics and the configurable RU v2 weights.
 //
 // L1: BatchPointGet, PointGet, Limit.
-// L2: HashAgg, HashJoin, IndexLookUpJoin, IndexLookUpExecutor,
-// IndexReaderExecutor, MemTableReaderExec, SelectionExec, TableDualExec,
-// TableReaderExecutor, UnionScanExec, SelectLockExec.
+// L2: Expand, HashAgg, HashJoin, IndexLookUpJoin, IndexLookUpExecutor,
+// IndexLookUpMergeJoin, IndexNestedLoopHashJoin, IndexReaderExecutor,
+// MemTableReaderExec, MergeJoin, Projection, SelectionExec, TableDualExec,
+// TableReaderExecutor, TopN, UnionScanExec, SelectLockExec, Window.
 // L3: Sort, StreamAgg.
 // L4: intentionally unused today.
 // L5: reserved for insert-row accounting outside this executor map.
@@ -110,18 +111,26 @@ var ruv2ExecutorMetricByType = map[string]ruv2ExecutorMetric{
 	"*executor.PointGetExecutor":    {level: 1, label: "PointGetExecutor", useCells: true},
 	"*executor.LimitExec":           {level: 1, label: "LimitExec", useCells: true},
 	"*aggregate.HashAggExec":        {level: 2, label: "HashAggExec", useCells: false},
-	"*executor.HashJoinExec":        {level: 2, label: "HashJoinExec", useCells: false},
-	"*executor.IndexLookUpJoin":     {level: 2, label: "IndexLookUpJoin", useCells: true},
+	"*executor.ExpandExec":          {level: 2, label: "ExpandExec", useCells: false},
 	"*executor.IndexLookUpExecutor": {level: 2, label: "IndexLookUpExecutor", useCells: false},
 	"*executor.IndexReaderExecutor": {level: 2, label: "IndexReaderExecutor", useCells: false},
 	"*executor.MemTableReaderExec":  {level: 2, label: "MemTableReaderExec", useCells: false},
+	"*executor.ProjectionExec":      {level: 2, label: "ProjectionExec", useCells: true},
 	"*executor.SelectionExec":       {level: 2, label: "SelectionExec", useCells: false},
+	"*executor.SelectLockExec":      {level: 2, label: "SelectLockExec", useCells: true},
 	"*executor.TableDualExec":       {level: 2, label: "TableDualExec", useCells: false},
 	"*executor.TableReaderExecutor": {level: 2, label: "TableReaderExecutor", useCells: false},
 	"*executor.UnionScanExec":       {level: 2, label: "UnionScanExec", useCells: false},
-	"*executor.SelectLockExec":      {level: 2, label: "SelectLockExec", useCells: true},
-	"*executor.SortExec":            {level: 3, label: "SortExec", useCells: true},
+	"*executor.WindowExec":          {level: 2, label: "WindowExec", useCells: false},
+	"*join.HashJoinV1Exec":          {level: 2, label: "HashJoinV1Exec", useCells: false},
+	"*join.HashJoinV2Exec":          {level: 2, label: "HashJoinV2Exec", useCells: false},
+	"*join.IndexLookUpJoin":         {level: 2, label: "IndexLookUpJoin", useCells: true},
+	"*join.IndexLookUpMergeJoin":    {level: 2, label: "IndexLookUpMergeJoin", useCells: true},
+	"*join.IndexNestedLoopHashJoin": {level: 2, label: "IndexNestedLoopHashJoin", useCells: true},
+	"*join.MergeJoinExec":           {level: 2, label: "MergeJoinExec", useCells: false},
+	"*sortexec.TopNExec":            {level: 2, label: "TopNExec", useCells: true},
 	"*aggregate.StreamAggExec":      {level: 3, label: "StreamAggExec", useCells: false},
+	"*sortexec.SortExec":            {level: 3, label: "SortExec", useCells: true},
 }
 
 func addRUV2ExecutorMetricWithInfo(ctx context.Context, info ruv2ExecutorMetric, useCells bool, delta int64) {
