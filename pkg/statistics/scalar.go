@@ -24,6 +24,32 @@ import (
 	"github.com/pingcap/tidb/pkg/util/context"
 )
 
+// calcFraction4Datums returns the fraction of the interval [lower, upper]
+// that lies within [lower, value], using the continuous-value (uniform-
+// within-bucket) assumption. Used by the global-stats merge to split an
+// input bucket's count proportionally when the bucket straddles a chosen
+// global-bucket boundary.
+func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
+	switch value.Kind() {
+	case types.KindFloat32:
+		return calcFraction(float64(lower.GetFloat32()), float64(upper.GetFloat32()), float64(value.GetFloat32()))
+	case types.KindFloat64:
+		return calcFraction(lower.GetFloat64(), upper.GetFloat64(), value.GetFloat64())
+	case types.KindInt64:
+		return calcFraction(float64(lower.GetInt64()), float64(upper.GetInt64()), float64(value.GetInt64()))
+	case types.KindUint64:
+		return calcFraction(float64(lower.GetUint64()), float64(upper.GetUint64()), float64(value.GetUint64()))
+	case types.KindMysqlDuration:
+		return calcFraction(float64(lower.GetMysqlDuration().Duration), float64(upper.GetMysqlDuration().Duration), float64(value.GetMysqlDuration().Duration))
+	case types.KindMysqlDecimal, types.KindMysqlTime:
+		return calcFraction(convertDatumToScalar(lower, 0), convertDatumToScalar(upper, 0), convertDatumToScalar(value, 0))
+	case types.KindBytes, types.KindString:
+		commonPfxLen := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
+		return calcFraction(convertDatumToScalar(lower, commonPfxLen), convertDatumToScalar(upper, commonPfxLen), convertDatumToScalar(value, commonPfxLen))
+	}
+	return 0.5
+}
+
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
 // using the continuous-value assumption.
 func calcFraction(lower, upper, value float64) float64 {
@@ -198,27 +224,6 @@ func convertBytesToScalar(value []byte) float64 {
 	default:
 		return float64(binary.BigEndian.Uint64(value))
 	}
-}
-
-func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
-	switch value.Kind() {
-	case types.KindFloat32:
-		return calcFraction(float64(lower.GetFloat32()), float64(upper.GetFloat32()), float64(value.GetFloat32()))
-	case types.KindFloat64:
-		return calcFraction(lower.GetFloat64(), upper.GetFloat64(), value.GetFloat64())
-	case types.KindInt64:
-		return calcFraction(float64(lower.GetInt64()), float64(upper.GetInt64()), float64(value.GetInt64()))
-	case types.KindUint64:
-		return calcFraction(float64(lower.GetUint64()), float64(upper.GetUint64()), float64(value.GetUint64()))
-	case types.KindMysqlDuration:
-		return calcFraction(float64(lower.GetMysqlDuration().Duration), float64(upper.GetMysqlDuration().Duration), float64(value.GetMysqlDuration().Duration))
-	case types.KindMysqlDecimal, types.KindMysqlTime:
-		return calcFraction(convertDatumToScalar(lower, 0), convertDatumToScalar(upper, 0), convertDatumToScalar(value, 0))
-	case types.KindBytes, types.KindString:
-		commonPfxLen := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
-		return calcFraction(convertDatumToScalar(lower, commonPfxLen), convertDatumToScalar(upper, commonPfxLen), convertDatumToScalar(value, commonPfxLen))
-	}
-	return 0.5
 }
 
 const maxNumStep = 10
