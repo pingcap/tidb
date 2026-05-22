@@ -33,6 +33,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/keepalive"
@@ -285,4 +286,17 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 		Files:   mockFiles,
 		Schemas: mockSchemas,
 	}
+}
+
+func TestRestorePhaseRequiresCheckpoint(t *testing.T) {
+	flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+	DefineRestoreFlags(flags)
+	require.NoError(t, flags.Set(FlagRestorePhase, "1"))
+	require.NoError(t, flags.Set(flagUseCheckpoint, "false"))
+
+	cfg := &RestoreConfig{}
+	err := cfg.ParseFromFlags(flags, true)
+	require.Error(t, err)
+	require.ErrorContains(t, err, FlagRestorePhase)
+	require.ErrorContains(t, err, flagUseCheckpoint)
 }
