@@ -1329,6 +1329,9 @@ func getEtcdCliByPDCli(pdCli pd.Client, tls *common.TLS, keyspaceName string) (*
 		AutoSyncInterval: 30 * time.Second,
 		TLS:              tls.TLSConfig(),
 	})
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	return etcdCli, kvStore, nil
 }
 func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
