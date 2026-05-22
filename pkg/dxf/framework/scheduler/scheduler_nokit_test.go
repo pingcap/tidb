@@ -518,9 +518,6 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		taskWithPrepare.RequiredSlots = task.RequiredSlots
 		taskWithPrepare.MaxNodeCount = task.MaxNodeCount
 		scheduler.task.Store(&taskWithPrepare)
-		taskPreparedByOtherOwner := taskWithPrepare
-		taskPreparedByOtherOwner.Step = proto.StepPrepared
-		taskPreparedByOtherOwner.Meta = []byte(`{"prepare":"by-other-owner"}`)
 		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
 				inTask.Meta = []byte(`{"prepare":"done"}`)
