@@ -301,6 +301,10 @@ func TestJSONPlanInExplain(t *testing.T) {
 		resJSON := tk.MustQuery(test).Rows()
 		var res []*core.ExplainInfoForEncode
 		require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), &res))
+		testdata.OnRecord(func() {
+			output[i].SQL = test
+			output[i].JSONPlan = res
+		})
 		for j, expect := range output[i].JSONPlan {
 			require.Equal(t, expect.ID, res[j].ID)
 			require.Equal(t, expect.EstRows, res[j].EstRows)
