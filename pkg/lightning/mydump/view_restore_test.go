@@ -133,6 +133,14 @@ CREATE VIEW v_extra AS SELECT 1;
 	require.Contains(t, parsed.createSQL, "VIEW `test`.`v_extra` AS SELECT 1")
 }
 
+func TestParseViewSchemaSQLReportsMissingCreateViewWithName(t *testing.T) {
+	p := parser.New()
+	currentView := filter.Table{Schema: "test", Name: "v_missing"}
+
+	_, err := parseViewSchemaSQL(p, currentView, "USE analytics;")
+	require.ErrorContains(t, err, "missing create view statement for `test`.`v_missing`")
+}
+
 func TestParseViewSchemaSQLRejectsMultipleCreateStatements(t *testing.T) {
 	p := parser.New()
 	currentView := filter.Table{Schema: "test", Name: "v_multi"}

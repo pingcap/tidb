@@ -189,9 +189,6 @@ func NewSchemaImportPlan(ctx context.Context, store storeapi.Storage, sqlMode my
 			if err != nil {
 				return nil, err
 			}
-			if strings.TrimSpace(sqlStr) == "" {
-				return nil, errors.Errorf("empty schema for view %s.%s", viewMeta.DB, viewMeta.Name)
-			}
 
 			parsed, err := parseViewSchemaSQL(p, filterTableName(viewMeta.DB, viewMeta.Name), sqlStr)
 			if err != nil {
@@ -258,7 +255,9 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 	}
 
 	if createStmt == nil {
-		return nil, common.ErrInvalidSchemaStmt.GenWithStackByArgs("missing create view statement")
+		return nil, common.ErrInvalidSchemaStmt.GenWithStackByArgs(
+			"missing create view statement for " + currentView.String(),
+		)
 	}
 
 	// Extract referenced objects from the SELECT body so the restore step can

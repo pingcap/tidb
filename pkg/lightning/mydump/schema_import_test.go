@@ -365,7 +365,7 @@ func TestNewSchemaImportPlanRejectsEmptyViewSchema(t *testing.T) {
 			},
 		},
 	})
-	require.ErrorContains(t, err, "empty schema for view test.v1")
+	require.ErrorContains(t, err, "missing create view statement for `test`.`v1`")
 }
 
 func TestLoaderSetupDefersInvalidViewSQLUntilRun(t *testing.T) {
@@ -396,7 +396,7 @@ func TestLoaderSetupDefersInvalidViewSQLUntilRun(t *testing.T) {
 	importer := NewSchemaImporter(log.Logger{Logger: zap.NewExample()}, mysql.SQLMode(0), db, store, 1)
 
 	err = importer.Run(ctx, mdl.GetDatabases())
-	require.ErrorContains(t, err, "empty schema for view db.v1")
+	require.ErrorContains(t, err, "missing create view statement for `db`.`v1`")
 }
 
 func TestSchemaImporterManyTables(t *testing.T) {
