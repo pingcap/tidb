@@ -35,7 +35,7 @@ func (s *gatedReadStorage) ReadFile(ctx context.Context, name string) ([]byte, e
 	if s.readGate != nil {
 		<-s.readGate
 	}
-	return s.ReadFile(ctx, name)
+	return s.ExternalStorage.ReadFile(ctx, name)
 }
 
 func TestGetCheckpointOfTask(t *testing.T) {

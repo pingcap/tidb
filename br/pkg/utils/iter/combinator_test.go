@@ -104,3 +104,22 @@ func TestErrorDuringTransforming(t *testing.T) {
 	coll := iter.CollectAll(context.TODO(), items)
 	req.ErrorContains(coll.Err, "meow")
 }
+
+func TestErrorBeforeTransforming(t *testing.T) {
+	req := require.New(t)
+	items := iter.Transform(iter.Fail[int](errors.New("meow")), func(context.Context, int) (int, error) {
+		return 0, nil
+	}, iter.WithChunkSize(1))
+
+	resultCh := make(chan iter.IterResult[[]int], 1)
+	go func() {
+		resultCh <- iter.CollectAll(context.Background(), items)
+	}()
+
+	select {
+	case coll := <-resultCh:
+		req.ErrorContains(coll.Err, "meow")
+	case <-time.After(time.Second):
+		req.Fail("Transform blocked while propagating upstream error")
+	}
+}

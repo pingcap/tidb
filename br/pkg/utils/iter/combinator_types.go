@@ -77,10 +77,11 @@ func (m *chunkMapping[T, R]) start(ctx context.Context) {
 
 			r := m.inner.TryNext(ctx)
 			if r.FinishedOrError() {
-				<-m.outstanding
 				if r.Err != nil {
 					m.results <- DoneBy[R](r)
 					m.cancel()
+				} else {
+					<-m.outstanding
 				}
 				return
 			}

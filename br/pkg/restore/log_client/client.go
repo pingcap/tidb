@@ -369,7 +369,6 @@ func (rc *LogClient) CollectSSTFileSets(
 		zap.Int64("total-kvs", totalKVs),
 		zap.Duration("iterate-take", time.Since(start)))
 	return backupFileSets, totalKVs, nil
-
 }
 
 // RestoreSSTFileSets restores pre-collected SST file sets.
