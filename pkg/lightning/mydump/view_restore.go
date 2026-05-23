@@ -235,8 +235,6 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 			if createStmt != nil {
 				return nil, common.ErrInvalidSchemaStmt.GenWithStackByArgs("multiple create view statements found")
 			}
-			node.ViewName.Schema = ast.NewCIStr(currentView.Schema)
-			node.ViewName.Name = ast.NewCIStr(currentView.Name)
 			createStmt = node
 		case *ast.SetStmt:
 			// keep session setup statements

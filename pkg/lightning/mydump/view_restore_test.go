@@ -50,7 +50,6 @@ SET collation_connection = @PREV_COLLATION_CONNECTION;
 	require.NotContains(t, parsed.createSQL, "DROP TABLE")
 	require.NotContains(t, parsed.createSQL, "DROP VIEW")
 	require.Contains(t, parsed.createSQL, "SET NAMES 'binary'")
-	require.Contains(t, parsed.createSQL, "VIEW `test`.`v2`")
 }
 
 func TestParseViewSchemaSQLDeduplicatesAndUsesCurrentSchema(t *testing.T) {
@@ -130,7 +129,6 @@ CREATE VIEW v_extra AS SELECT 1;
 	parsed, err := parseViewSchemaSQL(p, currentView, sql)
 	require.NoError(t, err)
 	require.Contains(t, parsed.createSQL, "USE `analytics`")
-	require.Contains(t, parsed.createSQL, "VIEW `test`.`v_extra` AS SELECT 1")
 }
 
 func TestParseViewSchemaSQLReportsMissingCreateViewWithName(t *testing.T) {
