@@ -61,7 +61,7 @@ func (pdss *PushDownSequenceSolver) recursiveOptimize(pushedSequence *logicalop.
 		pushedSequence = logicalop.LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
 		pushedSequence.SetChildren(append(allCTEs, mainQuery)...)
 		return pdss.recursiveOptimize(pushedSequence, mainQuery)
-	case *logicalop.DataSource, *logicalop.LogicalAggregation, *logicalop.LogicalCTE:
+	case *logicalop.DataSource, *logicalop.LogicalCTE:
 		pushedSequence.SetChild(pushedSequence.ChildLen()-1, pdss.recursiveOptimize(nil, lp))
 		return pushedSequence
 	default:

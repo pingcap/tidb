@@ -188,8 +188,14 @@
       // Can work when there's global limit/topn
       "explain format = 'plan_tree' with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b limit 10",
       "explain format = 'plan_tree' with c1 as (select * from t) select * from c1, c1 c2 where c1.a=c2.b order by c1.a limit 10",
+      // Sequence can be pushed through scalar aggregation, while the aggregation keeps its schema and final task.
+      "explain format = 'plan_tree' with c1 as (select * from t) select sum(a + b) from (select c1.a, c2.b from c1, c1 c2 where c1.a=c2.b) x",
+      // Sequence can be pushed through scalar aggregation whose child is a UnionAll, like TPC-DS Q23.
+      "explain format = 'plan_tree' with c1 as (select * from t) select sum(a) from (select c1.a from c1, c1 c2 where c1.a=c2.b union all select c1.a from c1, c1 c2 where c1.b=c2.c) x",
       // The c2 references c1, c1 can mpp, and then c2 can mpp, so the main query can mpp.
       "explain format = 'plan_tree' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b",
+      // Sequence can be pushed through scalar aggregation even when one CTE producer references a previous producer.
+      "explain format = 'plan_tree' with c1 as (select * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select sum(c1.a + c2.b) from c2 c1, c2 where c1.a=c2.b",
       // The same SQL, c1 forces to read tikv. So c2 cannot MPP, then the whole SQL.
       "explain format = 'plan_tree' with c1 as (select /*+ read_from_storage(tikv[t]) */ * from t), c2 as (select c1.* from c1, c1 c2 where c1.b=c2.c) select * from c2 c1, c2 where c1.a=c2.b",
       // The two WITH satement can all be MPP.
