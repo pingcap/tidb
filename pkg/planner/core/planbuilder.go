@@ -961,6 +961,30 @@ func (b *PlanBuilder) shouldRecordExplainSetScalarSubquery(ctx context.Context) 
 	return vars != nil && vars.StmtCtx.InExplainStmt
 }
 
+func (b *PlanBuilder) recordRoutineScalarSubquery(ctx context.Context, physicalPlan base.PhysicalPlan, offset int, outputColCount int) {
+	if b == nil || b.explainSetPlan != nil || physicalPlan == nil || outputColCount <= 0 {
+		return
+	}
+	if _, ok := ExplainRoutineRuntimeSiteFromContext(ctx); !ok {
+		return
+	}
+	vars := b.ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	outputColIDs := make([]int64, 0, outputColCount)
+	for i := 0; i < outputColCount; i++ {
+		outputColIDs = append(outputColIDs, vars.AllocPlanColumnID())
+	}
+	subqueryCtx := ScalarSubqueryEvalCtx{
+		scalarSubQuery: physicalPlan,
+		ctx:            ctx,
+		is:             b.is,
+		outputColIDs:   outputColIDs,
+	}.Init(b.ctx, offset)
+	vars.RegisterScalarSubQ(subqueryCtx)
+}
+
 func (b *PlanBuilder) recordExplainSetScalarSubquery(ctx context.Context, physicalPlan base.PhysicalPlan, offset int, outputColCount int) {
 	if b == nil || b.explainSetPlan == nil || physicalPlan == nil || outputColCount <= 0 {
 		return

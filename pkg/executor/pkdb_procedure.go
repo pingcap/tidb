@@ -1231,9 +1231,15 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		}
 		if runtimeStmt != nil {
 			explainable = !routineExplainIsScaffoldingStmt(stmtNode)
-			planKey = routineExplainPlanKey(planForExplain)
+			preferScalarSubQuery := e.routineAnalyzer.prefersScalarSubQueryDrilldown(site.StmtOrdinal)
+			planKey = routineExplainPlanKey(planForExplain, preferScalarSubQuery)
 			if captureDrilldown && explainable {
-				drilldownRows, err = renderRoutineExplainAnalyzeRows(planForExplain, runtimeStmt, e.routineAnalyzer.drilldownFormat)
+				drilldownRows, err = renderRoutineExplainAnalyzeRows(
+					planForExplain,
+					runtimeStmt,
+					e.routineAnalyzer.drilldownFormat,
+					preferScalarSubQuery,
+				)
 				if err != nil {
 					return nil, nil, err
 				}

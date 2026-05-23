@@ -281,13 +281,81 @@ end`)
 
 	rows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_analyze_return_subquery(1)").Rows())
 	require.NotEmpty(t, rows)
+	targetOrdinal := ""
 	requireAnyRow(t, rows, func(row []string) bool {
 		sqlText := strings.ToLower(row[6])
-		return row[0] == "test" && row[1] == "f_explain_routine_analyze_return_subquery" &&
+		matched := row[0] == "test" && row[1] == "f_explain_routine_analyze_return_subquery" &&
 			row[2] == "FUNCTION" && isPositiveOrdinal(row[3]) && row[4] == "root" && row[5] == "return" &&
 			strings.Contains(sqlText, "return (select") && strings.Contains(sqlText, "from `t_explain_routine`") &&
 			row[7] == "YES" && row[8] == "" && row[10] == "1" && row[13] == "1" && row[14] == "1"
+		if matched {
+			targetOrdinal = row[3]
+		}
+		return matched
 	})
+	require.NotEmpty(t, targetOrdinal)
+
+	drilldownRows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_analyze_return_subquery(1) for stmt " + targetOrdinal).Rows())
+	require.NotEmpty(t, drilldownRows)
+	requireAnyRow(t, drilldownRows, func(row []string) bool {
+		return len(row) == 9 && strings.Contains(strings.ToLower(strings.Join(row, " ")), "t_explain_routine")
+	})
+}
+
+func TestExplainAnalyzeRoutineFunctionComplexReturnSubqueryDrilldown(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec("create table t_explain_return_left (id int, b decimal(10,2), key idx_id(id))")
+	tk.MustExec("create table t_explain_return_right (id int, b decimal(10,2), key idx_id(id))")
+	tk.MustExec("insert into t_explain_return_left values (1, 10.00), (1, 20.00), (2, 30.00)")
+	tk.MustExec("insert into t_explain_return_right values (1, 2.00), (1, 3.00), (2, 4.00)")
+	tk.MustExec(`create function f_explain_routine_analyze_complex_return(p_id int) returns decimal(10,2)
+begin
+	return (
+		select sum(x.v) from (
+			select sum(l.b - ifnull(r.b, 0)) as v
+			from t_explain_return_left l left join t_explain_return_right r on l.id = r.id
+			where l.id = p_id
+			union all
+			select sum(l.b) as v
+			from t_explain_return_left l
+			where l.id <= p_id
+		) x
+	);
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_analyze_complex_return(1)").Rows())
+	require.NotEmpty(t, rows)
+	targetOrdinal := ""
+	requireAnyRow(t, rows, func(row []string) bool {
+		if row[5] != "return" {
+			return false
+		}
+		targetOrdinal = row[3]
+		return row[4] == "root" && row[7] == "YES" && row[8] == "" && row[10] == "1" && row[13] == "1"
+	})
+	require.NotEmpty(t, targetOrdinal)
+
+	drilldownRows := rowsToStrings(tk.MustQuery("explain analyze routine function f_explain_routine_analyze_complex_return(1) for stmt " + targetOrdinal).Rows())
+	require.NotEmpty(t, drilldownRows)
+
+	firstRow := strings.ToLower(strings.Join(drilldownRows[0], " "))
+	require.NotContains(t, firstRow, "projection", "drill-down should not start from the synthetic SELECT wrapper: %v", drilldownRows)
+	if len(drilldownRows) > 1 {
+		secondRow := strings.ToLower(strings.Join(drilldownRows[1], " "))
+		require.NotContains(t, secondRow, "tabledual", "drill-down should not expose the synthetic SELECT wrapper: %v", drilldownRows)
+	}
+	requireAnyRow(t, drilldownRows, func(row []string) bool {
+		return strings.Contains(strings.ToLower(strings.Join(row, " ")), "union")
+	})
+	requireAnyRow(t, drilldownRows, func(row []string) bool {
+		joined := strings.ToLower(strings.Join(row, " "))
+		return strings.Contains(joined, "t_explain_return_left") || strings.Contains(joined, "t_explain_return_right")
+	})
+
+	jsonRows := rowsToStrings(tk.MustQuery("explain analyze format='tidb_json' routine function f_explain_routine_analyze_complex_return(1) for stmt " + targetOrdinal).Rows())
+	require.Len(t, jsonRows, 1)
+	require.True(t, json.Valid([]byte(jsonRows[0][0])), "invalid plan json: %s", jsonRows[0][0])
+	require.NotContains(t, strings.ToLower(jsonRows[0][0]), "tabledual", "JSON drill-down should not expose the synthetic SELECT wrapper: %s", jsonRows[0][0])
 }
 
 func TestExplainRoutineCoversDefaultAndConditionExprSubqueries(t *testing.T) {

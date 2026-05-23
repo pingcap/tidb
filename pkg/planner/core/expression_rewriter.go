@@ -1142,6 +1142,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			er.ctxStackAppend(scalarSubQ, types.EmptyName)
 			return v, true
 		}
+		b.recordRoutineScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
 		b.recordExplainSetScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), 1)
 		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
 		if err != nil {
@@ -1414,6 +1415,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		}
 		return v, true
 	}
+	planCtx.builder.recordRoutineScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
 	planCtx.builder.recordExplainSetScalarSubquery(ctx, physicalPlan, np.QueryBlockOffset(), np.Schema().Len())
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
 	if err != nil {

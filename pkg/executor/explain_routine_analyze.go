@@ -75,6 +75,17 @@ func (a *routineExplainAnalyzer) drilldownRuntimeStatsCollForTarget() *execdetai
 	return a.drilldownRuntimeStatsColl
 }
 
+func (a *routineExplainAnalyzer) prefersScalarSubQueryDrilldown(stmtOrdinal int) bool {
+	if a == nil {
+		return false
+	}
+	entry, ok := a.catalogByOrdinal[stmtOrdinal]
+	if !ok {
+		return false
+	}
+	return routineExplainStmtKindUsesExpressionWrapper(entry.StmtKind)
+}
+
 func (a *routineExplainAnalyzer) observe(stmtOrdinal int, runtimeSQLText string, rowsProduced int64, totalTime time.Duration, planKey string, explainable bool, drilldownRows [][]string) {
 	if a == nil || stmtOrdinal <= 0 {
 		return
@@ -205,9 +216,14 @@ func routineExplainIsScaffoldingStmt(stmt ast.StmtNode) bool {
 	}
 }
 
-func routineExplainPlanKey(plan base.Plan) string {
+func routineExplainPlanKey(plan base.Plan, preferScalarSubQuery bool) string {
 	if plan == nil {
 		return ""
+	}
+	if preferScalarSubQuery {
+		if planKey := routineExplainScalarSubQueryPlanKey(plan); planKey != "" {
+			return planKey
+		}
 	}
 	_, digest := plannercore.NormalizePlan(plan)
 	if digest != nil {
@@ -215,13 +231,17 @@ func routineExplainPlanKey(plan base.Plan) string {
 			return planKey
 		}
 	}
+	return routineExplainScalarSubQueryPlanKey(plan)
+}
+
+func routineExplainScalarSubQueryPlanKey(plan base.Plan) string {
 	flat := plannercore.FlattenPhysicalPlan(plan, true)
 	if flat == nil || len(flat.ScalarSubQueries) == 0 {
 		return ""
 	}
 	planKeys := make([]string, 0, len(flat.ScalarSubQueries))
 	for _, subQuery := range flat.ScalarSubQueries {
-		_, digest = plannercore.NormalizeFlatPlan(&plannercore.FlatPhysicalPlan{Main: subQuery})
+		_, digest := plannercore.NormalizeFlatPlan(&plannercore.FlatPhysicalPlan{Main: subQuery})
 		if digest == nil {
 			continue
 		}
@@ -232,7 +252,16 @@ func routineExplainPlanKey(plan base.Plan) string {
 	return strings.Join(planKeys, ";")
 }
 
-func renderRoutineExplainAnalyzeRows(plan base.Plan, stmt ast.StmtNode, format string) ([][]string, error) {
+func routineExplainStmtKindUsesExpressionWrapper(stmtKind string) bool {
+	switch stmtKind {
+	case "condition", "declare_default", "return":
+		return true
+	default:
+		return false
+	}
+}
+
+func renderRoutineExplainAnalyzeRows(plan base.Plan, stmt ast.StmtNode, format string, preferScalarSubQuery bool) ([][]string, error) {
 	if selectIntoPlan, ok := plan.(*plannercore.SelectInto); ok && selectIntoPlan.TargetPlan != nil {
 		plan = selectIntoPlan.TargetPlan
 	}
@@ -243,6 +272,18 @@ func renderRoutineExplainAnalyzeRows(plan base.Plan, stmt ast.StmtNode, format s
 		ExecStmt:   stmt,
 	}
 	explain.SetSCtx(plan.SCtx())
+	if preferScalarSubQuery {
+		flat := plannercore.FlattenPhysicalPlan(plan, true)
+		if flat != nil && len(flat.ScalarSubQueries) > 0 {
+			if err := explain.RenderFlatResult(&plannercore.FlatPhysicalPlan{
+				CTEs:             flat.CTEs,
+				ScalarSubQueries: flat.ScalarSubQueries,
+			}); err != nil {
+				return nil, err
+			}
+			return explain.Rows, nil
+		}
+	}
 	if err := explain.RenderResult(); err != nil {
 		return nil, err
 	}
