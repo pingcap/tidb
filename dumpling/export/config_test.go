@@ -88,9 +88,40 @@ func TestParseParquetSizeFlags(t *testing.T) {
 	require.EqualValues(t, 128*units.MiB, conf.ParquetRowGroupSize)
 }
 
+func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
+	t.Run("reject template without index when rows and output template are both specified", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{.DB}}.{{.Table}}",
+		)
+		require.ErrorContains(t, err, "--output-filename-template must include {{.Index}} when --rows/-r is specified")
+	})
+
+	t.Run("accept template with index when rows and output template are both specified", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{.DB}}.{{.Table}}.{{.Index}}",
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("accept template without index when rows is not specified", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--output-filename-template", "{{.DB}}.{{.Table}}",
+		)
+		require.NoError(t, err)
+	})
+}
+
 func parseConfigFromArgsForTest(t *testing.T, args ...string) *Config {
 	t.Helper()
+	conf, err := parseConfigFromArgsForTestWithErr(t, args...)
+	require.NoError(t, err)
+	return conf
+}
 
+func parseConfigFromArgsForTestWithErr(t *testing.T, args ...string) (*Config, error) {
+	t.Helper()
 	conf := DefaultConfig()
 	flags := pflag.NewFlagSet("dumpling", pflag.ContinueOnError)
 	conf.DefineFlags(flags)
@@ -99,7 +130,8 @@ func parseConfigFromArgsForTest(t *testing.T, args ...string) *Config {
 	t.Cleanup(func() {
 		pflag.CommandLine = oldCommandLine
 	})
-	require.NoError(t, flags.Parse(args))
-	require.NoError(t, conf.ParseFromFlags(flags))
-	return conf
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	return conf, conf.ParseFromFlags(flags)
 }

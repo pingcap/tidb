@@ -100,6 +100,15 @@ cnt=$(cat ${DUMPLING_OUTPUT_DIR}/${TABLE_NAME}.${DB_NAME}.000000000.csv|wc -l)
 echo "records count is ${cnt}"
 [ "$cnt" = 101 ]
 
+echo "Test for --rows with --output-filename-template without {{.Index}} should report an error."
+set +e
+run_dumpling --rows 10 --output-filename-template "${TABLE_NAME}.${DB_NAME}" > ${DUMPLING_OUTPUT_DIR}/dumpling.log
+set -e
+
+actual=$(grep -w -- "--output-filename-template must include {{.Index}} when --rows/-r is specified" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
+echo "expected 1 return error when specifying --rows with --output-filename-template without {{.Index}}, actual ${actual}"
+[ "$actual" = 1 ]
+
 export DUMPLING_TEST_PORT=4000
 echo "Test for --sql option."
 run_sql "drop database if exists \`$DB_NAME\`;"

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -386,7 +387,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
-	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
+	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
@@ -636,6 +637,9 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
+	if flags.Changed(flagRows) && flags.Changed(flagOutputFilenameTemplate) && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
+		return errors.New("--output-filename-template must include {{.Index}} when --rows/-r is specified; otherwise chunk files may overwrite each other")
+	}
 	conf.OutputFileTemplate = tmpl
 
 	compressType, err := flags.GetString(flagCompress)
@@ -703,6 +707,112 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	return nil
+}
+
+func outputTemplateUsesIndex(tmpl *template.Template, templateName string) bool {
+	if tmpl == nil {
+		return false
+	}
+
+	visitedTemplate := make(map[string]struct{})
+	visitedNode := make(map[parse.Node]struct{})
+
+	var visitTemplate func(name string) bool
+	visitTemplate = func(name string) bool {
+		if _, ok := visitedTemplate[name]; ok {
+			return false
+		}
+		visitedTemplate[name] = struct{}{}
+
+		t := tmpl.Lookup(name)
+		if t == nil || t.Tree == nil || t.Tree.Root == nil {
+			return false
+		}
+
+		var visitNode func(node parse.Node) bool
+		visitNode = func(node parse.Node) bool {
+			if node == nil {
+				return false
+			}
+			if _, ok := visitedNode[node]; ok {
+				return false
+			}
+			visitedNode[node] = struct{}{}
+
+			switch n := node.(type) {
+			case *parse.FieldNode:
+				for _, ident := range n.Ident {
+					if ident == "Index" {
+						return true
+					}
+				}
+			case *parse.VariableNode:
+				for _, ident := range n.Ident {
+					if ident == "Index" {
+						return true
+					}
+				}
+			case *parse.ChainNode:
+				for _, ident := range n.Field {
+					if ident == "Index" {
+						return true
+					}
+				}
+				return visitNode(n.Node)
+			case *parse.ListNode:
+				for _, child := range n.Nodes {
+					if visitNode(child) {
+						return true
+					}
+				}
+			case *parse.ActionNode:
+				return visitNode(n.Pipe)
+			case *parse.PipeNode:
+				for _, decl := range n.Decl {
+					if visitNode(decl) {
+						return true
+					}
+				}
+				for _, cmd := range n.Cmds {
+					if visitNode(cmd) {
+						return true
+					}
+				}
+			case *parse.CommandNode:
+				for _, arg := range n.Args {
+					if visitNode(arg) {
+						return true
+					}
+				}
+			case *parse.TemplateNode:
+				if visitNode(n.Pipe) {
+					return true
+				}
+				return visitTemplate(n.Name)
+			case *parse.IfNode:
+				if visitNode(n.Pipe) || visitNode(n.List) {
+					return true
+				}
+				return visitNode(n.ElseList)
+			case *parse.RangeNode:
+				if visitNode(n.Pipe) || visitNode(n.List) {
+					return true
+				}
+				return visitNode(n.ElseList)
+			case *parse.WithNode:
+				if visitNode(n.Pipe) || visitNode(n.List) {
+					return true
+				}
+				return visitNode(n.ElseList)
+			}
+
+			return false
+		}
+
+		return visitNode(t.Tree.Root)
+	}
+
+	return visitTemplate(templateName)
 }
 
 // ParseFileSize parses file size from tables-list and filter arguments
