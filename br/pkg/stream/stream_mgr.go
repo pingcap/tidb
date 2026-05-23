@@ -206,7 +206,11 @@ func (m *MetadataHelper) InitCacheEntry(path string, ref int) {
 	}
 }
 
-func (m *MetadataHelper) decodeCompressedData(data []byte, rawLength uint64, compressionType backuppb.CompressionType) ([]byte, error) {
+func (m *MetadataHelper) decodeCompressedData(
+	data []byte,
+	rawLength uint64,
+	compressionType backuppb.CompressionType,
+) ([]byte, error) {
 	switch compressionType {
 	case backuppb.CompressionType_UNKNOWN:
 		return data, nil
