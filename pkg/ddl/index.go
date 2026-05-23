@@ -110,7 +110,7 @@ var DefaultCumulativeTimeout = 1 * time.Minute
 // exported for testing.
 var DefaultAnalyzeCheckInterval = 10 * time.Second
 
-func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
+func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, currentTableName string) ([]*model.IndexColumn, bool, error) { // Added currentTableName parameter
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -119,6 +119,15 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 	// The sum of length of all index columns.
 	sumLength := 0
 	for _, ip := range indexPartSpecifications {
+		// --- START OF PROPOSED CHANGE ---
+		if ip.Column.Schema.L != "" {
+			return nil, false, dbterror.ErrWrongColumnName.GenWithStack("column '%s' specifies a database prefix, which is not allowed in index definition", ip.Column.OrigColName())
+		}
+		if ip.Column.Table.L != "" && !strings.EqualFold(ip.Column.Table.L, currentTableName) {
+			return nil, false, dbterror.ErrWrongColumnName.GenWithStack("column '%s' specifies an invalid table prefix '%s'. Expected column from table '%s'", ip.Column.OrigColName(), ip.Column.Table.O, currentTableName)
+		}
+		// --- END OF PROPOSED CHANGE ---
+
 		col = model.FindColumnInfo(columns, ip.Column.Name.L)
 		if col == nil {
 			return nil, false, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
@@ -427,7 +436,7 @@ func BuildIndexInfo(
 
 	var err error
 	allTableColumns := tblInfo.Columns
-	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, columnarIndexType)
+	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, columnarIndexType, tblInfo.Name.L)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
