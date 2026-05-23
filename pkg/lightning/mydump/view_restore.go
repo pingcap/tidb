@@ -321,10 +321,8 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 
 	// Kahn's algorithm with a sorted initial ready set and sorted dependent
 	// lists keeps view creation order stable across runs.
-	remainingIndegree := make(map[filter.Table]int, len(plan.nodes))
 	ready := make([]filter.Table, 0, len(plan.nodes))
 	for key, node := range plan.nodes {
-		remainingIndegree[key] = node.indegree
 		if node.indegree == 0 {
 			ready = append(ready, key)
 		}
@@ -338,8 +336,9 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 		plan.ordered = append(plan.ordered, node)
 
 		for _, dependent := range node.dependents {
-			remainingIndegree[dependent]--
-			if remainingIndegree[dependent] == 0 {
+			dependentNode := plan.nodes[dependent]
+			dependentNode.indegree--
+			if dependentNode.indegree == 0 {
 				ready = append(ready, dependent)
 			}
 		}
@@ -347,8 +346,8 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 
 	if len(plan.ordered) != len(plan.nodes) {
 		cycleNodes := make([]filter.Table, 0, len(plan.nodes)-len(plan.ordered))
-		for key, indegree := range remainingIndegree {
-			if indegree > 0 {
+		for key, node := range plan.nodes {
+			if node.indegree > 0 {
 				cycleNodes = append(cycleNodes, key)
 			}
 		}

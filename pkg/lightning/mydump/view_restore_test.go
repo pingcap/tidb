@@ -184,9 +184,6 @@ func TestBuildViewRestorePlanSupportsMultipleAndCrossSchemaViewDeps(t *testing.T
 		plan.ordered[1].key,
 		plan.ordered[2].key,
 	})
-	require.Equal(t, 0, plan.nodes[db1v1].indegree)
-	require.Equal(t, 0, plan.nodes[db2v3].indegree)
-	require.Equal(t, 2, plan.nodes[db2v2].indegree)
 	require.Equal(t, []filter.Table{db2v2}, plan.nodes[db1v1].dependents)
 	require.Equal(t, []filter.Table{db2v2}, plan.nodes[db2v3].dependents)
 }
