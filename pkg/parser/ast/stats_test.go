@@ -182,6 +182,11 @@ func TestFlushStatsDeltaScoped(t *testing.T) {
 			sql:  "FLUSH STATS_DELTA db1.t1, db1.T1, db2.t1",
 			want: "FLUSH STATS_DELTA `db1`.`t1`, `db2`.`t1`",
 		},
+		{
+			name: "quoted dotted names are distinct",
+			sql:  "FLUSH STATS_DELTA `a.b`.`c`, `a`.`b.c`",
+			want: "FLUSH STATS_DELTA `a.b`.`c`, `a`.`b.c`",
+		},
 	}
 	for _, test := range dedupTests {
 		t.Run(test.name, func(t *testing.T) {
@@ -227,6 +232,11 @@ func TestRefreshStatsStmtDedup(t *testing.T) {
 			name: "database duplicates case insensitive",
 			sql:  "REFRESH STATS db1.*, DB1.*, db2.t1",
 			want: "REFRESH STATS `db1`.*, `db2`.`t1`",
+		},
+		{
+			name: "quoted dotted names are distinct",
+			sql:  "REFRESH STATS `a.b`.`c`, `a`.`b.c`",
+			want: "REFRESH STATS `a.b`.`c`, `a`.`b.c`",
 		},
 	}
 

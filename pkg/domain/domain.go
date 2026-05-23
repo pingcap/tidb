@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
-	disthandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -63,9 +62,9 @@ import (
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -116,6 +115,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -1127,7 +1127,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
-	disthandle.SetNodeResource(nodeRes)
+	storage.SetNodeResource(nodeRes)
 	executorManager, err := taskexecutor.NewManager(managerCtx, do.store, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
@@ -1147,7 +1147,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		logger := logutil.BgLogger()
-		return local.InitializeRateLimiterParam(m, logger)
+		return ingestctrl.InitializeRateLimiterParam(m, logger)
 	}); err != nil {
 		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}
@@ -1175,11 +1175,16 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 	} else {
 		totalDisk = sz.Capacity
 	}
+	nodeRes := proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk)
+	dxfNodeRes := nodeRes.LimitDXFResource(cfg.DXFResourceLimit)
 	logger.Info("initialize node resource",
 		zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))),
+		zap.Int("dxf-resource-limit", cfg.DXFResourceLimit),
+		zap.Int("dxf-usable-cpu", dxfNodeRes.TotalCPU),
+		zap.String("dxf-usable-mem", units.BytesSize(float64(dxfNodeRes.TotalMem))),
 		zap.String("total-disk", units.BytesSize(float64(totalDisk))))
-	return proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk), nil
+	return dxfNodeRes, nil
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string, nodeRes *proto.NodeResource) {
@@ -1263,7 +1268,7 @@ func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
 // GetPDClient returns the PD client.
 func (do *Domain) GetPDClient() pd.Client {
 	if store, ok := do.store.(kv.StorageWithPD); ok {
-		return store.GetPDClient()
+		return store.GetPDClient().WithCallerComponent(caller.GetComponent(1))
 	}
 	return nil
 }
@@ -2504,7 +2509,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 
 		for {
 			select {
-			case <-time.After(sessionstates.LoadCertInterval):
+			case <-time.After(sessionstates.GetLoadCertInterval()):
 				sessionstates.ReloadSigningCert()
 			case <-do.exit:
 				return

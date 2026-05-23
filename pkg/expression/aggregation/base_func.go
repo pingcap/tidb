@@ -137,7 +137,7 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	case ast.AggFuncAvg:
 		a.typeInfer4Avg(ctx.GetEvalCtx())
 	case ast.AggFuncGroupConcat:
-		a.typeInfer4GroupConcat(ctx)
+		return a.typeInfer4GroupConcat(ctx)
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue:
 		a.typeInfer4MaxMin(ctx)
@@ -298,11 +298,32 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
+func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) error {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
-	charset, collate := charset.GetDefaultCharsetAndCollate()
-	a.RetTp.SetCharset(charset)
-	a.RetTp.SetCollate(collate)
+	ec, err := expression.CheckAndDeriveCollationFromExprs(ctx, ast.AggFuncGroupConcat, types.ETString, a.Args...)
+	if err != nil {
+		return err
+	}
+	if ec.Charset == "" || ec.Collation == "" {
+		connCharset, connCollation := ctx.GetCharsetInfo()
+		if connCharset == "" || connCollation == "" {
+			connCharset, connCollation = charset.GetDefaultCharsetAndCollate()
+		}
+		if ec.Charset == "" {
+			ec.Charset = connCharset
+		}
+		if ec.Collation == "" {
+			if ec.Charset == connCharset {
+				ec.Collation = connCollation
+			} else if coll, err := charset.GetDefaultCollation(ec.Charset); err == nil {
+				ec.Collation = coll
+			} else {
+				ec.Collation = connCollation
+			}
+		}
+	}
+	a.RetTp.SetCharset(ec.Charset)
+	a.RetTp.SetCollate(ec.Collation)
 
 	a.RetTp.SetFlen(mysql.MaxBlobWidth)
 	a.RetTp.SetDecimal(0)
@@ -312,6 +333,7 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
 			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 		}
 	}
+	return nil
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext) {

@@ -401,6 +401,11 @@ error = '''
 checkpoint not found
 '''
 
+["Lightning:Checkpoint:ErrCheckpointTableNotFound"]
+error = '''
+checkpoint for table %s not found
+'''
+
 ["Lightning:Checkpoint:ErrCleanCheckpoint"]
 error = '''
 clean checkpoint error
@@ -969,6 +974,11 @@ Key part '%-.192s' length cannot be 0
 ["ddl:1452"]
 error = '''
 Cannot add or update a child row: a foreign key constraint fails (%.192s)
+'''
+
+["ddl:1468"]
+error = '''
+User name must start with `%s.` (use `%s.%s` instead)
 '''
 
 ["ddl:1470"]
@@ -2071,6 +2081,11 @@ error = '''
 Unknown background task name '%-.192s'
 '''
 
+["executor:8274"]
+error = '''
+tidb_max_keys_read limit exceeded
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
@@ -3089,6 +3104,11 @@ Access denied for user '%-.48s'@'%-.255s'
 ["server:1820"]
 error = '''
 You must reset your password using ALTER USER statement before executing this statement
+'''
+
+["server:20003"]
+error = '''
+User name prefix does not match the assigned keyspace.
 '''
 
 ["server:3159"]

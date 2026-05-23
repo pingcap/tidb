@@ -31,13 +31,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	pkgprogress "github.com/pingcap/tidb/lightning/pkg/progress"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
@@ -189,7 +189,7 @@ func (tr *TableImporter) importTable(
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
 			return false, errors.Trace(err)
 		}
-		web.BroadcastTableCheckpoint(tr.tableName, cp)
+		pkgprogress.BroadcastTableCheckpoint(tr.tableName, cp)
 
 		// rebase the allocator based on the max ID from table info.
 		ti := tr.tableInfo.Core
@@ -223,8 +223,8 @@ func (tr *TableImporter) importTable(
 	// 2. Do duplicate detection if needed
 	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
-		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
-		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
+		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+ingestctrl.DupDetectDirSuffix)
+		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+ingestctrl.DupResultDirSuffix)
 
 		dupIgnoreRows, err := extsort.OpenDiskSorter(resultDir, &extsort.DiskSorterOptions{
 			Concurrency: rc.cfg.App.RegionConcurrency,
@@ -452,7 +452,7 @@ func estimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableC
 	}
 	totalRawFileSize *= factor
 
-	return local.EstimateCompactionThreshold2(totalRawFileSize)
+	return ingestctrl.EstimateCompactionThreshold2(totalRawFileSize)
 }
 
 func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
@@ -708,7 +708,7 @@ func (tr *TableImporter) preprocessEngine(
 	if !tr.tableMeta.IsRowOrdered {
 		dataEngineCfg.Local.Compact = true
 		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+		dataEngineCfg.Local.CompactThreshold = ingestctrl.CompactionUpperThreshold
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
@@ -1067,15 +1067,19 @@ func (tr *TableImporter) postProcess(
 		// if we came here, it must be a local backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
-		localBackend := rc.backend.(*local.Backend)
-		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		var dupeController *ingestctrl.DupeController
 		hasDupe := false
 		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
+			localBackend := rc.backend.(*ingestctrl.Backend)
+			var err error
+			dupeController, err = localBackend.GetDupeController(ctx, rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
 			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
-			var err error
 			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts, rc.cfg.Conflict.Strategy)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
@@ -1130,7 +1134,7 @@ func (tr *TableImporter) postProcess(
 				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 			}
 
-			var remoteChecksum *local.RemoteChecksum
+			var remoteChecksum *ingestctrl.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
 			failpoint.Inject("checksum-error", func() {
 				tr.logger.Info("failpoint checksum-error injected.")
@@ -1357,7 +1361,7 @@ func (tr *TableImporter) importKV(
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
 	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = local.ConvertToErrFoundConflictRecords(err, tr.encTable)
+		err = ingestctrl.ConvertToErrFoundConflictRecords(err, tr.encTable)
 	}
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
@@ -1382,7 +1386,7 @@ func (tr *TableImporter) importKV(
 }
 
 // do checksum for each table.
-func (tr *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, localChecksum verify.KVChecksum) error {
+func (tr *TableImporter) compareChecksum(remoteChecksum *ingestctrl.RemoteChecksum, localChecksum verify.KVChecksum) error {
 	if remoteChecksum.Checksum != localChecksum.Sum() ||
 		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
 		remoteChecksum.TotalBytes != localChecksum.SumSize() {
@@ -1468,7 +1472,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 
 	defer func() {
 		if retErr == nil {
-			web.BroadcastTableProgress(tr.tableName, progressStep, 1)
+			pkgprogress.BroadcastTableProgress(tr.tableName, progressStep, 1)
 		} else if !log.IsContextCanceledError(retErr) {
 			// Try to strip the prefix of the error message.
 			// e.g "add index failed: Error 1062 ..." -> "Error 1062 ..."
@@ -1491,7 +1495,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
 		if totalRows > 0 {
 			progress := min(float64(status.rowCount)/float64(totalRows*len(multiSQLs)), 1)
-			web.BroadcastTableProgress(tableName, progressStep, progress)
+			pkgprogress.BroadcastTableProgress(tableName, progressStep, progress)
 			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 		}
 	})
@@ -1512,7 +1516,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 			if totalRows > 0 {
 				p := float64(status.rowCount) / float64(totalRows)
 				progress := baseProgress + p/float64(len(multiSQLs))
-				web.BroadcastTableProgress(tableName, progressStep, progress)
+				pkgprogress.BroadcastTableProgress(tableName, progressStep, progress)
 				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 			}
 		})
@@ -1520,7 +1524,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 			return err
 		}
 		baseProgress += 1.0 / float64(len(multiSQLs))
-		web.BroadcastTableProgress(tableName, progressStep, baseProgress)
+		pkgprogress.BroadcastTableProgress(tableName, progressStep, baseProgress)
 	}
 	return nil
 }
