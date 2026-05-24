@@ -922,3 +922,22 @@ func TestInsertRowsColMultiplyRUV2SQLPath(t *testing.T) {
 		"100 100 100",
 	))
 }
+
+func TestDMLRowsColMultiplyRUV2SQLPath(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+
+	runDML := func(sql string) int64 {
+		ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		tk.MustExecWithContext(ctx, sql)
+		metrics := execdetails.RUV2MetricsFromContext(ctx)
+		require.NotNil(t, metrics)
+		return metrics.ExecutorL5InsertRows()
+	}
+
+	require.Equal(t, int64(6), runDML("replace into t values (1, 2, 3), (2, 3, 4)"))
+	require.Equal(t, int64(6), runDML("update t set b = b + 10 where a in (1, 2)"))
+	require.Equal(t, int64(3), runDML("delete from t where a = 1"))
+}

@@ -283,6 +283,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	if err != nil {
 		return err
 	}
+	recordDMLRowsColMultiply2Metrics(ctx.GetSessionVars(), 1, int64(len(data)))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil
 }

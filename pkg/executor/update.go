@@ -370,8 +370,19 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		e.drained = true
 		e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(numRows))
+		e.recordRowsColMultiply2RUV2Metrics(int64(numRows))
 	}
 	return nil
+}
+
+func (e *UpdateExec) recordRowsColMultiply2RUV2Metrics(rowCount int64) {
+	var columnCount int64
+	for _, content := range e.tblColPosInfos {
+		if content.End > content.Start {
+			columnCount += int64(content.End - content.Start)
+		}
+	}
+	recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowCount, columnCount)
 }
 
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {

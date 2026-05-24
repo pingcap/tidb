@@ -1754,14 +1754,22 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
-	if rowsColMultiply <= 0 {
+func recordDMLRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowCount, columnCount int64) {
+	if rowCount <= 0 || columnCount <= 0 {
 		return
 	}
 
+	rowsColMultiply := rowCount * columnCount
+	if rowCount > math.MaxInt64/columnCount {
+		rowsColMultiply = math.MaxInt64
+	}
 	if sessVars.RUV2Metrics != nil {
 		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
 	}
+}
+
+func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
+	recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)
 }
 
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
