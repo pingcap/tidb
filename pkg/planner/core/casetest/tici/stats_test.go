@@ -63,7 +63,7 @@ func TestTiCISearchEstimateOnlyForMultiTable(t *testing.T) {
 	)`)
 	tk.MustExec("create table t2(a int primary key)")
 	var tValues, t2Values strings.Builder
-	for i := 1; i <= 2000; i++ {
+	for i := 1; i <= 100; i++ {
 		if i > 1 {
 			tValues.WriteString(",")
 			t2Values.WriteString(",")
@@ -81,18 +81,28 @@ func TestTiCISearchEstimateOnlyForMultiTable(t *testing.T) {
 
 	singleTablePlan := testdata.ConvertRowsToStrings(
 		tk.MustQuery("explain format='brief' select id from t where fts_match_word('hello', title)").Rows())
-	requirePlanLineContains(t, singleTablePlan, "IndexRangeScan 200.00", "search func:fts_match_word")
-	requirePlanLineContains(t, singleTablePlan, "Projection 200.00", "test.t.id")
+	requirePlanLineContains(t, singleTablePlan, "IndexRangeScan 10.00", "search func:fts_match_word")
+	requirePlanLineContains(t, singleTablePlan, "Projection 10.00", "test.t.id")
 
 	multiTablePlan := testdata.ConvertRowsToStrings(
-		tk.MustQuery("explain format='brief' select /*+ inl_join(t) */ t.id from t2, t where t.id = t2.a and fts_match_word('hello', t.title)").Rows())
-	requirePlanLineContains(t, multiTablePlan, "IndexRangeScan 1000.00", "search func:fts_match_word")
-	requirePlanLineContains(t, multiTablePlan, "HashJoin 1000.00")
+		tk.MustQuery("explain format='brief' select /*+ hash_join(t2, t) */ t.id from t2, t where t.id = t2.a and fts_match_word('hello', t.title)").Rows())
+	requirePlanLineContains(t, multiTablePlan, "IndexRangeScan 100.00", "search func:fts_match_word")
+	requirePlanLineContains(t, multiTablePlan, "HashJoin 100.00")
 
 	tk.MustExec(fmt.Sprintf("set global %s = off", vardef.TiDBEnableTiCIEstimate))
 	disabledEstimatePlan := testdata.ConvertRowsToStrings(
 		tk.MustQuery("explain format='brief' select /*+ inl_join(t) */ t.id from t2, t where t.id = t2.a and match(t.title) against ('hello' in boolean mode)").Rows())
-	requirePlanLineContains(t, disabledEstimatePlan, "IndexRangeScan 200.00", "search func:fts_match_word")
+	requirePlanLineContains(t, disabledEstimatePlan, "IndexRangeScan 10.00", "search func:fts_match_word")
+
+	tk.MustExec(fmt.Sprintf("set global %s = on", vardef.TiDBEnableTiCIEstimate))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/mockstorage/MockTiCIEstimateCount", `return(1)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/mockstorage/MockTiCIEstimateCount"))
+	}()
+	smallEstimatePlan := testdata.ConvertRowsToStrings(
+		tk.MustQuery("explain format='brief' select /*+ hash_join(t2, t) */ t.id from t2, t where t.id = t2.a and fts_match_word('hello', t.title)").Rows())
+	requirePlanLineContains(t, smallEstimatePlan, "IndexRangeScan 1.00", "search func:fts_match_word")
+	requirePlanLineContains(t, smallEstimatePlan, "HashJoin 1.00")
 }
 
 func requirePlanLineContains(t *testing.T, plan []string, expected ...string) {
