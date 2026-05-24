@@ -1615,6 +1615,8 @@ func mixedUnionNumericSourceType(
 		case types.ETInt, types.ETReal, types.ETDecimal:
 			if numericTp == nil {
 				numericTp = sourceTp.Clone()
+			} else {
+				numericTp = unionJoinFieldType(numericTp, sourceTp)
 			}
 		case types.ETString:
 			hasStringSource = true

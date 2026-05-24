@@ -985,5 +985,11 @@ func TestIssue25600InSubqueryMixedUnionComparison(t *testing.T) {
 		tk.MustQuery(
 			`select /* issue:25600 */ 'sc' in (select '' union select '0')`,
 		).Check(testkit.Rows("0"))
+		tk.MustQuery(
+			`select /* issue:25600 */ '1.1' in (select 1 union select 1.9)`,
+		).Check(testkit.Rows("0"))
+		tk.MustQuery(
+			`select /* issue:25600 */ '1.1' in (select 1.9 union select 1)`,
+		).Check(testkit.Rows("0"))
 	})
 }
