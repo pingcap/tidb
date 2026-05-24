@@ -946,4 +946,10 @@ func TestDMLRowsColMultiplyRUV2SQLPath(t *testing.T) {
 	tk.MustExec("insert into outer_l values (1, 10), (2, 20)")
 	tk.MustExec("insert into outer_r values (1, 100)")
 	require.Equal(t, int64(2), runDML("update outer_l left join outer_r on outer_l.a = outer_r.a set outer_r.b = outer_r.b + 1"))
+
+	tk.MustExec("create table dup_t(a int primary key, b int)")
+	tk.MustExec("create table dup_s(a int, b int)")
+	tk.MustExec("insert into dup_t values (1, 10)")
+	tk.MustExec("insert into dup_s values (1, 100), (1, 200)")
+	require.Equal(t, int64(2), runDML("update dup_t join dup_s on dup_t.a = dup_s.a set dup_t.b = dup_t.b + 1"))
 }

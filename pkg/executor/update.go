@@ -379,7 +379,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *UpdateExec) rowsColMultiplyForPreparedRow() int64 {
 	var columnCount int64
 	for i, content := range e.tblColPosInfos {
-		if i >= len(e.tableUpdatable) || !e.tableUpdatable[i] {
+		if i >= len(e.tableUpdatable) || !e.tableUpdatable[i] || i >= len(e.changed) || e.changed[i] {
 			continue
 		}
 		if content.End > content.Start {
