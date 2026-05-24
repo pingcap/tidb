@@ -1,1 +1,0 @@
-CREATE TABLE v4(id INT);

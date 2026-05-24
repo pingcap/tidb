@@ -1,1 +1,0 @@
-CREATE TABLE v3(id INT, name VARCHAR(16));
