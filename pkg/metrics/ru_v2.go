@@ -30,6 +30,8 @@ var (
 	RUV2PlanDeriveStatsPaths    prometheus.Counter
 	RUV2ResourceManagerReadCnt  prometheus.Counter
 	RUV2ResourceManagerWriteCnt prometheus.Counter
+	RUV2WriteKeys               prometheus.Counter
+	RUV2WriteSize               prometheus.Counter
 	RUV2SessionParserTotal      prometheus.Counter
 	RUV2TxnCnt                  prometheus.Counter
 
@@ -122,6 +124,24 @@ func InitRUV2Metrics() {
 			Subsystem: "ruv2",
 			Name:      "resource_manager_write_cnt",
 			Help:      "Counter of resource manager write requests for RU v2.",
+		},
+	)
+
+	RUV2WriteKeys = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "write_keys",
+			Help:      "Shadow counter of commit write keys for RU v2.",
+		},
+	)
+
+	RUV2WriteSize = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "write_size",
+			Help:      "Shadow counter of commit write size for RU v2.",
 		},
 	)
 

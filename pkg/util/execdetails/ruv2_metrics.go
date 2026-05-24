@@ -124,6 +124,19 @@ func SyncRUV2MetricsFromRUDetails(metrics *RUV2Metrics, ruDetails *tikvutil.RUDe
 	UpdateRUV2MetricsFromRUV2(metrics, ruDetails.DrainRUV2())
 }
 
+// UpdateRUV2MetricsFromCommitDetails adds commit write counters into RUv2 shadow metrics.
+func UpdateRUV2MetricsFromCommitDetails(metrics *RUV2Metrics, commitDetails *tikvutil.CommitDetails) {
+	if metrics == nil || commitDetails == nil || metrics.Bypass() {
+		return
+	}
+	if commitDetails.WriteKeys != 0 {
+		metrics.AddWriteKeys(int64(commitDetails.WriteKeys))
+	}
+	if commitDetails.WriteSize != 0 {
+		metrics.AddWriteSize(int64(commitDetails.WriteSize))
+	}
+}
+
 // RUV2Metrics stores statement-level RUv2 metrics.
 type RUV2Metrics struct {
 	bypass atomic.Bool
@@ -142,6 +155,8 @@ type RUV2Metrics struct {
 
 	resourceManagerReadCnt  int64
 	resourceManagerWriteCnt int64
+	writeKeys               int64
+	writeSize               int64
 
 	tikvKvEngineCacheMiss             int64
 	tikvCoprocessorExecutorIterations int64
@@ -262,6 +277,24 @@ func (m *RUV2Metrics) AddResourceManagerWriteCnt(delta int64) {
 	atomic.AddInt64(&m.resourceManagerWriteCnt, delta)
 }
 
+// AddWriteKeys records commit write keys for RUv2 shadow accounting.
+func (m *RUV2Metrics) AddWriteKeys(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2WriteKeys.Add(float64(delta))
+	atomic.AddInt64(&m.writeKeys, delta)
+}
+
+// AddWriteSize records commit write size for RUv2 shadow accounting.
+func (m *RUV2Metrics) AddWriteSize(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2WriteSize.Add(float64(delta))
+	atomic.AddInt64(&m.writeSize, delta)
+}
+
 // AddTiKVKVEngineCacheMiss records TiKV kv_engine_cache_miss counters from ExecDetailsV2.
 func (m *RUV2Metrics) AddTiKVKVEngineCacheMiss(delta int64) {
 	if m.Bypass() {
@@ -343,6 +376,8 @@ func (m *RUV2Metrics) Clone() *RUV2Metrics {
 	atomic.StoreInt64(&cloned.txnCnt, atomic.LoadInt64(&m.txnCnt))
 	atomic.StoreInt64(&cloned.resourceManagerReadCnt, atomic.LoadInt64(&m.resourceManagerReadCnt))
 	atomic.StoreInt64(&cloned.resourceManagerWriteCnt, atomic.LoadInt64(&m.resourceManagerWriteCnt))
+	atomic.StoreInt64(&cloned.writeKeys, atomic.LoadInt64(&m.writeKeys))
+	atomic.StoreInt64(&cloned.writeSize, atomic.LoadInt64(&m.writeSize))
 	atomic.StoreInt64(&cloned.tikvKvEngineCacheMiss, atomic.LoadInt64(&m.tikvKvEngineCacheMiss))
 	atomic.StoreInt64(&cloned.tikvCoprocessorExecutorIterations, atomic.LoadInt64(&m.tikvCoprocessorExecutorIterations))
 	atomic.StoreInt64(&cloned.tikvCoprocessorResponseBytes, atomic.LoadInt64(&m.tikvCoprocessorResponseBytes))
@@ -430,6 +465,8 @@ func (m *RUV2Metrics) Merge(other *RUV2Metrics) {
 	atomic.AddInt64(&m.txnCnt, other.TxnCnt())
 	atomic.AddInt64(&m.resourceManagerReadCnt, other.ResourceManagerReadCnt())
 	atomic.AddInt64(&m.resourceManagerWriteCnt, other.ResourceManagerWriteCnt())
+	atomic.AddInt64(&m.writeKeys, other.WriteKeys())
+	atomic.AddInt64(&m.writeSize, other.WriteSize())
 	atomic.AddInt64(&m.tikvKvEngineCacheMiss, other.TiKVKVEngineCacheMiss())
 	atomic.AddInt64(&m.tikvCoprocessorExecutorIterations, other.TiKVCoprocessorExecutorIterations())
 	atomic.AddInt64(&m.tikvCoprocessorResponseBytes, other.TiKVCoprocessorResponseBytes())
@@ -510,6 +547,22 @@ func (m *RUV2Metrics) ResourceManagerWriteCnt() int64 {
 	return atomic.LoadInt64(&m.resourceManagerWriteCnt)
 }
 
+// WriteKeys returns commit write keys for RUv2 shadow accounting.
+func (m *RUV2Metrics) WriteKeys() int64 {
+	if m == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&m.writeKeys)
+}
+
+// WriteSize returns commit write size for RUv2 shadow accounting.
+func (m *RUV2Metrics) WriteSize() int64 {
+	if m == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&m.writeSize)
+}
+
 // TiKVKVEngineCacheMiss returns TiKV kv_engine_cache_miss counters from ExecDetailsV2.
 func (m *RUV2Metrics) TiKVKVEngineCacheMiss() int64 {
 	if m == nil {
@@ -574,6 +627,8 @@ func (m *RUV2Metrics) IsZero() bool {
 		m.TxnCnt() == 0 &&
 		m.ResourceManagerReadCnt() == 0 &&
 		m.ResourceManagerWriteCnt() == 0 &&
+		m.WriteKeys() == 0 &&
+		m.WriteSize() == 0 &&
 		m.TiKVKVEngineCacheMiss() == 0 &&
 		m.TiKVCoprocessorExecutorIterations() == 0 &&
 		m.TiKVCoprocessorResponseBytes() == 0 &&
@@ -649,6 +704,8 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		txnCnt                            int64
 		resourceManagerReadCnt            int64
 		resourceManagerWriteCnt           int64
+		writeKeys                         int64
+		writeSize                         int64
 		tiKVKVEngineCacheMiss             int64
 		tiKVCoprocessorExecutorIterations int64
 		tiKVCoprocessorResponseBytes      int64
@@ -670,6 +727,8 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		txnCnt = metrics.TxnCnt()
 		resourceManagerReadCnt = metrics.ResourceManagerReadCnt()
 		resourceManagerWriteCnt = metrics.ResourceManagerWriteCnt()
+		writeKeys = metrics.WriteKeys()
+		writeSize = metrics.WriteSize()
 		tiKVKVEngineCacheMiss = metrics.TiKVKVEngineCacheMiss()
 		tiKVCoprocessorExecutorIterations = metrics.TiKVCoprocessorExecutorIterations()
 		tiKVCoprocessorResponseBytes = metrics.TiKVCoprocessorResponseBytes()
@@ -690,6 +749,8 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		txnCnt == 0 &&
 		resourceManagerReadCnt == 0 &&
 		resourceManagerWriteCnt == 0 &&
+		writeKeys == 0 &&
+		writeSize == 0 &&
 		tiKVKVEngineCacheMiss == 0 &&
 		tiKVCoprocessorExecutorIterations == 0 &&
 		tiKVCoprocessorResponseBytes == 0 &&
@@ -738,6 +799,8 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 	appendInt("txn_cnt", txnCnt)
 	appendInt("resource_manager_read_cnt", resourceManagerReadCnt)
 	appendInt("resource_manager_write_cnt", resourceManagerWriteCnt)
+	appendInt("write_keys", writeKeys)
+	appendInt("write_size", writeSize)
 	appendInt("tikv_kv_engine_cache_miss", tiKVKVEngineCacheMiss)
 	appendInt("tikv_coprocessor_executor_iterations", tiKVCoprocessorExecutorIterations)
 	appendInt("tikv_coprocessor_response_bytes", tiKVCoprocessorResponseBytes)

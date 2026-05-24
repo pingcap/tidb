@@ -382,6 +382,8 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	metrics.AddPlanDeriveStatsPaths(23)
 	metrics.AddResourceManagerReadCnt(29)
 	metrics.AddResourceManagerWriteCnt(31)
+	metrics.AddWriteKeys(3)
+	metrics.AddWriteSize(66)
 	metrics.AddSessionParserTotal(37)
 	metrics.AddTxnCnt(41)
 	metrics.AddTiKVKVEngineCacheMiss(43)
@@ -401,6 +403,8 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	require.InEpsilon(t, 157258.0, tikvRU, 0.01)
 	require.InEpsilon(t, 24680.0, tiflashRU, 0.01)
 	require.InEpsilon(t, 181978.2906903357, totalRU, 0.01)
+	require.Equal(t, int64(3), metrics.WriteKeys())
+	require.Equal(t, int64(66), metrics.WriteSize())
 
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights
@@ -426,6 +430,34 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 		var nilMetrics *RUV2Metrics
 		require.Equal(t, tikvRU+tiflashRU, nilMetrics.TotalRU(weights, tikvRU, tiflashRU))
 	})
+}
+
+func TestUpdateRUV2MetricsFromCommitDetails(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	weights := defaultRUV2WeightsForTest()
+	beforeRU := metrics.CalculateRUValues(weights)
+
+	UpdateRUV2MetricsFromCommitDetails(metrics, &util.CommitDetails{
+		WriteKeys: 3,
+		WriteSize: 66,
+	})
+
+	require.Equal(t, int64(3), metrics.WriteKeys())
+	require.Equal(t, int64(66), metrics.WriteSize())
+	require.Equal(t, beforeRU, metrics.CalculateRUValues(weights))
+
+	detail := FormatRUV2Metrics(metrics, weights, 0, 0)
+	require.Contains(t, detail, "write_keys:3")
+	require.Contains(t, detail, "write_size:66")
+
+	bypassed := NewRUV2Metrics()
+	bypassed.SetBypass(true)
+	UpdateRUV2MetricsFromCommitDetails(bypassed, &util.CommitDetails{
+		WriteKeys: 1,
+		WriteSize: 2,
+	})
+	require.Zero(t, bypassed.WriteKeys())
+	require.Zero(t, bypassed.WriteSize())
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {

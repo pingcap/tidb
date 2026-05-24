@@ -1778,6 +1778,9 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 		return
 	}
 
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	execdetails.UpdateRUV2MetricsFromCommitDetails(sessVars.RUV2Metrics, execDetail.CommitDetail)
+
 	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
 	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
 	if ruDetail == nil {
