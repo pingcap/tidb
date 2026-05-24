@@ -395,7 +395,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		}
 	}
 	for _, gbyItem := range gbyItems {
-		if !hasMutableEffectsOrNonDeterministicExpr(gbyItem) ||
+		if !canReuseMutableGroupByProjection(gbyItem) ||
 			firstRowColumnForExprInSchema(b.ctx.GetExprCtx().GetEvalCtx(), plan4Agg.AggFuncs, schema4Agg, gbyItem) != nil {
 			continue
 		}
@@ -438,6 +438,10 @@ func hasMutableEffectsOrNonDeterministicExpr(expr expression.Expression) bool {
 	return expression.IsMutableEffectsExpr(expr) || expression.CheckNonDeterministic(expr)
 }
 
+func canReuseMutableGroupByProjection(expr expression.Expression) bool {
+	return hasMutableEffectsOrNonDeterministicExpr(expr) && !expression.ExprHasSetVarOrSleep(expr)
+}
+
 func firstRowColumnForExpr(ectx expression.EvalContext, plan4Agg *logicalop.LogicalAggregation, expr expression.Expression) *expression.Column {
 	return firstRowColumnForExprInSchema(ectx, plan4Agg.AggFuncs, plan4Agg.Schema(), expr)
 }
@@ -454,27 +458,49 @@ func firstRowColumnForExprInSchema(ectx expression.EvalContext, aggFuncs []*aggr
 	return nil
 }
 
-func collectMutableGroupByProjections(ectx expression.EvalContext, gbyExprs []ast.ExprNode, p base.LogicalPlan) []groupByProjection {
+func collectMutableGroupByProjections(exprCtx expression.BuildContext, gbyExprs []ast.ExprNode, p base.LogicalPlan) []groupByProjection {
 	agg, ok := p.(*logicalop.LogicalAggregation)
 	if !ok {
 		return nil
 	}
+	ectx := exprCtx.GetEvalCtx()
 	projections := make([]groupByProjection, 0, len(gbyExprs))
 	for i, astExpr := range gbyExprs {
-		if i >= len(agg.GroupByItems) || !hasMutableEffectsOrNonDeterministicExpr(agg.GroupByItems[i]) {
+		if i >= len(agg.GroupByItems) || !canReuseMutableGroupByProjection(agg.GroupByItems[i]) {
 			continue
 		}
 		col := firstRowColumnForExpr(ectx, agg, agg.GroupByItems[i])
 		if col == nil {
 			continue
 		}
+		rewrittenExpr := rewriteGroupByProjectionExpr(exprCtx, agg, agg.GroupByItems[i])
 		projections = append(projections, groupByProjection{
-			astExpr: astExpr,
-			expr:    agg.GroupByItems[i],
-			col:     col,
+			astExpr:       astExpr,
+			expr:          agg.GroupByItems[i],
+			rewrittenExpr: rewrittenExpr,
+			col:           col,
 		})
 	}
 	return projections
+}
+
+func rewriteGroupByProjectionExpr(exprCtx expression.BuildContext, agg *logicalop.LogicalAggregation, expr expression.Expression) expression.Expression {
+	if len(agg.Children()) == 0 {
+		return expr
+	}
+	child := agg.Children()[0]
+	childSchema := child.Schema()
+	firstRowExprs := make([]expression.Expression, 0, childSchema.Len())
+	ectx := exprCtx.GetEvalCtx()
+	for _, col := range childSchema.Columns {
+		firstRowCol := firstRowColumnForExpr(ectx, agg, col)
+		if firstRowCol == nil {
+			firstRowExprs = append(firstRowExprs, col)
+			continue
+		}
+		firstRowExprs = append(firstRowExprs, firstRowCol)
+	}
+	return expression.ColumnSubstitute(exprCtx, expr, childSchema, firstRowExprs)
 }
 
 func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsClause) (p base.LogicalPlan, err error) {
@@ -1824,9 +1850,10 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 }
 
 type groupByProjection struct {
-	astExpr ast.ExprNode
-	expr    expression.Expression
-	col     *expression.Column
+	astExpr       ast.ExprNode
+	expr          expression.Expression
+	rewrittenExpr expression.Expression
+	col           *expression.Column
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
@@ -2070,6 +2097,9 @@ type mutableGroupByProjectionReplacer struct {
 func (r mutableGroupByProjectionReplacer) Transform(expr expression.Expression) expression.Expression {
 	for _, projection := range r.groupByProjections {
 		if expr.Equal(r.ectx, projection.expr) {
+			return projection.col
+		}
+		if projection.rewrittenExpr != nil && expr.Equal(r.ectx, projection.rewrittenExpr) {
 			return projection.col
 		}
 	}
@@ -4636,7 +4666,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 		if !rollup {
-			groupByProjections = collectMutableGroupByProjections(b.ctx.GetExprCtx().GetEvalCtx(), gbyExprs, p)
+			groupByProjections = collectMutableGroupByProjections(b.ctx.GetExprCtx(), gbyExprs, p)
 		}
 		for agg, idx := range totalMap {
 			totalMap[agg] = aggIndexMap[idx]

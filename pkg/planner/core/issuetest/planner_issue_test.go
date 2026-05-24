@@ -633,6 +633,14 @@ SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t8
 			tk.MustExec("set @@sql_mode = ''")
 			query = "select /* issue:36386 */ b*floor(2*rand()) + 1 as e, count(d) from foo group by b*floor(2*rand())"
 			checkQuery(query, cascades)
+
+			tk.MustExec("drop table if exists ta")
+			tk.MustExec("create table ta(a int, b int)")
+			planRows := tk.MustQuery("explain format='plan_tree' select @n:=@n+1 as e from ta group by e").Rows()
+			require.GreaterOrEqual(t, len(planRows), 2, cascades)
+			require.Contains(t, fmt.Sprint(planRows[0]), "Projection", cascades)
+			require.Contains(t, fmt.Sprint(planRows[0]), "setvar", cascades)
+			require.Contains(t, fmt.Sprint(planRows[1]), "HashAgg", cascades)
 			tk.MustExec("set @@sql_mode = default")
 		}
 		tk.MustExec("set @@tidb_enable_cascades_planner = off")
