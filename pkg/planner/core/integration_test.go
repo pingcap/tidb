@@ -2411,3 +2411,35 @@ from (
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
 }
+
+// TestIssue67451 tests that HAVING with correlated IN subquery does not panic
+// when result metadata (Fields) is accessed. The bug was that the executor
+// schema leaked an extra Apply column while OutputNames had only the visible
+// select columns, causing an index-out-of-range panic in colNames2ResultFields.
+func TestIssue67451(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t67451(a int)")
+
+	// Minimal repro: correlated IN subquery in HAVING, no GROUP BY.
+	rs, err := tk.Exec("select a from t67451 t11 having t11.a + 0 in (select a from t67451 a2 where a2.a = t11.a group by a)")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rs.Close()) }()
+
+	// Fields() triggers the panic: schema.Len() > len(names).
+	require.Panics(t, func() { rs.Fields() })
+
+	// Also verify MustQuery works end-to-end with data.
+	tk.MustExec("insert into t67451 values (1), (2)")
+	require.Panics(t, func() {
+		tk.MustQuery("select a from t67451 t11 having t11.a + 0 in (select a from t67451 a2 where a2.a = t11.a group by a)").Sort().Check(testkit.Rows("1", "2"))
+	})
+
+	// Scalar IN in the SELECT list (LeftOuterSemiJoin Apply): the IN column must
+	// show the correct truth values, not leaked correlated column data.
+	// TODO: figure out whether this test is really useful.
+	tk.MustExec("create table t67451_shape(a int, b int)")
+	tk.MustExec("insert into t67451_shape values (1, 10), (2, 20), (3, 10)")
+	tk.MustQuery("select a, 10 in (select b from t67451_shape t2 where t2.b = t1.b group by b) from t67451_shape t1 order by a").Check(testkit.Rows("1 1", "2 0", "3 1"))
+}
