@@ -242,15 +242,44 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 
 func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
 	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
+	countAfterAccess := min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
 	// TiCI count estimation is only used to refine multi-table plan choices.
 	// StmtCtx.Tables is de-duplicated, so self-joins on one table use the local fallback.
 	if len(ds.SCtx().GetSessionVars().StmtCtx.Tables) > 1 {
 		if count, ok := deriveTiCISearchPathStats(ds, path); ok {
-			path.CountAfterAccess = count
-			return
+			countAfterAccess = count
 		}
 	}
-	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+	updateTiCISearchPathStats(ds, path, countAfterAccess)
+}
+
+func updateTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath, countAfterAccess float64) {
+	calcSelectivity := func(filters []expression.Expression) float64 {
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, filters, nil)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			return cost.SelectionFactor
+		}
+		return selectivity
+	}
+
+	path.CountAfterAccess = countAfterAccess
+	path.CountAfterIndex = countAfterAccess
+	countAfterFilters := countAfterAccess
+	if len(path.IndexFilters) > 0 {
+		selectivity := calcSelectivity(path.IndexFilters)
+		path.CountAfterIndex = countAfterAccess * selectivity
+		countAfterFilters = path.CountAfterIndex
+	}
+	if len(path.TableFilters) > 0 {
+		selectivity := calcSelectivity(path.TableFilters)
+		countAfterFilters *= selectivity
+	}
+	// TODO: Let deriveStatsByFilter produce this final DataSource stats after TiCI FTS
+	// predicates can participate in normal selectivity estimation. Today those predicates
+	// are consumed into FtsQueryInfo before deriveStatsByFilter runs, and the TiCI search
+	// count is only known during path stats derivation.
+	ds.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), countAfterFilters))
 }
 
 func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
