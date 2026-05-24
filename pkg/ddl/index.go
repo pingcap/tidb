@@ -3922,7 +3922,7 @@ func (w *worker) estimatePhysicalTableSampleBytesPerRow(
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	var (
 		totalLogicalBytes int64
-		sampledKVs        []sampledIndexKV
+		sampledKVs        = make([]sampledIndexKV, 0, len(regions)*samplePredictionRowsPerRegion*len(indexes))
 	)
 	for _, region := range regions {
 		skipRows := predictionRegionSkipRows(region, rnd)
