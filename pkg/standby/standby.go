@@ -49,6 +49,7 @@ const (
 // ActivateRequest is the request body for activating the tidb server.
 type ActivateRequest struct {
 	KeyspaceName   string            `json:"keyspace_name"`
+	KeyspaceID     *uint32           `json:"keyspace_id,omitempty"`
 	MaxIdleSeconds uint              `json:"max_idle_seconds"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 
@@ -179,6 +180,17 @@ func (c *LoadKeyspaceController) ActivationMetadata() map[string]string {
 		metadata[k] = v
 	}
 	return metadata
+}
+
+// ActivationKeyspaceID returns the keyspace ID carried by the activate request.
+func (c *LoadKeyspaceController) ActivationKeyspaceID() *uint32 {
+	mu.RLock()
+	defer mu.RUnlock()
+	if activateRequest.KeyspaceID == nil {
+		return nil
+	}
+	keyspaceID := *activateRequest.KeyspaceID
+	return &keyspaceID
 }
 
 // Handler returns a handler to query tidb pool status or activate or exit the tidb server.
@@ -366,6 +378,7 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 
 	logutil.BgLogger().Info("standby receive activate request",
 		zap.String("keyspace-name", activateRequest.KeyspaceName),
+		zap.Uint32p("keyspace-id", activateRequest.KeyspaceID),
 		zap.Uint("max-idle-seconds", activateRequest.MaxIdleSeconds),
 		zap.Bool("run-auto-analyze", activateRequest.RunAutoAnalyze),
 		zap.Bool("tidb-enable-ddl", activateRequest.TiDBEnableDDL),

@@ -170,9 +170,9 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 		}
 	})
 
-	err := prepareKeyspaceObservabilityWithMetadata(map[string]string{
-		keyspaceIDMetricLabel: "42",
-		"meta_a":              "value_a",
+	keyspaceID := uint32(42)
+	err := prepareKeyspaceObservabilityWithMetadata(&keyspaceID, map[string]string{
+		"meta_a": "value_a",
 	}, "ks", true)
 	require.NoError(t, err)
 
@@ -186,9 +186,9 @@ func TestSetupKeyspaceObservabilityForNonStarter(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 
-	err := prepareKeyspaceObservabilityWithMetadata(map[string]string{
-		keyspaceIDMetricLabel: "42",
-		"meta_a":              "value_a",
+	keyspaceID := uint32(42)
+	err := prepareKeyspaceObservabilityWithMetadata(&keyspaceID, map[string]string{
+		"meta_a": "value_a",
 	}, "ks", false)
 	require.NoError(t, err)
 
@@ -211,6 +211,6 @@ func TestSetupKeyspaceObservabilityForStartSkipsClassic(t *testing.T) {
 		conf.KeyspaceName = "test_keyspace"
 	})
 
-	require.NoError(t, prepareKeyspaceObservability(nil))
+	require.NoError(t, prepareKeyspaceObservability(nil, nil))
 	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }

@@ -315,6 +315,7 @@ func main() {
 	}
 
 	var standbyController server.StandbyController
+	var activationKeyspaceID *uint32
 	var activationMetadata map[string]string
 	if config.GetGlobalConfig().Standby.StandByMode {
 		standbyController = standby.NewLoadKeyspaceController()
@@ -333,6 +334,7 @@ func main() {
 		// need to validate config again in case of config change via standby
 		terror.MustNil(config.GetGlobalConfig().Valid())
 		if c, ok := standbyController.(*standby.LoadKeyspaceController); ok {
+			activationKeyspaceID = c.ActivationKeyspaceID()
 			activationMetadata = c.ActivationMetadata()
 		}
 	}
@@ -340,7 +342,7 @@ func main() {
 	signal.SetupUSR1Handler()
 	err = registerStores()
 	terror.MustNil(err)
-	err = prepareKeyspaceObservability(activationMetadata)
+	err = prepareKeyspaceObservability(activationKeyspaceID, activationMetadata)
 	terror.MustNil(err)
 	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
@@ -1158,23 +1160,23 @@ const (
 	keyspaceNameMetricLabel = "keyspace_name"
 )
 
-func prepareKeyspaceObservability(metadata map[string]string) error {
+func prepareKeyspaceObservability(keyspaceID *uint32, metadata map[string]string) error {
 	cfg := config.GetGlobalConfig()
 	if !kerneltype.IsNextGen() || cfg.Store != config.StoreTypeTiKV {
 		return nil
 	}
 	metricscommon.SetConstLabels(keyspaceNameMetricLabel, cfg.KeyspaceName)
-	return prepareKeyspaceObservabilityWithMetadata(metadata, cfg.KeyspaceName, deploymode.IsStarter())
+	return prepareKeyspaceObservabilityWithMetadata(keyspaceID, metadata, cfg.KeyspaceName, deploymode.IsStarter())
 }
 
-func prepareKeyspaceObservabilityWithMetadata(metadata map[string]string, keyspaceName string, includeConfiguredFields bool) error {
+func prepareKeyspaceObservabilityWithMetadata(keyspaceID *uint32, metadata map[string]string, keyspaceName string, includeConfiguredFields bool) error {
 	resolvedValues := config.KeyspaceObservabilityValues{
 		MetricLabels: map[string]string{
 			keyspaceNameMetricLabel: keyspaceName,
 		},
 	}
-	if keyspaceID, ok := metadata[keyspaceIDMetricLabel]; ok {
-		resolvedValues.MetricLabels[keyspaceIDMetricLabel] = keyspaceID
+	if keyspaceID != nil {
+		resolvedValues.MetricLabels[keyspaceIDMetricLabel] = fmt.Sprint(*keyspaceID)
 	}
 	if includeConfiguredFields {
 		copiedConfig := *config.GetGlobalConfig()

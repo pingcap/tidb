@@ -25,14 +25,15 @@ func TestActivateRequestMetadata(t *testing.T) {
 	var req ActivateRequest
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"keyspace_name": "ks",
+		"keyspace_id": 42,
 		"metadata": {
-			"keyspace_id": "42",
 			"meta_a": "value_a"
 		}
 	}`), &req))
+	require.NotNil(t, req.KeyspaceID)
+	require.Equal(t, uint32(42), *req.KeyspaceID)
 	require.Equal(t, map[string]string{
-		"keyspace_id": "42",
-		"meta_a":      "value_a",
+		"meta_a": "value_a",
 	}, req.Metadata)
 
 	mu.Lock()
@@ -50,4 +51,10 @@ func TestActivateRequestMetadata(t *testing.T) {
 	require.Equal(t, req.Metadata, metadata)
 	metadata["meta_a"] = "changed"
 	require.Equal(t, "value_a", controller.ActivationMetadata()["meta_a"])
+
+	keyspaceID := controller.ActivationKeyspaceID()
+	require.NotNil(t, keyspaceID)
+	require.Equal(t, uint32(42), *keyspaceID)
+	*keyspaceID = 43
+	require.Equal(t, uint32(42), *controller.ActivationKeyspaceID())
 }
