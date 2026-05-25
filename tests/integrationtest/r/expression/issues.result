@@ -1559,11 +1559,11 @@ insert into t1 values (1), (2), (3),(1),(2),(3);
 drop table if exists t2;
 create table t2 (c_int int not null);
 insert into t2 values (1), (2), (3),(1),(2),(3);
-select  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c1,  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c2 from t1 group by c_int;
+select  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c1,  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c2 from t1 group by c_int order by c1;
 c1	c2
-3	3
-2	2
 1	1
+2	2
+3	3
 drop table if exists t;
 CREATE TABLE `t` (
 `COL1` tinyint(45) NOT NULL,

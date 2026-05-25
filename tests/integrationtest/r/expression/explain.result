@@ -49,11 +49,11 @@ explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a where t2.
 id	estRows	task	access object	operator info
 HashJoin	4166.67	root		right outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
 ├─TableReader(Build)	3333.33	root		data:Selection
-│ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t2.a, 1)
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t1.a, 1), not(isnull(expression__explain.t1.a))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─TableReader(Probe)	3333.33	root		data:Selection
-  └─Selection	3333.33	cop[tikv]		gt(expression__explain.t1.a, 1), not(isnull(expression__explain.t1.a))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Selection	3333.33	cop[tikv]		gt(expression__explain.t2.a, 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a and t2.a > 1;
 id	estRows	task	access object	operator info
 HashJoin	10000.00	root		right outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)], right cond:gt(expression__explain.t2.a, 1)

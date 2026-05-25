@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -eu
+CUR=$(cd "$(dirname "$0")" && pwd)
 DB="$TEST_NAME"
 
 run_sql "CREATE DATABASE $DB;"
@@ -74,6 +75,11 @@ if [ "$table_count" -ne "2" ];then
     exit 1
 fi
 
-run_pd_ctl -u https://$PD_ADDR config set enable-placement-rules false
+if ! output=$(run_pd_ctl -u https://$PD_ADDR config set enable-placement-rules false 2>&1); then
+    echo "$output"
+    echo "$output" | grep -q "cannot disable placement rules with TiFlash nodes"
+else
+    echo "$output"
+fi
 
 run_sql "DROP DATABASE $DB;"

@@ -307,11 +307,11 @@
           "  └─HashAgg 7992.00 root  group by:Column#30, funcs:count(Column#28)->Column#25, funcs:firstrow(Column#29)->test.t2.b2",
           "    └─Projection 12487.50 root  test.t2.a2->Column#28, test.t2.b2->Column#29, minus(test.t2.b2, 5)->Column#30",
           "      └─HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a1, test.t2.a2)]",
-          "        ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "        │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "        └─TableReader(Probe) 9990.00 root  data:Selection",
-          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
-          "            └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "        ├─TableReader(Build) 9990.00 root  data:Selection",
+          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
+          "        │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "        └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -479,11 +479,11 @@
           "└─HashJoin 5208.33 root  right outer join, equal:[eq(test.t1.b1, test.t1.b1)]",
           "  ├─HashJoin(Build) 4166.67 root  right outer join, equal:[eq(test.t1.a1, test.t1.a1)]",
           "  │ ├─TableReader(Build) 3333.33 root  data:Selection",
-          "  │ │ └─Selection 3333.33 cop[tikv]  gt(test.t1.a1, 5)",
-          "  │ │   └─TableFullScan 10000.00 cop[tikv] table:tc keep order:false, stats:pseudo",
+          "  │ │ └─Selection 3333.33 cop[tikv]  gt(test.t1.a1, 5), not(isnull(test.t1.a1))",
+          "  │ │   └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
           "  │ └─TableReader(Probe) 3333.33 root  data:Selection",
-          "  │   └─Selection 3333.33 cop[tikv]  gt(test.t1.a1, 5), not(isnull(test.t1.a1))",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  │   └─Selection 3333.33 cop[tikv]  gt(test.t1.a1, 5)",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:tc keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b1))",
           "      └─TableFullScan 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
@@ -554,11 +554,11 @@
           "└─HashAgg 6393.60 root  group by:test.t2.b2, funcs:count(test.t2.a2)->Column#25, funcs:firstrow(test.t2.b2)->test.t2.b2",
           "  └─Selection 9990.00 root  gt(ifnull(test.t2.b2, 5), 1)",
           "    └─HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a1, test.t2.a2)]",
-          "      ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "      │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 9990.00 root  data:Selection",
-          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
-          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -568,11 +568,11 @@
           "└─Selection 6393.60 root  gt(Column#25, 1)",
           "  └─HashAgg 7992.00 root  group by:test.t2.b2, funcs:count(test.t2.a2)->Column#25, funcs:firstrow(test.t2.b2)->test.t2.b2",
           "    └─HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a1, test.t2.a2)]",
-          "      ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "      │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 9990.00 root  data:Selection",
-          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
-          "          └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {

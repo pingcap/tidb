@@ -485,7 +485,15 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule *pd.Rule) error {
 	}
 	// Pd shall schedule TiFlash, we can mock here
 	tid := 0
-	_, err := fmt.Sscanf(rule.ID, "table-%d-r", &tid)
+	// Placement rule ID can be either:
+	// - "table-<tableID>-r" (API v1)
+	// - "keyspace-<keyspaceID>-table-<tableID>-r" (API v2)
+	// Extract "table-<tableID>-r" suffix for compatibility.
+	id := rule.ID
+	if idx := strings.LastIndex(id, "table-"); idx >= 0 {
+		id = id[idx:]
+	}
+	_, err := fmt.Sscanf(id, "table-%d-r", &tid)
 	if err != nil {
 		return errors.New("Can't parse rule")
 	}

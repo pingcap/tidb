@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -339,28 +340,74 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 	bindings := strings.Split(buf.String(), "\n")
 	for _, binding := range bindings {
 		cols := strings.Split(binding, "\t")
-		if len(cols) < 3 {
+		// The columns are dumped from `SHOW [GLOBAL|SESSION] BINDINGS`:
+		// original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, ...
+		// We only need the first four columns to restore the binding.
+		if len(cols) < 4 {
 			continue
 		}
 		originSQL := cols[0]
 		bindingSQL := cols[1]
-		enabled := cols[3]
+		defaultDB := cols[2]
+		status := cols[3]
 		newNormalizedSQL := parser.NormalizeForBinding(originSQL, true)
-		if strings.Compare(enabled, "enabled") == 0 {
+		if status == "enabled" || status == "using" {
+			c := context.Background()
+			originalDB := ctx.GetSessionVars().CurrentDB
+			changedDB := false
+			if defaultDB != "" && !strings.EqualFold(originalDB, defaultDB) {
+				quotedDB := strings.ReplaceAll(defaultDB, "`", "``")
+				_, useErr := ctx.GetSQLExecutor().Execute(c, fmt.Sprintf("USE `%s`", quotedDB))
+				if useErr != nil {
+					return useErr
+				}
+				changedDB = true
+			}
+			if defaultDB != "" {
+				newNormalizedSQL = stripBindingDefaultDBQualifier(newNormalizedSQL, defaultDB)
+				bindingSQL = stripBindingDefaultDBQualifier(bindingSQL, defaultDB)
+			}
+			restoreDB := func() error {
+				if !changedDB {
+					return nil
+				}
+				if originalDB == "" {
+					sessionVars := ctx.GetSessionVars()
+					sessionVars.CurrentDBChanged = sessionVars.CurrentDB != ""
+					sessionVars.CurrentDB = ""
+					return nil
+				}
+				quotedDB := strings.ReplaceAll(originalDB, "`", "``")
+				_, restoreErr := ctx.GetSQLExecutor().Execute(c, fmt.Sprintf("USE `%s`", quotedDB))
+				return restoreErr
+			}
+
 			sql := fmt.Sprintf("CREATE %s BINDING FOR %s USING %s", func() string {
 				if isSession {
 					return "SESSION"
 				}
 				return "GLOBAL"
 			}(), newNormalizedSQL, bindingSQL)
-			c := context.Background()
-			_, err = ctx.GetSQLExecutor().Execute(c, sql)
-			if err != nil {
-				return err
+			_, executeErr := ctx.GetSQLExecutor().Execute(c, sql)
+			restoreErr := restoreDB()
+			if executeErr != nil {
+				if restoreErr != nil {
+					return errors.Annotatef(executeErr, "failed to restore current database: %v", restoreErr)
+				}
+				return executeErr
+			}
+			if restoreErr != nil {
+				return restoreErr
 			}
 		}
 	}
 	return nil
+}
+
+func stripBindingDefaultDBQualifier(sql, defaultDB string) string {
+	quotedDB := "`" + strings.ReplaceAll(defaultDB, "`", "``") + "`"
+	pattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(quotedDB) + `\s*\.\s*`)
+	return pattern.ReplaceAllString(sql, "")
 }
 
 func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
