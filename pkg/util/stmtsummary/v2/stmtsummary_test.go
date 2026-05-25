@@ -84,6 +84,17 @@ func TestStmtSummary(t *testing.T) {
 }
 
 func TestStmtSummaryPersistEvicted(t *testing.T) {
+	begin := time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC)
+	evictAt := begin.Add(42 * time.Second)
+	now := begin
+	oldTimeNow := timeNow
+	timeNow = func() time.Time {
+		return now
+	}
+	t.Cleanup(func() {
+		timeNow = oldTimeNow
+	})
+
 	storage := &mockStmtStorage{}
 	ss := NewStmtSummary4Test(2)
 	ss.storage = storage
@@ -94,6 +105,7 @@ func TestStmtSummaryPersistEvicted(t *testing.T) {
 	// and should each land in storage.evicted.
 	ss.Add(GenerateStmtExecInfo4Test("digest1"))
 	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	now = evictAt
 	ss.Add(GenerateStmtExecInfo4Test("digest3")) // evicts digest1
 	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
 
@@ -106,6 +118,10 @@ func TestStmtSummaryPersistEvicted(t *testing.T) {
 
 	storage.Lock()
 	digests := []string{storage.evicted[0].Digest, storage.evicted[1].Digest}
+	for _, record := range storage.evicted {
+		require.Equal(t, begin.Unix(), record.Begin)
+		require.Equal(t, evictAt.Unix(), record.End)
+	}
 	storage.Unlock()
 	require.ElementsMatch(t, []string{"digest1", "digest2"}, digests)
 
