@@ -497,6 +497,15 @@ func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols
 	return isIndexConditionCoveredByForeignKeyCols(index, cols...)
 }
 
+// isIndexConditionCoveredByForeignKeyCols returns whether the partial index predicate
+// is implied by the rows that need foreign key checks.
+//
+// Foreign keys currently use MATCH SIMPLE semantics: for a composite foreign key,
+// a row participates in checks and cascades only when all foreign key columns are
+// non-NULL. Therefore, a predicate of "<fk-col> IS NOT NULL" on any one foreign
+// key column is safe, because every row that needs a foreign key lookup satisfies
+// it. Predicates on non-foreign-key columns, or stricter predicates such as
+// comparisons, may filter out rows that still need checks and are not safe here.
 func isIndexConditionCoveredByForeignKeyCols(index *IndexInfo, cols ...ast.CIStr) bool {
 	if !index.HasCondition() {
 		return true
