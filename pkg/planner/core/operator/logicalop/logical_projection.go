@@ -103,6 +103,8 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 			// only when a single CNF item still depends on aggregate results after
 			// projection substitution. CNF items that use only grouping columns should
 			// continue through aggregation so they match direct HAVING pushdown.
+			// For example, keep `ifnull(sum(a), 0) > 0` here, but still push a
+			// separate grouping-key predicate like `b > 0`.
 			canBePushed, canNotBePushed := breakDownPredicates(p, ordinaryPredicates)
 			remained, child, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed)
 			return append(append(remained, canNotBePushed...), sensitivePredicates...), child, err
@@ -714,6 +716,11 @@ func hasTypeSensitiveAggCNFItem(predicate expression.Expression, agg *LogicalAgg
 func hasRealAggFuncColumn(expr expression.Expression, agg *LogicalAggregation) bool {
 	for _, col := range expression.ExtractColumns(expr) {
 		idx := agg.Schema().ColumnIndex(col)
+		// Aggregation output columns stay aligned with AggFuncs; PruneColumns
+		// deletes schema columns and AggFuncs together to preserve this invariant.
+		// For example, `ifnull(sum(a), 0)` references a real aggregate column,
+		// while an internal `firstrow(b)` for a grouping key should still be
+		// treated as a grouping-column predicate.
 		if idx >= 0 && idx < len(agg.AggFuncs) && agg.AggFuncs[idx].Name != ast.AggFuncFirstRow {
 			return true
 		}
