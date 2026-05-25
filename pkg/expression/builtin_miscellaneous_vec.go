@@ -365,6 +365,15 @@ func (b *builtinIntAnyValueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	return b.args[0].VecEvalInt(ctx, input, result)
 }
 
+// Non-hybrid integer results should keep the default string fallback. Hybrid return fields
+// delegate to the argument to preserve its binary/string representation in string contexts.
+func (b *builtinIntAnyValueSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !b.tp.Hybrid() {
+		return b.baseBuiltinFunc.vecEvalString(ctx, input, result)
+	}
+	return b.args[0].VecEvalString(ctx, input, result)
+}
+
 func (b *builtinIsIPv4CompatSig) vectorized() bool {
 	return true
 }
