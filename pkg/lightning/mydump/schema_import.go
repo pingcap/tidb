@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sort"
 	"strings"
 
 	dmysql "github.com/go-sql-driver/mysql"
@@ -334,12 +333,7 @@ func (si *SchemaImporter) loadExistingViewDependencies(
 	existingViews = make(tableNameSet)
 	// existingNonViews tracks all downstream TABLE_TYPE != VIEW objects. In
 	// TiDB today this effectively means tables and sequences.
-	schemaNames := make([]string, 0, len(schemas))
 	for schema := range schemas {
-		schemaNames = append(schemaNames, schema)
-	}
-	sort.Strings(schemaNames)
-	for _, schema := range schemaNames {
 		var objectTypes map[string]bool
 		objectTypes, err = si.getExistingObjectTypes(ctx, schema)
 		if err != nil {
