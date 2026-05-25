@@ -115,13 +115,12 @@ func (c *viewDependencyCollector) recordCTEName(name string) {
 	if len(c.cteNameScopes) == 0 {
 		return
 	}
-	c.cteNameScopes[len(c.cteNameScopes)-1][strings.ToLower(name)] = struct{}{}
+	c.cteNameScopes[len(c.cteNameScopes)-1][name] = struct{}{}
 }
 
 func (c *viewDependencyCollector) isCTEName(name string) bool {
-	normalized := strings.ToLower(name)
 	for i := len(c.cteNameScopes) - 1; i >= 0; i-- {
-		if _, ok := c.cteNameScopes[i][normalized]; ok {
+		if _, ok := c.cteNameScopes[i][name]; ok {
 			return true
 		}
 	}
@@ -137,11 +136,11 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 		return n, false
 	case *ast.CommonTableExpression:
 		if node.IsRecursive {
-			c.recordCTEName(node.Name.O)
+			c.recordCTEName(node.Name.L)
 		}
 		return n, false
 	case *ast.TableName:
-		if node.Schema.O == "" && c.isCTEName(node.Name.O) {
+		if node.Schema.O == "" && c.isCTEName(node.Name.L) {
 			return n, true
 		}
 
@@ -163,7 +162,7 @@ func (c *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
 		// Recursive CTEs are recorded in Enter so self-references inside the CTE
 		// body can be recognized. Non-recursive CTEs only become visible after
 		// their query finishes, so we record every CTE again on Leave.
-		c.recordCTEName(node.Name.O)
+		c.recordCTEName(node.Name.L)
 	case *ast.SelectStmt:
 		if node.With != nil {
 			c.popCTEScope()
