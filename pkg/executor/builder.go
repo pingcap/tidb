@@ -64,7 +64,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
+	mviewmerge "github.com/pingcap/tidb/pkg/planner/mview"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -106,14 +106,14 @@ type executorBuilder struct {
 	hasLock bool
 	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness        bool
-	txnScope           string
-	readReplicaScope   string
-	inUpdateStmt       bool
-	inDeleteStmt       bool
-	inInsertStmt       bool
-	inSelectLockStmt   bool
-	inMVDeltaMergeStmt bool
+	isStaleness           bool
+	txnScope              string
+	readReplicaScope      string
+	inUpdateStmt          bool
+	inDeleteStmt          bool
+	inInsertStmt          bool
+	inSelectLockStmt      bool
+	inMViewDeltaMergeStmt bool
 
 	// forDataReaderBuilder indicates whether the builder is used by a dataReaderBuilder.
 	// When forDataReader is true, the builder should use the dataReaderTS as the executor read ts. This is because
@@ -192,7 +192,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	case *plannercore.PurgeMaterializedViewLog:
 		return b.buildPurgeMaterializedViewLog(v)
 	case *plannercore.MVDeltaMerge:
-		return b.buildMVDeltaMerge(v)
+		return b.buildMViewDeltaMerge(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *plannercore.Delete:
@@ -1367,9 +1367,9 @@ func (b *executorBuilder) buildPurgeMaterializedViewLog(v *plannercore.PurgeMate
 	return e
 }
 
-func (b *executorBuilder) buildMVDeltaMerge(v *plannercore.MVDeltaMerge) exec.Executor {
+func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MVDeltaMerge) exec.Executor {
 	if v.Source == nil {
-		b.err = errors.New("MVDeltaMerge source plan is nil")
+		b.err = errors.New("MViewDeltaMerge source plan is nil")
 		return nil
 	}
 
@@ -1377,17 +1377,17 @@ func (b *executorBuilder) buildMVDeltaMerge(v *plannercore.MVDeltaMerge) exec.Ex
 		return nil
 	}
 
-	originInMVDeltaMerge := b.inMVDeltaMergeStmt
-	b.inMVDeltaMergeStmt = true
+	originInMViewDeltaMerge := b.inMViewDeltaMergeStmt
+	b.inMViewDeltaMergeStmt = true
 	defer func() {
-		b.inMVDeltaMergeStmt = originInMVDeltaMerge
+		b.inMViewDeltaMergeStmt = originInMViewDeltaMerge
 	}()
 	sourceExec := b.build(v.Source)
 	if b.err != nil {
 		return nil
 	}
 	if sourceExec == nil {
-		b.err = errors.New("MVDeltaMerge source executor is nil")
+		b.err = errors.New("MViewDeltaMerge source executor is nil")
 		return nil
 	}
 
@@ -1395,16 +1395,15 @@ func (b *executorBuilder) buildMVDeltaMerge(v *plannercore.MVDeltaMerge) exec.Ex
 	deltaAggColCount := v.DeltaColumnCount
 	mvTable, ok := b.is.TableByID(context.Background(), v.MVTableID)
 	if !ok {
-		b.err = errors.Errorf("MVDeltaMerge target table id %d not found in infoschema", v.MVTableID)
+		b.err = errors.Errorf("MViewDeltaMerge target table id %d not found in infoschema", v.MVTableID)
 		return nil
 	}
-	targetInfo := mvTable.Meta()
 	if v.MVTablePKCols == nil {
-		b.err = errors.New("MVDeltaMerge target handle cols is nil")
+		b.err = errors.New("MViewDeltaMerge target handle cols is nil")
 		return nil
 	}
 
-	aggMappings, err := buildMVDeltaMergeAggMappings(
+	aggMappings, err := buildMViewDeltaMergeAggMappings(
 		b.ctx,
 		v.AggInfos,
 		sourceFieldTypes,
@@ -1416,39 +1415,38 @@ func (b *executorBuilder) buildMVDeltaMerge(v *plannercore.MVDeltaMerge) exec.Ex
 	}
 
 	return &MViewDeltaMergeAggExec{
-		BaseExecutor:         exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
-		AggMappings:          aggMappings,
-		DeltaAggColCount:     deltaAggColCount,
-		TargetTable:          mvTable,
-		TargetInfo:           targetInfo,
-		TargetHandleCols:     v.MVTablePKCols,
-		MinMaxRecompute:      nil,
+		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), sourceExec),
+		AggMappings:      aggMappings,
+		DeltaAggColCount: deltaAggColCount,
+		TargetTable:      mvTable,
+		TargetInfo:       mvTable.Meta(),
+		TargetHandleCols: v.MVTablePKCols,
+		MinMaxRecompute:  nil,
 	}
 }
 
-func buildMVDeltaMergeAggMappings(
+func buildMViewDeltaMergeAggMappings(
 	sctx sessionctx.Context,
-	aggInfos []mvmerge.AggInfo,
+	aggInfos []mviewmerge.AggInfo,
 	sourceFieldTypes []*types.FieldType,
 	deltaAggColCount int,
 ) ([]MViewDeltaMergeAggMapping, error) {
 	if sctx == nil {
-		return nil, errors.New("MVDeltaMerge session context is nil")
+		return nil, errors.New("MViewDeltaMerge session context is nil")
 	}
-	mvColumnOffsetBase := deltaAggColCount
 	mappings := make([]MViewDeltaMergeAggMapping, 0, len(aggInfos))
-	countStarItemIdx := -1
+	countStarMappingIdx := -1
 
-	for i, aggInfo := range aggInfos {
-		outputColID := mvColumnOffsetBase + aggInfo.MVOffset
+	for mappingIdx, aggInfo := range aggInfos {
+		outputColID := deltaAggColCount + aggInfo.MVOffset
 
 		deps := append([]int(nil), aggInfo.Dependencies...)
 
-		aggFuncName, err := mvDeltaMergeAggFuncName(aggInfo.Kind)
+		aggFuncName, err := mviewDeltaMergeAggFuncName(aggInfo.Kind)
 		if err != nil {
 			return nil, err
 		}
-		aggArg, err := mvDeltaMergeAggArgExpr(aggInfo, deps, sourceFieldTypes)
+		aggArg, err := mviewDeltaMergeAggArgExpr(aggInfo, deps, sourceFieldTypes)
 		if err != nil {
 			return nil, err
 		}
@@ -1462,8 +1460,8 @@ func buildMVDeltaMergeAggMappings(
 			ColID:           []int{outputColID},
 			DependencyColID: deps,
 		}
-		if countStarItemIdx < 0 && aggInfo.Kind == mvmerge.AggCountStar {
-			countStarItemIdx = i
+		if countStarMappingIdx < 0 && aggInfo.Kind == mviewmerge.AggCountStar {
+			countStarMappingIdx = mappingIdx
 		}
 		mappings = append(mappings, mapping)
 	}
@@ -1471,6 +1469,9 @@ func buildMVDeltaMergeAggMappings(
 	n := len(mappings)
 	if n == 0 {
 		return nil, nil
+	}
+	if countStarMappingIdx < 0 {
+		return nil, errors.New("MViewDeltaMerge aggregate mappings require COUNT(*)")
 	}
 
 	// Kahn topological sort over "mapping i must run before mapping j".
@@ -1507,9 +1508,9 @@ func buildMVDeltaMergeAggMappings(
 	orderedIdxes := make([]int, 0, n)
 	inQueue := make([]bool, n)
 	queue := make([]int, 0, n)
-	if countStarItemIdx >= 0 && indegree[countStarItemIdx] == 0 {
-		queue = append(queue, countStarItemIdx)
-		inQueue[countStarItemIdx] = true
+	if indegree[countStarMappingIdx] == 0 {
+		queue = append(queue, countStarMappingIdx)
+		inQueue[countStarMappingIdx] = true
 	}
 	for i := range mappings {
 		if inQueue[i] || indegree[i] != 0 {
@@ -1544,7 +1545,7 @@ func buildMVDeltaMergeAggMappings(
 		}
 		slices.Sort(unresolvedOutputCols)
 		return nil, errors.Errorf(
-			"MVDeltaMerge aggregate dependencies are unresolved or cyclic, unresolved output column ids: %v",
+			"MViewDeltaMerge aggregate dependencies are unresolved or cyclic, unresolved output column ids: %v",
 			unresolvedOutputCols,
 		)
 	}
@@ -1557,32 +1558,32 @@ func buildMVDeltaMergeAggMappings(
 	return ordered, nil
 }
 
-func mvDeltaMergeAggFuncName(kind mvmerge.AggKind) (string, error) {
+func mviewDeltaMergeAggFuncName(kind mviewmerge.AggKind) (string, error) {
 	switch kind {
-	case mvmerge.AggCountStar, mvmerge.AggCount:
+	case mviewmerge.AggCountStar, mviewmerge.AggCount:
 		return ast.AggFuncCount, nil
-	case mvmerge.AggSum:
+	case mviewmerge.AggSum:
 		return ast.AggFuncSum, nil
-	case mvmerge.AggMin:
+	case mviewmerge.AggMin:
 		return ast.AggFuncMin, nil
-	case mvmerge.AggMax:
+	case mviewmerge.AggMax:
 		return ast.AggFuncMax, nil
 	default:
-		return "", errors.Errorf("unsupported MVDeltaMerge aggregate kind %v", kind)
+		return "", errors.Errorf("unsupported MViewDeltaMerge aggregate kind %v", kind)
 	}
 }
 
-func mvDeltaMergeAggArgExpr(
-	aggInfo mvmerge.AggInfo,
+func mviewDeltaMergeAggArgExpr(
+	aggInfo mviewmerge.AggInfo,
 	dependencies []int,
 	sourceFieldTypes []*types.FieldType,
 ) (expression.Expression, error) {
-	if aggInfo.Kind == mvmerge.AggCountStar {
+	if aggInfo.Kind == mviewmerge.AggCountStar {
 		return expression.NewOne(), nil
 	}
 	if len(dependencies) == 0 {
 		return nil, errors.Errorf(
-			"MVDeltaMerge aggregate %v at mv offset %d has empty dependencies",
+			"MViewDeltaMerge aggregate %v at mview offset %d has empty dependencies",
 			aggInfo.Kind,
 			aggInfo.MVOffset,
 		)
@@ -1590,7 +1591,7 @@ func mvDeltaMergeAggArgExpr(
 	dep := dependencies[0]
 	if dep < 0 || dep >= len(sourceFieldTypes) {
 		return nil, errors.Errorf(
-			"MVDeltaMerge aggregate %v at mv offset %d has invalid dependency col id %d",
+			"MViewDeltaMerge aggregate %v at mview offset %d has invalid dependency col id %d",
 			aggInfo.Kind,
 			aggInfo.MVOffset,
 			dep,
@@ -1599,7 +1600,7 @@ func mvDeltaMergeAggArgExpr(
 	retType := sourceFieldTypes[dep]
 	if retType == nil {
 		return nil, errors.Errorf(
-			"MVDeltaMerge aggregate %v at mv offset %d has unavailable dependency type at col %d",
+			"MViewDeltaMerge aggregate %v at mview offset %d has unavailable dependency type at col %d",
 			aggInfo.Kind,
 			aggInfo.MVOffset,
 			dep,
@@ -2438,7 +2439,7 @@ func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Execut
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMVDeltaMergeStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2466,14 +2467,14 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMVDeltaMergeStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
 }
 
 func (b *executorBuilder) shouldReadByForUpdateTS() bool {
-	return b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMVDeltaMergeStmt
+	return b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt
 }
 
 func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) exec.Executor {
