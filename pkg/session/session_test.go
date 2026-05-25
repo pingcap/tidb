@@ -106,16 +106,16 @@ func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
 		restoreLog := log.ReplaceGlobals(lg, p)
 		defer restoreLog()
 
-		fatal2panic := false
+		var panicVal any
 		_, _ = func() (_ *domain.Domain, err error) {
 			defer func() {
-				if recover() != nil {
-					fatal2panic = true
-				}
+				panicVal = recover()
 			}()
 			return bootstrapSessionImpl(context.Background(), userStore, createSessionStub)
 		}()
-		require.True(t, fatal2panic)
+		require.NotNil(t, panicVal)
+		panicMsg := fmt.Sprint(panicVal)
+		require.True(t, strings.HasPrefix(panicMsg, "bootstrap version of user keyspace must be smaller or equal"))
 		require.False(t, createSessionCalled)
 	})
 }
