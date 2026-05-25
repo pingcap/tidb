@@ -444,7 +444,7 @@ func (si *SchemaImporter) getExistingSchemas(ctx context.Context, query string) 
 	if err != nil {
 		return nil, err
 	}
-	res := set.NewStringSet()
+	res := make(set.StringSet, len(stringRows))
 	for _, row := range stringRows {
 		res.Insert(strings.ToLower(row[0]))
 	}
