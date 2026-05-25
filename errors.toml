@@ -2346,6 +2346,11 @@ error = '''
 masking policy doesn't exist
 '''
 
+["meta:8275"]
+error = '''
+masking policy expression can only reference the target column '%-.64s'
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
