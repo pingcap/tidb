@@ -24,253 +24,253 @@
       {
         "SQL": "select count(1) from t1 where a > 0 group by a, b",
         "Str": [
-          "GID:1, GE:DataSource_10{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:Aggregation_12{GID:1}, logic prop:{stats:{count 4, ColNDVs map[5:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}",
-          "GID:3, GE:Projection_13{GID:2}, logic prop:{stats:{count 4, ColNDVs map[5:4], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}"
+          "GID:1, GE:DataSource_11{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:Aggregation_13{GID:1}, logic prop:{stats:{count 4, ColNDVs map[5:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}",
+          "GID:3, GE:Projection_14{GID:2}, logic prop:{stats:{count 4, ColNDVs map[5:4], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}"
         ],
         "OpNum": 3
       },
       {
         "SQL": "select count(1) from t1 where b > 0 group by a, b",
         "Str": [
-          "GID:1, GE:DataSource_14{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:Aggregation_16{GID:1}, logic prop:{stats:{count 4, ColNDVs map[5:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}",
-          "GID:3, GE:Projection_17{GID:2}, logic prop:{stats:{count 4, ColNDVs map[5:4], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}"
+          "GID:1, GE:DataSource_15{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:Aggregation_17{GID:1}, logic prop:{stats:{count 4, ColNDVs map[5:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}",
+          "GID:3, GE:Projection_18{GID:2}, logic prop:{stats:{count 4, ColNDVs map[5:4], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}"
         ],
         "OpNum": 3
       },
       {
         "SQL": "select count(1) from t1 where cos(a) > 0 group by a, b",
         "Str": [
-          "GID:1, GE:DataSource_18{}, logic prop:{stats:{count 4, ColNDVs map[1:1.6 2:1.6], GroupNDVs [{[1 2] 3.2}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:Aggregation_20{GID:1}, logic prop:{stats:{count 3.2, ColNDVs map[5:3.2], GroupNDVs [{[1 2] 3.2}]}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}",
-          "GID:3, GE:Projection_21{GID:2}, logic prop:{stats:{count 3.2, ColNDVs map[5:3.2], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}"
+          "GID:1, GE:DataSource_19{}, logic prop:{stats:{count 4, ColNDVs map[1:1.6 2:1.6], GroupNDVs [{[1 2] 3.2}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:Aggregation_21{GID:1}, logic prop:{stats:{count 3.2, ColNDVs map[5:3.2], GroupNDVs [{[1 2] 3.2}]}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}",
+          "GID:3, GE:Projection_22{GID:2}, logic prop:{stats:{count 3.2, ColNDVs map[5:3.2], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}"
         ],
         "OpNum": 3
       },
       {
         "SQL": "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
         "Str": [
-          "GID:1, GE:DataSource_22{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:Aggregation_24{GID:1}, logic prop:{stats:{count 4, ColNDVs map[6:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#6] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(6)}}",
-          "GID:3, GE:Projection_25{GID:2}, logic prop:{stats:{count 4, ColNDVs map[6:4], GroupNDVs []}, schema:{Column: [Column#6] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(6)}}"
+          "GID:1, GE:DataSource_23{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:Aggregation_25{GID:1}, logic prop:{stats:{count 4, ColNDVs map[6:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#6] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(6)}}",
+          "GID:3, GE:Projection_26{GID:2}, logic prop:{stats:{count 4, ColNDVs map[6:4], GroupNDVs []}, schema:{Column: [Column#6] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(6)}}"
         ],
         "OpNum": 4
       },
       {
         "SQL": "select count(c3) from (select a+b as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
         "Str": [
-          "GID:1, GE:DataSource_26{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:Aggregation_28{GID:1}, logic prop:{stats:{count 2, ColNDVs map[7:2], GroupNDVs []}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(10), (2,10)-->(7)}}",
-          "GID:3, GE:Projection_29{GID:2}, logic prop:{stats:{count 2, ColNDVs map[7:2], GroupNDVs []}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(2,10)-->(7)}}"
+          "GID:1, GE:DataSource_27{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:Aggregation_29{GID:1}, logic prop:{stats:{count 2, ColNDVs map[7:2], GroupNDVs []}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(10), (2,10)-->(7)}}",
+          "GID:3, GE:Projection_30{GID:2}, logic prop:{stats:{count 2, ColNDVs map[7:2], GroupNDVs []}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(2,10)-->(7)}}"
         ],
         "OpNum": 4
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b > (select t2.b from t2 where t2.a = t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_30{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{()-->(1,2,9,10)}}",
-          "GID:2, GE:DataSource_33{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
-          "GID:3, GE:MaxOneRow_36{GID:2}, logic prop:{stats:{count 1, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
-          "GID:4, GE:Apply_37{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 9:5 10:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(1,2,9,10)}}",
-          "GID:5, GE:Aggregation_38{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
-          "GID:6, GE:Projection_39{GID:5}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
+          "GID:1, GE:DataSource_31{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{()-->(1,2,9,10)}}",
+          "GID:2, GE:DataSource_34{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
+          "GID:3, GE:MaxOneRow_37{GID:2}, logic prop:{stats:{count 1, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
+          "GID:4, GE:Apply_38{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 9:5 10:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(1,2,9,10)}}",
+          "GID:5, GE:Aggregation_39{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
+          "GID:6, GE:Projection_40{GID:5}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
         ],
         "OpNum": 7
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b > (select t2.b from t2 where t2.a = t1.a)) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_40{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:2, GE:DataSource_42{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:3, GE:MaxOneRow_45{GID:2}, logic prop:{stats:{count 1, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:4, GE:Selection_50{GID:3}, logic prop:{stats:{count 0.8, ColNDVs map[5:0.8 6:0.8], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:5, GE:Apply_46{GID:1, GID:4}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5 6:5], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:6, GE:Aggregation_48{GID:5}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
-          "GID:7, GE:Projection_49{GID:6}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
+          "GID:1, GE:DataSource_41{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:2, GE:DataSource_43{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:3, GE:MaxOneRow_46{GID:2}, logic prop:{stats:{count 1, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:4, GE:Selection_51{GID:3}, logic prop:{stats:{count 0.8, ColNDVs map[5:0.8 6:0.8], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:5, GE:Apply_47{GID:1, GID:4}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5 6:5], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:6, GE:Aggregation_49{GID:5}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
+          "GID:7, GE:Projection_50{GID:6}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
         ],
         "OpNum": 7
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_51{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_54{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
-          "GID:3, GE:Limit_62{GID:2}, logic prop:{stats:{count 3, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
-          "GID:4, GE:Apply_58{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 13:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#13] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:5, GE:Aggregation_59{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
-          "GID:6, GE:Projection_60{GID:5}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
+          "GID:1, GE:DataSource_52{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_55{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
+          "GID:3, GE:Limit_63{GID:2}, logic prop:{stats:{count 3, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
+          "GID:4, GE:Apply_59{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 13:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#13] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:5, GE:Aggregation_60{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
+          "GID:6, GE:Projection_61{GID:5}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
         ],
         "OpNum": 6
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_63{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_66{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
-          "GID:3, GE:Limit_74{GID:2}, logic prop:{stats:{count 3, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
-          "GID:4, GE:Apply_70{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 13:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#13] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:5, GE:Aggregation_71{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
-          "GID:6, GE:Projection_72{GID:5}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
+          "GID:1, GE:DataSource_64{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_67{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
+          "GID:3, GE:Limit_75{GID:2}, logic prop:{stats:{count 3, ColNDVs map[9:1 10:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(9)}}",
+          "GID:4, GE:Apply_71{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 13:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#13] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:5, GE:Aggregation_72{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
+          "GID:6, GE:Projection_73{GID:5}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
         ],
         "OpNum": 6
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_75{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_77{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:3, GE:Limit_86{GID:2}, logic prop:{stats:{count 3, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:4, GE:Apply_81{GID:1, GID:3}, logic prop:{stats:{count 4, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:5, GE:Aggregation_83{GID:4}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
-          "GID:6, GE:Projection_84{GID:5}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
+          "GID:1, GE:DataSource_76{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_78{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:3, GE:Limit_87{GID:2}, logic prop:{stats:{count 3, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:4, GE:Apply_82{GID:1, GID:3}, logic prop:{stats:{count 4, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:5, GE:Aggregation_84{GID:4}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
+          "GID:6, GE:Projection_85{GID:5}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
         ],
         "OpNum": 6
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_87{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_89{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:3, GE:Limit_98{GID:2}, logic prop:{stats:{count 3, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
-          "GID:4, GE:Apply_93{GID:1, GID:3}, logic prop:{stats:{count 4, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:5, GE:Aggregation_95{GID:4}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
-          "GID:6, GE:Projection_96{GID:5}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
+          "GID:1, GE:DataSource_88{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_90{}, logic prop:{stats:{count 3.333333333333333, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:3, GE:Limit_99{GID:2}, logic prop:{stats:{count 3, ColNDVs map[5:1 6:1], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{()-->(5)}}",
+          "GID:4, GE:Apply_94{GID:1, GID:3}, logic prop:{stats:{count 4, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:5, GE:Aggregation_96{GID:4}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
+          "GID:6, GE:Projection_97{GID:5}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
         ],
         "OpNum": 6
       },
       {
         "SQL": "select count(1) from t1, t2 where t1.a = t2.a group by t1.a, t1.b",
         "Str": [
-          "GID:1, GE:DataSource_99{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{(1,5)==(1,5)}}",
-          "GID:2, GE:DataSource_100{}, logic prop:{stats:{count 10, ColNDVs map[5:3], GroupNDVs []}, schema:{Column: [test.t2.a] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Join_105{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2 5:3], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a] PKOrUK: [] NullableUK: []}, fd:{(1,5)==(1,5)}}",
-          "GID:4, GE:Aggregation_103{GID:3}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1)==(1), (1,2)-->(9)}}",
-          "GID:5, GE:Projection_104{GID:4}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1)==(1), (1,2)-->(9)}}"
+          "GID:1, GE:DataSource_100{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{(1,5)==(1,5)}}",
+          "GID:2, GE:DataSource_101{}, logic prop:{stats:{count 10, ColNDVs map[5:3], GroupNDVs []}, schema:{Column: [test.t2.a] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Join_106{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2 5:3], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a] PKOrUK: [] NullableUK: []}, fd:{(1,5)==(1,5)}}",
+          "GID:4, GE:Aggregation_104{GID:3}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1)==(1), (1,2)-->(9)}}",
+          "GID:5, GE:Projection_105{GID:4}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1)==(1), (1,2)-->(9)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b",
         "Str": [
-          "GID:1, GE:DataSource_106{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{(5)~~>(1), (1)-->(5)}}",
-          "GID:2, GE:DataSource_107{}, logic prop:{stats:{count 10, ColNDVs map[5:3], GroupNDVs []}, schema:{Column: [test.t2.a] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Join_111{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2 5:3], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a] PKOrUK: [] NullableUK: []}, fd:{(5)~~>(1), (1)-->(5)}}",
-          "GID:4, GE:Projection_112{GID:3}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:5, GE:Aggregation_109{GID:4}, logic prop:{stats:{count 4, ColNDVs map[9:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
-          "GID:6, GE:Projection_110{GID:5}, logic prop:{stats:{count 4, ColNDVs map[9:4], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
+          "GID:1, GE:DataSource_108{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{(5)~~>(1), (1)-->(5)}}",
+          "GID:2, GE:DataSource_109{}, logic prop:{stats:{count 10, ColNDVs map[5:3], GroupNDVs []}, schema:{Column: [test.t2.a] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Join_113{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2 5:3], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a] PKOrUK: [] NullableUK: []}, fd:{(5)~~>(1), (1)-->(5)}}",
+          "GID:4, GE:Projection_115{GID:3}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:5, GE:Aggregation_111{GID:4}, logic prop:{stats:{count 4, ColNDVs map[9:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
+          "GID:6, GE:Projection_112{GID:5}, logic prop:{stats:{count 4, ColNDVs map[9:4], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t2.a, t2.b",
         "Str": [
-          "GID:1, GE:DataSource_113{}, logic prop:{stats:{count 5, ColNDVs map[1:2], GroupNDVs []}, schema:{Column: [test.t1.a] PKOrUK: [] NullableUK: []}, fd:{(5)~~>(1), (1)-->(5)}}",
-          "GID:2, GE:DataSource_114{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Join_118{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 5:3 6:3], GroupNDVs []}, schema:{Column: [test.t1.a,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{(5)~~>(1), (1)-->(5)}}",
-          "GID:4, GE:Projection_119{GID:3}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[5:3 6:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:5, GE:Aggregation_116{GID:4}, logic prop:{stats:{count 3, ColNDVs map[9:3], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9)}}",
-          "GID:6, GE:Projection_117{GID:5}, logic prop:{stats:{count 3, ColNDVs map[9:3], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9)}}"
+          "GID:1, GE:DataSource_116{}, logic prop:{stats:{count 5, ColNDVs map[1:2], GroupNDVs []}, schema:{Column: [test.t1.a] PKOrUK: [] NullableUK: []}, fd:{(5)~~>(1), (1)-->(5)}}",
+          "GID:2, GE:DataSource_117{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Join_121{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 5:3 6:3], GroupNDVs []}, schema:{Column: [test.t1.a,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{(5)~~>(1), (1)-->(5)}}",
+          "GID:4, GE:Projection_123{GID:3}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[5:3 6:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:5, GE:Aggregation_119{GID:4}, logic prop:{stats:{count 3, ColNDVs map[9:3], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9)}}",
+          "GID:6, GE:Projection_120{GID:5}, logic prop:{stats:{count 3, ColNDVs map[9:3], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(1) from t1 right join t2 on t1.a = t2.a group by t1.a, t1.b",
         "Str": [
-          "GID:1, GE:DataSource_120{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_121{}, logic prop:{stats:{count 10, ColNDVs map[5:3], GroupNDVs []}, schema:{Column: [test.t2.a] PKOrUK: [] NullableUK: []}, fd:{(1)~~>(5), (5)-->(1)}}",
-          "GID:3, GE:Join_125{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2 5:3], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a] PKOrUK: [] NullableUK: []}, fd:{(1)~~>(5), (5)-->(1)}}",
-          "GID:4, GE:Projection_126{GID:3}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:5, GE:Aggregation_123{GID:4}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
-          "GID:6, GE:Projection_124{GID:5}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
+          "GID:1, GE:DataSource_124{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_125{}, logic prop:{stats:{count 10, ColNDVs map[5:3], GroupNDVs []}, schema:{Column: [test.t2.a] PKOrUK: [] NullableUK: []}, fd:{(1)~~>(5), (5)-->(1)}}",
+          "GID:3, GE:Join_129{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2 5:3], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a] PKOrUK: [] NullableUK: []}, fd:{(1)~~>(5), (5)-->(1)}}",
+          "GID:4, GE:Projection_131{GID:3}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:5, GE:Aggregation_127{GID:4}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
+          "GID:6, GE:Projection_128{GID:5}, logic prop:{stats:{count 2, ColNDVs map[9:2], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(1) from t1 right join t2 on t1.a = t2.a group by t2.a, t2.b",
         "Str": [
-          "GID:1, GE:DataSource_127{}, logic prop:{stats:{count 5, ColNDVs map[1:2], GroupNDVs []}, schema:{Column: [test.t1.a] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_128{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs [{[5 6] 9}]}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{(1)~~>(5), (5)-->(1)}}",
-          "GID:3, GE:Join_132{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 5:3 6:3], GroupNDVs [{[5 6] 9}]}, schema:{Column: [test.t1.a,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{(1)~~>(5), (5)-->(1)}}",
-          "GID:4, GE:Projection_133{GID:3}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[5:3 6:3], GroupNDVs [{[5 6] 9}]}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:5, GE:Aggregation_130{GID:4}, logic prop:{stats:{count 9, ColNDVs map[9:9], GroupNDVs [{[5 6] 9}]}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9)}}",
-          "GID:6, GE:Projection_131{GID:5}, logic prop:{stats:{count 9, ColNDVs map[9:9], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9)}}"
+          "GID:1, GE:DataSource_132{}, logic prop:{stats:{count 5, ColNDVs map[1:2], GroupNDVs []}, schema:{Column: [test.t1.a] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_133{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs [{[5 6] 9}]}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{(1)~~>(5), (5)-->(1)}}",
+          "GID:3, GE:Join_137{GID:1, GID:2}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[1:2 5:3 6:3], GroupNDVs [{[5 6] 9}]}, schema:{Column: [test.t1.a,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{(1)~~>(5), (5)-->(1)}}",
+          "GID:4, GE:Projection_139{GID:3}, logic prop:{stats:{count 16.666666666666668, ColNDVs map[5:3 6:3], GroupNDVs [{[5 6] 9}]}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:5, GE:Aggregation_135{GID:4}, logic prop:{stats:{count 9, ColNDVs map[9:9], GroupNDVs [{[5 6] 9}]}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9)}}",
+          "GID:6, GE:Projection_136{GID:5}, logic prop:{stats:{count 9, ColNDVs map[9:9], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_134{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_137{}, logic prop:{stats:{count 10, ColNDVs map[9:3 10:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Join_140{GID:1, GID:2}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 13:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#13] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:4, GE:Aggregation_141{GID:3}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
-          "GID:5, GE:Projection_142{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
+          "GID:1, GE:DataSource_140{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_143{}, logic prop:{stats:{count 10, ColNDVs map[9:3 10:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Join_146{GID:1, GID:2}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 13:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#13] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:4, GE:Aggregation_147{GID:3}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
+          "GID:5, GE:Projection_148{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_143{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_146{}, logic prop:{stats:{count 10, ColNDVs map[9:3 10:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Join_149{GID:1, GID:2}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 13:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#13] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:4, GE:Aggregation_150{GID:3}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
-          "GID:5, GE:Projection_151{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
+          "GID:1, GE:DataSource_149{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_152{}, logic prop:{stats:{count 10, ColNDVs map[9:3 10:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Join_155{GID:1, GID:2}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 13:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#13] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:4, GE:Aggregation_156{GID:3}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}",
+          "GID:5, GE:Projection_157{GID:4}, logic prop:{stats:{count 4, ColNDVs map[14:4], GroupNDVs []}, schema:{Column: [Column#14] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(14)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b in (select t2.b from t2 where t2.a > t1.a)) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_152{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_154{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Join_157{GID:1, GID:2}, logic prop:{stats:{count 4, ColNDVs map[1:1.6 2:1.6], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:4, GE:Aggregation_159{GID:3}, logic prop:{stats:{count 1.6, ColNDVs map[9:1.6], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
-          "GID:5, GE:Projection_160{GID:4}, logic prop:{stats:{count 1.6, ColNDVs map[9:1.6], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
+          "GID:1, GE:DataSource_158{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_160{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Join_163{GID:1, GID:2}, logic prop:{stats:{count 4, ColNDVs map[1:1.6 2:1.6], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:4, GE:Aggregation_165{GID:3}, logic prop:{stats:{count 1.6, ColNDVs map[9:1.6], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
+          "GID:5, GE:Projection_166{GID:4}, logic prop:{stats:{count 1.6, ColNDVs map[9:1.6], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b not in (select t2.b from t2 where t2.a > t1.a)) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_161{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:DataSource_163{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Join_166{GID:1, GID:2}, logic prop:{stats:{count 4, ColNDVs map[1:1.6 2:1.6], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:4, GE:Aggregation_168{GID:3}, logic prop:{stats:{count 1.6, ColNDVs map[9:1.6], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
-          "GID:5, GE:Projection_169{GID:4}, logic prop:{stats:{count 1.6, ColNDVs map[9:1.6], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
+          "GID:1, GE:DataSource_167{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:DataSource_169{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs []}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Join_172{GID:1, GID:2}, logic prop:{stats:{count 4, ColNDVs map[1:1.6 2:1.6], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:4, GE:Aggregation_174{GID:3}, logic prop:{stats:{count 1.6, ColNDVs map[9:1.6], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}",
+          "GID:5, GE:Projection_175{GID:4}, logic prop:{stats:{count 1.6, ColNDVs map[9:1.6], GroupNDVs []}, schema:{Column: [Column#9] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(9)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select * from t1 left join (select t2.a as a, t2.b as b, count(1) as cnt from t2 group by t2.a, t2.b) as tmp on t1.a = tmp.a and t1.b = tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_170{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9), (5)~~>(1), (6)~~>(2), (1,2)-->(5,6,9)}}",
-          "GID:2, GE:DataSource_171{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs [{[5 6] 9}]}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Aggregation_172{GID:2}, logic prop:{stats:{count 9, ColNDVs map[5:9 6:9 9:9], GroupNDVs [{[5 6] 9}]}, schema:{Column: [Column#9,test.t2.a,test.t2.b] PKOrUK: [[test.t2.a,test.t2.b]] NullableUK: []}, fd:{(5,6)-->(9)}}",
-          "GID:4, GE:Join_176{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5 6:5 9:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#9,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9), (5)~~>(1), (6)~~>(2), (1,2)-->(5,6,9)}}",
-          "GID:5, GE:Projection_177{GID:4}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5 6:5 9:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b,Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9), (5)~~>(1), (6)~~>(2), (1,2)-->(5,6)}}",
-          "GID:6, GE:Projection_175{GID:5}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5 6:5 9:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b,Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9), (5)~~>(1), (6)~~>(2), (1,2)-->(5,6)}}"
+          "GID:1, GE:DataSource_176{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9), (5)~~>(1), (6)~~>(2), (1,2)-->(5,6,9)}}",
+          "GID:2, GE:DataSource_177{}, logic prop:{stats:{count 10, ColNDVs map[5:3 6:3], GroupNDVs [{[5 6] 9}]}, schema:{Column: [test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Aggregation_178{GID:2}, logic prop:{stats:{count 9, ColNDVs map[5:9 6:9 9:9], GroupNDVs [{[5 6] 9}]}, schema:{Column: [Column#9,test.t2.a,test.t2.b] PKOrUK: [[test.t2.a,test.t2.b]] NullableUK: []}, fd:{(5,6)-->(9)}}",
+          "GID:4, GE:Join_182{GID:1, GID:3}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5 6:5 9:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#9,test.t2.a,test.t2.b] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9), (5)~~>(1), (6)~~>(2), (1,2)-->(5,6,9)}}",
+          "GID:5, GE:Projection_184{GID:4}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5 6:5 9:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b,Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9), (5)~~>(1), (6)~~>(2), (1,2)-->(5,6)}}",
+          "GID:6, GE:Projection_181{GID:5}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 5:5 6:5 9:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,test.t2.a,test.t2.b,Column#9] PKOrUK: [] NullableUK: []}, fd:{(5,6)-->(9), (5)~~>(1), (6)~~>(2), (1,2)-->(5,6)}}"
         ],
         "OpNum": 5
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 limit 3) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_178{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:Limit_184{GID:1}, logic prop:{stats:{count 3, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Aggregation_181{GID:2}, logic prop:{stats:{count 2, ColNDVs map[5:2], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}",
-          "GID:4, GE:Projection_182{GID:3}, logic prop:{stats:{count 2, ColNDVs map[5:2], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}"
+          "GID:1, GE:DataSource_185{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:Limit_191{GID:1}, logic prop:{stats:{count 3, ColNDVs map[1:2 2:2], GroupNDVs []}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Aggregation_188{GID:2}, logic prop:{stats:{count 2, ColNDVs map[5:2], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}",
+          "GID:4, GE:Projection_189{GID:3}, logic prop:{stats:{count 2, ColNDVs map[5:2], GroupNDVs []}, schema:{Column: [Column#5] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(5)}}"
         ],
         "OpNum": 4
       },
       {
         "SQL": "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b",
         "Str": [
-          "GID:1, GE:DataSource_185{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:2, GE:Window_188{GID:1}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 6:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#6] PKOrUK: [] NullableUK: []}, fd:{}}",
-          "GID:3, GE:Aggregation_190{GID:2}, logic prop:{stats:{count 4, ColNDVs map[7:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(7)}}",
-          "GID:4, GE:Projection_191{GID:3}, logic prop:{stats:{count 4, ColNDVs map[7:4], GroupNDVs []}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(7)}}"
+          "GID:1, GE:DataSource_192{}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:2, GE:Window_195{GID:1}, logic prop:{stats:{count 5, ColNDVs map[1:2 2:2 6:5], GroupNDVs [{[1 2] 4}]}, schema:{Column: [test.t1.a,test.t1.b,Column#6] PKOrUK: [] NullableUK: []}, fd:{}}",
+          "GID:3, GE:Aggregation_197{GID:2}, logic prop:{stats:{count 4, ColNDVs map[7:4], GroupNDVs [{[1 2] 4}]}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(7)}}",
+          "GID:4, GE:Projection_198{GID:3}, logic prop:{stats:{count 4, ColNDVs map[7:4], GroupNDVs []}, schema:{Column: [Column#7] PKOrUK: [] NullableUK: []}, fd:{(1,2)-->(7)}}"
         ],
         "OpNum": 4
       }
