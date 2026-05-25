@@ -756,9 +756,6 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	}
 	b.optFlag |= rule.FlagPredicateSimplification
 	b.optFlag |= rule.FlagEmptySelectionEliminator
-	if b.ctx.GetSessionVars().EnableCommonSubplanExtract {
-		b.optFlag |= rule.FlagCommonSubplanExtract
-	}
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
 	if err != nil {

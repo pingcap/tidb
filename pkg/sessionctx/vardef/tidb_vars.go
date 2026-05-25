@@ -180,7 +180,7 @@ const (
 	TiDBOptimizerEnableOuterJoinReorder = "tidb_enable_outer_join_reorder"
 
 	// TiDBOptEnableCommonSubplanExtract enables logical extraction of identical
-	// Join subtrees (same structure, same join conds, same where conds) into a
+	// UNION ALL subtrees (same structure, same join conds, same where conds) into a
 	// shared CTE to avoid duplicated execution. Off by default.
 	TiDBOptEnableCommonSubplanExtract = "tidb_opt_enable_common_subplan_extract"
 
