@@ -1,5 +1,12 @@
 # Split sample add-index TiKV prediction into all-encoding and new-encoding modes
 
+Historical note (2026-05-25): the follow-up change requested by the user removed the separate
+`sample_new_encoding_tikv_index_bytes` predictor from the current implementation. The live code now
+keeps only `sample_predicted_tikv_index_bytes`, and the add-index TiKV capacity
+precheck plus compatibility field `predicted_tikv_index_bytes` both use that single predictor.
+The remaining content in this document records the superseded dual-predictor design that existed on
+2026-05-21.
+
 This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` up to date as work proceeds.
 
 Reference: `PLANS.md` at repository root; this plan must be maintained according to it.
