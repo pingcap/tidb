@@ -911,8 +911,10 @@ workLoop:
 				releaseCollectorMemory()
 				continue
 			}
-			// GEE corrects the FM sketch's undercount under subsampling; 0 means no
-			// estimate was produced, so only adjust upward.
+			// Under NDV sub-sampling, estimateNDVs holds the GEE estimate built from
+			// the per-region HLL sketches; this path builds no FM sketch, so the
+			// histogram's own NDV is 0 here. A 0 estimate means none was produced,
+			// so only adjust upward.
 			if estimateNDVs[task.slicePos] > hist.NDV {
 				hist.NDV = estimateNDVs[task.slicePos]
 			}
@@ -963,18 +965,11 @@ func totalSketchSampleSize(regions []statistics.RegionSketchSummary) uint64 {
 // estimateSamplingNDV returns the GEE-estimated NDV for column/index position
 // i, or 0 when there is not enough data to estimate.
 func estimateSamplingNDV(rootCollector statistics.RowSampleCollector, regions []statistics.RegionSketchSummary, i int, sampleSize uint64) int64 {
-	sampleNDV := uint64(rootCollector.Base().FMSketches[i].NDV())
-	if sampleNDV == 0 {
-		return 0
-	}
 	count := rootCollector.Base().Count - rootCollector.Base().NullCount[i]
 	if count <= 0 {
 		return 0
 	}
 	rowCount := uint64(count)
-	if sampleNDV > rowCount {
-		sampleNDV = rowCount
-	}
 	ndvSketches := make([]*statistics.HLL, 0, len(regions))
 	singletonSketches := make([]*statistics.HLL, 0, len(regions))
 	for _, r := range regions {
@@ -997,6 +992,15 @@ func estimateSamplingNDV(rootCollector statistics.RowSampleCollector, regions []
 	}
 	if len(ndvSketches) == 0 {
 		return 0
+	}
+	// Both the GEE base term (the sub-sample NDV) and the singleton correction
+	// come from the per-region HyperLogLog sketches; this path builds no FM sketch.
+	sampleNDV := statistics.EstimateGlobalNDVBySketches(ndvSketches)
+	if sampleNDV == 0 {
+		return 0
+	}
+	if sampleNDV > rowCount {
+		sampleNDV = rowCount
 	}
 	singletonItems := statistics.EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
 	return int64(statistics.EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount))

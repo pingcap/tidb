@@ -66,6 +66,23 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 	return ndv
 }
 
+// EstimateGlobalNDVBySketches estimates the distinct-value count across all
+// regions by unioning their per-region NDV HyperLogLogs. Under NDV sub-sampling
+// this is the GEE base term d (the sub-sample NDV); see EstimateNDVByGEE. HLL
+// unions are register-wise max, so the result is order-independent and the
+// inputs are left unmodified (the first merge clones).
+func EstimateGlobalNDVBySketches(ndvSketches []*HLL) uint64 {
+	intest.Assert(len(ndvSketches) > 0, "ndvSketches shouldn't be empty")
+	var union *HLL
+	for _, sketch := range ndvSketches {
+		union = mergeCopiedHLL(union, sketch)
+	}
+	if union == nil {
+		return 0
+	}
+	return union.Count()
+}
+
 // EstimateGlobalSingletonBySketches estimates the global singleton count using NDV and singleton sketches.
 // For each region i, we ask: how many of region i's local singletons
 // never appeared in any other region? Those are the values that are

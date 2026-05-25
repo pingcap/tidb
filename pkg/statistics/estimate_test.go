@@ -37,6 +37,41 @@ func newHLLFromHashValues(vals ...uint64) *HLL {
 	return h
 }
 
+func TestEstimateGlobalNDVBySketches(t *testing.T) {
+	var (
+		a = hllValue(0)
+		b = hllValue(1)
+		c = hllValue(2)
+		d = hllValue(3)
+		e = hllValue(4)
+		f = hllValue(5)
+	)
+
+	t.Run("UnionAcrossRegions", func(t *testing.T) {
+		// {a,b,c} ∪ {b,c,d} ∪ {c,e,f} = {a,b,c,d,e,f} = 6 distinct.
+		ndvSketches := []*HLL{
+			newHLLFromHashValues(a, b, c),
+			newHLLFromHashValues(b, c, d),
+			newHLLFromHashValues(c, e, f),
+		}
+		require.Equal(t, uint64(6), EstimateGlobalNDVBySketches(ndvSketches))
+	})
+
+	t.Run("SingleRegion", func(t *testing.T) {
+		require.Equal(t, uint64(3), EstimateGlobalNDVBySketches([]*HLL{newHLLFromHashValues(a, b, c)}))
+	})
+
+	t.Run("DoesNotMutateInputs", func(t *testing.T) {
+		// The union must clone the first sketch rather than merge into it: the same
+		// slice is passed on to the singleton estimator, so mutation would corrupt f1.
+		s0 := newHLLFromHashValues(a, b)
+		s1 := newHLLFromHashValues(c, d)
+		require.Equal(t, uint64(4), EstimateGlobalNDVBySketches([]*HLL{s0, s1}))
+		require.Equal(t, uint64(2), s0.Count())
+		require.Equal(t, uint64(2), s1.Count())
+	})
+}
+
 func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 	// Distinct ids → distinct registers, so tiny-set counts are exact.
 	var (

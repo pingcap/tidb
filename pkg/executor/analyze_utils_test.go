@@ -23,9 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -91,10 +89,6 @@ func TestEstimateSamplingNDV(t *testing.T) {
 
 	rootCollector := statistics.NewReservoirRowSampleCollector(1, 2)
 	rootCollector.Count = 100
-	rootCollector.FMSketches = append(rootCollector.FMSketches,
-		mustBuildFMSketch(t, 1, 2, 3, 4),
-		mustBuildFMSketch(t, 10, 11),
-	)
 
 	// RegionSketchSummary retains per-region HLL sketches. Each id maps to a distinct
 	// HLL register so the tiny-set counts (and thus the leave-one-out f1) are exact.
@@ -120,14 +114,4 @@ func TestEstimateSamplingNDV(t *testing.T) {
 
 	require.Equal(t, uint64(6), totalSketchSampleSize(regions))
 	require.Equal(t, int64(10), estimateSamplingNDV(rootCollector, regions, 0, 6))
-}
-
-func mustBuildFMSketch(t *testing.T, values ...int64) *statistics.FMSketch {
-	t.Helper()
-	sketch := statistics.NewFMSketch(1000)
-	sc := mock.NewContext().GetSessionVars().StmtCtx
-	for _, value := range values {
-		require.NoError(t, sketch.InsertValue(sc, types.NewIntDatum(value)))
-	}
-	return sketch
 }
