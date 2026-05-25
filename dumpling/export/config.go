@@ -387,7 +387,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
-	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
+	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r or --filesize/-F in split mode, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
@@ -637,8 +637,9 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
-	if flags.Changed(flagRows) && flags.Changed(flagOutputFilenameTemplate) && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
-		return errors.New("--output-filename-template must include {{.Index}} when --rows/-r is specified; otherwise chunk files may overwrite each other")
+	outputSplitIntoMultipleFiles := conf.Rows != UnspecifiedSize || conf.FileSize != UnspecifiedSize
+	if flags.Changed(flagOutputFilenameTemplate) && outputSplitIntoMultipleFiles && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
+		return errors.New("--output-filename-template must include {{.Index}} when split mode is enabled by --rows/-r or --filesize/-F; otherwise chunk files may overwrite each other")
 	}
 	conf.OutputFileTemplate = tmpl
 
