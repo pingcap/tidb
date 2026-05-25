@@ -15,7 +15,6 @@
 package rule
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -24,11 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCommonSubplanExtract exercises the L0 detection-only landing of the
-// common subplan extractor rule. Each input SQL is executed with the rule
-// enabled; the captured output is the filtered `SHOW WARNINGS` rows that
-// carry the `common_subplan_extract` note. An empty Notes slice means the
-// rule deliberately did not fire (negative case).
+// TestCommonSubplanExtract verifies that the common_subplan_extract rule rewrites
+// identical UNION ALL branches into shared CTEs. The expected output is the
+// EXPLAIN FORMAT='brief' plan string for each input SQL.
 func TestCommonSubplanExtract(tt *testing.T) {
 	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
@@ -39,8 +36,9 @@ func TestCommonSubplanExtract(tt *testing.T) {
 
 		var input []string
 		var output []struct {
-			SQL   string
-			Notes []string
+			SQL    string
+			HasCTE bool
+			Plan   []string
 		}
 		suite := GetCommonSubplanExtractSuiteData()
 		suite.LoadTestCases(t, &input, &output, cascades, caller)
@@ -53,36 +51,37 @@ func TestCommonSubplanExtract(tt *testing.T) {
 				tk.MustExec(sql)
 				continue
 			}
-			tk.MustExec(sql)
-			notes := collectCommonSubplanNotes(tk)
+
+			rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+			plan := make([]string, 0, len(rows))
+			for _, r := range rows {
+				parts := make([]string, len(r))
+				for j, col := range r {
+					parts[j] = col.(string)
+				}
+				plan = append(plan, strings.Join(parts, "\t"))
+			}
+
+			hasCTE := planContainsCTE(plan)
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
-				output[i].Notes = notes
+				output[i].HasCTE = hasCTE
+				output[i].Plan = plan
 			})
-			require.Equalf(t, output[i].Notes, notes,
-				"case[%d] %q notes mismatch", i, sql)
+			require.Equalf(t, output[i].HasCTE, hasCTE,
+				"case[%d] %q: HasCTE mismatch (got %v, want %v)", i, sql, hasCTE, output[i].HasCTE)
 		}
 	})
 }
 
-// collectCommonSubplanNotes returns the `common_subplan_extract` note
-// messages currently on the session's warning list, preserving insertion
-// order. Other warnings are ignored.
-func collectCommonSubplanNotes(tk *testkit.TestKit) []string {
-	rows := tk.MustQuery("show warnings").Rows()
-	var out []string
-	for _, r := range rows {
-		if len(r) < 3 {
-			continue
-		}
-		level, _ := r[0].(string)
-		msg, _ := r[2].(string)
-		if !strings.EqualFold(level, "Note") {
-			continue
-		}
-		if strings.Contains(msg, "common_subplan_extract") {
-			out = append(out, fmt.Sprintf("%s", msg))
+// planContainsCTE returns true when the EXPLAIN output includes a CTEFullScan
+// row, which signals that the common_subplan_extract rule rewrote a duplicate
+// branch into a shared CTE.
+func planContainsCTE(plan []string) bool {
+	for _, row := range plan {
+		if strings.Contains(row, "CTEFullScan") {
+			return true
 		}
 	}
-	return out
+	return false
 }

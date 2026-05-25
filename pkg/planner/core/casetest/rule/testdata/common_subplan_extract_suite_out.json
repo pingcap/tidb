@@ -4,55 +4,63 @@
     "Cases": [
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       },
       {
         "SQL": "",
-        "Notes": null
-      },
-      {
-        "SQL": "",
-        "Notes": null
+        "HasCTE": false,
+        "Plan": null
       }
     ]
   }
