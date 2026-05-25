@@ -13,7 +13,7 @@ go_library(
         "region.go",
         "router.go",
         "schema_import.go",
-        "view_restore.go",
+        "view_import.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/mydump",
     visibility = ["//visibility:public"],
@@ -70,7 +70,7 @@ go_test(
         "region_test.go",
         "router_test.go",
         "schema_import_test.go",
-        "view_restore_test.go",
+        "view_import_test.go",
     ],
     data = glob([
         "csv/*",

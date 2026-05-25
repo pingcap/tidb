@@ -43,11 +43,11 @@ type schemaStmtType int
 func (stmtType schemaStmtType) String() string {
 	switch stmtType {
 	case schemaCreateDatabase:
-		return "restore database schema"
+		return "import database schema"
 	case schemaCreateTable:
-		return "restore table schema"
+		return "import table schema"
 	case schemaCreateView:
-		return "restore view schema"
+		return "import view schema"
 	}
 	return "unknown statement of schema"
 }
@@ -91,7 +91,7 @@ func (si *SchemaImporter) Run(ctx context.Context, dbMetas []*MDDatabaseMeta) (e
 	if err != nil {
 		return err
 	}
-	logTask := si.logger.Begin(zap.InfoLevel, "restore all schema")
+	logTask := si.logger.Begin(zap.InfoLevel, "import all schema")
 	defer func() {
 		logTask.End(zap.ErrorLevel, err)
 	}()
@@ -218,7 +218,7 @@ func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabas
 // dumpling dump a view as a table-schema sql file which creates a table of same name
 // as the view, and a view-schema sql file which drops the table and creates the view.
 func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPlan) error {
-	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
+	// 3. import views. Since views can cross database we must import views after all table schemas are imported.
 	if plan.viewPlan == nil {
 		return nil
 	}
@@ -226,7 +226,7 @@ func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPla
 	if err != nil {
 		return err
 	}
-	if err := validateViewRestorePlan(plan.viewPlan, unionTableNames(existingNonViews, existingViews)); err != nil {
+	if err := validateViewImportPlan(plan.viewPlan, unionTableNames(existingNonViews, existingViews)); err != nil {
 		return err
 	}
 
@@ -259,7 +259,7 @@ func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPla
 }
 
 func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
-	// Table schema restore should preserve session directives but must not drop
+	// Table schema import should preserve session directives but must not drop
 	// downstream objects from source schema files.
 	stmts, err := createIfNotExistsStmtWithMode(p, job.sqlStr, job.dbName, job.tblName, true)
 	if err != nil {
@@ -289,8 +289,8 @@ func normalizeTableName(dbName, tblName string) filter.Table {
 	return filter.Table{Schema: strings.ToLower(dbName), Name: strings.ToLower(tblName)}
 }
 
-// collectDumpTables returns only the physical tables restored before the view
-// phase. View dependencies are tracked separately in viewRestorePlan.
+// collectDumpTables returns only the physical tables imported before the view
+// phase. View dependencies are tracked separately in viewImportPlan.
 func collectDumpTables(dbMetas []*MDDatabaseMeta) tableNameSet {
 	tables := make(tableNameSet)
 	for _, dbMeta := range dbMetas {
@@ -319,7 +319,7 @@ func unionTableNames(sets ...tableNameSet) tableNameSet {
 // scanning whole schemas.
 func (si *SchemaImporter) loadExistingViewDependencies(
 	ctx context.Context,
-	plan *viewRestorePlan,
+	plan *viewImportPlan,
 ) (existingNonViews tableNameSet, existingViews tableNameSet, err error) {
 	schemas := make(set.StringSet)
 	for _, node := range plan.nodes {

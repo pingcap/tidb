@@ -54,8 +54,8 @@ type parsedViewSchema struct {
 	createSQL string
 }
 
-// viewNode is one vertex in the ordered view restore graph. Dependencies that
-// are not restored by the dump stay in externalDeps and must already exist
+// viewNode is one vertex in the ordered view import graph. Dependencies that
+// are not imported by the dump stay in externalDeps and must already exist
 // downstream.
 type viewNode struct {
 	key          filter.Table
@@ -66,9 +66,9 @@ type viewNode struct {
 	createSQL    string
 }
 
-// viewRestorePlan keeps both the dependency graph and the topologically sorted
-// restore order used during schema import.
-type viewRestorePlan struct {
+// viewImportPlan keeps both the dependency graph and the topologically sorted
+// import order used during schema import.
+type viewImportPlan struct {
 	nodes   map[filter.Table]*viewNode
 	ordered []*viewNode
 }
@@ -86,10 +86,10 @@ func sortViewNodes(nodes []*viewNode) {
 	})
 }
 
-// SchemaImportPlan describes the schema objects that should be restored from a dump.
+// SchemaImportPlan describes the schema objects that should be imported from a dump.
 type SchemaImportPlan struct {
 	dbMetas  []*MDDatabaseMeta
-	viewPlan *viewRestorePlan
+	viewPlan *viewImportPlan
 }
 
 // viewDependencyCollector walks a CREATE VIEW query and collects referenced
@@ -174,7 +174,7 @@ func (c *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
-// NewSchemaImportPlan builds a schema restore plan, including ordered view restoration when needed.
+// NewSchemaImportPlan builds a schema import plan, including ordered view imports when needed.
 func NewSchemaImportPlan(ctx context.Context, store storeapi.Storage, sqlMode mysql.SQLMode, dbMetas []*MDDatabaseMeta) (*SchemaImportPlan, error) {
 	plan := &SchemaImportPlan{dbMetas: dbMetas}
 	if len(dbMetas) == 0 {
@@ -203,7 +203,7 @@ func NewSchemaImportPlan(ctx context.Context, store storeapi.Storage, sqlMode my
 		return plan, nil
 	}
 
-	viewPlan, err := buildViewRestorePlan(parsedViews, collectDumpTables(dbMetas))
+	viewPlan, err := buildViewImportPlan(parsedViews, collectDumpTables(dbMetas))
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 
 	var (
 		res        strings.Builder
-		restoreCtx = format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
+		formatCtx  = format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
 		createStmt *ast.CreateViewStmt
 	)
 
@@ -242,14 +242,14 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 			// keep session setup statements
 		default:
 			// Preserve any additional parseable statements for compatibility with
-			// the old view restore path, which tolerated them as long as the file
+			// the old view import path, which tolerated them as long as the file
 			// still contained a valid CREATE VIEW statement.
 		}
 
-		if err := stmt.Restore(restoreCtx); err != nil {
+		if err := stmt.Restore(formatCtx); err != nil {
 			return nil, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(sql)
 		}
-		restoreCtx.WritePlain(";")
+		formatCtx.WritePlain(";")
 		keptStatements = append(keptStatements, res.String())
 		res.Reset()
 	}
@@ -260,7 +260,7 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 		)
 	}
 
-	// Extract referenced objects from the SELECT body so the restore step can
+	// Extract referenced objects from the SELECT body so the import step can
 	// build a dependency-aware creation order.
 	collector := &viewDependencyCollector{
 		currentSchema: currentView.Schema,
@@ -277,12 +277,12 @@ func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) 
 	}, nil
 }
 
-// buildViewRestorePlan classifies each view dependency as:
+// buildViewImportPlan classifies each view dependency as:
 //   - another dumped view, which becomes an edge in the topo-sort graph
-//   - a dumped base table, which is already restored before views
-//   - an external object, which must exist downstream before restore starts
-func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameSet) (*viewRestorePlan, error) {
-	plan := &viewRestorePlan{
+//   - a dumped base table, which is already imported before views
+//   - an external object, which must exist downstream before import starts
+func buildViewImportPlan(parsedViews []*parsedViewSchema, dumpTables tableNameSet) (*viewImportPlan, error) {
+	plan := &viewImportPlan{
 		nodes: make(map[filter.Table]*viewNode, len(parsedViews)),
 	}
 
@@ -358,9 +358,9 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 	return plan, nil
 }
 
-// validateViewRestorePlan checks the external dependencies collected during
+// validateViewImportPlan checks the external dependencies collected during
 // planning against the objects that already exist downstream.
-func validateViewRestorePlan(plan *viewRestorePlan, existingObjects tableNameSet) error {
+func validateViewImportPlan(plan *viewImportPlan, existingObjects tableNameSet) error {
 	for _, node := range plan.ordered {
 		for _, dep := range node.externalDeps {
 			if existingObjects.has(dep) {

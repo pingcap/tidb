@@ -18,13 +18,13 @@ set -euE
 
 run_sql "SELECT IF(@@global.sql_require_primary_key, 'SET GLOBAL sql_require_primary_key=ON;', 'SET GLOBAL sql_require_primary_key=OFF;') cmd;"
 UNDO_CMD=$(read_result)
-restore_sql_require_primary_key() {
+reset_sql_require_primary_key() {
   run_sql "$UNDO_CMD"
 }
-trap restore_sql_require_primary_key EXIT
+trap reset_sql_require_primary_key EXIT
 
 # Dumpling emits placeholder CREATE TABLE files for views without primary keys.
-# Lightning should still restore the real views when downstream requires PKs.
+# Lightning should still import the real views when downstream requires PKs.
 run_sql 'SET GLOBAL sql_require_primary_key=ON'
 value='OFF'
 for _ in $(seq 60); do

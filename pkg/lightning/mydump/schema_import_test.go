@@ -524,7 +524,7 @@ func TestCreateTableIfNotExistsStmt(t *testing.T) {
 		`, "m"))
 }
 
-func TestSchemaImporterRestoresViewsInDependencyOrderAfterPlaceholderPrune(t *testing.T) {
+func TestSchemaImporterImportsViewsInDependencyOrderAfterPlaceholderPrune(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() {

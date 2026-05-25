@@ -169,7 +169,7 @@ CREATE VIEW v_multi AS SELECT 2;
 	require.ErrorContains(t, err, "multiple create view statements found")
 }
 
-func TestBuildViewRestorePlanSupportsMultipleAndCrossSchemaViewDeps(t *testing.T) {
+func TestBuildViewImportPlanSupportsMultipleAndCrossSchemaViewDeps(t *testing.T) {
 	db1v1 := filter.Table{Schema: "db1", Name: "v1"}
 	db2v2 := filter.Table{Schema: "db2", Name: "v2"}
 	db2v3 := filter.Table{Schema: "db2", Name: "v3"}
@@ -178,7 +178,7 @@ func TestBuildViewRestorePlanSupportsMultipleAndCrossSchemaViewDeps(t *testing.T
 	dumpTables.add(filter.Table{Schema: "db2", Name: "t2"})
 	dumpTables.add(filter.Table{Schema: "db2", Name: "t3"})
 
-	plan, err := buildViewRestorePlan([]*parsedViewSchema{
+	plan, err := buildViewImportPlan([]*parsedViewSchema{
 		{
 			key:       db1v1,
 			deps:      []filter.Table{{Schema: "db1", Name: "t1"}, {Schema: "db2", Name: "t2"}},
@@ -206,13 +206,13 @@ func TestBuildViewRestorePlanSupportsMultipleAndCrossSchemaViewDeps(t *testing.T
 	require.Equal(t, []filter.Table{db2v2}, plan.nodes[db2v3].dependents)
 }
 
-func TestBuildViewRestorePlanNormalizesCaseInsensitiveDeps(t *testing.T) {
+func TestBuildViewImportPlanNormalizesCaseInsensitiveDeps(t *testing.T) {
 	v1 := filter.Table{Schema: "test", Name: "v1"}
 	v2 := filter.Table{Schema: "test", Name: "V2"}
 	dumpTables := make(tableNameSet)
 	dumpTables.add(filter.Table{Schema: "test", Name: "t"})
 
-	plan, err := buildViewRestorePlan([]*parsedViewSchema{
+	plan, err := buildViewImportPlan([]*parsedViewSchema{
 		{
 			key:       v1,
 			deps:      []filter.Table{{Schema: "test", Name: "t"}},
@@ -231,8 +231,8 @@ func TestBuildViewRestorePlanNormalizesCaseInsensitiveDeps(t *testing.T) {
 	require.Empty(t, plan.nodes[normalizeTableName(v2.Schema, v2.Name)].externalDeps)
 }
 
-func TestBuildViewRestorePlanRejectsCaseInsensitiveDuplicates(t *testing.T) {
-	_, err := buildViewRestorePlan([]*parsedViewSchema{
+func TestBuildViewImportPlanRejectsCaseInsensitiveDuplicates(t *testing.T) {
+	_, err := buildViewImportPlan([]*parsedViewSchema{
 		{
 			key:       filter.Table{Schema: "test", Name: "v1"},
 			createSQL: "CREATE VIEW `test`.`v1` AS SELECT 1;",
@@ -245,8 +245,8 @@ func TestBuildViewRestorePlanRejectsCaseInsensitiveDuplicates(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate view definition")
 }
 
-func TestBuildViewRestorePlanDetectsCycle(t *testing.T) {
-	_, err := buildViewRestorePlan([]*parsedViewSchema{
+func TestBuildViewImportPlanDetectsCycle(t *testing.T) {
+	_, err := buildViewImportPlan([]*parsedViewSchema{
 		{
 			key:       filter.Table{Schema: "test", Name: "v1"},
 			deps:      []filter.Table{{Schema: "test", Name: "v2"}},

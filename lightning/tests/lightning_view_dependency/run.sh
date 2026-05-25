@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Test that Lightning restores views in topological dependency order across
+# Test that Lightning imports views in topological dependency order across
 # databases.
 #
 # Dependency graph:
@@ -29,10 +29,10 @@ set -euE
 
 run_sql "SELECT IF(@@global.sql_require_primary_key, 'SET GLOBAL sql_require_primary_key=ON;', 'SET GLOBAL sql_require_primary_key=OFF;') cmd;"
 UNDO_CMD=$(read_result)
-restore_sql_require_primary_key() {
+reset_sql_require_primary_key() {
   run_sql "$UNDO_CMD"
 }
-trap restore_sql_require_primary_key EXIT
+trap reset_sql_require_primary_key EXIT
 
 run_sql 'SET GLOBAL sql_require_primary_key=ON'
 value='OFF'

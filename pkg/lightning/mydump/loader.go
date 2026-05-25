@@ -548,9 +548,9 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 
 	s.pruneViewPlaceholders(ctx)
 
-	// Sql file for restore data
+	// SQL files for importing data.
 	for _, fileInfo := range s.tableDatas {
-		// set a dummy `FileInfo` here without file meta because we needn't restore the table schema
+		// Set a dummy `FileInfo` here without file meta because we needn't import the table schema.
 		tableMeta, _, _ := s.insertTable(FileInfo{TableName: fileInfo.TableName})
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo)
 		tableMeta.TotalSize += fileInfo.FileMeta.RealSize
@@ -847,7 +847,7 @@ func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
 
 	// Dumpling emits a table schema file for each view before the dedicated view
 	// schema file is discovered. Once the view list is complete, drop those
-	// placeholder tables so schema restore only sees the real table objects.
+	// placeholder tables so schema import only sees the real table objects.
 	const maxPrunedTableLogSamples = 20
 	prunedCount := 0
 	prunedTables := make([]string, 0, maxPrunedTableLogSamples)
