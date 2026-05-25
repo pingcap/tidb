@@ -139,11 +139,11 @@ FROM t0
 			`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
 			`  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`,
 			`  └─HashJoin(Probe) 100000000.00 root  CARTESIAN left outer join`,
-			`    ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
-			`    │ └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`,
-			`    └─Projection(Probe) 10000.00 root  <nil>->Column#7`,
-			`      └─TableReader 10000.00 root  data:TableFullScan`,
-			`        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`))
+			`    ├─Projection(Build) 10000.00 root  <nil>->Column#7`,
+			`    │ └─TableReader 10000.00 root  data:TableFullScan`,
+			`    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+			`    └─TableReader(Probe) 10000.00 root  data:TableFullScan`,
+			`      └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
 	tk.MustQuery(`SELECT *
 FROM t0
          LEFT JOIN (SELECT NULL AS col_2
