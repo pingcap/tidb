@@ -1893,6 +1893,10 @@ func isAlterTiFlashReplica(specs []*ast.AlterTableSpec) bool {
 	return len(specs) == 1 && specs[0].Tp == ast.AlterTableSetTiFlashReplica
 }
 
+func isAlterTableOnlyExchangePartition(specs []*ast.AlterTableSpec) bool {
+	return len(specs) == 1 && specs[0].Tp == ast.AlterTableExchangePartition
+}
+
 func isAlterTableOnlyAddColumnsAtEnd(specs []*ast.AlterTableSpec) bool {
 	if len(specs) == 0 {
 		return false
@@ -2034,6 +2038,11 @@ func checkAlterTableMaterializedViewConstraints(
 	specs []*ast.AlterTableSpec,
 	op string,
 ) error {
+	if isAlterTableOnlyExchangePartition(specs) {
+		// EXCHANGE PARTITION needs both table roles for precise materialized-view checks.
+		return nil
+	}
+
 	if tblInfo.MaterializedViewLog != nil {
 		// MATERIALIZED VIEW LOG table only allows ALTER TABLE ... SET TIFLASH REPLICA for now.
 		if isAlterTiFlashReplica(specs) {
