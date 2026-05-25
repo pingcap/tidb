@@ -303,6 +303,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
+	case *plannercore.PhysicalOrderedWindow:
+		return b.buildOrderedWindow(v)
 	case *plannercore.PhysicalShuffle:
 		return b.buildShuffle(v)
 	case *plannercore.PhysicalShuffleReceiverStub:
@@ -4706,6 +4708,8 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *plannercore.PhysicalProjection:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	case *plannercore.PhysicalOrderedWindow:
+		return builder.buildOrderedWindowForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
@@ -5216,6 +5220,55 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	return e, nil
 }
 
+type selfOpeningExecutor interface {
+	OpenSelf() error
+}
+
+func openExecutorSelf(e exec.Executor) error {
+	if opener, ok := e.(selfOpeningExecutor); ok {
+		return opener.OpenSelf()
+	}
+	return errors.New("executor cannot be opened without opening children")
+}
+
+func (builder *dataReaderBuilder) buildOrderedWindowForIndexJoin(
+	ctx context.Context,
+	v *plannercore.PhysicalOrderedWindow,
+	lookUpContents []*join.IndexJoinLookUpContent,
+	indexRanges []*ranger.Range,
+	keyOff2IdxOff []int,
+	cwc *plannercore.ColWithCmpFuncManager,
+	canReorderHandles bool,
+	memTracker *memory.Tracker,
+	interruptSignal *atomic.Value,
+) (windowExecutor exec.Executor, err error) {
+	var childExec exec.Executor
+	childExec, err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if windowExecutor != nil {
+			terror.Log(exec.Close(windowExecutor))
+			return
+		}
+		terror.Log(exec.Close(childExec))
+	}()
+
+	windowExecutor, err = BuildOrdered(builder.ctx, &v.PhysicalWindow, childExec)
+	if err != nil {
+		return nil, err
+	}
+	err = openExecutorSelf(windowExecutor)
+	if err != nil {
+		return nil, err
+	}
+	return windowExecutor, nil
+}
+
 // buildRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*join.IndexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager,
@@ -5346,6 +5399,19 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 		return nil
 	}
 	return windowExec
+}
+
+func (b *executorBuilder) buildOrderedWindow(v *plannercore.PhysicalOrderedWindow) exec.Executor {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	exec, err := BuildOrdered(b.ctx, &v.PhysicalWindow, childExec)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return exec
 }
 
 func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {

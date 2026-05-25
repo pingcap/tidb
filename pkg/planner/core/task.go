@@ -2405,6 +2405,15 @@ func (p *PhysicalWindow) Attach2Task(tasks ...base.Task) base.Task {
 }
 
 // Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalOrderedWindow) Attach2Task(tasks ...base.Task) base.Task {
+	if cop, ok := tasks[0].(*CopTask); ok && cop.indexPlan != nil && cop.tablePlan != nil {
+		return base.InvalidTask
+	}
+	t := tasks[0].ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p.Self, t)
+}
+
+// Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalCTEStorage) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	if mpp, ok := t.(*MppTask); ok {

@@ -83,6 +83,7 @@ var (
 	_ base.PhysicalPlan = &PhysicalMergeJoin{}
 	_ base.PhysicalPlan = &PhysicalUnionScan{}
 	_ base.PhysicalPlan = &PhysicalWindow{}
+	_ base.PhysicalPlan = &PhysicalOrderedWindow{}
 	_ base.PhysicalPlan = &PhysicalShuffle{}
 	_ base.PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ base.PhysicalPlan = &BatchPointGetPlan{}
@@ -2591,6 +2592,17 @@ type PhysicalWindow struct {
 	storeTp kv.StoreType
 }
 
+// PhysicalOrderedWindow is a window operator for inputs that are already ordered
+// by the window partition/order keys. It is only valid when the child plan can
+// provide that property by itself, for example from an ordered index scan.
+//
+// Unlike PhysicalWindow, this operator must not rely on a Sort enforcer. If a
+// sort is needed to satisfy the window property, the optimizer should use the
+// regular PhysicalWindow path instead.
+type PhysicalOrderedWindow struct {
+	PhysicalWindow
+}
+
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
@@ -2640,6 +2652,34 @@ func (p *PhysicalWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 		cloned.Frame = p.Frame.Clone()
 	}
 
+	return cloned, nil
+}
+
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalOrderedWindow) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalOrderedWindow)
+	*cloned = *p
+	cloned.SetSCtx(newCtx)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
+	}
+	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
+	for _, it := range p.OrderBy {
+		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
+	}
+	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
+	for _, it := range p.WindowFuncDescs {
+		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
+	}
+	if p.Frame != nil {
+		cloned.Frame = p.Frame.Clone()
+	}
 	return cloned, nil
 }
 

@@ -1,0 +1,124 @@
+[
+  {
+    "Name": "TestIndexJoinWithOrderedWindowInner",
+    "Cases": [
+      {
+        "Plan": [
+          "OrderedWindow 10000.00 root  row_number()->Column#6 over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "└─IndexReader 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11 1",
+          "1 2 12 2",
+          "2 1 21 1",
+          "2 3 23 2",
+          "3 4 34 1"
+        ]
+      },
+      {
+        "Plan": [
+          "Selection 8000.00 root  eq(Column#6, 1)",
+          "└─OrderedWindow 10000.00 root  row_number()->Column#6 over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "  └─IndexReader 10000.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11 1",
+          "2 1 21 1",
+          "3 4 34 1"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin 9990.00 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) 7992.00 root  eq(Column#8, 1)",
+          "│ └─OrderedWindow 9990.00 root  row_number()->Column#8 over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│   └─IndexReader 9990.00 root  index:IndexFullScan",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 10000.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11",
+          "2 1 21",
+          "3 4 34"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin 9990.00 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) 7992.00 root  eq(Column#8, 2)",
+          "│ └─OrderedWindow 9990.00 root  row_number()->Column#8 over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│   └─IndexReader 9990.00 root  index:IndexFullScan",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 10000.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 12",
+          "2 3 23"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin 9990.00 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) 7992.00 root  lt(Column#8, 2)",
+          "│ └─OrderedWindow 9990.00 root  row_number()->Column#8 over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│   └─IndexReader 9990.00 root  index:IndexFullScan",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 10000.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11",
+          "2 1 21",
+          "3 4 34"
+        ]
+      },
+      {
+        "Plan": [
+          "IndexHashJoin 9990.00 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─Selection(Build) 7992.00 root  le(Column#8, 2)",
+          "│ └─OrderedWindow 9990.00 root  row_number()->Column#8 over(partition by test.t2.a order by test.t2.b rows between current row and current row)",
+          "│   └─IndexReader 9990.00 root  index:IndexFullScan",
+          "│     └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_abc(a, b, c) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 10000.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1 11",
+          "1 2 12",
+          "2 1 21",
+          "2 3 23",
+          "3 4 34"
+        ]
+      },
+      {
+        "Plan": [
+          "Projection 2.50 root  test.probe_rows.probe_key, case(and(eq(test.inner_rows.type_code, 4), eq(test.inner_rows.state_code, 2)), 1, 0)->Column#16, test.inner_rows.payload",
+          "└─IndexHashJoin 2.50 root  left outer join, inner:Selection, outer key:test.probe_rows.probe_key, inner key:test.inner_rows.partition_key, equal cond:eq(test.probe_rows.probe_key, test.inner_rows.partition_key)",
+          "  ├─IndexLookUp(Build) 2.00 root  ",
+          "  │ ├─Selection(Build) 2.00 cop[tikv]  eq(ifnull(test.probe_rows.flag1, 0), 0), eq(ifnull(test.probe_rows.flag2, 0), 0), eq(ifnull(test.probe_rows.flag3, 0), 0)",
+          "  │ │ └─IndexRangeScan 2.50 cop[tikv] table:p, index:idx_filter_time(filter_code, probe_time, flag1, flag2, flag3) range:(\"filter_001\" 2026-02-04 00:00:00,\"filter_001\" 2026-02-05 00:00:00], keep order:false, stats:pseudo",
+          "  │ └─TableRowIDScan(Probe) 2.00 cop[tikv] table:p keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 16000.00 root  eq(Column#15, 1)",
+          "    └─OrderedWindow 20000.00 root  row_number()->Column#15 over(partition by test.inner_rows.partition_key order by test.inner_rows.order_time desc rows between current row and current row)",
+          "      └─Projection 2.50 root  test.inner_rows.partition_key, test.inner_rows.order_time, test.inner_rows.type_code, test.inner_rows.state_code, test.inner_rows.payload",
+          "        └─IndexLookUp 2.50 root  ",
+          "          ├─IndexRangeScan(Build) 2.50 cop[tikv] table:i, index:idx_partition_order(partition_key, order_time) range: decided by [eq(test.inner_rows.partition_key, test.probe_rows.probe_key)], keep order:true, desc, stats:pseudo",
+          "          └─TableRowIDScan(Probe) 2.50 cop[tikv] table:i keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "K001 1 new_payload_1",
+          "K002 0 new_payload_2",
+          "K003 0 <nil>"
+        ]
+      }
+    ]
+  }
+]

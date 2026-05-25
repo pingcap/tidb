@@ -106,6 +106,14 @@ func (p PhysicalWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, of
 	return &p
 }
 
+// Init initializes PhysicalOrderedWindow.
+func (p PhysicalOrderedWindow) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalOrderedWindow {
+	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, "OrderedWindow", &p, offset)
+	p.SetChildrenReqProps(props)
+	p.SetStats(stats)
+	return &p
+}
+
 // Init initializes PhysicalShuffle.
 func (p PhysicalShuffle) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffle {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeShuffle, &p, offset)
