@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -108,8 +107,7 @@ func GetPDHostPorts(ctx context.Context, pdClient pd.Client, hasPrefix bool) ([]
 			if len(member.ClientUrls) > 0 {
 				prefix, host, port, err := ParseURL(member.ClientUrls[0])
 				if err != nil {
-					logutil.BgLogger().Error("fail to parse client url from pd members", zap.String("client_url", member.ClientUrls[0]), zap.Error(err))
-					return nil, err
+					return nil, fmt.Errorf("parse client url from pd members %q: %w", member.ClientUrls[0], err)
 				}
 				var pdAddr string
 				if hasPrefix {

@@ -66,7 +66,6 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 			log.Info("get keyspace meta service group info", zap.Any("group-info", keyspaceMetaServiceGroup))
 			return keyspaceMetaServiceGroup, nil
 		}
-		log.Error("it is unexpected for the keyspace to have a group ID but no group addresses", zap.Any("group-info", keyspaceMetaServiceGroup))
 		return nil, ErrGroupNotMatch
 	}
 

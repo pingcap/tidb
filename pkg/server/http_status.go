@@ -55,9 +55,9 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
+	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/printer"
@@ -67,6 +67,7 @@ import (
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
@@ -576,39 +577,54 @@ func (s *Server) startHTTPServer() {
 }
 
 // GetKeyspaceMetaServiceAddrs exports for testing.
-func GetKeyspaceMetaServiceAddrs(store kv.Storage) ([]string, *tls.Config, bool) {
+func GetKeyspaceMetaServiceAddrs(store kv.Storage) ([]string, *tls.Config, error) {
 	ebd, ok := store.(kv.MetaServiceBackend)
 	if !ok {
-		if !intest.InTest {
-			logutil.BgLogger().Panic("get meta service backend not ok")
-		}
-		return nil, nil, false
+		return nil, nil, errors.New("store does not implement MetaServiceBackend")
 	}
 	metaServiceInfo, err := ebd.MetaServiceInfo()
 	if err != nil {
-		if !intest.InTest {
-			logutil.BgLogger().Panic("tikv store not meta service backend", zap.Error(err))
-		}
-		logutil.BgLogger().Error("tikv store not meta service backend", zap.Error(err))
-		return nil, nil, false
+		return nil, nil, errors.Annotate(err, "get meta service info")
 	}
 	if metaServiceInfo == nil {
-		if !intest.InTest {
-			logutil.BgLogger().Panic("meta service info is nil")
-		}
-		logutil.BgLogger().Error("meta service info is nil")
-		return nil, nil, false
+		return nil, nil, errors.New("meta service info is nil")
 	}
 	if metaServiceInfo.KeyspaceMetaGroup == nil {
-		if !intest.InTest {
-			logutil.BgLogger().Panic("keyspace meta service group is nil")
-		}
-		logutil.BgLogger().Error("keyspace meta service group is nil")
-		return nil, nil, false
+		return nil, nil, errors.New("keyspace meta service group is nil")
 	}
 	keyspaceMetaServiceAddrs := metaServiceInfo.KeyspaceMetaGroup.KeyspaceMetaServiceAddrs
 	logutil.BgLogger().Info("register auto service on meta service", zap.Any("meta-service-addrs", keyspaceMetaServiceAddrs))
-	return keyspaceMetaServiceAddrs, ebd.TLSConfig(), true
+	return keyspaceMetaServiceAddrs, ebd.TLSConfig(), nil
+}
+
+// setupAutoIDService initializes and registers the AutoID service for TiKV stores.
+func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
+	keyspaceName := config.GetGlobalKeyspaceName()
+
+	var fullPath string
+	if keyspaceName == "" {
+		fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
+	} else {
+		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+	}
+
+	store, err := store.New(fullPath)
+	if err != nil {
+		logutil.BgLogger().Warn("skip auto service registration because opening tikv store failed", zap.Error(err))
+		return
+	}
+
+	keyspaceMetaServiceAddrs, tlsConfig, err := GetKeyspaceMetaServiceAddrs(store)
+	if err != nil {
+		logutil.BgLogger().Warn("skip auto service registration because meta service is unavailable", zap.Error(err))
+		return
+	}
+
+	selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
+	service := autoid.New(selfAddr, keyspaceMetaServiceAddrs, store, tlsConfig)
+	logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
+	pb.RegisterAutoIDAllocServer(grpcServer, service)
+	s.autoIDService = service
 }
 
 func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
@@ -622,15 +638,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
 	if s.cfg.Store == config.StoreTypeTiKV {
-		if tidbDriver, ok := s.driver.(*TiDBDriver); ok {
-			if keyspaceMetaServiceAddrs, tlsConfig, ok := GetKeyspaceMetaServiceAddrs(tidbDriver.store); ok {
-				selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-				service := autoid.New(selfAddr, keyspaceMetaServiceAddrs, tidbDriver.store, tlsConfig)
-				logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
-				pb.RegisterAutoIDAllocServer(grpcServer, service)
-				s.autoIDService = service
-			}
-		}
+		s.setupAutoIDService(grpcServer)
 	}
 
 	s.statusServer.Store(statusServer)
