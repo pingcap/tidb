@@ -430,6 +430,18 @@ func writeLockMeta(t *testing.T, strg storeapi.Storage, path string, meta objsto
 	require.NoError(t, strg.WriteFile(context.Background(), path, data))
 }
 
+type deleteRaceStorage struct {
+	storeapi.Storage
+	beforeDelete func(context.Context, string)
+}
+
+func (s *deleteRaceStorage) DeleteFile(ctx context.Context, name string) error {
+	if s.beforeDelete != nil {
+		s.beforeDelete(ctx, name)
+	}
+	return s.Storage.DeleteFile(ctx, name)
+}
+
 func TestCleanUpStaleLockOverdueWithinTTL(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
@@ -485,6 +497,43 @@ func TestCleanUpStaleLockOverduePastTTL(t *testing.T) {
 	require.True(t, reclaimed)
 	requireFileNotExists(t, filepath.Join(pth, "stale.lock"))
 	require.Less(t, elapsed, 30*time.Millisecond, "deeply overdue locks should reclaim immediately")
+}
+
+func TestCleanUpStaleLockDoesNotDeleteFreshFixedPathLock(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	now := time.Now()
+	defer objstore.TEST_SetNow(func() time.Time { return now })()
+	writeLockMeta(t, strg, "fixed.lock", objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		ExpireAt: now.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "stale-holder",
+	})
+
+	raceStrg := &deleteRaceStorage{Storage: strg}
+	var freshLock *objstore.RemoteLock
+	raceStrg.beforeDelete = func(ctx context.Context, name string) {
+		require.Equal(t, "fixed.lock", name)
+		raceStrg.beforeDelete = nil
+
+		require.NoError(t, strg.DeleteFile(ctx, name))
+		var err error
+		freshLock, err = objstore.TryLockRemote(ctx, strg, name, "fresh-holder")
+		require.NoError(t, err)
+	}
+
+	reclaimed, err := objstore.CleanUpStaleLock(ctx, raceStrg, "fixed.lock")
+	require.NoError(t, err)
+	require.NotNil(t, freshLock)
+
+	meta, err := getLockMetaForTest(t, strg, "fixed.lock")
+	require.NoError(t, err)
+	require.Equal(t, "fresh-holder", meta.Hint, "cleanup must not delete a freshly acquired fixed-path lock")
+	require.False(t, reclaimed, "cleanup must not report reclaiming a lock that was replaced during cleanup")
+	require.NoError(t, freshLock.Unlock(ctx))
 }
 
 func TestCleanUpStaleLockAlive(t *testing.T) {

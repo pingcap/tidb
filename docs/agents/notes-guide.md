@@ -27,3 +27,7 @@ Policy-level requirements remain in the repository root `AGENTS.md`.
 ## IMPORT INTO Notes
 
 - IMPORT INTO notes live at `docs/agents/import-into/README.md`.
+
+## BR Notes
+
+- BR lease-lock business review notes live under `docs/agents/br/`.
