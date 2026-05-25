@@ -169,6 +169,7 @@ func (c *s3Client) PutObject(ctx context.Context, name string, data []byte) erro
 	if c.s3Compatible {
 		optFns = []func(*s3.Options){withContentMD5}
 	}
+	s3like.RecordAPICall(s3like.BackendS3, s3like.APICallPutObject)
 	_, err := c.svc.PutObject(ctx, input, optFns...)
 	return errors.Trace(err)
 }

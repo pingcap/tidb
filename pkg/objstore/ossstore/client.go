@@ -135,6 +135,7 @@ func (c *client) GetObject(ctx context.Context, file string, startOffset, endOff
 
 func (c *client) PutObject(ctx context.Context, file string, data []byte) error {
 	key := c.ObjectKey(file)
+	s3like.RecordAPICall(s3like.BackendOSS, s3like.APICallPutObject)
 	_, err := c.svc.PutObject(ctx, &oss.PutObjectRequest{
 		Body:   bytes.NewReader(data),
 		Bucket: oss.Ptr(c.options.Bucket),

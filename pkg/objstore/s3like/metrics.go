@@ -31,6 +31,8 @@ const (
 	APICallListObjects = "ListObjects"
 	// APICallHeadObjects is the metric label value for HeadObject API calls.
 	APICallHeadObjects = "HeadObjects"
+	// APICallPutObject is the metric label value for PutObject API calls.
+	APICallPutObject = "PutObject"
 )
 
 var (

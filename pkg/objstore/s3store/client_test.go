@@ -269,6 +269,10 @@ func TestContentMD5OptionForS3Compatible(t *testing.T) {
 					options:      &backuppb.S3{Bucket: "bucket"},
 					s3Compatible: tc.s3Compatible,
 				}
+				metricBefore := promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+					s3like.BackendS3,
+					s3like.APICallPutObject,
+				))
 
 				s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
 					DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -280,6 +284,10 @@ func TestContentMD5OptionForS3Compatible(t *testing.T) {
 
 				require.NoError(t, cli.PutObject(ctx, "object", []byte("data")))
 				require.True(t, s.Controller.Satisfied())
+				require.Equal(t, metricBefore+1, promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+					s3like.BackendS3,
+					s3like.APICallPutObject,
+				)))
 			})
 		}
 	})
