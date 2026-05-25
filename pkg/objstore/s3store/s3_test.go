@@ -1407,19 +1407,22 @@ func TestTryLockRemoteRootPathPrefix(t *testing.T) {
 	)
 	defer controller.Finish()
 
+	listCalls := 0
 	s3API.EXPECT().
 		ListObjectsV2(gomock.Any(), gomock.Any(), gomock.Any()).
+		Times(2).
 		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
-			require.Equal(t, "truncating.lock", aws.ToString(input.Prefix))
+			prefix := aws.ToString(input.Prefix)
+			listCalls++
+			if listCalls == 1 {
+				require.Equal(t, "truncating.lock", prefix)
+				return &s3.ListObjectsV2Output{}, nil
+			}
+			require.True(t, strings.HasPrefix(prefix, "truncating.lock."), prefix)
 			return nil, errors.New("stop")
 		})
-	s3API.EXPECT().
-		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-			return nil, errors.New("no such key")
-		})
 
-	_, err := TryLockRemote(context.Background(), storage, "truncating.lock", "hint")
+	_, err := TryLockRemoteTruncate(context.Background(), storage, "hint")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "during initial check")
 }

@@ -2645,36 +2645,43 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 		t.Fatal("MergeAndMigrateTo did not reach interactive check")
 	}
 
-	readLockMeta := func() (objstore.LockMeta, bool) {
-		metaBytes, err := s.ReadFile(ctx, lockPrefix+".WRIT")
+	readLockMeta := func() (objstore.LockMeta, string, bool) {
+		var paths []string
+		require.NoError(t, s.WalkDir(ctx, &storeapi.WalkOption{
+			SubDir:    path.Dir(lockPrefix),
+			ObjPrefix: path.Base(lockPrefix) + ".WRIT.",
+		}, func(p string, _ int64) error {
+			paths = append(paths, p)
+			return nil
+		}))
+		if len(paths) != 1 {
+			return objstore.LockMeta{}, "", false
+		}
+		metaBytes, err := s.ReadFile(ctx, paths[0])
 		if err != nil {
-			return objstore.LockMeta{}, false
+			return objstore.LockMeta{}, "", false
 		}
 		var meta objstore.LockMeta
 		if err := json.Unmarshal(metaBytes, &meta); err != nil {
-			return objstore.LockMeta{}, false
+			return objstore.LockMeta{}, "", false
 		}
-		return meta, true
+		return meta, paths[0], true
 	}
 
-	initialMeta, ok := readLockMeta()
+	initialMeta, initialLockPath, ok := readLockMeta()
 	require.True(t, ok)
 	originalReclaimAt := initialMeta.ExpireAt.Add(leaseTTL)
 
 	require.Eventually(t, func() bool {
-		meta, ok := readLockMeta()
-		return ok && meta.ExpireAt.After(initialMeta.ExpireAt.Add(leaseTTL/2))
+		meta, lockPath, ok := readLockMeta()
+		return ok && lockPath == initialLockPath && meta.ExpireAt.After(initialMeta.ExpireAt.Add(leaseTTL/2))
 	}, 2*time.Second, 10*time.Millisecond)
 
 	if wait := time.Until(originalReclaimAt.Add(20 * time.Millisecond)); wait > 0 {
 		time.Sleep(wait)
 	}
 
-	reclaimed, err := objstore.CleanUpStaleLock(ctx, s, lockPrefix+".WRIT")
-	require.NoError(t, err)
-	require.False(t, reclaimed, "active MergeAndMigrateTo write lock should be renewed and not reclaimed")
-
-	_, err = objstore.TryLockRemoteWrite(ctx, s, lockPrefix, "competing writer")
+	_, err := objstore.TryLockRemoteWrite(ctx, s, lockPrefix, "competing writer")
 	require.Error(t, err, "competing writer should not acquire the write lock while MergeAndMigrateTo is alive")
 
 	release()

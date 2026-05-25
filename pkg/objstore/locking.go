@@ -17,6 +17,8 @@ package objstore
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	stderrors "errors"
@@ -284,43 +286,232 @@ func (l *RemoteLock) String() string {
 	return fmt.Sprintf("{path=%s,uuid=%s,storage_uri=%s}", l.path, l.txnID, l.storage.URI())
 }
 
-func tryFetchRemoteLockInfo(ctx context.Context, storage storeapi.Storage, path string) error {
-	meta, err := getLockMeta(ctx, storage, path)
-	if err != nil {
-		return err
-	}
-	return ErrLocked{Meta: meta}
+type lockAcquireKind uint8
+
+const (
+	lockAcquireTruncate lockAcquireKind = iota
+	lockAcquireMigrationWrite
+	lockAcquireMigrationRead
+	lockAcquireAppendWrite
+)
+
+type lockMemberKind uint8
+
+const (
+	lockMemberUnknown lockMemberKind = iota
+	lockMemberTruncate
+	lockMemberMigrationWrite
+	lockMemberMigrationRead
+	lockMemberAppendWrite
+)
+
+type lockFamilyMember struct {
+	path            string
+	kind            lockMemberKind
+	ownIntent       bool
+	intent          bool
+	cleanupEligible bool
 }
 
-// TryLockRemote tries to create a "lock file" at the external storage.
-// If success, we will create a file at the path provided. So others may not access the file then.
-// Will return a `ErrLocked` if there is another process already creates the lock file.
-// This isn't a strict lock like flock in linux: that means, the lock might be forced removed by
-// manually deleting the "lock file" in external storage.
-func TryLockRemote(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
+type lockFamilyConflictError struct {
+	member lockFamilyMember
+}
+
+func (e lockFamilyConflictError) Error() string {
+	return fmt.Sprintf("conflict file %s", e.member.path)
+}
+
+func newLockGeneration() (string, error) {
+	var randomBytes [8]byte
+	if _, err := cryptorand.Read(randomBytes[:]); err != nil {
+		return "", errors.Annotate(err, "generate lock instance id")
+	}
+	return fmt.Sprintf("%016x%016x", nowFunc().UnixNano(), binary.BigEndian.Uint64(randomBytes[:])), nil
+}
+
+func makeLockContent(path, hint string) func(uuid.UUID) []byte {
+	return func(txnID uuid.UUID) []byte {
+		meta := MakeLockMeta(hint)
+		meta.TxnID = txnID[:]
+		res, err := json.Marshal(meta)
+		if err != nil {
+			log.Panic(
+				"Unreachable: a lock meta object cannot be marshaled to JSON.",
+				zap.String("path", path),
+				logutil.ShortError(err),
+			)
+		}
+		return res
+	}
+}
+
+func tryLockRemoteExact(
+	ctx context.Context,
+	storage storeapi.Storage,
+	physicalPath string,
+	hint string,
+	verify func(VerifyWriteContext) error,
+) (*RemoteLock, error) {
 	writer := conditionalPut{
-		Target: path,
-		Content: func(txnID uuid.UUID) []byte {
-			meta := MakeLockMeta(hint)
-			meta.TxnID = txnID[:]
-			res, err := json.Marshal(meta)
-			if err != nil {
-				log.Panic(
-					"Unreachable: a trivial object cannot be marshaled to JSON.",
-					zap.String("path", path),
-					logutil.ShortError(err),
-				)
-			}
-			return res
-		},
+		Target:  physicalPath,
+		Content: makeLockContent(physicalPath, hint),
+		Verify:  verify,
 	}
 
 	txnID, err := writer.CommitTo(ctx, storage)
 	if err != nil {
-		lockInfo := tryFetchRemoteLockInfo(ctx, storage, path)
-		return nil, errors.Annotatef(err, "failed to acquire lock on '%s': %s", path, lockInfo)
+		return nil, errors.Annotatef(err, "failed to acquire lock on '%s'", physicalPath)
 	}
-	return &RemoteLock{txnID: txnID, storage: storage, path: path}, nil
+	return &RemoteLock{txnID: txnID, storage: storage, path: physicalPath}, nil
+}
+
+func is32Hex(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+func is16Hex(s string) bool {
+	if len(s) != 16 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+const (
+	truncateLockPath         = "truncating.lock"
+	migrationLockPath        = "v1/LOCK"
+	appendLockPath           = "v1/APPEND_LOCK"
+	migrationWriteLockPrefix = "v1/LOCK.WRIT"
+	migrationReadLockPrefix  = "v1/LOCK.READ"
+	appendWriteLockPrefix    = "v1/APPEND_LOCK.WRIT"
+)
+
+func lockFamilyPrefixes(logicalPath string) ([]string, bool) {
+	switch logicalPath {
+	case truncateLockPath:
+		return []string{truncateLockPath}, true
+	case migrationLockPath:
+		return []string{migrationWriteLockPrefix, migrationReadLockPrefix}, true
+	case appendLockPath:
+		return []string{appendWriteLockPrefix}, true
+	default:
+		return nil, false
+	}
+}
+
+func listLockFamilyCandidates(ctx context.Context, storage storeapi.Storage, logicalPath string, includeTombstone bool) ([]string, error) {
+	prefixes, ok := lockFamilyPrefixes(logicalPath)
+	if !ok {
+		return nil, errors.Errorf("unknown lock family %s", logicalPath)
+	}
+
+	var candidates []string
+	for _, pfx := range prefixes {
+		fileName := path.Base(pfx)
+		dirName := path.Dir(pfx)
+		if dirName == "." {
+			dirName = ""
+		}
+		err := storage.WalkDir(ctx, &storeapi.WalkOption{
+			SubDir:           dirName,
+			ObjPrefix:        fileName,
+			IncludeTombstone: includeTombstone,
+		}, func(p string, _ int64) error {
+			candidates = append(candidates, p)
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return candidates, nil
+}
+
+func classifyLockFamilyMember(logicalPath, objectPath, ownIntent string) lockFamilyMember {
+	member := lockFamilyMember{
+		path:      objectPath,
+		kind:      lockMemberUnknown,
+		ownIntent: objectPath == ownIntent,
+	}
+	if member.ownIntent {
+		return member
+	}
+
+	committedPath := objectPath
+	if idx := strings.Index(committedPath, ".INTENT."); idx >= 0 {
+		committedPath = committedPath[:idx]
+		member.intent = true
+	}
+
+	switch logicalPath {
+	case truncateLockPath:
+		if committedPath == truncateLockPath {
+			member.kind = lockMemberTruncate
+		} else if strings.HasPrefix(committedPath, truncateLockPath+".") && is32Hex(strings.TrimPrefix(committedPath, truncateLockPath+".")) {
+			member.kind = lockMemberTruncate
+			member.cleanupEligible = !member.intent
+		}
+	case migrationLockPath:
+		switch {
+		case committedPath == migrationWriteLockPrefix:
+			member.kind = lockMemberMigrationWrite
+		case strings.HasPrefix(committedPath, migrationWriteLockPrefix+".") && is32Hex(strings.TrimPrefix(committedPath, migrationWriteLockPrefix+".")):
+			member.kind = lockMemberMigrationWrite
+			member.cleanupEligible = !member.intent
+		case strings.HasPrefix(committedPath, migrationReadLockPrefix+"."):
+			suffix := strings.TrimPrefix(committedPath, migrationReadLockPrefix+".")
+			if is16Hex(suffix) {
+				member.kind = lockMemberMigrationRead
+			} else if is32Hex(suffix) {
+				member.kind = lockMemberMigrationRead
+				member.cleanupEligible = !member.intent
+			}
+		}
+	case appendLockPath:
+		if committedPath == appendWriteLockPrefix {
+			member.kind = lockMemberAppendWrite
+		} else if strings.HasPrefix(committedPath, appendWriteLockPrefix+".") && is32Hex(strings.TrimPrefix(committedPath, appendWriteLockPrefix+".")) {
+			member.kind = lockMemberAppendWrite
+			member.cleanupEligible = !member.intent
+		}
+	}
+	return member
+}
+
+func verifyLockFamily(ctx VerifyWriteContext, logicalPath string, acquireKind lockAcquireKind) error {
+	candidates, err := listLockFamilyCandidates(ctx, ctx.Storage, logicalPath, true)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		member := classifyLockFamilyMember(logicalPath, candidate, ctx.IntentFileName())
+		if member.ownIntent {
+			continue
+		}
+		if lockFamilyConflicts(acquireKind, member.kind) {
+			return lockFamilyConflictError{member: member}
+		}
+	}
+	return nil
+}
+
+func lockFamilyConflicts(acquireKind lockAcquireKind, memberKind lockMemberKind) bool {
+	switch acquireKind {
+	case lockAcquireTruncate:
+		return memberKind == lockMemberTruncate || memberKind == lockMemberUnknown
+	case lockAcquireMigrationWrite:
+		return memberKind == lockMemberMigrationWrite || memberKind == lockMemberMigrationRead || memberKind == lockMemberUnknown
+	case lockAcquireMigrationRead:
+		return memberKind == lockMemberMigrationWrite || memberKind == lockMemberUnknown
+	case lockAcquireAppendWrite:
+		return memberKind == lockMemberAppendWrite || memberKind == lockMemberUnknown
+	default:
+		return true
+	}
 }
 
 // Unlock  removes the lock file at the specified path.
@@ -381,19 +572,9 @@ func (l *RemoteLock) stopRenewalIfStarted() {
 	<-done
 }
 
-// CleanUpStaleLock checks whether the lock file at `path` has remained expired
-// for at least one full LeaseTTL and, if so, deletes it.
-//
-// Returns:
-//   - reclaimed=true  : the stale lock was deleted; caller may retry acquire.
-//   - reclaimed=false : the lock is alive, has not stayed expired long enough,
-//     was written by an old client (no ExpireAt), or its file disappeared
-//     mid-flow. Caller treats this as "no action needed by us, conflict (if
-//     any) is genuine".
-//
-// The function never returns an error for the "lock not found" case (someone
-// else cleaned up); it surfaces only unexpected I/O failures.
-func CleanUpStaleLock(ctx context.Context, storage storeapi.Storage, path string) (reclaimed bool, err error) {
+var errLockMissingExpireAt = stderrors.New("lock missing ExpireAt")
+
+func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, path string) (reclaimed bool, err error) {
 	meta, err := getLockMeta(ctx, storage, path)
 	if err != nil {
 		// Lock file may have been deleted between caller's observation and
@@ -412,7 +593,7 @@ func CleanUpStaleLock(ctx context.Context, storage storeapi.Storage, path string
 		log.Warn("Encountered lock without ExpireAt (old client); will not auto-reclaim. "+
 			"Use `br log unlock --force` to clear manually if needed.",
 			zap.String("path", path), zap.Stringer("meta", meta))
-		return false, nil
+		return false, errLockMissingExpireAt
 	}
 	now := nowFunc()
 	reclaimAfter := meta.ExpireAt.Add(LeaseTTL)
@@ -428,6 +609,49 @@ func CleanUpStaleLock(ctx context.Context, storage storeapi.Storage, path string
 		zap.Time("reclaim_after", reclaimAfter),
 		zap.Stringer("original_meta", meta))
 	return true, nil
+}
+
+// CleanUpStaleTruncateLock reclaims only stale instance-form truncate locks.
+// It intentionally ignores the legacy fixed path "truncating.lock".
+func CleanUpStaleTruncateLock(ctx context.Context, storage storeapi.Storage) (bool, error) {
+	return cleanUpStaleLockFamily(ctx, storage, truncateLockPath, false)
+}
+
+func cleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logicalPath string, returnCandidateErrors bool) (bool, error) {
+	if _, ok := lockFamilyPrefixes(logicalPath); !ok {
+		return false, nil
+	}
+
+	candidates, err := listLockFamilyCandidates(ctx, storage, logicalPath, false)
+	if err != nil {
+		return false, err
+	}
+
+	anyReclaimed := false
+	var cleanupErr error
+	for _, candidate := range candidates {
+		member := classifyLockFamilyMember(logicalPath, candidate, "")
+		if !member.cleanupEligible {
+			continue
+		}
+
+		reclaimed, err := cleanUpStaleLockInstance(ctx, storage, member.path)
+		if err != nil {
+			log.Warn("Stale-lock cleanup: candidate cleanup failed; continuing with next candidate.",
+				zap.String("logical_path", logicalPath),
+				zap.String("path", member.path),
+				logutil.ShortError(err))
+			cleanupErr = multierr.Append(cleanupErr, err)
+			continue
+		}
+		if reclaimed {
+			anyReclaimed = true
+		}
+	}
+	if !returnCandidateErrors {
+		cleanupErr = nil
+	}
+	return anyReclaimed, cleanupErr
 }
 
 // errRenewTxnIDMismatch is returned by tryRenew when the lock file on remote
@@ -587,15 +811,6 @@ func (l *RemoteLock) UnlockOnCleanUp(ctx context.Context) {
 	}
 }
 
-func writeLockName(path string) string {
-	return fmt.Sprintf("%s.WRIT", path)
-}
-
-func newReadLockName(path string) string {
-	readID := rand.Int63()
-	return fmt.Sprintf("%s.READ.%016x", path, readID)
-}
-
 // Locker is a locker.
 type Locker = func(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error)
 
@@ -623,7 +838,7 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 		}
 		err = lockErr
 
-		if tryCleanUpStaleLocks(ctx, storage, lockPath) {
+		if tryCleanUpStaleLockFamily(ctx, storage, lockPath) {
 			log.Info("Stale locks cleaned up while waiting for lock.",
 				zap.String("path", lockPath))
 		}
@@ -649,110 +864,66 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	}
 }
 
-// tryCleanUpStaleLocks scans the lock-file family rooted at basePath
-// (basePath itself, basePath.WRIT, basePath.READ.*) and attempts to reclaim
-// any whose ExpireAt has expired beyond the double-confirmation window.
-// Returns true if at least one file was successfully reclaimed.
-//
-// Intent files (.INTENT.*) are skipped here; they are handled by the intent
-// expiry mechanism (separate phase).
-func tryCleanUpStaleLocks(ctx context.Context, storage storeapi.Storage, basePath string) bool {
-	fileName := path.Base(basePath)
-	dirName := path.Dir(basePath)
-	if dirName == "." {
-		dirName = ""
+func tryCleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logicalPath string) bool {
+	reclaimed, err := cleanUpStaleLockFamily(ctx, storage, logicalPath, true)
+	if err != nil {
+		log.Warn("Stale-lock cleanup: family cleanup had candidate errors; continuing retry loop.",
+			zap.String("logical_path", logicalPath),
+			logutil.ShortError(err))
 	}
-
-	var candidates []string
-	walkErr := storage.WalkDir(ctx, &storeapi.WalkOption{
-		SubDir:    dirName,
-		ObjPrefix: fileName,
-	}, func(p string, _ int64) error {
-		if strings.Contains(p, ".INTENT.") {
-			return nil
-		}
-		candidates = append(candidates, p)
-		return nil
-	})
-	if walkErr != nil {
-		log.Warn("Stale-lock cleanup: WalkDir failed; skipping reclaim attempt.",
-			zap.String("base", basePath), logutil.ShortError(walkErr))
-		return false
-	}
-
-	anyReclaimed := false
-	for _, p := range candidates {
-		reclaimed, err := CleanUpStaleLock(ctx, storage, p)
-		if err != nil {
-			log.Warn("Stale-lock cleanup: CleanUpStaleLock failed; continuing with next candidate.",
-				zap.String("path", p), logutil.ShortError(err))
-			continue
-		}
-		if reclaimed {
-			anyReclaimed = true
-		}
-	}
-	return anyReclaimed
+	return reclaimed
 }
 
 // TryLockRemoteWrite try lock.
 func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
-	target := writeLockName(path)
-	writer := conditionalPut{
-		Target: target,
-		Content: func(txnID uuid.UUID) []byte {
-			meta := MakeLockMeta(hint)
-			meta.TxnID = txnID[:]
-			res, err := json.Marshal(meta)
-			if err != nil {
-				log.Panic(
-					"Unreachable: a plain object cannot be marshaled to JSON.",
-					zap.String("path", path),
-					logutil.ShortError(err),
-				)
-			}
-			return res
-		},
-		Verify: func(ctx VerifyWriteContext) error {
-			return ctx.assertNoOtherOfPrefixExpect(path, ctx.IntentFileName())
-		},
+	var target string
+	var acquireKind lockAcquireKind
+	switch path {
+	case migrationLockPath:
+		generation, err := newLockGeneration()
+		if err != nil {
+			return nil, err
+		}
+		target = fmt.Sprintf("%s.%s", migrationWriteLockPrefix, generation)
+		acquireKind = lockAcquireMigrationWrite
+	case appendLockPath:
+		generation, err := newLockGeneration()
+		if err != nil {
+			return nil, err
+		}
+		target = fmt.Sprintf("%s.%s", appendWriteLockPrefix, generation)
+		acquireKind = lockAcquireAppendWrite
+	default:
+		return nil, errors.Errorf("unknown lock family %s", path)
 	}
-
-	txnID, err := writer.CommitTo(ctx, storage)
-	if err != nil {
-		return nil, errors.Annotatef(err, "something wrong about the lock: %s", tryFetchRemoteLockInfo(ctx, storage, target))
-	}
-	return &RemoteLock{txnID: txnID, storage: storage, path: target}, nil
+	return tryLockRemoteExact(ctx, storage, target, hint, func(ctx VerifyWriteContext) error {
+		return verifyLockFamily(ctx, path, acquireKind)
+	})
 }
 
 // TryLockRemoteRead try lock.
 func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
-	target := newReadLockName(path)
-	writeLock := writeLockName(path)
-	writer := conditionalPut{
-		Target: target,
-		Content: func(txnID uuid.UUID) []byte {
-			meta := MakeLockMeta(hint)
-			meta.TxnID = txnID[:]
-			res, err := json.Marshal(meta)
-			if err != nil {
-				log.Panic(
-					"Unreachable: a trivial object cannot be marshaled to JSON.",
-					zap.String("path", path),
-					logutil.ShortError(err),
-				)
-			}
-			return res
-		},
-		Verify: func(ctx VerifyWriteContext) error {
-			return ctx.assertNoOtherOfPrefixExpect(writeLock, "")
-		},
+	if path != migrationLockPath {
+		return nil, errors.Errorf("unknown lock family %s", path)
 	}
-
-	txnID, err := writer.CommitTo(ctx, storage)
+	generation, err := newLockGeneration()
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to commit the lock due to existing lock: "+
-			"something wrong about the lock: %s", tryFetchRemoteLockInfo(ctx, storage, writeLock))
+		return nil, err
 	}
-	return &RemoteLock{txnID: txnID, storage: storage, path: target}, nil
+	target := fmt.Sprintf("%s.%s", migrationReadLockPrefix, generation)
+	return tryLockRemoteExact(ctx, storage, target, hint, func(ctx VerifyWriteContext) error {
+		return verifyLockFamily(ctx, path, lockAcquireMigrationRead)
+	})
+}
+
+// TryLockRemoteTruncate tries to create an instance lock for truncation.
+func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string) (*RemoteLock, error) {
+	generation, err := newLockGeneration()
+	if err != nil {
+		return nil, err
+	}
+	target := fmt.Sprintf("%s.%s", truncateLockPath, generation)
+	return tryLockRemoteExact(ctx, storage, target, hint, func(ctx VerifyWriteContext) error {
+		return verifyLockFamily(ctx, truncateLockPath, lockAcquireTruncate)
+	})
 }

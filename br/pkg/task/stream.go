@@ -90,7 +90,7 @@ const (
 
 	truncateLockPath   = "truncating.lock"
 	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
-		"You may check the metadata and continue by wait other task finish or manually delete the lock file " + truncateLockPath + " at the external storage."
+		"You may check the metadata and continue by waiting for the other task to finish, or manually delete the conflicting lock object reported in the error after confirming the owner has exited."
 )
 
 const (
@@ -1119,10 +1119,10 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	if _, err := objstore.CleanUpStaleLock(ctx, extStorage, truncateLockPath); err != nil {
+	if _, err := objstore.CleanUpStaleTruncateLock(ctx, extStorage); err != nil {
 		return err
 	}
-	lock, err := objstore.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock)
+	lock, err := objstore.TryLockRemoteTruncate(ctx, extStorage, hintOnTruncateLock)
 	if err != nil {
 		return err
 	}

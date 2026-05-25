@@ -16,9 +16,11 @@ package objstore_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,46 +55,210 @@ func requireFileNotExists(t *testing.T, path string) {
 	require.True(t, os.IsNotExist(err))
 }
 
-func TestTryLockRemote(t *testing.T) {
+func requireListedPathsWithPrefix(t *testing.T, strg storeapi.Storage, prefix string) []string {
+	t.Helper()
+	dirName := ""
+	fileName := prefix
+	if idx := strings.LastIndex(prefix, "/"); idx >= 0 {
+		dirName = prefix[:idx]
+		fileName = prefix[idx+1:]
+	}
+
+	var paths []string
+	require.NoError(t, strg.WalkDir(context.Background(), &storeapi.WalkOption{
+		SubDir:    dirName,
+		ObjPrefix: fileName,
+	}, func(p string, _ int64) error {
+		paths = append(paths, p)
+		return nil
+	}))
+	return paths
+}
+
+func requireSinglePathWithPrefix(t *testing.T, strg storeapi.Storage, prefix string) string {
+	t.Helper()
+	paths := requireListedPathsWithPrefix(t, strg, prefix)
+	require.Len(t, paths, 1)
+	return paths[0]
+}
+
+func require32HexSuffix(t *testing.T, p, prefix string) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(p, prefix), "path %q must start with %q", p, prefix)
+	suffix := strings.TrimPrefix(p, prefix)
+	require.Len(t, suffix, 32)
+	_, err := hex.DecodeString(suffix)
+	require.NoError(t, err)
+}
+
+func TestTryLockRemoteTruncate(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "This file is mine!")
+	lock, err := objstore.TryLockRemoteTruncate(ctx, strg, "This file is mine!")
 	require.NoError(t, err)
-	requireFileExists(t, filepath.Join(pth, "test.lock"))
+	lockPath := requireSinglePathWithPrefix(t, strg, "truncating.lock.")
+	requireFileExists(t, filepath.Join(pth, lockPath))
 	err = lock.Unlock(ctx)
 	require.NoError(t, err)
-	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+	requireFileNotExists(t, filepath.Join(pth, lockPath))
 }
 
 func TestConflictLock(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "This file is mine!")
+	lock, err := objstore.TryLockRemoteTruncate(ctx, strg, "This file is mine!")
 	require.NoError(t, err)
-	_, err = objstore.TryLockRemote(ctx, strg, "test.lock", "This file is mine!")
-	require.ErrorContains(t, err, "conflict file test.lock")
-	requireFileExists(t, filepath.Join(pth, "test.lock"))
+	lockPath := requireSinglePathWithPrefix(t, strg, "truncating.lock.")
+	_, err = objstore.TryLockRemoteTruncate(ctx, strg, "This file is mine!")
+	require.ErrorContains(t, err, "conflict file")
+	requireFileExists(t, filepath.Join(pth, lockPath))
 	err = lock.Unlock(ctx)
 	require.NoError(t, err)
-	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+	requireFileNotExists(t, filepath.Join(pth, lockPath))
 }
 
 func TestRWLock(t *testing.T) {
 	ctx := context.Background()
 	strg, path := createMockStorage(t)
-	lock, err := objstore.TryLockRemoteRead(ctx, strg, "test.lock", "I wanna read it!")
+	lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "I wanna read it!")
 	require.NoError(t, err)
-	lock2, err := objstore.TryLockRemoteRead(ctx, strg, "test.lock", "I wanna read it too!")
+	lock2, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "I wanna read it too!")
 	require.NoError(t, err)
-	_, err = objstore.TryLockRemoteWrite(ctx, strg, "test.lock", "I wanna write it, you get out!")
+	_, err = objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "I wanna write it, you get out!")
 	require.Error(t, err)
 	require.NoError(t, lock.Unlock(ctx))
 	require.NoError(t, lock2.Unlock(ctx))
-	l, err := objstore.TryLockRemoteWrite(ctx, strg, "test.lock", "Can I have a write lock?")
+	l, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "Can I have a write lock?")
 	require.NoError(t, err)
-	requireFileExists(t, filepath.Join(path, "test.lock.WRIT"))
+	writePath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
+	require32HexSuffix(t, writePath, "v1/LOCK.WRIT.")
+	requireFileExists(t, filepath.Join(path, writePath))
 	require.NoError(t, l.Unlock(ctx))
-	requireFileNotExists(t, filepath.Join(path, "test.lock.WRIT"))
+	requireFileNotExists(t, filepath.Join(path, writePath))
+}
+
+func TestTryLockRemoteTruncateCreatesInstancePath(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+
+	lock, err := objstore.TryLockRemoteTruncate(ctx, strg, "truncate")
+	require.NoError(t, err)
+
+	lockPath := requireSinglePathWithPrefix(t, strg, "truncating.lock.")
+	require32HexSuffix(t, lockPath, "truncating.lock.")
+	requireFileExists(t, filepath.Join(pth, lockPath))
+	require.NoError(t, lock.Unlock(ctx))
+	requireFileNotExists(t, filepath.Join(pth, lockPath))
+}
+
+func TestTryLockRemoteReadWriteCreateInstancePaths(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+
+	readLock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader")
+	require.NoError(t, err)
+	readPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.READ.")
+	require32HexSuffix(t, readPath, "v1/LOCK.READ.")
+	requireFileExists(t, filepath.Join(pth, readPath))
+
+	readLock2, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader 2")
+	require.NoError(t, err)
+	require.Len(t, requireListedPathsWithPrefix(t, strg, "v1/LOCK.READ."), 2)
+
+	_, err = objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer")
+	require.ErrorContains(t, err, "conflict file")
+
+	require.NoError(t, readLock.Unlock(ctx))
+	require.NoError(t, readLock2.Unlock(ctx))
+
+	writeLock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer")
+	require.NoError(t, err)
+	writePath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
+	require32HexSuffix(t, writePath, "v1/LOCK.WRIT.")
+	requireFileExists(t, filepath.Join(pth, writePath))
+	require.NoError(t, writeLock.Unlock(ctx))
+	requireFileNotExists(t, filepath.Join(pth, writePath))
+}
+
+func TestTryLockRemoteAppendWriteCreatesInstancePath(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/APPEND_LOCK", "append writer")
+	require.NoError(t, err)
+
+	lockPath := requireSinglePathWithPrefix(t, strg, "v1/APPEND_LOCK.WRIT.")
+	require32HexSuffix(t, lockPath, "v1/APPEND_LOCK.WRIT.")
+	requireFileExists(t, filepath.Join(pth, lockPath))
+	require.NoError(t, lock.Unlock(ctx))
+	requireFileNotExists(t, filepath.Join(pth, lockPath))
+}
+
+func TestTryLockRemoteRejectsUnknownLogicalFamily(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+
+	_, err := objstore.TryLockRemoteRead(ctx, strg, "v1/APPEND_LOCK", "bad read")
+	require.ErrorContains(t, err, "unknown lock family")
+
+	_, err = objstore.TryLockRemoteWrite(ctx, strg, "v2/LOCK", "bad write")
+	require.ErrorContains(t, err, "unknown lock family")
+}
+
+func TestTryLockRemoteIgnoresOwnIntent(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer")
+	require.NoError(t, err)
+	require.NoError(t, lock.Unlock(ctx))
+}
+
+func TestTryLockRemoteReadWriteIntentCompatibility(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+
+	require.NoError(t, strg.WriteFile(ctx, "v1/LOCK.READ.0123456789abcdef0123456789abcdef.INTENT.reader", []byte{}))
+	writeLock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer blocked by read intent")
+	require.ErrorContains(t, err, "conflict file")
+	require.Nil(t, writeLock)
+
+	readLock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader compatible with read intent")
+	require.NoError(t, err)
+	require.NoError(t, readLock.Unlock(ctx))
+
+	require.NoError(t, strg.DeleteFile(ctx, "v1/LOCK.READ.0123456789abcdef0123456789abcdef.INTENT.reader"))
+	require.NoError(t, strg.WriteFile(ctx, "v1/LOCK.WRIT.0123456789abcdef0123456789abcdef.INTENT.writer", []byte{}))
+	_, err = objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader blocked by write intent")
+	require.ErrorContains(t, err, "conflict file")
+}
+
+func TestTryLockRemoteAcquireBlockedByLegacyAndUnknownProtectedMembers(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("legacy read blocks write", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		require.NoError(t, strg.WriteFile(ctx, "v1/LOCK.READ.cafef00d12345678", []byte("{}")))
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer")
+		require.ErrorContains(t, err, "conflict file")
+		require.Nil(t, lock)
+	})
+
+	t.Run("unknown migration object blocks acquire", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		require.NoError(t, strg.WriteFile(ctx, "v1/LOCK.WRITER_NOTES", []byte("{}")))
+		lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader")
+		require.ErrorContains(t, err, "conflict file")
+		require.Nil(t, lock)
+	})
+
+	t.Run("unknown truncate object blocks acquire", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		require.NoError(t, strg.WriteFile(ctx, "truncating.lock.backup", []byte("{}")))
+		lock, err := objstore.TryLockRemoteTruncate(ctx, strg, "truncate")
+		require.ErrorContains(t, err, "conflict file")
+		require.Nil(t, lock)
+	})
 }
 
 func TestConcurrentLock(t *testing.T) {
@@ -126,12 +292,12 @@ func TestConcurrentLock(t *testing.T) {
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-2", onceB))
 
 	go func() {
-		_, err := objstore.TryLockRemote(ctx, strg, "test.lock", "I wanna read it, but I hesitated before send my intention!")
+		_, err := objstore.TryLockRemoteTruncate(ctx, strg, "I wanna read it, but I hesitated before send my intention!")
 		errChA <- err
 	}()
 
 	go func() {
-		_, err := objstore.TryLockRemote(ctx, strg, "test.lock", "I wanna read it too, but I hesitated before committing!")
+		_, err := objstore.TryLockRemoteTruncate(ctx, strg, "I wanna read it too, but I hesitated before committing!")
 		errChB <- err
 	}()
 
@@ -150,19 +316,21 @@ func TestConcurrentLock(t *testing.T) {
 		require.NoError(t, errB, "%s", errA)
 	}
 
-	requireFileExists(t, filepath.Join(path, "test.lock"))
+	lockPath := requireSinglePathWithPrefix(t, strg, "truncating.lock.")
+	requireFileExists(t, filepath.Join(path, lockPath))
 }
 
 func TestUnlockOnCleanUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	strg, pth := createMockStorage(t)
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "This file is mine!")
+	lock, err := objstore.TryLockRemoteTruncate(ctx, strg, "This file is mine!")
 	require.NoError(t, err)
-	requireFileExists(t, filepath.Join(pth, "test.lock"))
+	lockPath := requireSinglePathWithPrefix(t, strg, "truncating.lock.")
+	requireFileExists(t, filepath.Join(pth, lockPath))
 
 	cancel()
 	lock.UnlockOnCleanUp(ctx)
-	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+	requireFileNotExists(t, filepath.Join(pth, lockPath))
 }
 
 func TestMakeLockMetaHasExpireAt(t *testing.T) {
@@ -179,7 +347,7 @@ func TestMakeLockMetaHasExpireAt(t *testing.T) {
 
 func TestTESTSetLeaseConstantsRestores(t *testing.T) {
 	origTTL := objstore.LeaseTTL
-	restore := objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)
+	restore := objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)
 	require.Equal(t, 100*time.Millisecond, objstore.LeaseTTL, "override must take effect")
 	restore()
 	require.Equal(t, origTTL, objstore.LeaseTTL, "restore must revert the override")
@@ -187,7 +355,7 @@ func TestTESTSetLeaseConstantsRestores(t *testing.T) {
 
 func TestTESTSetNowRestores(t *testing.T) {
 	fixed := time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
-	restore := objstore.TEST_SetNow(func() time.Time { return fixed })
+	restore := objstore.TESTSetNow(func() time.Time { return fixed })
 	m1 := objstore.MakeLockMeta("t")
 	require.Equal(t, fixed, m1.LockedAt)
 	require.Equal(t, fixed.Add(objstore.LeaseTTL), m1.ExpireAt)
@@ -199,23 +367,26 @@ func TestTESTSetNowRestores(t *testing.T) {
 func TestTryRenewSuccess(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
 
 	// Read back original ExpireAt.
-	origData, err := strg.ReadFile(ctx, "test.lock")
+	origData, err := strg.ReadFile(ctx, physicalPath)
 	require.NoError(t, err)
 	var origMeta objstore.LockMeta
 	require.NoError(t, json.Unmarshal(origData, &origMeta))
 
 	// Advance clock and renew.
 	advanced := origMeta.LockedAt.Add(time.Minute)
-	restoreNow := objstore.TEST_SetNow(func() time.Time { return advanced })
+	restoreNow := objstore.TESTSetNow(func() time.Time { return advanced })
 	defer restoreNow()
 
-	require.NoError(t, objstore.TEST_TryRenew(lock, ctx))
+	require.NoError(t, objstore.TESTTryRenew(ctx, lock))
 
-	newData, err := strg.ReadFile(ctx, "test.lock")
+	afterPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
+	require.Equal(t, physicalPath, afterPath, "renewal must refresh the existing physical instance path")
+	newData, err := strg.ReadFile(ctx, afterPath)
 	require.NoError(t, err)
 	var newMeta objstore.LockMeta
 	require.NoError(t, json.Unmarshal(newData, &newMeta))
@@ -227,8 +398,9 @@ func TestTryRenewSuccess(t *testing.T) {
 func TestTryRenewTxnIDMismatch(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
 
 	// Overwrite the lock file with a different TxnID, simulating that another
 	// process has reclaimed and re-acquired the lock.
@@ -236,36 +408,37 @@ func TestTryRenewTxnIDMismatch(t *testing.T) {
 	hijacked.TxnID = []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
 	hijackedData, err := json.Marshal(hijacked)
 	require.NoError(t, err)
-	require.NoError(t, strg.WriteFile(ctx, "test.lock", hijackedData))
+	require.NoError(t, strg.WriteFile(ctx, physicalPath, hijackedData))
 
-	err = objstore.TEST_TryRenew(lock, ctx)
-	require.ErrorIs(t, err, objstore.TEST_ErrRenewTxnIDMismatch)
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewTxnIDMismatch)
 }
 
 func TestTryRenewLeaseExpired(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
 
 	// Advance the clock far past the lease expiry.
-	origData, err := strg.ReadFile(ctx, "test.lock")
+	origData, err := strg.ReadFile(ctx, physicalPath)
 	require.NoError(t, err)
 	var origMeta objstore.LockMeta
 	require.NoError(t, json.Unmarshal(origData, &origMeta))
 
 	wayLate := origMeta.ExpireAt.Add(time.Hour)
-	restoreNow := objstore.TEST_SetNow(func() time.Time { return wayLate })
+	restoreNow := objstore.TESTSetNow(func() time.Time { return wayLate })
 	defer restoreNow()
 
-	err = objstore.TEST_TryRenew(lock, ctx)
-	require.ErrorIs(t, err, objstore.TEST_ErrRenewLeaseExpired)
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewLeaseExpired)
 }
 
 func TestTryRenewWriteError(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable(
@@ -275,25 +448,26 @@ func TestTryRenewWriteError(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err"))
 	}()
 
-	err = objstore.TEST_TryRenew(lock, ctx)
+	err = objstore.TESTTryRenew(ctx, lock)
 	require.Error(t, err)
-	require.NotErrorIs(t, err, objstore.TEST_ErrRenewTxnIDMismatch)
-	require.NotErrorIs(t, err, objstore.TEST_ErrRenewLeaseExpired)
+	require.NotErrorIs(t, err, objstore.TESTRenewTxnIDMismatch)
+	require.NotErrorIs(t, err, objstore.TESTRenewLeaseExpired)
 	require.Contains(t, err.Error(), "simulated S3 outage")
 }
 
 func TestStartRenewalRefreshesLeasePeriodically(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(200*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
-	defer objstore.TEST_StopRenewal(lock)
+	defer objstore.TESTStopRenewal(lock)
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
 
 	// Capture original ExpireAt.
 	getExpireAt := func() time.Time {
-		data, err := strg.ReadFile(ctx, "test.lock")
+		data, err := strg.ReadFile(ctx, physicalPath)
 		require.NoError(t, err)
 		var meta objstore.LockMeta
 		require.NoError(t, json.Unmarshal(data, &meta))
@@ -305,7 +479,7 @@ func TestStartRenewalRefreshesLeasePeriodically(t *testing.T) {
 
 	// Wait for at least two renewal ticks (interval=30ms → 100ms is plenty).
 	require.Eventually(t, func() bool {
-		return getExpireAt().After(orig)
+		return requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.") == physicalPath && getExpireAt().After(orig)
 	}, 500*time.Millisecond, 10*time.Millisecond,
 		"ExpireAt should advance past the original within a few renewal ticks")
 }
@@ -313,11 +487,12 @@ func TestStartRenewalRefreshesLeasePeriodically(t *testing.T) {
 func TestStartRenewalCallsOnLeaseLostOnTxnIDMismatch(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(200*time.Millisecond, 20*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(200*time.Millisecond, 20*time.Millisecond, 3, 5*time.Millisecond)()
 
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
-	defer objstore.TEST_StopRenewal(lock)
+	defer objstore.TESTStopRenewal(lock)
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
 
 	lostCh := make(chan struct{}, 1)
 	lock.StartRenewal(ctx, func() { lostCh <- struct{}{} })
@@ -327,7 +502,7 @@ func TestStartRenewalCallsOnLeaseLostOnTxnIDMismatch(t *testing.T) {
 	hijacked.TxnID = []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
 	hijackedData, err := json.Marshal(hijacked)
 	require.NoError(t, err)
-	require.NoError(t, strg.WriteFile(ctx, "test.lock", hijackedData))
+	require.NoError(t, strg.WriteFile(ctx, physicalPath, hijackedData))
 
 	select {
 	case <-lostCh:
@@ -341,11 +516,11 @@ func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
 	// Tight timing: 5 retries × ~5ms backoff = ~155ms tail. TTL = 1s gives margin.
-	defer objstore.TEST_SetLeaseConstants(1*time.Second, 20*time.Millisecond, 5, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(1*time.Second, 20*time.Millisecond, 5, 5*time.Millisecond)()
 
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
-	defer objstore.TEST_StopRenewal(lock)
+	defer objstore.TESTStopRenewal(lock)
 
 	require.NoError(t, failpoint.Enable(
 		"github.com/pingcap/tidb/pkg/objstore/local_write_file_err",
@@ -368,11 +543,11 @@ func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {
 func TestStartRenewalPanicsOnDoubleCall(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(1*time.Second, 100*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(1*time.Second, 100*time.Millisecond, 3, 5*time.Millisecond)()
 
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
-	defer objstore.TEST_StopRenewal(lock)
+	defer objstore.TESTStopRenewal(lock)
 
 	lock.StartRenewal(ctx, nil)
 	require.Panics(t, func() {
@@ -383,22 +558,24 @@ func TestStartRenewalPanicsOnDoubleCall(t *testing.T) {
 func TestUnlockWithoutRenewalIsUnchanged(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
-	requireFileExists(t, filepath.Join(pth, "test.lock"))
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
+	requireFileExists(t, filepath.Join(pth, physicalPath))
 
 	// No StartRenewal called; Unlock should still work.
 	require.NoError(t, lock.Unlock(ctx))
-	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+	requireFileNotExists(t, filepath.Join(pth, physicalPath))
 }
 
 func TestUnlockWaitsForRenewalGoroutine(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(1*time.Second, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(1*time.Second, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
-	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner")
 	require.NoError(t, err)
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
 	lock.StartRenewal(ctx, nil)
 
 	// Let renewal run for a few ticks so a WriteFile is likely in flight.
@@ -408,11 +585,11 @@ func TestUnlockWaitsForRenewalGoroutine(t *testing.T) {
 	// After Unlock returns, no further WriteFile can happen, so the lock
 	// file stays deleted.
 	require.NoError(t, lock.Unlock(ctx))
-	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+	requireFileNotExists(t, filepath.Join(pth, physicalPath))
 
 	// Give any (incorrectly-still-running) goroutine a moment to misbehave.
 	time.Sleep(60 * time.Millisecond)
-	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+	requireFileNotExists(t, filepath.Join(pth, physicalPath))
 
 	require.NotPanics(t, func() {
 		err = lock.Unlock(ctx)
@@ -422,7 +599,7 @@ func TestUnlockWaitsForRenewalGoroutine(t *testing.T) {
 
 // writeLockMeta is a small test helper that places a custom LockMeta JSON at a
 // given path on the storage, simulating what a (possibly long-dead) holder
-// would have written. Used by CleanUpStaleLock tests to plant scenarios.
+// would have written. Used by stale-lock cleanup tests to plant scenarios.
 func writeLockMeta(t *testing.T, strg storeapi.Storage, path string, meta objstore.LockMeta) {
 	t.Helper()
 	data, err := json.Marshal(meta)
@@ -430,25 +607,22 @@ func writeLockMeta(t *testing.T, strg storeapi.Storage, path string, meta objsto
 	require.NoError(t, strg.WriteFile(context.Background(), path, data))
 }
 
-type deleteRaceStorage struct {
-	storeapi.Storage
-	beforeDelete func(context.Context, string)
-}
-
-func (s *deleteRaceStorage) DeleteFile(ctx context.Context, name string) error {
-	if s.beforeDelete != nil {
-		s.beforeDelete(ctx, name)
+func staleLockMeta(now time.Time, hint string) objstore.LockMeta {
+	return objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		ExpireAt: now.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     hint,
 	}
-	return s.Storage.DeleteFile(ctx, name)
 }
 
-func TestCleanUpStaleLockOverdueWithinTTL(t *testing.T) {
+func TestCleanUpStaleTruncateLockOverdueWithinTTL(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
 	t.Run("missing lock is no-op", func(t *testing.T) {
-		reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "missing.lock")
+		reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg)
 		require.NoError(t, err)
 		require.False(t, reclaimed, "missing lock means there is nothing to clean up")
 	})
@@ -456,33 +630,35 @@ func TestCleanUpStaleLockOverdueWithinTTL(t *testing.T) {
 	// Plant a lock that expired 30ms ago. With LeaseTTL=100ms, the lock is
 	// not reclaimable until ExpireAt+LeaseTTL.
 	now := time.Now()
-	defer objstore.TEST_SetNow(func() time.Time { return now })()
-	writeLockMeta(t, strg, "stale.lock", objstore.LockMeta{
+	defer objstore.TESTSetNow(func() time.Time { return now })()
+	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, lockPath, objstore.LockMeta{
 		LockedAt: now.Add(-2 * time.Minute),
 		ExpireAt: now.Add(-30 * time.Millisecond),
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 		Hint:     "stale-overdue-within-ttl",
 	})
-	requireFileExists(t, filepath.Join(pth, "stale.lock"))
+	requireFileExists(t, filepath.Join(pth, lockPath))
 
 	start := time.Now()
-	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "stale.lock")
+	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg)
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
 	require.False(t, reclaimed, "lock must not be reclaimed until ExpireAt+LeaseTTL")
-	requireFileExists(t, filepath.Join(pth, "stale.lock"))
+	requireFileExists(t, filepath.Join(pth, lockPath))
 	require.Less(t, elapsed, 30*time.Millisecond, "cleanup should not wait for the grace window")
 }
 
-func TestCleanUpStaleLockOverduePastTTL(t *testing.T) {
+func TestCleanUpStaleTruncateLockOverduePastTTL(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
 	// Lock expired well over a full TTL ago — no wait needed.
 	now := time.Now()
-	writeLockMeta(t, strg, "stale.lock", objstore.LockMeta{
+	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, lockPath, objstore.LockMeta{
 		LockedAt: now.Add(-time.Hour),
 		ExpireAt: now.Add(-time.Hour),
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
@@ -490,152 +666,133 @@ func TestCleanUpStaleLockOverduePastTTL(t *testing.T) {
 	})
 
 	start := time.Now()
-	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "stale.lock")
+	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg)
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
 	require.True(t, reclaimed)
-	requireFileNotExists(t, filepath.Join(pth, "stale.lock"))
+	requireFileNotExists(t, filepath.Join(pth, lockPath))
 	require.Less(t, elapsed, 30*time.Millisecond, "deeply overdue locks should reclaim immediately")
 }
 
-func TestCleanUpStaleLockDoesNotDeleteFreshFixedPathLock(t *testing.T) {
-	ctx := context.Background()
-	strg, _ := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
-
-	now := time.Now()
-	defer objstore.TEST_SetNow(func() time.Time { return now })()
-	writeLockMeta(t, strg, "fixed.lock", objstore.LockMeta{
-		LockedAt: now.Add(-time.Hour),
-		ExpireAt: now.Add(-time.Hour),
-		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-		Hint:     "stale-holder",
-	})
-
-	raceStrg := &deleteRaceStorage{Storage: strg}
-	var freshLock *objstore.RemoteLock
-	raceStrg.beforeDelete = func(ctx context.Context, name string) {
-		require.Equal(t, "fixed.lock", name)
-		raceStrg.beforeDelete = nil
-
-		require.NoError(t, strg.DeleteFile(ctx, name))
-		var err error
-		freshLock, err = objstore.TryLockRemote(ctx, strg, name, "fresh-holder")
-		require.NoError(t, err)
-	}
-
-	reclaimed, err := objstore.CleanUpStaleLock(ctx, raceStrg, "fixed.lock")
-	require.NoError(t, err)
-	require.NotNil(t, freshLock)
-
-	meta, err := getLockMetaForTest(t, strg, "fixed.lock")
-	require.NoError(t, err)
-	require.Equal(t, "fresh-holder", meta.Hint, "cleanup must not delete a freshly acquired fixed-path lock")
-	require.False(t, reclaimed, "cleanup must not report reclaiming a lock that was replaced during cleanup")
-	require.NoError(t, freshLock.Unlock(ctx))
-}
-
-func TestCleanUpStaleLockAlive(t *testing.T) {
+func TestCleanUpStaleTruncateLockAlive(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
 	// Fresh lock with ExpireAt comfortably in the future.
 	now := time.Now()
-	writeLockMeta(t, strg, "alive.lock", objstore.LockMeta{
+	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, lockPath, objstore.LockMeta{
 		LockedAt: now,
 		ExpireAt: now.Add(50 * time.Millisecond),
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 		Hint:     "alive",
 	})
 
-	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "alive.lock")
+	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg)
 	require.NoError(t, err)
 	require.False(t, reclaimed, "alive lock must NOT be reclaimed")
-	requireFileExists(t, filepath.Join(pth, "alive.lock"))
+	requireFileExists(t, filepath.Join(pth, lockPath))
 }
 
-func TestCleanUpStaleLockZeroExpireAt(t *testing.T) {
+func TestCleanUpStaleTruncateLockZeroExpireAt(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
 
 	// Old-format lock without ExpireAt.
-	writeLockMeta(t, strg, "old.lock", objstore.LockMeta{
+	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, lockPath, objstore.LockMeta{
 		LockedAt: time.Now().Add(-time.Hour),
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 		Hint:     "old-format",
 	})
 
-	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "old.lock")
+	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg)
 	require.NoError(t, err)
 	require.False(t, reclaimed, "zero ExpireAt locks must NOT be auto-reclaimed (backward compat)")
-	requireFileExists(t, filepath.Join(pth, "old.lock"))
+	requireFileExists(t, filepath.Join(pth, lockPath))
 }
 
-func TestCleanUpStaleLockRefreshedDuringWait(t *testing.T) {
+func TestCleanUpStaleTruncateLockRefreshedDuringWait(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
 	// Plant a lock that expired 20ms ago. It is past ExpireAt but still
 	// inside the extra LeaseTTL grace window, so cleanup must not delete it.
 	now := time.Now()
-	writeLockMeta(t, strg, "racing.lock", objstore.LockMeta{
+	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, lockPath, objstore.LockMeta{
 		LockedAt: now.Add(-time.Minute),
 		ExpireAt: now.Add(-20 * time.Millisecond),
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 		Hint:     "to-be-refreshed",
 	})
 
-	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "racing.lock")
+	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg)
 	require.NoError(t, err)
 	require.False(t, reclaimed, "reclaim must wait until ExpireAt+LeaseTTL has passed")
-	requireFileExists(t, filepath.Join(pth, "racing.lock"))
+	requireFileExists(t, filepath.Join(pth, lockPath))
+}
+
+func TestCleanUpStaleTruncateLockReclaimsOnlyInstancePath(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	now := time.Now()
+	instancePath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	malformedPath := "truncating.lock.11111111111111111111111111111111"
+	zeroExpirePath := "truncating.lock.22222222222222222222222222222222"
+	writeLockMeta(t, strg, instancePath, staleLockMeta(now, "stale-truncate-instance"))
+	require.NoError(t, strg.WriteFile(ctx, malformedPath, []byte("{not-json")))
+	writeLockMeta(t, strg, zeroExpirePath, objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "zero-expire-truncate",
+	})
+	writeLockMeta(t, strg, "truncating.lock", staleLockMeta(now, "old-fixed-truncate"))
+	writeLockMeta(t, strg, "truncating.lock.backup", staleLockMeta(now, "unknown-protected-truncate"))
+
+	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg)
+	require.NoError(t, err)
+	require.True(t, reclaimed)
+	requireFileNotExists(t, filepath.Join(pth, instancePath))
+	requireFileExists(t, filepath.Join(pth, malformedPath))
+	requireFileExists(t, filepath.Join(pth, zeroExpirePath))
+	requireFileExists(t, filepath.Join(pth, "truncating.lock"))
+	requireFileExists(t, filepath.Join(pth, "truncating.lock.backup"))
 }
 
 func TestLockWithRetryReclaimsStaleWriteLock(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
-	// Plant a stale write lock at v1/LOCK.WRIT.
 	now := time.Now()
-	writeLockMeta(t, strg, "v1/LOCK.WRIT", objstore.LockMeta{
-		LockedAt: now.Add(-time.Hour),
-		ExpireAt: now.Add(-time.Hour), // long past
-		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-		Hint:     "crashed-prior-truncate",
-	})
-	requireFileExists(t, filepath.Join(pth, "v1/LOCK.WRIT"))
+	instancePath := "v1/LOCK.WRIT.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, instancePath, staleLockMeta(now, "crashed-prior-truncate"))
+	requireFileExists(t, filepath.Join(pth, instancePath))
 
 	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
 	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new truncate")
 	require.Error(t, err)
 	require.Nil(t, lock)
-	requireFileNotExists(t, filepath.Join(pth, "v1/LOCK.WRIT"))
+	requireFileNotExists(t, filepath.Join(pth, instancePath))
 }
 
 func TestLockWithRetryReclaimsStaleReadLockBeforeWrite(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
-	// Plant a stale READ lock under v1/LOCK.READ.{xxxx}.
 	now := time.Now()
-	writeLockMeta(t, strg, "v1/LOCK.READ.cafef00d12345678", objstore.LockMeta{
-		LockedAt: now.Add(-time.Hour),
-		ExpireAt: now.Add(-time.Hour),
-		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-		Hint:     "crashed-prior-restore",
-	})
-	writeLockMeta(t, strg, "v1/LOCK.READ.deadbeef12345678", objstore.LockMeta{
-		LockedAt: now.Add(-time.Hour),
-		ExpireAt: now.Add(-time.Hour),
-		TxnID:    []byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
-		Hint:     "another-crashed-prior-restore",
-	})
+	instancePath := "v1/LOCK.READ.0123456789abcdef0123456789abcdef"
+	oldReadPath := "v1/LOCK.READ.cafef00d12345678"
+	writeLockMeta(t, strg, instancePath, staleLockMeta(now, "crashed-prior-restore"))
+	writeLockMeta(t, strg, oldReadPath, staleLockMeta(now, "old-16hex-reader"))
 
 	// Without reclaim the write would fail (stale read blocks write). The
 	// cleanup pass should delete it, then fall through to ordinary backoff.
@@ -644,8 +801,8 @@ func TestLockWithRetryReclaimsStaleReadLockBeforeWrite(t *testing.T) {
 	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new compaction")
 	require.Error(t, err)
 	require.Nil(t, lock)
-	requireFileNotExists(t, filepath.Join(pth, "v1/LOCK.READ.cafef00d12345678"))
-	requireFileNotExists(t, filepath.Join(pth, "v1/LOCK.READ.deadbeef12345678"))
+	requireFileNotExists(t, filepath.Join(pth, instancePath))
+	requireFileExists(t, filepath.Join(pth, oldReadPath))
 
 	t.Run("cleanup does not bypass retry backoff", func(t *testing.T) {
 		strg, _ := createMockStorage(t)
@@ -675,10 +832,86 @@ func TestLockWithRetryReclaimsStaleReadLockBeforeWrite(t *testing.T) {
 	})
 }
 
+func TestLockWithRetryReclaimsStaleAppendWriteLock(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	now := time.Now()
+	instancePath := "v1/APPEND_LOCK.WRIT.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, instancePath, staleLockMeta(now, "stale-append-writer"))
+
+	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/APPEND_LOCK", "append writer")
+	require.Error(t, err)
+	require.Nil(t, lock)
+	requireFileNotExists(t, filepath.Join(pth, instancePath))
+}
+
+func TestLockWithRetryDoesNotReclaimFixedIntentOrUnknownProtectedObjects(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	now := time.Now()
+	paths := []string{
+		"v1/LOCK.WRIT",
+		"v1/APPEND_LOCK.WRIT",
+		"v1/LOCK.WRIT.0123456789abcdef0123456789abcdef.INTENT.writer",
+		"v1/LOCK.WRITER_NOTES",
+	}
+	for _, p := range paths {
+		writeLockMeta(t, strg, p, staleLockMeta(now, p))
+	}
+
+	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "writer")
+	require.Error(t, err)
+	require.Nil(t, lock)
+	for _, p := range paths {
+		requireFileExists(t, filepath.Join(pth, p))
+	}
+
+	appendCtx, appendCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer appendCancel()
+	lock, err = objstore.LockWithRetry(appendCtx, objstore.TryLockRemoteWrite, strg, "v1/APPEND_LOCK", "append writer")
+	require.Error(t, err)
+	require.Nil(t, lock)
+	requireFileExists(t, filepath.Join(pth, "v1/APPEND_LOCK.WRIT"))
+}
+
+func TestLockWithRetryMalformedCleanupCandidateDoesNotBlockLaterReclaim(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	malformedPath := "v1/LOCK.WRIT.0123456789abcdef0123456789abcdef"
+	zeroExpirePath := "v1/LOCK.WRIT.11111111111111111111111111111111"
+	stalePath := "v1/LOCK.WRIT.22222222222222222222222222222222"
+	require.NoError(t, strg.WriteFile(ctx, malformedPath, []byte("{not-json")))
+	writeLockMeta(t, strg, zeroExpirePath, objstore.LockMeta{
+		LockedAt: time.Now().Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "zero-expire",
+	})
+	writeLockMeta(t, strg, stalePath, staleLockMeta(time.Now(), "later-stale-writer"))
+
+	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "writer")
+	require.Error(t, err)
+	require.Nil(t, lock)
+	requireFileExists(t, filepath.Join(pth, malformedPath))
+	requireFileExists(t, filepath.Join(pth, zeroExpirePath))
+	requireFileNotExists(t, filepath.Join(pth, stalePath))
+}
+
 func TestLockWithRetryDoesNotReclaimAliveLock(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
 	// Acquire a real read lock (alive, ExpireAt in the future).
 	aliveLock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "alive reader")
@@ -713,7 +946,7 @@ func TestLockWithRetryDoesNotReclaimAliveLock(t *testing.T) {
 func TestLockWithRetryBackwardCompatOldFormatLock(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
-	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
 
 	// Plant an old-format lock (no ExpireAt) — must not be auto-reclaimed.
 	writeLockMeta(t, strg, "v1/LOCK.WRIT", objstore.LockMeta{

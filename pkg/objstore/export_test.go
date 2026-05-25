@@ -22,32 +22,32 @@ import (
 // Re-exports of internal sentinel errors so tests in objstore_test can match
 // them with errors.Is.
 var (
-	TEST_ErrRenewTxnIDMismatch = errRenewTxnIDMismatch
-	TEST_ErrRenewLeaseExpired  = errRenewLeaseExpired
+	TESTRenewTxnIDMismatch = errRenewTxnIDMismatch
+	TESTRenewLeaseExpired  = errRenewLeaseExpired
 )
 
-// TEST_TryRenew exposes the unexported tryRenew primitive for direct testing.
-func TEST_TryRenew(l *RemoteLock, ctx context.Context) error {
+// TESTTryRenew exposes the unexported tryRenew primitive for direct testing.
+func TESTTryRenew(ctx context.Context, l *RemoteLock) error {
 	return l.tryRenew(ctx)
 }
 
-// TEST_StopRenewal signals the renewal goroutine to stop and waits for it to
+// TESTStopRenewal signals the renewal goroutine to stop and waits for it to
 // exit. Used by tests that exercise StartRenewal without going through the
 // full Unlock path. Returns immediately if no renewal was started.
-func TEST_StopRenewal(l *RemoteLock) {
+func TESTStopRenewal(l *RemoteLock) {
 	l.stopRenewalIfStarted()
 }
 
-// TEST_SetLeaseConstants overrides the lease-related timing knobs for a test.
+// TESTSetLeaseConstants overrides the lease-related timing knobs for a test.
 // The returned restore function must be called (typically via t.Cleanup) so
 // later tests see production values again.
-func TEST_SetLeaseConstants(ttl, interval time.Duration, maxRetries int, baseBackoff time.Duration) (restore func()) {
+func TESTSetLeaseConstants(ttl, interval time.Duration, maxRetries int, baseBackoff time.Duration) (restore func()) {
 	return SetLeaseConstantsForTest(ttl, interval, maxRetries, baseBackoff)
 }
 
-// TEST_SetNow overrides nowFunc for deterministic time-based tests.
+// TESTSetNow overrides nowFunc for deterministic time-based tests.
 // Callers should invoke the returned restore function in a defer or t.Cleanup.
-func TEST_SetNow(fn func() time.Time) (restore func()) {
+func TESTSetNow(fn func() time.Time) (restore func()) {
 	old := nowFunc
 	nowFunc = fn
 	return func() { nowFunc = old }
