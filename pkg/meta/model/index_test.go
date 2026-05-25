@@ -75,19 +75,23 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	safePartial.ConditionExprString = "`c_1` is not null"
 	require.True(t, IsIndexPrefixCoveredForForeignKey(tbl, safePartial, ast.NewCIStr("c_0"), ast.NewCIStr("c_1")))
 
-	unsafePartialOnNonFKCol := newIndexForTest(3, c0, c1)
+	safePartialOnFirstFKCol := newIndexForTest(3, c0, c1)
+	safePartialOnFirstFKCol.ConditionExprString = "`c_0` is not null"
+	require.True(t, IsIndexPrefixCoveredForForeignKey(tbl, safePartialOnFirstFKCol, ast.NewCIStr("c_0"), ast.NewCIStr("c_1")))
+
+	unsafePartialOnNonFKCol := newIndexForTest(4, c0, c1)
 	unsafePartialOnNonFKCol.ConditionExprString = "`c_2` is not null"
 	require.False(t, IsIndexPrefixCoveredForForeignKey(tbl, unsafePartialOnNonFKCol, ast.NewCIStr("c_0"), ast.NewCIStr("c_1")))
 
-	unsafePartialIsNull := newIndexForTest(4, c0)
+	unsafePartialIsNull := newIndexForTest(5, c0)
 	unsafePartialIsNull.ConditionExprString = "`c_0` is null"
 	require.False(t, IsIndexPrefixCoveredForForeignKey(tbl, unsafePartialIsNull, ast.NewCIStr("c_0")))
 
-	unsafePartialBinaryCondition := newIndexForTest(5, c0)
+	unsafePartialBinaryCondition := newIndexForTest(6, c0)
 	unsafePartialBinaryCondition.ConditionExprString = "`c_0` > 0"
 	require.False(t, IsIndexPrefixCoveredForForeignKey(tbl, unsafePartialBinaryCondition, ast.NewCIStr("c_0")))
 
-	badCondition := newIndexForTest(6, c0)
+	badCondition := newIndexForTest(7, c0)
 	badCondition.ConditionExprString = "`c_0` is"
 	require.False(t, IsIndexPrefixCoveredForForeignKey(tbl, badCondition, ast.NewCIStr("c_0")))
 
