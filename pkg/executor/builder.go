@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	mviewmerge "github.com/pingcap/tidb/pkg/planner/mview"
-	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -1626,10 +1625,10 @@ func mviewDeltaMergeAggArgExpr(
 			dep,
 		)
 	}
-	if aggInfo.Kind == mvmerge.AggMin || aggInfo.Kind == mvmerge.AggMax {
+	if aggInfo.Kind == mviewmerge.AggMin || aggInfo.Kind == mviewmerge.AggMax {
 		if len(dependencies) != 4 && len(dependencies) != 5 {
 			return nil, errors.Errorf(
-				"MVDeltaMerge aggregate %v at mv offset %d expects 4 or 5 dependencies, got %d",
+				"MVDeltaMerge aggregate %v at mview offset %d expects 4 or 5 dependencies, got %d",
 				aggInfo.Kind,
 				aggInfo.MVOffset,
 				len(dependencies),
@@ -1658,14 +1657,11 @@ func (b *executorBuilder) buildMVDeltaMergeMinMaxRecompute(
 		return nil, nil
 	}
 
-	hasMinMax := false
-	for _, aggInfo := range v.AggInfos {
-		if aggInfo.Kind == mvmerge.AggMin || aggInfo.Kind == mvmerge.AggMax {
-			hasMinMax = true
-			break
-		}
+	minMaxResultColByMViewOffset, err := buildMVDeltaMergeMinMaxResultColByMViewOffset(v)
+	if err != nil {
+		return nil, err
 	}
-	if !hasMinMax {
+	if len(minMaxResultColByMViewOffset) == 0 {
 		return nil, nil
 	}
 
@@ -1690,68 +1686,51 @@ func (b *executorBuilder) buildMVDeltaMergeMinMaxRecompute(
 	}
 	if len(v.FullUpdateOutputMVOffsets) != v.FullUpdateInnerColumnCount {
 		return nil, errors.Errorf(
-			"MVDeltaMerge min/max recompute output mv-offset mapping length mismatch: got=%d expected=%d",
+			"MVDeltaMerge min/max recompute output mview-offset mapping length mismatch: got=%d expected=%d",
 			len(v.FullUpdateOutputMVOffsets),
 			v.FullUpdateInnerColumnCount,
 		)
 	}
 
 	keyInputColIDs := make([]int, len(v.GroupKeyMVOffsets))
-	for i, mvOffset := range v.GroupKeyMVOffsets {
-		if mvOffset < 0 || mvOffset >= v.MVColumnCount {
+	for i, mviewOffset := range v.GroupKeyMVOffsets {
+		if mviewOffset < 0 || mviewOffset >= v.MVColumnCount {
 			return nil, errors.Errorf(
-				"MVDeltaMerge group key mv offset %d out of range [0,%d)",
-				mvOffset,
+				"MVDeltaMerge group key mview offset %d out of range [0,%d)",
+				mviewOffset,
 				v.MVColumnCount,
 			)
 		}
-		keyInputColIDs[i] = v.DeltaColumnCount + mvOffset
+		keyInputColIDs[i] = v.DeltaColumnCount + mviewOffset
 	}
-	keyResultColIdxes := make([]int, len(v.GroupKeyMVOffsets))
-	if len(v.FullUpdateKeyResultColIdxes) == 0 {
-		for i := range keyResultColIdxes {
-			keyResultColIdxes[i] = i
-		}
-	} else {
-		if len(v.FullUpdateKeyResultColIdxes) != len(v.GroupKeyMVOffsets) {
+	if len(v.FullUpdateKeyResultColIdxes) != len(v.GroupKeyMVOffsets) {
+		return nil, errors.Errorf(
+			"MVDeltaMerge min/max recompute key-result mapping length mismatch: keyResult=%d groupKeys=%d",
+			len(v.FullUpdateKeyResultColIdxes),
+			len(v.GroupKeyMVOffsets),
+		)
+	}
+	keyResultColIdxes := make([]int, len(v.FullUpdateKeyResultColIdxes))
+	seenKeyResultColIdx := make(map[int]struct{}, len(v.FullUpdateKeyResultColIdxes))
+	for i, keyResultColIdx := range v.FullUpdateKeyResultColIdxes {
+		if keyResultColIdx < 0 || keyResultColIdx >= v.FullUpdateInnerColumnCount {
 			return nil, errors.Errorf(
-				"MVDeltaMerge min/max recompute key-result mapping length mismatch: keyResult=%d groupKeys=%d",
-				len(v.FullUpdateKeyResultColIdxes),
-				len(v.GroupKeyMVOffsets),
+				"MVDeltaMerge min/max recompute key-result col idx %d at position %d out of range [0,%d)",
+				keyResultColIdx,
+				i,
+				v.FullUpdateInnerColumnCount,
 			)
 		}
-		seenKeyResultColIdx := make(map[int]struct{}, len(v.FullUpdateKeyResultColIdxes))
-		for i, keyResultColIdx := range v.FullUpdateKeyResultColIdxes {
-			if keyResultColIdx < 0 || keyResultColIdx >= v.FullUpdateInnerColumnCount {
-				return nil, errors.Errorf(
-					"MVDeltaMerge min/max recompute key-result col idx %d at position %d out of range [0,%d)",
-					keyResultColIdx,
-					i,
-					v.FullUpdateInnerColumnCount,
-				)
-			}
-			if _, dup := seenKeyResultColIdx[keyResultColIdx]; dup {
-				return nil, errors.Errorf("MVDeltaMerge min/max recompute duplicate key-result col idx %d", keyResultColIdx)
-			}
-			seenKeyResultColIdx[keyResultColIdx] = struct{}{}
-			keyResultColIdxes[i] = keyResultColIdx
+		if _, dup := seenKeyResultColIdx[keyResultColIdx]; dup {
+			return nil, errors.Errorf("MVDeltaMerge min/max recompute duplicate key-result col idx %d", keyResultColIdx)
 		}
+		seenKeyResultColIdx[keyResultColIdx] = struct{}{}
+		keyResultColIdxes[i] = keyResultColIdx
 	}
 
-	minMaxResultColByMVOffset, err := buildMVDeltaMergeMinMaxResultColByMVOffset(v)
-	if err != nil {
-		return nil, err
-	}
-
-	hasMinMaxMapping := false
+	mappedMinMaxCnt := 0
 	for mappingIdx := range aggMappings {
 		mapping := aggMappings[mappingIdx]
-		if mapping.AggFunc == nil {
-			return nil, errors.Errorf("MVDeltaMerge min/max recompute requires AggMappings[%d].AggFunc", mappingIdx)
-		}
-		if !isMVDeltaMergeMinMaxAggFuncName(mapping.AggFunc.Name) {
-			continue
-		}
 		if len(mapping.ColID) != 1 {
 			return nil, errors.Errorf(
 				"MVDeltaMerge min/max recompute expects one output column for mapping %d, got %d",
@@ -1759,34 +1738,25 @@ func (b *executorBuilder) buildMVDeltaMergeMinMaxRecompute(
 				len(mapping.ColID),
 			)
 		}
-		hasMinMaxMapping = true
 		outputColID := mapping.ColID[0]
-		mvOffset := outputColID - v.DeltaColumnCount
-		if mvOffset < 0 || mvOffset >= v.MVColumnCount {
-			return nil, errors.Errorf(
-				"MVDeltaMerge min/max recompute mapping %d output col id %d has mv offset %d out of range [0,%d)",
-				mappingIdx,
-				outputColID,
-				mvOffset,
-				v.MVColumnCount,
-			)
-		}
-		batchResultColIdx, ok := minMaxResultColByMVOffset[mvOffset]
+		mviewOffset := outputColID - v.DeltaColumnCount
+		batchResultColIdx, ok := minMaxResultColByMViewOffset[mviewOffset]
 		if !ok {
-			return nil, errors.Errorf(
-				"MVDeltaMerge min/max recompute mapping %d (mv offset %d) has no full-update result column",
-				mappingIdx,
-				mvOffset,
-			)
+			continue
 		}
+		mappedMinMaxCnt++
 		mapping.MinMaxRecompute = &MinMaxRecomputeSpec{
 			Strategy:            MinMaxRecomputeBatch,
 			BatchResultColIdxes: []int{batchResultColIdx},
 		}
 		aggMappings[mappingIdx] = mapping
 	}
-	if !hasMinMaxMapping {
-		return nil, nil
+	if mappedMinMaxCnt != len(minMaxResultColByMViewOffset) {
+		return nil, errors.Errorf(
+			"MVDeltaMerge min/max recompute mapping mismatch: mapped=%d expected=%d",
+			mappedMinMaxCnt,
+			len(minMaxResultColByMViewOffset),
+		)
 	}
 
 	readerBuilder, err := b.newDataReaderBuilder(v.FullUpdateInnerSource)
@@ -1802,7 +1772,7 @@ func (b *executorBuilder) buildMVDeltaMergeMinMaxRecompute(
 		clonedTemplateRanges[i] = ran.Clone()
 	}
 
-	batchBuilder := &mvDeltaMergeMinMaxBatchExecBuilder{
+	batchBuilder := &mviewDeltaMergeMinMaxBatchExecBuilder{
 		dataBuilder:   readerBuilder,
 		indexRanges:   clonedTemplateRanges,
 		keyOff2IdxOff: append([]int(nil), v.FullUpdateKeyOff2IdxOff...),
@@ -1815,71 +1785,68 @@ func (b *executorBuilder) buildMVDeltaMergeMinMaxRecompute(
 	}, nil
 }
 
-func buildMVDeltaMergeMinMaxResultColByMVOffset(v *plannercore.MVDeltaMerge) (map[int]int, error) {
-	if v == nil {
-		return nil, errors.New("MVDeltaMerge is nil")
-	}
-
-	minMaxByMVOffset := make(map[int]struct{})
+func buildMVDeltaMergeMinMaxResultColByMViewOffset(v *plannercore.MVDeltaMerge) (map[int]int, error) {
+	var minMaxResultColByMViewOffset map[int]int
 	for _, aggInfo := range v.AggInfos {
 		if aggInfo.MVOffset < 0 || aggInfo.MVOffset >= v.MVColumnCount {
 			return nil, errors.Errorf(
-				"MVDeltaMerge agg mv offset %d out of range [0,%d)",
+				"MVDeltaMerge agg mview offset %d out of range [0,%d)",
 				aggInfo.MVOffset,
 				v.MVColumnCount,
 			)
 		}
-		if aggInfo.Kind != mvmerge.AggMin && aggInfo.Kind != mvmerge.AggMax {
+		if aggInfo.Kind != mviewmerge.AggMin && aggInfo.Kind != mviewmerge.AggMax {
 			continue
 		}
-		if _, dup := minMaxByMVOffset[aggInfo.MVOffset]; dup {
-			return nil, errors.Errorf("MVDeltaMerge has duplicate min/max agg mv offset %d", aggInfo.MVOffset)
+		if minMaxResultColByMViewOffset == nil {
+			minMaxResultColByMViewOffset = make(map[int]int, 4)
 		}
-		minMaxByMVOffset[aggInfo.MVOffset] = struct{}{}
+		if _, dup := minMaxResultColByMViewOffset[aggInfo.MVOffset]; dup {
+			return nil, errors.Errorf("MVDeltaMerge has duplicate min/max agg mview offset %d", aggInfo.MVOffset)
+		}
+		minMaxResultColByMViewOffset[aggInfo.MVOffset] = -1
+	}
+	if len(minMaxResultColByMViewOffset) == 0 {
+		return nil, nil
 	}
 
-	resultColByMVOffset := make(map[int]int, len(minMaxByMVOffset))
-	for resultColIdx, mvOffset := range v.FullUpdateOutputMVOffsets {
-		if mvOffset < 0 || mvOffset >= v.MVColumnCount {
+	for resultColIdx, mviewOffset := range v.FullUpdateOutputMVOffsets {
+		if mviewOffset < 0 || mviewOffset >= v.MVColumnCount {
 			return nil, errors.Errorf(
-				"MVDeltaMerge full-update output mv offset %d at result col %d out of range [0,%d)",
-				mvOffset,
+				"MVDeltaMerge full-update output mview offset %d at result col %d out of range [0,%d)",
+				mviewOffset,
 				resultColIdx,
 				v.MVColumnCount,
 			)
 		}
-		if _, isMinMax := minMaxByMVOffset[mvOffset]; !isMinMax {
+		prevResultColIdx, isMinMax := minMaxResultColByMViewOffset[mviewOffset]
+		if !isMinMax {
 			continue
 		}
-		if _, dup := resultColByMVOffset[mvOffset]; dup {
-			return nil, errors.Errorf(
-				"MVDeltaMerge full-update output has duplicate min/max mv offset %d",
-				mvOffset,
-			)
+		if prevResultColIdx >= 0 {
+			return nil, errors.Errorf("MVDeltaMerge full-update output has duplicate min/max mview offset %d", mviewOffset)
 		}
-		resultColByMVOffset[mvOffset] = resultColIdx
+		minMaxResultColByMViewOffset[mviewOffset] = resultColIdx
 	}
-	if len(resultColByMVOffset) != len(minMaxByMVOffset) {
+	for mviewOffset, resultColIdx := range minMaxResultColByMViewOffset {
+		if resultColIdx >= 0 {
+			continue
+		}
 		return nil, errors.Errorf(
-			"MVDeltaMerge min/max result layout mismatch: mapped=%d expected=%d",
-			len(resultColByMVOffset),
-			len(minMaxByMVOffset),
+			"MVDeltaMerge min/max result layout mismatch: missing full-update output for mview offset %d",
+			mviewOffset,
 		)
 	}
-	return resultColByMVOffset, nil
+	return minMaxResultColByMViewOffset, nil
 }
 
-func isMVDeltaMergeMinMaxAggFuncName(aggFuncName string) bool {
-	return aggFuncName == ast.AggFuncMin || aggFuncName == ast.AggFuncMax
-}
-
-type mvDeltaMergeMinMaxBatchExecBuilder struct {
+type mviewDeltaMergeMinMaxBatchExecBuilder struct {
 	dataBuilder   *dataReaderBuilder
 	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
 }
 
-func (b *mvDeltaMergeMinMaxBatchExecBuilder) Build(ctx context.Context, req *MinMaxBatchBuildRequest) (exec.Executor, error) {
+func (b *mviewDeltaMergeMinMaxBatchExecBuilder) Build(ctx context.Context, req *MinMaxBatchBuildRequest) (exec.Executor, error) {
 	if b == nil || b.dataBuilder == nil {
 		return nil, errors.New("MVDeltaMerge min/max batch builder is not initialized")
 	}
