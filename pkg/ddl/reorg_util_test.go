@@ -535,7 +535,7 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Len(t, selected, samplePredictionMaxRegionCount)
 	})
 
-	t.Run("sample prediction splits all-encoding and new-encoding estimates", func(t *testing.T) {
+	t.Run("sample prediction uses physical estimate for all encodings", func(t *testing.T) {
 		sctx := mock.NewContext()
 		intType := types.NewFieldType(mysql.TypeLonglong)
 		intType.AddFlag(mysql.NotNullFlag)
@@ -581,11 +581,9 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 			numericLogicalBytes += rowBytes
 		}
 		numericPrediction := estimateSampledIndexKVPredictionBytes(numericKVs)
-		require.NoError(t, numericPrediction.AllEncodingErr)
-		require.NoError(t, numericPrediction.NewEncodingErr)
-		require.Greater(t, numericLogicalBytes, numericPrediction.AllEncodingBytes)
-		require.Equal(t, numericLogicalBytes, numericPrediction.NewEncodingBytes)
-		numericRatio := float64(numericPrediction.AllEncodingBytes) / float64(numericLogicalBytes)
+		require.NoError(t, numericPrediction.Err)
+		require.Greater(t, numericLogicalBytes, numericPrediction.PredictedBytes)
+		numericRatio := float64(numericPrediction.PredictedBytes) / float64(numericLogicalBytes)
 		require.Less(t, numericRatio, float64(0.6))
 
 		restoredTblInfo := &model.TableInfo{
@@ -624,20 +622,16 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 			restoredLogicalBytes += rowBytes
 		}
 		restoredPrediction := estimateSampledIndexKVPredictionBytes(restoredKVs)
-		require.NoError(t, restoredPrediction.AllEncodingErr)
-		require.NoError(t, restoredPrediction.NewEncodingErr)
-		require.Greater(t, restoredLogicalBytes, restoredPrediction.AllEncodingBytes)
-		require.Equal(t, restoredPrediction.AllEncodingBytes, restoredPrediction.NewEncodingBytes)
-		restoredRatio := float64(restoredPrediction.AllEncodingBytes) / float64(restoredLogicalBytes)
+		require.NoError(t, restoredPrediction.Err)
+		require.Greater(t, restoredLogicalBytes, restoredPrediction.PredictedBytes)
+		restoredRatio := float64(restoredPrediction.PredictedBytes) / float64(restoredLogicalBytes)
 		require.Less(t, restoredRatio, float64(1))
 
 		mixedKVs := append(slices.Clone(numericKVs), restoredKVs...)
 		mixedPrediction := estimateSampledIndexKVPredictionBytes(mixedKVs)
-		require.NoError(t, mixedPrediction.AllEncodingErr)
-		require.NoError(t, mixedPrediction.NewEncodingErr)
-		require.Equal(t, numericLogicalBytes+restoredPrediction.NewEncodingBytes, mixedPrediction.NewEncodingBytes)
-		require.Less(t, mixedPrediction.AllEncodingBytes, mixedPrediction.NewEncodingBytes)
-		require.Less(t, mixedPrediction.NewEncodingBytes, numericLogicalBytes+restoredLogicalBytes)
+		require.NoError(t, mixedPrediction.Err)
+		require.Less(t, mixedPrediction.PredictedBytes, numericLogicalBytes+restoredPrediction.PredictedBytes)
+		require.Less(t, mixedPrediction.PredictedBytes, numericLogicalBytes+restoredLogicalBytes)
 	})
 }
 
