@@ -348,26 +348,6 @@ func TestNewSchemaImportPlan(t *testing.T) {
 	require.Empty(t, plan.viewPlan.ordered[0].externalDeps)
 }
 
-func TestNewSchemaImportPlanRejectsEmptyViewSchema(t *testing.T) {
-	ctx := context.Background()
-	tempDir := t.TempDir()
-	store, err := objstore.NewLocalStorage(tempDir)
-	require.NoError(t, err)
-
-	fileName := "test.v1-schema-view.sql"
-	require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte(""), 0o644))
-
-	_, err = NewSchemaImportPlan(ctx, store, mysql.SQLMode(0), []*MDDatabaseMeta{
-		{
-			Name: "test",
-			Views: []*MDTableMeta{
-				{DB: "test", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
-			},
-		},
-	})
-	require.ErrorContains(t, err, "missing create view statement for `test`.`v1`")
-}
-
 func TestLoaderSetupDefersViewSchemaValidationUntilRun(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
