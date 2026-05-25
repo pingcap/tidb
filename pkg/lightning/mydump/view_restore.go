@@ -86,6 +86,12 @@ func sortTableNames(tables []filter.Table) {
 	})
 }
 
+func sortViewNodes(nodes []*viewNode) {
+	sort.Slice(nodes, func(i, j int) bool {
+		return lessTableName(nodes[i].key, nodes[j].key)
+	})
+}
+
 // SchemaImportPlan describes the schema objects that should be restored from a dump.
 type SchemaImportPlan struct {
 	dbMetas  []*MDDatabaseMeta
@@ -321,25 +327,24 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 
 	// Kahn's algorithm with a sorted initial ready set and sorted dependent
 	// lists keeps view creation order stable across runs.
-	ready := make([]filter.Table, 0, len(plan.nodes))
-	for key, node := range plan.nodes {
+	ready := make([]*viewNode, 0, len(plan.nodes))
+	for _, node := range plan.nodes {
 		if node.indegree == 0 {
-			ready = append(ready, key)
+			ready = append(ready, node)
 		}
 	}
-	sortTableNames(ready)
+	sortViewNodes(ready)
 
 	for len(ready) > 0 {
-		key := ready[0]
+		node := ready[0]
 		ready = ready[1:]
-		node := plan.nodes[key]
 		plan.ordered = append(plan.ordered, node)
 
 		for _, dependent := range node.dependents {
 			dependentNode := plan.nodes[dependent]
 			dependentNode.indegree--
 			if dependentNode.indegree == 0 {
-				ready = append(ready, dependent)
+				ready = append(ready, dependentNode)
 			}
 		}
 	}
