@@ -199,14 +199,23 @@ func (h *WeightedRowSampleHeap) Pop() any {
 
 // RowSampleBuilder is used to construct the ReservoirRowSampleCollector to get the samples.
 type RowSampleBuilder struct {
-	RecordSet       sqlexec.RecordSet
-	Sc              *stmtctx.StatementContext
-	Rng             *rand.Rand
-	ColsFieldType   []*types.FieldType
-	Collators       []collate.Collator
-	ColGroups       [][]int64
-	MaxSampleSize   int
-	SampleRate      float64
+	RecordSet     sqlexec.RecordSet
+	Sc            *stmtctx.StatementContext
+	Rng           *rand.Rand
+	ColsFieldType []*types.FieldType
+	Collators     []collate.Collator
+	ColGroups     [][]int64
+	MaxSampleSize int
+	// SampleRate is the per-row keep probability for the row sample (the rows that
+	// build histograms and TopN). It drives Bernoulli sampling only when
+	// MaxSampleSize is 0; otherwise reservoir sampling is used and this is ignored.
+	SampleRate float64
+	// NDVSampleRate is the per-row keep probability for the per-column aggregates:
+	// FMsketches, NULL counts, and TotalSizes. NULL counts and TotalSizes are
+	// rescaled back to the full population afterwards. It is in (0, 1] and uses a
+	// separate per-row draw from SampleRate. Below NDVSampleSkipRate (1) the
+	// sketches see only a sub-sample, so singleton sketches are built to estimate
+	// population NDV from it.
 	NDVSampleRate   float64
 	MaxFMSketchSize int
 }
