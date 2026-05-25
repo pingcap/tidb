@@ -639,7 +639,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	outputSplitIntoMultipleFiles := conf.Rows != UnspecifiedSize || conf.FileSize != UnspecifiedSize
 	if flags.Changed(flagOutputFilenameTemplate) && outputSplitIntoMultipleFiles && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
-		return errors.New("--output-filename-template must include {{.Index}} when split mode is enabled by --rows/-r or --filesize/-F; otherwise chunk files may overwrite each other")
+		return errors.New("--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F; otherwise chunk files may overwrite each other")
 	}
 	conf.OutputFileTemplate = tmpl
 
@@ -715,105 +715,108 @@ func outputTemplateUsesIndex(tmpl *template.Template, templateName string) bool 
 		return false
 	}
 
-	visitedTemplate := make(map[string]struct{})
-	visitedNode := make(map[parse.Node]struct{})
+	type templateVisitState struct {
+		name          string
+		inConditional bool
+	}
+	visitedTemplate := make(map[templateVisitState]struct{})
 
-	var visitTemplate func(name string) bool
-	visitTemplate = func(name string) bool {
-		if _, ok := visitedTemplate[name]; ok {
+	var visitTemplate func(name string, inConditional bool) bool
+	var visitNode func(node parse.Node, inConditional bool) bool
+	visitTemplate = func(name string, inConditional bool) bool {
+		state := templateVisitState{name: name, inConditional: inConditional}
+		if _, ok := visitedTemplate[state]; ok {
 			return false
 		}
-		visitedTemplate[name] = struct{}{}
+		visitedTemplate[state] = struct{}{}
 
 		t := tmpl.Lookup(name)
 		if t == nil || t.Tree == nil || t.Tree.Root == nil {
 			return false
 		}
 
-		var visitNode func(node parse.Node) bool
-		visitNode = func(node parse.Node) bool {
-			if node == nil {
-				return false
-			}
-			if _, ok := visitedNode[node]; ok {
-				return false
-			}
-			visitedNode[node] = struct{}{}
+		return visitNode(t.Tree.Root, inConditional)
+	}
 
-			switch n := node.(type) {
-			case *parse.FieldNode:
-				for _, ident := range n.Ident {
-					if ident == "Index" {
-						return true
-					}
-				}
-			case *parse.VariableNode:
-				for _, ident := range n.Ident {
-					if ident == "Index" {
-						return true
-					}
-				}
-			case *parse.ChainNode:
-				for _, ident := range n.Field {
-					if ident == "Index" {
-						return true
-					}
-				}
-				return visitNode(n.Node)
-			case *parse.ListNode:
-				for _, child := range n.Nodes {
-					if visitNode(child) {
-						return true
-					}
-				}
-			case *parse.ActionNode:
-				return visitNode(n.Pipe)
-			case *parse.PipeNode:
-				for _, decl := range n.Decl {
-					if visitNode(decl) {
-						return true
-					}
-				}
-				for _, cmd := range n.Cmds {
-					if visitNode(cmd) {
-						return true
-					}
-				}
-			case *parse.CommandNode:
-				for _, arg := range n.Args {
-					if visitNode(arg) {
-						return true
-					}
-				}
-			case *parse.TemplateNode:
-				if visitNode(n.Pipe) {
-					return true
-				}
-				return visitTemplate(n.Name)
-			case *parse.IfNode:
-				if visitNode(n.Pipe) || visitNode(n.List) {
-					return true
-				}
-				return visitNode(n.ElseList)
-			case *parse.RangeNode:
-				if visitNode(n.Pipe) || visitNode(n.List) {
-					return true
-				}
-				return visitNode(n.ElseList)
-			case *parse.WithNode:
-				if visitNode(n.Pipe) || visitNode(n.List) {
-					return true
-				}
-				return visitNode(n.ElseList)
-			}
-
+	visitNode = func(node parse.Node, inConditional bool) bool {
+		if node == nil {
 			return false
 		}
 
-		return visitNode(t.Tree.Root)
+		switch n := node.(type) {
+		case *parse.ListNode:
+			if n == nil {
+				return false
+			}
+			for _, child := range n.Nodes {
+				if visitNode(child, inConditional) {
+					return true
+				}
+			}
+		case *parse.ActionNode:
+			if n == nil {
+				return false
+			}
+			if inConditional {
+				return false
+			}
+			return isStandaloneOutputIndexAction(n)
+		case *parse.TemplateNode:
+			if n == nil {
+				return false
+			}
+			return visitTemplate(n.Name, inConditional)
+		case *parse.IfNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.RangeNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.WithNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		}
+
+		return false
 	}
 
-	return visitTemplate(templateName)
+	return visitTemplate(templateName, false)
+}
+
+func isStandaloneOutputIndexAction(action *parse.ActionNode) bool {
+	if action == nil || action.Pipe == nil {
+		return false
+	}
+
+	// A standalone {{.Index}} must be a single command with a single argument.
+	if len(action.Pipe.Decl) != 0 || len(action.Pipe.Cmds) != 1 {
+		return false
+	}
+	cmd := action.Pipe.Cmds[0]
+	if cmd == nil || len(cmd.Args) != 1 {
+		return false
+	}
+
+	field, ok := cmd.Args[0].(*parse.FieldNode)
+	if !ok {
+		return false
+	}
+	return len(field.Ident) == 1 && field.Ident[0] == "Index"
 }
 
 // ParseFileSize parses file size from tables-list and filter arguments

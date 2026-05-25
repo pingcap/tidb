@@ -94,13 +94,37 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--rows", "10",
 			"--output-filename-template", "{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include {{.Index}} when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
 	})
 
 	t.Run("accept template with index when rows and output template are both specified", func(t *testing.T) {
 		_, err := parseConfigFromArgsForTestWithErr(t,
 			"--rows", "10",
 			"--output-filename-template", "{{.DB}}.{{.Table}}.{{.Index}}",
+		)
+		require.NoError(t, err)
+	})
+
+	t.Run("reject template when index only appears in a conditional guard", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{if .Index}}{{end}}{{.DB}}.{{.Table}}",
+		)
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+	})
+
+	t.Run("reject template when index is only conditionally rendered", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{if lt .Index 2}}{{.Index}}{{end}}{{.DB}}.{{.Table}}",
+		)
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
+	})
+
+	t.Run("accept template when standalone index exists outside conditionals", func(t *testing.T) {
+		_, err := parseConfigFromArgsForTestWithErr(t,
+			"--rows", "10",
+			"--output-filename-template", "{{if lt .Index 2}}prefix.{{end}}{{.DB}}.{{.Table}}.{{.Index}}",
 		)
 		require.NoError(t, err)
 	})
@@ -118,7 +142,7 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 			"--filesize", "1MiB",
 			"--output-filename-template", "{{.DB}}.{{.Table}}",
 		)
-		require.ErrorContains(t, err, "--output-filename-template must include {{.Index}} when split mode is enabled by --rows/-r or --filesize/-F")
+		require.ErrorContains(t, err, "--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F")
 	})
 
 	t.Run("accept template with index when filesize and output template are both specified", func(t *testing.T) {

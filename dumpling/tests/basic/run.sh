@@ -105,7 +105,7 @@ set +e
 run_dumpling --rows 10 --output-filename-template "${TABLE_NAME}.${DB_NAME}" > ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set -e
 
-actual=$(grep -w -- "--output-filename-template must include {{.Index}}" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
+actual=$(grep -F -- "--output-filename-template must include a standalone {{.Index}} outside conditional blocks" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
 echo "expected 1 return error when specifying --rows with --output-filename-template without {{.Index}}, actual ${actual}"
 [ "$actual" = 1 ]
 
@@ -114,7 +114,7 @@ set +e
 run_dumpling --filesize 1MiB --output-filename-template "${TABLE_NAME}.${DB_NAME}" > ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set -e
 
-actual=$(grep -w -- "--output-filename-template must include {{.Index}}" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
+actual=$(grep -F -- "--output-filename-template must include a standalone {{.Index}} outside conditional blocks" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
 echo "expected 1 return error when specifying --filesize with --output-filename-template without {{.Index}}, actual ${actual}"
 [ "$actual" = 1 ]
 
