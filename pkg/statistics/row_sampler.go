@@ -43,12 +43,20 @@ type RowSampleCollector interface {
 }
 
 type baseCollector struct {
-	Samples           WeightedRowSampleHeap
-	NullCount         []int64
-	FMSketches        []*FMSketch
+	Samples   WeightedRowSampleHeap
+	NullCount []int64
+	// FMSketches holds the per-column FM sketch used to estimate NDV.
+	FMSketches []*FMSketch
+	// SingletonSketches holds the per-column sketch of values seen exactly once in
+	// the sketch sub-sample; it recovers population NDV when NDVSampleRate < 1 and
+	// is empty otherwise.
 	SingletonSketches []*FMSketch
 	TotalSizes        []int64
 	Count             int64
+	// SketchSampleCount is the number of rows fed into FMSketches and
+	// SingletonSketches.
+	// It rescales NullCount and TotalSizes to the full population;
+	// 0 means no sub-sampling.
 	SketchSampleCount int64
 	MemSize           int64
 }
