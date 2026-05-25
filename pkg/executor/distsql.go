@@ -898,6 +898,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				}
 				return
 			}
+			logutil.Logger(ctx).Info("index lookup skip single-range fast path",
+				zap.Int("kvRanges", len(kvRanges)),
+				zap.Bool("keepOrder", e.keepOrder),
+				zap.Int("byItems", len(e.byItems)),
+				zap.Uint64("connectionID", e.dctx.ConnectionID))
 			maxInFlight := getIndexScanMaxInFlight(e.dctx.DistSQLConcurrency)
 			nextRange := 0
 			pushDownIntermediateTypes := [][]*types.FieldType{indexTypes}
