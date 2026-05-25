@@ -6,6 +6,7 @@ go_library(
         "config.go",
         "config_util.go",
         "const.go",
+        "keyspace_observability.go",
         "store.go",
         "tiflash.go",
     ],

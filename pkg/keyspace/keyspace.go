@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -62,7 +61,6 @@ func GetKeyspaceNameBySettings() (keyspaceName string) {
 
 var keyspaceNameBytes []byte
 var genKeyspaceNameOnce sync.Once
-var keyspaceMeta sync.Map
 
 // GetKeyspaceNameBytesBySettings is used to get keyspace name setting as a byte slice.
 func GetKeyspaceNameBytesBySettings() []byte {
@@ -82,33 +80,12 @@ func IsKeyspaceNameEmpty(keyspaceName string) bool {
 	return keyspaceName == ""
 }
 
-// SetKeyspaceMeta stores keyspace metadata loaded at startup for later reuse.
-func SetKeyspaceMeta(meta *keyspacepb.KeyspaceMeta) {
-	if meta == nil || IsKeyspaceNameEmpty(meta.GetName()) {
-		return
-	}
-	keyspaceMeta.Store(meta.GetName(), meta)
-}
-
-// GetKeyspaceMeta returns keyspace metadata loaded at startup.
-func GetKeyspaceMeta(keyspaceName string) (*keyspacepb.KeyspaceMeta, bool) {
-	meta, ok := keyspaceMeta.Load(keyspaceName)
-	if !ok {
-		return nil, false
-	}
-	return meta.(*keyspacepb.KeyspaceMeta), true
-}
-
 // WrapZapcoreWithKeyspace is used to wrap zapcore.Core.
 func WrapZapcoreWithKeyspace() zap.Option {
 	return zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		keyspaceName := GetKeyspaceNameBySettings()
 		if !IsKeyspaceNameEmpty(keyspaceName) {
-			fields := []zap.Field{zap.String("keyspaceName", keyspaceName)}
-			if meta, ok := GetKeyspaceMeta(keyspaceName); ok {
-				fields = append(fields, zap.Uint32("keyspaceID", meta.GetId()))
-			}
-			core = core.With(fields)
+			core = core.With([]zap.Field{zap.String("keyspaceName", keyspaceName)})
 		}
 		return core
 	})

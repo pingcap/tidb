@@ -11,7 +11,6 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
-        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//:zap",
@@ -25,13 +24,10 @@ go_test(
     srcs = ["keyspace_test.go"],
     embed = [":keyspace"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
-        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_stretchr_testify//require",
-        "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zaptest/observer",
     ],
 )

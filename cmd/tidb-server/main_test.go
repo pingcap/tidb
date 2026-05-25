@@ -18,7 +18,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -171,9 +170,9 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 		}
 	})
 
-	err := prepareKeyspaceObservabilityWithKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-		Id:     42,
-		Config: map[string]string{"meta_a": "value_a"},
+	err := prepareKeyspaceObservabilityWithMetadata(map[string]string{
+		keyspaceIDMetricLabel: "42",
+		"meta_a":              "value_a",
 	}, "ks", true)
 	require.NoError(t, err)
 
@@ -187,9 +186,9 @@ func TestSetupKeyspaceObservabilityForNonStarter(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 
-	err := prepareKeyspaceObservabilityWithKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-		Id:     42,
-		Config: map[string]string{"meta_a": "value_a"},
+	err := prepareKeyspaceObservabilityWithMetadata(map[string]string{
+		keyspaceIDMetricLabel: "42",
+		"meta_a":              "value_a",
 	}, "ks", false)
 	require.NoError(t, err)
 
@@ -212,6 +211,6 @@ func TestSetupKeyspaceObservabilityForStartSkipsClassic(t *testing.T) {
 		conf.KeyspaceName = "test_keyspace"
 	})
 
-	require.NoError(t, prepareKeyspaceObservability())
+	require.NoError(t, prepareKeyspaceObservability(nil))
 	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }

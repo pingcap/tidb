@@ -55,7 +55,7 @@ const defaultKeyspaceLabel = "keyspace_id"
 // RegisterMetrics registers metrics with keyspace metadata labels when available.
 func RegisterMetrics() error {
 	cfg := config.GetGlobalConfig()
-	if !keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) && kerneltype.IsNextGen() {
+	if kerneltype.IsNextGen() {
 		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
 	}
 	return registerMetrics()
