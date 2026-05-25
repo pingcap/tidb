@@ -1400,7 +1400,10 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 		return nil, nil, nil
 	}
 
-	tbl, ok := is.TableByID(context.Background(), pi.tableID)
+	// Set refill option to true for partition table.
+	// Without refill, partition table with 1024 partitions will cache miss 1024 times!
+	ctx := WithRefillOption(context.Background(), true)
+	tbl, ok := is.TableByID(ctx, pi.tableID)
 	if !ok {
 		// something wrong?
 		return nil, nil, nil
