@@ -478,6 +478,49 @@ func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...ast.CIStr
 	return true
 }
 
+// FindIndexByColumnsForForeignKey finds an index that can be safely used by a foreign key.
+func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, cols ...ast.CIStr) *IndexInfo {
+	for _, index := range indices {
+		if IsIndexPrefixCoveredForForeignKey(tbInfo, index, cols...) {
+			return index
+		}
+	}
+	return nil
+}
+
+// IsIndexPrefixCoveredForForeignKey checks whether the index covers the foreign key columns
+// and whether the partial index predicate, if any, is safe for foreign key checks.
+func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...ast.CIStr) bool {
+	if !IsIndexPrefixCovered(tbInfo, index, cols...) {
+		return false
+	}
+	return isIndexConditionCoveredByForeignKeyCols(index, cols...)
+}
+
+func isIndexConditionCoveredByForeignKeyCols(index *IndexInfo, cols ...ast.CIStr) bool {
+	if !index.HasCondition() {
+		return true
+	}
+	expr, err := index.ConditionExpr()
+	if err != nil {
+		return false
+	}
+	isNullExpr, ok := expr.(*ast.IsNullExpr)
+	if !ok || !isNullExpr.Not {
+		return false
+	}
+	colExpr, ok := isNullExpr.Expr.(*ast.ColumnNameExpr)
+	if !ok {
+		return false
+	}
+	for _, col := range cols {
+		if colExpr.Name.Name.L == col.L {
+			return true
+		}
+	}
+	return false
+}
+
 // FindIndexInfoByID finds IndexInfo in indices by id.
 func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 	for _, idx := range indices {
