@@ -735,8 +735,6 @@ func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
 		if baseName == "" {
 			continue
 		}
-		qualifiedMLogName := e.DBName.O + "." + tbl.Name.O
-		qualifiedBaseName := baseDB + "." + baseName
 		lowerMLogName := strings.ToLower(tbl.Name.O)
 		if fieldFilter != "" && lowerMLogName != fieldFilter {
 			continue
@@ -749,9 +747,9 @@ func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
 		}
 		rows = append(rows, mlogRow{
 			id:       tbl.ID,
-			name:     qualifiedMLogName,
+			name:     tbl.Name.O,
 			baseID:   baseID,
-			baseName: qualifiedBaseName,
+			baseName: baseName,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {

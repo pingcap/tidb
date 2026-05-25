@@ -545,21 +545,17 @@ func TestShowMaterializedViewLogs(t *testing.T) {
 	otherMLogTable, ok := is.TableByID(context.Background(), otherMLogID)
 	require.True(t, ok)
 	otherMLogName := otherMLogTable.Meta().Name.O
-	qualifiedOtherMLogName := "test_show_mlog_other." + otherMLogName
-	qualifiedOtherBaseName := "test_show_mlog_other." + otherBaseTable.Meta().Name.O
-	otherExpected := fmt.Sprintf("%d %s %d %s", otherMLogID, qualifiedOtherMLogName, otherBaseTable.Meta().ID, qualifiedOtherBaseName)
+	otherExpected := fmt.Sprintf("%d %s %d %s", otherMLogID, otherMLogName, otherBaseTable.Meta().ID, otherBaseTable.Meta().Name.O)
 
-	qualifiedMLogName := "test." + mlogName
-	qualifiedBaseName := "test." + baseName
-	expected := fmt.Sprintf("%d %s %d %s", mlogID, qualifiedMLogName, baseID, qualifiedBaseName)
+	expected := fmt.Sprintf("%d %s %d %s", mlogID, mlogName, baseID, baseName)
 	tk.MustQuery("show materialized view logs").Check(testkit.Rows(expected))
 	tk.MustQuery(fmt.Sprintf("show materialized view logs where mlog_id = %d", mlogID)).
 		Check(testkit.Rows(expected))
 	tk.MustQuery(fmt.Sprintf("show materialized view logs where base_table_id = %d", baseID)).
 		Check(testkit.Rows(expected))
-	tk.MustQuery(fmt.Sprintf("show materialized view logs where mlog_name = '%s'", qualifiedMLogName)).
+	tk.MustQuery(fmt.Sprintf("show materialized view logs where mlog_name = '%s'", mlogName)).
 		Check(testkit.Rows(expected))
-	tk.MustQuery(fmt.Sprintf("show materialized view logs where base_table_name = '%s'", qualifiedBaseName)).
+	tk.MustQuery(fmt.Sprintf("show materialized view logs where base_table_name = '%s'", baseName)).
 		Check(testkit.Rows(expected))
 	tk.MustQuery("show materialized view logs where base_table_name = 't_not_exist'").Check(testkit.Rows())
 	tk.MustQuery("show materialized view logs from test_show_mlog_other").

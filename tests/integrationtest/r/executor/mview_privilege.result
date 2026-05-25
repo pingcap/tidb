@@ -140,10 +140,10 @@ show create materialized view mv;
 Error 1142 (42000): SHOW VIEW command denied to user 'u_show_create'@'%' for table 'mv'
 show materialized view logs from mview_privilege_test;
 MLOG_ID	MLOG_NAME	BASE_TABLE_ID	BASE_TABLE_NAME
-<mlog_id>	mview_privilege_test.$mlog$t	<base_table_id>	mview_privilege_test.t
+<mlog_id>	$mlog$t	<base_table_id>	t
 show materialized view logs from mview_privilege_test like '$mlog$%';
 MLOG_ID	MLOG_NAME	BASE_TABLE_ID	BASE_TABLE_NAME
-<mlog_id>	mview_privilege_test.$mlog$t	<base_table_id>	mview_privilege_test.t
+<mlog_id>	$mlog$t	<base_table_id>	t
 show materialized view logs from mview_privilege_test like 'mview_privilege_test.$mlog$%';
 MLOG_ID	MLOG_NAME	BASE_TABLE_ID	BASE_TABLE_NAME
 show materialized view log on t wait_purge;
