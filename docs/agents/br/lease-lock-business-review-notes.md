@@ -198,18 +198,15 @@ Automatic review follow-up, after scope refinement:
   lock if they use `TryLockRemote` directly and then rely on automatic stale
   cleanup. Fixing only migration `*.WRIT` locks would leave truncate with the
   same cleanup race.
-- Promising fix direction: make fixed locks instance/generation based instead
-  of rewriting and deleting one stable object path. A random suffix, similar to
+- Final fix direction: make fixed locks instance/generation based instead of
+  rewriting and deleting one stable object path. A random suffix, similar to
   read locks, prevents stale cleanup from deleting a newly acquired lock at the
-  same path. A generation suffix derived from the latest lease/renewal time may
-  be even more useful because it also makes delayed renewal writes easier to
-  detect and reject.
-- Important nuance: path randomization alone prevents overwriting a new holder,
-  but an old holder with a delayed renewal could still recreate its old lock
-  instance after it has lost the lease. A complete generation-based design
-  should make renewal move to a new generation/path under a conflict check over
-  the whole lock family, then update `RemoteLock.path` only after that write
-  succeeds.
+  same path.
+- Superseded earlier hypothesis: renewal should not move to a new generation.
+  The finalized design generates a new physical instance path only during
+  acquire; renewal refreshes `ExpireAt` in place on the current instance. See
+  `lease-lock-instance-generation-design.md` and
+  `lease-lock-family-acquire-protocol.md`.
 - Backward compatibility note: old fixed-path lock files without `ExpireAt`
   are already not auto-reclaimed because `CleanUpStaleLock` treats zero
   `ExpireAt` as an old-client lock. New conflict scans must still treat the old
