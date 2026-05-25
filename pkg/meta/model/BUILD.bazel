@@ -64,6 +64,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/types/parser_driver",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//http",
     ],
