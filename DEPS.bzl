@@ -5528,11 +5528,11 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "c92084d6f9f39398a997ae0530e9e4a8acfc82b98ab17a1178c414293909f4fc",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20260414083400-4388bfaaedab",
+        sha256 = "00a31b8634562e77d133297593ca4504957691f9896abc13064663994fafaae1",
+        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20260514102340-daa7c864b473",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260414083400-4388bfaaedab.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260414083400-4388bfaaedab.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260514102340-daa7c864b473.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260514102340-daa7c864b473.zip",
         ],
     )
     go_repository(
@@ -6596,11 +6596,11 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "c141a99a743835252241ccc913861f671f4aec654e4c5c1920ab1bdf4c3586b7",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260511022933-fb7ee09992a7",
+        sha256 = "0b9ee9816e5dbcacf2c3585795a1b1cb47b4bcd47d6f734e652af608ef19a7c1",
+        strip_prefix = "github.com/lcwangchao/client-go/v2@v2.0.0-alpha.0.20260525030734-65e21d95c3ac",
         urls = [
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260511022933-fb7ee09992a7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260511022933-fb7ee09992a7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/lcwangchao/client-go/v2/com_github_lcwangchao_client_go_v2-v2.0.0-alpha.0.20260525030734-65e21d95c3ac.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/lcwangchao/client-go/v2/com_github_lcwangchao_client_go_v2-v2.0.0-alpha.0.20260525030734-65e21d95c3ac.zip",
         ],
     )
     go_repository(
