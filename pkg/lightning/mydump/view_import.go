@@ -127,13 +127,26 @@ func (c *viewDependencyCollector) isCTEName(name string) bool {
 	return false
 }
 
-func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
+func hasWithClause(n ast.Node) bool {
 	switch node := n.(type) {
 	case *ast.SelectStmt:
-		if node.With != nil {
-			c.pushCTEScope()
-		}
+		return node.With != nil
+	case *ast.SetOprStmt:
+		return node.With != nil
+	case *ast.SetOprSelectList:
+		return node.With != nil
+	default:
+		return false
+	}
+}
+
+func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
+	if hasWithClause(n) {
+		c.pushCTEScope()
 		return n, false
+	}
+
+	switch node := n.(type) {
 	case *ast.CommonTableExpression:
 		if node.IsRecursive {
 			// Recursive CTE can reference itself, so expose the name before
@@ -159,17 +172,13 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 }
 
 func (c *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
-	switch node := n.(type) {
-	case *ast.CommonTableExpression:
-		if !node.IsRecursive {
-			// Non-recursive CTE becomes visible only after its definition has
-			// been fully traversed.
-			c.recordCTEName(node.Name.L)
-		}
-	case *ast.SelectStmt:
-		if node.With != nil {
-			c.popCTEScope()
-		}
+	if node, ok := n.(*ast.CommonTableExpression); ok && !node.IsRecursive {
+		// Non-recursive CTE becomes visible only after its definition has
+		// been fully traversed.
+		c.recordCTEName(node.Name.L)
+	}
+	if hasWithClause(n) {
+		c.popCTEScope()
 	}
 	return n, true
 }

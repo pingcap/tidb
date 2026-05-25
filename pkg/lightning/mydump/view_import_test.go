@@ -136,6 +136,56 @@ SELECT cte.id FROM cte;
 	require.Equal(t, []filter.Table{{Schema: "test", Name: "t1"}}, parsed.deps)
 }
 
+func TestParseViewSchemaSQLIgnoresCTEDependenciesInSetOperatorRoot(t *testing.T) {
+	p := parser.New()
+	currentView := filter.Table{Schema: "test", Name: "v_set_root_cte"}
+	sql := `
+CREATE VIEW v_set_root_cte AS
+WITH cte AS (
+	SELECT id FROM t1
+)
+SELECT cte.id FROM cte
+UNION
+SELECT id FROM t2;
+`
+
+	parsed, err := parseViewSchemaSQL(p, currentView, sql)
+	require.NoError(t, err)
+	require.ElementsMatch(t,
+		[]filter.Table{
+			{Schema: "test", Name: "t1"},
+			{Schema: "test", Name: "t2"},
+		},
+		parsed.deps,
+	)
+}
+
+func TestParseViewSchemaSQLIgnoresCTEDependenciesInSetOperatorBranch(t *testing.T) {
+	p := parser.New()
+	currentView := filter.Table{Schema: "test", Name: "v_set_branch_cte"}
+	sql := `
+CREATE VIEW v_set_branch_cte AS
+SELECT id FROM t0
+UNION
+(
+	WITH cte AS (
+		SELECT id FROM t1
+	)
+	SELECT cte.id FROM cte
+);
+`
+
+	parsed, err := parseViewSchemaSQL(p, currentView, sql)
+	require.NoError(t, err)
+	require.ElementsMatch(t,
+		[]filter.Table{
+			{Schema: "test", Name: "t0"},
+			{Schema: "test", Name: "t1"},
+		},
+		parsed.deps,
+	)
+}
+
 func TestParseViewSchemaSQLPreservesUnexpectedStatements(t *testing.T) {
 	p := parser.New()
 	currentView := filter.Table{Schema: "test", Name: "v_extra"}

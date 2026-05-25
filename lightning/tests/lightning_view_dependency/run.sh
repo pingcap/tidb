@@ -22,8 +22,9 @@
 #     └─ db1.v1      (level 1: depends on t1)
 #        ├─ db2.v2   (level 2: depends on v1, cross-DB)
 #        └─ db2.v3   (level 2: depends on v1, sibling of v2)
-#           └─ db3.v4 (level 3: depends on v2, chain)
-#           └─ db3.v5 (level 3: depends on v2 AND v3, diamond merge)
+#           ├─ db3.v4 (level 3: depends on v2, chain)
+#           ├─ db3.v5 (level 3: depends on v2 AND v3, diamond merge)
+#           └─ db3.v6 (level 3: WITH cte AS (SELECT ... FROM v2) SELECT ... FROM cte UNION SELECT ... FROM v4)
 
 set -euE
 
@@ -82,5 +83,12 @@ for BACKEND in local tidb; do
   run_sql 'SELECT count(*) FROM `db3`.v5'
   check_contains 'count(*): 2'
   run_sql 'SELECT sum(id) FROM `db3`.v5'
+  check_contains 'sum(id): 5'
+
+  # db3.v6: WITH cte AS (SELECT id FROM db2.v2) SELECT id FROM cte UNION SELECT id FROM db3.v4
+  # → (2), (3)  (root set-operator with CTE should not treat cte as a table dependency)
+  run_sql 'SELECT count(*) FROM `db3`.v6'
+  check_contains 'count(*): 2'
+  run_sql 'SELECT sum(id) FROM `db3`.v6'
   check_contains 'sum(id): 5'
 done
