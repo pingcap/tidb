@@ -381,12 +381,24 @@ type RestoreCtx struct {
 	In        RestoreWriter
 	DefaultDB string
 	// ParentBinaryOp stores the parent opcode.Op as an int; 0 means no parent.
-	// Callers that set it before restoring a child expression must restore it
-	// before returning.
+	// Expression Restore callers set it while restoring a child so parentheses
+	// removal can compare the child expression's precedence with the surrounding
+	// operator. Callers must restore the previous value before returning.
 	ParentBinaryOp int
-	// ParentBinarySide is interpreted by expression restore as the binary child
-	// side sentinel. It is meaningful only together with ParentBinaryOp and must
-	// be restored by callers that set it.
+	// ParentBinarySide records whether the current child is on the left or right
+	// side of ParentBinaryOp. It is interpreted by expression restore using the
+	// internal left/right constants in ast/expressions.go and is meaningful only
+	// together with ParentBinaryOp.
+	//
+	// Examples:
+	// - In `(a + b) * c`, the `(a + b)` child is the left side of `*`, so `+`
+	//   must keep its parentheses.
+	// - In `a + (b * c)`, the `(b * c)` child is the right side of `+`, so `*`
+	//   can drop its parentheses because it binds tighter.
+	// - In `a - (b - c)`, the right-side marker makes the same-precedence `-`
+	//   child keep parentheses because subtraction is not associative.
+	//
+	// Callers must restore the previous value before returning.
 	ParentBinarySide int
 	// InUnaryOperation marks that a child expression is being restored as a unary
 	// operand. Callers must restore the previous value before returning.

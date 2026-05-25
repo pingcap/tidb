@@ -897,9 +897,45 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 			"select 1 from b where x between (y or z) and 1",
 			"select ? from `b` where `x` between ( `y` or `z` ) and ?",
 		},
+		// Operator-like expressions that are not BinaryOperationExpr still need
+		// to keep their outer parentheses under a tighter arithmetic parent.
+		// Otherwise `(x LIKE 'a') + 1` would be restored as `x LIKE 'a' + 1`,
+		// which MySQL parses as `x LIKE ('a' + 1)`.
+		{
+			"select 1 from b where (x like 'test') + 1",
+			"select ? from `b` where ( `x` like ? ) + ?",
+		},
+		{
+			"select 1 from b where x like ('test' or 'fallback')",
+			"select ? from `b` where `x` like ( ? or ? )",
+		},
+		{
+			"select 1 from b where (x regexp 'x') + 1",
+			"select ? from `b` where ( `x` regexp ? ) + ?",
+		},
+		{
+			"select 1 from b where (x in (1, 2)) + 1",
+			"select ? from `b` where ( `x` in ( ... ) ) + ?",
+		},
+		{
+			"select 1 from b where (x is null) + 1",
+			"select ? from `b` where ( `x` is ? ) + ?",
+		},
+		{
+			"select 1 from b where (x is true) + 1",
+			"select ? from `b` where ( `x` is true ) + ?",
+		},
+		{
+			"select 1 from b where (x between y and z) + 1",
+			"select ? from `b` where ( `x` between `y` and `z` ) + ?",
+		},
 		{
 			"select 1 from b where (x or y) = any (select z from b)",
 			"select ? from `b` where ( `x` or `y` ) = any ( select `z` from `b` )",
+		},
+		{
+			"select 1 from b where (x = any (select z from b)) + 1",
+			"select ? from `b` where ( `x` = any ( select `z` from `b` ) ) + ?",
 		},
 		{
 			"select 1 from b where exists (select 1 from b where (x or y) in (1, 2))",
@@ -912,6 +948,10 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		{
 			"select 1 from b where 1 member of ((x or y))",
 			"select ? from `b` where ? member of ( ( `x` or `y` ) )",
+		},
+		{
+			"select 1 from b where (1 member of ('[true]')) + 1",
+			"select ? from `b` where ( ? member of ( ? ) ) + ?",
 		},
 		{
 			"select 1 from b where binary (x or y)",
