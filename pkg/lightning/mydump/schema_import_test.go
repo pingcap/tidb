@@ -368,7 +368,7 @@ func TestNewSchemaImportPlanRejectsEmptyViewSchema(t *testing.T) {
 	require.ErrorContains(t, err, "missing create view statement for `test`.`v1`")
 }
 
-func TestLoaderSetupDefersInvalidViewSQLUntilRun(t *testing.T) {
+func TestLoaderSetupDefersViewSchemaValidationUntilRun(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	store, err := objstore.NewLocalStorage(tempDir)
