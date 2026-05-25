@@ -118,6 +118,24 @@ SELECT cte.id FROM cte;
 	require.Equal(t, []filter.Table{{Schema: "test", Name: "t1"}}, parsed.deps)
 }
 
+func TestParseViewSchemaSQLIgnoresRecursiveCTESelfReference(t *testing.T) {
+	p := parser.New()
+	currentView := filter.Table{Schema: "test", Name: "v_recursive_cte"}
+	sql := `
+CREATE VIEW v_recursive_cte AS
+WITH RECURSIVE cte AS (
+	SELECT id FROM t1
+	UNION ALL
+	SELECT cte.id + 1 FROM cte WHERE cte.id < 10
+)
+SELECT cte.id FROM cte;
+`
+
+	parsed, err := parseViewSchemaSQL(p, currentView, sql)
+	require.NoError(t, err)
+	require.Equal(t, []filter.Table{{Schema: "test", Name: "t1"}}, parsed.deps)
+}
+
 func TestParseViewSchemaSQLPreservesUnexpectedStatements(t *testing.T) {
 	p := parser.New()
 	currentView := filter.Table{Schema: "test", Name: "v_extra"}

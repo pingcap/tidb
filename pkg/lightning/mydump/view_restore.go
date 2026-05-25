@@ -136,6 +136,8 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 		return n, false
 	case *ast.CommonTableExpression:
 		if node.IsRecursive {
+			// Recursive CTE can reference itself, so expose the name before
+			// traversing Query.
 			c.recordCTEName(node.Name.L)
 		}
 		return n, false
@@ -159,10 +161,11 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 func (c *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
 	switch node := n.(type) {
 	case *ast.CommonTableExpression:
-		// Recursive CTEs are recorded in Enter so self-references inside the CTE
-		// body can be recognized. Non-recursive CTEs only become visible after
-		// their query finishes, so we record every CTE again on Leave.
-		c.recordCTEName(node.Name.L)
+		if !node.IsRecursive {
+			// Non-recursive CTE becomes visible only after its definition has
+			// been fully traversed.
+			c.recordCTEName(node.Name.L)
+		}
 	case *ast.SelectStmt:
 		if node.With != nil {
 			c.popCTEScope()
