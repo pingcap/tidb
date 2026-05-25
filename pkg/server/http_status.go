@@ -592,7 +592,20 @@ func GetKeyspaceMetaServiceAddrs(store kv.Storage) ([]string, *tls.Config, bool)
 		logutil.BgLogger().Error("tikv store not meta service backend", zap.Error(err))
 		return nil, nil, false
 	}
-
+	if metaServiceInfo == nil {
+		if !intest.InTest {
+			logutil.BgLogger().Panic("meta service info is nil")
+		}
+		logutil.BgLogger().Error("meta service info is nil")
+		return nil, nil, false
+	}
+	if metaServiceInfo.KeyspaceMetaGroup == nil {
+		if !intest.InTest {
+			logutil.BgLogger().Panic("keyspace meta service group is nil")
+		}
+		logutil.BgLogger().Error("keyspace meta service group is nil")
+		return nil, nil, false
+	}
 	keyspaceMetaServiceAddrs := metaServiceInfo.KeyspaceMetaGroup.KeyspaceMetaServiceAddrs
 	logutil.BgLogger().Info("register auto service on meta service", zap.Any("meta-service-addrs", keyspaceMetaServiceAddrs))
 	return keyspaceMetaServiceAddrs, ebd.TLSConfig(), true
