@@ -40,7 +40,62 @@
       // Variable OFF => no CTE even for identical branches.
       "set @@tidb_opt_enable_common_subplan_extract = 0",
       "select a from t1 where b > 10 union all select a from t1 where b > 10",
-      "set @@tidb_opt_enable_common_subplan_extract = 1"
+      "set @@tidb_opt_enable_common_subplan_extract = 1",
+
+      // =============================================
+      // More complex positive cases.
+      // =============================================
+
+      // Partial dedup: 3-way where two branches are identical, one is different.
+      // Branches [A, A, B] → group {0,1} extracted as one CTE; B stays as-is.
+      "select a from t1 where b > 10 union all select a from t1 where b > 10 union all select a from t2 where b > 10",
+
+      // Two distinct dedup groups in one UNION ALL.
+      // Branches [A, A, B, B] → two separate CTEs, one per group.
+      "select a from t1 where b > 10 union all select a from t1 where b > 10 union all select a from t2 where c > 5 union all select a from t2 where c > 5",
+
+      // Four identical branches — all four become CTE references to the same CTEClass.
+      "select a from t1 where b > 10 union all select a from t1 where b > 10 union all select a from t1 where b > 10 union all select a from t1 where b > 10",
+
+      // Identical TopN branches (ORDER BY + LIMIT per branch, parenthesized).
+      "(select a from t1 where b > 0 order by c limit 10) union all (select a from t1 where b > 0 order by c limit 10)",
+
+      // Identical aggregation branches with HAVING filter.
+      "select a, count(*) from t1 group by a having count(*) > 1 union all select a, count(*) from t1 group by a having count(*) > 1",
+
+      // Identical 3-table join branches.
+      "select t1.a from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b union all select t1.a from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
+
+      // Identical join with multiple equal conditions and extra filter.
+      "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c > 0 union all select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c > 0",
+
+      // Identical UNION ALL branches inside a derived table — rule still fires on the inner Union.
+      "select * from (select a from t1 where b > 10 union all select a from t1 where b > 10) t",
+
+      // =============================================
+      // More complex negative cases.
+      // =============================================
+
+      // Different LIMIT values — TopN count differs, fingerprints diverge.
+      "(select a from t1 order by b limit 5) union all (select a from t1 order by b limit 10)",
+
+      // Different ORDER BY direction — TopN desc-flag differs.
+      "(select a from t1 order by b asc limit 5) union all (select a from t1 order by b desc limit 5)",
+
+      // Different GROUP BY column — aggregation fingerprint differs.
+      "select a, count(*) from t1 group by a union all select b, count(*) from t1 group by b",
+
+      // Same aggregation function but different aggregate argument.
+      "select a, sum(b) from t1 group by a union all select a, sum(c) from t1 group by a",
+
+      // Different HAVING condition — selection fingerprint differs.
+      "select a, count(*) from t1 group by a having count(*) > 1 union all select a, count(*) from t1 group by a having count(*) > 2",
+
+      // 3-way all different — no duplicate group forms.
+      "select a from t1 where b > 10 union all select a from t1 where b > 20 union all select a from t1 where b > 30",
+
+      // Different join type (inner vs left outer) — JoinType field differs.
+      "select t1.a from t1 inner join t2 on t1.a = t2.a union all select t1.a from t1 left join t2 on t1.a = t2.a"
     ]
   }
 ]

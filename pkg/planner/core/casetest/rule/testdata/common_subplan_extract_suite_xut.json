@@ -156,6 +156,263 @@
         "SQL": "",
         "HasCTE": false,
         "Plan": null
+      },
+      {
+        "SQL": "select a from t1 where b > 10 union all select a from t1 where b > 10 union all select a from t2 where b > 10",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t10000.00\troot\t\t",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_17\tdata:CTE_17",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_17\tdata:CTE_17",
+          "└─TableReader\t3333.33\troot\t\tdata:Projection",
+          "  └─Projection\t3333.33\tcop[tikv]\t\ttest.t2.a->Column#16",
+          "    └─Selection\t3333.33\tcop[tikv]\t\tgt(test.t2.b, 10)",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t2\tkeep order:false, stats:pseudo",
+          "CTE_17\t3333.33\troot\t\tNon-Recursive CTE",
+          "└─TableReader(Seed Part)\t3333.33\troot\t\tdata:Projection",
+          "  └─Projection\t3333.33\tcop[tikv]\t\ttest.t1.a->Column#16",
+          "    └─Selection\t3333.33\tcop[tikv]\t\tgt(test.t1.b, 10)",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t1 where b > 10 union all select a from t1 where b > 10 union all select a from t2 where c > 5 union all select a from t2 where c > 5",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t13333.33\troot\t\t",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_25\tdata:CTE_25",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_25\tdata:CTE_25",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_22\tdata:CTE_22",
+          "└─CTEFullScan\t3333.33\troot\tCTE:cse_cte_22\tdata:CTE_22",
+          "CTE_25\t3333.33\troot\t\tNon-Recursive CTE",
+          "└─TableReader(Seed Part)\t3333.33\troot\t\tdata:Projection",
+          "  └─Projection\t3333.33\tcop[tikv]\t\ttest.t1.a->Column#21",
+          "    └─Selection\t3333.33\tcop[tikv]\t\tgt(test.t1.b, 10)",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo",
+          "CTE_22\t3333.33\troot\t\tNon-Recursive CTE",
+          "└─TableReader(Seed Part)\t3333.33\troot\t\tdata:Projection",
+          "  └─Projection\t3333.33\tcop[tikv]\t\ttest.t2.a->Column#21",
+          "    └─Selection\t3333.33\tcop[tikv]\t\tgt(test.t2.c, 5)",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t2\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t1 where b > 10 union all select a from t1 where b > 10 union all select a from t1 where b > 10 union all select a from t1 where b > 10",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t13333.33\troot\t\t",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_22\tdata:CTE_22",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_22\tdata:CTE_22",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_22\tdata:CTE_22",
+          "└─CTEFullScan\t3333.33\troot\tCTE:cse_cte_22\tdata:CTE_22",
+          "CTE_22\t3333.33\troot\t\tNon-Recursive CTE",
+          "└─TableReader(Seed Part)\t3333.33\troot\t\tdata:Projection",
+          "  └─Projection\t3333.33\tcop[tikv]\t\ttest.t1.a->Column#21",
+          "    └─Selection\t3333.33\tcop[tikv]\t\tgt(test.t1.b, 10)",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "(select a from t1 where b > 0 order by c limit 10) union all (select a from t1 where b > 0 order by c limit 10)",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t20.00\troot\t\t",
+          "├─CTEFullScan\t10.00\troot\tCTE:cse_cte_14\tdata:CTE_14",
+          "└─CTEFullScan\t10.00\troot\tCTE:cse_cte_14\tdata:CTE_14",
+          "CTE_14\t10.00\troot\t\tNon-Recursive CTE",
+          "└─Projection(Seed Part)\t10.00\troot\t\ttest.t1.a->Column#13",
+          "  └─TopN\t10.00\troot\t\ttest.t1.c, offset:0, count:10",
+          "    └─TableReader\t10.00\troot\t\tdata:TopN",
+          "      └─TopN\t10.00\tcop[tikv]\t\ttest.t1.c, offset:0, count:10",
+          "        └─Selection\t3333.33\tcop[tikv]\t\tgt(test.t1.b, 0)",
+          "          └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a, count(*) from t1 group by a having count(*) > 1 union all select a, count(*) from t1 group by a having count(*) > 1",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t12800.00\troot\t\t",
+          "├─CTEFullScan\t6400.00\troot\tCTE:cse_cte_19\tdata:CTE_19",
+          "└─CTEFullScan\t6400.00\troot\tCTE:cse_cte_19\tdata:CTE_19",
+          "CTE_19\t6400.00\troot\t\tNon-Recursive CTE",
+          "└─Projection(Seed Part)\t6400.00\troot\t\ttest.t1.a->Column#17, Column#6->Column#18",
+          "  └─Selection\t6400.00\troot\t\tgt(Column#6, 1)",
+          "    └─HashAgg\t8000.00\troot\t\tgroup by:test.t1.a, funcs:count(Column#24)->Column#6, funcs:firstrow(test.t1.a)->test.t1.a",
+          "      └─TableReader\t8000.00\troot\t\tdata:HashAgg",
+          "        └─HashAgg\t8000.00\tcop[tikv]\t\tgroup by:test.t1.a, funcs:count(1)->Column#24",
+          "          └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select t1.a from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b union all select t1.a from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t31187.53\troot\t\t",
+          "├─CTEFullScan\t15593.77\troot\tCTE:cse_cte_32\tdata:CTE_32",
+          "└─CTEFullScan\t15593.77\troot\tCTE:cse_cte_32\tdata:CTE_32",
+          "CTE_32\t15593.77\troot\t\tNon-Recursive CTE",
+          "└─Projection(Seed Part)\t15593.77\troot\t\ttest.t1.a->Column#31",
+          "  └─Projection\t15593.77\troot\t\ttest.t1.a, test.t2.a, test.t2.b, test.t3.b",
+          "    └─HashJoin\t15593.77\troot\t\tinner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "      ├─TableReader(Build)\t9990.00\troot\t\tdata:Selection",
+          "      │ └─Selection\t9990.00\tcop[tikv]\t\tnot(isnull(test.t3.b))",
+          "      │   └─TableFullScan\t10000.00\tcop[tikv]\ttable:t3\tkeep order:false, stats:pseudo",
+          "      └─HashJoin(Probe)\t12475.01\troot\t\tinner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "        ├─TableReader(Build)\t9990.00\troot\t\tdata:Selection",
+          "        │ └─Selection\t9990.00\tcop[tikv]\t\tnot(isnull(test.t1.a))",
+          "        │   └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo",
+          "        └─TableReader(Probe)\t9980.01\troot\t\tdata:Selection",
+          "          └─Selection\t9980.01\tcop[tikv]\t\tnot(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "            └─TableFullScan\t10000.00\tcop[tikv]\ttable:t2\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c > 0 union all select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c > 0",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t8316.68\troot\t\t",
+          "├─CTEFullScan\t4158.34\troot\tCTE:cse_cte_23\tdata:CTE_23",
+          "└─CTEFullScan\t4158.34\troot\tCTE:cse_cte_23\tdata:CTE_23",
+          "CTE_23\t4158.34\troot\t\tNon-Recursive CTE",
+          "└─Projection(Seed Part)\t4158.34\troot\t\ttest.t1.a->Column#21, test.t1.b->Column#22",
+          "  └─HashJoin\t4158.34\troot\t\tinner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "    ├─TableReader(Build)\t3326.67\troot\t\tdata:Selection",
+          "    │ └─Selection\t3326.67\tcop[tikv]\t\tgt(test.t1.c, 0), not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    │   └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo",
+          "    └─TableReader(Probe)\t9980.01\troot\t\tdata:Selection",
+          "      └─Selection\t9980.01\tcop[tikv]\t\tnot(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "        └─TableFullScan\t10000.00\tcop[tikv]\ttable:t2\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select a from t1 where b > 10 union all select a from t1 where b > 10) t",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t6666.67\troot\t\t",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_12\tdata:CTE_12",
+          "└─CTEFullScan\t3333.33\troot\tCTE:cse_cte_12\tdata:CTE_12",
+          "CTE_12\t3333.33\troot\t\tNon-Recursive CTE",
+          "└─TableReader(Seed Part)\t3333.33\troot\t\tdata:Projection",
+          "  └─Projection\t3333.33\tcop[tikv]\t\ttest.t1.a->Column#11",
+          "    └─Selection\t3333.33\tcop[tikv]\t\tgt(test.t1.b, 10)",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "(select a from t1 order by b limit 5) union all (select a from t1 order by b limit 10)",
+        "HasCTE": false,
+        "Plan": [
+          "Union\t15.00\troot\t\t",
+          "├─TopN\t5.00\troot\t\ttest.t1.b, offset:0, count:5",
+          "│ └─TableReader\t5.00\troot\t\tdata:TopN",
+          "│   └─TopN\t5.00\tcop[tikv]\t\ttest.t1.b, offset:0, count:5",
+          "│     └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo",
+          "└─TopN\t10.00\troot\t\ttest.t1.b, offset:0, count:10",
+          "  └─TableReader\t10.00\troot\t\tdata:TopN",
+          "    └─TopN\t10.00\tcop[tikv]\t\ttest.t1.b, offset:0, count:10",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "(select a from t1 order by b asc limit 5) union all (select a from t1 order by b desc limit 5)",
+        "HasCTE": false,
+        "Plan": [
+          "Union\t10.00\troot\t\t",
+          "├─TopN\t5.00\troot\t\ttest.t1.b, offset:0, count:5",
+          "│ └─TableReader\t5.00\troot\t\tdata:TopN",
+          "│   └─TopN\t5.00\tcop[tikv]\t\ttest.t1.b, offset:0, count:5",
+          "│     └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo",
+          "└─TopN\t5.00\troot\t\ttest.t1.b:desc, offset:0, count:5",
+          "  └─TableReader\t5.00\troot\t\tdata:TopN",
+          "    └─TopN\t5.00\tcop[tikv]\t\ttest.t1.b:desc, offset:0, count:5",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a, count(*) from t1 group by a union all select b, count(*) from t1 group by b",
+        "HasCTE": false,
+        "Plan": [
+          "Union\t16000.00\troot\t\t",
+          "├─Projection\t8000.00\troot\t\ttest.t1.a->Column#13, Column#6->Column#14",
+          "│ └─HashAgg\t8000.00\troot\t\tgroup by:test.t1.a, funcs:count(Column#15)->Column#6, funcs:firstrow(test.t1.a)->test.t1.a",
+          "│   └─TableReader\t8000.00\troot\t\tdata:HashAgg",
+          "│     └─HashAgg\t8000.00\tcop[tikv]\t\tgroup by:test.t1.a, funcs:count(1)->Column#15",
+          "│       └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo",
+          "└─Projection\t8000.00\troot\t\ttest.t1.b->Column#13, Column#12->Column#14",
+          "  └─HashAgg\t8000.00\troot\t\tgroup by:test.t1.b, funcs:count(Column#17)->Column#12, funcs:firstrow(test.t1.b)->test.t1.b",
+          "    └─TableReader\t8000.00\troot\t\tdata:HashAgg",
+          "      └─HashAgg\t8000.00\tcop[tikv]\t\tgroup by:test.t1.b, funcs:count(1)->Column#17",
+          "        └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a, sum(b) from t1 group by a union all select a, sum(c) from t1 group by a",
+        "HasCTE": false,
+        "Plan": [
+          "Union\t16000.00\troot\t\t",
+          "├─Projection\t8000.00\troot\t\ttest.t1.a->Column#13, Column#6->Column#14",
+          "│ └─HashAgg\t8000.00\troot\t\tgroup by:test.t1.a, funcs:sum(Column#15)->Column#6, funcs:firstrow(test.t1.a)->test.t1.a",
+          "│   └─TableReader\t8000.00\troot\t\tdata:HashAgg",
+          "│     └─HashAgg\t8000.00\tcop[tikv]\t\tgroup by:test.t1.a, funcs:sum(test.t1.b)->Column#15",
+          "│       └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo",
+          "└─Projection\t8000.00\troot\t\ttest.t1.a->Column#13, Column#12->Column#14",
+          "  └─HashAgg\t8000.00\troot\t\tgroup by:test.t1.a, funcs:sum(Column#17)->Column#12, funcs:firstrow(test.t1.a)->test.t1.a",
+          "    └─TableReader\t8000.00\troot\t\tdata:HashAgg",
+          "      └─HashAgg\t8000.00\tcop[tikv]\t\tgroup by:test.t1.a, funcs:sum(test.t1.c)->Column#17",
+          "        └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a, count(*) from t1 group by a having count(*) > 1 union all select a, count(*) from t1 group by a having count(*) > 2",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t12800.00\troot\t\t",
+          "├─CTEFullScan\t6400.00\troot\tCTE:cse_cte_19\tdata:CTE_19",
+          "└─CTEFullScan\t6400.00\troot\tCTE:cse_cte_19\tdata:CTE_19",
+          "CTE_19\t6400.00\troot\t\tNon-Recursive CTE",
+          "└─Projection(Seed Part)\t6400.00\troot\t\ttest.t1.a->Column#17, Column#6->Column#18",
+          "  └─Selection\t6400.00\troot\t\tgt(Column#6, 1)",
+          "    └─HashAgg\t8000.00\troot\t\tgroup by:test.t1.a, funcs:count(Column#24)->Column#6, funcs:firstrow(test.t1.a)->test.t1.a",
+          "      └─TableReader\t8000.00\troot\t\tdata:HashAgg",
+          "        └─HashAgg\t8000.00\tcop[tikv]\t\tgroup by:test.t1.a, funcs:count(1)->Column#24",
+          "          └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t1 where b > 10 union all select a from t1 where b > 20 union all select a from t1 where b > 30",
+        "HasCTE": true,
+        "Plan": [
+          "Union\t10000.00\troot\t\t",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_17\tdata:CTE_17",
+          "├─CTEFullScan\t3333.33\troot\tCTE:cse_cte_17\tdata:CTE_17",
+          "└─CTEFullScan\t3333.33\troot\tCTE:cse_cte_17\tdata:CTE_17",
+          "CTE_17\t3333.33\troot\t\tNon-Recursive CTE",
+          "└─TableReader(Seed Part)\t3333.33\troot\t\tdata:Projection",
+          "  └─Projection\t3333.33\tcop[tikv]\t\ttest.t1.a->Column#16",
+          "    └─Selection\t3333.33\tcop[tikv]\t\tgt(test.t1.b, 10)",
+          "      └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select t1.a from t1 inner join t2 on t1.a = t2.a union all select t1.a from t1 left join t2 on t1.a = t2.a",
+        "HasCTE": false,
+        "Plan": [
+          "Union\t24975.00\troot\t\t",
+          "├─HashJoin\t12487.50\troot\t\tinner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "│ ├─TableReader(Build)\t9990.00\troot\t\tdata:Selection",
+          "│ │ └─Selection\t9990.00\tcop[tikv]\t\tnot(isnull(test.t2.a))",
+          "│ │   └─TableFullScan\t10000.00\tcop[tikv]\ttable:t2\tkeep order:false, stats:pseudo",
+          "│ └─TableReader(Probe)\t9990.00\troot\t\tdata:Selection",
+          "│   └─Selection\t9990.00\tcop[tikv]\t\tnot(isnull(test.t1.a))",
+          "│     └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo",
+          "└─HashJoin\t12487.50\troot\t\tleft outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build)\t9990.00\troot\t\tdata:Selection",
+          "  │ └─Selection\t9990.00\tcop[tikv]\t\tnot(isnull(test.t2.a))",
+          "  │   └─TableFullScan\t10000.00\tcop[tikv]\ttable:t2\tkeep order:false, stats:pseudo",
+          "  └─TableReader(Probe)\t10000.00\troot\t\tdata:TableFullScan",
+          "    └─TableFullScan\t10000.00\tcop[tikv]\ttable:t1\tkeep order:false, stats:pseudo"
+        ]
       }
     ]
   }
