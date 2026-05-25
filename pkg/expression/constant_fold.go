@@ -49,9 +49,10 @@ func FoldConstant(ctx BuildContext, expr Expression) Expression {
 	return e
 }
 
-// cloneFoldedBranchWithRetType copies branches selected by special folding
-// before FoldConstant applies the parent expression metadata to the returned expression.
-func cloneFoldedBranchWithRetType(expr Expression) Expression {
+// cloneFoldedBranchForMetadataOverride copies branches selected by special
+// folding before FoldConstant applies the parent expression metadata to the
+// returned expression.
+func cloneFoldedBranchForMetadataOverride(expr Expression) Expression {
 	switch e := expr.(type) {
 	case *Column:
 		cloned := e.Clone().(*Column)
@@ -63,7 +64,8 @@ func cloneFoldedBranchWithRetType(expr Expression) Expression {
 		return cloned
 	case *ScalarFunction:
 		cloned := e.Clone().(*ScalarFunction)
-		cloned.RetType = cloned.Function.getRetTp()
+		cloned.RetType = e.RetType.Clone()
+		cloned.Function.setRetTp(cloned.RetType)
 		return cloned
 	default:
 		return expr
@@ -106,11 +108,9 @@ func ifFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 			return expr, false
 		}
 		if !isNull0 && arg0 != 0 {
-			foldedExpr, isDeferred := foldConstant(ctx, args[1])
-			return cloneFoldedBranchWithRetType(foldedExpr), isDeferred
+			return foldConstant(ctx, args[1])
 		}
-		foldedExpr, isDeferred := foldConstant(ctx, args[2])
-		return cloneFoldedBranchWithRetType(foldedExpr), isDeferred
+		return foldConstant(ctx, args[2])
 	}
 	// if the condition is not const, which branch is unknown to run, so directly return.
 	return expr, false
@@ -132,7 +132,7 @@ func ifNullFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool
 			expr.GetType(ctx.GetEvalCtx()).SetCharset(args[1].GetType(ctx.GetEvalCtx()).GetCharset())
 			expr.GetType(ctx.GetEvalCtx()).SetCollate(args[1].GetType(ctx.GetEvalCtx()).GetCollate())
 
-			return cloneFoldedBranchWithRetType(foldedExpr), isConstant
+			return foldedExpr, isConstant
 		}
 		return constArg, isDeferred
 	}
@@ -164,7 +164,7 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 				foldedExpr.GetType(ctx.GetEvalCtx()).SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 				return foldedExpr, isDeferredConst
 			}
-			return cloneFoldedBranchWithRetType(foldedExpr), isDeferredConst
+			return foldedExpr, isDeferredConst
 		}
 	}
 	// If the number of arguments in casewhen is odd, and the previous conditions
@@ -177,7 +177,7 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			foldedExpr.GetType(ctx.GetEvalCtx()).SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
 			return foldedExpr, isDeferredConst
 		}
-		return cloneFoldedBranchWithRetType(foldedExpr), isDeferredConst
+		return foldedExpr, isDeferredConst
 	}
 	return expr, isDeferredConst
 }
@@ -193,7 +193,11 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			return expr, false
 		}
 		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, expr) {
-			return function(ctx, x)
+			foldedExpr, isDeferred := function(ctx, x)
+			if foldedExpr != x {
+				foldedExpr = cloneFoldedBranchForMetadataOverride(foldedExpr)
+			}
+			return foldedExpr, isDeferred
 		}
 
 		args := x.GetArgs()

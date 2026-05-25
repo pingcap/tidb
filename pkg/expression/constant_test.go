@@ -289,12 +289,6 @@ func TestConstantFolding(t *testing.T) {
 	require.Equal(t, "binary", folded.GetType(ctx.GetEvalCtx()).GetCollate())
 
 	lowerExpr := newFunctionWithType(ctx, ast.Lower, types.NewFieldType(mysql.TypeVarchar), col).(*ScalarFunction)
-	clonedLowerExpr := lowerExpr.Clone().(*ScalarFunction)
-	require.NotSame(t, lowerExpr.RetType, clonedLowerExpr.RetType)
-	clonedLowerExpr.GetType(ctx.GetEvalCtx()).SetCharset("binary")
-	require.Equal(t, "utf8mb4", lowerExpr.GetType(ctx.GetEvalCtx()).GetCharset())
-	require.Equal(t, "utf8mb4", clonedLowerExpr.Function.getRetTp().GetCharset())
-
 	ifRetType := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "binary", 255)
 	ifExpr := newFunctionWithType(ctx, ast.If, ifRetType,
 		newLonglong(1),
