@@ -18,7 +18,7 @@ Reference: `PLANS.md` at repository root; this plan must be maintained according
 
 当前 lease lock 已经有 stale cleanup。固定路径 lock 的问题是 cleanup 先读 metadata，再删除同一个 path；如果另一个 waiter 在中间删除旧 lock 并在同一路径 acquire 新 lock，旧 cleanup 可能误删新 holder 的 lock。
 
-完成本计划后，新 acquire 会写入不同的物理实例路径，例如 `v1/LOCK.WRIT.<32hex>`。cleanup 只删除它已经读取并确认 stale 的旧实例路径，因此不会删除后来新 acquire 出来的不同实例。用户可通过 `go test` 中的 race-style regression case 观察该行为：旧 instance 被 cleanup 后，新 holder 的新 instance 仍存在。
+完成本计划后，新 acquire 会写入不同的物理实例路径，例如 `v1/LOCK.WRIT.<32hex>`。cleanup 只删除它已经读取并确认 stale 的旧实例路径，因此不会删除后来新 acquire 出来的不同实例。用户可通过 `go test` 中的 cleanup regression case 观察该行为：同一 family 下 stale instance 被 cleanup 后，另一个 alive generated instance 仍存在。
 
 ## Progress
 
@@ -34,6 +34,8 @@ Reference: `PLANS.md` at repository root; this plan must be maintained according
 - [x] (2026-05-25 11:46+02:00) 运行 API 迁移 WIP tests：objstore failpoint targeted tests、S3 root-prefix test、BR stream renewal test、BR task compile 均 passed。
 - [x] (2026-05-25 11:52+02:00) 根据新增 Go test function 运行 `make bazel_prepare` 并检查 Bazel metadata；无 metadata diff。
 - [x] (2026-05-25 11:56+02:00) 运行 Ready profile：targeted tests + `make lint` passed。
+- [x] (2026-05-25 12:35+02:00) 根据独立审查补充 robustness/race regression tests，并增强 cleanup 诊断日志。
+- [x] (2026-05-25 12:40+02:00) 补充 append writer interleaving 与 same physical target collision race tests，直接覆盖 family verifier 和 `assertOnlyMyIntent()` 的并发边界。
 
 ## Surprises & Discoveries
 
@@ -68,7 +70,7 @@ Reference: `PLANS.md` at repository root; this plan must be maintained according
 
 ## Outcomes & Retrospective
 
-- 2026-05-25: slice 1 completed acquire-layer instance generation and family verifier. Remaining gaps are cleanup behavior, exported API removal, business call-site updates, S3 test update, renewal path assertions, Bazel metadata, and Ready validation.
+- 2026-05-25: implementation completed. Follow-up review hardening added direct false-success regressions for writer-held/read-blocked, append writer conflict, legacy fixed truncate conflict, read/write interleaving, append writer interleaving, same physical target collision, and cleanup preserving an alive generated instance while reclaiming a stale sibling. Cleanup diagnostics now warn for unknown protected-prefix objects and use non-legacy wording for generated instances missing `ExpireAt`.
 
 ## Context and Orientation
 
@@ -176,7 +178,7 @@ Files:
 
 Concrete steps:
 
-- [ ] Add helper functions near existing test helpers:
+- [x] Add helper functions near existing test helpers:
 
     func listPathsWithPrefix(t *testing.T, strg storeapi.Storage, subDir, objPrefix string) []string {
         t.Helper()
@@ -207,9 +209,9 @@ Concrete steps:
         require.NoError(t, err)
     }
 
-- [ ] Add imports `encoding/hex` and `strings` if they are not already present.
+- [x] Add imports `encoding/hex` and `strings` if they are not already present.
 
-- [ ] Replace or extend `TestTryLockRemote` with truncate-specific expectations:
+- [x] Replace or extend `TestTryLockRemote` with truncate-specific expectations:
 
     func TestTryLockRemoteTruncateCreatesInstancePath(t *testing.T) {
         ctx := context.Background()
@@ -226,7 +228,7 @@ Concrete steps:
         requireFileNotExists(t, filepath.Join(pth, physicalPath))
     }
 
-- [ ] Replace or extend `TestRWLock` with instance path expectations for `v1/LOCK`:
+- [x] Replace or extend `TestRWLock` with instance path expectations for `v1/LOCK`:
 
     func TestTryLockRemoteReadWriteCreateInstancePaths(t *testing.T) {
         ctx := context.Background()
@@ -250,7 +252,7 @@ Concrete steps:
         require.NoError(t, writeLock.Unlock(ctx))
     }
 
-- [ ] Add append write instance path test:
+- [x] Add append write instance path test:
 
     func TestTryLockRemoteAppendWriteCreatesInstancePath(t *testing.T) {
         ctx := context.Background()
@@ -263,7 +265,7 @@ Concrete steps:
         require.NoError(t, lock.Unlock(ctx))
     }
 
-- [ ] Add invalid logical path tests:
+- [x] Add invalid logical path tests:
 
     func TestTryLockRemoteRejectsUnknownLogicalFamily(t *testing.T) {
         ctx := context.Background()
@@ -276,7 +278,7 @@ Concrete steps:
         require.ErrorContains(t, err, "unknown lock family")
     }
 
-- [ ] Run the targeted test and confirm it fails for the expected reason:
+- [x] Run the targeted test and confirm it fails for the expected reason:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemoteTruncateCreatesInstancePath|TestTryLockRemoteReadWriteCreateInstancePaths|TestTryLockRemoteAppendWriteCreatesInstancePath|TestTryLockRemoteRejectsUnknownLogicalFamily' -count=1
 
@@ -292,9 +294,9 @@ Files:
 
 Concrete steps:
 
-- [ ] Replace `math/rand` import usage carefully. Keep it because `LockWithRetry` uses jitter. Add `crypto/rand` as `cryptorand`, add `encoding/binary`, and keep `encoding/hex`.
+- [x] Replace `math/rand` import usage carefully. Keep it because `LockWithRetry` uses jitter. Add `crypto/rand` as `cryptorand`, add `encoding/binary`, and keep `encoding/hex`.
 
-- [ ] Add constants near `writeLockName`:
+- [x] Add constants near `writeLockName`:
 
     const (
         lockPathTruncate  = "truncating.lock"
@@ -303,7 +305,7 @@ Concrete steps:
         lockGenerationHexLen = 32
     )
 
-- [ ] Add `newLockGeneration`:
+- [x] Add `newLockGeneration`:
 
     func newLockGeneration() (string, error) {
         var random [8]byte
@@ -313,13 +315,13 @@ Concrete steps:
         return fmt.Sprintf("%016x%016x", nowFunc().UnixNano(), binary.BigEndian.Uint64(random[:])), nil
     }
 
-- [ ] Change `newReadLockName` to take a generated suffix:
+- [x] Change `newReadLockName` to take a generated suffix:
 
     func newReadLockName(path, generation string) string {
         return fmt.Sprintf("%s.READ.%s", path, generation)
     }
 
-- [ ] Add `newWriteLockInstanceName` and `newTruncateLockInstanceName`:
+- [x] Add `newWriteLockInstanceName` and `newTruncateLockInstanceName`:
 
     func newWriteLockInstanceName(path, generation string) string {
         return fmt.Sprintf("%s.WRIT.%s", path, generation)
@@ -329,7 +331,7 @@ Concrete steps:
         return fmt.Sprintf("%s.%s", lockPathTruncate, generation)
     }
 
-- [ ] Extract lock content creation so all acquire paths use the same metadata:
+- [x] Extract lock content creation so all acquire paths use the same metadata:
 
     func makeLockContent(lockPath, hint string) func(uuid.UUID) []byte {
         return func(txnID uuid.UUID) []byte {
@@ -345,7 +347,7 @@ Concrete steps:
         }
     }
 
-- [ ] Rename exported `TryLockRemote` implementation into unexported `tryLockRemoteExact`:
+- [x] Rename exported `TryLockRemote` implementation into unexported `tryLockRemoteExact`:
 
     func tryLockRemoteExact(
         ctx context.Context,
@@ -366,7 +368,7 @@ Concrete steps:
         return &RemoteLock{txnID: txnID, storage: storage, path: physicalPath}, nil
     }
 
-- [ ] Add `TryLockRemoteTruncate`:
+- [x] Add `TryLockRemoteTruncate`:
 
     func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string) (*RemoteLock, error) {
         generation, err := newLockGeneration()
@@ -381,7 +383,7 @@ Concrete steps:
 
     `verifyLockFamily` can initially call existing exact prefix check as a temporary compile step, but it must be replaced in Milestone 3 before tests are allowed to pass.
 
-- [ ] Update `TryLockRemoteRead` and `TryLockRemoteWrite` to reject unknown logical paths and to use generated physical target names. Until Milestone 3, they may still use existing prefix verify:
+- [x] Update `TryLockRemoteRead` and `TryLockRemoteWrite` to reject unknown logical paths and to use generated physical target names. Until Milestone 3, they may still use existing prefix verify:
 
     func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
         if path != lockPathMigration && path != lockPathAppend {
@@ -411,7 +413,7 @@ Concrete steps:
         })
     }
 
-- [ ] Run the Milestone 1 targeted test command. Expected: compile may still fail if `verifyLockFamily` is missing; after adding a temporary skeleton, naming tests should start passing or fail due to family conflict logic.
+- [x] Run the Milestone 1 targeted test command. Expected: compile may still fail if `verifyLockFamily` is missing; after adding a temporary skeleton, naming tests should start passing or fail due to family conflict logic.
 
 ## Milestone 3: Implement family classifier and acquire verifier
 
@@ -424,7 +426,7 @@ Files:
 
 Concrete steps:
 
-- [ ] Add helper predicates:
+- [x] Add helper predicates:
 
     func isHexLen(s string, n int) bool {
         if len(s) != n {
@@ -442,7 +444,7 @@ Concrete steps:
         return p[:idx], true
     }
 
-- [ ] Add family listing helper. It must preserve current verify conservatism by setting `IncludeTombstone: true` for acquire:
+- [x] Add family listing helper. It must preserve current verify conservatism by setting `IncludeTombstone: true` for acquire:
 
     func listLockFamilyCandidates(ctx context.Context, storage storeapi.Storage, logicalPath string, includeTombstone bool) ([]string, error) {
         prefixes, err := lockFamilyPrefixes(logicalPath)
@@ -471,7 +473,7 @@ Concrete steps:
         return candidates, nil
     }
 
-- [ ] Add `lockFamilyPrefixes`:
+- [x] Add `lockFamilyPrefixes`:
 
     func lockFamilyPrefixes(logicalPath string) ([]string, error) {
         switch logicalPath {
@@ -486,7 +488,7 @@ Concrete steps:
         }
     }
 
-- [ ] Implement classifier using committed target first, then intent wrapper. Required classification:
+- [x] Implement classifier using committed target first, then intent wrapper. Required classification:
 
     func classifyLockFamilyMember(logicalPath string, acquireKind lockAcquireKind, objectPath string, ownIntent string) lockFamilyMember {
         committedPath, isIntent := splitIntentPath(objectPath)
@@ -516,7 +518,7 @@ Concrete steps:
         }
     }
 
-- [ ] Implement `classifyTruncateMember`, `classifyMigrationMember`, and `classifyAppendMember` with these exact outcomes:
+- [x] Implement `classifyTruncateMember`, `classifyMigrationMember`, and `classifyAppendMember` with these exact outcomes:
 
     `truncating.lock` is committed truncate member, cleanup ineligible.
 
@@ -538,7 +540,7 @@ Concrete steps:
 
     `v1/APPEND_LOCK.WRIT.<32hex>` is committed write member, cleanup eligible.
 
-- [ ] Add conflict predicate:
+- [x] Add conflict predicate:
 
     func isConflictForAcquire(acquireKind lockAcquireKind, member lockFamilyMember) bool {
         if member.Path == "" || member.OwnIntent {
@@ -559,7 +561,7 @@ Concrete steps:
         }
     }
 
-- [ ] Add `verifyLockFamily`:
+- [x] Add `verifyLockFamily`:
 
     func verifyLockFamily(ctx VerifyWriteContext, logicalPath string, acquireKind lockAcquireKind) error {
         candidates, err := listLockFamilyCandidates(ctx, ctx.Storage, logicalPath, true)
@@ -582,7 +584,7 @@ Concrete steps:
         return nil
     }
 
-- [ ] Add tests:
+- [x] Add tests:
 
     func TestLockFamilyVerifierIgnoresOwnIntent(t *testing.T) {
         ctx := context.Background()
@@ -595,7 +597,7 @@ Concrete steps:
 
     This test primarily protects the second `Verify()` in `conditionalPut.CommitTo`, because it must see and ignore its own intent.
 
-- [ ] Add tests for read/write intent compatibility. Use existing failpoints `exclusive-write-commit-to-1` and `exclusive-write-commit-to-2` to pause one acquire after intent creation, then assert:
+- [x] Add tests for read/write intent compatibility. Use existing failpoints `exclusive-write-commit-to-1` and `exclusive-write-commit-to-2` to pause one acquire after intent creation, then assert:
 
     read acquire is blocked by write intent.
 
@@ -605,7 +607,7 @@ Concrete steps:
 
   Keep each case as a separate `t.Run` under one top-level test if possible, to reduce Bazel test metadata churn.
 
-- [ ] Run targeted tests:
+- [x] Run targeted tests:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemoteReadWriteCreateInstancePaths|TestTryLockRemoteAppendWriteCreatesInstancePath|TestLockFamilyVerifierIgnoresOwnIntent|TestRWLock|TestConcurrentLock' -count=1
 
@@ -622,7 +624,7 @@ Files:
 
 Concrete steps:
 
-- [ ] Rename `CleanUpStaleLock` to unexported `cleanUpStaleLockInstance`. Keep the metadata logic mostly intact:
+- [x] Rename `CleanUpStaleLock` to unexported `cleanUpStaleLockInstance`. Keep the metadata logic mostly intact:
 
     func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, path string) (reclaimed bool, err error) {
         meta, err := getLockMeta(ctx, storage, path)
@@ -656,7 +658,7 @@ Concrete steps:
 
   Note: zero `ExpireAt` is an error only here because this helper must be called only after classifier confirms a new 32 hex cleanup-eligible instance.
 
-- [ ] Implement `tryCleanUpStaleLockFamily`. It should list with `includeTombstone=false`, classify each candidate, skip intent and unknown objects, call `cleanUpStaleLockInstance` only for `CleanupEligible`, log candidate errors, continue, and return true if any candidate was reclaimed.
+- [x] Implement `tryCleanUpStaleLockFamily`. It should list with `includeTombstone=false`, classify each candidate, skip intent and unknown objects, call `cleanUpStaleLockInstance` only for `CleanupEligible`, log candidate errors, continue, and return true if any candidate was reclaimed.
 
     func tryCleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logicalPath string) bool {
         candidates, err := listLockFamilyCandidates(ctx, storage, logicalPath, false)
@@ -688,9 +690,9 @@ Concrete steps:
         return anyReclaimed
     }
 
-- [ ] Update `LockWithRetry` to call `tryCleanUpStaleLockFamily` unconditionally after acquire error. Do not gate on error type.
+- [x] Update `LockWithRetry` to call `tryCleanUpStaleLockFamily` unconditionally after acquire error. Do not gate on error type.
 
-- [ ] Add exported truncate cleanup:
+- [x] Add exported truncate cleanup:
 
     func CleanUpStaleTruncateLock(ctx context.Context, storage storeapi.Storage) (bool, error) {
         candidates, err := listLockFamilyCandidates(ctx, storage, lockPathTruncate, false)
@@ -718,7 +720,7 @@ Concrete steps:
 
   This function returns WalkDir errors but logs and continues candidate cleanup errors, matching the design that malformed 32 hex instances should not block the cleanup pass itself.
 
-- [ ] Update cleanup tests. Existing tests expecting `CleanUpStaleLock` should be changed to call either `CleanUpStaleTruncateLock` or exercise cleanup through `LockWithRetry`.
+- [x] Update cleanup tests. Existing tests expecting `CleanUpStaleLock` should be changed to call either `CleanUpStaleTruncateLock` or exercise cleanup through `LockWithRetry`.
 
 Required test cases:
 
@@ -733,7 +735,7 @@ Required test cases:
     intent object is not deleted
     malformed v1/LOCK.WRIT.<32hex> logs/skips and a later stale eligible candidate is still deleted
 
-- [ ] Add a regression test for the original fixed-path race, now using two different instances:
+- [x] Add a regression test for the original fixed-path race, now using two different instances:
 
     write stale v1/LOCK.WRIT.<32hex-old>
     wrap storage DeleteFile so that before deleting old instance, another holder acquires v1/LOCK.WRIT.<32hex-new>
@@ -742,7 +744,7 @@ Required test cases:
 
   If no direct test hook exists for family cleanup, expose only test helper through `pkg/objstore/export_test.go`, not production API.
 
-- [ ] Run targeted cleanup tests:
+- [x] Run targeted cleanup tests:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestCleanUp|TestLockWithRetry' -count=1
 

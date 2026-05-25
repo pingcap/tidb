@@ -17,6 +17,8 @@ package objstore
 import (
 	"context"
 	"time"
+
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 // Re-exports of internal sentinel errors so tests in objstore_test can match
@@ -29,6 +31,12 @@ var (
 // TESTTryRenew exposes the unexported tryRenew primitive for direct testing.
 func TESTTryRenew(ctx context.Context, l *RemoteLock) error {
 	return l.tryRenew(ctx)
+}
+
+// TESTTryLockRemoteExact exposes exact-target conditionalPut for tests that
+// need to exercise assertOnlyMyIntent without lock-family verification.
+func TESTTryLockRemoteExact(ctx context.Context, storage storeapi.Storage, physicalPath, hint string) (*RemoteLock, error) {
+	return tryLockRemoteExact(ctx, storage, physicalPath, hint, nil)
 }
 
 // TESTStopRenewal signals the renewal goroutine to stop and waits for it to

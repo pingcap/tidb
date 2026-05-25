@@ -133,6 +133,9 @@ func TestRWLock(t *testing.T) {
 	writePath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
 	require32HexSuffix(t, writePath, "v1/LOCK.WRIT.")
 	requireFileExists(t, filepath.Join(path, writePath))
+	readWhileWriting, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "Can I read while you write?")
+	require.ErrorContains(t, err, "conflict file")
+	require.Nil(t, readWhileWriting)
 	require.NoError(t, l.Unlock(ctx))
 	requireFileNotExists(t, filepath.Join(path, writePath))
 }
@@ -190,6 +193,9 @@ func TestTryLockRemoteAppendWriteCreatesInstancePath(t *testing.T) {
 	lockPath := requireSinglePathWithPrefix(t, strg, "v1/APPEND_LOCK.WRIT.")
 	require32HexSuffix(t, lockPath, "v1/APPEND_LOCK.WRIT.")
 	requireFileExists(t, filepath.Join(pth, lockPath))
+	lock2, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/APPEND_LOCK", "append writer 2")
+	require.ErrorContains(t, err, "conflict file")
+	require.Nil(t, lock2)
 	require.NoError(t, lock.Unlock(ctx))
 	requireFileNotExists(t, filepath.Join(pth, lockPath))
 }
@@ -252,6 +258,30 @@ func TestTryLockRemoteAcquireBlockedByLegacyAndUnknownProtectedMembers(t *testin
 		require.Nil(t, lock)
 	})
 
+	t.Run("legacy write blocks read", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		require.NoError(t, strg.WriteFile(ctx, "v1/LOCK.WRIT", []byte("{}")))
+		lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader")
+		require.ErrorContains(t, err, "conflict file")
+		require.Nil(t, lock)
+	})
+
+	t.Run("legacy append write blocks append writer", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		require.NoError(t, strg.WriteFile(ctx, "v1/APPEND_LOCK.WRIT", []byte("{}")))
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/APPEND_LOCK", "append writer")
+		require.ErrorContains(t, err, "conflict file")
+		require.Nil(t, lock)
+	})
+
+	t.Run("legacy fixed truncate blocks truncate", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		require.NoError(t, strg.WriteFile(ctx, "truncating.lock", []byte("{}")))
+		lock, err := objstore.TryLockRemoteTruncate(ctx, strg, "truncate")
+		require.ErrorContains(t, err, "conflict file")
+		require.Nil(t, lock)
+	})
+
 	t.Run("unknown truncate object blocks acquire", func(t *testing.T) {
 		strg, _ := createMockStorage(t)
 		require.NoError(t, strg.WriteFile(ctx, "truncating.lock.backup", []byte("{}")))
@@ -263,61 +293,150 @@ func TestTryLockRemoteAcquireBlockedByLegacyAndUnknownProtectedMembers(t *testin
 
 func TestConcurrentLock(t *testing.T) {
 	ctx := context.Background()
-	strg, path := createMockStorage(t)
 
-	errChA := make(chan error, 1)
-	errChB := make(chan error, 1)
-
-	waitRecvTwice := func(ch chan<- struct{}) func() {
-		return func() {
-			ch <- struct{}{}
-			ch <- struct{}{}
-		}
+	type lockResult struct {
+		lock *objstore.RemoteLock
+		err  error
 	}
 
-	asyncOnceFunc := func(f func()) func() {
-		run := new(atomic.Bool)
-		return func() {
-			if run.CompareAndSwap(false, true) {
-				f()
+	runConcurrentAcquire := func(
+		t *testing.T,
+		lockerA func() (*objstore.RemoteLock, error),
+		lockerB func() (*objstore.RemoteLock, error),
+		assertWinner func(t *testing.T),
+	) {
+		t.Helper()
+		errChA := make(chan lockResult, 1)
+		errChB := make(chan lockResult, 1)
+
+		waitRecvTwice := func(ch chan<- struct{}) func() {
+			return func() {
+				ch <- struct{}{}
+				ch <- struct{}{}
 			}
 		}
+
+		asyncOnceFunc := func(f func()) func() {
+			run := new(atomic.Bool)
+			return func() {
+				if run.CompareAndSwap(false, true) {
+					f()
+				}
+			}
+		}
+
+		chA := make(chan struct{})
+		onceA := asyncOnceFunc(waitRecvTwice(chA))
+		chB := make(chan struct{})
+		onceB := asyncOnceFunc(waitRecvTwice(chB))
+
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-1", onceA))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-1"))
+		})
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-2", onceB))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-2"))
+		})
+
+		go func() {
+			lock, err := lockerA()
+			errChA <- lockResult{lock: lock, err: err}
+		}()
+
+		go func() {
+			lock, err := lockerB()
+			errChB <- lockResult{lock: lock, err: err}
+		}()
+
+		<-chA
+		<-chB
+
+		<-chB
+		<-chA
+
+		resA := <-errChA
+		resB := <-errChB
+		if resA.err == nil {
+			require.Error(t, resB.err)
+			require.NotNil(t, resA.lock)
+		} else {
+			require.NoError(t, resB.err, "%s", resA.err)
+			require.NotNil(t, resB.lock)
+		}
+		assertWinner(t)
 	}
-	chA := make(chan struct{})
-	onceA := asyncOnceFunc(waitRecvTwice(chA))
-	chB := make(chan struct{})
-	onceB := asyncOnceFunc(waitRecvTwice(chB))
 
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-1", onceA))
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/objstore/exclusive-write-commit-to-2", onceB))
+	t.Run("truncate writers", func(t *testing.T) {
+		strg, pth := createMockStorage(t)
+		runConcurrentAcquire(t,
+			func() (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteTruncate(ctx, strg, "I wanna truncate, but I hesitated before send my intention!")
+			},
+			func() (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteTruncate(ctx, strg, "I wanna truncate too, but I hesitated before committing!")
+			},
+			func(t *testing.T) {
+				lockPath := requireSinglePathWithPrefix(t, strg, "truncating.lock.")
+				requireFileExists(t, filepath.Join(pth, lockPath))
+			},
+		)
+	})
 
-	go func() {
-		_, err := objstore.TryLockRemoteTruncate(ctx, strg, "I wanna read it, but I hesitated before send my intention!")
-		errChA <- err
-	}()
+	t.Run("migration read and write", func(t *testing.T) {
+		strg, pth := createMockStorage(t)
+		runConcurrentAcquire(t,
+			func() (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "reader hesitated before send intention")
+			},
+			func() (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "writer hesitated before committing")
+			},
+			func(t *testing.T) {
+				readPaths := requireListedPathsWithPrefix(t, strg, "v1/LOCK.READ.")
+				writePaths := requireListedPathsWithPrefix(t, strg, "v1/LOCK.WRIT.")
+				require.Equal(t, 1, len(readPaths)+len(writePaths))
+				for _, lockPath := range append(readPaths, writePaths...) {
+					requireFileExists(t, filepath.Join(pth, lockPath))
+				}
+			},
+		)
+	})
 
-	go func() {
-		_, err := objstore.TryLockRemoteTruncate(ctx, strg, "I wanna read it too, but I hesitated before committing!")
-		errChB <- err
-	}()
+	t.Run("append writers", func(t *testing.T) {
+		strg, pth := createMockStorage(t)
+		runConcurrentAcquire(t,
+			func() (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteWrite(ctx, strg, "v1/APPEND_LOCK", "append writer A")
+			},
+			func() (*objstore.RemoteLock, error) {
+				return objstore.TryLockRemoteWrite(ctx, strg, "v1/APPEND_LOCK", "append writer B")
+			},
+			func(t *testing.T) {
+				writePaths := requireListedPathsWithPrefix(t, strg, "v1/APPEND_LOCK.WRIT.")
+				require.Len(t, writePaths, 1)
+				requireFileExists(t, filepath.Join(pth, writePaths[0]))
+			},
+		)
+	})
 
-	<-chA
-	<-chB
-
-	<-chB
-	<-chA
-
-	// There is exactly one error.
-	errA := <-errChA
-	errB := <-errChB
-	if errA == nil {
-		require.Error(t, errB)
-	} else {
-		require.NoError(t, errB, "%s", errA)
-	}
-
-	lockPath := requireSinglePathWithPrefix(t, strg, "truncating.lock.")
-	requireFileExists(t, filepath.Join(path, lockPath))
+	t.Run("same physical target", func(t *testing.T) {
+		strg, pth := createMockStorage(t)
+		const physicalPath = "v1/LOCK.WRIT.0123456789abcdef0123456789abcdef"
+		runConcurrentAcquire(t,
+			func() (*objstore.RemoteLock, error) {
+				return objstore.TESTTryLockRemoteExact(ctx, strg, physicalPath, "same target A")
+			},
+			func() (*objstore.RemoteLock, error) {
+				return objstore.TESTTryLockRemoteExact(ctx, strg, physicalPath, "same target B")
+			},
+			func(t *testing.T) {
+				requireFileExists(t, filepath.Join(pth, physicalPath))
+				paths := requireListedPathsWithPrefix(t, strg, physicalPath)
+				require.Equal(t, []string{physicalPath}, paths)
+			},
+		)
+	})
 }
 
 func TestUnlockOnCleanUp(t *testing.T) {
@@ -700,17 +819,18 @@ func TestCleanUpStaleTruncateLockZeroExpireAt(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
 
-	// Old-format lock without ExpireAt.
+	// A generated instance without ExpireAt is malformed for the new protocol.
+	// Cleanup must keep it so acquire can still fail safely with a blocker path.
 	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
 	writeLockMeta(t, strg, lockPath, objstore.LockMeta{
 		LockedAt: time.Now().Add(-time.Hour),
 		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-		Hint:     "old-format",
+		Hint:     "zero-expire-truncate",
 	})
 
 	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg)
 	require.NoError(t, err)
-	require.False(t, reclaimed, "zero ExpireAt locks must NOT be auto-reclaimed (backward compat)")
+	require.False(t, reclaimed, "zero ExpireAt instance locks must NOT be auto-reclaimed")
 	requireFileExists(t, filepath.Join(pth, lockPath))
 }
 
@@ -743,9 +863,16 @@ func TestCleanUpStaleTruncateLockReclaimsOnlyInstancePath(t *testing.T) {
 
 	now := time.Now()
 	instancePath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	aliveInstancePath := "truncating.lock.33333333333333333333333333333333"
 	malformedPath := "truncating.lock.11111111111111111111111111111111"
 	zeroExpirePath := "truncating.lock.22222222222222222222222222222222"
 	writeLockMeta(t, strg, instancePath, staleLockMeta(now, "stale-truncate-instance"))
+	writeLockMeta(t, strg, aliveInstancePath, objstore.LockMeta{
+		LockedAt: now,
+		ExpireAt: now.Add(time.Hour),
+		TxnID:    []byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
+		Hint:     "alive-truncate-instance",
+	})
 	require.NoError(t, strg.WriteFile(ctx, malformedPath, []byte("{not-json")))
 	writeLockMeta(t, strg, zeroExpirePath, objstore.LockMeta{
 		LockedAt: now.Add(-time.Hour),
@@ -759,6 +886,7 @@ func TestCleanUpStaleTruncateLockReclaimsOnlyInstancePath(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, reclaimed)
 	requireFileNotExists(t, filepath.Join(pth, instancePath))
+	requireFileExists(t, filepath.Join(pth, aliveInstancePath))
 	requireFileExists(t, filepath.Join(pth, malformedPath))
 	requireFileExists(t, filepath.Join(pth, zeroExpirePath))
 	requireFileExists(t, filepath.Join(pth, "truncating.lock"))

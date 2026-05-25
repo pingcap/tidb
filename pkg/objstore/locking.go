@@ -590,7 +590,7 @@ func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, pat
 		return false, err
 	}
 	if meta.ExpireAt.IsZero() {
-		log.Warn("Encountered lock without ExpireAt (old client); will not auto-reclaim. "+
+		log.Warn("Encountered cleanup-eligible lock instance without ExpireAt; will not auto-reclaim. "+
 			"Use `br log unlock --force` to clear manually if needed.",
 			zap.String("path", path), zap.Stringer("meta", meta))
 		return false, errLockMissingExpireAt
@@ -632,6 +632,11 @@ func cleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logic
 	for _, candidate := range candidates {
 		member := classifyLockFamilyMember(logicalPath, candidate, "")
 		if !member.cleanupEligible {
+			if member.kind == lockMemberUnknown && !member.intent {
+				log.Warn("Stale-lock cleanup: skipping unknown protected-prefix object.",
+					zap.String("logical_path", logicalPath),
+					zap.String("path", member.path))
+			}
 			continue
 		}
 
