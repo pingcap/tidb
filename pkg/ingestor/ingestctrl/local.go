@@ -1692,7 +1692,9 @@ func (local *Backend) doImport(
 		// Close the pool, as well as the channel.
 		wctx.Cancel()
 		pool.Release()
-		return nil
+		// The worker may set operator error after jobWg.Wait() is unblocked. Re-check
+		// here to avoid losing worker errors due to cancellation ordering.
+		return wctx.OperatorErr()
 	})
 
 	err := workGroup.Wait()
