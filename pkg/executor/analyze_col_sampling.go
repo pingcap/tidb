@@ -975,8 +975,8 @@ func estimateSamplingNDV(rootCollector statistics.RowSampleCollector, regions []
 	if sampleNDV > rowCount {
 		sampleNDV = rowCount
 	}
-	ndvSketches := make([]*statistics.FMSketch, 0, len(regions))
-	singletonSketches := make([]*statistics.FMSketch, 0, len(regions))
+	ndvSketches := make([]*statistics.HLL, 0, len(regions))
+	singletonSketches := make([]*statistics.HLL, 0, len(regions))
 	for _, r := range regions {
 		intest.Assert(len(r.SingletonSketches) > 0, "singleton sketches should not be empty")
 		intest.Assert(i < len(r.SingletonSketches), "singleton sketch should exist for the column")
@@ -984,12 +984,16 @@ func estimateSamplingNDV(rootCollector statistics.RowSampleCollector, regions []
 		if i >= len(r.SingletonSketches) || r.SingletonSketches[i] == nil {
 			continue
 		}
-		// The estimator needs live maps to merge, so rebuild them from the compact
-		// retained form (see statistics.RegionSketchSummary). Doing it per column (this
-		// is called once per column, and these slices are freed on return) caps the
-		// live materialization at O(regions), not O(regions*columns).
-		ndvSketches = append(ndvSketches, statistics.FMSketchFromProto(r.NDVSketches[i]))
-		singletonSketches = append(singletonSketches, statistics.FMSketchFromProto(r.SingletonSketches[i]))
+		// Decode the per-region HyperLogLog sketches (see statistics.RegionSketchSummary).
+		// Decoding per column (this is called once per column, and these slices are freed
+		// on return) keeps the live materialization at O(regions), not O(regions*columns).
+		ndvHLL := statistics.HLLFromProto(r.NDVSketches[i])
+		singletonHLL := statistics.HLLFromProto(r.SingletonSketches[i])
+		if ndvHLL == nil || singletonHLL == nil {
+			continue
+		}
+		ndvSketches = append(ndvSketches, ndvHLL)
+		singletonSketches = append(singletonSketches, singletonHLL)
 	}
 	if len(ndvSketches) == 0 {
 		return 0

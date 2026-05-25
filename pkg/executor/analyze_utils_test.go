@@ -96,23 +96,24 @@ func TestEstimateSamplingNDV(t *testing.T) {
 		mustBuildFMSketch(t, 10, 11),
 	)
 
-	// RegionSketchSummary retains sketches in the compact proto form.
-	toProto := func(ss ...*statistics.FMSketch) []*tipb.FMSketch {
-		out := make([]*tipb.FMSketch, len(ss))
-		for i, s := range ss {
-			out[i] = statistics.FMSketchToProto(s)
+	// RegionSketchSummary retains per-region HLL sketches. Each id maps to a distinct
+	// HLL register so the tiny-set counts (and thus the leave-one-out f1) are exact.
+	hllProto := func(ids ...uint64) *tipb.HLLSketch {
+		h := statistics.NewHLL(statistics.DefaultHLLPrecision)
+		for _, id := range ids {
+			h.InsertHash((id << 50) | (1 << 49))
 		}
-		return out
+		return h.ToProto()
 	}
 	regions := []statistics.RegionSketchSummary{
 		{
-			NDVSketches:       toProto(mustBuildFMSketch(t, 1, 2, 3), mustBuildFMSketch(t, 10)),
-			SingletonSketches: toProto(mustBuildFMSketch(t, 1, 2, 3), mustBuildFMSketch(t, 10)),
+			NDVSketches:       []*tipb.HLLSketch{hllProto(1, 2, 3), hllProto(10)},
+			SingletonSketches: []*tipb.HLLSketch{hllProto(1, 2, 3), hllProto(10)},
 			SketchSampleCount: 3,
 		},
 		{
-			NDVSketches:       toProto(mustBuildFMSketch(t, 2, 3, 4), mustBuildFMSketch(t, 11)),
-			SingletonSketches: toProto(mustBuildFMSketch(t, 2, 4), mustBuildFMSketch(t, 11)),
+			NDVSketches:       []*tipb.HLLSketch{hllProto(2, 3, 4), hllProto(11)},
+			SingletonSketches: []*tipb.HLLSketch{hllProto(2, 4), hllProto(11)},
 			SketchSampleCount: 3,
 		},
 	}

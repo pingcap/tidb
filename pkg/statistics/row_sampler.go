@@ -50,11 +50,12 @@ type baseCollector struct {
 	// global NDV — used directly (NDV sample rate >= 1) or as the sample NDV in the GEE
 	// correction. This is the merged whole, unlike the per-region RegionSketchSummaries.
 	FMSketches []*FMSketch
-	// SingletonSketches holds the per-column "seen exactly once" sketch. It is filled
-	// only on the producing side (the in-process sampler: Collect -> buildSingletonSketches)
-	// and serialized by ToProto into the response, mirroring TiKV. It stays empty on the
-	// merge side, where received per-region singletons are kept in RegionSketchSummaries.
-	SingletonSketches []*FMSketch
+	// hllNDVSketches and hllSingletonSketches hold the per-column HyperLogLog sketches
+	// built only on the producing side (the in-process sampler: Collect -> buildHLLSketches)
+	// and serialized by ToProto, mirroring TiKV. They stay nil on the merge side, where
+	// received per-region HLLs are kept in RegionSketchSummaries.
+	hllNDVSketches       []*tipb.HLLSketch
+	hllSingletonSketches []*tipb.HLLSketch
 	// RegionSketchSummaries holds one summary per region collected into this collector
 	// (see RegionSketchSummary): a from-response leaf carries its own region (built in
 	// FromProto, straight from the decoded proto), and a merged collector carries the
@@ -74,18 +75,17 @@ type baseCollector struct {
 	MemSize           int64
 }
 
-// RegionSketchSummary holds one region's NDV and singleton sketches plus the row
-// count that fed them, kept separate per region: unioning singleton sketches breaks
-// "seen exactly once" (a value singleton in two regions occurs twice), so
-// EstimateGlobalSingletonBySketches consumes each region on its own. Sketches use
-// the compact proto form (not Go maps) because one is retained per region until the
-// estimate; the consumer rebuilds each before use.
+// RegionSketchSummary holds one region's NDV and singleton HyperLogLog sketches
+// plus the row count that fed them, kept separate per region: unioning singleton
+// sketches breaks "seen exactly once" (a value singleton in two regions occurs
+// twice), so EstimateGlobalSingletonBySketches consumes each region on its own.
+// HLL is fixed-size, so retaining one per region until the estimate stays bounded
+// even at thousands of regions; the consumer decodes each before use.
 type RegionSketchSummary struct {
-	// NDVSketches is the region's per-column distinct-value sketch (compact form).
-	NDVSketches []*tipb.FMSketch
-	// SingletonSketches is the region's per-column sketch of values seen exactly
-	// once in the region (compact form).
-	SingletonSketches []*tipb.FMSketch
+	// NDVSketches is the region's per-column distinct-value HyperLogLog.
+	NDVSketches []*tipb.HLLSketch
+	// SingletonSketches is the region's per-column "seen exactly once" HyperLogLog.
+	SingletonSketches []*tipb.HLLSketch
 	// SketchSampleCount is the number of rows that fed these sketches.
 	SketchSampleCount int64
 }
@@ -160,16 +160,20 @@ func (s *singletonSketchBuilder) clone() *singletonSketchBuilder {
 	}
 }
 
-func (s *singletonSketchBuilder) build(maxSketchSize int) *FMSketch {
-	if s == nil {
-		return nil
+// buildHLLs builds this builder's NDV and singleton HyperLogLog sketches. The NDV
+// sketch covers every distinct hash (once + multiple); the singleton sketch covers
+// only hashes seen exactly once. Mirrors TiKV's SingletonSketch::into_hlls.
+func (s *singletonSketchBuilder) buildHLLs(precision uint8) (ndv, singleton *tipb.HLLSketch) {
+	ndvHLL := NewHLL(precision)
+	singletonHLL := NewHLL(precision)
+	for hash := range s.once {
+		ndvHLL.InsertHash(hash)
+		singletonHLL.InsertHash(hash)
 	}
-	intest.Assert(maxSketchSize > 0, "maxSketchSize should be greater than 0")
-	sketch := NewFMSketch(maxSketchSize)
-	for val := range s.once {
-		sketch.insertHashValue(val)
+	for hash := range s.multiple {
+		ndvHLL.InsertHash(hash)
 	}
-	return sketch
+	return ndvHLL.ToProto(), singletonHLL.ToProto()
 }
 
 // ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
@@ -271,11 +275,10 @@ func NewRowSampleCollector(maxSampleSize int, sampleRate float64, totalLen int) 
 // NewReservoirRowSampleCollector creates the new collector by the given inputs.
 func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirRowSampleCollector {
 	base := &baseCollector{
-		Samples:           make(WeightedRowSampleHeap, 0, maxSampleSize),
-		NullCount:         make([]int64, totalLen),
-		FMSketches:        make([]*FMSketch, 0, totalLen),
-		SingletonSketches: make([]*FMSketch, 0, totalLen),
-		TotalSizes:        make([]int64, totalLen),
+		Samples:    make(WeightedRowSampleHeap, 0, maxSampleSize),
+		NullCount:  make([]int64, totalLen),
+		FMSketches: make([]*FMSketch, 0, totalLen),
+		TotalSizes: make([]int64, totalLen),
 	}
 	return &ReservoirRowSampleCollector{
 		baseCollector: base,
@@ -377,14 +380,15 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 		collector.Base().TotalSizes[colGroupIdx] = collector.Base().TotalSizes[colIdx]
 	}
 	if buildSingletons {
-		collector.Base().buildSingletonSketches(singletonBuilders, s.MaxFMSketchSize)
+		collector.Base().buildHLLSketches(singletonBuilders, DefaultHLLPrecision)
 	}
 	return collector, nil
 }
 
 func (s *baseCollector) destroyAndPutToPool() {
 	s.FMSketches = nil // Release for GC.
-	s.SingletonSketches = nil
+	s.hllNDVSketches = nil
+	s.hllSingletonSketches = nil
 	s.RegionSketchSummaries = nil
 }
 
@@ -491,10 +495,11 @@ func (s *baseCollector) rescaleNullCountAndTotalSizes() {
 	}
 }
 
-func (s *baseCollector) buildSingletonSketches(singletonBuilders []*singletonSketchBuilder, maxSketchSize int) {
-	s.SingletonSketches = make([]*FMSketch, len(singletonBuilders))
+func (s *baseCollector) buildHLLSketches(singletonBuilders []*singletonSketchBuilder, precision uint8) {
+	s.hllNDVSketches = make([]*tipb.HLLSketch, len(singletonBuilders))
+	s.hllSingletonSketches = make([]*tipb.HLLSketch, len(singletonBuilders))
 	for i, builder := range singletonBuilders {
-		s.SingletonSketches[i] = builder.build(maxSketchSize)
+		s.hllNDVSketches[i], s.hllSingletonSketches[i] = builder.buildHLLs(precision)
 	}
 }
 
@@ -513,18 +518,15 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	for _, sketch := range s.FMSketches {
 		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
 	}
-	pbSingletonSketches := make([]*tipb.FMSketch, 0, len(s.SingletonSketches))
-	for _, sketch := range s.SingletonSketches {
-		pbSingletonSketches = append(pbSingletonSketches, FMSketchToProto(sketch))
-	}
 	collector := &tipb.RowSampleCollector{
-		Samples:           RowSamplesToProto(s.Samples),
-		NullCounts:        s.NullCount,
-		Count:             s.Count,
-		FmSketch:          pbFMSketches,
-		TotalSize:         s.TotalSizes,
-		SingletonSketch:   pbSingletonSketches,
-		SketchSampleCount: s.SketchSampleCount,
+		Samples:            RowSamplesToProto(s.Samples),
+		NullCounts:         s.NullCount,
+		Count:              s.Count,
+		FmSketch:           pbFMSketches,
+		TotalSize:          s.TotalSizes,
+		HllNdvSketch:       s.hllNDVSketches,
+		HllSingletonSketch: s.hllSingletonSketches,
+		SketchSampleCount:  s.SketchSampleCount,
 	}
 	return collector
 }
@@ -537,13 +539,13 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	for _, pbSketch := range pbCollector.FmSketch {
 		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
 	}
-	// Retain this region's sketches as one summary, straight from the decoded
-	// response: no re-serialization (the live FMSketches above are only for the root
-	// NDV merge) and no singleton live maps (they are never merged). Merging later
-	// concatenates this into the root; the estimator rebuilds the sketches it needs.
-	if singletons := pbCollector.GetSingletonSketch(); len(singletons) > 0 {
+	// Retain this region's HLL sketches as one summary, straight from the decoded
+	// response. The live FMSketches above are only for the root NDV merge; the
+	// per-region HLLs (NDV + singleton) are what the f1 leave-one-out unions. Merging
+	// later concatenates this into the root; the estimator decodes the HLLs before use.
+	if singletons := pbCollector.GetHllSingletonSketch(); len(singletons) > 0 {
 		s.RegionSketchSummaries = []RegionSketchSummary{{
-			NDVSketches:       pbCollector.FmSketch,
+			NDVSketches:       pbCollector.GetHllNdvSketch(),
 			SingletonSketches: singletons,
 			SketchSampleCount: pbCollector.GetSketchSampleCount(),
 		}}
@@ -691,11 +693,10 @@ type BernoulliRowSampleCollector struct {
 // NewBernoulliRowSampleCollector creates the new collector by the given inputs.
 func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *BernoulliRowSampleCollector {
 	base := &baseCollector{
-		Samples:           make(WeightedRowSampleHeap, 0, 8),
-		NullCount:         make([]int64, totalLen),
-		FMSketches:        make([]*FMSketch, 0, totalLen),
-		SingletonSketches: make([]*FMSketch, 0, totalLen),
-		TotalSizes:        make([]int64, totalLen),
+		Samples:    make(WeightedRowSampleHeap, 0, 8),
+		NullCount:  make([]int64, totalLen),
+		FMSketches: make([]*FMSketch, 0, totalLen),
+		TotalSizes: make([]int64, totalLen),
 	}
 	return &BernoulliRowSampleCollector{
 		baseCollector: base,

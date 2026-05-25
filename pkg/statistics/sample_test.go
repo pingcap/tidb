@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -298,7 +299,7 @@ func TestSampleSerial(t *testing.T) {
 	t.Run("SubTestRowSampleDefaultNDVRate", SubTestRowSampleDefaultNDVRate())
 	t.Run("SubTestRowSampleSingletonSketches", SubTestRowSampleSingletonSketches())
 	t.Run("SubTestRowSampleRescalesNullCountUnderSubSampling", SubTestRowSampleRescalesNullCountUnderSubSampling())
-	t.Run("SubTestSingletonSketchBuildRespectsMaxSize", SubTestSingletonSketchBuildRespectsMaxSize())
+	t.Run("SubTestSingletonSketchBuildHLLs", SubTestSingletonSketchBuildHLLs())
 	t.Run("SubTestMergePreservesPerRegionSingletonSketches", SubTestMergePreservesPerRegionSingletonSketches())
 }
 
@@ -320,10 +321,11 @@ func SubTestRowSampleDefaultNDVRate() func(*testing.T) {
 
 		require.Equal(t, int64(100), collector.Base().FMSketches[0].NDV())
 		require.Zero(t, collector.Base().SketchSampleCount)
-		require.Empty(t, collector.Base().SingletonSketches)
+		require.Empty(t, collector.Base().hllSingletonSketches)
 
 		pbCollector := collector.Base().ToProto()
-		require.Empty(t, pbCollector.GetSingletonSketch())
+		require.Empty(t, pbCollector.GetHllNdvSketch())
+		require.Empty(t, pbCollector.GetHllSingletonSketch())
 		require.Zero(t, pbCollector.GetSketchSampleCount())
 	}
 }
@@ -364,31 +366,32 @@ func SubTestRowSampleSingletonSketches() func(*testing.T) {
 
 		// Only rows (2, 20) and (3, 20) pass the rate=0.5 sketch sampling check.
 		require.Equal(t, int64(2), base.SketchSampleCount)
-		require.Len(t, base.SingletonSketches, 4)
-		require.Equal(t, int64(2), base.SingletonSketches[0].NDV()) // col 0: 2 and 3 are singletons.
-		require.Equal(t, int64(0), base.SingletonSketches[1].NDV()) // col 1: 20 repeats.
+		require.Len(t, base.hllSingletonSketches, 4)
+		singletonCount := func(i int) uint64 { return HLLFromProto(base.hllSingletonSketches[i]).Count() }
+		require.Equal(t, uint64(2), singletonCount(0)) // col 0: 2 and 3 are singletons.
+		require.Equal(t, uint64(0), singletonCount(1)) // col 1: 20 repeats.
 		// Single-column group [0] is cloned from col 0, so its singletons match.
-		require.Equal(t, base.SingletonSketches[0].NDV(), base.SingletonSketches[2].NDV())
+		require.Equal(t, singletonCount(0), singletonCount(2))
 		// Multi-column group [0,1]: (2,20) and (3,20) are singleton row pairs.
-		require.Equal(t, int64(2), base.SingletonSketches[3].NDV())
+		require.Equal(t, uint64(2), singletonCount(3))
 
 		pbCollector := base.ToProto()
 		require.Equal(t, int64(2), pbCollector.GetSketchSampleCount())
-		require.Len(t, pbCollector.GetSingletonSketch(), 4)
+		require.Len(t, pbCollector.GetHllNdvSketch(), 4)
+		require.Len(t, pbCollector.GetHllSingletonSketch(), 4)
 
 		restored := NewReservoirRowSampleCollector(4, 4)
 		restored.FromProto(pbCollector, memory.NewTracker(0, -1))
 		require.Equal(t, base.SketchSampleCount, restored.SketchSampleCount)
-		// FromProto retains this region's sketches as one summary, straight from the
-		// decoded response — by reference (no re-serialization round-trip) and without
-		// rebuilding the singleton live maps (never merged); the estimator rebuilds them.
+		// FromProto retains this region's HLL sketches as one summary, straight from the
+		// decoded response (by reference, no re-serialization); the estimator decodes them.
 		require.Len(t, restored.RegionSketchSummaries, 1)
 		summary := restored.RegionSketchSummaries[0]
-		require.Same(t, pbCollector.FmSketch[0], summary.NDVSketches[0])
-		require.Same(t, pbCollector.GetSingletonSketch()[0], summary.SingletonSketches[0])
+		require.Same(t, pbCollector.GetHllNdvSketch()[0], summary.NDVSketches[0])
+		require.Same(t, pbCollector.GetHllSingletonSketch()[0], summary.SingletonSketches[0])
 		require.Len(t, summary.SingletonSketches, 4)
-		require.Equal(t, base.SingletonSketches[0].NDV(), FMSketchFromProto(summary.SingletonSketches[0]).NDV())
-		require.Equal(t, base.SingletonSketches[3].NDV(), FMSketchFromProto(summary.SingletonSketches[3]).NDV())
+		require.Equal(t, singletonCount(0), HLLFromProto(summary.SingletonSketches[0]).Count())
+		require.Equal(t, singletonCount(3), HLLFromProto(summary.SingletonSketches[3]).Count())
 	}
 }
 
@@ -437,14 +440,23 @@ func SubTestRowSampleRescalesNullCountUnderSubSampling() func(*testing.T) {
 	}
 }
 
-func SubTestSingletonSketchBuildRespectsMaxSize() func(*testing.T) {
+func SubTestSingletonSketchBuildHLLs() func(*testing.T) {
 	return func(t *testing.T) {
 		builder := newSingletonSketchBuilder()
-		for i := range 100 {
-			builder.insertHashValue(uint64(i))
+		// 50 values seen once (singletons) and 50 seen twice (not singletons).
+		for i := range 50 {
+			builder.insertHashValue(splitmix64(uint64(i)))
 		}
-
-		require.LessOrEqual(t, len(builder.build(10).hashset), 10)
+		for i := 50; i < 100; i++ {
+			h := splitmix64(uint64(i))
+			builder.insertHashValue(h)
+			builder.insertHashValue(h)
+		}
+		ndv, singleton := builder.buildHLLs(DefaultHLLPrecision)
+		require.Len(t, ndv.GetRegisters(), 1<<DefaultHLLPrecision)
+		// NDV covers all 100 distinct values; singletons cover the 50 seen once.
+		require.InDelta(t, 100.0, float64(HLLFromProto(ndv).Count()), 10)
+		require.InDelta(t, 50.0, float64(HLLFromProto(singleton).Count()), 5)
 	}
 }
 
@@ -567,22 +579,20 @@ func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 // regions as a global singleton.
 func SubTestMergePreservesPerRegionSingletonSketches() func(*testing.T) {
 	return func(t *testing.T) {
-		// Distinct hash values stand in for distinct data values; with maxSize=1000
-		// the FM sketch mask stays 0 so NDV is exact.
-		const (
-			a = uint64(100)
-			b = uint64(200)
-			c = uint64(300)
+		// Distinct ids map to distinct HLL registers, so tiny-set counts are exact.
+		var (
+			a = hllValue(0)
+			b = hllValue(1)
+			c = hllValue(2)
 		)
 		// makeRegion builds a single-column leaf collector that mimics one analyze
-		// response: its own NDV sketch and singleton sketch over that region's
-		// sub-sample.
+		// response (ToProto -> FromProto), so it carries its own per-region HLL summary;
+		// merging then only concatenates summaries.
 		makeRegion := func(ndv, singleton []uint64, sketchSampleCount int64) *ReservoirRowSampleCollector {
-			// Build the leaf the way an analyze response does (ToProto -> FromProto) so it
-			// carries its own per-region summary; merging then only concatenates summaries.
 			src := NewReservoirRowSampleCollector(1, 1)
-			src.Base().FMSketches = []*FMSketch{newFMSketchFromHashValues(ndv...)}
-			src.Base().SingletonSketches = []*FMSketch{newFMSketchFromHashValues(singleton...)}
+			src.Base().FMSketches = []*FMSketch{NewFMSketch(1000)} // global NDV FM (for the root merge)
+			src.Base().hllNDVSketches = []*tipb.HLLSketch{newHLLFromHashValues(ndv...).ToProto()}
+			src.Base().hllSingletonSketches = []*tipb.HLLSketch{newHLLFromHashValues(singleton...).ToProto()}
 			src.Base().SketchSampleCount = sketchSampleCount
 			coll := NewReservoirRowSampleCollector(1, 1)
 			coll.FromProto(src.Base().ToProto(), memory.NewTracker(0, -1))
@@ -603,22 +613,22 @@ func SubTestMergePreservesPerRegionSingletonSketches() func(*testing.T) {
 		require.Len(t, root.Base().RegionSketchSummaries, 2)
 		require.Equal(t, int64(4), root.Base().SketchSampleCount)
 
-		ndvSketches := make([]*FMSketch, 0, 2)
-		singletonSketches := make([]*FMSketch, 0, 2)
+		ndvSketches := make([]*HLL, 0, 2)
+		singletonSketches := make([]*HLL, 0, 2)
 		for _, region := range root.Base().RegionSketchSummaries {
-			ndvSketches = append(ndvSketches, FMSketchFromProto(region.NDVSketches[0]))
-			singletonSketches = append(singletonSketches, FMSketchFromProto(region.SingletonSketches[0]))
+			ndvSketches = append(ndvSketches, HLLFromProto(region.NDVSketches[0]))
+			singletonSketches = append(singletonSketches, HLLFromProto(region.SingletonSketches[0]))
 		}
 		// Per-region keeps `a` out of the global singleton count (it appears in both
 		// regions' NDV sketches); only `b` and `c` remain.
 		require.Equal(t, uint64(2), EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches))
 
-		// Contrast with the previous behavior: unioning the two regions into a single
-		// sketch over-counts the cross-region duplicate `a` as a global singleton.
-		unionNDV := newFMSketchFromHashValues(a, b, c)
-		unionSingleton := newFMSketchFromHashValues(a, b, c)
+		// Contrast: unioning the two regions into a single sketch over-counts the
+		// cross-region duplicate `a` as a global singleton.
+		unionNDV := newHLLFromHashValues(a, b, c)
+		unionSingleton := newHLLFromHashValues(a, b, c)
 		require.Equal(t, uint64(3),
-			EstimateGlobalSingletonBySketches([]*FMSketch{unionNDV}, []*FMSketch{unionSingleton}),
+			EstimateGlobalSingletonBySketches([]*HLL{unionNDV}, []*HLL{unionSingleton}),
 			"a union of the regions over-counts the cross-region duplicate")
 
 		// A merged collector contributes its region summaries when merged again, so

@@ -105,7 +105,7 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 //	        contribution = 2  (`e` and `f` are new)
 //
 // Estimated singletons = 1 + 1 + 2 = 4
-func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketch) uint64 {
+func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*HLL) uint64 {
 	// Defensive checks.
 	intest.Assert(len(ndvSketches) > 0, "ndvSketches shouldn't be empty")
 	intest.Assert(len(ndvSketches) == len(singletonSketches), "ndvSketches and singletonSketches should have the same length")
@@ -132,24 +132,29 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 	// suffixNDV[i] = union of ndvSketches[i:] (suffixNDV[n] is empty). Precomputing
 	// these makes each region's "union of all others" a prefix∪suffix combine, so the
 	// pass is O(n) merges instead of O(n^2), at the cost of O(n) cached union sketches.
+	// HLL unions are register-wise max, so a merge is O(registers) and exact.
 	n := len(ndvSketches)
-	suffixNDV := make([]*FMSketch, n+1)
+	suffixNDV := make([]*HLL, n+1)
 	for i := n - 1; i >= 1; i-- {
-		suffixNDV[i] = mergeCopiedFMSketch(mergeCopiedFMSketch(nil, suffixNDV[i+1]), ndvSketches[i])
+		suffixNDV[i] = mergeCopiedHLL(mergeCopiedHLL(nil, suffixNDV[i+1]), ndvSketches[i])
 	}
 
 	var globalSingleton int64
 	// prefixNDV accumulates the union of ndvSketches[0:i] as i advances.
-	var prefixNDV *FMSketch
+	var prefixNDV *HLL
 	for i := range ndvSketches {
-		// Union of every region except i = prefix(0:i) ∪ suffix(i+1:).
-		other := mergeCopiedFMSketch(mergeCopiedFMSketch(nil, prefixNDV), suffixNDV[i+1])
-		ndvOther := other.NDV()
-		other = mergeCopiedFMSketch(other, singletonSketches[i])
-		// FM sketch NDV estimates are not monotone under merge, so the union can come
-		// out smaller than ndvOther; clamp the per-region contribution to >= 0.
-		globalSingleton += max(0, other.NDV()-ndvOther)
-		prefixNDV = mergeCopiedFMSketch(prefixNDV, ndvSketches[i])
+		// Union of every region except i = prefix(0:i) ∪ suffix(i+1:). It is nil only
+		// when there is a single region, in which case all its singletons are global.
+		other := mergeCopiedHLL(mergeCopiedHLL(nil, prefixNDV), suffixNDV[i+1])
+		var ndvOther uint64
+		if other != nil {
+			ndvOther = other.Count()
+		}
+		other = mergeCopiedHLL(other, singletonSketches[i])
+		// HLL estimates are not monotone under union, so the result can come out
+		// smaller than ndvOther; clamp the per-region contribution to >= 0.
+		globalSingleton += max(0, int64(other.Count())-int64(ndvOther))
+		prefixNDV = mergeCopiedHLL(prefixNDV, ndvSketches[i])
 		suffixNDV[i+1] = nil // consumed; release for GC
 	}
 	// SAFETY: Each per-region contribution is clamped to >= 0 before accumulation.
@@ -157,13 +162,13 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 	return uint64(globalSingleton)
 }
 
-func mergeCopiedFMSketch(dst, src *FMSketch) *FMSketch {
+func mergeCopiedHLL(dst, src *HLL) *HLL {
 	if src == nil {
 		return dst
 	}
 	if dst == nil {
-		return src.Copy()
+		return src.Clone()
 	}
-	dst.MergeFMSketch(src)
+	dst.Merge(src)
 	return dst
 }
