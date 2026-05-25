@@ -97,7 +97,7 @@ func (si *SchemaImporter) Run(ctx context.Context, dbMetas []*MDDatabaseMeta) (e
 		logTask.End(zap.ErrorLevel, err)
 	}()
 
-	if plan == nil || len(plan.dbMetas) == 0 {
+	if len(plan.dbMetas) == 0 {
 		return nil
 	}
 
