@@ -28,6 +28,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -157,6 +158,10 @@ func TestClientIsObjectExists(t *testing.T) {
 		svc:          s.MockS3,
 		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 	}
+	metricBefore := promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+		s3like.BackendS3,
+		s3like.APICallHeadObjects,
+	))
 	for _, mockErr := range []error{
 		&types.NotFound{},
 		&types.NoSuchKey{},
@@ -180,6 +185,10 @@ func TestClientIsObjectExists(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	require.True(t, s.Controller.Satisfied())
+	require.Equal(t, metricBefore+5, promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+		s3like.BackendS3,
+		s3like.APICallHeadObjects,
+	)))
 }
 
 func TestClientListObjects(t *testing.T) {
@@ -189,6 +198,10 @@ func TestClientListObjects(t *testing.T) {
 		svc:          s.MockS3,
 		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 	}
+	metricBefore := promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+		s3like.BackendS3,
+		s3like.APICallListObjects,
+	))
 
 	s.MockS3.EXPECT().ListObjectsV2(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, input *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
@@ -221,6 +234,10 @@ func TestClientListObjects(t *testing.T) {
 	_, err = cli.ListObjects(ctx, "target", "", nil, 100)
 	require.ErrorContains(t, err, "mock list error")
 	require.True(t, s.Controller.Satisfied())
+	require.Equal(t, metricBefore+2, promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+		s3like.BackendS3,
+		s3like.APICallListObjects,
+	)))
 }
 
 func assertContentMD5Option(t *testing.T, optFns []func(*s3.Options), expect bool) {

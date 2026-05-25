@@ -366,6 +366,7 @@ func (rs *KS3Storage) FileExists(ctx context.Context, file string) (bool, error)
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
+	s3like.RecordAPICall(s3like.BackendKS3, s3like.APICallHeadObjects)
 	_, err := rs.svc.HeadObjectWithContext(ctx, input)
 	if err != nil {
 		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
@@ -414,6 +415,7 @@ func (rs *KS3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn 
 	}
 
 	for {
+		s3like.RecordAPICall(s3like.BackendKS3, s3like.APICallListObjects)
 		res, err := rs.svc.ListObjectsWithContext(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
