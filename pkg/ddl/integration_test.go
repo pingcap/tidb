@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -46,8 +47,14 @@ type mockEtcdBackend struct {
 	pdAddrs []string
 }
 
-func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+var _ kv.MetaServiceBackend = (*mockEtcdBackend)(nil)
+
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
+}
+
+func (*mockEtcdBackend) MetaServiceInfo() (*metaservice.Info, error) {
+	return nil, nil
 }
 
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
