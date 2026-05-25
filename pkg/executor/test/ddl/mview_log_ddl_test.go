@@ -536,7 +536,7 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 
 	tk.MustExec("alter table t_ddl_mv add column c int")
 	err := tk.ExecToErr("alter table t_ddl_mv modify column a bigint")
-	require.ErrorContains(t, err, "referenced by materialized view log")
+	require.ErrorContains(t, err, "does not support changing charset/collation/nullability of group keys")
 	err = tk.ExecToErr("drop table t_ddl_mv")
 	require.ErrorContains(t, err, "DROP TABLE on base table with materialized view dependencies")
 	err = tk.ExecToErr("rename table t_ddl_mv to t_ddl_mv2")
