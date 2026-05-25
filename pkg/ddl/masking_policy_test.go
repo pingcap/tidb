@@ -200,3 +200,31 @@ func TestMaskingPolicyModifyColumnRejectUnsupportedType(t *testing.T) {
 	tk.MustQuery("select column_name, expression from mysql.tidb_masking_policy where policy_name = 'p'").
 		Check(testkit.Rows("c `c`"))
 }
+
+func TestMaskingPolicyExpressionRejectsNonTargetColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_expr_dep")
+	tk.MustExec("create table t_expr_dep(a varchar(100), b varchar(100))")
+
+	// CREATE MASKING POLICY ... ON t(a) AS b must fail because expression references non-target column b.
+	tk.MustGetErrCode("create masking policy p_expr_dep on t_expr_dep(a) as b", errno.ErrMaskingPolicyExprInvalidColumn)
+
+	// Expression referencing both target and non-target columns must also fail.
+	tk.MustGetErrCode("create masking policy p_expr_dep2 on t_expr_dep(a) as concat(a, b)", errno.ErrMaskingPolicyExprInvalidColumn)
+
+	// Expression referencing only the target column must succeed.
+	tk.MustExec("create masking policy p_valid on t_expr_dep(a) as a enable")
+	tk.MustQuery("select expression from mysql.tidb_masking_policy where policy_name = 'p_valid'").
+		Check(testkit.Rows("`a`"))
+
+	// CREATE OR REPLACE with non-target column reference must also fail.
+	tk.MustGetErrCode("create or replace masking policy p_valid on t_expr_dep(a) as b", errno.ErrMaskingPolicyExprInvalidColumn)
+
+	// ALTER TABLE ... MODIFY MASKING POLICY with non-target column reference must fail.
+	tk.MustGetErrCode("alter table t_expr_dep modify masking policy p_valid set expression = b", errno.ErrMaskingPolicyExprInvalidColumn)
+
+	// ALTER TABLE ... MODIFY MASKING POLICY with target column reference must succeed.
+	tk.MustExec("alter table t_expr_dep modify masking policy p_valid set expression = concat(a, '_masked')")
+}

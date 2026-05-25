@@ -406,10 +406,18 @@ func restoreMaskingExpression(expr ast.ExprNode) (string, error) {
 	return sb.String(), nil
 }
 
-func validateMaskingPolicyExpression(ctx sessionctx.Context, tblInfo *model.TableInfo, _ *model.ColumnInfo, exprStr string) error {
-	_, err := expression.ParseSimpleExpr(ctx.GetExprCtx(), exprStr, expression.WithTableInfo("", tblInfo))
+func validateMaskingPolicyExpression(ctx sessionctx.Context, tblInfo *model.TableInfo, targetCol *model.ColumnInfo, exprStr string) error {
+	expr, err := expression.ParseSimpleExpr(ctx.GetExprCtx(), exprStr, expression.WithTableInfo("", tblInfo))
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Ensure the expression only references the target column.
+	// This prevents policies like ON t(a) AS b which would break if column b is dropped.
+	cols := expression.ExtractColumns(expr)
+	for _, col := range cols {
+		if col.ID != targetCol.ID {
+			return meta.ErrMaskingPolicyExprInvalidColumn.FastGenByArgs(targetCol.Name.O)
+		}
 	}
 	return nil
 }

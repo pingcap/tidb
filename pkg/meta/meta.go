@@ -158,6 +158,8 @@ var (
 	ErrMaskingPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyExists)
 	// ErrMaskingPolicyNotExists is the error for masking policy not exists.
 	ErrMaskingPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyNotExists)
+	// ErrMaskingPolicyExprInvalidColumn is the error for masking policy expression referencing non-target column.
+	ErrMaskingPolicyExprInvalidColumn = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyExprInvalidColumn)
 	// ErrResourceGroupExists is the error for resource group exists.
 	ErrResourceGroupExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists is the error for resource group not exists.
