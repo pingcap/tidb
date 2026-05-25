@@ -299,6 +299,7 @@ func TestSampleSerial(t *testing.T) {
 	t.Run("SubTestRowSampleSingletonSketches", SubTestRowSampleSingletonSketches())
 	t.Run("SubTestRowSampleRescalesNullCountUnderSubSampling", SubTestRowSampleRescalesNullCountUnderSubSampling())
 	t.Run("SubTestSingletonSketchBuildRespectsMaxSize", SubTestSingletonSketchBuildRespectsMaxSize())
+	t.Run("SubTestMergePreservesPerRegionSingletonSketches", SubTestMergePreservesPerRegionSingletonSketches())
 }
 
 func SubTestRowSampleDefaultNDVRate() func(*testing.T) {
@@ -550,5 +551,70 @@ func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 			require.Equal(t, s.TotalSize, collector.TotalSize)
 			require.Equal(t, len(s.Samples), len(collector.Samples))
 		}
+	}
+}
+
+// SubTestMergePreservesPerRegionSingletonSketches checks that merging keeps each
+// region's sketches separate (in RegionSketchSummaries) rather than unioning the
+// singleton sketches, which would miscount a value that is a singleton in two
+// regions as a global singleton.
+func SubTestMergePreservesPerRegionSingletonSketches() func(*testing.T) {
+	return func(t *testing.T) {
+		// Distinct hash values stand in for distinct data values; with maxSize=1000
+		// the FM sketch mask stays 0 so NDV is exact.
+		const (
+			a = uint64(100)
+			b = uint64(200)
+			c = uint64(300)
+		)
+		// makeRegion builds a single-column leaf collector that mimics one analyze
+		// response: its own NDV sketch and singleton sketch over that region's
+		// sub-sample.
+		makeRegion := func(ndv, singleton []uint64, sketchSampleCount int64) *ReservoirRowSampleCollector {
+			coll := NewReservoirRowSampleCollector(1, 1)
+			coll.Base().FMSketches = []*FMSketch{newFMSketchFromHashValues(ndv...)}
+			coll.Base().SingletonSketches = []*FMSketch{newFMSketchFromHashValues(singleton...)}
+			coll.Base().SketchSampleCount = sketchSampleCount
+			return coll
+		}
+
+		// `a` is a local singleton in both regions, so it occurs twice globally and
+		// is not a global singleton. `b` and `c` are the only global singletons.
+		region1 := makeRegion([]uint64{a, b}, []uint64{a, b}, 2)
+		region2 := makeRegion([]uint64{a, c}, []uint64{a, c}, 2)
+
+		root := NewReservoirRowSampleCollector(1, 1)
+		root.Base().FMSketches = []*FMSketch{NewFMSketch(1000)}
+		root.MergeCollector(region1)
+		root.MergeCollector(region2)
+
+		// The two regions stay separate instead of collapsing into one sketch.
+		require.Len(t, root.Base().RegionSketchSummaries, 2)
+		require.Equal(t, int64(4), root.Base().SketchSampleCount)
+
+		ndvSketches := make([]*FMSketch, 0, 2)
+		singletonSketches := make([]*FMSketch, 0, 2)
+		for _, region := range root.Base().RegionSketchSummaries {
+			ndvSketches = append(ndvSketches, region.NDVSketches[0])
+			singletonSketches = append(singletonSketches, region.SingletonSketches[0])
+		}
+		// Per-region keeps `a` out of the global singleton count (it appears in both
+		// regions' NDV sketches); only `b` and `c` remain.
+		require.Equal(t, uint64(2), EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches))
+
+		// Contrast with the previous behavior: unioning the two regions into a single
+		// sketch over-counts the cross-region duplicate `a` as a global singleton.
+		unionNDV := newFMSketchFromHashValues(a, b, c)
+		unionSingleton := newFMSketchFromHashValues(a, b, c)
+		require.Equal(t, uint64(3),
+			EstimateGlobalSingletonBySketches([]*FMSketch{unionNDV}, []*FMSketch{unionSingleton}),
+			"a union of the regions over-counts the cross-region duplicate")
+
+		// A merged collector contributes its region summaries when merged again, so
+		// per-region granularity survives the second (worker -> root) merge level.
+		top := NewReservoirRowSampleCollector(1, 1)
+		top.Base().FMSketches = []*FMSketch{NewFMSketch(1000)}
+		top.MergeCollector(root)
+		require.Len(t, top.Base().RegionSketchSummaries, 2)
 	}
 }

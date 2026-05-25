@@ -19,6 +19,7 @@ import (
 	"context"
 	"maps"
 	"math/rand"
+	"slices"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -48,17 +49,40 @@ type baseCollector struct {
 	// FMSketches holds the per-column FM sketch used to estimate NDV.
 	FMSketches []*FMSketch
 	// SingletonSketches holds the per-column sketch of values seen exactly once in
-	// the sketch sub-sample; it recovers population NDV when NDVSampleRate < 1 and
-	// is empty otherwise.
+	// the sketch sub-sample; it recovers population NDV when
+	// NDVSampleRate < NDVSampleSkipRate and is empty otherwise. A merged collector
+	// keeps per-region sketches in RegionSketchSummaries instead.
 	SingletonSketches []*FMSketch
-	TotalSizes        []int64
-	Count             int64
+	// RegionSketchSummaries holds one summary per region merged into this collector
+	// (see RegionSketchSummary); it is nil on a leaf collector or when singleton
+	// sketches are not collected.
+	//
+	// It grows with the region count and is not counted in MemSize, so the consumer
+	// must bound and account for it.
+	RegionSketchSummaries []RegionSketchSummary
+	TotalSizes            []int64
+	Count                 int64
 	// SketchSampleCount is the number of rows fed into FMSketches and
 	// SingletonSketches.
 	// It rescales NullCount and TotalSizes to the full population;
 	// 0 means no sub-sampling.
 	SketchSampleCount int64
 	MemSize           int64
+}
+
+// RegionSketchSummary holds one region's NDV and singleton sketches and the row
+// count that fed them. Regions are kept separate and never unioned: unioning the
+// singleton sketches would break "seen exactly once" — a value that is a singleton
+// in two regions occurs twice overall — and inflate the global singleton count.
+// EstimateGlobalSingletonBySketches consumes the regions separately to avoid that.
+type RegionSketchSummary struct {
+	// NDVSketches is the region's per-column distinct-value sketch.
+	NDVSketches []*FMSketch
+	// SingletonSketches is the region's per-column sketch of values seen exactly
+	// once in the region.
+	SingletonSketches []*FMSketch
+	// SketchSampleCount is the number of rows that fed these sketches.
+	SketchSampleCount int64
 }
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
@@ -154,7 +178,7 @@ type ReservoirRowSampleItem struct {
 const EmptyReservoirSampleItemSize = int64(unsafe.Sizeof(ReservoirRowSampleItem{}))
 
 // ShouldBuildSingletonSketches reports whether the configured NDV sample rate
-// requires building per-node singleton sketches (rate < NDVSampleSkipRate means sketches are
+// requires building per-region singleton sketches (rate < NDVSampleSkipRate means sketches are
 // collected from a subset of rows and a global NDV estimate is derived from
 // the singletons).
 func ShouldBuildSingletonSketches(rate float64) bool {
@@ -356,6 +380,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 func (s *baseCollector) destroyAndPutToPool() {
 	s.FMSketches = nil // Release for GC.
 	s.SingletonSketches = nil
+	s.RegionSketchSummaries = nil
 }
 
 func (s *baseCollector) collectColumns(
@@ -468,19 +493,25 @@ func (s *baseCollector) buildSingletonSketches(singletonBuilders []*singletonSke
 	}
 }
 
-func (s *baseCollector) mergeSingletonSketches(singletonSketches []*FMSketch) {
-	// Initialize on the first merge; later merges use the same sketch layout.
-	if len(s.SingletonSketches) == 0 {
-		s.SingletonSketches = make([]*FMSketch, len(singletonSketches))
-		for i, singletonSketch := range singletonSketches {
-			s.SingletonSketches[i] = singletonSketch.Copy()
-		}
+// collectRegionSketchSummaries records the sub-collector's per-region sketches on
+// this collector instead of unioning them; see RegionSketchSummary for why.
+func (s *baseCollector) collectRegionSketchSummaries(sub *baseCollector) {
+	// An already-merged sub-collector carries its own summaries; concatenate them.
+	if len(sub.RegionSketchSummaries) > 0 {
+		s.RegionSketchSummaries = append(s.RegionSketchSummaries, sub.RegionSketchSummaries...)
 		return
 	}
-	intest.Assert(len(s.SingletonSketches) == len(singletonSketches), "singleton sketch count should match")
-	for i, singletonSketch := range singletonSketches {
-		s.SingletonSketches[i].MergeFMSketch(singletonSketch)
+	// A leaf sub-collector is one region; skip it when it has no singleton sketches.
+	if len(sub.SingletonSketches) == 0 {
+		return
 	}
+	// Reference the region's sketches instead of copying them — they are not mutated
+	// after the merge. slices.Clone duplicates only the pointer slice, not the maps.
+	s.RegionSketchSummaries = append(s.RegionSketchSummaries, RegionSketchSummary{
+		NDVSketches:       slices.Clone(sub.FMSketches),
+		SingletonSketches: slices.Clone(sub.SingletonSketches),
+		SketchSampleCount: sub.SketchSampleCount,
+	})
 }
 
 // ToProto converts the collector to pb struct.
@@ -592,7 +623,7 @@ func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	for i, fms := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(fms)
 	}
-	s.mergeSingletonSketches(subCollector.Base().SingletonSketches)
+	s.collectRegionSketchSummaries(subCollector.Base())
 	for i, nullCount := range subCollector.Base().NullCount {
 		s.NullCount[i] += nullCount
 	}
@@ -689,7 +720,7 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	for i := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
 	}
-	s.mergeSingletonSketches(subCollector.Base().SingletonSketches)
+	s.collectRegionSketchSummaries(subCollector.Base())
 	for i := range subCollector.Base().NullCount {
 		s.NullCount[i] += subCollector.Base().NullCount[i]
 	}
