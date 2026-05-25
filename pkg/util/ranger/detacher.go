@@ -261,6 +261,19 @@ func compareCNFItemRangeResult(curResult, bestResult *cnfItemRangeResult) (curIs
 // composite range `[1748604343 -inf, 1748604343 216627868)`, instead of scanning
 // the wider first-column range `[1748604343, 1748604343]` and relying on a
 // residual filter for c25.
+//
+// Parameter roles:
+//   - baseRes is the current CNF detach result, usually built from direct
+//     first-column access conditions.
+//   - bestCNFItemRes is the most useful single CNF item result found by
+//     extractBestCNFItemRanges. It carries both its composite range and the
+//     original condition offset.
+//   - newConditions is the working condition list after direct Eq/In extraction.
+//     Conditions not covered by the intersected access range are rebuilt from it
+//     as residual filters.
+//   - originalConditions is the untouched CNF input. bestCNFItemRes.offset refers
+//     to this slice, so it is used to remove the original composite item only
+//     when that item is fully represented by the final access range.
 func intersectCNFItemWithBaseRange(
 	sctx *rangerctx.RangerContext,
 	baseRes *DetachRangeResult,
