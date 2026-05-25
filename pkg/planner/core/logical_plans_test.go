@@ -356,7 +356,7 @@ func TestFullOuterJoinPhysicalPlanHashJoinOnly(t *testing.T) {
 	defer s.Close()
 	s.sctx.GetSessionVars().EnableFullOuterJoin = true
 	ctx := context.Background()
-	sql := "select * from t t1 full outer join t t2 on t1.a = t2.a"
+	sql := "select /*+ HASH_JOIN(t1, t2) */ * from t t1 full outer join t t2 on t1.a = t2.a"
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	nodeW := resolve.NewNodeW(stmt)
