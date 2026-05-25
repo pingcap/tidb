@@ -80,12 +80,6 @@ func lessTableName(left, right filter.Table) bool {
 	return left.Name < right.Name
 }
 
-func sortTableNames(tables []filter.Table) {
-	sort.Slice(tables, func(i, j int) bool {
-		return lessTableName(tables[i], tables[j])
-	})
-}
-
 func sortViewNodes(nodes []*viewNode) {
 	sort.Slice(nodes, func(i, j int) bool {
 		return lessTableName(nodes[i].key, nodes[j].key)
@@ -319,10 +313,6 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 			}
 			node.externalDeps = append(node.externalDeps, normalizedDep)
 		}
-		sortTableNames(node.externalDeps)
-	}
-	for _, node := range plan.nodes {
-		sortTableNames(node.dependents)
 	}
 
 	// Kahn's algorithm with a sorted initial ready set and sorted dependent
@@ -356,7 +346,6 @@ func buildViewRestorePlan(parsedViews []*parsedViewSchema, dumpTables tableNameS
 				cycleNodes = append(cycleNodes, key)
 			}
 		}
-		sortTableNames(cycleNodes)
 		cycleNames := make([]string, 0, len(cycleNodes))
 		for _, key := range cycleNodes {
 			cycleNames = append(cycleNames, key.String())
