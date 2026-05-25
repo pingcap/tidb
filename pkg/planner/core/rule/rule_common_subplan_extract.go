@@ -191,6 +191,8 @@ func writePlanFingerprint(buf *bytes.Buffer, p base.LogicalPlan) bool {
 		buf.Write(expression.SortedExplainNormalizedExpressionList(v.RightConditions))
 		buf.WriteByte(';')
 		buf.Write(expression.SortedExplainNormalizedExpressionList(v.OtherConditions))
+		buf.WriteByte(';')
+		buf.Write(expression.SortedExplainNormalizedScalarFuncList(v.NAEQConditions))
 		buf.WriteByte('|')
 
 	case *logicalop.LogicalSelection:
