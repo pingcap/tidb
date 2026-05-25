@@ -244,36 +244,96 @@ func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
 	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
 	// TiCI count estimation is only used to refine multi-table plan choices.
 	// StmtCtx.Tables is de-duplicated, so self-joins on one table use the local fallback.
-	if len(ds.SCtx().GetSessionVars().StmtCtx.Tables) > 1 {
+	stmtTables := ds.SCtx().GetSessionVars().StmtCtx.Tables
+	if len(stmtTables) > 1 {
 		if count, ok := deriveTiCISearchPathStats(ds, path); ok {
 			path.CountAfterAccess = count
 			return
 		}
+	} else {
+		logutil.BgLogger().Warn("TiCI estimate count skipped",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.String("reason", "statement has no multiple unique tables"),
+				zap.Int("statementTableCount", len(stmtTables)),
+				zap.Strings("statementTables", ticiStatementTableNames(stmtTables)))...)
 	}
-	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+	fallbackCount := min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+	logutil.BgLogger().Warn("TiCI estimate count fallback used",
+		append(ticiSearchPathLogFields(ds, path),
+			zap.Float64("fallbackCountAfterAccess", fallbackCount))...)
+	path.CountAfterAccess = fallbackCount
 }
 
 func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
 	sctx, ok := ds.SCtx().(sessionctx.Context)
-	if !ok || path == nil || path.Index == nil || path.FtsQueryInfo == nil || len(path.Ranges) == 0 {
+	if !ok {
+		logutil.BgLogger().Warn("TiCI estimate count skipped",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.String("reason", "plan context is not session context"),
+				zap.String("planContextType", fmt.Sprintf("%T", ds.SCtx())))...)
+		return 0, false
+	}
+	if path == nil {
+		logutil.BgLogger().Warn("TiCI estimate count skipped",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.String("reason", "access path is nil"))...)
+		return 0, false
+	}
+	if path.Index == nil {
+		logutil.BgLogger().Warn("TiCI estimate count skipped",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.String("reason", "access path has no index"))...)
+		return 0, false
+	}
+	if path.FtsQueryInfo == nil {
+		logutil.BgLogger().Warn("TiCI estimate count skipped",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.String("reason", "access path has no FTS query info"))...)
+		return 0, false
+	}
+	if len(path.Ranges) == 0 {
+		logutil.BgLogger().Warn("TiCI estimate count skipped",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.String("reason", "access path has no ranges"))...)
 		return 0, false
 	}
 	if !vardef.EnableTiCIEstimate.Load() {
+		logutil.BgLogger().Warn("TiCI estimate count skipped",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.String("reason", "TiCI estimate is disabled"))...)
 		return 0, false
 	}
 	provider, ok := sctx.GetStore().(kv.TiCIEstimateCountProvider)
 	if !ok {
+		logutil.BgLogger().Warn("TiCI estimate count skipped",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.String("reason", "store does not support TiCI estimate count"),
+				zap.String("storeType", fmt.Sprintf("%T", sctx.GetStore())))...)
 		return 0, false
 	}
 	tableID := ds.PhysicalTableID
 	if tableID == 0 {
 		tableID = ds.TableInfo.ID
 	}
-	keyRanges, err := distsql.TiCIIndexRangesToKVRanges(sctx.GetDistSQLCtx(), []int64{tableID}, path.Index.ID, path.Ranges, getTiCIShardType(ds, path))
+	shardType := getTiCIShardType(ds, path)
+	keyRanges, err := distsql.TiCIIndexRangesToKVRanges(sctx.GetDistSQLCtx(), []int64{tableID}, path.Index.ID, path.Ranges, shardType)
 	if err != nil {
+		logutil.BgLogger().Warn("TiCI estimate count failed to build key ranges",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.Int64("tableID", tableID),
+				zap.Int("ticiShardType", int(shardType)),
+				zap.Error(err))...)
 		return 0, false
 	}
 	tzName, tzOffset := timeutil.Zone(sctx.GetSessionVars().Location())
+	timeout := 50 * time.Millisecond
+	logutil.BgLogger().Warn("TiCI estimate count request started",
+		append(ticiSearchPathLogFields(ds, path),
+			zap.Int64("tableID", tableID),
+			zap.Int("ticiShardType", int(shardType)),
+			zap.Int("keyRangeCount", keyRanges.TotalRangeNum()),
+			zap.Int("partitionCount", keyRanges.PartitionNum()),
+			zap.Duration("timeout", timeout))...)
 	count, err := provider.EstimateTiCICount(context.Background(), &kv.TiCIEstimateCountRequest{
 		TableID:        tableID,
 		IndexID:        path.Index.ID,
@@ -281,20 +341,82 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 		KeyRanges:      keyRanges,
 		TimeZoneName:   tzName,
 		TimeZoneOffset: tzOffset,
-	}, 50*time.Millisecond)
+	}, timeout)
 	if err != nil {
+		logutil.BgLogger().Warn("TiCI estimate count failed",
+			append(ticiSearchPathLogFields(ds, path),
+				zap.Int64("tableID", tableID),
+				zap.Int("ticiShardType", int(shardType)),
+				zap.Int("keyRangeCount", keyRanges.TotalRangeNum()),
+				zap.Int("partitionCount", keyRanges.PartitionNum()),
+				zap.Duration("timeout", timeout),
+				zap.Error(err))...)
 		return 0, false
 	}
 	plannerCount := min(float64(count), float64(ds.StatisticTable.RealtimeCount))
-	logutil.BgLogger().Debug("TiCI estimate count succeeded",
-		zap.Int64("tableID", tableID),
-		zap.String("indexName", path.Index.Name.O),
-		zap.Int64("indexID", path.Index.ID),
-		zap.Uint64("estimatedCount", count),
-		zap.Float64("plannerCountAfterAccess", plannerCount),
-		zap.Int64("realtimeCount", ds.StatisticTable.RealtimeCount),
-		zap.Int("rangeCount", len(path.Ranges)))
+	logutil.BgLogger().Warn("TiCI estimate count succeeded",
+		append(ticiSearchPathLogFields(ds, path),
+			zap.Int64("tableID", tableID),
+			zap.Int("ticiShardType", int(shardType)),
+			zap.Int("keyRangeCount", keyRanges.TotalRangeNum()),
+			zap.Int("partitionCount", keyRanges.PartitionNum()),
+			zap.Uint64("estimatedCount", count),
+			zap.Float64("plannerCountAfterAccess", plannerCount))...)
 	return plannerCount, true
+}
+
+func ticiSearchPathLogFields(ds *logicalop.DataSource, path *util.AccessPath) []zap.Field {
+	fields := make([]zap.Field, 0, 16)
+	if ds != nil {
+		if ds.TableInfo != nil {
+			fields = append(fields,
+				zap.String("tableName", ds.TableInfo.Name.O),
+				zap.Int64("logicalTableID", ds.TableInfo.ID))
+		}
+		fields = append(fields, zap.Int64("physicalTableID", ds.PhysicalTableID))
+		if ds.StatisticTable != nil {
+			fields = append(fields, zap.Int64("realtimeCount", ds.StatisticTable.RealtimeCount))
+		}
+	}
+	if path == nil {
+		return fields
+	}
+	fields = append(fields,
+		zap.String("pathStoreType", path.StoreType.Name()),
+		zap.Int("rangeCount", len(path.Ranges)))
+	if path.Index != nil {
+		fields = append(fields,
+			zap.String("indexName", path.Index.Name.O),
+			zap.Int64("indexID", path.Index.ID))
+	}
+	if path.FtsQueryInfo != nil {
+		fields = append(fields,
+			zap.String("ftsQueryType", path.FtsQueryInfo.QueryType.String()),
+			zap.Int64("ftsIndexID", path.FtsQueryInfo.IndexId),
+			zap.String("ftsQueryFunc", path.FtsQueryInfo.QueryFunc.String()),
+			zap.String("ftsTokenizer", path.FtsQueryInfo.QueryTokenizer),
+			zap.Int("ftsMatchExprCount", len(path.FtsQueryInfo.MatchExpr)),
+			zap.Int("ftsSortColumnCount", len(path.FtsQueryInfo.SortColumnIds)),
+			zap.Bool("ftsHasTopK", path.FtsQueryInfo.TopK != nil))
+		if path.FtsQueryInfo.TopK != nil {
+			fields = append(fields, zap.Uint32("ftsTopK", *path.FtsQueryInfo.TopK))
+		}
+	} else {
+		fields = append(fields, zap.Bool("ftsQueryInfoMissing", true))
+	}
+	return fields
+}
+
+func ticiStatementTableNames(tables []stmtctx.TableEntry) []string {
+	names := make([]string, 0, len(tables))
+	for _, table := range tables {
+		if table.DB != "" {
+			names = append(names, table.DB+"."+table.Table)
+			continue
+		}
+		names = append(names, table.Table)
+	}
+	return names
 }
 
 func getTiCIShardType(ds *logicalop.DataSource, path *util.AccessPath) distsql.TiCIShardType {
