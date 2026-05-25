@@ -9,6 +9,7 @@ go_test(
         "rule_cdc_join_reorder_test.go",
         "rule_common_handle_ordering_test.go",
         "rule_common_subplan_extract_test.go",
+        "rule_correlate_test.go",
         "rule_derive_topn_from_window_test.go",
         "rule_eliminate_empty_selection_test.go",
         "rule_eliminate_projection_test.go",

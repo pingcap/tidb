@@ -138,7 +138,7 @@ func (s *externalCheckpointStorage) flushLock(ctx context.Context, p int64) erro
 		LockId:   s.lockId,
 		ExpireAt: p + lockTimeToLive.Milliseconds(),
 	}
-	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", p),
+	log.Debug("start to flush the checkpoint lock", zap.Int64("lock-at", p),
 		zap.Int64("expire-at", lock.ExpireAt))
 	data, err := json.Marshal(lock)
 	if err != nil {

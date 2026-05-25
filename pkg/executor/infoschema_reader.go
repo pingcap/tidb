@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -2546,11 +2547,15 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 		jobInfo := chunkRow.GetString(3)
 		processedRows := chunkRow.GetInt64(4)
 		var startTime, endTime any
+		// startTime and endTime use the local timezone for displaying.
+		// startTimeUTC is used to calculate the remaining duration of the job.
+		var startTimeUTC *time.Time
 		if !chunkRow.IsNull(5) {
 			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
 			if err != nil {
 				return nil, err
 			}
+			startTimeUTC = &t
 			startTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
 		if !chunkRow.IsNull(6) {
@@ -2574,11 +2579,10 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 		var remainDurationStr, progressDouble, estimatedRowCntStr any
 		if state == statistics.AnalyzeRunning && !strings.HasPrefix(jobInfo, "merge global stats") {
-			startTime, ok := startTime.(types.Time)
-			if !ok {
+			if startTimeUTC == nil {
 				return nil, errors.New("invalid start time")
 			}
-			remainingDuration, progress, estimatedRowCnt, remainDurationErr := getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
+			remainingDuration, progress, estimatedRowCnt, remainDurationErr := getRemainDurationForAnalyzeStatusHelper(ctx, sctx, startTimeUTC,
 				dbName, tableName, partitionName, processedRows)
 			if remainDurationErr != nil {
 				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(remainDurationErr))
@@ -2615,16 +2619,13 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
-	sctx sessionctx.Context, startTime *types.Time,
+	sctx sessionctx.Context, startTimeUTC *time.Time,
 	dbName, tableName, partitionName string, processedRows int64,
 ) (_ *time.Duration, percentage, totalCnt float64, err error) {
 	remainingDuration := time.Duration(0)
-	if startTime != nil {
-		start, err := startTime.GoTime(time.UTC)
-		if err != nil {
-			return nil, percentage, totalCnt, err
-		}
-		duration := time.Now().UTC().Sub(start)
+	if startTimeUTC != nil {
+		// time.Time.Sub uses the actual instant.
+		duration := time.Since(*startTimeUTC)
 		if intest.InTest {
 			if val := ctx.Value(AnalyzeProgressTest); val != nil {
 				remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
@@ -3771,7 +3772,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessi
 		kr := strings.Join(ranges, ", ")
 
 		row := types.MakeDatums(
-			rule.ID,
+			label.RestoreRuleID(rule.ID),
 			rule.RuleType,
 			labels,
 			kr,
@@ -4154,10 +4155,23 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 		err = errors.New("the label rule has no data")
 		return
 	}
-	dbName = s[1]
-	tableName = s[2]
-	if len(s) > 3 {
-		partitionName = s[3]
+	idOffset := 0
+	if kerneltype.IsNextGen() && s[0] == label.KeyspacePrefix {
+		if len(s) < 5 {
+			err = errors.Errorf("invalid keyspace label rule ID: %v", rule.ID)
+			return
+		}
+		idOffset = 2
+	}
+	if s[idOffset] != label.IDPrefix || len(s) < idOffset+3 {
+		err = errors.Errorf("invalid label rule ID: %v", rule.ID)
+		return
+	}
+
+	dbName = s[idOffset+1]
+	tableName = s[idOffset+2]
+	if idOffset+3 < len(s) {
+		partitionName = s[idOffset+3]
 	}
 	return
 }

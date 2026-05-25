@@ -23,9 +23,11 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -113,6 +115,7 @@ func NewCollector(
 	encoder *importer.TableKVEncoder,
 	globalSet, localSet *BoundedHandleSet,
 	sharedTotalFileSize *atomic.Int64,
+	progressCollector execute.Collector,
 	trafficRec TrafficRecorder,
 ) *Collector {
 	// Safety check: if caller doesn't pass the shared counter, allocate one to
@@ -129,9 +132,9 @@ func NewCollector(
 		hdlSet:              localSet,
 		sharedTotalFileSize: sharedTotalFileSize,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, encoder, collector, progressCollector, logger)
 	var h Handler
-	if kvGroup == external.DataKVGroup {
+	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
 		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), NewHandleFilter(globalSet))
@@ -141,7 +144,7 @@ func NewCollector(
 }
 
 // Run starts the collector to collect conflicted KV info.
-func (c *Collector) Run(ctx context.Context, ch chan *external.KVPair) (err error) {
+func (c *Collector) Run(ctx context.Context, ch chan *simplesst.KVPair) (err error) {
 	if err = c.handler.PreRun(); err != nil {
 		return err
 	}
@@ -159,7 +162,7 @@ func (c *Collector) HandleEncodedRow(ctx context.Context, handle tidbkv.Handle,
 	//
 	// an alternative solution is to upload those handles to sort storage and
 	// check them in another pass later.
-	if c.kvGroup != external.DataKVGroup {
+	if c.kvGroup != globalsort.DataKVGroup {
 		c.hdlSet.Add(handle)
 	}
 
@@ -222,7 +225,7 @@ func (c *Collector) switchFile(ctx context.Context) error {
 		zap.String("lastFileSize", units.BytesSize(float64(c.currFileSize))))
 	writer, err := c.store.Create(ctx, filename, &storeapi.WriterOption{
 		Concurrency: 20,
-		PartSize:    external.MinUploadPartSize,
+		PartSize:    simplesst.MinUploadPartSize,
 	})
 	if err != nil {
 		return errors.Trace(err)

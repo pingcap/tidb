@@ -396,7 +396,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				groupByColsOutputCols.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x, true)
+			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -629,14 +629,23 @@ func (la *LogicalAggregation) pushDownDNFPredicates(cond expression.Expression, 
 
 // splitCondForAggregation splits the condition into those who can be pushed and others.
 func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Expression) (condsToPush, ret []expression.Expression) {
+	exprCtx := la.SCtx().GetExprCtx()
 	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
 	aggFirstRowColumns := expression.NewSchema(la.getAggFuncsColsForFirstRow()...)
+	aggConstResultColumns, aggConstResultExprs := la.getAggFuncsColsForConstResult()
+	var aggConstResultSchema *expression.Schema
+	if len(aggConstResultColumns) > 0 {
+		aggConstResultSchema = expression.NewSchema(aggConstResultColumns...)
+	}
 	for _, cond := range predicates {
 		for _, cnfItem := range expression.SplitCNFItems(cond) {
+			if aggConstResultSchema != nil {
+				cnfItem = expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, cnfItem, aggConstResultSchema, aggConstResultExprs))
+			}
 			subCondsToPush, subRet := la.pushDownDNFPredicates(cnfItem, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
 			if len(subCondsToPush) > 0 {
 				condsToPush = append(condsToPush, subCondsToPush...)
@@ -658,8 +667,58 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 	return condsToPush, ret
 }
 
+func (la *LogicalAggregation) hasOnlyConstGroupByItems() bool {
+	if len(la.GroupByItems) == 0 {
+		return true
+	}
+	for _, item := range la.GroupByItems {
+		if item.ConstLevel() < expression.ConstOnlyInContext {
+			return false
+		}
+	}
+	return true
+}
+
+// getAggFuncsColsForConstResult gets aggregate output columns whose values always match their
+// single row-independent argument for every non-empty group.
+func (la *LogicalAggregation) getAggFuncsColsForConstResult() (aggFuncsCols []*expression.Column, aggFuncsExprs []expression.Expression) {
+	if len(la.GroupByItems) == 0 {
+		return nil, nil
+	}
+	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
+	aggFuncsExprs = make([]expression.Expression, 0, len(la.AggFuncs))
+	for idx, col := range la.Schema().Columns {
+		if idx >= len(la.AggFuncs) {
+			break
+		}
+		aggFunc := la.AggFuncs[idx]
+		if aggFuncResultMatchesArgForNonEmptyGroup(aggFunc) {
+			aggFuncsCols = append(aggFuncsCols, col)
+			aggFuncsExprs = append(aggFuncsExprs, aggFunc.Args[0])
+		}
+	}
+	return aggFuncsCols, aggFuncsExprs
+}
+
+func aggFuncResultMatchesArgForNonEmptyGroup(aggFunc *aggregation.AggFuncDesc) bool {
+	if aggFunc.HasDistinct || len(aggFunc.Args) != 1 || len(aggFunc.OrderByItems) > 0 {
+		return false
+	}
+	switch aggFunc.Name {
+	case ast.AggFuncMax, ast.AggFuncMin:
+	default:
+		return false
+	}
+	return aggFunc.Args[0].ConstLevel() >= expression.ConstOnlyInContext
+}
+
 // getAggFuncsColsForFirstRow gets the columns that are used by first_row agg functions.
 func (la *LogicalAggregation) getAggFuncsColsForFirstRow() (aggFuncsCols []*expression.Column) {
+	// Constant-group aggregations (for example GROUP BY NULL) choose an arbitrary input row for
+	// firstrow() outputs, so pushing HAVING predicates on those outputs back to base rows is unsound.
+	if la.hasOnlyConstGroupByItems() {
+		return nil
+	}
 	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
 	for idx, col := range la.Schema().Columns {
 		aggFunc := la.AggFuncs[idx]

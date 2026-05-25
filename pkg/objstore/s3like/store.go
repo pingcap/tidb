@@ -45,6 +45,12 @@ import (
 var HardcodedChunkSize = 5 * 1024 * 1024
 
 const (
+	// S3AccessKey is the key for the access key used in S3 operations.
+	S3AccessKey = "access-key"
+	// S3SecretAccessKey is the key for the secret access key used in S3 operations.
+	S3SecretAccessKey = "secret-access-key"
+	// S3RoleARN is the key for the role ARN used in S3 operations.
+	S3RoleARN = "role-arn"
 	// S3ExternalID is the key for the external ID used in S3 operations.
 	S3ExternalID = "external-id"
 
@@ -387,6 +393,27 @@ func (rs *Storage) DeleteFiles(ctx context.Context, files []string) error {
 // FileExists check if file exists on s3 storage.
 func (rs *Storage) FileExists(ctx context.Context, file string) (bool, error) {
 	return rs.s3Cli.IsObjectExists(ctx, file)
+}
+
+// FileSynced reports whether the object has completed source-side replication.
+func (rs *Storage) FileSynced(ctx context.Context, file string) (bool, error) {
+	head, err := rs.s3Cli.HeadObject(ctx, file)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	status := head.ReplicationStatus
+	switch status {
+	case "COMPLETE", "COMPLETED", "REPLICA":
+		return true, nil
+	case "PENDING":
+		return false, nil
+	case "FAILED":
+		return false, errors.Errorf("upstream replication status for %s is FAILED", file)
+	case "":
+		return false, errors.Errorf("upstream replication status for %s is empty", file)
+	default:
+		return false, errors.Errorf("upstream replication status for %s is %q", file, status)
+	}
 }
 
 // WalkDir traverse all the files in a dir.
