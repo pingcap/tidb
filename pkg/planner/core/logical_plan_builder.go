@@ -2350,6 +2350,9 @@ func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []base.LogicalP
 		return nil, nil
 	}
 	b.optFlag |= rule.FlagEliminateUnionAllDualItem
+	if b.ctx.GetSessionVars().EnableCommonSubplanExtract {
+		b.optFlag |= rule.FlagCommonSubplanExtract
+	}
 	u := logicalop.LogicalUnionAll{}.Init(b.ctx, b.getSelectOffset())
 	u.SetChildren(subPlan...)
 	err := b.buildProjection4Union(ctx, u)

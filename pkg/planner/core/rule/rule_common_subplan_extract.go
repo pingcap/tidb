@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 )
 
 // CommonSubplanExtractor detects structurally identical subtrees within the
@@ -156,6 +157,7 @@ func extractDuplicatesInUnion(union *logicalop.LogicalUnionAll, groups map[strin
 				Cte:       cteClass,
 				CteAsName: cteName,
 				CteName:   cteName,
+				SeedStat:  &property.StatsInfo{},
 			}.Init(sctx, union.QueryBlockOffset())
 			lCTE.SetSchema(newSchema)
 			lCTE.SetOutputNames(firstChild.OutputNames())
