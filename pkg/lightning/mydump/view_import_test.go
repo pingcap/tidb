@@ -281,6 +281,44 @@ func TestBuildViewImportPlanNormalizesCaseInsensitiveDeps(t *testing.T) {
 	require.Empty(t, plan.nodes[normalizeTableName(v2.Schema, v2.Name)].externalDeps)
 }
 
+func TestBuildViewImportPlanKeepsWideTopoLayerDeterministic(t *testing.T) {
+	v1 := filter.Table{Schema: "test", Name: "v1"}
+	v2 := filter.Table{Schema: "test", Name: "v2"}
+	va := filter.Table{Schema: "test", Name: "va"}
+	vz := filter.Table{Schema: "test", Name: "vz"}
+	dumpTables := make(tableNameSet)
+	dumpTables.add(filter.Table{Schema: "test", Name: "t1"})
+	dumpTables.add(filter.Table{Schema: "test", Name: "t2"})
+
+	plan, err := buildViewImportPlan([]*parsedViewSchema{
+		{
+			key:       v1,
+			deps:      []filter.Table{{Schema: "test", Name: "t1"}},
+			createSQL: "CREATE VIEW `test`.`v1` AS SELECT `id` FROM `test`.`t1`;",
+		},
+		{
+			key:       v2,
+			deps:      []filter.Table{{Schema: "test", Name: "t2"}},
+			createSQL: "CREATE VIEW `test`.`v2` AS SELECT `id` FROM `test`.`t2`;",
+		},
+		{
+			key:       vz,
+			deps:      []filter.Table{{Schema: "test", Name: "v1"}},
+			createSQL: "CREATE VIEW `test`.`vz` AS SELECT `id` FROM `test`.`v1`;",
+		},
+		{
+			key:       va,
+			deps:      []filter.Table{{Schema: "test", Name: "v2"}},
+			createSQL: "CREATE VIEW `test`.`va` AS SELECT `id` FROM `test`.`v2`;",
+		},
+	}, dumpTables)
+	require.NoError(t, err)
+	require.Equal(t,
+		[]filter.Table{v1, v2, va, vz},
+		[]filter.Table{plan.ordered[0].key, plan.ordered[1].key, plan.ordered[2].key, plan.ordered[3].key},
+	)
+}
+
 func TestBuildViewImportPlanRejectsCaseInsensitiveDuplicates(t *testing.T) {
 	_, err := buildViewImportPlan([]*parsedViewSchema{
 		{
