@@ -863,6 +863,33 @@ func (mgr *TaskManager) SwitchTaskStep(
 	})
 }
 
+// SwitchTaskStepAfterPrepare atomically persists prepare completion from
+// pending+init to pending+prepared.
+func (mgr *TaskManager) SwitchTaskStepAfterPrepare(ctx context.Context, task *proto.Task) (bool, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return false, err
+	}
+	switched := false
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_global_task
+			set step = %?,
+				state_update_time = CURRENT_TIMESTAMP(),
+				meta = %?,
+				concurrency = %?,
+				max_node_count = %?
+			where id = %? and state = %? and step = %?`,
+			proto.StepPrepared, task.Meta, task.RequiredSlots, task.MaxNodeCount,
+			task.ID, proto.TaskStatePending, proto.StepInit)
+		if err != nil {
+			return err
+		}
+		switched = se.GetSessionVars().StmtCtx.AffectedRows() > 0
+		return nil
+	})
+	return switched, err
+}
+
 func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionctx.Context,
 	task *proto.Task, nextState proto.TaskState, nextStep proto.Step) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
@@ -1156,7 +1183,7 @@ func (mgr *TaskManager) GetSubtaskCheckpoint(ctx context.Context, subtaskID int6
 	return rs[0].GetString(0), nil
 }
 
-// UpdateTaskExtraParams update the extra params of a task.
+// UpdateTaskExtraParams updates the extra params of a task.
 func (mgr *TaskManager) UpdateTaskExtraParams(ctx context.Context, taskID int64, extraParams proto.ExtraParams) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
