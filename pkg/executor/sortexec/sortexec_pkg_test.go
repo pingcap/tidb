@@ -16,14 +16,12 @@ package sortexec
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -129,22 +127,12 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	}
 	err := sp.sort()
 	require.NoError(t, err)
-	var delayedWrite atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", func() bool {
-		if delayedWrite.CompareAndSwap(false, true) {
-			time.Sleep(1500 * time.Millisecond)
-		}
-		return false
-	})
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
-		wg.Done()
-	}()
+	// Set the kill signal before spilling. The signal persists atomically and
+	// will be detected by HandleKillSignal() after the first full chunk is
+	// written during spillToDiskImpl(). This avoids timing-dependent race
+	// conditions where a failpoint delay + goroutine sleep may not align.
+	rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 	err = sp.spillToDisk()
-	wg.Wait()
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
 	require.Greater(t, sp.numRowInDiskForTest(), int64(0))
 	require.Less(t, sp.numRowInDiskForTest(), totalRows)
