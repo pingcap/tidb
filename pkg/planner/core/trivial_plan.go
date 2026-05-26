@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -276,6 +277,22 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 				return nil, nil
 			}
 		}
+	}
+
+	// Mirror the predicate-column tracking that CollectPredicateColumnsPoint
+	// normally performs. ANALYZE PREDICATE COLUMNS reads from this collector
+	// to decide which columns to focus on, so it must be updated even when
+	// stats are already loaded.
+	if len(refColIDs) > 0 {
+		items := make([]model.TableItemID, 0, len(refColIDs))
+		for colID := range refColIDs {
+			items = append(items, model.TableItemID{
+				TableID: tblInfo.ID,
+				ID:      colID,
+				IsIndex: false,
+			})
+		}
+		ctx.UpdateColStatsUsage(slices.Values(items))
 	}
 
 	// Provide a HistColl so downstream callers (e.g. GetAvgRowSize for
