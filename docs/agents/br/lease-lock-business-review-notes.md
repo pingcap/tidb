@@ -38,16 +38,21 @@ Scope refinement for restore review:
 
 #### `br/pkg/task/stream.go`: truncate lock cleanup and acquire
 
-- Status: resolved in current branch for the missing-file cleanup behavior.
+- Status: resolved in current branch for the missing-file cleanup behavior and
+  for the fixed-path stale cleanup race.
 - `RunStreamTruncate` uses a standalone truncate lock at `truncateLockPath`
   rather than the migration read/write lock family.
-- The original acquire behavior was: cleanup once, call `TryLockRemote` once,
-  and return on conflict. It did not use `LockWithRetry`.
+- The original acquire behavior was preserved: cleanup once, acquire once, and
+  return on conflict. It does not use `LockWithRetry`.
 - Preserve that acquire behavior unless the user-visible retry semantics are
   intentionally changed.
-- `CleanUpStaleLock` now treats a missing lock file as "nothing to clean" and
-  returns `(false, nil)`, so the common no-lock case does not fail before
-  `TryLockRemote`.
+- The current code uses `CleanUpStaleTruncateLock` and
+  `TryLockRemoteTruncate`. Truncate acquire now creates
+  `truncating.lock.<32hex>` physical instances, and cleanup only reclaims stale
+  new-format truncate instances.
+- Legacy fixed-path truncate locks, malformed new-format candidates, intents,
+  and unknown protected-prefix objects are treated conservatively: they are not
+  auto-deleted by cleanup.
 
 #### `br/pkg/task/stream.go`: truncate lease loss and warnings
 
@@ -182,8 +187,11 @@ Automatic review follow-up, after scope refinement:
 
 #### `pkg/objstore/locking.go`: stale cleanup race
 
-- Automatic review raised a high-risk infrastructure issue that needs manual
-  confirmation before deciding the fix.
+- Status: resolved in current branch by the instance/generation-based lock
+  naming change. See `lease-lock-instance-generation-design.md`,
+  `lease-lock-family-acquire-protocol.md`, and
+  `lease-lock-instance-generation-implementation-plan.md`.
+- Automatic review raised this as a high-risk infrastructure issue.
 - `CleanUpStaleLock` reads stale lock metadata and later deletes the lock path
   with an unconditional `DeleteFile`; the current storage interface does not
   expose compare-and-delete.
@@ -202,15 +210,23 @@ Automatic review follow-up, after scope refinement:
   rewriting and deleting one stable object path. A random suffix, similar to
   read locks, prevents stale cleanup from deleting a newly acquired lock at the
   same path.
+- Implemented behavior: acquire writes a new physical instance path such as
+  `v1/LOCK.WRIT.<32hex>`, `v1/LOCK.READ.<32hex>`,
+  `v1/APPEND_LOCK.WRIT.<32hex>`, or `truncating.lock.<32hex>`. Renewal and
+  unlock operate on the acquired physical instance path.
+- `LockWithRetry` now performs family-aware cleanup and only deletes stale
+  cleanup-eligible new 32 hex committed instances. Acquire verification remains
+  separate from cleanup: it scans the lock family for conflicts but does not
+  read lock metadata, check `ExpireAt`, or delete objects.
 - Superseded earlier hypothesis: renewal should not move to a new generation.
   The finalized design generates a new physical instance path only during
   acquire; renewal refreshes `ExpireAt` in place on the current instance. See
   `lease-lock-instance-generation-design.md` and
   `lease-lock-family-acquire-protocol.md`.
-- Backward compatibility note: old fixed-path lock files without `ExpireAt`
-  are already not auto-reclaimed because `CleanUpStaleLock` treats zero
-  `ExpireAt` as an old-client lock. New conflict scans must still treat the old
-  `*.WRIT` fixed path as a valid conflicting write lock.
+- Compatibility note: old fixed-path lock files, old 16 hex read locks,
+  intents, malformed new-format candidates, and unknown protected-prefix
+  objects are not auto-reclaimed. New conflict scans still treat old fixed-path
+  write locks as valid conflicting locks.
 - Follow-up, out of scope for the immediate file-name fix: all current lease
   expiration decisions use the local process clock. Review later whether BR
   should obtain lock lease time from PD, or at least make part of the lease
@@ -222,16 +238,16 @@ Automatic review follow-up, after scope refinement:
 
 | Caller | File | Lock type | Current concern |
 | --- | --- | --- | --- |
-| `RunStreamTruncate` | `br/pkg/task/stream.go` | standalone `TryLockRemote` | missing-file cleanup resolved; still affected by fixed-path stale cleanup race |
+| `RunStreamTruncate` | `br/pkg/task/stream.go` | standalone truncate instance lock | fixed-path stale cleanup race resolved; lease-loss warning/success behavior still needs review |
 | `restoreStream` / `GetLockedMigrations` | `br/pkg/task/stream.go`, `br/pkg/restore/log_client/client.go` | migration read lock | renewal should start inside `GetLockedMigrations`; restore sub-step cancellation is out of scope |
 | `AppendMigration` | `br/pkg/stream/stream_metas.go` | migration read lock + append write lock | no renewal during append critical section |
 | `MergeAndMigrateTo` | `br/pkg/stream/stream_metas.go` | migration write lock | no renewal during destructive critical section |
 
 ### Suggested review order
 
-1. Fix the fixed-path stale cleanup race in the lock layer. Prefer an
-   instance/generation-based design or a real conditional-delete/reclaim
-   protocol. Include standalone truncate locks in the design.
+1. Done: fixed the fixed-path stale cleanup race in the lock layer with
+   instance/generation-based physical paths. Standalone truncate locks are
+   included in this design.
 2. Move restore read-lock renewal ownership into `GetLockedMigrations`, with a
    caller-provided lease-loss callback. Start renewal immediately after
    `ext.GetReadLock` succeeds and before reading `v1/migrations/`.
