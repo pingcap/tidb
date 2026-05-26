@@ -580,6 +580,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
+	RecordAPICall(BackendS3, APICallPutObject)
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
@@ -588,6 +589,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
+	RecordAPICall(BackendS3, APICallHeadObjects)
 	err = rs.svc.WaitUntilObjectExistsWithContext(ctx, hinput)
 	return errors.Trace(err)
 }
@@ -682,6 +684,7 @@ func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) 
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
+	RecordAPICall(BackendS3, APICallHeadObjects)
 	_, err := rs.svc.HeadObjectWithContext(ctx, input)
 	if err != nil {
 		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
@@ -728,6 +731,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	}
 
 	for {
+		RecordAPICall(BackendS3, APICallListObjects)
 		res, err := rs.svc.ListObjectsV2WithContext(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
@@ -778,6 +782,7 @@ func (rs *S3Storage) FileSynced(ctx context.Context, file string) (bool, error) 
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
+	RecordAPICall(BackendS3, APICallHeadObjects)
 	head, err := rs.svc.HeadObjectWithContext(ctx, input)
 	if err != nil {
 		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint

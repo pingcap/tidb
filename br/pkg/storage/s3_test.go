@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	. "github.com/pingcap/tidb/br/pkg/storage"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -531,6 +533,11 @@ func TestFileExistsNoError(t *testing.T) {
 	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
+	metricBefore := promtest.ToFloat64(storage.S3APICallCounter.WithLabelValues(
+		storage.BackendS3,
+		storage.APICallHeadObjects,
+	))
+
 	s.s3.EXPECT().
 		HeadObjectWithContext(ctx, gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, opt ...request.Option) (*s3.HeadObjectOutput, error) {
@@ -542,6 +549,11 @@ func TestFileExistsNoError(t *testing.T) {
 	exists, err := s.storage.FileExists(ctx, "file")
 	require.NoError(t, err)
 	require.True(t, exists)
+
+	require.Equal(t, metricBefore+1, promtest.ToFloat64(storage.S3APICallCounter.WithLabelValues(
+		storage.BackendS3,
+		storage.APICallHeadObjects,
+	)))
 }
 
 func TestFileSyncedNoError(t *testing.T) {
@@ -648,6 +660,11 @@ func TestWriteError(t *testing.T) {
 	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
+	metricBefore := promtest.ToFloat64(storage.S3APICallCounter.WithLabelValues(
+		storage.BackendS3,
+		storage.APICallPutObject,
+	))
+
 	expectedErr := awserr.New(s3.ErrCodeNoSuchBucket, "no such bucket", nil)
 
 	s.s3.EXPECT().
@@ -656,6 +673,11 @@ func TestWriteError(t *testing.T) {
 
 	err := s.storage.WriteFile(ctx, "file2", []byte("test"))
 	require.Regexp(t, `\Q`+expectedErr.Error()+`\E`, err.Error())
+
+	require.Equal(t, metricBefore+1, promtest.ToFloat64(storage.S3APICallCounter.WithLabelValues(
+		storage.BackendS3,
+		storage.APICallPutObject,
+	)))
 }
 
 // TestWriteError checks that a GetObject error is propagated.
@@ -1220,6 +1242,11 @@ func TestWalkDir(t *testing.T) {
 		}).
 		After(fifthCall)
 
+	metricBefore := promtest.ToFloat64(storage.S3APICallCounter.WithLabelValues(
+		storage.BackendS3,
+		storage.APICallListObjects,
+	))
+
 	// Ensure we receive the items in order.
 	i := 0
 	err := s.storage.WalkDir(
@@ -1264,6 +1291,10 @@ func TestWalkDir(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, contents, i)
+	require.Equal(t, metricBefore+6, promtest.ToFloat64(storage.S3APICallCounter.WithLabelValues(
+		storage.BackendS3,
+		storage.APICallListObjects,
+	)))
 }
 
 func TestS3WalkDirStartAfter(t *testing.T) {
