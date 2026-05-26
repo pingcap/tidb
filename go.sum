@@ -875,6 +875,8 @@ github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260514081829-33af58c5fb00 h1:YGK
 github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260514081829-33af58c5fb00/go.mod h1:rg9c3yf9lfQdj9rt5FvwRP9xDubUY6C9hyH4g9zFH1s=
 github.com/YuhaoZhang00/kvproto v0.0.0-20260514083546-6392d3ef7006 h1:X5cqeo4gtC/rOaTW8QhGu6amLfb3ib44U78t1hKZqP8=
 github.com/YuhaoZhang00/kvproto v0.0.0-20260514083546-6392d3ef7006/go.mod h1:z6+aAHB7dBkA+LyinEX+48/ImRJ3jag0Hg0c7wkhEvE=
+github.com/YuhaoZhang00/kvproto v0.0.0-20260526080839-acfca8a6521f h1:Z5K9nLblAtUEdgepJVgICnm6of2H/OLvildxEl3CyAA=
+github.com/YuhaoZhang00/kvproto v0.0.0-20260526080839-acfca8a6521f/go.mod h1:z6+aAHB7dBkA+LyinEX+48/ImRJ3jag0Hg0c7wkhEvE=
 github.com/YuhaoZhang00/pd/client v0.0.0-20260514081800-e393a2130e70 h1:bI6FfbYaoNNosTmSf/suIhtxuIXojXnPvPOJPUJG8Ss=
 github.com/YuhaoZhang00/pd/client v0.0.0-20260514081800-e393a2130e70/go.mod h1:I6LzwZgaSbT7h2C74QwM9DgEbla7vLkVPIGeDKYpuoE=
 github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d h1:licZJFw2RwpHMqeKTCYkitsPqHNxTmd4SNR5r94FGM8=

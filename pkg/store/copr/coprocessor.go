@@ -1779,7 +1779,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	req.PredictedReadBytes = worker.predictor.Predict(task.pagingSize)
+	req.PredictedReadBytes = worker.predictor.Predict(task.pagingSize, task.pagingSizeBytes)
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1946,6 +1946,19 @@ func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
 	return 0
 }
 
+func pagingBreakReasonFromPB(reason coprocessor.PagingBreakReason) pageBreakReason {
+	switch reason {
+	case coprocessor.PagingBreakReason_PAGING_BREAK_REASON_ROW_LIMIT:
+		return pageBreakReasonRowLimit
+	case coprocessor.PagingBreakReason_PAGING_BREAK_REASON_BYTE_LIMIT:
+		return pageBreakReasonByteLimit
+	case coprocessor.PagingBreakReason_PAGING_BREAK_REASON_RANGE_END:
+		return pageBreakReasonRangeEnd
+	default:
+		return pageBreakReasonUnknown
+	}
+}
+
 func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
 	if err != nil {
@@ -1968,7 +1981,7 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	}
 
 	readBytes := pagingResponseReadBytes(resp.pbResp)
-	worker.predictor.Observe(task.pagingSize, readBytes, pagingRange == nil, time.Now())
+	worker.predictor.Observe(task.pagingSize, readBytes, pagingBreakReasonFromPB(resp.pbResp.GetPagingBreakReason()), time.Now())
 
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)

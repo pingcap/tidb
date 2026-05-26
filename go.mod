@@ -370,7 +370,7 @@ replace (
 	// Temporary: pin to YuhaoZhang00/kvproto rc-precharge-premium-test which adds
 	// `paging_size_bytes` to coprocessor.Request. Revert once
 	// pingcap/kvproto#1448 is merged and tagged.
-	github.com/pingcap/kvproto => github.com/YuhaoZhang00/kvproto v0.0.0-20260514083546-6392d3ef7006
+	github.com/pingcap/kvproto => github.com/YuhaoZhang00/kvproto v0.0.0-20260526080839-acfca8a6521f
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
 	// Temporary: pin to feature branches. Revert once tikv/client-go#1947 and tikv/pd#10611 are merged and tagged.
