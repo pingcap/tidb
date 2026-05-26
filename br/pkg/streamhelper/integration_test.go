@@ -318,7 +318,11 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	fifth, ok := <-ch
 	require.True(t, ok)
 	require.Equal(t, fifth.Type, streamhelper.EventErr)
-	require.ErrorIs(t, fifth.Err, context.Canceled)
+	// Closing a watch on cancellation can surface either the context error or EOF,
+	// depending on which ready select case the listener observes first.
+	cause := errors.Cause(fifth.Err)
+	require.Truef(t, cause == context.Canceled || cause == io.EOF,
+		"expected listener cancellation or watch stream EOF, got %v", fifth.Err)
 	item, ok := <-ch
 	require.False(t, ok, "%v", item)
 }
