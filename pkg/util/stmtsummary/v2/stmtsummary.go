@@ -41,6 +41,17 @@ const (
 	defaultMaxSQLLength        = 32768
 	defaultRefreshInterval     = 30 * 60 // 30 min
 	defaultRotateCheckInterval = 1       // s
+
+	// evictedLogChanCap bounds the buffer of per-record evicted entries waiting
+	// to be logged. When full, new evictions are dropped so Add() never blocks.
+	evictedLogChanCap = 1024
+
+	// evictedLogBatchSize and evictedLogFlushInterval bound the async logger's
+	// batching. They reduce write frequency under eviction bursts while keeping
+	// single-record latency low.
+	evictedLogBatchSize       = 64
+	evictedLogFlushInterval   = 100 * time.Millisecond
+	evictedDropReportInterval = 30 * time.Second
 )
 
 var (
@@ -87,12 +98,18 @@ type StmtSummary struct {
 	optMaxSQLLength        *atomic2.Uint32
 	optRefreshInterval     *atomic2.Uint32
 	optGroupByUser         *atomic2.Bool
+	optPersistEvicted      *atomic2.Bool
 
 	window     *stmtWindow
 	windowLock sync.Mutex
 	storage    stmtStorage
 	closeWg    sync.WaitGroup
 	closed     atomic.Bool
+
+	// evictedCh carries per-record evictions to the async logger.
+	// Eviction persistence is controlled by optPersistEvicted; sends are non-blocking.
+	evictedCh      chan *StmtRecord
+	evictedDropped atomic.Uint64
 }
 
 // NewStmtSummary creates a new StmtSummary from Config.
@@ -115,7 +132,7 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
 		optGroupByUser:         atomic2.NewBool(false),
-		window:                 newStmtWindow(timeNow(), uint(defaultMaxStmtCount)),
+		optPersistEvicted:      atomic2.NewBool(false),
 		storage: newStmtLogStorage(&log.Config{
 			File: log.FileLogConfig{
 				Filename:   cfg.Filename,
@@ -124,12 +141,19 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 				MaxBackups: cfg.FileMaxBackups,
 			},
 		}),
+		evictedCh: make(chan *StmtRecord, evictedLogChanCap),
 	}
+	s.window = newStmtWindow(timeNow(), uint(defaultMaxStmtCount), s.onEvict)
 
 	s.closeWg.Add(1)
 	go func() {
 		defer s.closeWg.Done()
 		s.rotateLoop()
+	}()
+	s.closeWg.Add(1)
+	go func() {
+		defer s.closeWg.Done()
+		s.evictedLogLoop()
 	}()
 
 	return s, nil
@@ -149,9 +173,17 @@ func NewStmtSummary4Test(maxStmtCount uint) *StmtSummary {
 		optMaxSQLLength:        atomic2.NewUint32(defaultMaxSQLLength),
 		optRefreshInterval:     atomic2.NewUint32(60 * 60 * 24 * 365), // 1 year
 		optGroupByUser:         atomic2.NewBool(false),
-		window:                 newStmtWindow(timeNow(), maxStmtCount),
+		optPersistEvicted:      atomic2.NewBool(false),
 		storage:                &mockStmtStorage{},
+		evictedCh:              make(chan *StmtRecord, evictedLogChanCap),
 	}
+	ss.window = newStmtWindow(timeNow(), maxStmtCount, ss.onEvict)
+
+	ss.closeWg.Add(1)
+	go func() {
+		defer ss.closeWg.Done()
+		ss.evictedLogLoop()
+	}()
 
 	return ss
 }
@@ -261,6 +293,17 @@ func (s *StmtSummary) SetGroupByUser(v bool) error {
 	return nil
 }
 
+// PersistEvicted reports whether per-record evictions are persisted.
+func (s *StmtSummary) PersistEvicted() bool {
+	return s.optPersistEvicted.Load()
+}
+
+// SetPersistEvicted enables or disables per-record eviction persistence.
+func (s *StmtSummary) SetPersistEvicted(v bool) error {
+	s.optPersistEvicted.Store(v)
+	return nil
+}
+
 // Add adds a single stmtsummary.StmtExecInfo to the current statistics window
 // of StmtSummary. Before adding, it will check whether the current window has
 // expired, and if it has expired, the window will be persisted asynchronously
@@ -274,6 +317,11 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 
 	// Add info to the current statistics window.
 	s.windowLock.Lock()
+	if s.closed.Load() {
+		s.windowLock.Unlock()
+		stmtsummary.StmtDigestKeyPool.Put(k)
+		return
+	}
 	// Decide userForKey under windowLock so SetGroupByUser's flag flip + clear
 	// is atomic w.r.t. Add; otherwise a post-clear insert could land under the
 	// wrong grouping mode.
@@ -338,11 +386,17 @@ func (s *StmtSummary) ClearInternal() {
 
 // Close closes the work of StmtSummary.
 func (s *StmtSummary) Close() {
+	s.windowLock.Lock()
+	if !s.closed.CompareAndSwap(false, true) {
+		s.windowLock.Unlock()
+		return
+	}
+	s.windowLock.Unlock()
+
 	if s.cancel != nil {
 		s.cancel()
 		s.closeWg.Wait()
 	}
-	s.closed.Store(true)
 	s.flush()
 }
 
@@ -351,7 +405,7 @@ func (s *StmtSummary) flush() {
 
 	s.windowLock.Lock()
 	window := s.window
-	s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
+	s.window = newStmtWindow(now, uint(s.MaxStmtCount()), s.onEvict)
 	s.windowLock.Unlock()
 
 	if window.lru.Size() > 0 {
@@ -396,7 +450,7 @@ func (s *StmtSummary) updateMetrics() {
 
 func (s *StmtSummary) rotate(now time.Time) {
 	w := s.window
-	s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
+	s.window = newStmtWindow(now, uint(s.MaxStmtCount()), s.onEvict)
 	size := w.lru.Size()
 	if size > 0 {
 		// Persist window asynchronously.
@@ -405,6 +459,126 @@ func (s *StmtSummary) rotate(now time.Time) {
 			defer s.closeWg.Done()
 			s.storage.persist(w, now)
 		}()
+	}
+}
+
+// onEvict is the LRU eviction hook installed on every stmtWindow.
+// Called while the record's lock is held (see newStmtWindow). We copy the
+// fields we need and hand the clone off to the async log goroutine. A
+// non-blocking send is used so the hot Add() path never stalls on log I/O.
+func (s *StmtSummary) onEvict(_ *stmtsummary.StmtDigestKey, r *StmtRecord, begin, end time.Time) bool {
+	if !s.optPersistEvicted.Load() {
+		return false
+	}
+	if s.evictedCh == nil {
+		return false
+	}
+	clone := cloneRecordForLog(r)
+	clone.Begin = begin.Unix()
+	clone.End = end.Unix()
+	select {
+	case s.evictedCh <- clone:
+		return true
+	default:
+		s.evictedDropped.Add(1)
+		metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
+			metrics.StmtSummaryTypeV2,
+			metrics.StmtSummaryEvictedLogResultDropped,
+		).Inc()
+		return false
+	}
+}
+
+// evictedLogLoop drains evictedCh and writes each record to the stmt log.
+// When group_by_user is also enabled, each logged record represents exactly
+// one (digest, user) group that fell out of the LRU.
+func (s *StmtSummary) evictedLogLoop() {
+	reportTicker := time.NewTicker(evictedDropReportInterval)
+	defer reportTicker.Stop()
+
+	flushTimer := time.NewTimer(evictedLogFlushInterval)
+	if !flushTimer.Stop() {
+		<-flushTimer.C
+	}
+	defer flushTimer.Stop()
+
+	var lastDropReport uint64
+	report := func() {
+		cur := s.evictedDropped.Load()
+		if cur > lastDropReport {
+			logutil.BgLogger().Warn("stmt summary evicted log dropped records",
+				zap.Uint64("dropped_total", cur),
+				zap.Uint64("since_last_report", cur-lastDropReport),
+			)
+			lastDropReport = cur
+		}
+	}
+
+	stopFlushTimer := func() {
+		if !flushTimer.Stop() {
+			select {
+			case <-flushTimer.C:
+			default:
+			}
+		}
+	}
+
+	batch := make([]*StmtRecord, 0, evictedLogBatchSize)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		s.storage.logEvicted(batch)
+		for i := range batch {
+			batch[i] = nil
+		}
+		batch = batch[:0]
+		stopFlushTimer()
+	}
+	appendRecord := func(r *StmtRecord) {
+		batch = append(batch, r)
+		if len(batch) == 1 {
+			flushTimer.Reset(evictedLogFlushInterval)
+		}
+		if len(batch) >= evictedLogBatchSize {
+			flush()
+		}
+	}
+	drainAvailable := func() {
+		for len(batch) > 0 && len(batch) < evictedLogBatchSize {
+			select {
+			case r := <-s.evictedCh:
+				appendRecord(r)
+			default:
+				return
+			}
+		}
+	}
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			// Close sets closed while holding windowLock before canceling this
+			// context, and Add rechecks closed under the same lock. At this
+			// point no Add can enqueue more evicted records.
+			for {
+				select {
+				case r := <-s.evictedCh:
+					appendRecord(r)
+				default:
+					flush()
+					report()
+					return
+				}
+			}
+		case r := <-s.evictedCh:
+			appendRecord(r)
+			drainAvailable()
+		case <-flushTimer.C:
+			flush()
+		case <-reportTicker.C:
+			report()
+		}
 	}
 }
 
@@ -419,7 +593,14 @@ type stmtWindow struct {
 	evictedCount atomic.Int64 // total number of LRU evictions in this window
 }
 
-func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
+// onEvictFn is invoked for every LRU eviction. The callback receives the
+// locked record (caller holds r.Lock) so it can copy fields cheaply. It
+// returns true when the record has been handed off for per-record persistence,
+// in which case the caller can skip adding it to the persisted aggregate.
+// Must not block.
+type onEvictFn func(key *stmtsummary.StmtDigestKey, r *StmtRecord, begin, end time.Time) bool
+
+func newStmtWindow(begin time.Time, capacity uint, onEvict onEvictFn) *stmtWindow {
 	w := &stmtWindow{
 		begin:   begin,
 		lru:     kvcache.NewSimpleLRUCache(capacity, 0, 0),
@@ -430,7 +611,12 @@ func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		defer r.Unlock()
-		w.evicted.add(k.(*stmtsummary.StmtDigestKey), r.StmtRecord)
+		key := k.(*stmtsummary.StmtDigestKey)
+		queuedForEvictedLog := false
+		if onEvict != nil {
+			queuedForEvictedLog = onEvict(key, r.StmtRecord, w.begin, timeNow())
+		}
+		w.evicted.add(key, r.StmtRecord, queuedForEvictedLog)
 	})
 	return w
 }
@@ -443,42 +629,57 @@ func (w *stmtWindow) clear() {
 
 type stmtStorage interface {
 	persist(w *stmtWindow, end time.Time)
+	// logEvicted writes evicted records to durable storage. It may be
+	// called concurrently with persist; implementations must be safe to call
+	// from the evictedLogLoop goroutine.
+	logEvicted(records []*StmtRecord)
 	sync() error
 }
 
 type stmtEvicted struct {
 	sync.Mutex
-	keys  map[string]struct{}
-	other *StmtRecord
+	keys map[string]struct{}
+	// inMemoryAggregate contains all evicted records in the current in-memory window.
+	inMemoryAggregate *StmtRecord
+	// persistFallback contains only records not already queued to the per-record evicted log.
+	persistFallback *StmtRecord
 }
 
 func newStmtEvicted() *stmtEvicted {
 	return &stmtEvicted{
-		keys: make(map[string]struct{}),
-		other: &StmtRecord{
-			AuthUsers:    make(map[string]struct{}),
-			MinLatency:   time.Duration(math.MaxInt64),
-			BackoffTypes: make(map[string]int),
-			FirstSeen:    time.Now(),
-			LastSeen:     time.Now(),
-		},
+		keys:              make(map[string]struct{}),
+		inMemoryAggregate: newEvictedAggregateRecord(),
+		persistFallback:   newEvictedAggregateRecord(),
 	}
 }
 
-func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord) {
+func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord, queuedForEvictedLog bool) {
 	if key == nil || record == nil {
 		return
 	}
 	e.Lock()
 	defer e.Unlock()
 	e.keys[string(key.Hash())] = struct{}{}
-	e.other.Merge(record)
+	e.inMemoryAggregate.Merge(record)
+	if !queuedForEvictedLog {
+		e.persistFallback.Merge(record)
+	}
 }
 
 func (e *stmtEvicted) count() int {
 	e.Lock()
 	defer e.Unlock()
 	return len(e.keys)
+}
+
+func newEvictedAggregateRecord() *StmtRecord {
+	return &StmtRecord{
+		AuthUsers:    make(map[string]struct{}),
+		MinLatency:   time.Duration(math.MaxInt64),
+		BackoffTypes: make(map[string]int),
+		FirstSeen:    time.Now(),
+		LastSeen:     time.Now(),
+	}
 }
 
 type lockedStmtRecord struct {
@@ -489,6 +690,7 @@ type lockedStmtRecord struct {
 type mockStmtStorage struct {
 	sync.Mutex
 	windows []*stmtWindow
+	evicted []*StmtRecord
 }
 
 func (s *mockStmtStorage) persist(w *stmtWindow, _ time.Time) {
@@ -497,8 +699,36 @@ func (s *mockStmtStorage) persist(w *stmtWindow, _ time.Time) {
 	s.Unlock()
 }
 
+func (s *mockStmtStorage) logEvicted(records []*StmtRecord) {
+	s.Lock()
+	s.evicted = append(s.evicted, records...)
+	s.Unlock()
+}
+
 func (*mockStmtStorage) sync() error {
 	return nil
+}
+
+// cloneRecordForLog returns a shallow copy of r with its two mutable maps
+// (AuthUsers, BackoffTypes) cloned, so the async logger can marshal the
+// snapshot without racing with further updates on the retained StmtRecord.
+// Called with r's lock held (see onEvict).
+func cloneRecordForLog(r *StmtRecord) *StmtRecord {
+	c := *r
+	if len(r.AuthUsers) > 0 {
+		c.AuthUsers = make(map[string]struct{}, len(r.AuthUsers))
+		for u := range r.AuthUsers {
+			c.AuthUsers[u] = struct{}{}
+		}
+	}
+	if len(r.BackoffTypes) > 0 {
+		c.BackoffTypes = make(map[string]int, len(r.BackoffTypes))
+		for k, v := range r.BackoffTypes {
+			c.BackoffTypes[k] = v
+		}
+	}
+	// IndexNames is a slice; shallow copy is fine because it is append-only.
+	return &c
 }
 
 /* Public proxy functions between v1 and v2 */
@@ -585,6 +815,16 @@ func SetGroupByUser(v bool) error {
 	}
 	if GlobalStmtSummary != nil {
 		return GlobalStmtSummary.SetGroupByUser(v)
+	}
+	return nil
+}
+
+// SetPersistEvicted toggles per-record eviction persistence. Only v2
+// (persistent) honors this flag; v1 has no log sink, so the call is a no-op
+// for it.
+func SetPersistEvicted(v bool) error {
+	if GlobalStmtSummary != nil {
+		return GlobalStmtSummary.SetPersistEvicted(v)
 	}
 	return nil
 }
