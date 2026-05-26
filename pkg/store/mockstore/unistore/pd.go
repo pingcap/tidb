@@ -281,11 +281,12 @@ func (c *pdClient) GetAllMembers(ctx context.Context) (*pdpb.GetMembersResponse,
 			clientUrls := []string{addr}
 			members = append(members, &pdpb.Member{ClientUrls: clientUrls})
 		}
-		return &pdpb.GetMembersResponse{
-			Members:    members,
-			Leader:     members[0],
-			EtcdLeader: members[0],
-		}, nil
+		resp := &pdpb.GetMembersResponse{Members: members}
+		if len(members) > 0 {
+			resp.Leader = members[0]
+			resp.EtcdLeader = members[0]
+		}
+		return resp, nil
 	}
 
 	return nil, nil

@@ -114,6 +114,13 @@ func TestMockPDServiceDiscovery(t *testing.T) {
 	re.Len(clis, 2)
 	re.Equal(clis[0].GetURL(), "http://127.0.0.1:2379")
 	re.Equal(clis[1].GetURL(), "http://172.32.21.32:2379")
+
+	client := &pdClient{addrs: []string{}}
+	resp, err := client.GetAllMembers(context.Background())
+	re.NoError(err)
+	re.Empty(resp.GetMembers())
+	re.Nil(resp.Leader)
+	re.Nil(resp.EtcdLeader)
 }
 
 func TestMockKeyspaceManager(t *testing.T) {
