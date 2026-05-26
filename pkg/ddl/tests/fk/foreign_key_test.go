@@ -136,6 +136,19 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	}, *tb5Info.ForeignKeys[0])
 	require.Equal(t, 1, len(tb5Info.Indices))
 	require.Equal(t, "fk_1", tb5Info.Indices[0].Name.L)
+
+	tk.MustExec("create table partial_parent (id int key)")
+	tk.MustExec("create table partial_child_unsafe (id int key, pid int, marker int, index unsafe_pid(pid) where marker is not null, foreign key fk_pid(pid) references partial_parent(id))")
+	partialUnsafeInfo := getTableInfo(t, dom, "test2", "partial_child_unsafe")
+	require.Equal(t, 2, len(partialUnsafeInfo.Indices))
+	require.Equal(t, "unsafe_pid", partialUnsafeInfo.Indices[0].Name.L)
+	require.Equal(t, "fk_pid", partialUnsafeInfo.Indices[1].Name.L)
+
+	tk.MustExec("create table partial_child_safe (id int key, pid int, index safe_pid(pid) where pid is not null, foreign key fk_pid(pid) references partial_parent(id))")
+	partialSafeInfo := getTableInfo(t, dom, "test2", "partial_child_safe")
+	require.Equal(t, 1, len(partialSafeInfo.Indices))
+	require.Equal(t, "safe_pid", partialSafeInfo.Indices[0].Name.L)
+
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test", "t1")))
 	require.Equal(t, 1, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t2")))
 	require.Equal(t, 0, len(dom.InfoSchema().GetTableReferredForeignKeys("test2", "t3")))
@@ -1168,6 +1181,42 @@ func TestAddForeignKey(t *testing.T) {
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test unsafe partial index should not be used as the child foreign key index.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, b int, c int, index idx_b(b) where c is not null);")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(id);")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 2, len(tbl2Info.Indices))
+	require.Equal(t, "idx_b", tbl2Info.Indices[0].Name.L)
+	require.Equal(t, "fk_b", tbl2Info.Indices[1].Name.L)
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (1, 1, null);")
+	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustExec("alter table t2 drop index idx_b;")
+	tk.MustGetDBError("alter table t2 drop index fk_b", dbterror.ErrDropIndexNeededInForeignKey)
+
+	// Test IS NOT NULL partial indexes are safe for foreign key checks.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, b int, index idx_b(b) where b is not null);")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(id);")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 1, len(tbl2Info.Indices))
+	require.Equal(t, "idx_b", tbl2Info.Indices[0].Name.L)
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustExec("insert into t2 values (1, 1);")
+	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+
+	// Test IS NOT NULL partial indexes are safe for referenced columns.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, a int, index idx_a(a) where a is not null);")
+	tk.MustExec("create table t2 (id int key, b int, index idx_b(b));")
+	tk.MustExec("alter table t2 add constraint fk_b foreign key (b) references t1(a);")
+	tk.MustExec("insert into t1 values (1, 10);")
+	tk.MustExec("insert into t2 values (1, 10);")
+	tk.MustGetDBError("insert into t2 values (2, 20)", plannererrors.ErrNoReferencedRow2)
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {
@@ -1291,6 +1340,30 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 				"create table t2 (a int, b varchar(10));",
 			},
 			alter: "alter  table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index idx_a(a) where b = 1);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, index idx_a(a) where a is null);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
+			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int key, a int, b int, index idx_a(a) where b is not null);",
+				"create table t2 (a int, b int, index(b));",
+			},
+			alter: "alter table t2 add foreign key fk_b(b) references t1(a)",
 			err:   "[schema:1822]Failed to add the foreign key constraint. Missing index for constraint 'fk_b' in the referenced table 't1'",
 		},
 		{
