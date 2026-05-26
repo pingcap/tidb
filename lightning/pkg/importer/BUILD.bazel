@@ -158,6 +158,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
+        "//pkg/metaservice",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "//pkg/parser",
