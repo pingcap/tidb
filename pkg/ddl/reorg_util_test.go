@@ -535,6 +535,21 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Len(t, selected, samplePredictionMaxRegionCount)
 	})
 
+	t.Run("block sample prediction bounds", func(t *testing.T) {
+		require.Equal(t, blockSamplePredictionProbeRows, clampSamplePredictionRows(0, blockSamplePredictionProbeRows, blockSamplePredictionMaxRows))
+		require.Equal(t, blockSamplePredictionProbeRows, blockSamplePredictionTargetRows(10, 1<<30))
+		require.Equal(t, blockSamplePredictionMaxRows, blockSamplePredictionTargetRows(10, 10))
+		require.Equal(t, blockSamplePredictionMaxRows, blockSamplePredictionTargetRows(10, 0))
+
+		require.Zero(t, maxBlockSamplePredictionSkipRows(samplePredictionRegion{ApproximateKeys: int64(blockSamplePredictionMaxRows)}))
+		require.EqualValues(t, 1, maxBlockSamplePredictionSkipRows(samplePredictionRegion{ApproximateKeys: int64(blockSamplePredictionMaxRows + 1)}))
+		require.EqualValues(t, samplePredictionMaxSkipRows, maxBlockSamplePredictionSkipRows(samplePredictionRegion{ApproximateKeys: int64(blockSamplePredictionMaxRows + samplePredictionMaxSkipRows + 1)}))
+
+		require.EqualValues(t, 100, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 100}, 10))
+		require.EqualValues(t, 10, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 0}, 10))
+		require.EqualValues(t, 10, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 5}, 10))
+	})
+
 	t.Run("sample prediction uses physical estimate for all encodings", func(t *testing.T) {
 		sctx := mock.NewContext()
 		intType := types.NewFieldType(mysql.TypeLonglong)
