@@ -644,7 +644,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 && hints != nil {
+	if req.StoreBatchSize > 0 && (hints != nil || isAnalyzeStoreBatchRequest(req)) {
 		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
@@ -819,7 +819,7 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 		}
 	}()
 	// only batch small tasks for memory control.
-	if b.limit <= 0 || !isSmallTask(task) {
+	if b.limit <= 0 || (!isAnalyzeStoreBatchRequest(b.req) && !isSmallTask(task)) {
 		return nil
 	}
 	batchedTask, err := b.cache.BuildBatchTask(b.bo, b.req, task, b.replicaRead)
@@ -2321,6 +2321,10 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		}
 	}
 	batchResps := resp.GetBatchResponses()
+	if worker.req.Tp == kv.ReqTypeAnalyze && len(batchResps) == 0 &&
+		resp.GetRegionError() == nil && resp.GetLocked() == nil && resp.GetOtherError() == "" {
+		return nil, nil, nil
+	}
 	batchRespList = make([]*copResponse, 0, len(batchResps))
 	for _, batchResp := range batchResps {
 		taskID := batchResp.GetTaskId()
@@ -2971,6 +2975,9 @@ func optRowHint(req *kv.Request) bool {
 }
 
 func checkStoreBatchCopr(req *kv.Request) bool {
+	if req.Tp == kv.ReqTypeAnalyze {
+		return isAnalyzeStoreBatchRequest(req)
+	}
 	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
 		return false
 	}
@@ -2988,4 +2995,18 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 		return false
 	}
 	return true
+}
+
+func isAnalyzeStoreBatchRequest(req *kv.Request) bool {
+	if req.Tp != kv.ReqTypeAnalyze || req.StoreType != kv.TiKV {
+		return false
+	}
+	if req.ReplicaRead != kv.ReplicaReadLeader || req.Paging.Enable {
+		return false
+	}
+	analyzeReq := &tipb.AnalyzeReq{}
+	if err := proto.Unmarshal(req.Data, analyzeReq); err != nil {
+		return false
+	}
+	return analyzeReq.GetTp() == tipb.AnalyzeType_TypeFullSampling && analyzeReq.GetColReq() != nil
 }
