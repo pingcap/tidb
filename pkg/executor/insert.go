@@ -55,38 +55,48 @@ type InsertExec struct {
 	Priority mysql.PriorityEnum
 
 	// For RETURNING clause support
-	returningExprs  []expression.Expression
-	returningSchema *expression.Schema
-	returningRows   [][]types.Datum
-	returningDone   bool
+	returningExprs           []expression.Expression
+	returningSchema          *expression.Schema
+	returningNeedExtraHandle bool
+	returningRows            [][]types.Datum
+	returningDone            bool
 }
 
-func (e *InsertExec) appendReturningRow(row []types.Datum) {
+func (e *InsertExec) appendReturningRow(row []types.Datum, handle kv.Handle) {
 	if len(e.returningExprs) == 0 {
 		return
 	}
-	rowCopy := make([]types.Datum, len(row))
+	rowLen := len(row)
+	if e.returningNeedExtraHandle && !e.hasExtraHandle {
+		rowLen++
+	}
+	rowCopy := make([]types.Datum, rowLen)
 	for i := range row {
 		row[i].Copy(&rowCopy[i])
+	}
+	if e.returningNeedExtraHandle && !e.hasExtraHandle && handle != nil && handle.IsInt() {
+		rowCopy[len(row)].SetInt64(handle.IntValue())
 	}
 	e.returningRows = append(e.returningRows, rowCopy)
 }
 
 func (e *InsertExec) addRecord(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
-	if err := e.InsertValues.addRecord(ctx, row, dupKeyCheck); err != nil {
+	handle, err := e.InsertValues.addRecordWithAutoIDHintAndHandle(ctx, row, 0, dupKeyCheck)
+	if err != nil {
 		return err
 	}
-	e.appendReturningRow(row)
+	e.appendReturningRow(row, handle)
 	return nil
 }
 
 func (e *InsertExec) addRecordWithAutoIDHint(
 	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
 ) error {
-	if err := e.InsertValues.addRecordWithAutoIDHint(ctx, row, reserveAutoIDCount, dupKeyCheck); err != nil {
+	handle, err := e.InsertValues.addRecordWithAutoIDHintAndHandle(ctx, row, reserveAutoIDCount, dupKeyCheck)
+	if err != nil {
 		return err
 	}
-	e.appendReturningRow(row)
+	e.appendReturningRow(row, handle)
 	return nil
 }
 
@@ -622,7 +632,7 @@ func (e *InsertExec) doDupRowUpdate(
 		return errors.Trace(err)
 	}
 
-	e.appendReturningRow(newData)
+	e.appendReturningRow(newData, handle)
 
 	if autoColIdx >= 0 {
 		if e.Ctx().GetSessionVars().StmtCtx.AffectedRows() > 0 {

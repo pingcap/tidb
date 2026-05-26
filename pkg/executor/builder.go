@@ -1079,10 +1079,11 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		return b.buildReplace(ivs)
 	}
 	insert := &InsertExec{
-		InsertValues:    ivs,
-		OnDuplicate:     append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		returningExprs:  v.Returning,
-		returningSchema: v.ReturningSchema,
+		InsertValues:             ivs,
+		OnDuplicate:              append(v.OnDuplicate, v.GenCols.OnDuplicates...),
+		returningExprs:           v.Returning,
+		returningSchema:          v.ReturningSchema,
+		returningNeedExtraHandle: v.NeedExtraHandleReturning,
 	}
 	return insert
 }

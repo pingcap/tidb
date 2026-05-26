@@ -98,9 +98,10 @@ type Insert struct {
 	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
 
 	// Returning stores the RETURNING clause expression list.
-	Returning       []expression.Expression
-	ReturningSchema *expression.Schema `plan-cache-clone:"shallow"`
-	ReturningNames  types.NameSlice    `plan-cache-clone:"shallow"`
+	Returning                []expression.Expression
+	ReturningSchema          *expression.Schema `plan-cache-clone:"shallow"`
+	ReturningNames           types.NameSlice    `plan-cache-clone:"shallow"`
+	NeedExtraHandleReturning bool
 }
 
 // Init initializes Insert.
