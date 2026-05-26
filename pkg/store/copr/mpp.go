@@ -152,7 +152,10 @@ func buildTiCIShardInfosByStoreAddr(ctx context.Context, cache *TiCIShardCache, 
 		}
 		shardLocations = append(shardLocations, locs...)
 	}
-	storeShard := buildTiCIShardInfosByAddrFromLocations(shardLocations)
+	storeShard, err := buildTiCIShardInfosByAddrFromLocations(shardLocations)
+	if err != nil {
+		return nil, err
+	}
 	if len(storeShard) == 0 {
 		return nil, errors.New("No shard info found")
 	}

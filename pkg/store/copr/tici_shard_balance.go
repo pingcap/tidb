@@ -14,14 +14,20 @@
 
 package copr
 
-import "github.com/pingcap/kvproto/pkg/coprocessor"
+import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+)
 
-func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) map[string][]*coprocessor.ShardInfo {
+func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][]*coprocessor.ShardInfo, error) {
 	storeShard := make(map[string][]*coprocessor.ShardInfo)
 	addrLoad := make(map[string]int)
 	for _, loc := range locs {
-		if len(loc.localCacheAddrs) == 0 || loc.Ranges == nil {
-			continue
+		if len(loc.localCacheAddrs) == 0 {
+			return nil, errors.Errorf("tici shard %d has no local cache address", loc.ShardID)
+		}
+		if loc.Ranges == nil {
+			return nil, errors.Errorf("tici shard %d has nil ranges", loc.ShardID)
 		}
 		addr := selectTiCIShardAddr(loc.localCacheAddrs, addrLoad)
 		if addr == "" {
@@ -33,7 +39,7 @@ func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) map[string][]
 			Ranges:     loc.Ranges.ToPBRanges(),
 		})
 	}
-	return storeShard
+	return storeShard, nil
 }
 
 func selectTiCIShardAddr(addrs []string, addrLoad map[string]int) string {

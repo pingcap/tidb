@@ -1800,7 +1800,10 @@ func buildBatchCopTasksForFullText(ctx context.Context, store *kvStore, tableID 
 		return nil, errors.New("No shard info found")
 	}
 
-	storeShard := buildTiCIShardInfosByAddrFromLocations(ret)
+	storeShard, err := buildTiCIShardInfosByAddrFromLocations(ret)
+	if err != nil {
+		return nil, err
+	}
 
 	for addr, shardInfos := range storeShard {
 		tableShardInfos := []*coprocessor.TableShardInfos{}

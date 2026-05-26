@@ -499,6 +499,40 @@ func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
 		require.EqualValues(t, 2, infoByAddr["addr-a"][0].ShardInfos[1].ShardId)
 	})
 
+	t.Run("return error when shard has no local cache addr", func(t *testing.T) {
+		client := &mppTiCIMockShardClient{
+			result: []*ShardWithAddr{
+				{
+					Shard:           Shard{ShardID: 1, Epoch: 2, StartKey: []byte("a"), EndKey: []byte("b")},
+					localCacheAddrs: nil,
+				},
+			},
+		}
+		cache := NewTiCIShardCache(client)
+		req := &kv.MPPBuildTasksRequest{
+			TiCI:           true,
+			TiCITableID:    11,
+			TiCIIndexID:    22,
+			TiCIExecutorID: "executor-1",
+			TiCIKeyRanges:  []kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}},
+		}
+
+		_, err := buildTiCIShardInfosByStoreAddr(context.Background(), cache, req, tiflashcompute.DispatchPolicyConsistentHash, tiflash.AllReplicas)
+		require.ErrorContains(t, err, "tici shard 1 has no local cache address")
+	})
+
+	t.Run("return error when shard has nil ranges", func(t *testing.T) {
+		_, err := buildTiCIShardInfosByAddrFromLocations([]*ShardLocation{
+			{
+				ShardWithAddr: &ShardWithAddr{
+					Shard:           Shard{ShardID: 1, Epoch: 2, StartKey: []byte("a"), EndKey: []byte("b")},
+					localCacheAddrs: []string{"addr-a"},
+				},
+			},
+		})
+		require.ErrorContains(t, err, "tici shard 1 has nil ranges")
+	})
+
 	t.Run("balance full text shards between candidate addrs", func(t *testing.T) {
 		client := &mppTiCIMockShardClient{
 			result: []*ShardWithAddr{
