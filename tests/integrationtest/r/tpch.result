@@ -661,15 +661,15 @@ Projection	root		tpch50.customer.c_custkey, tpch50.customer.c_name, Column, tpch
     └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column, tpch50.customer.c_custkey->Column, tpch50.customer.c_name->Column, tpch50.customer.c_address->Column, tpch50.customer.c_phone->Column, tpch50.customer.c_acctbal->Column, tpch50.customer.c_comment->Column, tpch50.nation.n_name->Column
       └─Projection	root		tpch50.customer.c_custkey, tpch50.customer.c_name, tpch50.customer.c_address, tpch50.customer.c_phone, tpch50.customer.c_acctbal, tpch50.customer.c_comment, tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.nation.n_name
         └─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
-          ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
-          │ ├─TableReader(Build)	root		data:Selection
-          │ │ └─Selection	cop[tikv]		ge(tpch50.orders.o_orderdate, 1993-08-01 00:00:00.000000), lt(tpch50.orders.o_orderdate, 1993-11-01 00:00:00.000000)
-          │ │   └─TableFullScan	cop[tikv]	table:orders	keep order:false
-          │ └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.customer.c_nationkey)]
-          │   ├─TableReader(Build)	root		data:TableFullScan
-          │   │ └─TableFullScan	cop[tikv]	table:nation	keep order:false
-          │   └─TableReader(Probe)	root		data:TableFullScan
-          │     └─TableFullScan	cop[tikv]	table:customer	keep order:false
+          ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.customer.c_nationkey, tpch50.nation.n_nationkey)]
+          │ ├─TableReader(Build)	root		data:TableFullScan
+          │ │ └─TableFullScan	cop[tikv]	table:nation	keep order:false
+          │ └─IndexHashJoin(Probe)	root		inner join, inner:TableReader, outer key:tpch50.orders.o_custkey, inner key:tpch50.customer.c_custkey, equal cond:eq(tpch50.orders.o_custkey, tpch50.customer.c_custkey)
+          │   ├─TableReader(Build)	root		data:Selection
+          │   │ └─Selection	cop[tikv]		ge(tpch50.orders.o_orderdate, 1993-08-01 00:00:00.000000), lt(tpch50.orders.o_orderdate, 1993-11-01 00:00:00.000000)
+          │   │   └─TableFullScan	cop[tikv]	table:orders	keep order:false
+          │   └─TableReader(Probe)	root		data:TableRangeScan
+          │     └─TableRangeScan	cop[tikv]	table:customer	range: decided by [tpch50.orders.o_custkey], keep order:false
           └─IndexLookUp(Probe)	root		
             ├─IndexRangeScan(Build)	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)], keep order:false
             └─Selection(Probe)	cop[tikv]		eq(tpch50.lineitem.l_returnflag, "R")
