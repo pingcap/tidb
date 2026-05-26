@@ -449,6 +449,10 @@ func (s *StmtSummary) onEvict(_ *stmtsummary.StmtDigestKey, r *StmtRecord, begin
 		return true
 	default:
 		s.evictedDropped.Add(1)
+		metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
+			metrics.StmtSummaryTypeV2,
+			metrics.StmtSummaryEvictedLogResultDropped,
+		).Inc()
 		return false
 	}
 }

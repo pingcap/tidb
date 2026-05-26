@@ -37,6 +37,13 @@ func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
 	return m.GetGauge().GetValue()
 }
 
+func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, counter.Write(m))
+	return m.GetCounter().GetValue()
+}
+
 func TestStmtWindow(t *testing.T) {
 	ss := NewStmtSummary4Test(5)
 	defer ss.Close()
@@ -153,7 +160,16 @@ func TestStmtSummaryPersistEvictedDoesNotPersistLoggedRecordsAsAggregate(t *test
 	ss.Add(GenerateStmtExecInfo4Test("digest2"))
 	ss.Add(GenerateStmtExecInfo4Test("digest3")) // evicts digest1
 	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
+	persistedBefore := readCounterValue(t, metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
+		metrics.StmtSummaryTypeV2,
+		metrics.StmtSummaryEvictedLogResultPersisted,
+	))
 	ss.Close()
+	persistedAfter := readCounterValue(t, metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
+		metrics.StmtSummaryTypeV2,
+		metrics.StmtSummaryEvictedLogResultPersisted,
+	))
+	require.Equal(t, 2.0, persistedAfter-persistedBefore)
 
 	type loggedRecord struct {
 		Digest    string `json:"digest"`

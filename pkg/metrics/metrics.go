@@ -403,6 +403,7 @@ func RegisterMetrics() {
 	// StmtSummary
 	prometheus.MustRegister(StmtSummaryWindowRecordCount)
 	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
 
 	// Channelz
 	setupChannelzCollector()

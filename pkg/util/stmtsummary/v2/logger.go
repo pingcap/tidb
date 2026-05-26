@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
@@ -76,6 +77,7 @@ func (s *stmtLogStorage) sync() error {
 // from rotated-window records.
 func (s *stmtLogStorage) logEvicted(records []*StmtRecord) {
 	var builder strings.Builder
+	persisted := 0
 	for _, r := range records {
 		b, err := json.Marshal(evictedStmtRecord{StmtRecord: r, Evicted: true})
 		if err != nil {
@@ -86,11 +88,16 @@ func (s *stmtLogStorage) logEvicted(records []*StmtRecord) {
 			builder.WriteByte('\n')
 		}
 		_, _ = builder.Write(b)
+		persisted++
 	}
 	if builder.Len() == 0 {
 		return
 	}
 	s.logger.Info(builder.String())
+	metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
+		metrics.StmtSummaryTypeV2,
+		metrics.StmtSummaryEvictedLogResultPersisted,
+	).Add(float64(persisted))
 }
 
 // evictedStmtRecord embeds *StmtRecord and adds an "evicted" JSON tag.
