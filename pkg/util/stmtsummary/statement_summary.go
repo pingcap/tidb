@@ -55,8 +55,8 @@ type StmtDigestKey struct {
 
 // Init initialize the hash key.
 // When user is empty (group_by_user disabled), the hash is byte-identical to
-// the pre-user-dimension layout. When user is non-empty, it is prefixed with
-// a 4-byte length so the boundary between resourceGroupName and user is
+// the pre-user-dimension layout. When user is non-empty, the hash appends a
+// length-prefixed user segment after resourceGroupName so the boundary is
 // unambiguous and pairs like ("rg", "alice") and ("rga", "lice") cannot
 // collide.
 func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName, user string) {
