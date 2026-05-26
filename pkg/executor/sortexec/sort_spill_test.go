@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -349,10 +348,6 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 }
 
 func TestUnparallelSortSpillDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
 	testFuncName := util.GetFunctionName()
 
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -373,10 +368,6 @@ func TestUnparallelSortSpillDisk(t *testing.T) {
 }
 
 func TestFallBackAction(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
 	testFuncName := util.GetFunctionName()
 
 	hardLimitBytesNum := int64(1000000)

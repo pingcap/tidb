@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -381,10 +380,6 @@ func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 }
 
 func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
 	testFuncName := util.GetFunctionName()
 
 	//nolint:constructor
@@ -398,10 +393,6 @@ func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
 }
 
 func TestTopNSpillDisk(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
 	testFuncName := util.GetFunctionName()
 
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -452,10 +443,6 @@ func TestTopNSpillDisk(t *testing.T) {
 }
 
 func TestTopNSpillDiskFailpoint(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
 	testFuncName := util.GetFunctionName()
 
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -525,10 +512,6 @@ func TestIssue54206(t *testing.T) {
 }
 
 func TestIssue54541(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
 	testFuncName := util.GetFunctionName()
 
 	totalRowNum := 30
@@ -554,10 +537,6 @@ func TestIssue54541(t *testing.T) {
 }
 
 func TestTopNFallBackAction(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
 	testFuncName := util.GetFunctionName()
 
 	sortexec.SetSmallSpillChunkSizeForTest()
