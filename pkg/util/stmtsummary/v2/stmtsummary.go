@@ -106,7 +106,7 @@ type StmtSummary struct {
 	closed     atomic.Bool
 
 	// evictedCh carries per-record evictions to the async logger.
-	// A nil channel means evicted-logging is disabled. Sends are non-blocking.
+	// Eviction persistence is controlled by optPersistEvicted; sends are non-blocking.
 	evictedCh      chan *StmtRecord
 	evictedDropped atomic.Uint64
 }
