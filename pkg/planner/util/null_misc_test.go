@@ -38,7 +38,7 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
 
 	require.NotEmpty(t, names)
-	require.Equal(t, "a5ce0716b778fb8e0b488d3a11c402d8a8224191757a9e02ece80895d5d67e05", hex.EncodeToString(sum[:]))
+	require.Equal(t, "729f5252bcd91efe1a4bbf0c383a36c5a2e52ed2d90d7aab0a3e0b450322294c", hex.EncodeToString(sum[:]))
 
 	for name := range nullRejectRejectNullTests {
 		require.Contains(t, names, name)
@@ -181,6 +181,11 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		newNullRejectStringConst("abc"),
 		innerS,
 	)
+	deferredInnerGTZero := newNullRejectDeferredConst(exprCtx, gtInnerAZero)
+	deferredCoalesceInnerATwoGTTwo := newNullRejectDeferredConst(exprCtx,
+		newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), coalesceInnerATwo, newNullRejectIntConst(2)),
+	)
+	deferredOneWithNullPlaceholder := newNullRejectDeferredConst(exprCtx, expression.NewOne())
 
 	cases := []struct {
 		name     string
@@ -337,11 +342,26 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 			expr:     newNullRejectNotNull(t, exprCtx, jsonSearchNullableEscape),
 			expected: false,
 		},
+		{
+			name:     "deferred_expr_uses_symbolic_null_reject_proof",
+			expr:     deferredInnerGTZero,
+			expected: true,
+		},
+		{
+			name:     "deferred_expr_skips_nullified_fold",
+			expr:     deferredCoalesceInnerATwoGTTwo,
+			expected: false,
+		},
+		{
+			name:     "deferred_expr_does_not_classify_placeholder_null",
+			expr:     deferredOneWithNullPlaceholder,
+			expected: false,
+		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, IsNullRejected(sctx, innerSchema, tt.expr, true))
+			require.Equal(t, tt.expected, IsNullRejected(sctx, innerSchema, tt.expr))
 		})
 	}
 }
@@ -391,6 +411,15 @@ func newNullRejectUintConst(value uint64) *expression.Constant {
 	return &expression.Constant{
 		Value:   types.NewUintDatum(value),
 		RetType: newNullRejectUintFieldType(mysql.TypeLonglong),
+	}
+}
+
+// newNullRejectDeferredConst builds a deferred constant with a NULL placeholder value.
+func newNullRejectDeferredConst(ctx expression.BuildContext, deferred expression.Expression) *expression.Constant {
+	return &expression.Constant{
+		Value:        types.NewDatum(nil),
+		RetType:      deferred.GetType(ctx.GetEvalCtx()),
+		DeferredExpr: deferred,
 	}
 }
 

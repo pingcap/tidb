@@ -21,23 +21,33 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/zap"
 )
 
-var _ context.Misc = &infoSchemaMisc{}
+var _ context.Misc = &infoSchema{}
 
 type sortedTables []table.Table
 
@@ -72,6 +82,19 @@ type infoSchema struct {
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+	// maskingPolicyTableColumnMap stores masking policy metadata by table and column IDs.
+	// Note: Policy name is only unique per table, not globally. We use [TableID][ColumnID] as key
+	// to avoid name collision when different tables have policies with the same name.
+	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
+	// maskingPoliciesLoaded indicates whether masking policies have been loaded.
+	maskingPoliciesLoaded bool
+	// maskingPoliciesLoadCh is non-nil when a masking-policy load is in progress.
+	// Waiters block on this channel to avoid serving partially initialized policy maps.
+	maskingPoliciesLoadCh chan struct{}
+	// maskingPolicyMutex protects maskingPolicyTableColumnMap and loading state.
+	maskingPolicyMutex sync.RWMutex
+	// factory is used to execute SQL for delayed loading of masking policies.
+	factory func() (pools.Resource, error)
 
 	r autoid.Requirement
 }
@@ -103,7 +126,7 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := newInfoSchema(nil)
+	result := newInfoSchema(nil, nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -169,7 +192,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := newInfoSchema(nil)
+	result := newInfoSchema(nil, nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -199,18 +222,20 @@ func (is *infoSchema) base() *infoSchema {
 	return is
 }
 
-func newInfoSchema(r autoid.Requirement) *infoSchema {
+func newInfoSchema(r autoid.Requirement, factory func() (pools.Resource, error)) *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
 			policyMap:        map[string]*model.PolicyInfo{},
 			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
 			ruleBundleMap:    map[int64]*placement.Bundle{},
 		},
-		schemaMap:             map[string]*schemaTables{},
-		schemaID2Name:         map[int64]string{},
-		sortedTablesBuckets:   make([]sortedTables, bucketCount),
-		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
-		r:                     r,
+		schemaMap:                   map[string]*schemaTables{},
+		schemaID2Name:               map[int64]string{},
+		sortedTablesBuckets:         make([]sortedTables, bucketCount),
+		referredForeignKeyMap:       make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		maskingPolicyTableColumnMap: make(map[int64]map[int64]*model.MaskingPolicyInfo),
+		factory:                     factory,
+		r:                           r,
 	}
 }
 
@@ -278,6 +303,20 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 	for _, v := range is.policyMap {
 		if v.ID == id {
 			return v, true
+		}
+	}
+	return nil, false
+}
+
+func (is *infoSchema) MaskingPolicyByID(id int64) (val *model.MaskingPolicyInfo, ok bool) {
+	is.loadMaskingPoliciesIfNeeded()
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			if policy.ID == id {
+				return policy, true
+			}
 		}
 	}
 	return nil, false
@@ -546,6 +585,43 @@ func (is *infoSchemaMisc) ResourceGroupByName(name ast.CIStr) (*model.ResourceGr
 	return t, r
 }
 
+// MaskingPolicyByName returns masking policy metadata by policy name with delayed loading.
+// Note: Policy name is only unique per table, not globally. If multiple tables have policies
+// with the same name, this method returns (nil, false) to avoid returning an ambiguous result.
+// For precise lookup, use MaskingPolicyByTableColumn.
+func (is *infoSchema) MaskingPolicyByName(name ast.CIStr) (*model.MaskingPolicyInfo, bool) {
+	is.loadMaskingPoliciesIfNeeded()
+
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	var found *model.MaskingPolicyInfo
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			if policy.Name.L == name.L {
+				if found != nil {
+					return nil, false
+				}
+				found = policy
+			}
+		}
+	}
+	return found, found != nil
+}
+
+// MaskingPolicyByTableColumn returns masking policy metadata by table and column IDs with delayed loading.
+func (is *infoSchema) MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool) {
+	is.loadMaskingPoliciesIfNeeded()
+
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	colMap, ok := is.maskingPolicyTableColumnMap[tableID]
+	if !ok {
+		return nil, false
+	}
+	t, r := colMap[columnID]
+	return t, r
+}
+
 // ResourceGroupByID is used to find the resource group.
 func (is *infoSchemaMisc) ResourceGroupByID(id int64) (*model.ResourceGroupInfo, bool) {
 	is.resourceGroupMutex.RLock()
@@ -573,6 +649,329 @@ func (is *infoSchemaMisc) CloneResourceGroups() map[string]*model.ResourceGroupI
 	is.resourceGroupMutex.RLock()
 	defer is.resourceGroupMutex.RUnlock()
 	return maps.Clone(is.resourceGroupMap)
+}
+
+// AllMaskingPolicies returns all masking policies in a stable order with delayed loading.
+func (is *infoSchema) AllMaskingPolicies() []*model.MaskingPolicyInfo {
+	is.loadMaskingPoliciesIfNeeded()
+
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	policies := make([]*model.MaskingPolicyInfo, 0)
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			policies = append(policies, policy)
+		}
+	}
+	sort.Slice(policies, func(i, j int) bool {
+		if policies[i].Name.L == policies[j].Name.L {
+			return policies[i].ID < policies[j].ID
+		}
+		return policies[i].Name.L < policies[j].Name.L
+	})
+	return policies
+}
+
+func (is *infoSchema) CloneMaskingPoliciesByTableColumn() map[int64]map[int64]*model.MaskingPolicyInfo {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	cloned := make(map[int64]map[int64]*model.MaskingPolicyInfo, len(is.maskingPolicyTableColumnMap))
+	for tableID, colMap := range is.maskingPolicyTableColumnMap {
+		cloned[tableID] = maps.Clone(colMap)
+	}
+	return cloned
+}
+
+// loadMaskingPoliciesIfNeeded loads masking policies from system table on first access.
+// Only one goroutine performs loading, others wait for completion.
+func (is *infoSchema) loadMaskingPoliciesIfNeeded() {
+	for {
+		var loadCh chan struct{}
+		is.maskingPolicyMutex.Lock()
+		if is.maskingPoliciesLoaded {
+			is.maskingPolicyMutex.Unlock()
+			return
+		}
+		if is.factory == nil {
+			logutil.BgLogger().Debug("factory is nil, skipping masking policies loading")
+			is.maskingPoliciesLoaded = true
+			is.maskingPolicyMutex.Unlock()
+			return
+		}
+		if is.maskingPoliciesLoadCh != nil {
+			loadCh = is.maskingPoliciesLoadCh
+			is.maskingPolicyMutex.Unlock()
+			<-loadCh
+			continue
+		}
+		loadCh = make(chan struct{})
+		is.maskingPoliciesLoadCh = loadCh
+		is.maskingPolicyMutex.Unlock()
+
+		policies, err := LoadMaskingPolicies(is.factory)
+
+		is.maskingPolicyMutex.Lock()
+		if err != nil {
+			if isMaskingPolicyTableNotReady(err) {
+				logutil.BgLogger().Debug("masking policy table not available yet, skipping", zap.Error(err))
+				is.maskingPoliciesLoaded = true
+			} else {
+				logutil.BgLogger().Warn("failed to load masking policies", zap.Error(err))
+			}
+		} else if !is.maskingPoliciesLoaded {
+			newMap := make(map[int64]map[int64]*model.MaskingPolicyInfo, len(policies))
+			for _, policy := range policies {
+				if newMap[policy.TableID] == nil {
+					newMap[policy.TableID] = make(map[int64]*model.MaskingPolicyInfo)
+				}
+				newMap[policy.TableID][policy.ColumnID] = policy
+			}
+			is.maskingPolicyTableColumnMap = newMap
+			is.maskingPoliciesLoaded = true
+			logutil.BgLogger().Info("masking policies loaded", zap.Int("count", len(policies)))
+		}
+		close(loadCh)
+		is.maskingPoliciesLoadCh = nil
+		is.maskingPolicyMutex.Unlock()
+		return
+	}
+}
+
+// LoadMaskingPolicies loads all masking policy metadata through mysql.tidb_masking_policy.
+func LoadMaskingPolicies(factory func() (pools.Resource, error)) ([]*model.MaskingPolicyInfo, error) {
+	return loadMaskingPoliciesWithTableIDs(factory, nil)
+}
+
+// loadMaskingPoliciesWithTableIDs loads masking policy metadata through mysql.tidb_masking_policy.
+// If tableIDs is empty, all policies are loaded.
+func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tableIDs []int64) ([]*model.MaskingPolicyInfo, error) {
+	const maxBatchSize = 1024
+
+	resource, err := factory()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if closer, ok := resource.(interface{ Close() }); ok {
+		defer closer.Close()
+	}
+
+	sctx, ok := resource.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("failed to cast resource to sessionctx.Context")
+	}
+
+	ids, hasFilter := normalizeMaskingPolicyTableIDs(tableIDs)
+	if hasFilter && len(ids) == 0 {
+		return nil, nil
+	}
+
+	loadBatch := func(batchIDs []int64, policies []*model.MaskingPolicyInfo) ([]*model.MaskingPolicyInfo, error) {
+		query, args := buildLoadMaskingPoliciesQuery(batchIDs)
+		internalCtx := kv.WithInternalSourceType(stdctx.Background(), kv.InternalTxnDDL)
+		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+			internalCtx,
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			query,
+			args...,
+		)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		for _, row := range rows {
+			policy, err := maskingPolicyInfoFromChunkRow(row)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			policies = append(policies, policy)
+		}
+		return policies, nil
+	}
+
+	policies := make([]*model.MaskingPolicyInfo, 0)
+	if !hasFilter {
+		policies, err = loadBatch(nil, policies)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		for start := 0; start < len(ids); start += maxBatchSize {
+			end := min(start+maxBatchSize, len(ids))
+			policies, err = loadBatch(ids[start:end], policies)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	slices.SortFunc(policies, func(a, b *model.MaskingPolicyInfo) int {
+		if x := cmp.Compare(a.TableID, b.TableID); x != 0 {
+			return x
+		}
+		if x := cmp.Compare(a.ColumnID, b.ColumnID); x != 0 {
+			return x
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return policies, nil
+}
+
+func buildLoadMaskingPoliciesQuery(tableIDs []int64) (string, []any) {
+	const baseQuery = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+FROM mysql.tidb_masking_policy`
+
+	var sb strings.Builder
+	sb.WriteString(baseQuery)
+	args := make([]any, 0, len(tableIDs))
+	if len(tableIDs) > 0 {
+		sb.WriteString(" WHERE table_id IN (")
+		for i, id := range tableIDs {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("%?")
+			args = append(args, id)
+		}
+		sb.WriteString(")")
+	}
+	sb.WriteString(" ORDER BY table_id, column_id, policy_id")
+	return sb.String(), args
+}
+
+func normalizeMaskingPolicyTableIDs(tableIDs []int64) ([]int64, bool) {
+	hasFilter := len(tableIDs) > 0
+	if !hasFilter {
+		return nil, false
+	}
+
+	idSet := make(map[int64]struct{}, len(tableIDs))
+	ids := make([]int64, 0, len(tableIDs))
+	for _, id := range tableIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := idSet[id]; ok {
+			continue
+		}
+		idSet[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids, true
+}
+
+func maskingPolicyInfoFromChunkRow(row chunk.Row) (*model.MaskingPolicyInfo, error) {
+	status, err := maskingPolicyStatusFromString(row.GetString(8))
+	if err != nil {
+		return nil, err
+	}
+	restrictOn := ""
+	if !row.IsNull(10) {
+		restrictOn = row.GetString(10)
+	}
+	restrictOps, err := maskingPolicyRestrictOpsFromString(restrictOn)
+	if err != nil {
+		return nil, err
+	}
+
+	createdAt := time.Time{}
+	if !row.IsNull(11) {
+		createdAt, err = row.GetTime(11).GoTime(time.Local)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	updatedAt := time.Time{}
+	if !row.IsNull(12) {
+		updatedAt, err = row.GetTime(12).GoTime(time.Local)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	createdBy := ""
+	if !row.IsNull(13) {
+		createdBy = row.GetString(13)
+	}
+
+	return &model.MaskingPolicyInfo{
+		ID:          row.GetInt64(0),
+		Name:        ast.NewCIStr(row.GetString(1)),
+		DBName:      ast.NewCIStr(row.GetString(2)),
+		TableName:   ast.NewCIStr(row.GetString(3)),
+		TableID:     row.GetInt64(4),
+		ColumnName:  ast.NewCIStr(row.GetString(5)),
+		ColumnID:    row.GetInt64(6),
+		Expression:  row.GetString(7),
+		Status:      status,
+		MaskingType: maskingPolicyTypeFromString(row.GetString(9)),
+		RestrictOps: restrictOps,
+		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
+		CreatedBy:   createdBy,
+		State:       model.StatePublic,
+	}, nil
+}
+
+func maskingPolicyStatusFromString(status string) (model.MaskingPolicyStatus, error) {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "ENABLE", "ENABLED":
+		return model.MaskingPolicyStatusEnable, nil
+	case "DISABLE", "DISABLED":
+		return model.MaskingPolicyStatusDisable, nil
+	default:
+		return model.MaskingPolicyStatusDisable, errors.Errorf("unknown masking policy status: %s", status)
+	}
+}
+
+func maskingPolicyTypeFromString(tp string) model.MaskingPolicyType {
+	switch model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp))) {
+	case model.MaskingPolicyTypeFull,
+		model.MaskingPolicyTypePartial,
+		model.MaskingPolicyTypeNull,
+		model.MaskingPolicyTypeDate,
+		model.MaskingPolicyTypeCustom:
+		return model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))
+	default:
+		return model.MaskingPolicyTypeCustom
+	}
+}
+
+func maskingPolicyRestrictOpsFromString(restrictOn string) (ast.MaskingPolicyRestrictOps, error) {
+	restrictOn = strings.TrimSpace(strings.ToUpper(restrictOn))
+	if restrictOn == "" || restrictOn == "NONE" {
+		return ast.MaskingPolicyRestrictOpNone, nil
+	}
+	ops := ast.MaskingPolicyRestrictOpNone
+	for _, token := range strings.Split(restrictOn, ",") {
+		switch strings.TrimSpace(token) {
+		case ast.MaskingPolicyRestrictNameInsertIntoSelect:
+			ops |= ast.MaskingPolicyRestrictOpInsertIntoSelect
+		case ast.MaskingPolicyRestrictNameUpdateSelect:
+			ops |= ast.MaskingPolicyRestrictOpUpdateSelect
+		case ast.MaskingPolicyRestrictNameDeleteSelect:
+			ops |= ast.MaskingPolicyRestrictOpDeleteSelect
+		case ast.MaskingPolicyRestrictNameCTAS:
+			ops |= ast.MaskingPolicyRestrictOpCTAS
+		case "NONE", "":
+			// No-op.
+		default:
+			return ast.MaskingPolicyRestrictOpNone, errors.Errorf("unknown masking policy restrict option: %s", token)
+		}
+	}
+	return ops, nil
+}
+
+func isMaskingPolicyTableNotReady(err error) bool {
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "not exist")
+}
+
+func (is *infoSchema) resetMaskingPolicyCache() {
+	is.maskingPolicyMutex.Lock()
+	defer is.maskingPolicyMutex.Unlock()
+	is.maskingPoliciesLoaded = false
+	is.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
+	is.maskingPoliciesLoadCh = nil
 }
 
 // AllPlacementPolicies returns all placement policies

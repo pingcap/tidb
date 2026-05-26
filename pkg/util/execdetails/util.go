@@ -19,6 +19,7 @@ import (
 	"context"
 	"math"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/influxdata/tdigest"
@@ -34,6 +35,55 @@ func ContextWithInitializedExecDetails(ctx context.Context) context.Context {
 	return ctx
 }
 
+// ContextWithMissingExecDetailsInitialized initializes any missing statement execution, execution,
+// and resource usage details in the context while preserving existing objects.
+func ContextWithMissingExecDetailsInitialized(ctx context.Context) context.Context {
+	if ctx.Value(StmtExecDetailKey) == nil {
+		ctx = context.WithValue(ctx, StmtExecDetailKey, &StmtExecDetails{})
+	}
+	if ctx.Value(util.ExecDetailsKey) == nil {
+		ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	}
+	if ctx.Value(util.RUDetailsCtxKey) == nil {
+		ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	}
+	if ctx.Value(RUV2MetricsCtxKey) == nil {
+		ctx = context.WithValue(ctx, RUV2MetricsCtxKey, NewRUV2Metrics())
+	}
+	return ctx
+}
+
+// ContextWithInheritedRUV2Details reuses statement-level RUDetails and RUv2 metrics
+// from source when ctx does not already carry them.
+func ContextWithInheritedRUV2Details(ctx, source context.Context) context.Context {
+	if source == nil {
+		return ctx
+	}
+	if ctx.Value(util.RUDetailsCtxKey) == nil {
+		if ruDetails, _ := source.Value(util.RUDetailsCtxKey).(*util.RUDetails); ruDetails != nil {
+			ctx = context.WithValue(ctx, util.RUDetailsCtxKey, ruDetails)
+		}
+	}
+	if ctx.Value(RUV2MetricsCtxKey) == nil {
+		if metrics := RUV2MetricsFromContext(source); metrics != nil {
+			ctx = context.WithValue(ctx, RUV2MetricsCtxKey, metrics)
+		}
+	}
+	return ctx
+}
+
+// SyncRUV2MetricsFromContext drains any raw RUv2 counters in ctx's RUDetails into
+// the statement-level RUv2 metrics and returns the metrics object.
+func SyncRUV2MetricsFromContext(ctx context.Context) *RUV2Metrics {
+	metrics := RUV2MetricsFromContext(ctx)
+	if metrics == nil {
+		return nil
+	}
+	ruDetails, _ := ctx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	return metrics
+}
+
 // GetExecDetailsFromContext gets stmt execution, execution and resource usage details from context.
 func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails, tikvExecDetail util.ExecDetails, ruDetails *util.RUDetails) {
 	stmtDetailRaw := ctx.Value(StmtExecDetailKey)
@@ -42,7 +92,7 @@ func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails,
 	}
 	tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
-		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+		tikvExecDetail = LoadTiKVExecDetails(tikvExecDetailRaw.(*util.ExecDetails))
 	}
 	if ruDetailsVal := ctx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
 		ruDetails = ruDetailsVal.(*util.RUDetails)
@@ -51,6 +101,29 @@ func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails,
 	}
 
 	return
+}
+
+// LoadTiKVExecDetails snapshots the fields in util.ExecDetails that are updated via atomic operations.
+func LoadTiKVExecDetails(detail *util.ExecDetails) util.ExecDetails {
+	if detail == nil {
+		return util.ExecDetails{}
+	}
+	return util.ExecDetails{
+		BackoffCount:       atomic.LoadInt64(&detail.BackoffCount),
+		BackoffDuration:    atomic.LoadInt64(&detail.BackoffDuration),
+		WaitKVRespDuration: atomic.LoadInt64(&detail.WaitKVRespDuration),
+		WaitPDRespDuration: atomic.LoadInt64(&detail.WaitPDRespDuration),
+		TrafficDetails: util.TrafficDetails{
+			UnpackedBytesSentKVTotal:          atomic.LoadInt64(&detail.UnpackedBytesSentKVTotal),
+			UnpackedBytesReceivedKVTotal:      atomic.LoadInt64(&detail.UnpackedBytesReceivedKVTotal),
+			UnpackedBytesSentKVCrossZone:      atomic.LoadInt64(&detail.UnpackedBytesSentKVCrossZone),
+			UnpackedBytesReceivedKVCrossZone:  atomic.LoadInt64(&detail.UnpackedBytesReceivedKVCrossZone),
+			UnpackedBytesSentMPPTotal:         atomic.LoadInt64(&detail.UnpackedBytesSentMPPTotal),
+			UnpackedBytesReceivedMPPTotal:     atomic.LoadInt64(&detail.UnpackedBytesReceivedMPPTotal),
+			UnpackedBytesSentMPPCrossZone:     atomic.LoadInt64(&detail.UnpackedBytesSentMPPCrossZone),
+			UnpackedBytesReceivedMPPCrossZone: atomic.LoadInt64(&detail.UnpackedBytesReceivedMPPCrossZone),
+		},
+	}
 }
 
 type canGetFloat64 interface {

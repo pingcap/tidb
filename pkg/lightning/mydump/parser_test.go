@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -61,7 +62,7 @@ func TestReadRow(t *testing.T) {
 	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewUintDatum(1),
@@ -76,7 +77,7 @@ func TestReadRow(t *testing.T) {
 	require.Equal(t, int64(1), rowID)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewUintDatum(4),
@@ -91,7 +92,7 @@ func TestReadRow(t *testing.T) {
 	require.Equal(t, int64(2), rowID)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 3,
 		Row: []types.Datum{
 			types.NewUintDatum(7),
@@ -106,7 +107,7 @@ func TestReadRow(t *testing.T) {
 	require.Equal(t, int64(3), rowID)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump.Row{
+	require.Equal(t, parsedef.Row{
 		RowID: 4,
 		Row: []types.Datum{
 			types.NewUintDatum(10),

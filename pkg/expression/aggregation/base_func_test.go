@@ -19,7 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -72,6 +74,77 @@ func TestBaseFunc_InferAggRetType(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, dataType, desc.RetTp)
 		}
+	}
+
+	// GROUP_CONCAT should keep the non-binary collation from its non-binary inputs.
+	{
+		colType := types.NewFieldType(mysql.TypeVarString)
+		colType.SetCharset(charset.CharsetUTF8MB4)
+		colType.SetCollate("utf8mb4_0900_ai_ci")
+		colType.DelFlag(mysql.BinaryFlag)
+		col := &expression.Column{
+			UniqueID: 1,
+			RetType:  colType,
+		}
+
+		sepType := types.NewFieldType(mysql.TypeVarString)
+		sepType.SetCharset(charset.CharsetUTF8MB4)
+		sepType.SetCollate("utf8mb4_0900_ai_ci")
+		sepType.DelFlag(mysql.BinaryFlag)
+		sep := &expression.Constant{
+			Value:   types.NewStringDatum(" "),
+			RetType: sepType,
+		}
+
+		desc, err := newBaseFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep})
+		require.NoError(t, err)
+		require.Equal(t, charset.CharsetUTF8MB4, desc.RetTp.GetCharset())
+		require.Equal(t, "utf8mb4_0900_ai_ci", desc.RetTp.GetCollate())
+	}
+
+	// GROUP_CONCAT should fall back to connection collation when separator literal has empty charset/collation metadata.
+	{
+		require.NoError(t, ctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, charset.CharsetUTF8MB4))
+		require.NoError(t, ctx.GetSessionVars().SetSystemVar(vardef.CollationConnection, charset.CollationUTF8MB4))
+
+		col := &expression.Column{
+			UniqueID: 2,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		}
+
+		emptySepType := types.NewFieldType(mysql.TypeVarString)
+		emptySep := &expression.Constant{
+			Value:   types.NewStringDatum(","),
+			RetType: emptySepType,
+		}
+
+		desc, err := newBaseFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{col, emptySep})
+		require.NoError(t, err)
+		require.Equal(t, charset.CharsetUTF8MB4, desc.RetTp.GetCharset())
+		require.Equal(t, charset.CollationUTF8MB4, desc.RetTp.GetCollate())
+	}
+
+	// GROUP_CONCAT should still keep a non-binary input collation even when separator metadata is empty.
+	{
+		colType := types.NewFieldType(mysql.TypeVarString)
+		colType.SetCharset(charset.CharsetUTF8MB4)
+		colType.SetCollate("utf8mb4_0900_ai_ci")
+		colType.DelFlag(mysql.BinaryFlag)
+		col := &expression.Column{
+			UniqueID: 3,
+			RetType:  colType,
+		}
+
+		emptySepType := types.NewFieldType(mysql.TypeVarString)
+		emptySep := &expression.Constant{
+			Value:   types.NewStringDatum("|"),
+			RetType: emptySepType,
+		}
+
+		desc, err := newBaseFuncDesc(ctx, ast.AggFuncGroupConcat, []expression.Expression{col, emptySep})
+		require.NoError(t, err)
+		require.Equal(t, charset.CharsetUTF8MB4, desc.RetTp.GetCharset())
+		require.Equal(t, "utf8mb4_0900_ai_ci", desc.RetTp.GetCollate())
 	}
 }
 

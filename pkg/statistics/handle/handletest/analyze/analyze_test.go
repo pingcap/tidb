@@ -299,6 +299,10 @@ func TestAnalyzeMetricsCounters(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = origMinCnt
 	}()
 
+	// Keep this test scoped to the single unanalyzed table created above. The
+	// global default may schedule multiple auto-analyze jobs in parallel.
+	autoAnalyzeConcurrencySysVar := variable.GetSysVar("tidb_auto_analyze_concurrency")
+	require.NoError(t, autoAnalyzeConcurrencySysVar.SetGlobalFromHook(context.Background(), tk.Session().GetSessionVars(), "1", false))
 	beforeAutoSucc := readCounter(autoSucc)
 	beforeAutoFail := readCounter(autoFail)
 
