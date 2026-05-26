@@ -18,13 +18,11 @@
 # databases.
 #
 # Dependency graph:
-#   db1.t1  (real table)
-#     └─ db1.v1      (level 1: depends on t1)
-#        ├─ db2.v2   (level 2: depends on v1, cross-DB)
-#        └─ db2.v3   (level 2: depends on v1, sibling of v2)
-#           ├─ db3.v4 (level 3: depends on v2, chain)
-#           ├─ db3.v5 (level 3: depends on v2 AND v3, diamond merge)
-#           └─ db3.v6 (level 3: WITH cte AS (SELECT ... FROM v2) SELECT ... FROM cte UNION SELECT ... FROM v4)
+#   db1.t1 -> db1.v1
+#   db1.v1 -> db2.v2, db2.v3
+#   db2.v2 -> db3.v4, db3.v5, db3.v6
+#   db2.v3 -> db3.v5
+#   db3.v4 -> db3.v6
 
 set -euE
 
