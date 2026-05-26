@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -247,6 +248,10 @@ func testSpill(t *testing.T, ctx *mock.Context, joinType base.JoinType, leftData
 }
 
 func TestInnerJoinSpillBasic(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
@@ -297,6 +302,10 @@ func TestInnerJoinSpillBasic(t *testing.T) {
 }
 
 func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
@@ -350,6 +359,10 @@ func TestInnerJoinSpillWithOtherCondition(t *testing.T) {
 
 // Hash join executor may be repeatedly closed and opened
 func TestInnerJoinUnderApplyExec(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	ctx := mock.NewContext()
