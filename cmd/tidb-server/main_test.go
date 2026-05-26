@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/constants"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
@@ -170,8 +171,7 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 		}
 	})
 
-	keyspaceID := uint32(42)
-	err := prepareKeyspaceObservabilityWithMetadata(&keyspaceID, map[string]string{
+	err := prepareKeyspaceObservabilityWithMetadata(42, map[string]string{
 		"meta_a": "value_a",
 	}, "ks", true)
 	require.NoError(t, err)
@@ -186,8 +186,7 @@ func TestSetupKeyspaceObservabilityForNonStarter(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 
-	keyspaceID := uint32(42)
-	err := prepareKeyspaceObservabilityWithMetadata(&keyspaceID, map[string]string{
+	err := prepareKeyspaceObservabilityWithMetadata(42, map[string]string{
 		"meta_a": "value_a",
 	}, "ks", false)
 	require.NoError(t, err)
@@ -211,6 +210,6 @@ func TestSetupKeyspaceObservabilityForStartSkipsClassic(t *testing.T) {
 		conf.KeyspaceName = "test_keyspace"
 	})
 
-	require.NoError(t, prepareKeyspaceObservability(nil, nil))
+	require.NoError(t, prepareKeyspaceObservability(constants.NullKeyspaceID, nil))
 	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }

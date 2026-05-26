@@ -93,6 +93,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
@@ -315,7 +316,7 @@ func main() {
 	}
 
 	var standbyController server.StandbyController
-	var activationKeyspaceID *uint32
+	activationKeyspaceID := constants.NullKeyspaceID
 	var activationMetadata map[string]string
 	if config.GetGlobalConfig().Standby.StandByMode {
 		standbyController = standby.NewLoadKeyspaceController()
@@ -1160,7 +1161,7 @@ const (
 	keyspaceNameMetricLabel = "keyspace_name"
 )
 
-func prepareKeyspaceObservability(keyspaceID *uint32, metadata map[string]string) error {
+func prepareKeyspaceObservability(keyspaceID uint32, metadata map[string]string) error {
 	cfg := config.GetGlobalConfig()
 	if !kerneltype.IsNextGen() || cfg.Store != config.StoreTypeTiKV {
 		return nil
@@ -1169,14 +1170,14 @@ func prepareKeyspaceObservability(keyspaceID *uint32, metadata map[string]string
 	return prepareKeyspaceObservabilityWithMetadata(keyspaceID, metadata, cfg.KeyspaceName, deploymode.IsStarter())
 }
 
-func prepareKeyspaceObservabilityWithMetadata(keyspaceID *uint32, metadata map[string]string, keyspaceName string, includeConfiguredFields bool) error {
+func prepareKeyspaceObservabilityWithMetadata(keyspaceID uint32, metadata map[string]string, keyspaceName string, includeConfiguredFields bool) error {
 	resolvedValues := config.KeyspaceObservabilityValues{
 		MetricLabels: map[string]string{
 			keyspaceNameMetricLabel: keyspaceName,
 		},
 	}
-	if keyspaceID != nil {
-		resolvedValues.MetricLabels[keyspaceIDMetricLabel] = fmt.Sprint(*keyspaceID)
+	if keyspaceID != constants.NullKeyspaceID {
+		resolvedValues.MetricLabels[keyspaceIDMetricLabel] = fmt.Sprint(keyspaceID)
 	}
 	if includeConfiguredFields {
 		copiedConfig := *config.GetGlobalConfig()

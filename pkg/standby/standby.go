@@ -183,14 +183,10 @@ func (c *LoadKeyspaceController) ActivationMetadata() map[string]string {
 }
 
 // ActivationKeyspaceID returns the keyspace ID carried by the activate request.
-func (c *LoadKeyspaceController) ActivationKeyspaceID() *uint32 {
+func (c *LoadKeyspaceController) ActivationKeyspaceID() uint32 {
 	mu.RLock()
 	defer mu.RUnlock()
-	if activateRequest.KeyspaceID == nil {
-		return nil
-	}
-	keyspaceID := *activateRequest.KeyspaceID
-	return &keyspaceID
+	return *activateRequest.KeyspaceID
 }
 
 // Handler returns a handler to query tidb pool status or activate or exit the tidb server.
@@ -203,7 +199,7 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if req.KeyspaceName == "" {
+		if req.KeyspaceName == "" || req.KeyspaceID == nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -222,7 +218,7 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 				logutil.BgLogger().Error("failed to write response", zap.Error(err))
 			}
 			return
-		case activateRequest.KeyspaceName != req.KeyspaceName:
+		case activateRequest.KeyspaceName != req.KeyspaceName || *activateRequest.KeyspaceID != *req.KeyspaceID:
 			mu.Unlock()
 			w.WriteHeader(http.StatusPreconditionFailed)
 			_, err := w.Write([]byte("server is not in standby mode"))
