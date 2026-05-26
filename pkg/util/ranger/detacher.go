@@ -134,6 +134,7 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
+<<<<<<< HEAD
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
 			}
@@ -156,6 +157,33 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 						return i
 					}
 				}
+=======
+		}
+
+		// TODO: This collation-compatibility check rejects columns with binary-casted literals
+		// (e.g. f = CAST('a' AS BINARY) on a non-binary string column), which causes the EQ/IN
+		// extraction path to demote such predicates to filters. As a consequence, suffix index
+		// columns on a composite index (e.g. index on (f,g) with f = CAST('a' AS BINARY) AND g = 1)
+		// cannot be used as index equalities and are treated as filters as well. Relax this check
+		// for the CAST(... AS BINARY) / binary-collation case so binary-cast equality predicates
+		// can be treated as index-equalities, and add a regression test for the composite-index
+		// scenario above. Fix in a later release.
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+			return -1
+		}
+		if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
+			return -1
+		}
+
+		if constVal, ok = f.GetArgs()[idxConst].(*expression.Constant); !ok {
+			return -1
+		}
+
+		val, err := constVal.Eval(evalCtx, chunk.Row{})
+		intest.AssertFunc(func() bool {
+			if sctx.ExprCtx.ConnectionID() == 0 {
+				return sctx.RegardNULLAsPoint
+>>>>>>> d0ba8b783fc (planner: CAST to BINARY correctness issue (#68498))
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
