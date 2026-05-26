@@ -2603,6 +2603,29 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	require.ElementsMatch(t, maps.Keys(effs.Deletions), []string{mN(1), lN(1), lN(4), mig3p})
 }
 
+func readSingleLockMetaWithPrefix(t *testing.T, ctx context.Context, s storeapi.Storage, prefix string) (objstore.LockMeta, string, bool) {
+	var paths []string
+	require.NoError(t, s.WalkDir(ctx, &storeapi.WalkOption{
+		SubDir:    path.Dir(prefix),
+		ObjPrefix: path.Base(prefix),
+	}, func(p string, _ int64) error {
+		paths = append(paths, p)
+		return nil
+	}))
+	if len(paths) != 1 {
+		return objstore.LockMeta{}, "", false
+	}
+	metaBytes, err := s.ReadFile(ctx, paths[0])
+	if err != nil {
+		return objstore.LockMeta{}, "", false
+	}
+	var meta objstore.LockMeta
+	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+		return objstore.LockMeta{}, "", false
+	}
+	return meta, paths[0], true
+}
+
 func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	const (
 		leaseTTL      = 80 * time.Millisecond
@@ -2646,26 +2669,7 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	}
 
 	readLockMeta := func() (objstore.LockMeta, string, bool) {
-		var paths []string
-		require.NoError(t, s.WalkDir(ctx, &storeapi.WalkOption{
-			SubDir:    path.Dir(lockPrefix),
-			ObjPrefix: path.Base(lockPrefix) + ".WRIT.",
-		}, func(p string, _ int64) error {
-			paths = append(paths, p)
-			return nil
-		}))
-		if len(paths) != 1 {
-			return objstore.LockMeta{}, "", false
-		}
-		metaBytes, err := s.ReadFile(ctx, paths[0])
-		if err != nil {
-			return objstore.LockMeta{}, "", false
-		}
-		var meta objstore.LockMeta
-		if err := json.Unmarshal(metaBytes, &meta); err != nil {
-			return objstore.LockMeta{}, "", false
-		}
-		return meta, paths[0], true
+		return readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".WRIT.")
 	}
 
 	initialMeta, initialLockPath, ok := readLockMeta()
@@ -2692,6 +2696,37 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("MergeAndMigrateTo did not finish after releasing interactive check")
 	}
+}
+
+func TestLockForAppendRenewsBothLocks(t *testing.T) {
+	const (
+		leaseTTL      = 80 * time.Millisecond
+		renewInterval = 10 * time.Millisecond
+	)
+	ctx := context.Background()
+	s := tmp(t)
+	est := MigrationExtension(s)
+	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, 3, 5*time.Millisecond)
+	defer restoreLeaseConstants()
+
+	readLock, appendLock, err := est.lockForAppend(ctx, "AppendMigration", func() {})
+	require.NoError(t, err)
+	defer readLock.UnlockOnCleanUp(ctx)
+	defer appendLock.UnlockOnCleanUp(ctx)
+
+	readMeta, readLockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
+	require.True(t, ok)
+	appendMeta, appendLockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, appendLockPrefix+".WRIT.")
+	require.True(t, ok)
+
+	require.Eventually(t, func() bool {
+		meta, lockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
+		return ok && lockPath == readLockPath && meta.ExpireAt.After(readMeta.ExpireAt)
+	}, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		meta, lockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, appendLockPrefix+".WRIT.")
+		return ok && lockPath == appendLockPath && meta.ExpireAt.After(appendMeta.ExpireAt)
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func TestRemoveCompaction(t *testing.T) {

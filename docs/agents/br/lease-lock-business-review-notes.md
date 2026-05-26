@@ -56,8 +56,11 @@ Scope refinement for restore review:
 
 #### `br/pkg/task/stream.go`: truncate lease loss and warnings
 
-- `RunStreamTruncate` starts renewal with `lock.StartRenewal(ctx, cancelFn)`.
-  This is directionally correct because most truncate work uses the same `ctx`.
+- Status: renewal ownership resolved in current branch. `RunStreamTruncate`
+  keeps the existing cleanup-once/acquire-once behavior, but now acquires via
+  `LockRemoteTruncate(ctx, ..., cancelFn)`, so renewal starts inside the
+  lifecycle acquire API rather than through a business-layer `StartRenewal`
+  call.
 - The `--clean-up-compactions` path calls `MergeAndMigrateTo` and prints
   returned warnings before returning `nil`.
 - Review whether `context.Canceled` caused by lease loss can be captured only as
@@ -66,20 +69,20 @@ Scope refinement for restore review:
 
 #### `br/pkg/stream/stream_metas.go`: `MergeAndMigrateTo`
 
-- Status: confirmed issue; should be fixed, not merely reviewed.
-- `MergeAndMigrateTo` acquires a write lock on `lockPrefix` but currently does
-  not start renewal.
+- Status: renewal ownership resolved in current branch.
+- `MergeAndMigrateTo` acquires a write lock on `lockPrefix` through
+  `LockWithRetry(workCtx, ..., cancel)`. The lifecycle acquire API starts
+  renewal before returning the lock handle.
 - The protected region can write a new BASE migration, delete merged migration
   files, execute `migrateTo`, and write BASE again.
-- If that region exceeds the lease lifetime, another process may reclaim and
-  acquire the lock while this caller continues writing/deleting.
-- The risk is high because `migrateTo` may scan metadata, delete prefixes,
-  delete log files, apply metadata edits, and rewrite BASE. This can outlive
-  `LeaseTTL` on large log backup archives.
-- Fix direction: start renewal immediately after acquiring the migration write
-  lock, use lease loss to cancel the work context for the critical section, and
-  ensure cancellation is surfaced to callers instead of being reported only as
-  a warning.
+- Lease loss cancels the child work context used by the destructive critical
+  section. A remaining business-level review question is whether cancellation
+  from lease loss can still be returned only as a warning to truncate callers.
+- Context propagation note: `context.WithCancel(ctx)` creates an internal child
+  context for the critical section. Calling that child cancel function does not
+  cancel the caller's parent context. Correctness therefore depends on the
+  canceled child context making protected operations fail and on callers
+  treating those failures as command failures rather than non-fatal warnings.
 
 #### `br/pkg/stream/stream_metas.go`: `BASE_TMP` recovery
 
@@ -99,38 +102,29 @@ Scope refinement for restore review:
 
 #### `br/pkg/stream/stream_metas.go`: `AppendMigration`
 
+- Status: renewal ownership resolved in current branch.
 - `AppendMigration` acquires a main read lock and an append write lock through
   `lockForAppend`.
-- Neither lock currently starts renewal.
 - The protected region loads migrations, computes the next sequence number, and
   writes a new migration file.
-- Review should decide whether this region is short enough to avoid renewal. If
-  not, both locks need renewal or a smaller critical section.
+- `AppendMigration` now creates a child work context and passes its cancel
+  function to both lock acquisitions. `LockWithRetry` starts renewal for both
+  the main read lock and append write lock before returning.
 
 #### `br/pkg/restore/log_client/client.go`: `GetLockedMigrations`
 
-- `GetLockedMigrations` acquires a read lock, then loads migrations, then
-  returns the lock to `restoreStream`.
-- `restoreStream` starts renewal only after `GetLockedMigrations` returns.
-- This leaves the migration load phase outside renewal coverage.
-- The returned `LockedMigrations` value contains both migration data and a lock
-  resource that must be renewed and released. Naming the call-site variable
-  `migs` makes this lifecycle obligation easy to miss.
-- Review should either start renewal immediately after acquiring the lock or
-  justify why the load phase cannot exceed the lease risk window.
-- Review should also decide whether renewal ownership belongs inside
-  `GetLockedMigrations`, with the business layer passing only a lease-loss
-  callback such as the restore context cancel function.
-- Review decision: renewal should start inside `GetLockedMigrations`
-  immediately after `ext.GetReadLock` succeeds. Business callers should pass
-  the lease-loss callback/cancel function and should not receive a locked
-  migration value that still requires manual `StartRenewal`.
-- Automatic review also flagged that `StartRenewal` waits until the first
-  renewal interval before calling `tryRenew`. With the current layering, the
-  first actual renewal can happen at roughly:
-  `lock acquire + migration load + BuildMigrations + renew interval`.
-  Even if renewal ownership is moved into `GetLockedMigrations`, consider an
-  immediate renew/verify attempt before the interval loop.
+- Status: renewal ownership resolved in current branch.
+- `GetLockedMigrations(ctx, onLeaseLost)` acquires a read lock and starts
+  renewal through `ext.GetReadLock` / `LockWithRetry` before loading
+  migrations.
+- `restoreStream` now passes its lease-loss cancel function into
+  `GetLockedMigrations` and no longer calls `StartRenewal` directly.
+- The returned `LockedMigrations` value hides the internal read lock and exposes
+  `Unlock(ctx)`, so callers release the locked resource without controlling the
+  renewal goroutine directly.
+- Review decision on immediate renew: do not add an acquire-time immediate
+  `tryRenew` or verify. Acquire already writes a fresh `ExpireAt`; the
+  correctness issue was late ownership start, not the first renewal cadence.
 
 #### `br/pkg/task/stream.go`: restore lease-loss context propagation
 
@@ -239,25 +233,24 @@ Automatic review follow-up, after scope refinement:
 | Caller | File | Lock type | Current concern |
 | --- | --- | --- | --- |
 | `RunStreamTruncate` | `br/pkg/task/stream.go` | standalone truncate instance lock | fixed-path stale cleanup race resolved; lease-loss warning/success behavior still needs review |
-| `restoreStream` / `GetLockedMigrations` | `br/pkg/task/stream.go`, `br/pkg/restore/log_client/client.go` | migration read lock | renewal should start inside `GetLockedMigrations`; restore sub-step cancellation is out of scope |
-| `AppendMigration` | `br/pkg/stream/stream_metas.go` | migration read lock + append write lock | no renewal during append critical section |
-| `MergeAndMigrateTo` | `br/pkg/stream/stream_metas.go` | migration write lock | no renewal during destructive critical section |
+| `restoreStream` / `GetLockedMigrations` | `br/pkg/task/stream.go`, `br/pkg/restore/log_client/client.go` | migration read lock | renewal ownership resolved; restore sub-step cancellation is out of scope |
+| `AppendMigration` | `br/pkg/stream/stream_metas.go` | migration read lock + append write lock | renewal ownership resolved |
+| `MergeAndMigrateTo` | `br/pkg/stream/stream_metas.go` | migration write lock | renewal ownership resolved; lease-loss warning/success behavior still needs review |
 
 ### Suggested review order
 
 1. Done: fixed the fixed-path stale cleanup race in the lock layer with
    instance/generation-based physical paths. Standalone truncate locks are
    included in this design.
-2. Move restore read-lock renewal ownership into `GetLockedMigrations`, with a
-   caller-provided lease-loss callback. Start renewal immediately after
-   `ext.GetReadLock` succeeds and before reading `v1/migrations/`.
-3. Review whether `StartRenewal` should immediately renew or verify before
-   waiting for the first interval. This is lock-layer behavior and complements
-   item 2.
-4. Review `MergeAndMigrateTo`; it has the largest destructive migration write
-   surface and still needs renewal.
-5. Review `AppendMigration`; it protects sequence allocation and writing a new
-   migration with a main read lock plus append write lock.
+2. Done: moved restore read-lock renewal ownership into
+   `GetLockedMigrations`, with a caller-provided lease-loss callback.
+3. Done: reviewed immediate renew/verify and kept the existing interval
+   behavior. Acquire writes a fresh `ExpireAt`; lifecycle ownership now starts
+   immediately after acquire.
+4. Done: moved `MergeAndMigrateTo` write-lock renewal into `LockWithRetry` and
+   tied lease loss to the child work context.
+5. Done: moved `AppendMigration` read-lock and append-write-lock renewal into
+   `LockWithRetry` and tied lease loss to the child work context.
 6. Keep `Unlock` waiting for renewal goroutine teardown, but separately decide
    whether the wait needs a bounded context/deadline. This is lower priority
    cleanup robustness.

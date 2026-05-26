@@ -25,10 +25,10 @@ Lease lock 的安全性不只取决于 acquire 是否互斥，也取决于 holde
 - [x] (2026-05-26) 通过 design grilling 明确 API 边界：`Try*` 是 primitive，`Lock*` 是 lifecycle API，生产业务代码不直接调用 `StartRenewal`。
 - [x] (2026-05-26) 明确 `onLeaseLost` 语义：public lifecycle API 在 acquire 前拒绝 nil callback；测试可显式传 no-op callback。
 - [x] (2026-05-26) 明确本轮不把 `TryLockRemoteRead` / `TryLockRemoteWrite` 私有化，只补充 primitive 注释和生产调用约束。
-- [ ] 更新 objstore renewal API 和 tests。
-- [ ] 更新 BR migration/restore/truncate 调用点和 tests。
-- [ ] 更新 `docs/agents/br/lease-lock-business-review-notes.md`，记录 renewal ownership 已收敛和 immediate renew 已评估不改。
-- [ ] 运行 WIP 和 Ready validation，并把结果记录到本计划的 `Outcomes & Retrospective`。
+- [x] (2026-05-26) 更新 objstore renewal API 和 tests。
+- [x] (2026-05-26) 更新 BR migration/restore/truncate 调用点和 tests。
+- [x] (2026-05-26) 更新 `docs/agents/br/lease-lock-business-review-notes.md`，记录 renewal ownership 已收敛和 immediate renew 已评估不改。
+- [x] (2026-05-26) 运行 WIP 和 Ready validation，并把结果记录到本计划的 `Outcomes & Retrospective`。
 
 ## Surprises & Discoveries
 
@@ -65,7 +65,29 @@ Lease lock 的安全性不只取决于 acquire 是否互斥，也取决于 holde
 
 ## Outcomes & Retrospective
 
-Implementation has not started. During execution, append one entry after each milestone with commands run, observed behavior, and any remaining risks.
+- 2026-05-26 / Milestone 1: Implemented objstore lifecycle acquire ownership. `RemoteLock.StartRenewal` is now unexported as `startRenewal`; `LockWithRetry` requires `onLeaseLost` and starts renewal after acquire; `LockRemoteTruncate` wraps the truncate primitive without retry or cleanup. Added nil-callback rejection tests and a renewal-start test. Verified with:
+
+      ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLockWithRetry|TestLockRemoteTruncate|TestStartRenewal|TestTryRenew|TestUnlock' -count=1
+
+- 2026-05-26 / Milestone 2: Migrated BR production call sites. `RunStreamTruncate` uses `LockRemoteTruncate`; `GetLockedMigrations` accepts the lease-loss callback and starts renewal before loading migrations; `restoreStream` no longer starts renewal directly; `MergeAndMigrateTo` and `AppendMigration` pass child-context cancel functions into lock acquisition. Added tests for renewal during blocked migration load and renewal of both append locks. Verified with:
+
+      ./tools/check/failpoint-go-test.sh br/pkg/restore/log_client -run 'TestGetLockedMigrationsReleasesReadLockOnLoadError|TestGetLockedMigrations.*Renew' -count=1
+
+      ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'TestMergeAndMigrateToRenewsWriteLock|Test.*AppendMigration' -count=1
+
+      ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'TestLockForAppendRenewsBothLocks' -count=1
+
+      ./tools/check/failpoint-go-test.sh br/pkg/task -run TestNonExistent -count=1
+
+- 2026-05-26 / Execution note: interrupted or repeated failpoint test runs can leave generated failpoint rewrites or unrelated deleted files in the working tree. During this implementation, `make failpoint-disable` and targeted `git restore` were needed to remove those test-workflow artifacts before continuing.
+
+- 2026-05-26 / Milestone 3 and Ready validation: Updated the business review notes and ran static ownership checks. Production code has no direct `.StartRenewal(` calls; production `LockWithRetry` calls all pass callbacks; production direct `TryLockRemote*` calls are limited to primitive definitions and the `LockRemoteTruncate` wrapper. The `docs/agents/agents-review-guide.md` checks were completed by verifying no wrapped normative keywords in the changed agent docs, checking referenced agent-doc paths exist, and confirming `git diff --check` is clean. `make bazel_prepare` was required because this change added top-level tests in existing Go test files; it completed without producing Bazel metadata changes. `make lint` passed.
+
+- 2026-05-26 / Review follow-up: Independent review found that `LockRemoteTruncate` had nil-callback coverage but no positive renewal coverage. Added `TestLockRemoteTruncateStartsRenewal` and reran:
+
+      ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLockWithRetry|TestLockRemoteTruncate|TestStartRenewal|TestTryRenew|TestUnlock' -count=1
+
+  The same review also found that the Ready `br/pkg/stream` regex did not include `TestLockForAppendRenewsBothLocks`; the Ready command below now includes that test explicitly. After adding the new top-level objstore test, reran `make bazel_prepare` and `make lint`; both passed, and `make bazel_prepare` still produced no Bazel metadata changes.
 
 ## Context and Orientation
 
@@ -81,7 +103,7 @@ Important terms:
 - `Try* primitive`: a single-attempt acquire function. It writes one lock instance through `conditionalPut` and returns success or conflict without retry or renewal.
 - `Lifecycle acquire API`: a public function intended for production business code. It acquires a lock and starts renewal before returning the handle.
 
-Current production call paths:
+Original production call paths before this plan:
 
 - `br/pkg/task/stream.go::RunStreamTruncate` calls `CleanUpStaleTruncateLock`, then `TryLockRemoteTruncate`, then `lock.StartRenewal(ctx, cancelFn)`.
 - `br/pkg/task/stream.go::restoreStream` calls `client.GetLockedMigrations(ctx)`, then `client.BuildMigrations`, then `migs.ReadLock.StartRenewal(ctx, cancelFn)`.
@@ -212,17 +234,17 @@ After this milestone, `LockWithRetry` requires a non-nil `onLeaseLost`, `LockRem
 
 Concrete steps:
 
-- [ ] Rename `RemoteLock.StartRenewal` to `RemoteLock.startRenewal` in `pkg/objstore/locking.go`. Keep the current state-machine behavior and panic-on-double-start behavior unchanged.
-- [ ] Add `validateOnLeaseLost(onLeaseLost func()) error` in `pkg/objstore/locking_helper.go` or near `LockWithRetry` in `pkg/objstore/locking.go`. Use the exact error text `onLeaseLost callback is required for lease lock renewal` so tests can assert it.
-- [ ] Change `LockWithRetry` to accept `onLeaseLost func()`. Validate it before any retry/acquire work. On successful acquire, call `lock.startRenewal(ctx, onLeaseLost)` before returning.
-- [ ] Add `LockRemoteTruncate(ctx, storage, hint, onLeaseLost)` and keep `TryLockRemoteTruncate` primitive.
-- [ ] Add or update comments on `TryLockRemoteRead`, `TryLockRemoteWrite`, and `TryLockRemoteTruncate` to say they do not start renewal.
-- [ ] Update `pkg/objstore/export_test.go` with `TESTStartRenewal`.
-- [ ] Update existing renewal tests in `pkg/objstore/locking_test.go` to call `objstore.TESTStartRenewal(ctx, lock, callback)` instead of `lock.StartRenewal(...)`.
-- [ ] Add `TestLockWithRetryRejectsNilOnLeaseLost` in `pkg/objstore/locking_test.go`. It should call `LockWithRetry(ctx, TryLockRemoteWrite, strg, "v1/LOCK", "owner", nil)`, assert the required-callback error, and assert no `v1/LOCK.WRIT.` object exists.
-- [ ] Add `TestLockRemoteTruncateRejectsNilOnLeaseLost` in `pkg/objstore/locking_test.go`. It should call `LockRemoteTruncate(ctx, strg, "truncate", nil)`, assert the required-callback error, and assert no `truncating.lock.` object exists.
-- [ ] Add `TestLockWithRetryStartsRenewal` in `pkg/objstore/locking_test.go`. Use `TESTSetLeaseConstants` to set a short TTL and interval, acquire through `LockWithRetry(..., func(){})`, read the physical lock path, and assert `ExpireAt` advances after at least one renewal interval without direct `TESTStartRenewal`.
-- [ ] Update all objstore tests that call `LockWithRetry` to pass `func() {}` unless they intentionally test lease-loss callback behavior.
+- [x] Rename `RemoteLock.StartRenewal` to `RemoteLock.startRenewal` in `pkg/objstore/locking.go`. Keep the current state-machine behavior and panic-on-double-start behavior unchanged.
+- [x] Add `validateOnLeaseLost(onLeaseLost func()) error` in `pkg/objstore/locking_helper.go` or near `LockWithRetry` in `pkg/objstore/locking.go`. Use the exact error text `onLeaseLost callback is required for lease lock renewal` so tests can assert it.
+- [x] Change `LockWithRetry` to accept `onLeaseLost func()`. Validate it before any retry/acquire work. On successful acquire, call `lock.startRenewal(ctx, onLeaseLost)` before returning.
+- [x] Add `LockRemoteTruncate(ctx, storage, hint, onLeaseLost)` and keep `TryLockRemoteTruncate` primitive.
+- [x] Add or update comments on `TryLockRemoteRead`, `TryLockRemoteWrite`, and `TryLockRemoteTruncate` to say they do not start renewal.
+- [x] Update `pkg/objstore/export_test.go` with `TESTStartRenewal`.
+- [x] Update existing renewal tests in `pkg/objstore/locking_test.go` to call `objstore.TESTStartRenewal(ctx, lock, callback)` instead of `lock.StartRenewal(...)`.
+- [x] Add `TestLockWithRetryRejectsNilOnLeaseLost` in `pkg/objstore/locking_test.go`. It should call `LockWithRetry(ctx, TryLockRemoteWrite, strg, "v1/LOCK", "owner", nil)`, assert the required-callback error, and assert no `v1/LOCK.WRIT.` object exists.
+- [x] Add `TestLockRemoteTruncateRejectsNilOnLeaseLost` in `pkg/objstore/locking_test.go`. It should call `LockRemoteTruncate(ctx, strg, "truncate", nil)`, assert the required-callback error, and assert no `truncating.lock.` object exists.
+- [x] Add `TestLockWithRetryStartsRenewal` in `pkg/objstore/locking_test.go`. Use `TESTSetLeaseConstants` to set a short TTL and interval, acquire through `LockWithRetry(..., func(){})`, read the physical lock path, and assert `ExpireAt` advances after at least one renewal interval without direct `TESTStartRenewal`.
+- [x] Update all objstore tests that call `LockWithRetry` to pass `func() {}` unless they intentionally test lease-loss callback behavior.
 
 Run:
 
@@ -238,20 +260,20 @@ After this milestone, production BR code no longer calls `.StartRenewal(` and ev
 
 Concrete steps:
 
-- [ ] In `br/pkg/task/stream.go::RunStreamTruncate`, replace `TryLockRemoteTruncate` plus `StartRenewal` with `LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, cancelFn)`. Keep `CleanUpStaleTruncateLock` and the existing cleanup defer behavior unchanged.
-- [ ] In `br/pkg/restore/log_client/client.go`, change `LockedMigrations.ReadLock` to private `readLock` and add `Unlock(ctx)` as described in `Interfaces and Dependencies`.
-- [ ] Change `LogClient.GetLockedMigrations` to accept `onLeaseLost func()`. It should call `ext.GetReadLock(ctx, "restore stream", onLeaseLost)` before `ext.Load(ctx)`.
-- [ ] In `br/pkg/task/stream.go::restoreStream`, call `client.GetLockedMigrations(ctx, cancelFn)`, remove direct `migs.ReadLock.StartRenewal`, and replace the cleanup registration with `defer utils.WithCleanUp(&err, time.Minute, migs.Unlock)` inside the existing `if !skipCleanup` block. Do not make cleanup unconditional; the `skip-migration-read-lock-cleanup` failpoint must keep its current behavior.
-- [ ] Before replacing `cleanUpWithRetErr`, note the error ordering difference: the local helper combines as `multierr.Combine(*errOut, err)`, while `utils.WithCleanUp` combines as `multierr.Combine(err, *errOut)`. Existing tests should not assert the combined error string order. If an implementation test depends on order, keep the local helper for this cleanup path instead of changing semantics.
-- [ ] If `cleanUpWithRetErr` in `br/pkg/task/stream.go` has no remaining callers, delete it and remove the now-unused `multierr` import from that file.
-- [ ] In `br/pkg/stream/stream_metas.go::GetReadLock`, add `onLeaseLost func()` and pass it to `objstore.LockWithRetry`.
-- [ ] In `br/pkg/stream/stream_metas.go::MergeAndMigrateTo`, create `workCtx, cancel := context.WithCancel(ctx)` before calling `LockWithRetry`. Pass `workCtx` and `cancel` into `LockWithRetry`, remove direct `lock.StartRenewal`, and ensure subsequent critical-section work still uses `workCtx`. This order matters: if `LockWithRetry` receives the parent `ctx`, the renewal goroutine is not tied to the critical-section child context.
-- [ ] In `br/pkg/stream/stream_metas.go::lockForAppend`, add `onLeaseLost func()` and pass it to both `LockWithRetry` calls.
-- [ ] In `br/pkg/stream/stream_metas.go::AppendMigration`, create `workCtx, cancel := context.WithCancel(ctx)`, defer `cancel()`, call `m.lockForAppend(workCtx, "AppendMigration", cancel)`, and use `workCtx` for the protected load/sequence/write work after both locks are acquired.
-- [ ] Update `br/pkg/restore/log_client/client_test.go::TestGetLockedMigrationsReleasesReadLockOnLoadError` to pass `func(){}` or a test callback to `GetLockedMigrations`.
-- [ ] Add or extend a `GetLockedMigrations` test that proves renewal starts before `ext.Load(ctx)` returns. A return-time-only test is not enough because it would also pass if renewal started after `Load` but before return. Use a test storage wrapper or a narrowly scoped failpoint to pause `Load` while it is walking or reading `v1/migrations/`. While `GetLockedMigrations(ctx, callback)` is still blocked inside `Load`, list the storage for `v1/LOCK.READ.`, read the lock metadata, and use `require.Eventually` with a generous timeout to assert `ExpireAt` advances on the same physical lock path. Then release the pause, let `GetLockedMigrations` return, and unlock the returned `LockedMigrations`.
-- [ ] Update `br/pkg/stream/stream_metas_test.go::TestMergeAndMigrateToRenewsWriteLock` to use the new `LockWithRetry` signature indirectly through production code. The test should still assert the write lock path is stable and `ExpireAt` advances.
-- [ ] Add `TestLockForAppendRenewsBothLocks` in `br/pkg/stream/stream_metas_test.go`. Because this test file is in package `stream`, it can call unexported `m.lockForAppend(ctx, "AppendMigration", func(){})` directly. Shorten lease constants with `objstore.SetLeaseConstantsForTest`, acquire both locks, list `v1/LOCK.READ.` and `v1/APPEND_LOCK.WRIT.` objects, read both `ExpireAt` values, and use `require.Eventually` with a generous timeout to assert both advance on the same physical lock paths after at least one renewal interval without direct renewal calls. Defer unlocks in the same order as `AppendMigration`: `defer readLock.UnlockOnCleanUp(ctx)` followed by `defer appendLock.UnlockOnCleanUp(ctx)`, so append write unlocks first.
+- [x] In `br/pkg/task/stream.go::RunStreamTruncate`, replace `TryLockRemoteTruncate` plus `StartRenewal` with `LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, cancelFn)`. Keep `CleanUpStaleTruncateLock` and the existing cleanup defer behavior unchanged.
+- [x] In `br/pkg/restore/log_client/client.go`, change `LockedMigrations.ReadLock` to private `readLock` and add `Unlock(ctx)` as described in `Interfaces and Dependencies`.
+- [x] Change `LogClient.GetLockedMigrations` to accept `onLeaseLost func()`. It should call `ext.GetReadLock(ctx, "restore stream", onLeaseLost)` before `ext.Load(ctx)`.
+- [x] In `br/pkg/task/stream.go::restoreStream`, call `client.GetLockedMigrations(ctx, cancelFn)`, remove direct `migs.ReadLock.StartRenewal`, and replace the cleanup registration with `defer utils.WithCleanUp(&err, time.Minute, migs.Unlock)` inside the existing `if !skipCleanup` block. Do not make cleanup unconditional; the `skip-migration-read-lock-cleanup` failpoint must keep its current behavior.
+- [x] Before replacing `cleanUpWithRetErr`, note the error ordering difference: the local helper combines as `multierr.Combine(*errOut, err)`, while `utils.WithCleanUp` combines as `multierr.Combine(err, *errOut)`. Existing tests should not assert the combined error string order. If an implementation test depends on order, keep the local helper for this cleanup path instead of changing semantics.
+- [x] If `cleanUpWithRetErr` in `br/pkg/task/stream.go` has no remaining callers, delete it and remove the now-unused `multierr` import from that file.
+- [x] In `br/pkg/stream/stream_metas.go::GetReadLock`, add `onLeaseLost func()` and pass it to `objstore.LockWithRetry`.
+- [x] In `br/pkg/stream/stream_metas.go::MergeAndMigrateTo`, create `workCtx, cancel := context.WithCancel(ctx)` before calling `LockWithRetry`. Pass `workCtx` and `cancel` into `LockWithRetry`, remove direct `lock.StartRenewal`, and ensure subsequent critical-section work still uses `workCtx`. This order matters: if `LockWithRetry` receives the parent `ctx`, the renewal goroutine is not tied to the critical-section child context.
+- [x] In `br/pkg/stream/stream_metas.go::lockForAppend`, add `onLeaseLost func()` and pass it to both `LockWithRetry` calls.
+- [x] In `br/pkg/stream/stream_metas.go::AppendMigration`, create `workCtx, cancel := context.WithCancel(ctx)`, defer `cancel()`, call `m.lockForAppend(workCtx, "AppendMigration", cancel)`, and use `workCtx` for the protected load/sequence/write work after both locks are acquired.
+- [x] Update `br/pkg/restore/log_client/client_test.go::TestGetLockedMigrationsReleasesReadLockOnLoadError` to pass `func(){}` or a test callback to `GetLockedMigrations`.
+- [x] Add or extend a `GetLockedMigrations` test that proves renewal starts before `ext.Load(ctx)` returns. A return-time-only test is not enough because it would also pass if renewal started after `Load` but before return. Use a test storage wrapper or a narrowly scoped failpoint to pause `Load` while it is walking or reading `v1/migrations/`. While `GetLockedMigrations(ctx, callback)` is still blocked inside `Load`, list the storage for `v1/LOCK.READ.`, read the lock metadata, and use `require.Eventually` with a generous timeout to assert `ExpireAt` advances on the same physical lock path. Then release the pause, let `GetLockedMigrations` return, and unlock the returned `LockedMigrations`.
+- [x] Update `br/pkg/stream/stream_metas_test.go::TestMergeAndMigrateToRenewsWriteLock` to use the new `LockWithRetry` signature indirectly through production code. The test should still assert the write lock path is stable and `ExpireAt` advances.
+- [x] Add `TestLockForAppendRenewsBothLocks` in `br/pkg/stream/stream_metas_test.go`. Because this test file is in package `stream`, it can call unexported `m.lockForAppend(ctx, "AppendMigration", func(){})` directly. Shorten lease constants with `objstore.SetLeaseConstantsForTest`, acquire both locks, list `v1/LOCK.READ.` and `v1/APPEND_LOCK.WRIT.` objects, read both `ExpireAt` values, and use `require.Eventually` with a generous timeout to assert both advance on the same physical lock paths after at least one renewal interval without direct renewal calls. Defer unlocks in the same order as `AppendMigration`: `defer readLock.UnlockOnCleanUp(ctx)` followed by `defer appendLock.UnlockOnCleanUp(ctx)`, so append write unlocks first.
 
 Run:
 
@@ -279,28 +301,28 @@ After this milestone, the review notes reflect the new ownership boundary and pr
 
 Concrete steps:
 
-- [ ] In `docs/agents/br/lease-lock-business-review-notes.md`, mark `GetLockedMigrations` renewal ownership as resolved in current branch after implementation.
-- [ ] In the same document, record the decision to keep `StartRenewal` interval behavior: no immediate renew/verify because acquire writes fresh `ExpireAt`; the fix is early ownership start.
-- [ ] In the business call-site table, update `AppendMigration` and `MergeAndMigrateTo` concerns after implementation. `AppendMigration` should no longer say "no renewal during append critical section" once the code passes `cancel` to both locks.
-- [ ] Run static search:
+- [x] In `docs/agents/br/lease-lock-business-review-notes.md`, mark `GetLockedMigrations` renewal ownership as resolved in current branch after implementation.
+- [x] In the same document, record the decision to keep `StartRenewal` interval behavior: no immediate renew/verify because acquire writes fresh `ExpireAt`; the fix is early ownership start.
+- [x] In the business call-site table, update `AppendMigration` and `MergeAndMigrateTo` concerns after implementation. `AppendMigration` should no longer say "no renewal during append critical section" once the code passes `cancel` to both locks.
+- [x] Run static search:
 
     rg -n "\\.StartRenewal\\(" br pkg -g '*.go' -g '!pkg/objstore/*_test.go'
 
 Expected: no production matches. Objstore tests should use `TESTStartRenewal`; `pkg/objstore` implementation may contain `startRenewal`.
 
-- [ ] Run static search:
+- [x] Run static search:
 
     rg -n "LockWithRetry\\(" br pkg -g '*.go' -g '!**/*_test.go'
 
 Expected: every production call has the new `onLeaseLost` argument and no production call passes nil.
 
-- [ ] Run static search:
+- [x] Run static search:
 
     rg -n "TryLockRemote(Read|Write|Truncate)\\(" br pkg -g '*.go' -g '!**/*_test.go'
 
 Expected: production direct `TryLockRemoteRead` / `TryLockRemoteWrite` calls are only function definitions or `LockWithRetry` locker arguments. `RunStreamTruncate` should use `LockRemoteTruncate` instead of `TryLockRemoteTruncate`. The new `LockRemoteTruncate` wrapper is allowed to call the primitive `TryLockRemoteTruncate`.
 
-- [ ] Follow `docs/agents/agents-review-guide.md` because this plan and the follow-up notes update files under `docs/agents/`. At minimum, verify there are no wrapped normative keywords, referenced paths exist, and no new docs conflict with `AGENTS.md`.
+- [x] Follow `docs/agents/agents-review-guide.md` because this plan and the follow-up notes update files under `docs/agents/`. At minimum, verify there are no wrapped normative keywords, referenced paths exist, and no new docs conflict with `AGENTS.md`.
 
 ## Validation and Acceptance
 
@@ -311,6 +333,7 @@ Acceptance criteria:
 - `TryLockRemoteRead`, `TryLockRemoteWrite`, and `TryLockRemoteTruncate` remain primitive and do not start renewal.
 - `LockWithRetry` rejects nil `onLeaseLost` before storage access.
 - `LockRemoteTruncate` rejects nil `onLeaseLost` before storage access.
+- `LockRemoteTruncate` starts renewal after successful acquire, and a test observes `ExpireAt` advancing without direct renewal calls.
 - `LockWithRetry` starts renewal after successful acquire, and a test observes `ExpireAt` advancing without direct renewal calls.
 - `RunStreamTruncate` acquires its truncate lock through `LockRemoteTruncate`.
 - `GetLockedMigrations(ctx, onLeaseLost)` starts renewal before loading migrations, hides its internal read lock, and exposes `Unlock(ctx)`.
@@ -325,7 +348,7 @@ Ready validation commands:
 
     ./tools/check/failpoint-go-test.sh br/pkg/restore/log_client -run 'TestGetLockedMigrationsReleasesReadLockOnLoadError|TestGetLockedMigrations.*Renew' -count=1
 
-    ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'TestMergeAndMigrateToRenewsWriteLock|Test.*AppendMigration' -count=1
+    ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'TestMergeAndMigrateToRenewsWriteLock|TestLockForAppendRenewsBothLocks|Test.*AppendMigration' -count=1
 
     ./tools/check/failpoint-go-test.sh br/pkg/task -run TestNonExistent -count=1
 

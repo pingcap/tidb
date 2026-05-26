@@ -39,8 +39,13 @@ func TESTTryLockRemoteExact(ctx context.Context, storage storeapi.Storage, physi
 	return tryLockRemoteExact(ctx, storage, physicalPath, hint, nil)
 }
 
+// TESTStartRenewal exposes the unexported renewal owner for direct testing.
+func TESTStartRenewal(ctx context.Context, l *RemoteLock, onLeaseLost func()) {
+	l.startRenewal(ctx, onLeaseLost)
+}
+
 // TESTStopRenewal signals the renewal goroutine to stop and waits for it to
-// exit. Used by tests that exercise StartRenewal without going through the
+// exit. Used by tests that exercise startRenewal without going through the
 // full Unlock path. Returns immediately if no renewal was started.
 func TESTStopRenewal(l *RemoteLock) {
 	l.stopRenewalIfStarted()

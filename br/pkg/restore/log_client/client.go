@@ -676,12 +676,19 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 
 type LockedMigrations struct {
 	Migs     []*backuppb.Migration
-	ReadLock *objstore.RemoteLock
+	readLock *objstore.RemoteLock
 }
 
-func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrations, retErr error) {
+func (m *LockedMigrations) Unlock(ctx context.Context) error {
+	if m == nil || m.readLock == nil {
+		return nil
+	}
+	return m.readLock.Unlock(ctx)
+}
+
+func (rc *LogClient) GetLockedMigrations(ctx context.Context, onLeaseLost func()) (ret *LockedMigrations, retErr error) {
 	ext := stream.MigrationExtension(rc.storage)
-	readLock, err := ext.GetReadLock(ctx, "restore stream")
+	readLock, err := ext.GetReadLock(ctx, "restore stream", onLeaseLost)
 	if err != nil {
 		return nil, err
 	}
@@ -698,7 +705,7 @@ func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrat
 
 	return &LockedMigrations{
 		Migs:     migs.ListAll(),
-		ReadLock: readLock,
+		readLock: readLock,
 	}, nil
 }
 

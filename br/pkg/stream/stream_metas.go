@@ -652,8 +652,8 @@ type Migrations struct {
 }
 
 // GetReadLock locks the storage and make sure there won't be other one modify this backup.
-func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (*objstore.RemoteLock, error) {
-	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint)
+func (m *MigrationExt) GetReadLock(ctx context.Context, hint string, onLeaseLost func()) (*objstore.RemoteLock, error) {
+	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint, onLeaseLost)
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -775,17 +775,17 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 // lockForAppend implements two-phase locking for append migration operations:
 // 1. Acquire read lock on main path (allows coexistence with restore)
 // 2. Acquire write lock on append path (prevents concurrent appends)
-func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
+func (m MigrationExt) lockForAppend(ctx context.Context, hint string, onLeaseLost func()) (
 	readLock, appendLock *objstore.RemoteLock, err error) {
 	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
-	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)")
+	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)", onLeaseLost)
 	if err != nil {
 		return nil, nil, errors.Annotate(err,
 			"failed to acquire read lock for append operation")
 	}
 
 	// Phase 2: Acquire write lock on append path to prevent concurrent appends
-	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)")
+	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)", onLeaseLost)
 	if err != nil {
 		// If append lock fails, release the read lock
 		readLock.UnlockOnCleanUp(ctx)
@@ -797,14 +797,16 @@ func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
 
 func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (int, error) {
 	log.Info("appending migration, trying to acquire two-phase lock")
-	readLock, appendLock, err := m.lockForAppend(ctx, "AppendMigration")
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	readLock, appendLock, err := m.lockForAppend(workCtx, "AppendMigration", cancel)
 	if err != nil {
 		return 0, err
 	}
 	defer readLock.UnlockOnCleanUp(ctx)
 	defer appendLock.UnlockOnCleanUp(ctx)
 
-	migs, err := m.Load(ctx)
+	migs, err := m.Load(workCtx)
 	if err != nil {
 		return 0, err
 	}
@@ -817,7 +819,7 @@ func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (i
 	if err != nil {
 		return 0, errors.Annotatef(err, "failed to encode the migration %s", mig)
 	}
-	return newSN, m.s.WriteFile(ctx, name, data)
+	return newSN, m.s.WriteFile(workCtx, name, data)
 }
 
 // MergeTo merges migrations from the BASE in the live migrations until the specified sequence number.
@@ -904,9 +906,11 @@ func (m MigrationExt) MergeAndMigrateTo(
 	}
 
 	if !config.skipLockingInTest {
-		lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, lockPrefix,
-			"StreamTruncation: MergeMigration")
+		workCtx, cancel := context.WithCancel(ctx)
+		lock, err := objstore.LockWithRetry(workCtx, objstore.TryLockRemoteWrite, m.s, lockPrefix,
+			"StreamTruncation: MergeMigration", cancel)
 		if err != nil {
+			cancel()
 			result.MigratedTo = MigratedTo{
 				Warnings: []error{
 					errors.Annotate(err, "failed to get the lock, nothing will happen"),
@@ -914,9 +918,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 			return
 		}
 
-		workCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		lock.StartRenewal(workCtx, cancel)
 		defer lock.UnlockOnCleanUp(ctx)
 		ctx = workCtx
 	}

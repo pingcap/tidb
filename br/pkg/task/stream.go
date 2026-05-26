@@ -72,7 +72,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1122,16 +1121,13 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if _, err := objstore.CleanUpStaleTruncateLock(ctx, extStorage); err != nil {
 		return err
 	}
-	lock, err := objstore.TryLockRemoteTruncate(ctx, extStorage, hintOnTruncateLock)
+	lock, err := objstore.LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, cancelFn)
 	if err != nil {
 		return err
 	}
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
 		return lock.Unlock(ctx)
 	})
-	// Truncation can comfortably outlast a single lease TTL on large logs,
-	// so renew in the background and abort the run if the lease is lost.
-	lock.StartRenewal(ctx, cancelFn)
 
 	sp, err := stream.GetTSFromFile(ctx, extStorage, stream.TruncateSafePointFileName)
 	if err != nil {
@@ -1542,7 +1538,7 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
-	migs, err := client.GetLockedMigrations(ctx)
+	migs, err := client.GetLockedMigrations(ctx, cancelFn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1557,12 +1553,8 @@ func restoreStream(
 	})
 
 	if !skipCleanup {
-		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+		defer utils.WithCleanUp(&err, time.Minute, migs.Unlock)
 	}
-	// Renew the read lease in the background; if the lease is permanently
-	// lost, cancel the restore context so in-flight work fails fast rather
-	// than continuing under a stale lock.
-	migs.ReadLock.StartRenewal(ctx, cancelFn)
 
 	defer client.RestoreSSTStatisticFields(&extraFields)
 
@@ -2180,15 +2172,6 @@ func generatePiTRTaskInfo(
 	checkInfo.NeedFullRestore = doFullRestore
 	checkInfo.RestoreTS = cfg.RestoreTS
 	return checkInfo, nil
-}
-
-func cleanUpWithRetErr(errOut *error, f func(ctx context.Context) error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	err := f(ctx)
-	if errOut != nil {
-		*errOut = multierr.Combine(*errOut, err)
-	}
 }
 
 func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) error {

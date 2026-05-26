@@ -161,7 +161,7 @@ var (
 	// before other processes may consider it stale and attempt to reclaim it.
 	LeaseTTL = 5 * time.Minute
 
-	// renewInterval is the cadence at which a StartRenewal-tracked lock
+	// renewInterval is the cadence at which a startRenewal-tracked lock
 	// refreshes its ExpireAt. Renewing at TTL/3 leaves 2*TTL/3 for retry
 	// backoff before the lease would actually expire.
 	renewInterval = LeaseTTL / 3
@@ -234,8 +234,8 @@ const (
 // RemoteLock is the remote lock.
 //
 // Renewal state (mu, renewalState, stopCh, done) is zero-initialized and
-// activated by StartRenewal. Because RemoteLock embeds a sync.Mutex once
-// renewal activates, callers must not copy a RemoteLock after StartRenewal
+// activated by startRenewal. Because RemoteLock embeds a sync.Mutex once
+// renewal activates, callers must not copy a RemoteLock after startRenewal
 // has been invoked on it; pass pointers instead.
 type RemoteLock struct {
 	txnID   uuid.UUID
@@ -256,7 +256,7 @@ func (l *RemoteLock) String() string {
 // Unlock  removes the lock file at the specified path.
 // Removing that file will release the lock.
 //
-// If StartRenewal was previously invoked, Unlock first signals the renewal
+// If startRenewal was previously invoked, Unlock first signals the renewal
 // goroutine to stop and waits for it to exit. This ordering is important:
 // without the wait, an in-flight tryRenew WriteFile could land after our
 // DeleteFile below, recreating a zombie lock file on remote storage.
@@ -365,20 +365,20 @@ func (l *RemoteLock) tryRenew(ctx context.Context) error {
 	return nil
 }
 
-// StartRenewal launches a background goroutine that periodically refreshes
+// startRenewal launches a background goroutine that periodically refreshes
 // this lock's ExpireAt until Unlock is called. onLeaseLost is invoked if the
 // renewal goroutine discovers the lease has been permanently lost (TxnID
 // mismatch, ExpireAt already past, or renewal retries exhausted); callers
 // typically pass a context.CancelFunc to tear down business work.
 //
-// StartRenewal must be called at most once per *RemoteLock. A second call
+// startRenewal must be called at most once per *RemoteLock. A second call
 // panics; this surfaces ownership-discipline bugs rather than silently
 // double-starting a pair of conflicting renewal goroutines.
-func (l *RemoteLock) StartRenewal(ctx context.Context, onLeaseLost func()) {
+func (l *RemoteLock) startRenewal(ctx context.Context, onLeaseLost func()) {
 	l.mu.Lock()
 	if l.renewalState != renewalIdle {
 		l.mu.Unlock()
-		log.Panic("StartRenewal called twice on the same lock; each RemoteLock has exactly one owner.",
+		log.Panic("startRenewal called twice on the same lock; each RemoteLock has exactly one owner.",
 			zap.Stringer("lock", l))
 	}
 	l.renewalState = renewalRunning
@@ -483,12 +483,23 @@ const (
 	lockRetryTimes = 60
 )
 
+func validateOnLeaseLost(onLeaseLost func()) error {
+	if onLeaseLost == nil {
+		return errors.New("onLeaseLost callback is required for lease lock renewal")
+	}
+	return nil
+}
+
 // LockWithRetry lock with retry.
 //
 // On each conflict it opportunistically deletes any stale (ExpireAt-past +
 // double-confirmed) lock files in the family rooted at `lockPath`, then
 // continues with the standard exponential backoff.
-func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, lockPath, hint string) (*RemoteLock, error) {
+func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, lockPath, hint string, onLeaseLost func()) (*RemoteLock, error) {
+	if err := validateOnLeaseLost(onLeaseLost); err != nil {
+		return nil, err
+	}
+
 	const JitterMs = 5000
 
 	retry := utils.InitialRetryState(lockRetryTimes, 1*time.Second, 60*time.Second)
@@ -497,6 +508,7 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	for {
 		lock, lockErr := locker(ctx, storage, lockPath, hint)
 		if lockErr == nil {
+			lock.startRenewal(ctx, onLeaseLost)
 			return lock, nil
 		}
 		err = lockErr
@@ -527,7 +539,8 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	}
 }
 
-// TryLockRemoteWrite try lock.
+// TryLockRemoteWrite is a single-attempt write-lock primitive. It does not
+// retry, clean up stale locks, or start renewal.
 func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
 	var target string
 	var acquireKind lockAcquireKind
@@ -554,7 +567,8 @@ func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hin
 	})
 }
 
-// TryLockRemoteRead try lock.
+// TryLockRemoteRead is a single-attempt read-lock primitive. It does not
+// retry, clean up stale locks, or start renewal.
 func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
 	if path != migrationLockPath {
 		return nil, errors.Errorf("unknown lock family %s", path)
@@ -569,7 +583,9 @@ func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint
 	})
 }
 
-// TryLockRemoteTruncate tries to create an instance lock for truncation.
+// TryLockRemoteTruncate is a single-attempt primitive that tries to create an
+// instance lock for truncation. It does not retry, clean up stale locks, or
+// start renewal. Production truncate callers should use LockRemoteTruncate.
 func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string) (*RemoteLock, error) {
 	generation, err := newLockGeneration()
 	if err != nil {
@@ -579,4 +595,18 @@ func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint s
 	return tryLockRemoteExact(ctx, storage, target, hint, func(ctx VerifyWriteContext) error {
 		return verifyLockFamily(ctx, truncateLockPath, lockAcquireTruncate)
 	})
+}
+
+// LockRemoteTruncate acquires a truncate lock once and starts lease renewal.
+func LockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string, onLeaseLost func()) (*RemoteLock, error) {
+	if err := validateOnLeaseLost(onLeaseLost); err != nil {
+		return nil, err
+	}
+
+	lock, err := TryLockRemoteTruncate(ctx, storage, hint)
+	if err != nil {
+		return nil, err
+	}
+	lock.startRenewal(ctx, onLeaseLost)
+	return lock, nil
 }

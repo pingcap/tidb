@@ -2517,6 +2517,49 @@ func (m *mockBatchProcessor) ProcessBatch(
 	return m.processFunc(ctx, files, entries, filterTS, cf)
 }
 
+type loadPausingStorage struct {
+	storeapi.Storage
+
+	loadStarted chan struct{}
+	releaseLoad chan struct{}
+	once        sync.Once
+}
+
+func (s *loadPausingStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error {
+	if opt != nil && opt.SubDir == "v1/migrations" {
+		s.once.Do(func() {
+			close(s.loadStarted)
+		})
+		select {
+		case <-s.releaseLoad:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.Storage.WalkDir(ctx, opt, fn)
+}
+
+func requireSingleReadLockMeta(t *testing.T, ctx context.Context, stg storeapi.Storage) (string, objstore.LockMeta) {
+	t.Helper()
+
+	var paths []string
+	require.NoError(t, stg.WalkDir(ctx, &storeapi.WalkOption{
+		SubDir:    "v1",
+		ObjPrefix: "LOCK.READ.",
+	}, func(p string, _ int64) error {
+		paths = append(paths, p)
+		return nil
+	}))
+	require.Len(t, paths, 1)
+
+	data, err := stg.ReadFile(ctx, paths[0])
+	require.NoError(t, err)
+
+	var meta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(data, &meta))
+	return paths[0], meta
+}
+
 func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
 	ctx := context.Background()
 	stg, err := objstore.NewLocalStorage(t.TempDir())
@@ -2529,7 +2572,7 @@ func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
 	require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
 
 	client := logclient.TEST_NewLogClientWithStorage(stg)
-	_, err = client.GetLockedMigrations(ctx)
+	_, err = client.GetLockedMigrations(ctx, func() {})
 	require.Error(t, err, "expected Load() to fail on malformed migration file")
 
 	var lingering []string
@@ -2541,4 +2584,59 @@ func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
 		return nil
 	}))
 	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
+}
+
+func TestGetLockedMigrationsRenewsReadLockWhileLoadingMigrations(t *testing.T) {
+	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(90*time.Millisecond, 10*time.Millisecond, 3, 5*time.Millisecond)
+	t.Cleanup(restoreLeaseConstants)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	baseStorage, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	stg := &loadPausingStorage{
+		Storage:     baseStorage,
+		loadStarted: make(chan struct{}),
+		releaseLoad: make(chan struct{}),
+	}
+
+	client := logclient.TEST_NewLogClientWithStorage(stg)
+	type getLockedMigrationsResult struct {
+		migs *logclient.LockedMigrations
+		err  error
+	}
+	done := make(chan getLockedMigrationsResult, 1)
+	go func() {
+		migs, err := client.GetLockedMigrations(ctx, func() {})
+		done <- getLockedMigrationsResult{migs: migs, err: err}
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-stg.loadStarted:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+
+	lockPath, initialMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+	require.Eventually(t, func() bool {
+		currentPath, currentMeta := requireSingleReadLockMeta(t, ctx, baseStorage)
+		return currentPath == lockPath && currentMeta.ExpireAt.After(initialMeta.ExpireAt)
+	}, time.Second, 10*time.Millisecond)
+
+	close(stg.releaseLoad)
+	require.Eventually(t, func() bool {
+		select {
+		case res := <-done:
+			require.NoError(t, res.err)
+			require.NotNil(t, res.migs)
+			require.NoError(t, res.migs.Unlock(ctx))
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
 }
