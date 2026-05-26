@@ -30,6 +30,12 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 	expectedAddrsStr := "127.0.0.1:2388,127.0.0.1:2389"
 	expectedAddrs := strings.Split(expectedAddrsStr, ",")
 
+	// Test case where keyspaceMeta is nil
+	keyspaceMetaServiceGroup, err := metaservice.GetKeyspaceMetaServiceGroup(nil, globalMetaAddrs)
+	require.Nil(t, keyspaceMetaServiceGroup)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, metaservice.ErrNilKeyspaceMeta))
+
 	// Test case with a valid group ID and addresses
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
 		Config: map[string]string{
@@ -38,7 +44,7 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 		},
 	}
 
-	keyspaceMetaServiceGroup, err := metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
 	require.NoError(t, err)
 	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
 
