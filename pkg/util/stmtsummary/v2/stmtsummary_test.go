@@ -15,8 +15,10 @@
 package stmtsummary
 
 import (
+	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +26,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
@@ -133,6 +137,45 @@ func TestStmtSummaryPersistEvicted(t *testing.T) {
 		defer storage.Unlock()
 		return len(storage.evicted) != 2
 	}, 100*time.Millisecond, 10*time.Millisecond, "evicted count should remain 2 after disabling")
+}
+
+func TestStmtSummaryPersistEvictedDoesNotPersistLoggedRecordsAsAggregate(t *testing.T) {
+	var logBuf bytes.Buffer
+	storage := &stmtLogStorage{
+		logger: zap.New(zapcore.NewCore(&stmtLogEncoder{}, zapcore.AddSync(&logBuf), zapcore.InfoLevel)),
+	}
+
+	ss := NewStmtSummary4Test(2)
+	ss.storage = storage
+	require.NoError(t, ss.SetPersistEvicted(true))
+
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3")) // evicts digest1
+	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
+	ss.Close()
+
+	type loggedRecord struct {
+		Digest    string `json:"digest"`
+		ExecCount int64  `json:"exec_count"`
+		Evicted   bool   `json:"evicted"`
+	}
+
+	var totalExecCount int64
+	evictedDigests := make([]string, 0, 2)
+	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		var record loggedRecord
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		totalExecCount += record.ExecCount
+		if record.Evicted {
+			evictedDigests = append(evictedDigests, record.Digest)
+			continue
+		}
+		require.NotEmpty(t, record.Digest, "logged evicted records should not also be persisted as the aggregate row")
+	}
+
+	require.ElementsMatch(t, []string{"digest1", "digest2"}, evictedDigests)
+	require.Equal(t, int64(4), totalExecCount)
 }
 
 func TestWindowEvictedCountResetOnRotate(t *testing.T) {
