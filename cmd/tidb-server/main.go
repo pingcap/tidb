@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
@@ -93,7 +92,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"github.com/tikv/pd/client/constants"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 )
@@ -316,8 +314,9 @@ func main() {
 	}
 
 	var standbyController server.StandbyController
-	activationKeyspaceID := constants.NullKeyspaceID
+	var activationKeyspaceID uint32
 	var activationMetadata map[string]string
+	hasActivationRequest := false
 	if config.GetGlobalConfig().Standby.StandByMode {
 		standbyController = standby.NewLoadKeyspaceController()
 	}
@@ -337,14 +336,17 @@ func main() {
 		if c, ok := standbyController.(*standby.LoadKeyspaceController); ok {
 			activationKeyspaceID = c.ActivationKeyspaceID()
 			activationMetadata = c.ActivationMetadata()
+			hasActivationRequest = true
 		}
 	}
 
 	signal.SetupUSR1Handler()
 	err = registerStores()
 	terror.MustNil(err)
-	err = prepareKeyspaceObservability(activationKeyspaceID, activationMetadata)
-	terror.MustNil(err)
+	if deploymode.IsStarter() && hasActivationRequest {
+		err = prepareKeyspaceObservabilityForStarter(activationKeyspaceID, activationMetadata)
+		terror.MustNil(err)
+	}
 	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
 
@@ -1161,36 +1163,33 @@ const (
 	keyspaceNameMetricLabel = "keyspace_name"
 )
 
-func prepareKeyspaceObservability(keyspaceID uint32, metadata map[string]string) error {
+func prepareKeyspaceObservabilityForStarter(keyspaceID uint32, metadata map[string]string) error {
 	cfg := config.GetGlobalConfig()
-	if !kerneltype.IsNextGen() || cfg.Store != config.StoreTypeTiKV {
+	if cfg.Store != config.StoreTypeTiKV {
 		return nil
 	}
-	metricscommon.SetConstLabels(keyspaceNameMetricLabel, cfg.KeyspaceName)
-	return prepareKeyspaceObservabilityWithMetadata(keyspaceID, metadata, cfg.KeyspaceName, deploymode.IsStarter())
+	return prepareKeyspaceObservabilityWithMetadata(keyspaceID, metadata, cfg.KeyspaceName)
 }
 
-func prepareKeyspaceObservabilityWithMetadata(keyspaceID uint32, metadata map[string]string, keyspaceName string, includeConfiguredFields bool) error {
+func prepareKeyspaceObservabilityWithMetadata(keyspaceID uint32, metadata map[string]string, keyspaceName string) error {
 	resolvedValues := config.KeyspaceObservabilityValues{
 		MetricLabels: map[string]string{
 			keyspaceNameMetricLabel: keyspaceName,
 		},
 	}
-	if keyspaceID != constants.NullKeyspaceID {
-		resolvedValues.MetricLabels[keyspaceIDMetricLabel] = fmt.Sprint(keyspaceID)
+	resolvedValues.MetricLabels[keyspaceIDMetricLabel] = fmt.Sprint(keyspaceID)
+
+	copiedConfig := *config.GetGlobalConfig()
+	if err := copiedConfig.ResolveKeyspaceObservability(metadata); err != nil {
+		return err
 	}
-	if includeConfiguredFields {
-		copiedConfig := *config.GetGlobalConfig()
-		if err := copiedConfig.ResolveKeyspaceObservability(metadata); err != nil {
-			return err
-		}
-		configuredValues := copiedConfig.KeyspaceObservabilityValues.Clone()
-		for k, v := range configuredValues.MetricLabels {
-			resolvedValues.MetricLabels[k] = v
-		}
-		resolvedValues.SlowLogFields = configuredValues.SlowLogFields
-		resolvedValues.StmtLogFields = configuredValues.StmtLogFields
+	configuredValues := copiedConfig.KeyspaceObservabilityValues.Clone()
+	for k, v := range configuredValues.MetricLabels {
+		resolvedValues.MetricLabels[k] = v
 	}
+	resolvedValues.SlowLogFields = configuredValues.SlowLogFields
+	resolvedValues.StmtLogFields = configuredValues.StmtLogFields
+
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceObservabilityValues = resolvedValues
 	})

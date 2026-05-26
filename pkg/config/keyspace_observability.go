@@ -17,20 +17,22 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/prometheus/common/model"
 )
 
 // KeyspaceObservability maps metadata entries to observability outputs.
 type KeyspaceObservability struct {
-	Fields []KeyspaceObservabilityField `toml:"fields" json:"fields"`
+	Fields []KeyspaceObservabilityField `toml:"fields" json:"fields,omitempty"`
 }
 
 // KeyspaceObservabilityField describes one metadata entry mapping.
 type KeyspaceObservabilityField struct {
-	Source       string `toml:"source" json:"source"`
+	Source       string `toml:"source" json:"source,omitempty"`
 	MetricLabel  string `toml:"metric-label" json:"metric-label,omitempty"`
 	SlowLogField string `toml:"slow-log-field" json:"slow-log-field,omitempty"`
 	StmtLogField string `toml:"stmt-log-field" json:"stmt-log-field,omitempty"`
-	Required     bool   `toml:"required" json:"required"`
+	Required     bool   `toml:"required" json:"required,omitempty"`
 }
 
 // KeyspaceObservabilityValues stores resolved metadata values.
@@ -365,19 +367,7 @@ func validKeyspaceObservabilityLogFieldName(field string) bool {
 }
 
 func validPrometheusLabelName(label string) bool {
-	for i, r := range label {
-		if i == 0 {
-			if r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' {
-				continue
-			}
-			return false
-		}
-		if r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			continue
-		}
-		return false
-	}
-	return label != ""
+	return model.LabelName(label).IsValid() && model.LabelName(label).IsValidLegacy()
 }
 
 // ResolveKeyspaceObservability resolves configured output values from metadata.
@@ -403,7 +393,7 @@ func (c *Config) ResolveKeyspaceObservability(values map[string]string) error {
 			resolved.StmtLogFields = append(resolved.StmtLogFields, KeyspaceObservabilityFieldPair{Key: field.StmtLogField, Value: value})
 		}
 	}
-	c.KeyspaceObservabilityValues = resolved.Clone()
+	c.KeyspaceObservabilityValues = resolved
 	return nil
 }
 

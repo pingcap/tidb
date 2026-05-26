@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/client/constants"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
@@ -159,6 +158,11 @@ func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
 func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
+
+	err := prepareKeyspaceObservabilityWithMetadata(42, nil, "ks")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"keyspace_id": "42", "keyspace_name": "ks"}, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
+
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceObservability = config.KeyspaceObservability{
 			Fields: []config.KeyspaceObservabilityField{{
@@ -171,9 +175,9 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 		}
 	})
 
-	err := prepareKeyspaceObservabilityWithMetadata(42, map[string]string{
+	err = prepareKeyspaceObservabilityWithMetadata(42, map[string]string{
 		"meta_a": "value_a",
-	}, "ks", true)
+	}, "ks")
 	require.NoError(t, err)
 
 	cfg := config.GetGlobalConfig()
@@ -182,34 +186,15 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 	require.Equal(t, []config.KeyspaceObservabilityFieldPair{{Key: "stmt_meta_a", Value: "value_a"}}, cfg.GetKeyspaceObservabilityStmtLogFields())
 }
 
-func TestSetupKeyspaceObservabilityForNonStarter(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-
-	err := prepareKeyspaceObservabilityWithMetadata(42, map[string]string{
-		"meta_a": "value_a",
-	}, "ks", false)
-	require.NoError(t, err)
-
-	cfg := config.GetGlobalConfig()
-	require.Equal(t, map[string]string{"keyspace_id": "42", "keyspace_name": "ks"}, cfg.GetKeyspaceObservabilityMetricLabels())
-	require.Empty(t, cfg.GetKeyspaceObservabilitySlowLogFields())
-	require.Empty(t, cfg.GetKeyspaceObservabilityStmtLogFields())
-}
-
-func TestSetupKeyspaceObservabilityForStartSkipsClassic(t *testing.T) {
-	if !kerneltype.IsClassic() {
-		t.Skip("only verifies the classic-mode short-circuit path")
-	}
-
+func TestSetupKeyspaceObservabilityForStarterSkipsNonTiKV(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Store = config.StoreTypeTiKV
+		conf.Store = config.StoreTypeUniStore
 		conf.Path = "invalid-pd-path"
 		conf.KeyspaceName = "test_keyspace"
 	})
 
-	require.NoError(t, prepareKeyspaceObservability(constants.NullKeyspaceID, nil))
+	require.NoError(t, prepareKeyspaceObservabilityForStarter(42, nil))
 	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }

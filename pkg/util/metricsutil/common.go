@@ -50,7 +50,7 @@ import (
 
 var componentName = caller.Component("tidb-metrics-util")
 
-const defaultKeyspaceLabel = "keyspace_id"
+const keyspaceIDLabel = "keyspace_id"
 
 // RegisterMetrics registers metrics with keyspace metadata labels when available.
 func RegisterMetrics() error {
@@ -118,7 +118,7 @@ func registerMetrics() error {
 	labels := cloneConstLabels()
 	maps.Copy(labels, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 	if len(labels) > 0 {
-		metricscommon.SetConstLabelsFromMap(labels)
+		setConstLabels(labels)
 	}
 	initMetrics()
 	return nil
@@ -134,8 +134,16 @@ func cloneConstLabels() map[string]string {
 
 func setKeyspaceIDConstLabel(keyspaceID uint32) {
 	labels := cloneConstLabels()
-	labels[defaultKeyspaceLabel] = fmt.Sprint(keyspaceID)
-	metricscommon.SetConstLabelsFromMap(labels)
+	labels[keyspaceIDLabel] = fmt.Sprint(keyspaceID)
+	setConstLabels(labels)
+}
+
+func setConstLabels(labels map[string]string) {
+	kv := make([]string, 0, len(labels)*2)
+	for k, v := range labels {
+		kv = append(kv, k, v)
+	}
+	metricscommon.SetConstLabels(kv...)
 }
 
 func getKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {
