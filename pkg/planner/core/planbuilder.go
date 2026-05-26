@@ -3862,18 +3862,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	if txn == nil || !txn.Valid() {
 		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction")
 	}
-	toTS := txn.StartTS()
-	if toTS == 0 {
-		return nil, errors.New("RefreshMaterializedViewImplementStmt: invalid transaction start tso")
-	}
 
 	if stmt.LastSuccessfulRefreshReadTSO < 0 {
 		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: invalid LastSuccessfulRefreshReadTSO %d", stmt.LastSuccessfulRefreshReadTSO)
 	}
 	fromTS := uint64(stmt.LastSuccessfulRefreshReadTSO)
-	if fromTS > toTS {
-		return nil, errors.Errorf("RefreshMaterializedViewImplementStmt: invalid refresh tso window (%d, %d]", fromTS, toTS)
-	}
 
 	optimizeSelect := func(optCtx context.Context, sel *ast.SelectStmt) (base.PhysicalPlan, error) {
 		nodeW := resolve.NewNodeW(sel)
@@ -3905,7 +3898,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return pp, nil
 	}
 
-	res, err := mvmerge.Build(b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS, ToTS: toTS}, nil)
+	res, err := mvmerge.Build(b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS}, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -105,13 +105,14 @@ type executorBuilder struct {
 	hasLock bool
 	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness      bool
-	txnScope         string
-	readReplicaScope string
-	inUpdateStmt     bool
-	inDeleteStmt     bool
-	inInsertStmt     bool
-	inSelectLockStmt bool
+	isStaleness           bool
+	txnScope              string
+	readReplicaScope      string
+	inUpdateStmt          bool
+	inDeleteStmt          bool
+	inInsertStmt          bool
+	inSelectLockStmt      bool
+	inMViewDeltaMergeStmt bool
 
 	// forDataReaderBuilder indicates whether the builder is used by a dataReaderBuilder.
 	// When forDataReader is true, the builder should use the dataReaderTS as the executor read ts. This is because
@@ -189,6 +190,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildRefreshMaterializedView(v)
 	case *plannercore.PurgeMaterializedViewLog:
 		return b.buildPurgeMaterializedViewLog(v)
+	case *plannercore.MVDeltaMerge:
+		return b.buildMViewDeltaMerge(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *plannercore.Delete:
@@ -2190,7 +2193,7 @@ func (b *executorBuilder) buildExpand(v *plannercore.PhysicalExpand) exec.Execut
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2218,10 +2221,14 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
+}
+
+func (b *executorBuilder) shouldReadByForUpdateTS() bool {
+	return b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt
 }
 
 func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) exec.Executor {
@@ -2238,7 +2245,7 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) exec.
 	return e
 }
 
-// `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
+// `getSnapshotTS` returns for-update-ts for write/lock style statements otherwise the isolation read ts.
 // Please notice that in RC isolation, the above two ts are the same
 func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	if b.forDataReaderBuilder {
@@ -2246,7 +2253,7 @@ func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	}
 
 	txnManager := sessiontxn.GetTxnManager(b.ctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+	if b.shouldReadByForUpdateTS() {
 		return txnManager.GetStmtForUpdateTS()
 	}
 	return txnManager.GetStmtReadTS()
@@ -2259,7 +2266,7 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	var err error
 
 	txnManager := sessiontxn.GetTxnManager(b.ctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+	if b.shouldReadByForUpdateTS() {
 		snapshot, err = txnManager.GetSnapshotWithStmtForUpdateTS()
 	} else {
 		snapshot, err = txnManager.GetSnapshotWithStmtReadTS()

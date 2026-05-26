@@ -52,10 +52,10 @@ const (
 //      [all delta payload columns][all MV columns][optional rowid handle].
 // The executor consumes this one merged source stream and applies aggregate-specific update rules by offset.
 
-// BuildOptions defines the commit-ts window (FromTS, ToTS] used to read incremental mv-log rows.
+// BuildOptions defines the commit-ts lower bound (FromTS, +inf) used to read incremental mv-log rows.
+// Upper bound is provided by statement snapshot ts (for_update_ts at execution time).
 type BuildOptions struct {
 	FromTS uint64
-	ToTS   uint64
 }
 
 // BuildResult is the merge source produced by Build.
@@ -1127,7 +1127,6 @@ func stripAllParentheses(expr ast.ExprNode) ast.ExprNode {
 //	  SUM(IF(old_new = -1, 1, 0)) AS __mvmerge_removed_rows   -- only when MIN/MAX exists
 //	FROM <db>.<mlog>
 //	WHERE _tidb_commit_ts > FromTS
-//	  AND _tidb_commit_ts <= ToTS
 //	  AND <MV WHERE predicate>
 //	GROUP BY <group keys from MV definition>
 //
@@ -1145,10 +1144,7 @@ func buildMLogDeltaSelect(
 ) (*ast.SelectStmt, error) {
 	buildMLogWhere := func() (ast.ExprNode, error) {
 		tsCol := colExpr(model.ExtraCommitTSName.L)
-		var where ast.ExprNode = andExpr(
-			binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", "")),
-			binary(opcode.LE, tsCol, ast.NewValueExpr(opt.ToTS, "", "")),
-		)
+		var where ast.ExprNode = binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", ""))
 		if mvSel.Where != nil {
 			mvWhere, err := cloneExprByRestore(sctx, mvSel.Where)
 			if err != nil {
