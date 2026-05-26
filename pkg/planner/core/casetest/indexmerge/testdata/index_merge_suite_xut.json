@@ -479,9 +479,9 @@
       {
         "SQL": "select * from t where a=1 or a=2 order by c; -- 5. duplicated column a's conditions and lack of column b's conditions",
         "Plan": [
-          "Sort root  test.t.c",
+          "Projection root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e",
           "└─IndexLookUp root  ",
-          "  ├─IndexRangeScan(Build) cop[tikv] table:t, index:a(a) range:[1,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t, index:ac(a, c) range:[1,1], [2,2], keep order:true, stats:pseudo",
           "  └─TableRowIDScan(Probe) cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -490,7 +490,7 @@
         "Plan": [
           "Sort root  test.t.c",
           "└─IndexLookUp root  ",
-          "  ├─IndexRangeScan(Build) cop[tikv] table:t, index:a(a) range:[1,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t, index:a(a) range:[1,1], [2,2], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },

@@ -389,7 +389,7 @@ a	b
 explain format='plan_tree' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0;
 id	task	access object	operator info
 TableReader	root	partition:p0	data:Selection
-└─Selection	cop[tikv]		or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0))
+└─Selection	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -1, 0)
   └─TableFullScan	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0;
 a	b
@@ -434,7 +434,7 @@ a	b
 explain format='plan_tree' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1;
 id	task	access object	operator info
 TableReader	root	partition:p0,p1	data:Selection
-└─Selection	cop[tikv]		or(eq(executor__partition__partition_boundaries.t.a, -1), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1)))
+└─Selection	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -1, 0, 1)
   └─TableFullScan	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1;
 a	b
@@ -478,7 +478,7 @@ a	b
 explain format='plan_tree' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2;
 id	task	access object	operator info
 TableReader	root	partition:p0,p1,p2	data:Selection
-└─Selection	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0)), or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2)))
+└─Selection	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -1, 0, 1, 2)
   └─TableFullScan	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2;
 a	b
@@ -521,7 +521,7 @@ a	b
 explain format='plan_tree' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3;
 id	task	access object	operator info
 TableReader	root	partition:p0,p1,p2,p3	data:Selection
-└─Selection	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0)), or(eq(executor__partition__partition_boundaries.t.a, 1), or(eq(executor__partition__partition_boundaries.t.a, 2), eq(executor__partition__partition_boundaries.t.a, 3))))
+└─Selection	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -1, 0, 1, 2, 3)
   └─TableFullScan	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3;
 a	b
@@ -563,7 +563,7 @@ a	b
 explain format='plan_tree' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4;
 id	task	access object	operator info
 TableReader	root	partition:p0,p1,p2,p3,p4	data:Selection
-└─Selection	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1))), or(eq(executor__partition__partition_boundaries.t.a, 2), or(eq(executor__partition__partition_boundaries.t.a, 3), eq(executor__partition__partition_boundaries.t.a, 4))))
+└─Selection	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -1, 0, 1, 2, 3, 4)
   └─TableFullScan	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4;
 a	b
@@ -604,7 +604,7 @@ a	b
 explain format='plan_tree' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5;
 id	task	access object	operator info
 TableReader	root	partition:p0,p1,p2,p3,p4,p5	data:Selection
-└─Selection	cop[tikv]		or(or(eq(executor__partition__partition_boundaries.t.a, -1), or(eq(executor__partition__partition_boundaries.t.a, 0), eq(executor__partition__partition_boundaries.t.a, 1))), or(or(eq(executor__partition__partition_boundaries.t.a, 2), eq(executor__partition__partition_boundaries.t.a, 3)), or(eq(executor__partition__partition_boundaries.t.a, 4), eq(executor__partition__partition_boundaries.t.a, 5))))
+└─Selection	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -1, 0, 1, 2, 3, 4, 5)
   └─TableFullScan	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5;
 a	b
@@ -644,7 +644,7 @@ a	b
 explain format='plan_tree' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6;
 id	task	access object	operator info
 TableReader	root	partition:all	data:Selection
-└─Selection	cop[tikv]		or(or(or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0)), or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2))), or(or(eq(executor__partition__partition_boundaries.t.a, 3), eq(executor__partition__partition_boundaries.t.a, 4)), or(eq(executor__partition__partition_boundaries.t.a, 5), eq(executor__partition__partition_boundaries.t.a, 6))))
+└─Selection	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -1, 0, 1, 2, 3, 4, 5, 6)
   └─TableFullScan	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6;
 a	b
@@ -686,7 +686,7 @@ a	b
 explain format='plan_tree' SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6 OR a = 7;
 id	task	access object	operator info
 TableReader	root	partition:all	data:Selection
-└─Selection	cop[tikv]		or(or(or(eq(executor__partition__partition_boundaries.t.a, -1), eq(executor__partition__partition_boundaries.t.a, 0)), or(eq(executor__partition__partition_boundaries.t.a, 1), eq(executor__partition__partition_boundaries.t.a, 2))), or(or(eq(executor__partition__partition_boundaries.t.a, 3), eq(executor__partition__partition_boundaries.t.a, 4)), or(eq(executor__partition__partition_boundaries.t.a, 5), or(eq(executor__partition__partition_boundaries.t.a, 6), eq(executor__partition__partition_boundaries.t.a, 7)))))
+└─Selection	cop[tikv]		in(executor__partition__partition_boundaries.t.a, -1, 0, 1, 2, 3, 4, 5, 6, 7)
   └─TableFullScan	cop[tikv]	table:t	keep order:false
 SELECT * FROM t WHERE 1 = 0 OR a = -1 OR a = 0 OR a = 1 OR a = 2 OR a = 3 OR a = 4 OR a = 5 OR a = 6 OR a = 7;
 a	b

@@ -272,16 +272,16 @@
         "SQL": "explain format = 'plan_tree' select * from tlist where a=0 or a=7",
         "DynamicPlan": [
           "TableReader root partition:p0,p2 data:Selection",
-          "└─Selection cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "└─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 7)",
           "  └─TableFullScan cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 7)",
           "│   └─TableFullScan cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
           "└─TableReader root  data:Selection",
-          "  └─Selection cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "  └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 7)",
           "    └─TableFullScan cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
         ]
       },
@@ -289,19 +289,19 @@
         "SQL": "explain format = 'plan_tree' select * from tlist where a=0 or a=1 or a=6 or a=11",
         "DynamicPlan": [
           "TableReader root partition:p0,p2,p3 data:Selection",
-          "└─Selection cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "└─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 6, 11)",
           "  └─TableFullScan cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 6, 11)",
           "│   └─TableFullScan cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 6, 11)",
           "│   └─TableFullScan cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
           "└─TableReader root  data:Selection",
-          "  └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "  └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 6, 11)",
           "    └─TableFullScan cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
         ]
       },
@@ -309,16 +309,16 @@
         "SQL": "explain format = 'plan_tree' select * from tcollist where a=0 or a=7",
         "DynamicPlan": [
           "TableReader root partition:p0,p2 data:Selection",
-          "└─Selection cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "└─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 7)",
           "  └─TableFullScan cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 7)",
           "│   └─TableFullScan cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
           "└─TableReader root  data:Selection",
-          "  └─Selection cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "  └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 7)",
           "    └─TableFullScan cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo"
         ]
       },
@@ -326,19 +326,19 @@
         "SQL": "explain format = 'plan_tree' select * from tcollist where a=0 or a=1 or a=6 or a=11",
         "DynamicPlan": [
           "TableReader root partition:p0,p2,p3 data:Selection",
-          "└─Selection cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "└─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 6, 11)",
           "  └─TableFullScan cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 6, 11)",
           "│   └─TableFullScan cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 6, 11)",
           "│   └─TableFullScan cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo",
           "└─TableReader root  data:Selection",
-          "  └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "  └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 6, 11)",
           "    └─TableFullScan cop[tikv] table:tcollist, partition:p3 keep order:false, stats:pseudo"
         ]
       },
@@ -1059,16 +1059,16 @@
         "SQL": "explain format = 'plan_tree' select * from tlist where a=0 or a=7",
         "DynamicPlan": [
           "TableReader root partition:p0,p2 data:Selection",
-          "└─Selection cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "└─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 7)",
           "  └─TableFullScan cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 7)",
           "│   └─TableFullScan cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
           "└─TableReader root  data:Selection",
-          "  └─Selection cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "  └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 7)",
           "    └─TableFullScan cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
         ]
       },
@@ -1076,19 +1076,19 @@
         "SQL": "explain format = 'plan_tree' select * from tlist where a=0 or a=1 or a=6 or a=11",
         "DynamicPlan": [
           "TableReader root partition:p0,p2,p3 data:Selection",
-          "└─Selection cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "└─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 6, 11)",
           "  └─TableFullScan cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 6, 11)",
           "│   └─TableFullScan cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 6, 11)",
           "│   └─TableFullScan cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
           "└─TableReader root  data:Selection",
-          "  └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "  └─Selection cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 6, 11)",
           "    └─TableFullScan cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
         ]
       },
@@ -1096,16 +1096,16 @@
         "SQL": "explain format = 'plan_tree' select * from tcollist where a=0 or a=7",
         "DynamicPlan": [
           "TableReader root partition:p0,p2 data:Selection",
-          "└─Selection cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "└─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 7)",
           "  └─TableFullScan cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 7)",
           "│   └─TableFullScan cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
           "└─TableReader root  data:Selection",
-          "  └─Selection cop[tikv]  or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 7))",
+          "  └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 7)",
           "    └─TableFullScan cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo"
         ]
       },
@@ -1113,19 +1113,19 @@
         "SQL": "explain format = 'plan_tree' select * from tcollist where a=0 or a=1 or a=6 or a=11",
         "DynamicPlan": [
           "TableReader root partition:p0,p2,p3 data:Selection",
-          "└─Selection cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "└─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 6, 11)",
           "  └─TableFullScan cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 6, 11)",
           "│   └─TableFullScan cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
           "├─TableReader root  data:Selection",
-          "│ └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "│ └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 6, 11)",
           "│   └─TableFullScan cop[tikv] table:tcollist, partition:p2 keep order:false, stats:pseudo",
           "└─TableReader root  data:Selection",
-          "  └─Selection cop[tikv]  or(or(eq(list_partition_pruning.tcollist.a, 0), eq(list_partition_pruning.tcollist.a, 1)), or(eq(list_partition_pruning.tcollist.a, 6), eq(list_partition_pruning.tcollist.a, 11)))",
+          "  └─Selection cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 6, 11)",
           "    └─TableFullScan cop[tikv] table:tcollist, partition:p3 keep order:false, stats:pseudo"
         ]
       },
@@ -1722,16 +1722,16 @@
         "SQL": "explain format = 'plan_tree' select * from t where b = 1 OR b = 2",
         "DynamicPlan": [
           "IndexReader root partition:all index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:t, index:b(b) range:[1,2], keep order:false"
+          "└─IndexRangeScan cop[tikv] table:t, index:b(b) range:[1,1], [2,2], keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─IndexReader root  index:IndexRangeScan",
-          "│ └─IndexRangeScan cop[tikv] table:t, partition:P0, index:b(b) range:[1,2], keep order:false",
+          "│ └─IndexRangeScan cop[tikv] table:t, partition:P0, index:b(b) range:[1,1], [2,2], keep order:false",
           "├─IndexReader root  index:IndexRangeScan",
-          "│ └─IndexRangeScan cop[tikv] table:t, partition:p1, index:b(b) range:[1,2], keep order:false",
+          "│ └─IndexRangeScan cop[tikv] table:t, partition:p1, index:b(b) range:[1,1], [2,2], keep order:false",
           "└─IndexReader root  index:IndexRangeScan",
-          "  └─IndexRangeScan cop[tikv] table:t, partition:P2, index:b(b) range:[1,2], keep order:false"
+          "  └─IndexRangeScan cop[tikv] table:t, partition:P2, index:b(b) range:[1,1], [2,2], keep order:false"
         ]
       },
       {
@@ -1849,14 +1849,14 @@
         "SQL": "explain format = 'plan_tree' select * from t partition (p1,P2) where b = 1 OR b = 2",
         "DynamicPlan": [
           "IndexReader root partition:p1,P2 index:IndexRangeScan",
-          "└─IndexRangeScan cop[tikv] table:t, index:b(b) range:[1,2], keep order:false"
+          "└─IndexRangeScan cop[tikv] table:t, index:b(b) range:[1,1], [2,2], keep order:false"
         ],
         "StaticPlan": [
           "PartitionUnion root  ",
           "├─IndexReader root  index:IndexRangeScan",
-          "│ └─IndexRangeScan cop[tikv] table:t, partition:p1, index:b(b) range:[1,2], keep order:false",
+          "│ └─IndexRangeScan cop[tikv] table:t, partition:p1, index:b(b) range:[1,1], [2,2], keep order:false",
           "└─IndexReader root  index:IndexRangeScan",
-          "  └─IndexRangeScan cop[tikv] table:t, partition:P2, index:b(b) range:[1,2], keep order:false"
+          "  └─IndexRangeScan cop[tikv] table:t, partition:P2, index:b(b) range:[1,1], [2,2], keep order:false"
         ]
       }
     ]

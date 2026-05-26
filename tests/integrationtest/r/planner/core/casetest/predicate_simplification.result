@@ -284,7 +284,7 @@ and t2. col1 in ("2021-07-14 09:28:16", "1982-01-09 03:36:39", "1970-12-18 10:53
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, planner__core__casetest__predicate_simplification.idt_mc21780.col1)]
 ├─TableReader(Build)	root		data:Selection
-│ └─Selection	cop[tikv]		lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1)), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 2021-07-14 09:28:16.000000), or(eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1982-01-09 03:36:39.000000), eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000)))
+│ └─Selection	cop[tikv]		in(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000, 1982-01-09 03:36:39.000000, 2021-07-14 09:28:16.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:Selection
   └─Selection	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000)
@@ -573,7 +573,7 @@ create table t1 (a int, b decimal(65,30), c int);
 explain format='plan_tree' select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5;
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))
+└─Selection	cop[tikv]		in(planner__core__casetest__predicate_simplification.t1.a, 1, 2, 5)
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t1 where a = 1 or a = 2 or a = 5 or a = 5 or a = 5 or b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3;
 id	task	access object	operator info
@@ -583,17 +583,17 @@ TableReader	root		data:Selection
 explain format='plan_tree' select * from t1 where a = 1 and (b = 1.1 or b = 2.2 or b = 3.3 or b = 3.3);
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), eq(planner__core__casetest__predicate_simplification.t1.b, 3.3)))
+└─Selection	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a, 1), in(planner__core__casetest__predicate_simplification.t1.b, 1.1, 2.2, 3.3)
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t1 where a = 1 or (b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
+└─Selection	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), in(planner__core__casetest__predicate_simplification.t1.a, 1, 2, 5)))
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t1 where (a = 1 and (b = 2.2 or (c = 1 and (b = 1 or b = 1)))) or (b = 1.1 and b = 1.1 and (a = 1 or a = 2 or a = 5 or a = 5 or a = 5));
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		or(and(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), and(eq(planner__core__casetest__predicate_simplification.t1.c, 1), eq(planner__core__casetest__predicate_simplification.t1.b, 1)))), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.a, 2), eq(planner__core__casetest__predicate_simplification.t1.a, 5)))))
+└─Selection	cop[tikv]		or(and(eq(planner__core__casetest__predicate_simplification.t1.a, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b, 2.2), and(eq(planner__core__casetest__predicate_simplification.t1.c, 1), eq(planner__core__casetest__predicate_simplification.t1.b, 1)))), and(eq(planner__core__casetest__predicate_simplification.t1.b, 1.1), in(planner__core__casetest__predicate_simplification.t1.a, 1, 2, 5)))
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t1 where (c = 10 or (b + 1 > 10 and (a + 1 < 5 or a + 1 < 5 or a = 20))) and c + 1 < 10 and (a = 1 or a = 2 or a = 5 or a = 5 or b = 5 or b = 5);
 id	task	access object	operator info

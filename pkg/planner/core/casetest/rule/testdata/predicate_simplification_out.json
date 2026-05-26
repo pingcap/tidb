@@ -125,6 +125,116 @@
           "1"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "select * from t6 use index() where a = 4 or a = 1;",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  in(test.t6.a, 1, 4)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t6 use index() where a > 1 or a = 2;",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  or(gt(test.t6.a, 1), eq(test.t6.a, 2))",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t6 use index() where rand() < 0.5 or a = 1 or a = 2;",
+        "Plan": [
+          "Selection root  or(lt(rand(), 0.5), or(eq(test.t6.a, 1), eq(test.t6.a, 2)))",
+          "└─TableReader root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": [
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to storage layer now."
+        ]
+      },
+      {
+        "SQL": "select * from t1 use index(primary) where id = uuid() or id = uuid();",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  or(eq(test.t1.id, uuid()), eq(test.t1.id, uuid()))",
+          "  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t6 use index() where a > 1 or a = 2 or a = 3;",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  or(gt(test.t6.a, 1), or(eq(test.t6.a, 2), eq(test.t6.a, 3)))",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t6 use index() where a = 1 or a = 2 or a = 3;",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  in(test.t6.a, 1, 2, 3)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t6 use index() where a = 1 or a in (2, 3);",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  in(test.t6.a, 1, 2, 3)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t6 use index() where a = 1 or a = 2 or b = 1 or b = 2;",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  or(or(eq(test.t6.a, 1), eq(test.t6.a, 2)), or(eq(test.t6.b, 1), eq(test.t6.b, 2)))",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t6 use index() where a in (1, 2, 3) or a in (4, 5, 6);",
+        "Plan": [
+          "TableReader root  data:Selection",
+          "└─Selection cop[tikv]  in(test.t6.a, 1, 2, 3, 4, 5, 6)",
+          "  └─TableFullScan cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "LastPlanFromCache": [
+          "0"
+        ],
+        "Warning": null
       }
     ]
   }

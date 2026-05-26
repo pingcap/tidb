@@ -226,6 +226,9 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	removeRedundantORBranch(sctx, simplifiedPredicate)
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
+	if propagateConstant {
+		simplifiedPredicate = mergeORToINLists(sctx, simplifiedPredicate)
+	}
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
 }
@@ -593,6 +596,164 @@ func recursiveRemoveRedundantORBranch(sctx base.PlanContext, predicate expressio
 		}
 	}
 	return expression.ComposeDNFCondition(sctx.GetExprCtx(), newORList...)
+}
+
+func mergeORToINLists(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	for i, predicate := range predicates {
+		predicates[i] = recursiveMergeORToINList(sctx, predicate)
+	}
+	return predicates
+}
+
+func recursiveMergeORToINList(sctx base.PlanContext, predicate expression.Expression) expression.Expression {
+	_, tp := FindPredicateType(sctx, predicate)
+	switch tp {
+	case andPredicate:
+		andFunc := predicate.(*expression.ScalarFunction)
+		andList := expression.SplitCNFItems(andFunc)
+		for i, andItem := range andList {
+			andList[i] = recursiveMergeORToINList(sctx, andItem)
+		}
+		return expression.ComposeCNFCondition(sctx.GetExprCtx(), andList...)
+	case orPredicate:
+		orFunc := predicate.(*expression.ScalarFunction)
+		orList := expression.SplitDNFItems(orFunc)
+		for i, orItem := range orList {
+			orList[i] = recursiveMergeORToINList(sctx, orItem)
+		}
+		// Avoid reshaping OR trees that contain mutable or side-effect expressions.
+		// Even if the logical condition is equivalent, changing the evaluation form can
+		// change observable semantics for nondeterministic functions.
+		if slices.ContainsFunc(orList, expression.IsMutableEffectsExpr) {
+			return expression.ComposeDNFCondition(sctx.GetExprCtx(), orList...)
+		}
+		mergedPredicate, merged := tryMergeORListToINList(sctx, orFunc, orList)
+		if merged {
+			if expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), predicate) {
+				sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("OR to IN predicate simplification is triggered")
+			}
+			return mergedPredicate
+		}
+		return expression.ComposeDNFCondition(sctx.GetExprCtx(), orList...)
+	default:
+		return predicate
+	}
+}
+
+func tryMergeORListToINList(sctx base.PlanContext, orFunc *expression.ScalarFunction, orList []expression.Expression) (expression.Expression, bool) {
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	type orMergeGroup struct {
+		col         *expression.Column
+		firstExpr   expression.Expression
+		values      []*expression.Constant
+		dedupValues map[string]struct{}
+		disjunctCnt int
+	}
+	appendValue := func(group *orMergeGroup, value *expression.Constant) bool {
+		if value.Value.IsNull() {
+			return false
+		}
+		valueType := value.GetType(evalCtx)
+		if valueType.EvalType() == types.ETString &&
+			!collate.CompatibleCollate(valueType.GetCollate(), group.col.GetType(evalCtx).GetCollate()) {
+			return false
+		}
+		hashCode := string(value.HashCode())
+		if _, ok := group.dedupValues[hashCode]; ok {
+			return true
+		}
+		group.dedupValues[hashCode] = struct{}{}
+		group.values = append(group.values, value)
+		return true
+	}
+	buildGroupPredicate := func(group *orMergeGroup) (expression.Expression, error) {
+		if group.disjunctCnt == 1 {
+			return group.firstExpr, nil
+		}
+		// Keep the original append order as a fallback. SortFunc mutates in place, so sorting a clone lets us
+		// drop a partial reorder if Compare reports an error and continue with the deterministic input order.
+		sortedValues := slices.Clone(group.values)
+		var sortErr error
+		slices.SortFunc(sortedValues, func(a, b *expression.Constant) int {
+			if sortErr != nil {
+				return 0
+			}
+			cmp, err := a.Value.Compare(evalCtx.TypeCtx(), &b.Value, collate.GetCollator(group.col.GetType(evalCtx).GetCollate()))
+			if err != nil {
+				sortErr = err
+				return 0
+			}
+			return cmp
+		})
+		values := group.values
+		if sortErr == nil {
+			values = sortedValues
+		}
+		if len(values) == 1 {
+			return expression.NewFunction(sctx.GetExprCtx(), ast.EQ, orFunc.GetStaticType(), group.col, values[0])
+		}
+		args := make([]expression.Expression, 0, len(values)+1)
+		args = append(args, group.col)
+		for _, value := range values {
+			args = append(args, value)
+		}
+		return expression.NewFunction(sctx.GetExprCtx(), ast.In, orFunc.GetStaticType(), args...)
+	}
+	appendGroup := func(mergedItems []expression.Expression, group *orMergeGroup) ([]expression.Expression, bool, error) {
+		if group == nil {
+			return mergedItems, false, nil
+		}
+		newPredicate, err := buildGroupPredicate(group)
+		if err != nil {
+			return nil, false, err
+		}
+		return append(mergedItems, newPredicate), group.disjunctCnt > 1, nil
+	}
+
+	// Only merge when the whole OR-list is a same-column EQ/IN disjunction.
+	// Partial regrouping like `a = 1 OR a = 2 OR b = 3 -> in(a, 1, 2) OR b = 3`
+	// can change later physical optimization opportunities, for example ordered index-merge paths.
+	var currentGroup *orMergeGroup
+	for _, orItem := range orList {
+		col, predicateTp := FindPredicateType(sctx, orItem)
+		if col == nil || (predicateTp != equalPredicate && predicateTp != inListPredicate) {
+			return nil, false
+		}
+		scalarFunc, ok := orItem.(*expression.ScalarFunction)
+		intest.Assert(ok, "tryMergeORListToINList expects scalar-function disjuncts once FindPredicateType returns a column")
+		if !ok {
+			return nil, false
+		}
+		if currentGroup == nil {
+			currentGroup = &orMergeGroup{
+				col:         col,
+				firstExpr:   orItem,
+				dedupValues: make(map[string]struct{}, len(scalarFunc.GetArgs())-1),
+			}
+		} else if !currentGroup.col.Equals(col) {
+			return nil, false
+		}
+		currentGroup.disjunctCnt++
+
+		startIdx := 1
+		for _, arg := range scalarFunc.GetArgs()[startIdx:] {
+			value, ok := arg.(*expression.Constant)
+			if !ok || !appendValue(currentGroup, value) {
+				return nil, false
+			}
+		}
+	}
+	mergedItems, merged, err := appendGroup(nil, currentGroup)
+	if err != nil {
+		return nil, false
+	}
+	if !merged {
+		return nil, false
+	}
+	if len(mergedItems) == 1 {
+		return mergedItems[0], true
+	}
+	return expression.ComposeDNFCondition(sctx.GetExprCtx(), mergedItems...), true
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

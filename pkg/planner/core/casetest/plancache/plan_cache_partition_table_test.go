@@ -417,16 +417,19 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 	queries := []struct {
 		sql               string
 		usesBatchPointGet bool
+		skipPlanCacheHint []string
 	}{
 		{
 			"select " + strings.Join(cols, ",") + " from t where a IN (?,?,?)",
 			true,
+			nil,
 			// Cannot convert to [Batch]Point get, due to dynamic pruning
 		},
 		{
 			"select " + strings.Join(cols, ",") + " from t where a = ? or a = ? or a = ?",
 			// See canConvertPointGet, just needs to be enabled :)
 			false,
+			[]string{"skip prepared plan-cache: OR to IN predicate simplification is triggered"},
 		},
 		{
 			// This uses an 'AccessCondition' for testing more
@@ -435,6 +438,7 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 			// Currently not enabled, since not only an IN (in tryWhereIn2BatchPointGet)
 			// or have multiple values which does not yet enabled through canConvertPointGet.
 			false,
+			nil,
 		},
 	}
 	for i, q := range queries {
@@ -468,13 +472,17 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		if !tk.Session().GetSessionVars().FoundInPlanCache {
 			warn := tk.MustQuery("show warnings " + comment)
-			// previous plan removed at least one of the duplicate
-			// argument.
 			require.Equal(t, "Warning", warn.Rows()[0][0])
 			require.Equal(t, "1105", warn.Rows()[0][1])
-			// skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, Handles length diff
-			// skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, IndexValue length diff
-			warn.MultiCheckContain([]string{"skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, ", " length diff"})
+			if len(q.skipPlanCacheHint) > 0 {
+				warn.MultiCheckContain(q.skipPlanCacheHint)
+			} else {
+				// previous plan removed at least one of the duplicate
+				// argument.
+				// skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, Handles length diff
+				// skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, IndexValue length diff
+				warn.MultiCheckContain([]string{"skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, ", " length diff"})
+			}
 		}
 		tk.MustExec(`deallocate prepare stmt`)
 	}
@@ -533,7 +541,7 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, 
 			sql + " a = %s or a = %s or a = %s",
 			// See canConvertPointGet, just needs to be enabled :)
 			false,
-			true,
+			false,
 		},
 		{
 			// This uses an 'AccessCondition' for testing more

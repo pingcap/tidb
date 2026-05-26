@@ -1013,7 +1013,7 @@
         "Plan": [
           "TableReader root partition:p0,p3 MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Selection mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "  └─Selection mpp[tiflash]  in(test.rp_t.a, 1, 20)",
           "    └─TableFullScan mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
@@ -1022,7 +1022,7 @@
         "Plan": [
           "TableReader root partition:p0,p1 MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Selection mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "  └─Selection mpp[tiflash]  in(test.hp_t.a, 1, 20)",
           "    └─TableFullScan mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
@@ -1032,7 +1032,7 @@
           "StreamAgg root  funcs:count(1)->Column",
           "└─TableReader root partition:p0,p3 MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "    └─Selection mpp[tiflash]  in(test.rp_t.a, 1, 20)",
           "      └─TableFullScan mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       },
@@ -1042,7 +1042,7 @@
           "StreamAgg root  funcs:count(1)->Column",
           "└─TableReader root partition:p0,p1 MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "    └─Selection mpp[tiflash]  in(test.hp_t.a, 1, 20)",
           "      └─TableFullScan mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
       }
