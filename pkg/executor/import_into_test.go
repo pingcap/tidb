@@ -143,3 +143,15 @@ func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
 	require.True(t, invoked)
 	require.True(t, childMaintenance)
 }
+
+func TestImportIntoRejectsMaterializedViewLogBaseTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table src (a int)")
+	tk.MustExec("create table dst (a int)")
+	tk.MustExec("create materialized view log on dst (a)")
+
+	err := tk.ExecToErr("import into dst from select * from src with disable_precheck")
+	require.ErrorContains(t, err, "IMPORT INTO on tables with materialized view log")
+}
