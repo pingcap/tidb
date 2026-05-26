@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
@@ -87,8 +88,11 @@ func TestPrintTiDBInfo(t *testing.T) {
 	fields := entries[0].ContextMap()
 	if kerneltype.IsNextGen() {
 		require.Equal(t, mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion), fields["TiDB Component Version"])
+		require.Equal(t, deploymode.Get().String(), fields["Deploy Mode"])
 	} else {
 		_, ok := fields["TiDB Component Version"]
+		require.False(t, ok)
+		_, ok = fields["Deploy Mode"]
 		require.False(t, ok)
 	}
 }

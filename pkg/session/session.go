@@ -147,6 +147,7 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	gouberatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1334,7 +1335,7 @@ func getSessionFactoryInternal(store kv.Storage, createSessFn func(store kv.Stor
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
+		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -3466,7 +3467,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
-		return &distsqlctx.DistSQLContext{
+		ret := &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
 			Client:          s.GetClient(),
@@ -3514,6 +3515,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			RUConsumptionReporter:         ruConsumptionReporter,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
+			MaxKeysRead:                   vars.GetMaxKeysRead(),
 
 			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
 			ConnectionID:                vars.ConnectionID,
@@ -3521,6 +3523,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 
 			ExecDetails: &sc.SyncExecDetails,
 		}
+		if ret.MaxKeysRead > 0 {
+			ret.MaxKeysReadCounter = new(gouberatomic.Uint64)
+		}
+		return ret
 	})
 
 	// Check if the runaway checker is updated. This is to avoid that evaluating a non-correlated subquery
@@ -3939,7 +3945,7 @@ func (s *session) MatchIdentity(ctx context.Context, username, remoteHost string
 		return user, nil
 	}
 	// This error will not be returned to the user, access denied will be instead
-	return nil, fmt.Errorf("could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
+	return nil, errors.Wrapf(sessionapi.ErrIdentityNotFound, "could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
@@ -4300,12 +4306,14 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
 	if kv.IsUserKS(store) {
+		targetVer := currentBootstrapVersion
 		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
 		if systemKSVer == notBootstrapped {
 			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
-		} else if ver > systemKSVer {
-			logutil.BgLogger().Fatal("bootstrap version of user keyspace must be smaller or equal to that of SYSTEM keyspace",
-				zap.Int64("user", ver), zap.Int64("system", systemKSVer))
+		} else if targetVer > systemKSVer {
+			logutil.BgLogger().Fatal("bootstrap version of user keyspace must be smaller or equal to that of SYSTEM keyspace. if you are upgrading user keyspace, please make sure to upgrade SYSTEM keyspace first",
+				zap.Int64("userCurr", ver), zap.Int64("userTarget", targetVer),
+				zap.Int64("system", systemKSVer))
 		}
 	}
 
@@ -4854,7 +4862,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		// But we need to init max_allowed_packet to use concat function during bootstrap or upgrade.
-		err := vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
+		err := vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
 		if err != nil {
 			logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
 		}

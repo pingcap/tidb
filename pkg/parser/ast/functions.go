@@ -372,7 +372,8 @@ const (
 	VecAsText               = "vec_as_text"
 
 	// FTS functions (tidb extension)
-	FTSMatchWord = "fts_match_word"
+	FTSMatchWord         = "fts_match_word"
+	FTSMysqlMatchAgainst = "match_against"
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
@@ -529,12 +530,12 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 	}
 	if n.FnName.L == JSONMemberOf {
 		if len(n.Args) == 2 {
-			if err := n.Args[0].Restore(ctx); err != nil {
+			if err := restoreExprWithBinaryOpParent(ctx, n.Args[0], restoreOpMemberOf, binaryOpLeftSide); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[0]")
 			}
 			ctx.WriteKeyWord(" MEMBER OF ")
 			ctx.WritePlain("(")
-			if err := n.Args[1].Restore(ctx); err != nil {
+			if err := restoreExprWithBinaryOpParent(ctx, n.Args[1], restoreOpMemberOf, binaryOpRightSide); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[1]")
 			}
 			ctx.WritePlain(")")
@@ -702,7 +703,7 @@ func (n *FuncCastExpr) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	case CastBinaryOperator:
 		ctx.WriteKeyWord("BINARY ")
-		if err := n.Expr.Restore(ctx); err != nil {
+		if err := restoreExprWithUnaryOpParent(ctx, n.Expr); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
 		}
 	}
@@ -892,7 +893,11 @@ func (n *AggregateFuncExpr) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 		ctx.WriteKeyWord(" SEPARATOR ")
-		if err := n.Args[len(n.Args)-1].Restore(ctx); err != nil {
+		// The parser grammar only accepts `SEPARATOR stringLit` without charset introducer.
+		// Keep the literal text restorable even when separator carries charset/collation metadata.
+		separatorCtx := *ctx
+		separatorCtx.Flags |= format.RestoreStringWithoutCharset
+		if err := n.Args[len(n.Args)-1].Restore(&separatorCtx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AggregateFuncExpr.Args SEPARATOR")
 		}
 	default:

@@ -256,6 +256,11 @@ else
 	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
+.PHONY: server_failpoint
+server_failpoint: failpoint-enable ## Build TiDB server binary with failpoints enabled
+	$(SERVER_BUILD_CMD) || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+
 .PHONY: init-submodule
 init-submodule:
 	git submodule init && git submodule update --force
@@ -343,11 +348,11 @@ failpoint-disable: tools/bin/failpoint-ctl
 
 .PHONY: bazel-failpoint-enable
 bazel-failpoint-enable:
-	find $$PWD/ -mindepth 1 -maxdepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
+	BAZEL_GLOBAL_CONFIG="$(BAZEL_GLOBAL_CONFIG)" BAZEL_CMD_CONFIG="$(BAZEL_CMD_CONFIG)" ./tools/check/failpoint-state.sh enable bazel
 
 .PHONY: bazel-failpoint-disable
 bazel-failpoint-disable:
-	find $$PWD/ -mindepth 1 -maxdepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+	BAZEL_GLOBAL_CONFIG="$(BAZEL_GLOBAL_CONFIG)" BAZEL_CMD_CONFIG="$(BAZEL_CMD_CONFIG)" ./tools/check/failpoint-state.sh disable bazel
 
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go tools/check/longtests.go
@@ -551,7 +556,7 @@ mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter > br/pkg/mock/backend.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/common ChunkFlushStatus > br/pkg/mock/common.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
-	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
+	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/ingestor/ingestctrl DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/dxf/framework/mock/task_executor_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/dxf/framework/mock/scheduler_mock.go
@@ -700,16 +705,23 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
+BAZEL_BEP_BACKEND ?= grpcs://beplessproxy.channel9.ai
+BAZEL_BEP_RESULTS_URL ?= https://bepless.hawkingrei.com/
+BAZEL_BEP_BASE_FLAGS = \
+	--bes_backend=$(BAZEL_BEP_BACKEND) \
+	--bes_results_url=$(BAZEL_BEP_RESULTS_URL) \
+	--experimental_remote_build_event_upload=all
+
 .PHONY: bazel_ci_test
 bazel_ci_test: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) $(BAZEL_BEP_BASE_FLAGS) $$(./build/print-bazel-bep-flags.sh) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_ci_test_ddlargsv1
 bazel_ci_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) $(BAZEL_BEP_BASE_FLAGS) $$(./build/print-bazel-bep-flags.sh) --build_tests_only --test_keep_going=false \
 		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...

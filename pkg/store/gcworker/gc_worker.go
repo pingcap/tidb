@@ -62,6 +62,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdgc "github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -99,14 +100,15 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	uuid := strconv.FormatUint(ver.Ver, 16)
 	resolverIdentifier := fmt.Sprintf("gc-worker-%s", uuid)
 	keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+	gcPDClient := pdClient.WithCallerComponent(caller.GcWorker)
 	worker := &GCWorker{
 		uuid:                 uuid,
 		desc:                 fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		keyspaceID:           keyspaceID,
 		store:                store,
 		tikvStore:            tikvStore,
-		pdClient:             pdClient,
-		pdGCControllerClient: pdClient.GetGCInternalController(keyspaceID),
+		pdClient:             gcPDClient,
+		pdGCControllerClient: gcPDClient.GetGCInternalController(keyspaceID),
 		gcIsRunning:          false,
 		lastFinish:           time.Now(),
 		regionLockResolver:   tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
@@ -1811,12 +1813,13 @@ func RunGCJob(ctx context.Context, regionLockResolver tikv.RegionLockResolver, s
 // This function may not finish immediately because it may take some time to do resolveLocks.
 // Param concurrency specifies the concurrency of resolveLocks phase.
 func RunDistributedGCJob(ctx context.Context, regionLockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
+	gcPDClient := pd.WithCallerComponent(caller.DistributedGcJob)
 	gcWorker := &GCWorker{
 		tikvStore:            s,
 		uuid:                 identifier,
 		keyspaceID:           constants.NullKeyspaceID,
-		pdClient:             pd,
-		pdGCControllerClient: pd.GetGCInternalController(constants.NullKeyspaceID),
+		pdClient:             gcPDClient,
+		pdGCControllerClient: gcPDClient.GetGCInternalController(constants.NullKeyspaceID),
 		regionLockResolver:   regionLockResolver,
 	}
 

@@ -327,6 +327,50 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+
+	// nonViableFTSMatch is set during build when the expression rewriter
+	// encounters a predicate-context MATCH...AGAINST whose native form
+	// (FTSMysqlMatchAgainst) cannot be executed — the matched columns lack a
+	// public FULLTEXT index on a TiFlash-backed table, or the modifier is not
+	// supported by pushdown. The flag is read by the alternative-rounds driver
+	// after the round to invalidate the round's plan and trigger the
+	// fts-like-fallback round (see optimize.go).
+	nonViableFTSMatch bool
+
+	// predicateMatchSeen is set during build when the expression rewriter
+	// encounters a direct-boolean-context MATCH...AGAINST (one whose 0/1 boolean
+	// result is consumed directly as a predicate). The alternative-rounds driver
+	// uses this to enable the fts-like-fallback round even when round 1's
+	// native plan is executable, so the LIKE-based plan can compete on cost.
+	predicateMatchSeen bool
+}
+
+// HasNonViableFTSMatch reports whether the most recent build round saw a
+// predicate-context MATCH...AGAINST that could not be served by the native
+// FTSMysqlMatchAgainst builtin. The caller (optimize.go) uses this to
+// invalidate the round's plan and trigger the fts-like-fallback round.
+func (b *PlanBuilder) HasNonViableFTSMatch() bool {
+	return b.nonViableFTSMatch
+}
+
+// MarkNonViableFTSMatch records that a predicate-context MATCH...AGAINST in
+// the current build cannot be served natively. See HasNonViableFTSMatch.
+func (b *PlanBuilder) MarkNonViableFTSMatch() {
+	b.nonViableFTSMatch = true
+}
+
+// HasPredicateMatch reports whether the most recent build round saw a
+// direct-boolean-context MATCH...AGAINST. The caller (optimize.go) uses this
+// to decide whether to run the fts-like-fallback round for cost competition,
+// independent of whether round 1's native plan is executable.
+func (b *PlanBuilder) HasPredicateMatch() bool {
+	return b.predicateMatchSeen
+}
+
+// MarkPredicateMatch records that the current build encountered a
+// direct-boolean-context MATCH...AGAINST. See HasPredicateMatch.
+func (b *PlanBuilder) MarkPredicateMatch() {
+	b.predicateMatchSeen = true
 }
 
 type handleColHelper struct {
@@ -1245,6 +1289,9 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 		unSupportedReason = "stale read is not supported"
 	} else if sessionVars.SnapshotTS != 0 {
 		unSupportedReason = "historical read is not supported"
+	} else if sessionVars.MaxKeysRead > 0 {
+		// https://github.com/tikv/tikv/pull/19518#discussion_r3263461617
+		unSupportedReason = "tidb_max_keys_read is set"
 	}
 
 	if unSupportedReason != "" {
@@ -4680,15 +4727,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
 		importFromServer = objstore.IsLocal(u)
-		// for SEM v2, they are checked by configured rules.
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
-			}
-			if kerneltype.IsNextGen() && objstore.IsS3Like(u) {
-				if err := checkNextGenS3PathWithSem(u); err != nil {
-					return nil, err
-				}
 			}
 		}
 		// a nextgen cluster might be shared by multiple tenants, and they might
@@ -4696,6 +4737,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+			if err := checkNextGenS3PathWithSem(u); err != nil {
+				return nil, err
+			}
 			values := u.Query()
 			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
@@ -6342,15 +6386,29 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
-// and we will use the keyspace name as the S3 external ID.
+// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
+// disallow explicit S3 external ID. The keyspace name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
+	hasAccessKey := false
+	hasSecretAccessKey := false
+	hasRoleARN := false
 	for k := range values {
-		lowerK := strings.ToLower(k)
-		if lowerK == s3like.S3ExternalID {
+		normalizedK := objstore.NormalizeQueryParameterKey(k)
+		switch normalizedK {
+		case s3like.S3ExternalID:
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+		case s3like.S3AccessKey:
+			hasAccessKey = hasAccessKey || values.Get(k) != ""
+		case s3like.S3SecretAccessKey:
+			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
+		case s3like.S3RoleARN:
+			hasRoleARN = hasRoleARN || values.Get(k) != ""
 		}
+	}
+
+	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil
