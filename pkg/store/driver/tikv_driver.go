@@ -46,6 +46,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -125,13 +126,15 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 // GetPDClient is used to get pd client by etcd addrs and keyspace name.
 func GetPDClient(keyspaceName string, pdEtcdAddrs []string) (pd.Client, error) {
 	cfg := config.GetGlobalConfig()
-	pdCli, err := pd.NewClientWithAPIContext(context.Background(), keyspace.BuildAPIContext(keyspaceName), pdEtcdAddrs,
+	pdCli, err := pd.NewClientWithAPIContext(context.Background(), keyspace.BuildAPIContext(keyspaceName),
+		caller.Component("tidb-tikv-driver"),
+		pdEtcdAddrs,
 		pd.SecurityOption{
 			CAPath:   cfg.Security.ClusterSSLCA,
 			CertPath: cfg.Security.ClusterSSLCert,
 			KeyPath:  cfg.Security.ClusterSSLKey,
 		},
-		pd.WithGRPCDialOptions(
+		opt.WithGRPCDialOptions(
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
 				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
@@ -139,8 +142,8 @@ func GetPDClient(keyspaceName string, pdEtcdAddrs []string) (pd.Client, error) {
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(256*1024*1024)),
 		),
-		pd.WithCustomTimeoutOption(time.Duration(cfg.PDClient.PDServerTimeout)*time.Second),
-		pd.WithForwardingOption(cfg.EnableForwarding),
+		opt.WithCustomTimeoutOption(time.Duration(cfg.PDClient.PDServerTimeout)*time.Second),
+		opt.WithForwardingOption(cfg.EnableForwarding),
 	)
 	return pdCli, err
 }
