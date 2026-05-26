@@ -124,24 +124,6 @@ func shouldRetryTiCIDispatch(meta kv.MPPTaskMeta, errMsg string) bool {
 	}
 }
 
-func selectTiCIShardAddr(addrs []string, shardID uint64, dispatchPolicy tiflashcompute.DispatchPolicy, tiflashReplicaReadPolicy tiflash.ReplicaRead) string {
-	if len(addrs) == 0 {
-		return ""
-	}
-	if len(addrs) == 1 {
-		return addrs[0]
-	}
-	// For TiCI MPP, MetaService already returns shard-local candidates in preferred order.
-	// Keep using the first one to avoid dispatching to a candidate whose local cache/worker
-	// is not ready yet (e.g. GetShardLocalCacheInfo failed: 13/14).
-	//
-	// Keep parameters for call-site compatibility.
-	_ = shardID
-	_ = dispatchPolicy
-	_ = tiflashReplicaReadPolicy
-	return addrs[0]
-}
-
 func buildTiCIShardInfosByStoreAddr(ctx context.Context, cache *TiCIShardCache, req *kv.MPPBuildTasksRequest, dispatchPolicy tiflashcompute.DispatchPolicy, tiflashReplicaReadPolicy tiflash.ReplicaRead) (map[string][]*coprocessor.TableShardInfos, error) {
 	if cache == nil {
 		return nil, errors.New("tici shard cache client is not initialized")
@@ -159,7 +141,7 @@ func buildTiCIShardInfosByStoreAddr(ctx context.Context, cache *TiCIShardCache, 
 		}
 	}
 
-	storeShard := make(map[string][]*coprocessor.ShardInfo)
+	shardLocations := make([]*ShardLocation, 0)
 	for _, partitionIDAndRange := range ticiPartitionIDAndRanges {
 		if len(partitionIDAndRange.KeyRanges) == 0 {
 			continue
@@ -168,25 +150,9 @@ func buildTiCIShardInfosByStoreAddr(ctx context.Context, cache *TiCIShardCache, 
 		if err != nil {
 			return nil, err
 		}
-		for _, loc := range locs {
-			addrs := loc.localCacheAddrs
-			if len(addrs) == 0 {
-				continue
-			}
-			if loc.Ranges == nil {
-				continue
-			}
-			addr := selectTiCIShardAddr(addrs, loc.ShardID, dispatchPolicy, tiflashReplicaReadPolicy)
-			if len(addr) == 0 {
-				continue
-			}
-			storeShard[addr] = append(storeShard[addr], &coprocessor.ShardInfo{
-				ShardId:    loc.ShardID,
-				ShardEpoch: loc.Epoch,
-				Ranges:     loc.Ranges.ToPBRanges(),
-			})
-		}
+		shardLocations = append(shardLocations, locs...)
 	}
+	storeShard := buildTiCIShardInfosByAddrFromLocations(shardLocations)
 	if len(storeShard) == 0 {
 		return nil, errors.New("No shard info found")
 	}
