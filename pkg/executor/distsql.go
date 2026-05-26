@@ -173,13 +173,15 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 	if err != nil {
 		return nil, err
 	}
-	// The planner only admits an AccessCondition into the correlated-access path when the
-	// detacher can fully encode it as ranges (e.g. binary-collation residuals require a
-	// Constant operand, which is rejected before reaching here). If a future planner change
-	// lets residuals through, they would need to be applied as filters via PhysicalSelection
-	// or an equivalent re-applied predicate list -- PhysicalIndexScan.ToPB does not encode
-	// AccessCondition into the DAG request, so attaching them to is.AccessCondition would
-	// neither push them down nor evaluate them locally.
+	// Residuals from the detacher don't cause incorrect results on this path:
+	//   - Binary-collation residuals are blocked upstream -- SplitCorColAccessCondFromFilters
+	//     in pkg/planner/util/path.go rejects collation-mismatched predicates before they
+	//     can be promoted into is.AccessCondition.
+	//   - For other shouldReserve cases (prefix indexes, range predicates), the planner
+	//     retains the original predicate in path.TableFilters, which becomes a parent
+	//     Selection / table-side filter; rebuilding only the access ranges here is safe.
+	// The assert below is a regression guard in case a future planner change introduces a
+	// shouldReserve case that isn't covered by one of these two mechanisms.
 	intest.Assert(len(remainedConds) == 0, "rebuildIndexRanges: detacher returned residuals on correlated-access path")
 	return ranges, nil
 }
