@@ -192,8 +192,8 @@ metric-label = "keyspace_meta_label_b"
 		"meta_b": "value_b",
 	}))
 	require.Equal(t, map[string]string{"keyspace_meta_label_a": "value_a", "keyspace_meta_label_b": "value_b"}, conf.GetKeyspaceObservabilityMetricLabels())
-	require.Equal(t, []KeyspaceObservabilityFieldPair{{Key: "Slow_meta_a", Value: "value_a"}}, conf.GetKeyspaceObservabilitySlowLogFields())
-	require.Equal(t, []KeyspaceObservabilityFieldPair{{Key: "stmt_meta_a", Value: "value_a"}}, conf.GetKeyspaceObservabilityStmtLogFields())
+	require.Equal(t, map[string]string{"Slow_meta_a": "value_a"}, conf.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, conf.GetKeyspaceObservabilityStmtLogFields())
 
 	metricLabels := conf.GetKeyspaceObservabilityMetricLabels()
 	metricLabels["keyspace_meta_label_a"] = "changed"

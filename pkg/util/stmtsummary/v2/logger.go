@@ -85,35 +85,16 @@ func marshalStmtRecord(r *StmtRecord) ([]byte, error) {
 	if len(fields) == 0 {
 		return json.Marshal(r)
 	}
-	return json.Marshal(stmtRecordWithKeyspaceFields{
-		StmtRecord: r,
-		fields:     fields,
-	})
-}
-
-type stmtRecordWithKeyspaceFields struct {
-	*StmtRecord
-	fields []config.KeyspaceObservabilityFieldPair
-}
-
-func (r stmtRecordWithKeyspaceFields) MarshalJSON() ([]byte, error) {
-	b, err := json.Marshal(r.StmtRecord)
+	b, err := json.Marshal(r)
 	if err != nil {
 		return nil, err
 	}
-	if !json.Valid(b) || len(b) < 2 || b[0] != '{' || b[len(b)-1] != '}' {
-		return b, nil
-	}
-	items := make(map[string]json.RawMessage)
+	items := make(map[string]any)
 	if err := json.Unmarshal(b, &items); err != nil {
 		return nil, err
 	}
-	for _, field := range r.fields {
-		value, err := json.Marshal(field.Value)
-		if err != nil {
-			return nil, err
-		}
-		items[field.Key] = value
+	for key, value := range fields {
+		items[key] = value
 	}
 	return json.Marshal(items)
 }
