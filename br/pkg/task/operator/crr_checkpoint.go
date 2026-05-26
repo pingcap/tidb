@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -43,6 +45,15 @@ func NewCRRCheckpointService(
 	g glue.Glue,
 	cfg CRRCheckpointConfig,
 ) (*service.Service, cleanupFunc, error) {
+	_, upstreamStorage, err := task.GetStorage(ctx, cfg.UpstreamStorage, &cfg.Config)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkCRRUpstreamStorage(ctx, upstreamStorage); err != nil {
+		upstreamStorage.Close()
+		return nil, nil, err
+	}
+
 	mgr, err := task.NewMgr(
 		ctx,
 		g,
@@ -54,18 +65,13 @@ func NewCRRCheckpointService(
 		conn.StreamVersionChecker,
 	)
 	if err != nil {
+		upstreamStorage.Close()
 		return nil, nil, err
 	}
 
 	etcdCli, err := dialEtcdWithCfg(ctx, cfg.Config)
 	if err != nil {
-		mgr.Close()
-		return nil, nil, err
-	}
-
-	_, upstreamStorage, err := task.GetStorage(ctx, cfg.UpstreamStorage, &cfg.Config)
-	if err != nil {
-		closeEtcdClient(etcdCli)
+		upstreamStorage.Close()
 		mgr.Close()
 		return nil, nil, err
 	}
@@ -146,6 +152,20 @@ func NewCRRCheckpointService(
 		mgr.Close()
 	}
 	return svc, cleanup, nil
+}
+
+func checkCRRUpstreamStorage(ctx context.Context, storage storeapi.Storage) error {
+	exists, err := storage.FileExists(ctx, metautil.LockFile)
+	if err != nil {
+		return errors.Annotatef(err, "error occurred when checking %s file in upstream storage", metautil.LockFile)
+	}
+	if !exists {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"upstream storage %s is not a log backup directory because %s does not exist",
+			storage.URI(), metautil.LockFile,
+		)
+	}
+	return nil
 }
 
 func buildObjectSyncChecker(
