@@ -316,7 +316,6 @@ func main() {
 	var standbyController server.StandbyController
 	var activationKeyspaceID uint32
 	var activationMetadata map[string]string
-	hasActivationRequest := false
 	if config.GetGlobalConfig().Standby.StandByMode {
 		standbyController = standby.NewLoadKeyspaceController()
 	}
@@ -336,17 +335,14 @@ func main() {
 		if c, ok := standbyController.(*standby.LoadKeyspaceController); ok {
 			activationKeyspaceID = c.ActivationKeyspaceID()
 			activationMetadata = c.ActivationMetadata()
-			hasActivationRequest = true
 		}
 	}
 
 	signal.SetupUSR1Handler()
 	err = registerStores()
 	terror.MustNil(err)
-	if deploymode.IsStarter() && hasActivationRequest {
-		err = prepareKeyspaceObservabilityForStarter(activationKeyspaceID, activationMetadata)
-		terror.MustNil(err)
-	}
+	err = prepareKeyspaceObservability(activationKeyspaceID, activationMetadata)
+	terror.MustNil(err)
 	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
 
@@ -1163,22 +1159,34 @@ const (
 	keyspaceNameMetricLabel = "keyspace_name"
 )
 
-func prepareKeyspaceObservabilityForStarter(keyspaceID uint32, metadata map[string]string) error {
+func prepareKeyspaceObservability(keyspaceID uint32, metadata map[string]string) error {
 	cfg := config.GetGlobalConfig()
-	if cfg.Store != config.StoreTypeTiKV {
+
+	if kerneltype.IsClassic() || cfg.Store != config.StoreTypeTiKV {
 		return nil
 	}
-	return prepareKeyspaceObservabilityWithMetadata(keyspaceID, metadata, cfg.KeyspaceName)
-}
-
-func prepareKeyspaceObservabilityWithMetadata(keyspaceID uint32, metadata map[string]string, keyspaceName string) error {
-	resolvedValues := config.KeyspaceObservabilityValues{
+	resolvedValues := &config.KeyspaceObservabilityValues{
 		MetricLabels: map[string]string{
-			keyspaceNameMetricLabel: keyspaceName,
+			keyspaceNameMetricLabel: cfg.KeyspaceName,
 		},
 	}
-	resolvedValues.MetricLabels[keyspaceIDMetricLabel] = fmt.Sprint(keyspaceID)
 
+	if deploymode.IsStarter() {
+		resolvedValues.MetricLabels[keyspaceIDMetricLabel] = fmt.Sprint(keyspaceID)
+		err := prepareKeyspaceObservabilityForStarter(metadata, resolvedValues)
+		if err != nil {
+			return err
+		}
+	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservabilityValues = *resolvedValues
+	})
+
+	return nil
+}
+
+func prepareKeyspaceObservabilityForStarter(metadata map[string]string, resolvedValues *config.KeyspaceObservabilityValues) error {
 	copiedConfig := *config.GetGlobalConfig()
 	if err := copiedConfig.ResolveKeyspaceObservability(metadata); err != nil {
 		return err
@@ -1189,10 +1197,6 @@ func prepareKeyspaceObservabilityWithMetadata(keyspaceID uint32, metadata map[st
 	}
 	resolvedValues.SlowLogFields = configuredValues.SlowLogFields
 	resolvedValues.StmtLogFields = configuredValues.StmtLogFields
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceObservabilityValues = resolvedValues
-	})
 	return nil
 }
 

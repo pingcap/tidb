@@ -156,10 +156,24 @@ func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
 }
 
 func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
 	restore := config.RestoreFunc()
 	defer restore()
 
-	err := prepareKeyspaceObservabilityWithMetadata(42, nil, "ks")
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	keyspaceID := uint32(42)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeTiKV
+		conf.KeyspaceName = "ks"
+	})
+	err := prepareKeyspaceObservability(keyspaceID, nil)
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"keyspace_id": "42", "keyspace_name": "ks"}, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 
@@ -175,9 +189,9 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 		}
 	})
 
-	err = prepareKeyspaceObservabilityWithMetadata(42, map[string]string{
+	err = prepareKeyspaceObservability(keyspaceID, map[string]string{
 		"meta_a": "value_a",
-	}, "ks")
+	})
 	require.NoError(t, err)
 
 	cfg := config.GetGlobalConfig()
@@ -187,14 +201,24 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 }
 
 func TestSetupKeyspaceObservabilityForStarterSkipsNonTiKV(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
 	restore := config.RestoreFunc()
 	defer restore()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Store = config.StoreTypeUniStore
 		conf.Path = "invalid-pd-path"
 		conf.KeyspaceName = "test_keyspace"
 	})
 
-	require.NoError(t, prepareKeyspaceObservabilityForStarter(42, nil))
+	keyspaceID := uint32(42)
+	require.NoError(t, prepareKeyspaceObservability(keyspaceID, nil))
 	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }
