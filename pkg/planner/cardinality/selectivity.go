@@ -408,6 +408,24 @@ OUTER:
 		}
 	}
 
+	// Try to cover remaining LIKE/ILIKE predicates using column NDV and average
+	// column length. This mainly helps non-prefix patterns such as '%abc' and
+	// '%abc%', which cannot be transformed into useful access ranges.
+	for i, scalarCond := range notCoveredStrMatch {
+		if ok, sel := estimateLikeSelectivity(ctx, coll, scalarCond); ok {
+			ret *= sel
+			mask &^= 1 << uint64(i)
+			delete(notCoveredStrMatch, i)
+		}
+	}
+	for i, scalarCond := range notCoveredNegateStrMatch {
+		if ok, sel := estimateNegatedLikeSelectivity(ctx, coll, scalarCond); ok {
+			ret *= sel
+			mask &^= 1 << uint64(i)
+			delete(notCoveredNegateStrMatch, i)
+		}
+	}
+
 	// At last, if there are still conditions which cannot be estimated, we multiply the selectivity with
 	// the minimal default selectivity of the remaining conditions.
 	// Currently, only string matching functions (like and regexp) may have a different default selectivity,
@@ -1041,6 +1059,104 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	// 6. Get the final result.
 	res := topNSel + histSel + nullSel
 	return true, res, err
+}
+
+func estimateNegatedLikeSelectivity(
+	ctx planctx.PlanContext,
+	coll *statistics.HistColl,
+	scalarCond *expression.ScalarFunction,
+) (ok bool, selectivity float64) {
+	if scalarCond.FuncName.L != ast.UnaryNot || len(scalarCond.GetArgs()) != 1 {
+		return false, 0
+	}
+	inner := expression.GetExprInsideIsTruth(scalarCond.GetArgs()[0])
+	likeFunc, ok := inner.(*expression.ScalarFunction)
+	if !ok {
+		return false, 0
+	}
+	ok, selectivity = estimateLikeSelectivity(ctx, coll, likeFunc)
+	if !ok {
+		return false, 0
+	}
+	return true, max(0, 1-selectivity)
+}
+
+func estimateLikeSelectivity(
+	ctx planctx.PlanContext,
+	coll *statistics.HistColl,
+	scalarCond *expression.ScalarFunction,
+) (ok bool, selectivity float64) {
+	if scalarCond.FuncName.L != ast.Like && scalarCond.FuncName.L != ast.Ilike {
+		return false, 0
+	}
+	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), scalarCond) {
+		return false, 0
+	}
+	args := scalarCond.GetArgs()
+	if len(args) != 3 {
+		return false, 0
+	}
+	col, ok := args[0].(*expression.Column)
+	if !ok || !types.IsString(col.RetType.GetType()) {
+		return false, 0
+	}
+	colStats := coll.GetCol(col.UniqueID)
+	if coll.Pseudo || colStats == nil || !colStats.IsStatsInitialized() ||
+		colStats.Histogram.NDV <= 0 || colStats.TotColSize <= 0 {
+		return false, 0
+	}
+	notNullCount := colStats.NotNullCount()
+	if notNullCount <= 0 && coll.RealtimeCount > colStats.NullCount {
+		notNullCount = float64(coll.RealtimeCount - colStats.NullCount)
+	}
+	if notNullCount <= 0 {
+		return false, 0
+	}
+	avgColLen := float64(colStats.TotColSize) / notNullCount
+	if avgColLen <= 0 {
+		return false, 0
+	}
+
+	patternConst, ok := args[1].(*expression.Constant)
+	if !ok {
+		return false, 0
+	}
+	escapeConst, ok := args[2].(*expression.Constant)
+	if !ok {
+		return false, 0
+	}
+	pattern, isNull, err := patternConst.EvalString(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if err != nil || isNull {
+		return false, 0
+	}
+	escape, isNull, err := escapeConst.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if err != nil || isNull {
+		return false, 0
+	}
+
+	fixedLen := getLikePatternFixedLength(pattern, byte(escape))
+	substrNDV := math.Pow(float64(colStats.Histogram.NDV), float64(fixedLen)/avgColLen)
+	if substrNDV <= 0 || math.IsNaN(substrNDV) {
+		return false, 0
+	}
+	return true, min(1, 1/substrNDV)
+}
+
+func getLikePatternFixedLength(pattern string, escape byte) int {
+	fixedLen := 0
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] == escape {
+			if i < len(pattern)-1 {
+				i++
+			}
+			fixedLen++
+			continue
+		}
+		if pattern[i] != '%' && pattern[i] != '_' {
+			fixedLen++
+		}
+	}
+	return fixedLen
 }
 
 func findAvailableStatsForCol(sctx planctx.PlanContext, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
