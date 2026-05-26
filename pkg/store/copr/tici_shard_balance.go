@@ -19,6 +19,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 )
 
+// buildTiCIShardInfosByAddrFromLocations assigns shards in loc order. Each shard
+// chooses the candidate store with the lowest current shard count; ties keep the
+// candidate order returned by TiCI.
 func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][]*coprocessor.ShardInfo, error) {
 	storeShard := make(map[string][]*coprocessor.ShardInfo)
 	addrLoad := make(map[string]int)
