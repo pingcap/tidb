@@ -183,6 +183,7 @@ required = true
 [[keyspace-observability.fields]]
 source = "meta_b"
 metric-label = "keyspace_meta_label_b"
+slow-log-field = "keyspace_meta_slow_b"
 `
 	_, err := toml.Decode(content, conf)
 	require.NoError(t, err)
@@ -192,7 +193,10 @@ metric-label = "keyspace_meta_label_b"
 		"meta_b": "value_b",
 	}))
 	require.Equal(t, map[string]string{"keyspace_meta_label_a": "value_a", "keyspace_meta_label_b": "value_b"}, conf.GetKeyspaceObservabilityMetricLabels())
-	require.Equal(t, map[string]string{"keyspace_meta_slow_a": "value_a"}, conf.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, []KeyspaceObservabilityLogField{
+		{Name: "keyspace_meta_slow_a", Value: "value_a"},
+		{Name: "keyspace_meta_slow_b", Value: "value_b"},
+	}, conf.GetKeyspaceObservabilitySlowLogFields())
 	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, conf.GetKeyspaceObservabilityStmtLogFields())
 
 	require.ErrorContains(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_b": "value_b"}), `missing required keyspace metadata entry "meta_a"`)

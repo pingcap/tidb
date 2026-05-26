@@ -17,6 +17,7 @@ package config
 import (
 	"fmt"
 	"maps"
+	"sort"
 	"strings"
 
 	"github.com/prometheus/common/model"
@@ -38,9 +39,15 @@ type KeyspaceObservabilityField struct {
 
 // KeyspaceObservabilityValues stores resolved metadata values.
 type KeyspaceObservabilityValues struct {
-	MetricLabels  map[string]string `toml:"-" json:"-"`
-	SlowLogFields map[string]string `toml:"-" json:"-"`
-	StmtLogFields map[string]string `toml:"-" json:"-"`
+	MetricLabels  map[string]string               `toml:"-" json:"-"`
+	SlowLogFields []KeyspaceObservabilityLogField `toml:"-" json:"-"`
+	StmtLogFields map[string]string               `toml:"-" json:"-"`
+}
+
+// KeyspaceObservabilityLogField stores a resolved log field value.
+type KeyspaceObservabilityLogField struct {
+	Name  string
+	Value string
 }
 
 const keyspaceObservabilityMetricLabelPrefix = "keyspace_meta_"
@@ -106,7 +113,6 @@ func validPrometheusLabelName(label string) bool {
 func (c *Config) ResolveKeyspaceObservability(values map[string]string) error {
 	resolved := KeyspaceObservabilityValues{
 		MetricLabels:  make(map[string]string),
-		SlowLogFields: make(map[string]string),
 		StmtLogFields: make(map[string]string),
 	}
 	for _, field := range c.KeyspaceObservability.Fields {
@@ -121,12 +127,18 @@ func (c *Config) ResolveKeyspaceObservability(values map[string]string) error {
 			resolved.MetricLabels[field.MetricLabel] = value
 		}
 		if field.SlowLogField != "" {
-			resolved.SlowLogFields[field.SlowLogField] = value
+			resolved.SlowLogFields = append(resolved.SlowLogFields, KeyspaceObservabilityLogField{
+				Name:  field.SlowLogField,
+				Value: value,
+			})
 		}
 		if field.StmtLogField != "" {
 			resolved.StmtLogFields[field.StmtLogField] = value
 		}
 	}
+	sort.SliceStable(resolved.SlowLogFields, func(i, j int) bool {
+		return resolved.SlowLogFields[i].Name < resolved.SlowLogFields[j].Name
+	})
 	c.KeyspaceObservabilityValues = resolved
 	return nil
 }
@@ -138,7 +150,7 @@ func (v KeyspaceObservabilityValues) Clone() KeyspaceObservabilityValues {
 		res.MetricLabels = maps.Clone(v.MetricLabels)
 	}
 	if len(v.SlowLogFields) > 0 {
-		res.SlowLogFields = maps.Clone(v.SlowLogFields)
+		res.SlowLogFields = append([]KeyspaceObservabilityLogField(nil), v.SlowLogFields...)
 	}
 	if len(v.StmtLogFields) > 0 {
 		res.StmtLogFields = maps.Clone(v.StmtLogFields)
@@ -151,8 +163,8 @@ func (c *Config) GetKeyspaceObservabilityMetricLabels() map[string]string {
 	return c.KeyspaceObservabilityValues.MetricLabels
 }
 
-// GetKeyspaceObservabilitySlowLogFields returns resolved slow log fields.
-func (c *Config) GetKeyspaceObservabilitySlowLogFields() map[string]string {
+// GetKeyspaceObservabilitySlowLogFields returns resolved slow log fields in stable order.
+func (c *Config) GetKeyspaceObservabilitySlowLogFields() []KeyspaceObservabilityLogField {
 	return c.KeyspaceObservabilityValues.SlowLogFields
 }
 

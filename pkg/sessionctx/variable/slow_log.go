@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc64"
-	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -591,11 +590,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
-	keyspaceFields := config.GetGlobalConfig().GetKeyspaceObservabilitySlowLogFields()
-	keyspaceFieldKeys := slices.Collect(maps.Keys(keyspaceFields))
-	slices.Sort(keyspaceFieldKeys)
-	for _, key := range keyspaceFieldKeys {
-		writeSlowLogItem(&buf, key, keyspaceFields[key])
+	for _, field := range config.GetGlobalConfig().GetKeyspaceObservabilitySlowLogFields() {
+		writeSlowLogItem(&buf, field.Name, field.Value)
 	}
 
 	if s.CurrentDBChanged {

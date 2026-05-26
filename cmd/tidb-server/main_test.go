@@ -195,7 +195,9 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 
 	cfg := config.GetGlobalConfig()
 	require.Equal(t, map[string]string{"keyspace_name": "ks", "keyspace_meta_label_a": "value_a"}, cfg.GetKeyspaceObservabilityMetricLabels())
-	require.Equal(t, map[string]string{"keyspace_meta_slow_a": "value_a"}, cfg.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, []config.KeyspaceObservabilityLogField{
+		{Name: "keyspace_meta_slow_a", Value: "value_a"},
+	}, cfg.GetKeyspaceObservabilitySlowLogFields())
 	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, cfg.GetKeyspaceObservabilityStmtLogFields())
 }
 
