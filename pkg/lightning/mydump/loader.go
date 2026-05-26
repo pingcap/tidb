@@ -854,7 +854,7 @@ func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
 	for _, dbMeta := range s.loader.dbs {
 		filtered := dbMeta.Tables[:0]
 		for _, tableMeta := range dbMeta.Tables {
-			if _, ok := s.viewIndexMap[filterTableName(tableMeta.DB, tableMeta.Name)]; ok {
+			if _, ok := s.viewIndexMap[tableKey(tableMeta.DB, tableMeta.Name)]; ok {
 				prunedCount++
 				if len(prunedTables) < maxPrunedTableLogSamples {
 					prunedTables = append(prunedTables, common.UniqueTable(tableMeta.DB, tableMeta.Name))
@@ -875,7 +875,7 @@ func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
 	clear(s.tableIndexMap)
 	for _, dbMeta := range s.loader.dbs {
 		for i, tableMeta := range dbMeta.Tables {
-			s.tableIndexMap[filterTableName(tableMeta.DB, tableMeta.Name)] = i
+			s.tableIndexMap[tableKey(tableMeta.DB, tableMeta.Name)] = i
 		}
 	}
 }

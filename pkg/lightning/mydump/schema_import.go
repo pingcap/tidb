@@ -281,7 +281,7 @@ func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parse
 	return si.runJob(ctx, job, stmts)
 }
 
-func filterTableName(dbName, tblName string) filter.Table {
+func tableKey(dbName, tblName string) filter.Table {
 	return filter.Table{Schema: dbName, Name: tblName}
 }
 
@@ -295,7 +295,7 @@ func collectDumpTables(dbMetas []*MDDatabaseMeta) tableNameSet {
 	tables := make(tableNameSet)
 	for _, dbMeta := range dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
-			tables.add(filterTableName(tableMeta.DB, tableMeta.Name))
+			tables.add(tableKey(tableMeta.DB, tableMeta.Name))
 		}
 	}
 	return tables

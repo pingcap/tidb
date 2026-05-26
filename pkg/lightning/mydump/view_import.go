@@ -164,7 +164,7 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 			// Dumpling may omit the schema for same-database references.
 			schema = strings.ToLower(c.currentSchema)
 		}
-		c.deps.add(filterTableName(schema, node.Name.L))
+		c.deps.add(tableKey(schema, node.Name.L))
 		return n, true
 	default:
 		return n, false
@@ -201,7 +201,7 @@ func NewSchemaImportPlan(ctx context.Context, store storeapi.Storage, sqlMode my
 				return nil, err
 			}
 
-			parsed, err := parseViewSchemaSQL(p, filterTableName(viewMeta.DB, viewMeta.Name), sqlStr)
+			parsed, err := parseViewSchemaSQL(p, tableKey(viewMeta.DB, viewMeta.Name), sqlStr)
 			if err != nil {
 				return nil, err
 			}
