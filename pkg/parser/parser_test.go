@@ -84,7 +84,7 @@ func TestSimple(t *testing.T) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
-		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "operate", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",

@@ -70,6 +70,8 @@ connect (u_show_mv, localhost, u_show_mv,,mview_privilege_test);
 connection u_show_mv;
 --replace_column 1 <mview_id>
 show materialized view mv remain_logs;
+--replace_column 1 <mview_id>
+show materialized views from mview_privilege_test;
 -- error 1142
 show create materialized view mv;
 disconnect u_show_mv;
@@ -122,6 +124,7 @@ revoke select on mview_privilege_test.t from 'u_show_log'@'%';
 show grants for 'u_show_log'@'%';
 connect (u_show_log, localhost, u_show_log,,);
 connection u_show_log;
+show materialized views from mview_privilege_test;
 --replace_column 1 <mlog_id> 3 <base_table_id>
 show materialized view logs from mview_privilege_test;
 -- error 1142

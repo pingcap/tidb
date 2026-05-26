@@ -6580,10 +6580,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 			names = append(names, "Table_type")
 		}
 	case ast.ShowMaterializedViews:
-		names = []string{"MVIEW_ID", "MVIEW_NAME"}
+		names = []string{"mview_id", "mview_name"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowMaterializedViewLogs:
-		names = []string{"MLOG_ID", "MLOG_NAME", "BASE_TABLE_ID", "BASE_TABLE_NAME"}
+		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowMaterializedView:
 		names = []string{"mview_id", "mview_name", "pending_rows"}

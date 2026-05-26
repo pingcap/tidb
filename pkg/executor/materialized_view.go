@@ -616,8 +616,21 @@ func checkRefreshMaterializedViewBaseTableSelect(
 	is infoschema.InfoSchema,
 	mvInfo *model.MaterializedViewInfo,
 ) error {
+	sessVars := ctx.GetSessionVars()
+	if sessVars.InMaterializedViewMaintenance {
+		if !sessVars.InRestrictedSQL {
+			return plannererrors.ErrInternal.GenWithStack(
+				"materialized view maintenance should only run in restricted SQL mode",
+			)
+		}
+		return nil
+	}
+	if sessVars.InRestrictedSQL {
+		return nil
+	}
+
 	pm := privilege.GetPrivilegeManager(ctx)
-	user := ctx.GetSessionVars().User
+	user := sessVars.User
 	if pm == nil || user == nil || mvInfo == nil {
 		return nil
 	}
@@ -631,7 +644,7 @@ func checkRefreshMaterializedViewBaseTableSelect(
 			continue
 		}
 		baseName := baseTable.Meta().Name.L
-		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbInfo.Name.L, baseName, "", mysql.SelectPriv) {
+		if !pm.RequestVerification(sessVars.ActiveRoles, dbInfo.Name.L, baseName, "", mysql.SelectPriv) {
 			return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, baseName)
 		}
 	}
