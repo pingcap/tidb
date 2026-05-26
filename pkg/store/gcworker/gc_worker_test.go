@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	kv2 "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1108,6 +1109,60 @@ func TestLeaderTick(t *testing.T) {
 		break
 	}
 	require.NoError(t, err)
+
+	t.Run("UnifiedGCFastStartSkipsInitialWait", func(t *testing.T) {
+		txnSafePointSyncWaitTime = 0
+		veryLong := gcDefaultLifeTime * 10
+		lastRunBeforeFastStart := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
+		err := s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeFastStart)
+		require.NoError(t, err)
+		s.gcWorker.lastFinish = time.Now()
+
+		originInTest := intest.InTest
+		intest.InTest = false
+		t.Cleanup(func() {
+			intest.InTest = originInTest
+		})
+		originGlobalConfig := config.GetGlobalConfig()
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableGCFastStart = true
+		})
+		t.Cleanup(func() {
+			config.StoreGlobalConfig(originGlobalConfig)
+		})
+
+		err = s.gcWorker.runKeyspaceGCJobInUnifiedGCMode(gcContext(), gcConcurrency{v: 1})
+		require.NoError(t, err)
+		select {
+		case err = <-s.gcWorker.done:
+		case <-time.After(time.Second * 10):
+			err = errors.New("receive from s.gcWorker.done timeout")
+		}
+		require.NoError(t, err)
+
+		lastRunAfterFastStart, err := s.gcWorker.loadTime(gcLastRunTimeKey)
+		require.NoError(t, err)
+		require.NotNil(t, lastRunAfterFastStart)
+		require.True(t, lastRunAfterFastStart.After(lastRunBeforeFastStart))
+
+		lastRunBeforeWait := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
+		err = s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeWait)
+		require.NoError(t, err)
+		s.gcWorker.lastFinish = time.Now()
+		s.gcWorker.isFirstTickFinished = true
+		err = s.gcWorker.runKeyspaceGCJobInUnifiedGCMode(gcContext(), gcConcurrency{v: 1})
+		require.NoError(t, err)
+		select {
+		case err = <-s.gcWorker.done:
+			err = errors.Errorf("received signal s.gcWorker.done which shouldn't exist: %v", err)
+		case <-time.After(time.Second):
+		}
+		require.NoError(t, err)
+		lastRunAfterWait, err := s.gcWorker.loadTime(gcLastRunTimeKey)
+		require.NoError(t, err)
+		require.NotNil(t, lastRunAfterWait)
+		require.Equal(t, lastRunBeforeWait.Unix(), lastRunAfterWait.Unix())
+	})
 }
 
 func TestResolveLockRangeInfine(t *testing.T) {

@@ -449,7 +449,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 func (w *GCWorker) runKeyspaceGCJobInUnifiedGCMode(ctx context.Context, concurrency gcConcurrency) error {
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
-	if time.Since(w.lastFinish) < gcWaitTime {
+	if w.isNeedToWait() {
 		logutil.Logger(ctx).Info("another keyspace gc job has just finished, skipped.", zap.String("category", "gc worker"),
 			zap.String("leaderTick on ", w.uuid))
 		return nil

@@ -74,6 +74,7 @@ go_test(
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/errorpb",
