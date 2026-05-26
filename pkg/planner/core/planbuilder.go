@@ -4325,14 +4325,15 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	// Handle RETURNING clause
 	if len(insert.Returning) > 0 {
-		returningExprs, returningSchema, returningNames, err := b.buildReturningClause(
-			ctx, insert.Returning, insertPlan.TableSchema, insertPlan.TableColNames, mockTablePlan)
+		returningExprs, returningSchema, returningNames, needExtraHandle, err := b.buildReturningClause(
+			ctx, insert.Returning, insertPlan.TableSchema, insertPlan.TableColNames, mockTablePlan, tableInfo, tn.Schema)
 		if err != nil {
 			return nil, err
 		}
 		insertPlan.Returning = returningExprs
 		insertPlan.ReturningSchema = returningSchema
 		insertPlan.ReturningNames = returningNames
+		insertPlan.NeedExtraHandleReturning = needExtraHandle
 		// Set the output schema for the insert plan to be the returning schema
 		insertPlan.SetSchema(returningSchema)
 		insertPlan.SetOutputNames(returningNames)
@@ -6786,8 +6787,10 @@ func (b *PlanBuilder) buildReturningClause(
 	returning []*ast.SelectField,
 	tableSchema *expression.Schema,
 	tableNames types.NameSlice,
-	mockPlan base.LogicalPlan,
-) ([]expression.Expression, *expression.Schema, types.NameSlice, error) {
+	mockPlan *logicalop.LogicalTableDual,
+	tableInfo *model.TableInfo,
+	dbName ast.CIStr,
+) ([]expression.Expression, *expression.Schema, types.NameSlice, bool, error) {
 	capacity := 0
 	for _, field := range returning {
 		if field.WildCard != nil {
@@ -6799,6 +6802,30 @@ func (b *PlanBuilder) buildReturningClause(
 	exprs := make([]expression.Expression, 0, capacity)
 	cols := make([]*expression.Column, 0, capacity)
 	names := make(types.NameSlice, 0, capacity)
+	inputSchema := tableSchema
+	inputNames := tableNames
+	if !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
+		extraCol := &expression.Column{
+			RetType:  tp,
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraHandleID,
+			Index:    tableSchema.Len(),
+			OrigName: fmt.Sprintf("%v.%v.%v", dbName, tableInfo.Name, model.ExtraHandleName),
+		}
+		inputSchema = expression.NewSchema(append(append([]*expression.Column{}, tableSchema.Columns...), extraCol)...)
+		inputNames = append(tableNames.Shallow(), &types.FieldName{
+			OrigTblName: tableInfo.Name,
+			OrigColName: model.ExtraHandleName,
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraHandleName,
+		})
+	}
+	mockPlan.SetSchema(inputSchema)
+	mockPlan.SetOutputNames(inputNames)
+	needExtraHandle := false
 
 	for _, field := range returning {
 		// Handle RETURNING *
@@ -6815,9 +6842,15 @@ func (b *PlanBuilder) buildReturningClause(
 		// Handle specific column or expression
 		expr, np, err := b.rewrite(ctx, field.Expr, mockPlan, nil, true)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		_ = np // We don't need the new plan for simple column references
+		for _, col := range expression.ExtractColumns(expr) {
+			if col.ID == model.ExtraHandleID {
+				needExtraHandle = true
+				break
+			}
+		}
 
 		exprs = append(exprs, expr)
 
@@ -6836,10 +6869,10 @@ func (b *PlanBuilder) buildReturningClause(
 			}
 		} else if col, ok := expr.(*expression.Column); ok {
 			// Find the original column name
-			for i, c := range tableSchema.Columns {
+			for i, c := range inputSchema.Columns {
 				if c.UniqueID == col.UniqueID {
 					// Copy the FieldName
-					origName := tableNames[i]
+					origName := inputNames[i]
 					colName = &types.FieldName{
 						OrigTblName: origName.OrigTblName,
 						OrigColName: origName.OrigColName,
@@ -6858,7 +6891,7 @@ func (b *PlanBuilder) buildReturningClause(
 		} else {
 			exprName, err := b.buildProjectionFieldNameFromExpressions(ctx, field)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, false, err
 			}
 			colName = &types.FieldName{
 				ColName: exprName,
@@ -6868,5 +6901,5 @@ func (b *PlanBuilder) buildReturningClause(
 	}
 
 	schema := expression.NewSchema(cols...)
-	return exprs, schema, names, nil
+	return exprs, schema, names, needExtraHandle, nil
 }

@@ -39,6 +39,31 @@ insert into t (id, name, val) values (300, 'orig', 1);
 insert into t (id, name, val) values (300, 'updated', 5) on duplicate key update name=values(name), val=values(val)+1 returning id, name, val;
 id	name	val
 300	updated	6
+drop table if exists t_auto_random_returning;
+create table t_auto_random_returning (id bigint primary key auto_random(3), name varchar(20));
+insert into t_auto_random_returning (name) values ('auto-random-1'), ('auto-random-2') returning id > 0 as generated_id, name;
+generated_id	name
+1	auto-random-1
+1	auto-random-2
+select count(*), count(distinct id), min(id > 0), max(id > 0) from t_auto_random_returning;
+count(*)	count(distinct id)	min(id > 0)	max(id > 0)
+2	2	1	1
+drop table t_auto_random_returning;
+drop table if exists t_nonclustered_returning;
+create table t_nonclustered_returning (id int, name varchar(20), primary key(id) nonclustered);
+insert into t_nonclustered_returning values (1, 'nonclustered-1'), (2, 'nonclustered-2') returning id, name, _tidb_rowid;
+id	name	_tidb_rowid
+1	nonclustered-1	1
+2	nonclustered-2	2
+drop table t_nonclustered_returning;
+drop table if exists t_shard_rowid_returning;
+create table t_shard_rowid_returning (id int, name varchar(20), primary key(id) nonclustered) shard_row_id_bits=4;
+insert into t_shard_rowid_returning values (1, 'shard-1'), (2, 'shard-2'), (3, 'shard-3') returning id, _tidb_rowid, ((1 << (64 - 4 - 1)) - 1) & _tidb_rowid as rowid_sequence;
+id	_tidb_rowid	rowid_sequence
+1	<sharded_rowid>	1
+2	<sharded_rowid>	2
+3	<sharded_rowid>	3
+drop table t_shard_rowid_returning;
 select * from t order by id;
 id	name	val
 1	alice	10
