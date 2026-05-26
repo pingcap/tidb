@@ -308,6 +308,12 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
+// SetStoreBatchSize sets the store batch size for TiKV coprocessor requests.
+func (builder *RequestBuilder) SetStoreBatchSize(storeBatchSize int) *RequestBuilder {
+	builder.Request.StoreBatchSize = storeBatchSize
+	return builder
+}
+
 // SetPartitionIDAndRanges sets `PartitionIDAndRanges` property.
 func (builder *RequestBuilder) SetPartitionIDAndRanges(partitionIDAndRanges []kv.PartitionIDAndRanges) *RequestBuilder {
 	builder.PartitionIDAndRanges = partitionIDAndRanges
