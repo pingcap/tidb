@@ -220,9 +220,10 @@ func NewSchemaImportPlan(ctx context.Context, store storeapi.Storage, sqlMode my
 	return plan, nil
 }
 
-// parseViewSchemaSQL removes dumpling's placeholder cleanup DDL, normalizes the
-// CREATE VIEW target name, and records the referenced objects used for
-// dependency planning.
+// parseViewSchemaSQL removes dumpling's placeholder cleanup DDL, preserves the
+// parseable statements needed to recreate the view, and records the referenced
+// objects used for dependency planning. The CREATE VIEW target name is
+// rewritten later during import by createIfNotExistsStmtWithMode.
 func parseViewSchemaSQL(p *parser.Parser, currentView filter.Table, sql string) (*parsedViewSchema, error) {
 	stmts, _, err := p.ParseSQL(sql)
 	if err != nil {
