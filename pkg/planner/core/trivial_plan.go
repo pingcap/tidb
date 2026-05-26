@@ -261,8 +261,22 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 	}
 
 	// Row count estimate from stats cache (no synchronous loading).
-	rowCount := trivialRowCountEstimate(ctx, tblInfo)
+	statsTbl := getTrivialStatsTable(ctx, tblInfo)
+	rowCount := trivialRowCountFromStats(statsTbl)
 	statsInfo := &property.StatsInfo{RowCount: rowCount}
+
+	// The full planner's CollectPredicateColumnsPoint rule registers
+	// predicate columns for sync/async stats loading. The trivial path
+	// skips that rule, so fall back when WHERE references a column whose
+	// stats need loading — letting the full planner trigger the load
+	// preserves the observability and sync-wait contracts.
+	if statsTbl != nil && !statsTbl.Pseudo && len(refColIDs) > 0 {
+		for colID := range refColIDs {
+			if _, loadNeeded, _ := statsTbl.ColumnIsLoadNeeded(colID, true); loadNeeded {
+				return nil, nil
+			}
+		}
+	}
 
 	// Provide a HistColl so downstream callers (e.g. GetAvgRowSize for
 	// network buffer sizing) don't hit a nil dereference.
@@ -482,16 +496,21 @@ func (v *whereColumnVisitor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, !v.disallowed
 }
 
-// trivialRowCountEstimate returns a row count estimate without triggering
-// synchronous stats loading. Uses the cached RealtimeCount when available,
-// falling back to PseudoRowCount.
-func trivialRowCountEstimate(ctx base.PlanContext, tblInfo *model.TableInfo) float64 {
+// getTrivialStatsTable fetches the cached stats table for tblInfo, or nil
+// when the stats handle is unavailable. It never triggers synchronous loading.
+func getTrivialStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
-	if statsHandle != nil {
-		statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-		if statsTbl != nil && statsTbl.RealtimeCount > 0 {
-			return float64(statsTbl.RealtimeCount)
-		}
+	if statsHandle == nil {
+		return nil
+	}
+	return statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+}
+
+// trivialRowCountFromStats returns a row count estimate from the cached
+// stats table, falling back to PseudoRowCount when no real count is available.
+func trivialRowCountFromStats(statsTbl *statistics.Table) float64 {
+	if statsTbl != nil && statsTbl.RealtimeCount > 0 {
+		return float64(statsTbl.RealtimeCount)
 	}
 	return statistics.PseudoRowCount
 }
