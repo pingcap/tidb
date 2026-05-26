@@ -17,11 +17,8 @@ package join
 import (
 	"testing"
 
-<<<<<<< HEAD
 	"github.com/pingcap/failpoint"
-=======
 	"github.com/pingcap/tidb/pkg/config"
->>>>>>> 5376b6bd8a4 (executor: fix data race in the temp folder (#65064))
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
