@@ -30,9 +30,6 @@ func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][
 			return nil, errors.Errorf("tici shard %d has nil ranges", loc.ShardID)
 		}
 		addr := selectTiCIShardAddr(loc.localCacheAddrs, addrLoad)
-		if addr == "" {
-			continue
-		}
 		storeShard[addr] = append(storeShard[addr], &coprocessor.ShardInfo{
 			ShardId:    loc.ShardID,
 			ShardEpoch: loc.Epoch,
@@ -43,17 +40,15 @@ func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][
 }
 
 func selectTiCIShardAddr(addrs []string, addrLoad map[string]int) string {
-	var selected string
-	selectedLoad := 0
-	for _, addr := range addrs {
+	selected := addrs[0]
+	selectedLoad := addrLoad[selected]
+	for _, addr := range addrs[1:] {
 		load := addrLoad[addr]
-		if selected == "" || load < selectedLoad {
+		if load < selectedLoad {
 			selected = addr
 			selectedLoad = load
 		}
 	}
-	if selected != "" {
-		addrLoad[selected]++
-	}
+	addrLoad[selected]++
 	return selected
 }
