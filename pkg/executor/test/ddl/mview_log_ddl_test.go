@@ -514,16 +514,22 @@ func TestTruncateMaterializedViewRelatedTablesRejected(t *testing.T) {
 	tk.MustExec("create table t_truncate_mv (a int not null, b int)")
 	tk.MustExec("create materialized view log on t_truncate_mv (a, b)")
 
+	err := tk.ExecToErr("truncate table t_truncate_mv")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view log")
+
+	err = tk.ExecToErr("truncate table `$mlog$t_truncate_mv`")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view log table")
+
 	tk.MustExec("create materialized view mv_truncate_mv (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(1) from t_truncate_mv group by a")
 
-	err := tk.ExecToErr("truncate table mv_truncate_mv")
+	err = tk.ExecToErr("truncate table mv_truncate_mv")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view table")
 
 	err = tk.ExecToErr("truncate table `$mlog$t_truncate_mv`")
 	require.ErrorContains(t, err, "TRUNCATE TABLE on materialized view log table")
 
 	err = tk.ExecToErr("truncate table t_truncate_mv")
-	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view dependencies")
+	require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view log")
 }
 
 func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
