@@ -90,22 +90,24 @@ const (
 //     Once a grown bucket repeats, it should not be polluted by byte-limited
 //     fullscan samples.
 type ruPagePredictor struct {
-	mu             sync.Mutex
-	pageEMA        *ruEMA
-	bytePageEMA    *ruEMA
-	rowPageEMA     *ruEMA
-	rowBytesPerRow *ruEMA
-	rowBuckets     map[uint64]*ruEMA
-	lastReason     pageBreakReason
+	mu              sync.Mutex
+	pagingSizeBytes uint64
+	pageEMA         *ruEMA
+	bytePageEMA     *ruEMA
+	rowPageEMA      *ruEMA
+	rowBytesPerRow  *ruEMA
+	rowBuckets      map[uint64]*ruEMA
+	lastReason      pageBreakReason
 }
 
-func newRUPagePredictor() *ruPagePredictor {
+func newRUPagePredictor(pagingSizeBytes uint64) *ruPagePredictor {
 	return &ruPagePredictor{
-		pageEMA:        newRUEMA(),
-		bytePageEMA:    newRUEMA(),
-		rowPageEMA:     newRUEMA(),
-		rowBytesPerRow: newRUEMA(),
-		rowBuckets:     make(map[uint64]*ruEMA),
+		pagingSizeBytes: pagingSizeBytes,
+		pageEMA:         newRUEMA(),
+		bytePageEMA:     newRUEMA(),
+		rowPageEMA:      newRUEMA(),
+		rowBytesPerRow:  newRUEMA(),
+		rowBuckets:      make(map[uint64]*ruEMA),
 	}
 }
 
@@ -146,7 +148,7 @@ func (p *ruPagePredictor) observeRowLimited(pagingRows uint64, bytes uint64, now
 	bucket.Observe(bytes, now)
 }
 
-func (p *ruPagePredictor) Predict(pagingRows, pagingSizeBytes uint64) uint64 {
+func (p *ruPagePredictor) Predict(pagingRows uint64) uint64 {
 	p.mu.Lock()
 	lastReason := p.lastReason
 	bucket := p.rowBuckets[pagingRows]
@@ -163,7 +165,7 @@ func (p *ruPagePredictor) Predict(pagingRows, pagingSizeBytes uint64) uint64 {
 			return bucket.Predict()
 		}
 
-		if rowPredicted := p.predictByRows(pagingRows, pagingSizeBytes); rowPredicted > 0 {
+		if rowPredicted := p.predictByRows(pagingRows); rowPredicted > 0 {
 			return rowPredicted
 		}
 	}
@@ -176,10 +178,10 @@ func (p *ruPagePredictor) Predict(pagingRows, pagingSizeBytes uint64) uint64 {
 	}
 	// Cold-start fallback: before any page sample is available, use the
 	// configured byte budget so the first paging request is still precharged.
-	return pagingSizeBytes
+	return p.pagingSizeBytes
 }
 
-func (p *ruPagePredictor) predictByRows(pagingRows, pagingSizeBytes uint64) uint64 {
+func (p *ruPagePredictor) predictByRows(pagingRows uint64) uint64 {
 	bytesPerRow := p.rowBytesPerRow.Predict()
 	if bytesPerRow == 0 {
 		return 0
@@ -188,7 +190,7 @@ func (p *ruPagePredictor) predictByRows(pagingRows, pagingSizeBytes uint64) uint
 	if bytesPerRow <= rowPredicted/pagingRows {
 		rowPredicted = bytesPerRow * pagingRows
 	}
-	if pagingSizeBytes == 0 || rowPredicted <= pagingSizeBytes {
+	if p.pagingSizeBytes == 0 || rowPredicted <= p.pagingSizeBytes {
 		return rowPredicted
 	}
 	return p.rowPageEMA.Predict()

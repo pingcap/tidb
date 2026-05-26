@@ -231,7 +231,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		runawayChecker:   req.RunawayChecker,
 		maxKeysRead:      req.MaxKeysRead,
 		keysRead:         pickKeysReadCounter(req),
-		predictor:        newRUPagePredictor(),
+		predictor:        newRUPagePredictor(pagingSizeBytes),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -1779,7 +1779,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	req.PredictedReadBytes = worker.predictor.Predict(task.pagingSize, task.pagingSizeBytes)
+	req.PredictedReadBytes = worker.predictor.Predict(task.pagingSize)
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
