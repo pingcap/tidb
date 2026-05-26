@@ -248,6 +248,7 @@ func (s *Service) flushPendingResumeState(ctx context.Context) error {
 	if err := s.state.SaveState(ctx, *s.pendingResumeState); err != nil {
 		return fmt.Errorf("save resume state: %w", err)
 	}
+	s.status.setPersistentState(*s.pendingResumeState)
 	s.pendingResumeState = nil
 	s.status.clearFailure()
 	return nil

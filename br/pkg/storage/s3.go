@@ -732,10 +732,12 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if rs.s3Compatible {
 		optFns = []func(*s3.Options){withContentMD5}
 	}
+	RecordAPICall(BackendS3, APICallPutObject)
 	_, err := rs.svc.PutObject(ctx, input, optFns...)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	RecordAPICall(BackendS3, APICallHeadObjects)
 	// Use the proper waiter pattern in AWS SDK v2
 	waiter := s3.NewObjectExistsWaiter(rs.svc)
 	hinput := &s3.HeadObjectInput{
@@ -870,6 +872,7 @@ func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) 
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
+	RecordAPICall(BackendS3, APICallHeadObjects)
 	_, err := rs.svc.HeadObject(ctx, input)
 	if err != nil {
 		var aerr smithy.APIError
@@ -917,6 +920,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	}
 
 	for {
+		RecordAPICall(BackendS3, APICallListObjects)
 		res, err := rs.svc.ListObjectsV2(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
@@ -967,6 +971,7 @@ func (rs *S3Storage) FileSynced(ctx context.Context, file string) (bool, error) 
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
+	RecordAPICall(BackendS3, APICallHeadObjects)
 	head, err := rs.svc.HeadObject(ctx, input)
 	if err != nil {
 		return false, errors.Trace(err)
