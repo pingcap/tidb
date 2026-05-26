@@ -101,6 +101,6 @@ func TestStmtRecord(t *testing.T) {
 	require.NoError(t, err)
 	items := make(map[string]any)
 	require.NoError(t, json.Unmarshal(b, &items))
-	require.Equal(t, "value_a", items["stmt_meta_a"])
+	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
 	require.Equal(t, record2.Digest, items["digest"])
 }

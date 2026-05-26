@@ -195,10 +195,6 @@ metric-label = "keyspace_meta_label_b"
 	require.Equal(t, map[string]string{"Slow_meta_a": "value_a"}, conf.GetKeyspaceObservabilitySlowLogFields())
 	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, conf.GetKeyspaceObservabilityStmtLogFields())
 
-	metricLabels := conf.GetKeyspaceObservabilityMetricLabels()
-	metricLabels["keyspace_meta_label_a"] = "changed"
-	require.Equal(t, "value_a", conf.GetKeyspaceObservabilityMetricLabels()["keyspace_meta_label_a"])
-
 	require.ErrorContains(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_b": "value_b"}), `missing required keyspace metadata entry "meta_a"`)
 }
 
@@ -322,15 +318,6 @@ source = "meta_b"
 slow-log-field = "Slow_meta"
 `,
 			err: `duplicated slow-log-field "Slow_meta"`,
-		},
-		{
-			name: "reserved stmt log field",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-stmt-log-field = "digest"
-`,
-			err: `reserved stmt-log-field "digest"`,
 		},
 		{
 			name: "duplicate stmt log field",

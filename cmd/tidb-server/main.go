@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"runtime"
 	"strconv"
@@ -1192,9 +1193,7 @@ func prepareKeyspaceObservabilityForStarter(metadata map[string]string, resolved
 		return err
 	}
 	configuredValues := copiedConfig.KeyspaceObservabilityValues.Clone()
-	for k, v := range configuredValues.MetricLabels {
-		resolvedValues.MetricLabels[k] = v
-	}
+	maps.Copy(resolvedValues.MetricLabels, configuredValues.MetricLabels)
 	resolvedValues.SlowLogFields = configuredValues.SlowLogFields
 	resolvedValues.StmtLogFields = configuredValues.StmtLogFields
 	return nil

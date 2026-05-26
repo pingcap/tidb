@@ -16,6 +16,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/prometheus/common/model"
@@ -164,134 +165,6 @@ var reservedKeyspaceObservabilitySlowLogFieldPrefixes = []string{
 	"cop_backoff_",
 }
 
-var reservedKeyspaceObservabilityStmtLogFields = map[string]struct{}{
-	"auth_users":                         {},
-	"backoff_types":                      {},
-	"begin":                              {},
-	"binding_digest":                     {},
-	"binding_sql":                        {},
-	"charset":                            {},
-	"collation":                          {},
-	"commit_count":                       {},
-	"digest":                             {},
-	"end":                                {},
-	"exec_count":                         {},
-	"exec_retry_count":                   {},
-	"exec_retry_time":                    {},
-	"first_seen":                         {},
-	"index_names":                        {},
-	"is_internal":                        {},
-	"keyspace_id":                        {},
-	"keyspace_name":                      {},
-	"last_seen":                          {},
-	"max_backoff_time":                   {},
-	"max_commit_backoff_time":            {},
-	"max_commit_time":                    {},
-	"max_compile_latency":                {},
-	"max_cop_process_address":            {},
-	"max_cop_process_time":               {},
-	"max_cop_wait_address":               {},
-	"max_cop_wait_time":                  {},
-	"max_disk":                           {},
-	"max_get_commit_ts_time":             {},
-	"max_latency":                        {},
-	"max_local_latch_time":               {},
-	"max_mem":                            {},
-	"max_mem_arbitration":                {},
-	"max_parse_latency":                  {},
-	"max_prewrite_region_num":            {},
-	"max_prewrite_time":                  {},
-	"max_process_time":                   {},
-	"max_processed_keys":                 {},
-	"max_resolve_lock_time":              {},
-	"max_result_rows":                    {},
-	"max_rocksdb_block_cache_hit_count":  {},
-	"max_rocksdb_block_read_byte":        {},
-	"max_rocksdb_block_read_count":       {},
-	"max_rocksdb_delete_skipped_count":   {},
-	"max_rocksdb_key_skipped_count":      {},
-	"max_rru":                            {},
-	"max_ru_wait_duration":               {},
-	"max_ruv2":                           {},
-	"max_total_keys":                     {},
-	"max_txn_retry":                      {},
-	"max_wait_time":                      {},
-	"max_write_keys":                     {},
-	"max_write_size":                     {},
-	"max_wru":                            {},
-	"min_latency":                        {},
-	"min_result_rows":                    {},
-	"normalized_sql":                     {},
-	"plan_cache_hits":                    {},
-	"plan_cache_unqualified_count":       {},
-	"plan_cache_unqualified_last_reason": {},
-	"plan_digest":                        {},
-	"plan_hint":                          {},
-	"plan_in_binding":                    {},
-	"plan_in_cache":                      {},
-	"prepared":                           {},
-	"prev_sql":                           {},
-	"resource_group_name":                {},
-	"sample_binary_plan":                 {},
-	"sample_plan":                        {},
-	"sample_sql":                         {},
-	"schema_name":                        {},
-	"stmt_type":                          {},
-	"storage_kv":                         {},
-	"storage_mpp":                        {},
-	"sum_affected_rows":                  {},
-	"sum_backoff_time":                   {},
-	"sum_backoff_times":                  {},
-	"sum_backoff_total":                  {},
-	"sum_commit_backoff_time":            {},
-	"sum_commit_time":                    {},
-	"sum_compile_latency":                {},
-	"sum_disk":                           {},
-	"sum_errors":                         {},
-	"sum_get_commit_ts_time":             {},
-	"sum_kv_total":                       {},
-	"sum_latency":                        {},
-	"sum_local_latch_time":               {},
-	"sum_mem":                            {},
-	"sum_mem_arbitration":                {},
-	"sum_num_cop_tasks":                  {},
-	"sum_parse_latency":                  {},
-	"sum_pd_total":                       {},
-	"sum_prewrite_region_num":            {},
-	"sum_prewrite_time":                  {},
-	"sum_process_time":                   {},
-	"sum_processed_keys":                 {},
-	"sum_resolve_lock_time":              {},
-	"sum_result_rows":                    {},
-	"sum_rocksdb_block_cache_hit_count":  {},
-	"sum_rocksdb_block_read_byte":        {},
-	"sum_rocksdb_block_read_count":       {},
-	"sum_rocksdb_delete_skipped_count":   {},
-	"sum_rocksdb_key_skipped_count":      {},
-	"sum_rru":                            {},
-	"sum_ru_wait_duration":               {},
-	"sum_ruv2":                           {},
-	"sum_tidb_cpu":                       {},
-	"sum_tikv_cpu":                       {},
-	"sum_total_keys":                     {},
-	"sum_txn_retry":                      {},
-	"sum_wait_time":                      {},
-	"sum_warnings":                       {},
-	"sum_write_keys":                     {},
-	"sum_write_size":                     {},
-	"sum_write_sql_resp_total":           {},
-	"sum_wru":                            {},
-	"table_names":                        {},
-	"unpacked_bytes_received_tiflash_cross_zone": {},
-	"unpacked_bytes_received_tiflash_total":      {},
-	"unpacked_bytes_received_tikv_cross_zone":    {},
-	"unpacked_bytes_received_tikv_total":         {},
-	"unpacked_bytes_send_tiflash_cross_zone":     {},
-	"unpacked_bytes_send_tiflash_total":          {},
-	"unpacked_bytes_send_tikv_cross_zone":        {},
-	"unpacked_bytes_send_tikv_total":             {},
-}
-
 // Valid validates metadata observability mappings.
 func (o KeyspaceObservability) Valid() error {
 	metricLabels := make(map[string]struct{}, len(o.Fields))
@@ -332,9 +205,6 @@ func (o KeyspaceObservability) Valid() error {
 		}
 		if field.StmtLogField != "" {
 			key := strings.ToLower(field.StmtLogField)
-			if _, ok := reservedKeyspaceObservabilityStmtLogFields[key]; ok {
-				return fmt.Errorf("[keyspace-observability.fields.%d] reserved stmt-log-field %q", i, field.StmtLogField)
-			}
 			if _, ok := stmtLogFields[key]; ok {
 				return fmt.Errorf("[keyspace-observability.fields.%d] duplicated stmt-log-field %q", i, field.StmtLogField)
 			}
@@ -397,37 +267,28 @@ func (c *Config) ResolveKeyspaceObservability(values map[string]string) error {
 func (v KeyspaceObservabilityValues) Clone() KeyspaceObservabilityValues {
 	res := KeyspaceObservabilityValues{}
 	if len(v.MetricLabels) > 0 {
-		res.MetricLabels = make(map[string]string, len(v.MetricLabels))
-		for k, value := range v.MetricLabels {
-			res.MetricLabels[k] = value
-		}
+		res.MetricLabels = maps.Clone(v.MetricLabels)
 	}
 	if len(v.SlowLogFields) > 0 {
-		res.SlowLogFields = make(map[string]string, len(v.SlowLogFields))
-		for k, value := range v.SlowLogFields {
-			res.SlowLogFields[k] = value
-		}
+		res.SlowLogFields = maps.Clone(v.SlowLogFields)
 	}
 	if len(v.StmtLogFields) > 0 {
-		res.StmtLogFields = make(map[string]string, len(v.StmtLogFields))
-		for k, value := range v.StmtLogFields {
-			res.StmtLogFields[k] = value
-		}
+		res.StmtLogFields = maps.Clone(v.StmtLogFields)
 	}
 	return res
 }
 
 // GetKeyspaceObservabilityMetricLabels returns resolved metric labels.
 func (c *Config) GetKeyspaceObservabilityMetricLabels() map[string]string {
-	return c.KeyspaceObservabilityValues.Clone().MetricLabels
+	return c.KeyspaceObservabilityValues.MetricLabels
 }
 
 // GetKeyspaceObservabilitySlowLogFields returns resolved slow log fields.
 func (c *Config) GetKeyspaceObservabilitySlowLogFields() map[string]string {
-	return c.KeyspaceObservabilityValues.Clone().SlowLogFields
+	return c.KeyspaceObservabilityValues.SlowLogFields
 }
 
 // GetKeyspaceObservabilityStmtLogFields returns resolved statement log fields.
 func (c *Config) GetKeyspaceObservabilityStmtLogFields() map[string]string {
-	return c.KeyspaceObservabilityValues.Clone().StmtLogFields
+	return c.KeyspaceObservabilityValues.StmtLogFields
 }

@@ -85,18 +85,15 @@ func marshalStmtRecord(r *StmtRecord) ([]byte, error) {
 	if len(fields) == 0 {
 		return json.Marshal(r)
 	}
-	b, err := json.Marshal(r)
-	if err != nil {
-		return nil, err
-	}
-	items := make(map[string]any)
-	if err := json.Unmarshal(b, &items); err != nil {
-		return nil, err
-	}
-	for key, value := range fields {
-		items[key] = value
-	}
-	return json.Marshal(items)
+	return json.Marshal(stmtRecordWithAdditionalFields{
+		StmtRecord:       r,
+		AdditionalFields: fields,
+	})
+}
+
+type stmtRecordWithAdditionalFields struct {
+	*StmtRecord
+	AdditionalFields map[string]string `json:"additional_fields"`
 }
 
 type stmtLogEncoder struct{}
