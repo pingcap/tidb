@@ -52,7 +52,7 @@ func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement 
 // generate new StmtDigestKey and stmtSummaryByDigest
 func generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*StmtDigestKey, *stmtSummaryByDigest) {
 	key := &StmtDigestKey{}
-	key.Init(schema, "", "", "", "")
+	key.Init(schema, "", "", "", "", "")
 	value := newInduceSsbd(beginTime, endTime)
 	return key, value
 }
@@ -191,7 +191,7 @@ func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
 	require.Equal(t, "{begin: 8, end: 9, count: 1}, {begin: 5, end: 6, count: 1}, {begin: 2, end: 3, count: 1}", getAllEvicted(ssbde))
 
 	evictedKey = &StmtDigestKey{}
-	evictedKey.Init("b", "", "", "", "")
+	evictedKey.Init("b", "", "", "", "", "")
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
 	require.Equal(t, "{begin: 8, end: 9, count: 2}, {begin: 5, end: 6, count: 2}, {begin: 2, end: 3, count: 2}, {begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 
