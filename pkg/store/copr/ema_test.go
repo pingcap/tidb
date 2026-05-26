@@ -152,7 +152,7 @@ func TestRUPagePredictorScalesColdBucketByPagingRows(t *testing.T) {
 		"a cold larger row-count bucket should scale from bytes-per-row history")
 }
 
-func TestRUPagePredictorUsesBucketWhenAvailable(t *testing.T) {
+func TestRUPagePredictorUsesBytesPerRowAcrossRepeatedRowCounts(t *testing.T) {
 	p := newRUPagePredictor(0)
 	now := time.Now()
 
@@ -161,8 +161,10 @@ func TestRUPagePredictorUsesBucketWhenAvailable(t *testing.T) {
 	p.Observe(128, 88_000, pageBreakReasonRowLimit, now.Add(200*time.Millisecond))
 
 	predicted512 := p.Predict(512)
-	require.InDelta(t, float64(385_000), float64(predicted512), 1_000,
-		"an observed row-count bucket should use its own history instead of the smaller latest page")
+	require.Greater(t, predicted512, uint64(300_000),
+		"row-count prediction should scale from row-limited bytes-per-row history")
+	require.Less(t, predicted512, uint64(385_000),
+		"prediction should not depend on an exact row-count bucket")
 }
 
 func TestRUPagePredictorSkipsTerminalAndEmptyPages(t *testing.T) {
@@ -211,19 +213,19 @@ func TestRUPagePredictorKeepsRowScalingBelowByteBudget(t *testing.T) {
 	require.Less(t, predicted512, uint64(4*1024*1024))
 }
 
-func TestRUPagePredictorDoesNotJumpToByteBudgetWhenPageIsRowLimited(t *testing.T) {
+func TestRUPagePredictorCapsRowExtrapolationByByteBudget(t *testing.T) {
 	p := newRUPagePredictor(4 * 1024 * 1024)
 	now := time.Now()
 
 	p.Observe(128, 87_000, pageBreakReasonRowLimit, now)
 	predicted50000 := p.Predict(50000)
-	require.InDelta(t, float64(87_000), float64(predicted50000), 1_000,
-		"a row-limited join page should not make an unseen large bucket precharge the full byte budget")
+	require.Equal(t, uint64(4*1024*1024), predicted50000,
+		"row-count prediction should fall back to the byte budget once the row extrapolation exceeds it")
 
 	p.Observe(50000, 2_206_336, pageBreakReasonRowLimit, now.Add(100*time.Millisecond))
 	predicted50000 = p.Predict(50000)
-	require.InDelta(t, float64(2_206_336), float64(predicted50000), 1_000,
-		"once the exact bucket has samples, it should use the bucket instead of the page fallback")
+	require.Equal(t, uint64(4*1024*1024), predicted50000,
+		"row-count prediction should remain capped by the byte budget instead of using exact row-count buckets")
 }
 
 func TestRUPagePredictorKeepsByteLimitedFullscanAboveBudget(t *testing.T) {
@@ -246,6 +248,17 @@ func TestRUPagePredictorDoesNotUseByteLimitedSamplesForRowScaling(t *testing.T) 
 	predicted512 := p.Predict(512)
 	require.InDelta(t, float64(348_000), float64(predicted512), 20_000,
 		"row-count growth should use bytes-per-row learned from row-limited pages only")
+}
+
+func TestRUPagePredictorDoesNotUseUnknownSamplesForRowScaling(t *testing.T) {
+	p := newRUPagePredictor(4 * 1024 * 1024)
+	now := time.Now()
+
+	p.Observe(128, 87_000, pageBreakReasonUnknown, now)
+
+	predicted512 := p.Predict(512)
+	require.InDelta(t, float64(87_000), float64(predicted512), 1_000,
+		"unknown break reason should fall back to page history instead of training row bytes-per-row")
 }
 
 func TestRUPagePredictorPrefersRecentByteLimitAfterModeSwitch(t *testing.T) {
