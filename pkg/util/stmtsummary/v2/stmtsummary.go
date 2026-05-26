@@ -557,9 +557,11 @@ type stmtWindow struct {
 	evictedCount atomic.Int64 // total number of LRU evictions in this window
 }
 
-// onEvictFn is invoked for every LRU eviction after the evicted stats have
-// been aggregated into stmtWindow.evicted. The callback receives the locked
-// record (caller holds r.Lock) so it can copy fields cheaply. Must not block.
+// onEvictFn is invoked for every LRU eviction. The callback receives the
+// locked record (caller holds r.Lock) so it can copy fields cheaply. It
+// returns true when the record has been handed off for per-record persistence,
+// in which case the caller can skip adding it to the persisted aggregate.
+// Must not block.
 type onEvictFn func(key *stmtsummary.StmtDigestKey, r *StmtRecord, begin, end time.Time) bool
 
 func newStmtWindow(begin time.Time, capacity uint, onEvict onEvictFn) *stmtWindow {
