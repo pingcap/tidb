@@ -1097,6 +1097,9 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	}
 
 	var builder distsql.RequestBuilder
+	if indexScanConcurrency > 0 {
+		builder.SetConcurrency(indexScanConcurrency)
+	}
 	builder.SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
@@ -1104,7 +1107,6 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
-		SetConcurrency(indexScanConcurrency).
 		SetFromSessionVars(e.dctx).
 		SetFromInfoSchema(e.infoSchema).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(totalRanges))).
