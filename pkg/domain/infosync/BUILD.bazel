@@ -67,11 +67,16 @@ go_library(
 go_test(
     name = "infosync_test",
     timeout = "short",
-    srcs = ["info_test.go"],
+    srcs = [
+        "info_test.go",
+        "label_manager_test.go",
+    ],
     embed = [":infosync"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/ddl/label",
         "//pkg/ddl/placement",
         "//pkg/domain/serverinfo",
         "//pkg/keyspace",
@@ -79,7 +84,9 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
     ],
 )

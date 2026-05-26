@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"go.uber.org/zap"
@@ -102,7 +103,7 @@ type chunkWorker struct {
 	ctx context.Context
 	op  *encodeAndSortOperator
 
-	dataWriter  *globalsort.EngineWriter
+	dataWriter  *simplesst.EngineWriter
 	indexWriter *importer.IndexRouteWriter
 }
 
@@ -120,13 +121,13 @@ func newChunkWorker(
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) (*globalsort.Writer, error) {
+		indexWriterFn := func(indexID int64) (*simplesst.Writer, error) {
 			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID, op.onDupKey)
 			if err != nil {
 				return nil, err
 			}
-			builder := globalsort.NewWriterBuilder().
-				SetOnCloseFunc(func(summary *globalsort.WriterSummary) {
+			builder := simplesst.NewWriterBuilder().
+				SetOnCloseFunc(func(summary *simplesst.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 					op.sharedVars.indexKVFileCount.Add(int64(summary.KVFileCount))
 				}).
@@ -142,8 +143,8 @@ func newChunkWorker(
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
-		builder := globalsort.NewWriterBuilder().
-			SetOnCloseFunc(func(summary *globalsort.WriterSummary) {
+		builder := simplesst.NewWriterBuilder().
+			SetOnCloseFunc(func(summary *simplesst.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
 				op.sharedVars.dataKVFileCount.Add(int64(summary.KVFileCount))
 			}).
@@ -155,7 +156,7 @@ func newChunkWorker(
 		// writer id for data: data/{workerID}
 		writerID := path.Join(globalsort.DataKVGroup, workerUUID)
 		writer := builder.Build(op.sharedVars.globalSortStore, prefix, writerID)
-		w.dataWriter = globalsort.NewEngineWriter(writer)
+		w.dataWriter = simplesst.NewEngineWriter(writer)
 
 		w.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)
 	}

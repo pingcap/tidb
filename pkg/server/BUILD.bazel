@@ -193,6 +193,7 @@ go_test(
         "//pkg/server/internal/testutil",
         "//pkg/server/internal/util",
         "//pkg/session",
+        "//pkg/session/sessmgr",
         "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/store/mockstore",

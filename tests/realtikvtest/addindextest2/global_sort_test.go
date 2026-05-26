@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -99,7 +100,7 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
-		files, err := globalsort.GetAllFileNames(context.Background(), extStore, prefix)
+		files, err := simplesst.GetAllFileNames(context.Background(), extStore, prefix)
 		require.NoError(t, err)
 		require.Greater(t, jobID, int64(0))
 		require.Equal(t, 0, len(files))
@@ -112,7 +113,7 @@ func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
 	require.NoError(t, err)
 	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	dataFiles, err := globalsort.GetAllFileNames(context.Background(), extStore, dir)
+	dataFiles, err := simplesst.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)
 	filteredFiles := make([]string, 0)
 	for _, f := range dataFiles {
@@ -810,10 +811,10 @@ func TestSplitRangeForTable(t *testing.T) {
 	})
 
 	var addCnt, removeCnt atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/AddPartitionRangeForTable", func() {
 		addCnt.Add(1)
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/RemovePartitionRangeRequest", func() {
 		removeCnt.Add(1)
 	})
 
@@ -837,7 +838,7 @@ func TestSplitRangeForTable(t *testing.T) {
 			// 2. Verify large table case (mocked by lowering threshold)
 			// We only need to verify the logic once for the local backend logic.
 			if tc.caseName == "local ingest" {
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ForcePartitionRegionThreshold", func(threshold *int) {
 					*threshold = 0
 				})
 				addCnt.Store(0)
@@ -886,10 +887,10 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 	for i, tc := range testcases {
 		t.Run(tc.caseName, func(t *testing.T) {
 			var addCnt, removeCnt atomic.Int32
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/AddPartitionRangeForTable", func() {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/AddPartitionRangeForTable", func() {
 				addCnt.Add(1)
 			})
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/RemovePartitionRangeRequest", func() {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/RemovePartitionRangeRequest", func() {
 				removeCnt.Add(1)
 			})
 
@@ -910,7 +911,7 @@ func TestSplitRangeForPartitionTable(t *testing.T) {
 
 			// 2. Verify large table case (mocked by lowering threshold)
 			if tc.caseName == "local ingest" {
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ForcePartitionRegionThreshold", func(threshold *int) {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ForcePartitionRegionThreshold", func(threshold *int) {
 					*threshold = 0
 				})
 				addCnt.Store(0)
