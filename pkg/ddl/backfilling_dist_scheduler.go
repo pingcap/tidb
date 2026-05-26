@@ -106,6 +106,11 @@ func (sch *LitBackfillScheduler) Close() {
 func (*LitBackfillScheduler) OnTick(_ context.Context, _ *proto.Task) {
 }
 
+// OnPrepare implements scheduler.Extension interface.
+func (*LitBackfillScheduler) OnPrepare(context.Context, diststorage.TaskHandle, *proto.Task) error {
+	return nil
+}
+
 // OnNextSubtasksBatch generate batch of next step's plan.
 func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	ctx context.Context,

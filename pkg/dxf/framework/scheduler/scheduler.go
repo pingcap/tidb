@@ -400,9 +400,6 @@ func (s *BaseScheduler) onPending() error {
 		s.task.Store(task)
 		// fall through to switch to next step to avoid wait another tick to
 		// schedule subtasks after prepare.
-		// NOTE: no real business task enables prepare mode yet, so StepPrepared
-		// is only exercised by framework tests for now. Business GetNextStep
-		// StepPrepared integration will be done in a follow-up PR.
 	}
 	return s.switch2NextStep()
 }
