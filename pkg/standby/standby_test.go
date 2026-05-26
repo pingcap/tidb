@@ -16,6 +16,7 @@ package standby
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -28,12 +29,18 @@ import (
 
 type mockManagerClient struct {
 	called    bool
+	calls     int
+	failures  int
 	gotReason string
 }
 
 func (c *mockManagerClient) Free(_ context.Context, exitReason string) error {
 	c.called = true
+	c.calls++
 	c.gotReason = exitReason
+	if c.calls <= c.failures {
+		return errors.New("temporary error")
+	}
 	return nil
 }
 

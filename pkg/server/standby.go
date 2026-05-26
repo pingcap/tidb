@@ -32,5 +32,16 @@ type StandbyController interface {
 	// OnServerCreated is called when the server is created.
 	OnServerCreated(svr *Server)
 	// OnServerShutdown is called when the server is going to shut down.
-	OnServerShutdown(svr *Server)
+	OnServerShutdown(svr StandbyShutdownServer)
+}
+
+// StandbyShutdownServer is the server capability used by standby shutdown control.
+type StandbyShutdownServer interface {
+	AutoIDServiceClose()
+	GetForceShutdown() bool
+	GetNeedRequestMgrFree() bool
+	IsAutoIDOwner() bool
+	SetForceShutdown()
+	SetNeedRequestMgrFree()
+	WaitZeroConn()
 }

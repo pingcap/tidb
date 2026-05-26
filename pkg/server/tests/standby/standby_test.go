@@ -67,7 +67,7 @@ func (c *mockStandbyController) OnConnActive() {
 func (c *mockStandbyController) OnServerCreated(svr *server.Server) {
 }
 
-func (c *mockStandbyController) OnServerShutdown(svr *server.Server) {
+func (c *mockStandbyController) OnServerShutdown(svr server.StandbyShutdownServer) {
 }
 
 func TestStandby(t *testing.T) {

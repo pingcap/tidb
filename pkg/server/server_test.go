@@ -56,7 +56,7 @@ func (*testStandbyController) OnConnActive() {}
 
 func (*testStandbyController) OnServerCreated(*Server) {}
 
-func (*testStandbyController) OnServerShutdown(*Server) {}
+func (*testStandbyController) OnServerShutdown(StandbyShutdownServer) {}
 
 func TestIssue46197(t *testing.T) {
 	ctx := context.Background()
@@ -239,9 +239,10 @@ func (c *mockStandbyController) OnConnActive() {}
 
 func (c *mockStandbyController) OnServerCreated(_ *Server) {}
 
-func (c *mockStandbyController) OnServerShutdown(svr *Server) {
-	c.serverHealth = svr.Health()
-	c.serverInShutdownMode = svr.inShutdownMode.Load()
+func (c *mockStandbyController) OnServerShutdown(svr StandbyShutdownServer) {
+	server := svr.(*Server)
+	c.serverHealth = server.Health()
+	c.serverInShutdownMode = server.inShutdownMode.Load()
 	close(c.called)
 }
 

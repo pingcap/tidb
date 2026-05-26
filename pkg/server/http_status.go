@@ -684,8 +684,7 @@ type DetailStatus struct {
 	InitStatsPercentage float64 `json:"init_stats_percentage"`
 }
 
-// IsAutoIDServiceOwner is the response structure for checking if the auto ID service is the owner.
-type IsAutoIDServiceOwner struct {
+type autoIDServiceOwnerStatus struct {
 	IsOwner bool `json:"is_owner"`
 }
 
@@ -696,7 +695,7 @@ func (s *Server) handleCheckAutoIDOwner(w http.ResponseWriter, _ *http.Request) 
 		return
 	}
 
-	js, err := json.Marshal(IsAutoIDServiceOwner{
+	js, err := json.Marshal(autoIDServiceOwnerStatus{
 		IsOwner: s.IsAutoIDOwner(),
 	})
 	if err != nil {
