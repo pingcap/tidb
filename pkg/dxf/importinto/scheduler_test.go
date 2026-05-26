@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -159,6 +160,7 @@ func (s *importIntoSuite) TestIsRetryable() {
 	ext := &importScheduler{}
 	require.True(s.T(), ext.IsRetryableErr(drivererr.ErrRegionUnavailable))
 	require.True(s.T(), ext.IsRetryableErr(errors.Annotatef(errGetCrossKSSessionPool, "test")))
+	require.False(s.T(), ext.IsRetryableErr(exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")))
 }
 
 func TestIsImporting2TiKV(t *testing.T) {

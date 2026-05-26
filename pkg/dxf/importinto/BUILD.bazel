@@ -156,6 +156,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/etcd",
         "//pkg/util/mock",
         "@com_github_docker_go_units//:go-units",
