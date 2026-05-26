@@ -56,7 +56,7 @@ func TestValidateTiKVConfigEnabledForLogReplication(t *testing.T) {
 		wantContain []string
 	}{
 		{
-			name:      "all enabled",
+			name:      "all enabled for TiKV",
 			cluster:   "current",
 			instances: []string{"tikv-1", "tikv-2"},
 			configs: map[string]map[string]bool{
@@ -65,6 +65,22 @@ func TestValidateTiKVConfigEnabledForLogReplication(t *testing.T) {
 					"tikv-2": true,
 				},
 				tikvConfigLogArchiveEnabledKey: {
+					"tikv-1": true,
+					"tikv-2": true,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:      "all enabled for CSE",
+			cluster:   "current",
+			instances: []string{"tikv-1", "tikv-2"},
+			configs: map[string]map[string]bool{
+				tikvConfigReplicatorEnabledKey: {
+					"tikv-1": true,
+					"tikv-2": true,
+				},
+				cseConfigRfEngineMarkerKey: {
 					"tikv-1": true,
 					"tikv-2": true,
 				},
@@ -90,6 +106,7 @@ func TestValidateTiKVConfigEnabledForLogReplication(t *testing.T) {
 				"current cluster",
 				tikvConfigReplicatorEnabledKey,
 				tikvConfigLogArchiveEnabledKey,
+				cseConfigRfEngineMarkerKey,
 			},
 		},
 		{
@@ -106,6 +123,7 @@ func TestValidateTiKVConfigEnabledForLogReplication(t *testing.T) {
 				"source cluster",
 				tikvConfigReplicatorEnabledKey,
 				tikvConfigLogArchiveEnabledKey,
+				cseConfigRfEngineMarkerKey,
 			},
 		},
 	}
@@ -265,7 +283,35 @@ func TestFetchTiKVConfigFromPD(t *testing.T) {
 			"tikv-1:20160": true,
 			"tikv-2:20160": true,
 		},
+		cseConfigRfEngineMarkerKey: {
+			"tikv-1:20160": false,
+			"tikv-2:20160": false,
+		},
 	}, configValues)
+}
+
+func TestFetchTiKVConfigFromPDAcceptsCSERfEngine(t *testing.T) {
+	cse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"replicator":{"enable":true},"rfengine":{"target-file-size":"512MiB"}}`))
+	}))
+	defer cse.Close()
+
+	stores := []*metapb.Store{
+		{
+			Id:            1,
+			Address:       "tikv-1:20160",
+			StatusAddress: strings.TrimPrefix(cse.URL, "http://"),
+			State:         metapb.StoreState_Up,
+		},
+	}
+
+	instances, configValues, err := fetchTiKVConfigFromPD(context.Background(), "source", mockStoreLister{stores: stores}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"tikv-1:20160"}, instances)
+	require.True(t, configValues[tikvConfigReplicatorEnabledKey]["tikv-1:20160"])
+	require.False(t, configValues[tikvConfigLogArchiveEnabledKey]["tikv-1:20160"])
+	require.True(t, configValues[cseConfigRfEngineMarkerKey]["tikv-1:20160"])
+	require.NoError(t, validateTiKVConfigEnabled("source", instances, configValues))
 }
 
 func TestFetchTiKVConfigFromPDRejectsNonUpStore(t *testing.T) {

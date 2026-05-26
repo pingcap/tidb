@@ -41,13 +41,20 @@ const (
 
 	tikvConfigReplicatorEnabledKey = "replicator.enable"
 	tikvConfigLogArchiveEnabledKey = "raft-engine.enable-log-archive"
+	cseConfigRfEngineMarkerKey     = "rfengine.target-file-size"
 )
 
 var (
-	requiredTiKVConfigKeysMessage = fmt.Sprintf("'%s' and '%s'", tikvConfigReplicatorEnabledKey, tikvConfigLogArchiveEnabledKey)
-	requiredTiKVConfigKeys        = []string{
+	requiredTiKVConfigKeysMessage = fmt.Sprintf(
+		"'%s' and either '%s' or CSE '%s'",
 		tikvConfigReplicatorEnabledKey,
 		tikvConfigLogArchiveEnabledKey,
+		cseConfigRfEngineMarkerKey,
+	)
+	logReplicationTiKVConfigCheckKeys = []string{
+		tikvConfigReplicatorEnabledKey,
+		tikvConfigLogArchiveEnabledKey,
+		cseConfigRfEngineMarkerKey,
 	}
 )
 
@@ -488,11 +495,10 @@ func validateLogReplicationTiKVConfig(
 func validateTiKVConfigEnabled(cluster string, instances []string, configValues map[string]map[string]bool) error {
 	invalidCount := 0
 	for _, instance := range instances {
-		for _, key := range requiredTiKVConfigKeys {
-			if !configValues[key][instance] {
-				invalidCount++
-				break
-			}
+		if !configValues[tikvConfigReplicatorEnabledKey][instance] ||
+			(!configValues[tikvConfigLogArchiveEnabledKey][instance] &&
+				!configValues[cseConfigRfEngineMarkerKey][instance]) {
+			invalidCount++
 		}
 	}
 	if invalidCount == 0 {
@@ -601,7 +607,7 @@ func fetchTiKVConfigFromPD(
 	httpCli.Timeout = defaultHTTPTimeout
 
 	instances := make([]string, 0, len(stores))
-	configValues := make(map[string]map[string]bool, len(requiredTiKVConfigKeys))
+	configValues := make(map[string]map[string]bool, len(logReplicationTiKVConfigCheckKeys))
 	for _, store := range stores {
 		if engine.IsTiFlash(store) || engine.IsReplicator(store) {
 			continue
@@ -629,11 +635,16 @@ func fetchTiKVConfigFromPD(
 			)
 		}
 		instances = append(instances, instance)
-		for _, key := range requiredTiKVConfigKeys {
+		for _, key := range logReplicationTiKVConfigCheckKeys {
 			configByKey := configValues[key]
 			if configByKey == nil {
 				configByKey = make(map[string]bool)
 				configValues[key] = configByKey
+			}
+			if key == cseConfigRfEngineMarkerKey {
+				_, ok := flatConfig[key]
+				configByKey[instance] = ok
+				continue
 			}
 			enabled, _ := strconv.ParseBool(strings.TrimSpace(fmt.Sprint(flatConfig[key])))
 			configByKey[instance] = enabled
