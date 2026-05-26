@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mvmerge
+package mview
 
 import (
 	"fmt"
@@ -41,8 +41,8 @@ const (
 	fullUpdateOuterAlias = "full_outer"
 	fullUpdateInnerAlias = "full_inner"
 
-	deltaCntStarName = "__mvmerge_delta_cnt_star"
-	mvRowIDName      = "__mvmerge_mv_rowid"
+	deltaCntStarName = "__mview_delta_cnt_star"
+	mvRowIDName      = "__mview_mv_rowid"
 )
 
 // SQL construction overview:
@@ -312,7 +312,7 @@ func buildLocal(
 		}
 	}
 	if countStarMVOffset < 0 {
-		return nil, errors.New("materialized view definition must include COUNT(*) for mvmerge")
+		return nil, errors.New("materialized view definition must include COUNT(*) for mview")
 	}
 
 	return &buildLocalResult{
@@ -336,7 +336,7 @@ func buildLocal(
 //
 // Final SQL shape:
 //
-//	SELECT <delta payload cols>, <mv cols>, [mv._tidb_rowid AS __mvmerge_mv_rowid]
+//	SELECT <delta payload cols>, <mv cols>, [mv._tidb_rowid AS __mview_mv_rowid]
 //	FROM (
 //	  <stage-1 delta aggregation on mlog>
 //	) AS delta
@@ -352,10 +352,10 @@ func buildFromLocal(
 	aggArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
 	if local == nil {
-		return nil, errors.New("mvmerge: local result is nil")
+		return nil, errors.New("mview: local result is nil")
 	}
 	if local.MVSelect == nil {
-		return nil, errors.New("mvmerge: local MVSelect is nil")
+		return nil, errors.New("mview: local MVSelect is nil")
 	}
 	if aggArgNotNullByOffset == nil {
 		aggArgNotNullByOffset = inferAggArgNotNullByOffset(local)
@@ -395,12 +395,12 @@ func buildFromLocal(
 			return nil, err
 		}
 		if fullUpdateSel.Fields == nil {
-			return nil, errors.New("mvmerge: full-update lookup template has nil field list")
+			return nil, errors.New("mview: full-update lookup template has nil field list")
 		}
 		fullUpdateColumnCount = len(fullUpdateSel.Fields.Fields)
 		if len(fullUpdateMVOffsets) != fullUpdateColumnCount {
 			return nil, errors.Errorf(
-				"mvmerge: full-update lookup template mv-offset mapping length mismatch: got %d, expected %d",
+				"mview: full-update lookup template mv-offset mapping length mismatch: got %d, expected %d",
 				len(fullUpdateMVOffsets),
 				fullUpdateColumnCount,
 			)
@@ -427,7 +427,7 @@ func buildFromLocal(
 	}
 
 	// TODO: Revisit dependency-check ownership. We currently validate/derive aggregate dependencies
-	// in planner mvmerge, but this may be moved to another stage (for example, MV creation-time checks)
+	// in planner mview, but this may be moved to another stage (for example, MV creation-time checks)
 	// after we evaluate end-to-end guarantees and maintenance cost.
 	sumToCountExprIdx, err := mapSumToCountExprDependencies(local.aggCols, aggArgNotNullByOffset)
 	if err != nil {
@@ -695,7 +695,7 @@ func extractGroupKeyOffsetsFromMVSelect(sel *ast.SelectStmt) ([]int, error) {
 	for _, item := range sel.GroupBy.Items {
 		col, ok := item.Expr.(*ast.ColumnNameExpr)
 		if !ok {
-			return nil, errors.New("GROUP BY expression must be a column name for mvmerge")
+			return nil, errors.New("GROUP BY expression must be a column name for mview")
 		}
 		off, ok := offsetByColName[col.Name.Name.L]
 		if !ok {
@@ -717,10 +717,10 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 		switch strings.ToLower(agg.F) {
 		case ast.AggFuncCount:
 			if len(agg.Args) != 1 {
-				return nil, false, errors.New("COUNT must have exactly one argument for mvmerge stage-1")
+				return nil, false, errors.New("COUNT must have exactly one argument for mview stage-1")
 			}
 			if agg.Distinct {
-				return nil, false, errors.New("COUNT(DISTINCT ...) is not supported in mvmerge stage-1")
+				return nil, false, errors.New("COUNT(DISTINCT ...) is not supported in mview stage-1")
 			}
 			if isCountStarOrOneArg(agg.Args[0]) {
 				aggCols = append(aggCols, aggColInfo{
@@ -743,15 +743,15 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 					}
 					return ai
 				}(),
-				deltaName: fmt.Sprintf("__mvmerge_delta_cnt_%d", i),
+				deltaName: fmt.Sprintf("__mview_delta_cnt_%d", i),
 				argExpr:   stripColumnQualifier(agg.Args[0]),
 			})
 		case ast.AggFuncSum:
 			if len(agg.Args) != 1 {
-				return nil, false, errors.New("SUM must have exactly one argument for mvmerge stage-1")
+				return nil, false, errors.New("SUM must have exactly one argument for mview stage-1")
 			}
 			if agg.Distinct {
-				return nil, false, errors.New("SUM(DISTINCT ...) is not supported in mvmerge stage-1")
+				return nil, false, errors.New("SUM(DISTINCT ...) is not supported in mview stage-1")
 			}
 			ai := AggInfo{
 				Kind:     AggSum,
@@ -762,13 +762,13 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 			}
 			aggCols = append(aggCols, aggColInfo{
 				info:      ai,
-				deltaName: fmt.Sprintf("__mvmerge_delta_sum_%d", i),
+				deltaName: fmt.Sprintf("__mview_delta_sum_%d", i),
 				argExpr:   stripColumnQualifier(agg.Args[0]),
 			})
 		case ast.AggFuncMax:
 			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
 			if !ok {
-				return nil, false, errors.New("MAX argument must be a column name for mvmerge")
+				return nil, false, errors.New("MAX argument must be a column name for mview")
 			}
 			hasMinMax = true
 			aggCols = append(aggCols, aggColInfo{
@@ -777,16 +777,16 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 					MVOffset:   i,
 					ArgColName: argCol.Name.Name.L,
 				},
-				deltaName:           fmt.Sprintf("__mvmerge_max_in_added_%d", i),
-				addedCountDeltaName: fmt.Sprintf("__mvmerge_max_cnt_in_added_%d", i),
-				removedValueDelta:   fmt.Sprintf("__mvmerge_max_in_removed_%d", i),
-				removedCountDelta:   fmt.Sprintf("__mvmerge_max_cnt_in_removed_%d", i),
+				deltaName:           fmt.Sprintf("__mview_max_in_added_%d", i),
+				addedCountDeltaName: fmt.Sprintf("__mview_max_cnt_in_added_%d", i),
+				removedValueDelta:   fmt.Sprintf("__mview_max_in_removed_%d", i),
+				removedCountDelta:   fmt.Sprintf("__mview_max_cnt_in_removed_%d", i),
 				argExpr:             stripColumnQualifier(agg.Args[0]),
 			})
 		case ast.AggFuncMin:
 			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
 			if !ok {
-				return nil, false, errors.New("MIN argument must be a column name for mvmerge")
+				return nil, false, errors.New("MIN argument must be a column name for mview")
 			}
 			hasMinMax = true
 			aggCols = append(aggCols, aggColInfo{
@@ -795,14 +795,14 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 					MVOffset:   i,
 					ArgColName: argCol.Name.Name.L,
 				},
-				deltaName:           fmt.Sprintf("__mvmerge_min_in_added_%d", i),
-				addedCountDeltaName: fmt.Sprintf("__mvmerge_min_cnt_in_added_%d", i),
-				removedValueDelta:   fmt.Sprintf("__mvmerge_min_in_removed_%d", i),
-				removedCountDelta:   fmt.Sprintf("__mvmerge_min_cnt_in_removed_%d", i),
+				deltaName:           fmt.Sprintf("__mview_min_in_added_%d", i),
+				addedCountDeltaName: fmt.Sprintf("__mview_min_cnt_in_added_%d", i),
+				removedValueDelta:   fmt.Sprintf("__mview_min_in_removed_%d", i),
+				removedCountDelta:   fmt.Sprintf("__mview_min_cnt_in_removed_%d", i),
 				argExpr:             stripColumnQualifier(agg.Args[0]),
 			})
 		default:
-			return nil, false, errors.Errorf("unsupported aggregate function %s in mvmerge stage-1", agg.F)
+			return nil, false, errors.Errorf("unsupported aggregate function %s in mview stage-1", agg.F)
 		}
 	}
 	return aggCols, hasMinMax, nil
@@ -1119,12 +1119,12 @@ func stripAllParentheses(expr ast.ExprNode) ast.ExprNode {
 //
 //	SELECT
 //	  <group keys from MV SELECT list>,
-//	  SUM(old_new) AS __mvmerge_delta_cnt_star,
-//	  SUM(IF(<count arg> IS NOT NULL, old_new, 0)) AS __mvmerge_delta_cnt_<i>,
-//	  SUM(IF(old_new = 1, <sum arg>, -<sum arg>)) AS __mvmerge_delta_sum_<i>,
-//	  MAX(IF(old_new = 1, <arg>, NULL)) AS __mvmerge_max_in_added_<i>,
-//	  MIN(IF(old_new = 1, <arg>, NULL)) AS __mvmerge_min_in_added_<i>,
-//	  SUM(IF(old_new = -1, 1, 0)) AS __mvmerge_removed_rows   -- only when MIN/MAX exists
+//	  SUM(old_new) AS __mview_delta_cnt_star,
+//	  SUM(IF(<count arg> IS NOT NULL, old_new, 0)) AS __mview_delta_cnt_<i>,
+//	  SUM(IF(old_new = 1, <sum arg>, -<sum arg>)) AS __mview_delta_sum_<i>,
+//	  MAX(IF(old_new = 1, <arg>, NULL)) AS __mview_max_in_added_<i>,
+//	  MIN(IF(old_new = 1, <arg>, NULL)) AS __mview_min_in_added_<i>,
+//	  SUM(IF(old_new = -1, 1, 0)) AS __mview_removed_rows   -- only when MIN/MAX exists
 //	FROM <db>.<mlog>
 //	WHERE _tidb_commit_ts > FromTS
 //	  AND <MV WHERE predicate>
@@ -1187,7 +1187,7 @@ func buildMLogDeltaSelect(
 			continue
 		case AggCount:
 			if ac.argExpr == nil {
-				return nil, errors.New("COUNT aggregate argument is nil for mvmerge")
+				return nil, errors.New("COUNT aggregate argument is nil for mview")
 			}
 			argExpr, err := cloneExprByRestore(sctx, ac.argExpr)
 			if err != nil {
@@ -1200,7 +1200,7 @@ func buildMLogDeltaSelect(
 			})
 		case AggSum:
 			if ac.argExpr == nil {
-				return nil, errors.New("SUM aggregate argument is nil for mvmerge")
+				return nil, errors.New("SUM aggregate argument is nil for mview")
 			}
 			argExpr, err := cloneExprByRestore(sctx, ac.argExpr)
 			if err != nil {
@@ -1213,7 +1213,7 @@ func buildMLogDeltaSelect(
 			})
 		case AggMax:
 			if ac.info.ArgColName == "" {
-				return nil, errors.New("MAX aggregate argument column is empty for mvmerge")
+				return nil, errors.New("MAX aggregate argument column is empty for mview")
 			}
 			argCol := colExpr(ac.info.ArgColName)
 			addedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", ""))
@@ -1240,7 +1240,7 @@ func buildMLogDeltaSelect(
 			)
 		case AggMin:
 			if ac.info.ArgColName == "" {
-				return nil, errors.New("MIN aggregate argument column is empty for mvmerge")
+				return nil, errors.New("MIN aggregate argument column is empty for mview")
 			}
 			argCol := colExpr(ac.info.ArgColName)
 			addedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", ""))
@@ -1306,7 +1306,7 @@ func buildMLogDeltaSelect(
 //	  delta.<all delta payload cols>,
 //	  delta.<group-key mv columns>,   -- projected from delta side to keep changed groups
 //	  mv.<non-group-key mv columns>,
-//	  mv._tidb_rowid AS __mvmerge_mv_rowid  -- only for extra row-id handle tables
+//	  mv._tidb_rowid AS __mview_mv_rowid  -- only for extra row-id handle tables
 //	FROM (<stage-1 delta select>) AS delta
 //	LEFT JOIN <db>.<mv> AS mv
 //	  ON delta.<group_key_1> [= | <=>] mv.<group_key_1>
@@ -1350,7 +1350,7 @@ func buildMergeSourceSelect(
 		}
 	}
 	if onExpr == nil {
-		return nil, nil, -1, errors.New("empty join key for mvmerge")
+		return nil, nil, -1, errors.New("empty join key for mview")
 	}
 
 	// Use delta as left side so every changed group survives even when MV row doesn't exist yet.
@@ -1444,7 +1444,7 @@ func buildMergeSourceSelect(
 //	JOIN (
 //	  <buildFullUpdateLookupInnerSelect result>
 //	) AS full_inner
-//	  ON full_outer.__mvmerge_full_outer_gk_<mv_offset_i> <=> full_inner.<base_group_key_i>
+//	  ON full_outer.__mview_full_outer_gk_<mv_offset_i> <=> full_inner.<base_group_key_i>
 //
 // This function is only used for MIN/MAX fallback.
 // It builds a stable outer+inner IndexJoin template:
@@ -1517,7 +1517,7 @@ func buildFullUpdateLookupTemplateSelect(
 		onExpr = andExpr(onExpr, binary(opcode.NullEQ, outerGK, innerGK))
 	}
 	if onExpr == nil {
-		return nil, nil, errors.New("mvmerge: empty group key offsets for full-update lookup template")
+		return nil, nil, errors.New("mview: empty group key offsets for full-update lookup template")
 	}
 
 	fields := make([]*ast.SelectField, 0, len(mvCols))
@@ -1567,7 +1567,7 @@ func buildFullUpdateLookupTemplateSelect(
 // SQL shape (simplified):
 //
 //	SELECT
-//	  <group_key_i> AS __mvmerge_full_outer_gk_<mv_offset_i>
+//	  <group_key_i> AS __mview_full_outer_gk_<mv_offset_i>
 //	FROM <db>.<base_table>
 //	WHERE <MV WHERE predicate>
 //	LIMIT 1
@@ -1582,10 +1582,10 @@ func buildFullUpdateLookupOuterSelect(
 	groupKeyOffsets []int,
 ) (*ast.SelectStmt, map[int]string, error) {
 	if baseTable == nil {
-		return nil, nil, errors.New("mvmerge: base table is nil")
+		return nil, nil, errors.New("mview: base table is nil")
 	}
 	if len(groupKeyOffsets) == 0 {
-		return nil, nil, errors.New("mvmerge: empty group key offsets for full-update lookup template")
+		return nil, nil, errors.New("mview: empty group key offsets for full-update lookup template")
 	}
 
 	fields := make([]*ast.SelectField, 0, len(groupKeyOffsets))
@@ -1595,7 +1595,7 @@ func buildFullUpdateLookupOuterSelect(
 		if err != nil {
 			return nil, nil, err
 		}
-		alias := fmt.Sprintf("__mvmerge_full_outer_gk_%d", mvOffset)
+		alias := fmt.Sprintf("__mview_full_outer_gk_%d", mvOffset)
 		groupKeyAliasByMVOffset[mvOffset] = alias
 		fields = append(fields, &ast.SelectField{
 			Expr:   baseColExpr,
@@ -1649,10 +1649,10 @@ func buildFullUpdateLookupInnerSelect(
 	aggCols []aggColInfo,
 ) (*ast.SelectStmt, error) {
 	if baseTable == nil {
-		return nil, errors.New("mvmerge: base table is nil")
+		return nil, errors.New("mview: base table is nil")
 	}
 	if len(groupKeyOffsets) == 0 {
-		return nil, errors.New("mvmerge: empty group key offsets for full-update lookup template")
+		return nil, errors.New("mview: empty group key offsets for full-update lookup template")
 	}
 
 	aggByMVOffset := make(map[int]aggColInfo, len(aggCols))

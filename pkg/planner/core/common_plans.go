@@ -604,7 +604,7 @@ type MVDeltaMerge struct {
 	GroupKeyMVOffsets []int           `plan-cache-clone:"shallow"`
 	CountStarMVOffset int
 
-	AggInfos []mvmerge.AggInfo `plan-cache-clone:"shallow"`
+	AggInfos []mview.AggInfo `plan-cache-clone:"shallow"`
 }
 
 // ExplainInfo returns aggregate dependency information for MV delta merge.
@@ -628,7 +628,7 @@ func (p *MVDeltaMerge) ExplainInfo() string {
 	return builder.String()
 }
 
-func formatMVDeltaMergeAggDependency(aggInfo mvmerge.AggInfo) string {
+func formatMVDeltaMergeAggDependency(aggInfo mview.AggInfo) string {
 	var builder strings.Builder
 	builder.WriteString(formatMVDeltaMergeAggName(aggInfo))
 	builder.WriteString("@")
@@ -638,8 +638,8 @@ func formatMVDeltaMergeAggDependency(aggInfo mvmerge.AggInfo) string {
 	return builder.String()
 }
 
-func formatMVDeltaMergeAggName(aggInfo mvmerge.AggInfo) string {
-	if aggInfo.Kind == mvmerge.AggCountStar {
+func formatMVDeltaMergeAggName(aggInfo mview.AggInfo) string {
+	if aggInfo.Kind == mview.AggCountStar {
 		return "count(*)"
 	}
 	aggKindName := formatMVDeltaMergeAggKind(aggInfo.Kind)
@@ -649,15 +649,15 @@ func formatMVDeltaMergeAggName(aggInfo mvmerge.AggInfo) string {
 	return aggKindName + "(" + aggInfo.ArgColName + ")"
 }
 
-func formatMVDeltaMergeAggKind(kind mvmerge.AggKind) string {
+func formatMVDeltaMergeAggKind(kind mview.AggKind) string {
 	switch kind {
-	case mvmerge.AggCount:
+	case mview.AggCount:
 		return "count"
-	case mvmerge.AggSum:
+	case mview.AggSum:
 		return "sum"
-	case mvmerge.AggMin:
+	case mview.AggMin:
 		return "min"
-	case mvmerge.AggMax:
+	case mview.AggMax:
 		return "max"
 	default:
 		return fmt.Sprintf("agg(%d)", kind)

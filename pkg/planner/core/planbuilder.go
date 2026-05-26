@@ -3889,7 +3889,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		}
 		logic, ok := p.(base.LogicalPlan)
 		if !ok {
-			return nil, errors.Errorf("mvmerge: expected logical plan from select, got %T", p)
+			return nil, errors.Errorf("mview: expected logical plan from select, got %T", p)
 		}
 		pp, _, err := DoOptimize(optCtx, b.ctx, innerBuilder.GetOptFlag(), logic)
 		if err != nil {
@@ -3898,13 +3898,13 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 		return pp, nil
 	}
 
-	res, err := mvmerge.Build(b.ctx, b.is, mvInfo, mvmerge.BuildOptions{FromTS: fromTS}, nil)
+	res, err := mview.Build(b.ctx, b.is, mvInfo, mview.BuildOptions{FromTS: fromTS}, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	if res.MergeSourceSelect == nil {
-		return nil, errors.New("mvmerge: merge source select is nil")
+		return nil, errors.New("mview: merge source select is nil")
 	}
 	sourcePlan, err := optimizeSelect(ctx, res.MergeSourceSelect)
 	if err != nil {
@@ -3927,11 +3927,11 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 	)
 	if res.FullUpdateLookupTemplateSelect != nil {
 		if res.FullUpdateLookupColumnCount <= 0 {
-			return nil, errors.New("mvmerge full-update lookup template: invalid output column count")
+			return nil, errors.New("mview full-update lookup template: invalid output column count")
 		}
 		if len(res.FullUpdateLookupMVOffsets) != res.FullUpdateLookupColumnCount {
 			return nil, errors.Errorf(
-				"mvmerge full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
+				"mview full-update lookup template: invalid mv-offset mapping length: got %d, expected %d",
 				len(res.FullUpdateLookupMVOffsets),
 				res.FullUpdateLookupColumnCount,
 			)
@@ -3946,7 +3946,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			return nil, err
 		}
 		if fullUpdateLookupPlan.Schema().Len() != res.FullUpdateLookupColumnCount {
-			return nil, errors.Errorf("mvmerge full-update lookup template: unexpected output schema length: got %d, expected %d", fullUpdateLookupPlan.Schema().Len(), res.FullUpdateLookupColumnCount)
+			return nil, errors.Errorf("mview full-update lookup template: unexpected output schema length: got %d, expected %d", fullUpdateLookupPlan.Schema().Len(), res.FullUpdateLookupColumnCount)
 		}
 		var template *mvFullUpdateLookupTemplate
 		template, err = extractMVFullUpdateLookupTemplate(
@@ -3999,7 +3999,7 @@ type mvFullUpdateLookupTemplate struct {
 
 // extractMVFullUpdateLookupTemplate extracts executor-facing lookup metadata from the optimized
 // full-update lookup template plan. The optimized plan is expected to contain an IndexJoin-style
-// shape produced from mvmerge.FullUpdateLookupTemplateSelect; this helper discards the outer probe
+// shape produced from mview.FullUpdateLookupTemplateSelect; this helper discards the outer probe
 // side and keeps only the inner lookup child, index-range template, key-position mapping, and the
 // output-column to MV-offset mapping needed by MVDeltaMerge full recomputation.
 //
@@ -4015,18 +4015,18 @@ func extractMVFullUpdateLookupTemplate(
 	groupKeyMVOffsets []int,
 ) (*mvFullUpdateLookupTemplate, error) {
 	if lookupPlan == nil {
-		return nil, errors.New("mvmerge full-update lookup template: lookup plan is nil")
+		return nil, errors.New("mview full-update lookup template: lookup plan is nil")
 	}
 	if len(expectedOutputMVOffsets) != expectedInnerColumnCount {
 		return nil, errors.Errorf(
-			"mvmerge full-update lookup template: unexpected output mv-offset mapping length: got %d, expected %d",
+			"mview full-update lookup template: unexpected output mv-offset mapping length: got %d, expected %d",
 			len(expectedOutputMVOffsets),
 			expectedInnerColumnCount,
 		)
 	}
 	if len(groupKeyMVOffsets) != expectedGroupKeyCount {
 		return nil, errors.Errorf(
-			"mvmerge full-update lookup template: unexpected group key mv-offset length: got %d, expected %d",
+			"mview full-update lookup template: unexpected group key mv-offset length: got %d, expected %d",
 			len(groupKeyMVOffsets),
 			expectedGroupKeyCount,
 		)
@@ -4034,29 +4034,29 @@ func extractMVFullUpdateLookupTemplate(
 
 	indexJoin := findMVFullUpdateIndexJoinTemplatePlan(lookupPlan)
 	if indexJoin == nil {
-		return nil, errors.New("mvmerge full-update lookup template: expected index join plan but not found")
+		return nil, errors.New("mview full-update lookup template: expected index join plan but not found")
 	}
 	if indexJoin.innerPlan == nil {
-		return nil, errors.New("mvmerge full-update lookup template: index join inner plan is nil")
+		return nil, errors.New("mview full-update lookup template: index join inner plan is nil")
 	}
 	if indexJoin.innerPlan.Schema().Len() != expectedInnerColumnCount {
 		return nil, errors.Errorf(
-			"mvmerge full-update lookup template: unexpected inner schema length: got %d, expected %d",
+			"mview full-update lookup template: unexpected inner schema length: got %d, expected %d",
 			indexJoin.innerPlan.Schema().Len(),
 			expectedInnerColumnCount,
 		)
 	}
 	if indexJoin.Ranges == nil || len(indexJoin.Ranges.Range()) == 0 {
-		return nil, errors.New("mvmerge full-update lookup template: index join ranges are empty")
+		return nil, errors.New("mview full-update lookup template: index join ranges are empty")
 	}
 	// The fallback template is built from pure group-key equality join without range-comparison predicates.
-	intest.Assert(indexJoin.CompareFilters == nil, "mvmerge full-update lookup template should not have compare filters")
+	intest.Assert(indexJoin.CompareFilters == nil, "mview full-update lookup template should not have compare filters")
 
 	// Keep key mapping in MV group-key order; executor side will refill each key into the corresponding index position.
 	keyOff2IdxOff := append([]int(nil), indexJoin.KeyOff2IdxOff...)
 	if len(keyOff2IdxOff) != expectedGroupKeyCount {
 		return nil, errors.Errorf(
-			"mvmerge full-update lookup template: unexpected keyOff2IdxOff length: got %d, expected %d",
+			"mview full-update lookup template: unexpected keyOff2IdxOff length: got %d, expected %d",
 			len(keyOff2IdxOff),
 			expectedGroupKeyCount,
 		)
@@ -4065,7 +4065,7 @@ func extractMVFullUpdateLookupTemplate(
 	for i, idxOff := range keyOff2IdxOff {
 		if idxOff < 0 || idxOff >= rangeWidth {
 			return nil, errors.Errorf(
-				"mvmerge full-update lookup template: invalid keyOff2IdxOff[%d]=%d for range width %d",
+				"mview full-update lookup template: invalid keyOff2IdxOff[%d]=%d for range width %d",
 				i,
 				idxOff,
 				rangeWidth,
@@ -4074,7 +4074,7 @@ func extractMVFullUpdateLookupTemplate(
 	}
 	if len(indexJoin.InnerJoinKeys) != expectedGroupKeyCount {
 		return nil, errors.Errorf(
-			"mvmerge full-update lookup template: unexpected inner join key count: got %d, expected %d",
+			"mview full-update lookup template: unexpected inner join key count: got %d, expected %d",
 			len(indexJoin.InnerJoinKeys),
 			expectedGroupKeyCount,
 		)
@@ -4084,7 +4084,7 @@ func extractMVFullUpdateLookupTemplate(
 		keyResultColIdx := indexJoin.InnerJoinKeys[i].Index
 		if keyResultColIdx < 0 || keyResultColIdx >= indexJoin.innerPlan.Schema().Len() {
 			return nil, errors.Errorf(
-				"mvmerge full-update lookup template: invalid inner join key index %d at position %d for inner schema len %d",
+				"mview full-update lookup template: invalid inner join key index %d at position %d for inner schema len %d",
 				keyResultColIdx,
 				i,
 				indexJoin.innerPlan.Schema().Len(),
@@ -4125,14 +4125,14 @@ func deriveMVFullUpdateOutputMVOffsetsByInnerSchema(
 ) ([]int, error) {
 	if len(lookupOutputMVOffsets) != innerColumnCount {
 		return nil, errors.Errorf(
-			"mvmerge full-update lookup template: unexpected lookup output mv-offset length: got %d, expected %d",
+			"mview full-update lookup template: unexpected lookup output mv-offset length: got %d, expected %d",
 			len(lookupOutputMVOffsets),
 			innerColumnCount,
 		)
 	}
 	if len(groupKeyMVOffsets) != len(keyResultColIdxes) {
 		return nil, errors.Errorf(
-			"mvmerge full-update lookup template: group key mapping length mismatch: group key mv offsets=%d, key result indexes=%d",
+			"mview full-update lookup template: group key mapping length mismatch: group key mv offsets=%d, key result indexes=%d",
 			len(groupKeyMVOffsets),
 			len(keyResultColIdxes),
 		)
@@ -4147,27 +4147,27 @@ func deriveMVFullUpdateOutputMVOffsetsByInnerSchema(
 	for keyPos, mvOffset := range groupKeyMVOffsets {
 		if mvOffset < 0 {
 			return nil, errors.Errorf(
-				"mvmerge full-update lookup template: invalid group key mv offset %d at position %d",
+				"mview full-update lookup template: invalid group key mv offset %d at position %d",
 				mvOffset,
 				keyPos,
 			)
 		}
 		if _, dup := groupKeySet[mvOffset]; dup {
-			return nil, errors.Errorf("mvmerge full-update lookup template: duplicate group key mv offset %d", mvOffset)
+			return nil, errors.Errorf("mview full-update lookup template: duplicate group key mv offset %d", mvOffset)
 		}
 		groupKeySet[mvOffset] = struct{}{}
 
 		keyResultColIdx := keyResultColIdxes[keyPos]
 		if keyResultColIdx < 0 || keyResultColIdx >= innerColumnCount {
 			return nil, errors.Errorf(
-				"mvmerge full-update lookup template: key result col idx %d at position %d out of range [0,%d)",
+				"mview full-update lookup template: key result col idx %d at position %d out of range [0,%d)",
 				keyResultColIdx,
 				keyPos,
 				innerColumnCount,
 			)
 		}
 		if outputMVOffsets[keyResultColIdx] >= 0 {
-			return nil, errors.Errorf("mvmerge full-update lookup template: duplicate key result col idx %d", keyResultColIdx)
+			return nil, errors.Errorf("mview full-update lookup template: duplicate key result col idx %d", keyResultColIdx)
 		}
 		outputMVOffsets[keyResultColIdx] = mvOffset
 	}
@@ -4175,7 +4175,7 @@ func deriveMVFullUpdateOutputMVOffsetsByInnerSchema(
 	nonKeyMVOffsets := make([]int, 0, len(lookupOutputMVOffsets)-len(groupKeyMVOffsets))
 	for _, mvOffset := range lookupOutputMVOffsets {
 		if mvOffset < 0 {
-			return nil, errors.Errorf("mvmerge full-update lookup template: invalid output mv offset %d", mvOffset)
+			return nil, errors.Errorf("mview full-update lookup template: invalid output mv offset %d", mvOffset)
 		}
 		if _, isKey := groupKeySet[mvOffset]; isKey {
 			continue
@@ -4190,7 +4190,7 @@ func deriveMVFullUpdateOutputMVOffsetsByInnerSchema(
 	}
 	if len(unassignedResultColIdxes) != len(nonKeyMVOffsets) {
 		return nil, errors.Errorf(
-			"mvmerge full-update lookup template: non-key column mapping mismatch: unassigned result columns=%d, non-key mv offsets=%d",
+			"mview full-update lookup template: non-key column mapping mismatch: unassigned result columns=%d, non-key mv offsets=%d",
 			len(unassignedResultColIdxes),
 			len(nonKeyMVOffsets),
 		)
