@@ -616,6 +616,7 @@ func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
 
 	keyspaceMetaServiceAddrs, tlsConfig, err := GetKeyspaceMetaServiceAddrs(store)
 	if err != nil {
+		terror.Log(store.Close())
 		logutil.BgLogger().Warn("skip auto service registration because meta service is unavailable", zap.Error(err))
 		return
 	}

@@ -18,9 +18,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
@@ -132,6 +137,31 @@ func TestGetConAttrs(t *testing.T) {
 }
 
 func TestSeverHealth(t *testing.T) {
+	t.Run("setup autoid service closes store on meta service error", func(t *testing.T) {
+		originalOpenStore := openStoreForAutoIDService
+		t.Cleanup(func() {
+			openStoreForAutoIDService = originalOpenStore
+		})
+
+		mockStore := &autoIDServiceTestStore{}
+		openStoreForAutoIDService = func(path string) (kv.Storage, error) {
+			require.Equal(t, "tikv://127.0.0.1:2379", path)
+			return mockStore, nil
+		}
+
+		s := &Server{
+			cfg: &config.Config{
+				Store: "tikv",
+				Path:  "127.0.0.1:2379",
+			},
+		}
+
+		s.setupAutoIDService(NewRPCServer(s.cfg, nil, s))
+
+		require.True(t, mockStore.closed)
+		require.Nil(t, s.autoIDService)
+	})
+
 	RunInGoTestChan = make(chan struct{})
 	RunInGoTest = true
 	store := testkit.CreateMockStore(t)
@@ -151,4 +181,30 @@ func TestSeverHealth(t *testing.T) {
 		// wait for server to be healthy
 	}
 	require.True(t, server.health.Load(), "server should be healthy")
+}
+
+type autoIDServiceTestStore struct {
+	kv.Storage
+	closed bool
+}
+
+func (s *autoIDServiceTestStore) Close() error {
+	s.closed = true
+	return nil
+}
+
+func (*autoIDServiceTestStore) MetaServiceInfo() (*metaservice.Info, error) {
+	return nil, errors.New("meta service unavailable")
+}
+
+func (*autoIDServiceTestStore) GetPDAddrs() ([]string, error) {
+	return nil, nil
+}
+
+func (*autoIDServiceTestStore) StartGCWorker() error {
+	return nil
+}
+
+func (*autoIDServiceTestStore) TLSConfig() *tls.Config {
+	return nil
 }
