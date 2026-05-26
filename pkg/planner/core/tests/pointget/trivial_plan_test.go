@@ -89,18 +89,10 @@ func TestTrivialPlanFallback(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_idx, t_part, t_gen")
 
-	// Table with a secondary index — should NOT use trivial plan (optimizer
-	// needs to decide between table scan and index scan).
-	tk.MustExec("create table t_idx(a int primary key, b int, index idx_b(b))")
-	tk.MustExec("insert into t_idx values(1, 10), (2, 20)")
-	rows := tk.MustQuery("select * from t_idx").Sort().Rows()
-	require.Len(t, rows, 2)
-	requireTrivialPlan(t, tk, false)
-
 	// Partitioned table — should NOT use trivial plan.
 	tk.MustExec("create table t_part(a int primary key, b int) partition by hash(a) partitions 4")
 	tk.MustExec("insert into t_part values(1, 10), (2, 20)")
-	rows = tk.MustQuery("select * from t_part").Sort().Rows()
+	rows := tk.MustQuery("select * from t_part").Sort().Rows()
 	require.Len(t, rows, 2)
 	requireTrivialPlan(t, tk, false)
 
@@ -111,13 +103,9 @@ func TestTrivialPlanFallback(t *testing.T) {
 	require.Len(t, rows, 2)
 	requireTrivialPlan(t, tk, false)
 
-	// Query with WHERE clause on a trivial table — should NOT use trivial plan.
 	tk.MustExec("drop table if exists t_no_idx")
 	tk.MustExec("create table t_no_idx(a int primary key, b int)")
 	tk.MustExec("insert into t_no_idx values(1, 10), (2, 20)")
-	rows = tk.MustQuery("select * from t_no_idx where b > 5").Rows()
-	require.Len(t, rows, 2)
-	requireTrivialPlan(t, tk, false)
 
 	// Query with ORDER BY — should NOT use trivial plan.
 	rows = tk.MustQuery("select * from t_no_idx order by b").Rows()
@@ -140,6 +128,16 @@ func TestTrivialPlanFallback(t *testing.T) {
 	require.Len(t, rows, 2)
 	requireTrivialPlan(t, tk, false)
 
+	// WHERE on the PK column — could become a range scan, so bail.
+	rows = tk.MustQuery("select * from t_no_idx where a > 1").Rows()
+	require.Len(t, rows, 1)
+	requireTrivialPlan(t, tk, false)
+
+	// WHERE with a subquery — not supported on the trivial path.
+	rows = tk.MustQuery("select * from t_no_idx where b > (select min(b) from t_no_idx)").Rows()
+	require.Len(t, rows, 1)
+	requireTrivialPlan(t, tk, false)
+
 	// sql_select_limit — should NOT use trivial plan.
 	tk.MustExec("set @@sql_select_limit = 1")
 	rows = tk.MustQuery("select * from t_no_idx").Rows()
@@ -154,4 +152,113 @@ func TestTrivialPlanFallback(t *testing.T) {
 	require.Len(t, rows, 3)
 	requireTrivialPlan(t, tk, false)
 	tk.MustExec("rollback")
+}
+
+// TestTrivialPlanWithSecondaryIndex covers cases where the table has secondary
+// indexes but the per-query gate determines that no index could compete with
+// a table scan. The trivial fast path should still apply.
+func TestTrivialPlanWithSecondaryIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx, t_two_idx")
+	tk.MustExec("create table t_idx(a int primary key, b int, c varchar(32), index idx_c(c))")
+	tk.MustExec("insert into t_idx values(1, 10, 'foo'), (2, 20, 'bar')")
+
+	// SELECT * needs every column, so idx_c is not covering and not referenced
+	// by any predicate → table scan provably wins → trivial plan applies.
+	rows := tk.MustQuery("select * from t_idx").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, true)
+
+	// SELECT a only — idx_c does not contain a, so still not covering.
+	rows = tk.MustQuery("select a from t_idx").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, true)
+
+	// SELECT a, b — idx_c is not covering (b is missing) → trivial plan.
+	rows = tk.MustQuery("select a, b from t_idx").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, true)
+
+	// SELECT only the indexed column — idx_c covers {c} → fall back to the
+	// full optimizer because a covering index scan could win.
+	rows = tk.MustQuery("select c from t_idx").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, false)
+
+	// WHERE references an indexed column → idx_c could produce a range scan.
+	rows = tk.MustQuery("select * from t_idx where c = 'foo'").Rows()
+	require.Len(t, rows, 1)
+	requireTrivialPlan(t, tk, false)
+
+	// Multiple secondary indexes — same logic applies per index.
+	tk.MustExec("create table t_two_idx(a int primary key, b int, c int, d int, index idx_b(b), index idx_c(c))")
+	tk.MustExec("insert into t_two_idx values(1, 10, 100, 1000), (2, 20, 200, 2000)")
+
+	// SELECT * — no index covers, no index referenced → trivial plan.
+	rows = tk.MustQuery("select * from t_two_idx").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, true)
+
+	// WHERE on b (indexed) — bail.
+	rows = tk.MustQuery("select * from t_two_idx where b > 5").Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, false)
+
+	// WHERE on d (non-indexed) — trivial plan.
+	rows = tk.MustQuery("select * from t_two_idx where d > 1500").Rows()
+	require.Len(t, rows, 1)
+	requireTrivialPlan(t, tk, true)
+}
+
+// TestTrivialPlanWithWhere covers WHERE clauses that don't enable any index.
+func TestTrivialPlanWithWhere(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_w")
+	tk.MustExec("create table t_w(a int primary key, b int, c varchar(32), d int)")
+	tk.MustExec("insert into t_w values(1, 10, 'apple', 100), (2, 20, 'banana', 200), (3, 30, 'cherry', 300)")
+
+	// Simple non-indexed equality.
+	rows := tk.MustQuery("select * from t_w where b = 20").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "2", rows[0][0])
+	requireTrivialPlan(t, tk, true)
+
+	// Inequality predicate.
+	rows = tk.MustQuery("select a, c from t_w where d >= 200").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, true)
+
+	// Compound predicate referencing two non-indexed columns.
+	rows = tk.MustQuery("select * from t_w where b > 10 and c <> 'banana'").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "3", rows[0][0])
+	requireTrivialPlan(t, tk, true)
+
+	// WHERE references a column not in the SELECT list — the scan must include
+	// it for filtering, then a Projection strips it from the output.
+	rows = tk.MustQuery("select a from t_w where c = 'banana'").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "2", rows[0][0])
+	require.Len(t, rows[0], 1)
+	requireTrivialPlan(t, tk, true)
+
+	// Disjunction across non-indexed columns.
+	rows = tk.MustQuery("select b, d from t_w where b = 10 or d = 300").Sort().Rows()
+	require.Len(t, rows, 2)
+	requireTrivialPlan(t, tk, true)
+
+	// IS NULL on a non-indexed column.
+	tk.MustExec("insert into t_w values(4, null, 'date', 400)")
+	rows = tk.MustQuery("select a from t_w where b is null").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "4", rows[0][0])
+	requireTrivialPlan(t, tk, true)
+
+	// Unknown column name — fall through; the full planner produces the error.
+	err := tk.ExecToErr("select * from t_w where nonexistent = 1")
+	require.Error(t, err)
 }
