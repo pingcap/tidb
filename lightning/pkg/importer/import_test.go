@@ -16,10 +16,12 @@ package importer
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
@@ -27,12 +29,14 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
@@ -40,7 +44,33 @@ import (
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/require"
 	tikvconfig "github.com/tikv/client-go/v2/config"
+	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+type plainStorage struct{ kv.Storage }
+
+type metaServiceOnlyStorage struct {
+	kv.Storage
+	pdAddrs       []string
+	getPDAddrsErr error
+}
+
+func (s *metaServiceOnlyStorage) GetPDAddrs() ([]string, error) { return s.pdAddrs, s.getPDAddrsErr }
+func (*metaServiceOnlyStorage) TLSConfig() *tls.Config          { return nil }
+func (*metaServiceOnlyStorage) StartGCWorker() error            { return nil }
+func (*metaServiceOnlyStorage) MetaServiceInfo() (*metaservice.Info, error) {
+	return nil, nil
+}
+
+type testPDClient struct {
+	pd.Client
+	leaderURL string
+}
+
+func (c *testPDClient) GetLeaderURL() string {
+	return c.leaderURL
+}
 
 func TestNewTableRestore(t *testing.T) {
 	testCases := []struct {
@@ -439,4 +469,71 @@ func TestInitGlobalConfig(t *testing.T) {
 	require.Empty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCA)
 	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLCert)
 	require.NotEmpty(t, tikvconfig.GetGlobalConfig().Security.ClusterSSLKey)
+
+	t.Run("getEtcdCliByPDCli error paths", testGetEtcdCliByPDCliErrorPaths)
+}
+
+func testGetEtcdCliByPDCliErrorPaths(t *testing.T) {
+	tlsCfg, err := common.NewTLS("", "", "", "127.0.0.1", nil, nil, nil)
+	require.NoError(t, err)
+
+	origOpenTiKVStorage := openTiKVStorage
+	origNewEtcdClient := newEtcdClient
+	t.Cleanup(func() {
+		openTiKVStorage = origOpenTiKVStorage
+		newEtcdClient = origNewEtcdClient
+	})
+
+	t.Run("storage missing meta service backend", func(t *testing.T) {
+		store := &plainStorage{}
+
+		openTiKVStorage = func(string, *common.TLS) (kv.Storage, error) {
+			return store, nil
+		}
+		newEtcdClient = func(cfg clientv3.Config) (*clientv3.Client, error) {
+			t.Fatalf("unexpected etcd client construction with cfg %+v", cfg)
+			return nil, nil
+		}
+
+		etcdCli, kvStore, err := getEtcdCliByPDCli(&testPDClient{leaderURL: "http://127.0.0.1:2379"}, tlsCfg, "")
+		require.Nil(t, etcdCli)
+		require.Same(t, store, kvStore)
+		require.ErrorContains(t, err, "does not implement kv.MetaServiceBackend")
+	})
+
+	t.Run("propagate get pd addrs error", func(t *testing.T) {
+		backendErr := errors.New("get pd addrs failed")
+		store := &metaServiceOnlyStorage{getPDAddrsErr: backendErr}
+		openTiKVStorage = func(string, *common.TLS) (kv.Storage, error) {
+			return store, nil
+		}
+		newEtcdClient = func(cfg clientv3.Config) (*clientv3.Client, error) {
+			t.Fatalf("unexpected etcd client construction with cfg %+v", cfg)
+			return nil, nil
+		}
+
+		etcdCli, kvStore, err := getEtcdCliByPDCli(&testPDClient{leaderURL: "http://127.0.0.1:2379"}, tlsCfg, "")
+		require.Nil(t, etcdCli)
+		require.Same(t, store, kvStore)
+		require.ErrorContains(t, err, backendErr.Error())
+	})
+
+	t.Run("propagate etcd client creation error", func(t *testing.T) {
+		store := &metaServiceOnlyStorage{pdAddrs: []string{"127.0.0.1:2379"}}
+		openTiKVStorage = func(string, *common.TLS) (kv.Storage, error) {
+			return store, nil
+		}
+		clientErr := errors.New("new etcd client failed")
+		newEtcdClient = func(cfg clientv3.Config) (*clientv3.Client, error) {
+			require.Equal(t, []string{"127.0.0.1:2379"}, cfg.Endpoints)
+			require.Equal(t, 30*time.Second, cfg.AutoSyncInterval)
+			require.Nil(t, cfg.TLS)
+			return nil, clientErr
+		}
+
+		etcdCli, kvStore, err := getEtcdCliByPDCli(&testPDClient{leaderURL: "https://127.0.0.1:2379"}, tlsCfg, "")
+		require.Nil(t, etcdCli)
+		require.Same(t, store, kvStore)
+		require.ErrorContains(t, err, clientErr.Error())
+	})
 }

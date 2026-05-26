@@ -128,6 +128,15 @@ const (
 var (
 	minTiKVVersionForConflictStrategy = *semver.New("5.2.0")
 	maxTiKVVersionForConflictStrategy = version.NextMajorVersion()
+	openTiKVStorage                   = func(path string, tls *common.TLS) (tidbkv.Storage, error) {
+		return (&driver.TiKVDriver{}).OpenWithOptions(
+			path,
+			driver.WithSecurity(tls.ToTiKVSecurityConfig()),
+		)
+	}
+	newEtcdClient = func(cfg clientv3.Config) (*clientv3.Client, error) {
+		return clientv3.New(cfg)
+	}
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
@@ -1300,10 +1309,7 @@ func getEtcdCliByPDCli(pdCli pd.Client, tls *common.TLS, keyspaceName string) (*
 	if keyspaceName != "" {
 		path = fmt.Sprintf("%s&keyspaceName=%s", path, keyspaceName)
 	}
-	kvStore, err := (&driver.TiKVDriver{}).OpenWithOptions(
-		path,
-		driver.WithSecurity(tls.ToTiKVSecurityConfig()),
-	)
+	kvStore, err := openTiKVStorage(path, tls)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1318,19 +1324,19 @@ func getEtcdCliByPDCli(pdCli pd.Client, tls *common.TLS, keyspaceName string) (*
 
 	ebd, ok := kvStore.(tidbkv.MetaServiceBackend)
 	if !ok {
-		return nil, nil, nil
+		return nil, kvStore, errors.Errorf("storage %T does not implement kv.MetaServiceBackend", kvStore)
 	}
 	etcdAddrs, err := ebd.GetPDAddrs()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, kvStore, errors.Trace(err)
 	}
-	etcdCli, err := clientv3.New(clientv3.Config{
+	etcdCli, err := newEtcdClient(clientv3.Config{
 		Endpoints:        etcdAddrs,
 		AutoSyncInterval: 30 * time.Second,
 		TLS:              tls.TLSConfig(),
 	})
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, kvStore, errors.Trace(err)
 	}
 	return etcdCli, kvStore, nil
 }
