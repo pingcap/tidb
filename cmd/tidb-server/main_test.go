@@ -168,35 +168,34 @@ func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
 	})
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 
-	keyspaceID := uint32(42)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Store = config.StoreTypeTiKV
 		conf.KeyspaceName = "ks"
 	})
-	err := prepareKeyspaceObservability(keyspaceID, nil)
+	err := prepareKeyspaceObservabilityForStarter(nil)
 	require.NoError(t, err)
-	require.Equal(t, map[string]string{"keyspace_id": "42", "keyspace_name": "ks"}, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, map[string]string{"keyspace_name": "ks"}, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.KeyspaceObservability = config.KeyspaceObservability{
 			Fields: []config.KeyspaceObservabilityField{{
 				Source:       "meta_a",
 				MetricLabel:  "keyspace_meta_label_a",
-				SlowLogField: "Slow_meta_a",
+				SlowLogField: "keyspace_meta_slow_a",
 				StmtLogField: "stmt_meta_a",
 				Required:     true,
 			}},
 		}
 	})
 
-	err = prepareKeyspaceObservability(keyspaceID, map[string]string{
+	err = prepareKeyspaceObservabilityForStarter(map[string]string{
 		"meta_a": "value_a",
 	})
 	require.NoError(t, err)
 
 	cfg := config.GetGlobalConfig()
-	require.Equal(t, map[string]string{"keyspace_id": "42", "keyspace_name": "ks", "keyspace_meta_label_a": "value_a"}, cfg.GetKeyspaceObservabilityMetricLabels())
-	require.Equal(t, map[string]string{"Slow_meta_a": "value_a"}, cfg.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, map[string]string{"keyspace_name": "ks", "keyspace_meta_label_a": "value_a"}, cfg.GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, map[string]string{"keyspace_meta_slow_a": "value_a"}, cfg.GetKeyspaceObservabilitySlowLogFields())
 	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, cfg.GetKeyspaceObservabilityStmtLogFields())
 }
 
@@ -218,7 +217,6 @@ func TestSetupKeyspaceObservabilityForStarterSkipsNonTiKV(t *testing.T) {
 		conf.KeyspaceName = "test_keyspace"
 	})
 
-	keyspaceID := uint32(42)
-	require.NoError(t, prepareKeyspaceObservability(keyspaceID, nil))
+	require.NoError(t, prepareKeyspaceObservabilityForStarter(nil))
 	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }

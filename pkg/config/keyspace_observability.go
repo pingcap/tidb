@@ -45,126 +45,6 @@ type KeyspaceObservabilityValues struct {
 
 const keyspaceObservabilityMetricLabelPrefix = "keyspace_meta_"
 
-var reservedKeyspaceObservabilitySlowLogFields = map[string]struct{}{
-	"backoff_detail":                {},
-	"backoff_time":                  {},
-	"backoff_total":                 {},
-	"backoff_types":                 {},
-	"binary_plan":                   {},
-	"commit_backoff_time":           {},
-	"commit_primary_rpc_detail":     {},
-	"commit_time":                   {},
-	"compile_time":                  {},
-	"conn_id":                       {},
-	"cop_backoff_":                  {},
-	"cop_mvcc_read_amplification":   {},
-	"cop_proc_addr":                 {},
-	"cop_proc_avg":                  {},
-	"cop_proc_max":                  {},
-	"cop_proc_p90":                  {},
-	"cop_time":                      {},
-	"cop_wait_addr":                 {},
-	"cop_wait_avg":                  {},
-	"cop_wait_max":                  {},
-	"cop_wait_p90":                  {},
-	"db":                            {},
-	"digest":                        {},
-	"disk_max":                      {},
-	"exec_retry_count":              {},
-	"exec_retry_time":               {},
-	"get_commit_ts_time":            {},
-	"get_latest_ts_time":            {},
-	"get_snapshot_time":             {},
-	"has_more_results":              {},
-	"host":                          {},
-	"index_names":                   {},
-	"is_internal":                   {},
-	"isexplicittxn":                 {},
-	"issyncstatsfailed":             {},
-	"iswritecachetable":             {},
-	"keyspace_id":                   {},
-	"keyspace_name":                 {},
-	"kv_total":                      {},
-	"local_latch_wait_time":         {},
-	"lockkeys_time":                 {},
-	"mem_arbitration":               {},
-	"mem_max":                       {},
-	"num_cop_tasks":                 {},
-	"opt_binding_match":             {},
-	"opt_logical":                   {},
-	"opt_physical":                  {},
-	"opt_stats_derive":              {},
-	"opt_stats_sync_wait":           {},
-	"optimize_time":                 {},
-	"parse_time":                    {},
-	"pd_total":                      {},
-	"plan":                          {},
-	"plan_digest":                   {},
-	"plan_from_binding":             {},
-	"plan_from_cache":               {},
-	"preproc_subqueries":            {},
-	"preproc_subqueries_time":       {},
-	"prepared":                      {},
-	"prewrite_backoff_types":        {},
-	"prewrite_region":               {},
-	"prewrite_time":                 {},
-	"prev_stmt":                     {},
-	"process_keys":                  {},
-	"process_time":                  {},
-	"query":                         {},
-	"query_time":                    {},
-	"request_count":                 {},
-	"request_unit_read":             {},
-	"request_unit_v2":               {},
-	"request_unit_v2_detail":        {},
-	"request_unit_write":            {},
-	"resolve_lock_time":             {},
-	"resource_group":                {},
-	"result_rows":                   {},
-	"rewrite_time":                  {},
-	"rocksdb_block_cache_hit_count": {},
-	"rocksdb_block_read_byte":       {},
-	"rocksdb_block_read_count":      {},
-	"rocksdb_block_read_time":       {},
-	"rocksdb_delete_skipped_count":  {},
-	"rocksdb_key_skipped_count":     {},
-	"session_alias":                 {},
-	"session_connect_attrs":         {},
-	"slowest_prewrite_rpc_detail":   {},
-	"stats":                         {},
-	"storage_from_kv":               {},
-	"storage_from_mpp":              {},
-	"succ":                          {},
-	"tidb_cpu_time":                 {},
-	"tikv_cpu_time":                 {},
-	"time":                          {},
-	"time_queued_by_rc":             {},
-	"total_keys":                    {},
-	"txn_retry":                     {},
-	"txn_start_ts":                  {},
-	"unpacked_bytes_received_tiflash_cross_zone": {},
-	"unpacked_bytes_received_tiflash_total":      {},
-	"unpacked_bytes_received_tikv_cross_zone":    {},
-	"unpacked_bytes_received_tikv_total":         {},
-	"unpacked_bytes_sent_tiflash_cross_zone":     {},
-	"unpacked_bytes_sent_tiflash_total":          {},
-	"unpacked_bytes_sent_tikv_cross_zone":        {},
-	"unpacked_bytes_sent_tikv_total":             {},
-	"user":                                       {},
-	"user@host":                                  {},
-	"wait_prewrite_binlog_time":                  {},
-	"wait_time":                                  {},
-	"wait_ts":                                    {},
-	"warnings":                                   {},
-	"write_keys":                                 {},
-	"write_size":                                 {},
-	"write_sql_response_total":                   {},
-}
-
-var reservedKeyspaceObservabilitySlowLogFieldPrefixes = []string{
-	"cop_backoff_",
-}
-
 // Valid validates metadata observability mappings.
 func (o KeyspaceObservability) Valid() error {
 	metricLabels := make(map[string]struct{}, len(o.Fields))
@@ -195,8 +75,8 @@ func (o KeyspaceObservability) Valid() error {
 				return fmt.Errorf("[keyspace-observability.fields.%d] invalid slow-log-field %q", i, field.SlowLogField)
 			}
 			key := strings.ToLower(field.SlowLogField)
-			if isReservedKeyspaceObservabilitySlowLogField(key) {
-				return fmt.Errorf("[keyspace-observability.fields.%d] reserved slow-log-field %q", i, field.SlowLogField)
+			if !strings.HasPrefix(key, keyspaceObservabilityMetricLabelPrefix) {
+				return fmt.Errorf("[keyspace-observability.fields.%d] slow-log-field %q must start with %q", i, field.SlowLogField, keyspaceObservabilityMetricLabelPrefix)
 			}
 			if _, ok := slowLogFields[key]; ok {
 				return fmt.Errorf("[keyspace-observability.fields.%d] duplicated slow-log-field %q", i, field.SlowLogField)
@@ -212,18 +92,6 @@ func (o KeyspaceObservability) Valid() error {
 		}
 	}
 	return nil
-}
-
-func isReservedKeyspaceObservabilitySlowLogField(field string) bool {
-	if _, ok := reservedKeyspaceObservabilitySlowLogFields[field]; ok {
-		return true
-	}
-	for _, prefix := range reservedKeyspaceObservabilitySlowLogFieldPrefixes {
-		if strings.HasPrefix(field, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func validKeyspaceObservabilityLogFieldName(field string) bool {

@@ -16,7 +16,6 @@ package standby
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,21 +28,13 @@ func TestActivateRequestMetadata(t *testing.T) {
 	var req ActivateRequest
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"keyspace_name": "ks",
-		"keyspace_id": 42,
 		"metadata": {
 			"meta_a": "value_a"
 		}
 	}`), &req))
-	require.NotNil(t, req.KeyspaceID)
-	require.Equal(t, uint32(42), *req.KeyspaceID)
 	require.Equal(t, map[string]string{
 		"meta_a": "value_a",
 	}, req.Metadata)
-
-	var zeroKeyspaceIDReq ActivateRequest
-	require.NoError(t, json.Unmarshal([]byte(`{"keyspace_name":"ks","keyspace_id":0}`), &zeroKeyspaceIDReq))
-	require.NotNil(t, zeroKeyspaceIDReq.KeyspaceID)
-	require.Equal(t, uint32(0), *zeroKeyspaceIDReq.KeyspaceID)
 
 	mu.Lock()
 	originalRequest := activateRequest
@@ -60,55 +51,15 @@ func TestActivateRequestMetadata(t *testing.T) {
 	require.Equal(t, req.Metadata, metadata)
 	metadata["meta_a"] = "changed"
 	require.Equal(t, "value_a", controller.ActivationMetadata()["meta_a"])
-
-	keyspaceID := controller.ActivationKeyspaceID()
-	require.Equal(t, uint32(42), keyspaceID)
-	require.Equal(t, uint32(42), controller.ActivationKeyspaceID())
 }
 
-func TestActivateRequiresKeyspaceID(t *testing.T) {
+func TestActivateRequiresKeyspaceName(t *testing.T) {
 	controller := NewLoadKeyspaceController()
 	_, mux := controller.Handler(nil)
-	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{"keyspace_name":"ks"}`))
+	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{}`))
 	resp := httptest.NewRecorder()
 
 	mux.ServeHTTP(resp, req)
 
 	require.Equal(t, http.StatusBadRequest, resp.Code)
-}
-
-func TestActivateRejectsMismatchedKeyspaceID(t *testing.T) {
-	mu.Lock()
-	originalState, originalRequest := state, activateRequest
-	state = standbyState
-	activateRequest = ActivateRequest{}
-	mu.Unlock()
-	t.Cleanup(func() {
-		mu.Lock()
-		state = originalState
-		activateRequest = originalRequest
-		mu.Unlock()
-	})
-
-	controller := NewLoadKeyspaceController()
-	_, mux := controller.Handler(nil)
-	firstRespCode := make(chan int, 1)
-	go func() {
-		req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{"keyspace_name":"ks","keyspace_id":42}`))
-		resp := httptest.NewRecorder()
-		mux.ServeHTTP(resp, req)
-		firstRespCode <- resp.Code
-	}()
-	t.Cleanup(func() {
-		controller.EndStandby(errors.New("test done"))
-		require.Equal(t, http.StatusInternalServerError, <-firstRespCode)
-	})
-
-	<-activateCh
-	req := httptest.NewRequest(http.MethodPost, "/tidb-pool/activate", strings.NewReader(`{"keyspace_name":"ks","keyspace_id":43}`))
-	resp := httptest.NewRecorder()
-
-	mux.ServeHTTP(resp, req)
-
-	require.Equal(t, http.StatusPreconditionFailed, resp.Code)
 }

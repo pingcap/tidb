@@ -48,9 +48,8 @@ const (
 
 // ActivateRequest is the request body for activating the tidb server.
 type ActivateRequest struct {
-	KeyspaceName   string  `json:"keyspace_name"`
-	KeyspaceID     *uint32 `json:"keyspace_id,omitempty"`
-	MaxIdleSeconds uint    `json:"max_idle_seconds"`
+	KeyspaceName   string `json:"keyspace_name"`
+	MaxIdleSeconds uint   `json:"max_idle_seconds"`
 	// Metadata is keyspace metadata sent by the manager during activation, such as tenant, project, and cluster identifiers.
 	Metadata map[string]string `json:"metadata,omitempty"`
 
@@ -183,13 +182,6 @@ func (c *LoadKeyspaceController) ActivationMetadata() map[string]string {
 	return metadata
 }
 
-// ActivationKeyspaceID returns the keyspace ID carried by the activate request.
-func (c *LoadKeyspaceController) ActivationKeyspaceID() uint32 {
-	mu.RLock()
-	defer mu.RUnlock()
-	return *activateRequest.KeyspaceID
-}
-
 // Handler returns a handler to query tidb pool status or activate or exit the tidb server.
 func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.ServeMux) {
 	mux := http.NewServeMux()
@@ -200,7 +192,7 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if req.KeyspaceName == "" || req.KeyspaceID == nil {
+		if req.KeyspaceName == "" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -219,7 +211,7 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 				logutil.BgLogger().Error("failed to write response", zap.Error(err))
 			}
 			return
-		case activateRequest.KeyspaceName != req.KeyspaceName || *activateRequest.KeyspaceID != *req.KeyspaceID:
+		case activateRequest.KeyspaceName != req.KeyspaceName:
 			mu.Unlock()
 			w.WriteHeader(http.StatusPreconditionFailed)
 			_, err := w.Write([]byte("server is not in standby mode"))
@@ -375,7 +367,6 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 
 	logutil.BgLogger().Info("standby receive activate request",
 		zap.String("keyspace-name", activateRequest.KeyspaceName),
-		zap.Uint32p("keyspace-id", activateRequest.KeyspaceID),
 		zap.Uint("max-idle-seconds", activateRequest.MaxIdleSeconds),
 		zap.Bool("run-auto-analyze", activateRequest.RunAutoAnalyze),
 		zap.Bool("tidb-enable-ddl", activateRequest.TiDBEnableDDL),

@@ -176,7 +176,7 @@ func TestKeyspaceObservability(t *testing.T) {
 [[keyspace-observability.fields]]
 source = "meta_a"
 metric-label = "keyspace_meta_label_a"
-slow-log-field = "Slow_meta_a"
+slow-log-field = "keyspace_meta_slow_a"
 stmt-log-field = "stmt_meta_a"
 required = true
 
@@ -192,7 +192,7 @@ metric-label = "keyspace_meta_label_b"
 		"meta_b": "value_b",
 	}))
 	require.Equal(t, map[string]string{"keyspace_meta_label_a": "value_a", "keyspace_meta_label_b": "value_b"}, conf.GetKeyspaceObservabilityMetricLabels())
-	require.Equal(t, map[string]string{"Slow_meta_a": "value_a"}, conf.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, map[string]string{"keyspace_meta_slow_a": "value_a"}, conf.GetKeyspaceObservabilitySlowLogFields())
 	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, conf.GetKeyspaceObservabilityStmtLogFields())
 
 	require.ErrorContains(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_b": "value_b"}), `missing required keyspace metadata entry "meta_a"`)
@@ -289,13 +289,13 @@ metric-label = "task_id"
 			err: `metric-label "task_id" must start with "keyspace_meta_"`,
 		},
 		{
-			name: "reserved slow log field",
+			name: "slow log field without prefix",
 			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-slow-log-field = "Digest"
-`,
-			err: `reserved slow-log-field "Digest"`,
+	[[keyspace-observability.fields]]
+	source = "meta_a"
+	slow-log-field = "Digest"
+	`,
+			err: `slow-log-field "Digest" must start with "keyspace_meta_"`,
 		},
 		{
 			name: "invalid slow log field",
@@ -309,15 +309,15 @@ slow-log-field = "Bad Field"
 		{
 			name: "duplicate slow log field",
 			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-slow-log-field = "Slow_meta"
+	[[keyspace-observability.fields]]
+	source = "meta_a"
+	slow-log-field = "keyspace_meta_slow"
 
-[[keyspace-observability.fields]]
-source = "meta_b"
-slow-log-field = "Slow_meta"
-`,
-			err: `duplicated slow-log-field "Slow_meta"`,
+	[[keyspace-observability.fields]]
+	source = "meta_b"
+	slow-log-field = "KEYSPACE_META_SLOW"
+	`,
+			err: `duplicated slow-log-field "KEYSPACE_META_SLOW"`,
 		},
 		{
 			name: "duplicate stmt log field",

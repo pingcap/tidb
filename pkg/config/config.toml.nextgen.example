@@ -450,8 +450,8 @@ engines = ["tikv", "tiflash", "tidb"]
 # Only valid when deploy-mode is starter.
 # [[keyspace-observability.fields]]
 # source = "meta_key"
-# metric-label = "metric_label"
-# slow-log-field = "Slow_log_field"
+# metric-label = "keyspace_meta_metric_label"
+# slow-log-field = "keyspace_meta_slow_log_field"
 # stmt-log-field = "stmt_log_field"
 # required = false
 
