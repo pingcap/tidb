@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/mview"
+	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
 	_ "github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -422,7 +422,7 @@ func TestBuildMLogDeltaSelectCommitTSWindow(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		mvmerge.BuildOptions{FromTS: 10},
 		nil,
 	)
 	require.NoError(t, err)
@@ -452,7 +452,6 @@ func TestBuildMLogDeltaSelectCommitTSWindow(t *testing.T) {
 	}
 
 	require.EqualValues(t, 10, tsValueByOp[opcode.GT])
-	require.EqualValues(t, 20, tsValueByOp[opcode.LE])
 }
 
 func TestBuildMergeSourceSelectJoinOperatorByMVNullability(t *testing.T) {
