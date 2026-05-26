@@ -89,20 +89,14 @@ const (
 )
 
 func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MVDeltaMerge) exec.Executor {
-	if v.Source == nil {
-		b.err = errors.New("MViewDeltaMerge source plan is nil")
-		return nil
-	}
-
-	if b.err = b.updateForUpdateTS(); b.err != nil {
-		return nil
-	}
-
 	originInMViewDeltaMerge := b.inMViewDeltaMergeStmt
 	b.inMViewDeltaMergeStmt = true
 	defer func() {
 		b.inMViewDeltaMergeStmt = originInMViewDeltaMerge
 	}()
+	if b.err = b.updateForUpdateTS(); b.err != nil {
+		return nil
+	}
 	sourceExec := b.build(v.Source)
 	if b.err != nil {
 		return nil
