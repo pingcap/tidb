@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.uber.org/zap"
 )
 
 // loadTableRecordRegionRanges returns one key range per region that overlaps the
@@ -122,11 +124,25 @@ func (e *AnalyzeColumnsExec) setupRegionSampling(ctx context.Context) error {
 	numStores := tikvStoreCount(store)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	picked := sampleRegionsByStoreShare(regions, numStores, r)
-	// ndvrate sets how much of each picked region to scan: replace each region's
-	// full key range with a random sub-range covering that fraction of its keys.
-	keyRangeFraction := e.analyzePB.ColReq.GetNdvRate()
-	if keyRangeFraction <= 0 || keyRangeFraction > 1 {
-		keyRangeFraction = 1
+
+	// ndvrate is the target fraction of the WHOLE table to scan. The picked regions
+	// hold only regionFraction = picked/total of the rows, so scan a key-range of
+	// ndvrate/regionFraction within each, making the overall scanned fraction ndvrate.
+	ndvRate := e.analyzePB.ColReq.GetNdvRate()
+	if ndvRate <= 0 || ndvRate > 1 {
+		ndvRate = 1
+	}
+	regionFraction := float64(len(picked)) / float64(len(regions))
+	keyRangeFraction := keyRangeFractionForNDVRate(ndvRate, regionFraction)
+	if ndvRate > regionFraction {
+		// The per-store region budget caps the reachable fraction at regionFraction;
+		// scanning the picked regions in full is the most we can do at this store count.
+		logutil.BgLogger().Warn(
+			"analyze ndvrate exceeds the region-sampling ceiling; clamping the scanned fraction",
+			zap.Float64("ndvRate", ndvRate),
+			zap.Float64("reachableFraction", regionFraction),
+			zap.Int("numStores", numStores),
+		)
 	}
 	for i := range picked {
 		picked[i] = randomSubKeyRange(picked[i].StartKey, picked[i].EndKey, keyRangeFraction, r)
@@ -139,6 +155,18 @@ func (e *AnalyzeColumnsExec) setupRegionSampling(ctx context.Context) error {
 	e.regionSamplePicked = len(picked)
 	e.regionSampleKeyRangeFraction = keyRangeFraction
 	return nil
+}
+
+// keyRangeFractionForNDVRate returns the within-region key-range fraction so that the
+// overall scanned fraction of the table equals ndvRate, given the picked regions cover
+// regionFraction of it (overall = regionFraction * keyRangeFraction). It is capped at
+// a whole region (1.0): once ndvRate exceeds regionFraction the per-store region budget
+// can't reach it, so the overall fraction is clamped to regionFraction.
+func keyRangeFractionForNDVRate(ndvRate, regionFraction float64) float64 {
+	if regionFraction <= 0 {
+		return 1
+	}
+	return min(1.0, ndvRate/regionFraction)
 }
 
 // randomSubKeyRange returns a contiguous sub-range of [start, end) covering about

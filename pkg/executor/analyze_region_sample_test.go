@@ -92,6 +92,22 @@ func TestScaleAggregatesForRegionSample(t *testing.T) {
 	})
 }
 
+func TestKeyRangeFractionForNDVRate(t *testing.T) {
+	// With 5 stores the picked regions hold ~20% of the table, so 0.2 is the ceiling.
+	const regionFraction = 0.2
+
+	// ndvrate is the target fraction of the WHOLE table: the overall scanned fraction
+	// (regionFraction × keyRangeFraction) must equal ndvrate, clamped to the ceiling.
+	for _, ndvRate := range []float64{0.02, 0.1, 0.2, 0.5, 1.0} {
+		overall := regionFraction * keyRangeFractionForNDVRate(ndvRate, regionFraction)
+		require.InDelta(t, min(ndvRate, regionFraction), overall, 1e-9, "ndvRate=%v", ndvRate)
+	}
+
+	require.InDelta(t, 0.5, keyRangeFractionForNDVRate(0.1, regionFraction), 1e-9) // below ceiling: 0.1/0.2
+	require.Equal(t, 1.0, keyRangeFractionForNDVRate(0.5, regionFraction))         // above ceiling: clamped
+	require.Equal(t, 1.0, keyRangeFractionForNDVRate(0.5, 0))                      // degenerate regionFraction
+}
+
 func TestRandomSubKeyRange(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
 	start := kv.Key{0x10, 0x00} // 0x1000 = 4096
