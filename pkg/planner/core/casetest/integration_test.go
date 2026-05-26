@@ -510,6 +510,50 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 		tk.MustExec(`create table tx (a int, b json, key k(a, (cast(b as date array))))`)
 		tk.MustQuery(`select /* issue:49438 */ 1 from tx where a in (1)`).Check(testkit.Rows())
 
+		// issue:67009
+		for _, notNull := range []bool{true, false} {
+			tk.MustExec("drop table if exists t_issue67009")
+			if notNull {
+				tk.MustExec("create table t_issue67009(c0 char unique not null)")
+			} else {
+				tk.MustExec("create table t_issue67009(c0 char unique)")
+			}
+			tk.MustExec("insert into t_issue67009 values (1)")
+			tk.MustQuery(`select /* issue:67009 */ ceil(max(b'101010')) as c0
+				from t_issue67009
+				group by c0
+				having convert_tz('2025-12-31 14:30:00', 'Europe/Amsterdam', '+00:00')`).Check(testkit.Rows("0"))
+			tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: '*'"))
+			tk.MustQuery(`select /* issue:67009 constant */ max(42) as c0
+				from t_issue67009
+				group by c0
+				having convert_tz('2025-12-31 14:30:00', 'Europe/Amsterdam', '+00:00')`).Check(testkit.Rows("42"))
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+			if notNull {
+				tk.MustQuery("explain format = 'plan_tree' select /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0").Check(testkit.Rows(
+					"IndexReader root  index:IndexFullScan",
+					"└─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+				tk.MustQuery("explain format = 'plan_tree' select /* issue:67009 constant */ max(42) from t_issue67009 group by c0").Check(testkit.Rows(
+					"Projection root  42->Column",
+					"└─IndexReader root  index:IndexFullScan",
+					"  └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+			} else {
+				// Force HashAgg so this boundary assertion only checks that MAX(c0)
+				// is still aggregated rather than projected as a constant.
+				tk.MustQuery("explain format = 'plan_tree' select /*+ HASH_AGG() */ /* issue:67009 boundary */ max(c0) from t_issue67009 group by c0").Check(testkit.Rows(
+					"HashAgg root  group by:test.t_issue67009.c0, funcs:max(Column)->Column",
+					"└─IndexReader root  index:HashAgg",
+					"  └─HashAgg cop[tikv]  group by:test.t_issue67009.c0, funcs:max(test.t_issue67009.c0)->Column",
+					"    └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+				tk.MustQuery("explain format = 'plan_tree' select /*+ HASH_AGG() */ /* issue:67009 constant */ max(42) from t_issue67009 group by c0").Check(testkit.Rows(
+					"Projection root  42->Column",
+					"└─HashAgg root  group by:test.t_issue67009.c0, funcs:count(Column)->Column",
+					"  └─IndexReader root  index:HashAgg",
+					"    └─HashAgg cop[tikv]  group by:test.t_issue67009.c0, funcs:count(1)->Column",
+					"      └─IndexFullScan cop[tikv] table:t_issue67009, index:c0(c0) keep order:false, stats:pseudo"))
+			}
+		}
+
 		// issue:52023
 		tk.MustExec(`CREATE TABLE t_issue52023 (
 			a binary(1) NOT NULL,
