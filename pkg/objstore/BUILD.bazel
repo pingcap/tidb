@@ -15,6 +15,7 @@ go_library(
         "local_unix.go",
         "local_windows.go",
         "locking.go",
+        "locking_helper.go",
         "memstore.go",
         "noop.go",
         "parse.go",
