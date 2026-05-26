@@ -52,6 +52,16 @@ type AnalyzeColumnsExec struct {
 	baseModifyCnt           int64
 
 	memTracker *memory.Tracker
+
+	// Region sampling (only enabled when NDV sampling is on; see
+	// analyze_region_sample.go). When sampledKeyRanges is non-empty, the column
+	// scan covers just these picked regions instead of the whole table, and the
+	// merged count/null-count/total-size are extrapolated back to the table by
+	// regionSampleTotal/regionSamplePicked.
+	sampledKeyRanges             []kv.KeyRange
+	regionSampleTotal            int
+	regionSamplePicked           int
+	regionSampleKeyRangeFraction float64
 }
 
 // isColumnCoveredBySingleColUniqueIndex returns true if there exists a public, non-prefix,
@@ -81,6 +91,15 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
+	if len(e.sampledKeyRanges) > 0 {
+		// Region sampling: scan only the picked regions' key ranges.
+		result, err := e.buildRespForKeyRanges(ctx, e.sampledKeyRanges)
+		if err != nil {
+			return err
+		}
+		e.resultHandler.open(nil, result)
+		return nil
+	}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
@@ -102,7 +121,22 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 
 func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
+	builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
+	return e.finishAnalyzeReq(ctx, &builder)
+}
+
+// buildRespForKeyRanges builds the analyze coprocessor request over explicit raw
+// key ranges (the regions picked by region sampling), rather than over logical
+// handle ranges. The copr layer still splits these by region and fans out.
+func (e *AnalyzeColumnsExec) buildRespForKeyRanges(ctx context.Context, keyRanges []kv.KeyRange) (distsql.SelectResult, error) {
+	var builder distsql.RequestBuilder
+	builder.SetKeyRanges(keyRanges)
+	return e.finishAnalyzeReq(ctx, &builder)
+}
+
+// finishAnalyzeReq applies the common analyze-request settings (the ranges must
+// already be set on builder), builds it, and dispatches the coprocessor scan.
+func (e *AnalyzeColumnsExec) finishAnalyzeReq(ctx context.Context, builder *distsql.RequestBuilder) (distsql.SelectResult, error) {
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	startTS := uint64(math.MaxUint64)
 	isoLevel := kv.RC
@@ -112,7 +146,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
-	kvReq, err := reqBuilder.
+	kvReq, err := builder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
@@ -124,11 +158,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	if err != nil {
 		return nil, err
 	}
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 }
 
 func hasPkHist(handleCols plannerutil.HandleCols) bool {

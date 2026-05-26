@@ -207,6 +207,16 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	fmSketches []*statistics.FMSketch,
 	err error,
 ) {
+	// When NDV sampling is on, reduce the scanned data by sampling regions and a
+	// key-range within each (see analyze_region_sample.go). This is the only place
+	// region sampling is enabled; full ANALYZE (ndv_rate >= 1) scans everything as
+	// before. It is an optimization, so a setup failure falls back to a full scan
+	// rather than failing the ANALYZE.
+	if statistics.ShouldBuildSingletonSketches(e.analyzePB.ColReq.GetNdvRate()) {
+		if rerr := e.setupRegionSampling(ctx); rerr != nil {
+			logutil.BgLogger().Warn("analyze region sampling setup failed; falling back to full table scan", zap.Error(rerr))
+		}
+	}
 	// Open memory tracker and resultHandler.
 	if err = e.open(ctx, ranges); err != nil {
 		return 0, nil, nil, nil, err
@@ -303,6 +313,16 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if err != nil {
 		taskCancel(err)
 		return 0, nil, nil, nil, err
+	}
+
+	// Region sampling scanned only a subset of regions, and only part of each
+	// (the ndvrate key-range fraction); extrapolate the merged count, null counts,
+	// and total sizes back to the whole table. The histogram is left as-is for now;
+	// the NDV is extrapolated by estimateSamplingNDV below, which uses the scaled
+	// count as the population size N.
+	if e.regionSamplePicked > 0 {
+		base := rootRowCollector.Base()
+		scaleAggregatesForRegionSample(&base.Count, base.NullCount, base.TotalSizes, e.regionSampleTotal, e.regionSamplePicked, e.regionSampleKeyRangeFraction)
 	}
 
 	colLen := len(e.colsInfo)

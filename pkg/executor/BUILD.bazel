@@ -12,6 +12,7 @@ go_library(
         "analyze_col_sampling.go",
         "analyze_global_stats.go",
         "analyze_idx.go",
+        "analyze_region_sample.go",
         "analyze_utils.go",
         "analyze_worker.go",
         "batch_checker.go",
@@ -341,6 +342,7 @@ go_test(
     srcs = [
         "adapter_internal_test.go",
         "adapter_test.go",
+        "analyze_region_sample_test.go",
         "analyze_test.go",
         "analyze_utils_test.go",
         "batch_point_get_test.go",
