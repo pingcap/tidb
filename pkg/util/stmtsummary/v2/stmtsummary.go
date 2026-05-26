@@ -580,11 +580,11 @@ func newStmtWindow(begin time.Time, capacity uint, onEvict onEvictFn) *stmtWindo
 		r.Lock()
 		defer r.Unlock()
 		key := k.(*stmtsummary.StmtDigestKey)
-		logged := false
+		queuedForEvictedLog := false
 		if onEvict != nil {
-			logged = onEvict(key, r.StmtRecord, w.begin, timeNow())
+			queuedForEvictedLog = onEvict(key, r.StmtRecord, w.begin, timeNow())
 		}
-		w.evicted.add(key, r.StmtRecord, !logged)
+		w.evicted.add(key, r.StmtRecord, queuedForEvictedLog)
 	})
 	return w
 }
@@ -606,29 +606,31 @@ type stmtStorage interface {
 
 type stmtEvicted struct {
 	sync.Mutex
-	keys     map[string]struct{}
-	other    *StmtRecord
-	unlogged *StmtRecord
+	keys map[string]struct{}
+	// inMemoryAggregate contains all evicted records in the current in-memory window.
+	inMemoryAggregate *StmtRecord
+	// persistFallback contains only records not already queued to the per-record evicted log.
+	persistFallback *StmtRecord
 }
 
 func newStmtEvicted() *stmtEvicted {
 	return &stmtEvicted{
-		keys:     make(map[string]struct{}),
-		other:    newEvictedAggregateRecord(),
-		unlogged: newEvictedAggregateRecord(),
+		keys:              make(map[string]struct{}),
+		inMemoryAggregate: newEvictedAggregateRecord(),
+		persistFallback:   newEvictedAggregateRecord(),
 	}
 }
 
-func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord, persistAsAggregate bool) {
+func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord, queuedForEvictedLog bool) {
 	if key == nil || record == nil {
 		return
 	}
 	e.Lock()
 	defer e.Unlock()
 	e.keys[string(key.Hash())] = struct{}{}
-	e.other.Merge(record)
-	if persistAsAggregate {
-		e.unlogged.Merge(record)
+	e.inMemoryAggregate.Merge(record)
+	if !queuedForEvictedLog {
+		e.persistFallback.Merge(record)
 	}
 }
 

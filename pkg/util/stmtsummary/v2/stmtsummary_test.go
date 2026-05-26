@@ -58,14 +58,14 @@ func TestStmtWindow(t *testing.T) {
 	ss.Add(GenerateStmtExecInfo4Test("digest7"))
 	require.Equal(t, 5, ss.window.lru.Size())
 	require.Equal(t, 2, ss.window.evicted.count())
-	require.Equal(t, int64(4), ss.window.evicted.other.ExecCount) // digest1 digest1 digest2 digest2
+	require.Equal(t, int64(4), ss.window.evicted.inMemoryAggregate.ExecCount) // digest1 digest1 digest2 digest2
 	require.Equal(t, int64(2), ss.window.evictedCount.Load())
-	_, err := json.Marshal(ss.window.evicted.other)
+	_, err := json.Marshal(ss.window.evicted.inMemoryAggregate)
 	require.NoError(t, err)
 	ss.Clear()
 	require.Equal(t, 0, ss.window.lru.Size())
 	require.Equal(t, 0, ss.window.evicted.count())
-	require.Equal(t, int64(0), ss.window.evicted.other.ExecCount)
+	require.Equal(t, int64(0), ss.window.evicted.inMemoryAggregate.ExecCount)
 	require.Equal(t, int64(0), ss.window.evictedCount.Load())
 }
 

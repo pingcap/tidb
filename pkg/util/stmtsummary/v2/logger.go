@@ -60,10 +60,10 @@ func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {
 		r.Unlock()
 	}
 	w.evicted.Lock()
-	if w.evicted.unlogged.ExecCount > 0 {
-		w.evicted.unlogged.Begin = begin
-		w.evicted.unlogged.End = end.Unix()
-		s.log(w.evicted.unlogged)
+	if w.evicted.persistFallback.ExecCount > 0 {
+		w.evicted.persistFallback.Begin = begin
+		w.evicted.persistFallback.End = end.Unix()
+		s.log(w.evicted.persistFallback)
 	}
 	w.evicted.Unlock()
 }
