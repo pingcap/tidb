@@ -122,6 +122,13 @@ func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBu
 	return builder
 }
 
+// SetAnalyzeFullSamplingTrace sets the statement-level trace collector for
+// ANALYZE full-sampling requests.
+func (builder *RequestBuilder) SetAnalyzeFullSamplingTrace(trace kv.AnalyzeFullSamplingTraceCollector) *RequestBuilder {
+	builder.Request.AnalyzeFullSamplingTrace = trace
+	return builder
+}
+
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
 // Note this function should be deleted or at least not exported, but currently
@@ -234,7 +241,12 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq, isoLevel kv.IsoLevel) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeAnalyze
+		builder.Request.AnalyzeFullSampling = ana.GetTp() == tipb.AnalyzeType_TypeFullSampling && ana.GetColReq() != nil
+		marshalStart := time.Now()
 		builder.Request.Data, builder.err = ana.Marshal()
+		if builder.Request.AnalyzeFullSampling && builder.Request.AnalyzeFullSamplingTrace != nil {
+			builder.Request.AnalyzeFullSamplingTrace.RecordMarshalAnalyzeReq(time.Since(marshalStart), len(builder.Request.Data), builder.err == nil)
+		}
 		builder.Request.NotFillCache = true
 		builder.Request.IsolationLevel = isoLevel
 		builder.Request.Priority = kv.PriorityLow

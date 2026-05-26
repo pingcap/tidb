@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -189,9 +190,22 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	})
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = kv.InternalTxnStats
+	traceFullSampling := kvReq.AnalyzeFullSampling && kvReq.AnalyzeFullSamplingTrace != nil
+	requestBytes := len(kvReq.Data)
+	storeBatchSize := kvReq.StoreBatchSize
+	concurrency := kvReq.Concurrency
+	sendStart := time.Now()
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
+		if traceFullSampling {
+			kvReq.AnalyzeFullSamplingTrace.RecordDistSQLAnalyzeSend(time.Since(sendStart),
+				requestBytes, storeBatchSize, concurrency, false)
+		}
 		return nil, errors.New("client returns nil response")
+	}
+	if traceFullSampling {
+		kvReq.AnalyzeFullSamplingTrace.RecordDistSQLAnalyzeSend(time.Since(sendStart),
+			requestBytes, storeBatchSize, concurrency, true)
 	}
 	label := metrics.LblGeneral
 	if isRestrict {

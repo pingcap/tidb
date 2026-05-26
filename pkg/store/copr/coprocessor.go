@@ -70,6 +70,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -80,6 +81,8 @@ const (
 	smallTaskSigma         = 0.5
 	smallConcPerCore       = 20
 )
+
+const analyzeFullSamplingTraceLog = "analyze full sampling trace"
 
 var liteWorkerFallbackHook atomic.Pointer[func()]
 
@@ -200,6 +203,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if err != nil {
 		return nil, copErrorResponse{err}
 	}
+	var analyzeTrace kv.AnalyzeFullSamplingTraceCollector
+	if isAnalyzeStoreBatchRequest(req) {
+		analyzeTrace = req.AnalyzeFullSamplingTrace
+	}
 	it := &copIterator{
 		store:            c.store,
 		req:              req,
@@ -213,6 +220,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		runawayChecker:   req.RunawayChecker,
 		maxKeysRead:      req.MaxKeysRead,
 		keysRead:         pickKeysReadCounter(req),
+		analyzeTrace:     analyzeTrace,
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -643,9 +651,11 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		chanSize = 18
 	}
 
+	isAnalyzeBatchReq := isAnalyzeStoreBatchRequest(req)
+
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 && (hints != nil || isAnalyzeStoreBatchRequest(req)) {
-		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead)
+	if req.StoreBatchSize > 0 && (hints != nil || isAnalyzeBatchReq) {
+		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead, isAnalyzeBatchReq)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
 	}
@@ -732,6 +742,15 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 	tasks := builder.build()
 	elapsed := time.Since(start)
+	if req.Tp == kv.ReqTypeAnalyze && isAnalyzeBatchReq {
+		batchedSubTasks := 0
+		for _, task := range tasks {
+			batchedSubTasks += len(task.batchTaskList)
+		}
+		if req.AnalyzeFullSamplingTrace != nil {
+			req.AnalyzeFullSamplingTrace.RecordBuildCopTasks(elapsed, rangesLen, builder.regionNum(), len(tasks), batchedSubTasks, req.StoreBatchSize)
+		}
+	}
 	if elapsed > time.Millisecond*500 {
 		logutil.BgLogger().Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
@@ -785,26 +804,28 @@ type storeReplicaKey struct {
 }
 
 type batchStoreTaskBuilder struct {
-	bo          *Backoffer
-	req         *kv.Request
-	cache       *RegionCache
-	taskID      uint64
-	limit       int
-	store2Idx   map[storeReplicaKey]int
-	tasks       []*copTask
-	replicaRead kv.ReplicaReadType
+	bo                  *Backoffer
+	req                 *kv.Request
+	cache               *RegionCache
+	taskID              uint64
+	limit               int
+	isAnalyzeStoreBatch bool
+	store2Idx           map[storeReplicaKey]int
+	tasks               []*copTask
+	replicaRead         kv.ReplicaReadType
 }
 
-func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache, replicaRead kv.ReplicaReadType) *batchStoreTaskBuilder {
+func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache, replicaRead kv.ReplicaReadType, isAnalyzeStoreBatch bool) *batchStoreTaskBuilder {
 	return &batchStoreTaskBuilder{
-		bo:          bo,
-		req:         req,
-		cache:       cache,
-		taskID:      0,
-		limit:       req.StoreBatchSize,
-		store2Idx:   make(map[storeReplicaKey]int, 16),
-		tasks:       make([]*copTask, 0, 16),
-		replicaRead: replicaRead,
+		bo:                  bo,
+		req:                 req,
+		cache:               cache,
+		taskID:              0,
+		limit:               req.StoreBatchSize,
+		isAnalyzeStoreBatch: isAnalyzeStoreBatch,
+		store2Idx:           make(map[storeReplicaKey]int, 16),
+		tasks:               make([]*copTask, 0, 16),
+		replicaRead:         replicaRead,
 	}
 }
 
@@ -819,7 +840,7 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 		}
 	}()
 	// only batch small tasks for memory control.
-	if b.limit <= 0 || (!isAnalyzeStoreBatchRequest(b.req) && !isSmallTask(task)) {
+	if b.limit <= 0 || (!b.isAnalyzeStoreBatch && !isSmallTask(task)) {
 		return nil
 	}
 	batchedTask, err := b.cache.BuildBatchTask(b.bo, b.req, task, b.replicaRead)
@@ -1003,6 +1024,7 @@ type copIterator struct {
 
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
+	analyzeTrace   kv.AnalyzeFullSamplingTraceCollector
 
 	maxKeysRead uint64          // global limit from kv.Request (0 = unlimited)
 	keysRead    *atomic2.Uint64 // cumulative storage engine keys read across all completed tasks; may be shared across copIterators in the same statement
@@ -1052,6 +1074,7 @@ type copIteratorWorker struct {
 	storeBatchedNum         *atomic.Uint64
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
+	analyzeTrace            kv.AnalyzeFullSamplingTraceCollector
 
 	maxKeysRead uint64          // global limit (0 = unlimited)
 	keysRead    *atomic2.Uint64 // shared with copIterator for cumulative tracking
@@ -1250,6 +1273,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedNum:         &it.storeBatchedNum,
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
+		analyzeTrace:            it.analyzeTrace,
 		maxKeysRead:             it.maxKeysRead,
 		keysRead:                it.keysRead,
 	}
@@ -1719,6 +1743,29 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		taskMaxKeysRead = worker.maxKeysRead - scanned
 	}
 
+	traceFullSampling := isAnalyzeStoreBatchRequest(worker.req)
+	var traceLogger *zap.Logger
+	traceDebug := false
+	if traceFullSampling {
+		traceLogger = logutil.Logger(bo.GetCtx())
+		traceDebug = traceLogger.Core().Enabled(zapcore.DebugLevel)
+	}
+	if traceDebug {
+		traceLogger.Debug(analyzeFullSamplingTraceLog,
+			zap.String("component", "tidb"),
+			zap.String("phase", "tidb.copr.send_request"),
+			zap.String("event", "start"),
+			zap.Uint64("txnStartTS", worker.req.StartTs),
+			zap.Uint64("taskID", task.taskID),
+			zap.Uint64("regionID", task.region.GetID()),
+			zap.Uint64("regionVer", task.region.GetVer()),
+			zap.Uint64("regionConfVer", task.region.GetConfVer()),
+			zap.Int("rangeCount", task.ranges.Len()),
+			zap.Int("batchedSubTasks", len(task.batchTaskList)),
+			zap.Int("requestBytes", len(worker.req.Data)),
+			zap.String("storeAddr", task.storeAddr))
+	}
+
 	copReq := coprocessor.Request{
 		Tp:              worker.req.Tp,
 		StartTs:         worker.req.StartTs,
@@ -1824,6 +1871,21 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
 	}
 	if err != nil {
+		if traceFullSampling && worker.analyzeTrace != nil {
+			worker.analyzeTrace.RecordCopSendRequest(time.Since(startTime), 0, 0, len(task.batchTaskList), false)
+		}
+		if traceDebug {
+			traceLogger.Debug(analyzeFullSamplingTraceLog,
+				zap.String("component", "tidb"),
+				zap.String("phase", "tidb.copr.send_request"),
+				zap.String("event", "finish"),
+				zap.Uint64("txnStartTS", worker.req.StartTs),
+				zap.Uint64("taskID", task.taskID),
+				zap.Uint64("regionID", task.region.GetID()),
+				zap.Duration("elapsed", time.Since(startTime)),
+				zap.Bool("success", false),
+				zap.Error(err))
+		}
 		if task.storeType == kv.TiDB {
 			return worker.handleTiDBSendReqErr(err, task)
 		}
@@ -1836,6 +1898,28 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 	costTime := time.Since(startTime)
 	copResp := resp.Resp.(*coprocessor.Response)
+	if traceFullSampling {
+		if worker.analyzeTrace != nil {
+			worker.analyzeTrace.RecordCopSendRequest(costTime, len(copResp.Data), len(copResp.GetBatchResponses()), len(task.batchTaskList), true)
+		}
+	}
+	if traceDebug {
+		traceLogger.Debug(analyzeFullSamplingTraceLog,
+			zap.String("component", "tidb"),
+			zap.String("phase", "tidb.copr.send_request"),
+			zap.String("event", "finish"),
+			zap.Uint64("txnStartTS", worker.req.StartTs),
+			zap.Uint64("taskID", task.taskID),
+			zap.Uint64("regionID", task.region.GetID()),
+			zap.Duration("elapsed", costTime),
+			zap.Bool("success", true),
+			zap.String("storeAddr", storeAddr),
+			zap.Int("responseBytes", len(copResp.Data)),
+			zap.Int("batchResponses", len(copResp.GetBatchResponses())),
+			zap.Bool("hasRegionError", copResp.GetRegionError() != nil),
+			zap.Bool("hasLocked", copResp.GetLocked() != nil),
+			zap.String("otherError", copResp.GetOtherError()))
+	}
 
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, copResp)
@@ -2295,6 +2379,43 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 	if len(tasks) == 0 {
 		return nil, nil, nil
 	}
+	traceFullSampling := isAnalyzeStoreBatchRequest(worker.req)
+	var traceStart time.Time
+	var batchResps []*coprocessor.StoreBatchTaskResponse
+	var traceLogger *zap.Logger
+	traceDebug := false
+	if traceFullSampling {
+		traceStart = time.Now()
+		traceLogger = logutil.Logger(bo.GetCtx())
+		traceDebug = traceLogger.Core().Enabled(zapcore.DebugLevel)
+	}
+	if traceDebug {
+		traceLogger.Debug(analyzeFullSamplingTraceLog,
+			zap.String("component", "tidb"),
+			zap.String("phase", "tidb.copr.split_batch_response"),
+			zap.String("event", "start"),
+			zap.Uint64("txnStartTS", worker.req.StartTs),
+			zap.Int("expectedBatchedTasks", len(tasks)))
+		defer func() {
+			if worker.analyzeTrace != nil {
+				worker.analyzeTrace.RecordCopSplitBatchResponse(time.Since(traceStart), len(tasks), len(batchResps), len(batchRespList), len(remainTasks), err == nil)
+			}
+			if !traceDebug {
+				return
+			}
+			traceLogger.Debug(analyzeFullSamplingTraceLog,
+				zap.String("component", "tidb"),
+				zap.String("phase", "tidb.copr.split_batch_response"),
+				zap.String("event", "finish"),
+				zap.Uint64("txnStartTS", worker.req.StartTs),
+				zap.Duration("elapsed", time.Since(traceStart)),
+				zap.Int("batchResponses", len(batchResps)),
+				zap.Int("resultResponses", len(batchRespList)),
+				zap.Int("remainTasks", len(remainTasks)),
+				zap.Bool("success", err == nil),
+				zap.Error(err))
+		}()
+	}
 	batchedNum := len(tasks)
 	busyThresholdFallback := false
 	defer func() {
@@ -2320,7 +2441,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			Addr: rpcCtx.Addr,
 		}
 	}
-	batchResps := resp.GetBatchResponses()
+	batchResps = resp.GetBatchResponses()
 	if worker.req.Tp == kv.ReqTypeAnalyze && len(batchResps) == 0 &&
 		resp.GetRegionError() == nil && resp.GetLocked() == nil && resp.GetOtherError() == "" {
 		return nil, nil, nil
@@ -2430,7 +2551,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			return batchRespList, nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
 		busyThresholdFallback = true
-		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
+		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower, isAnalyzeStoreBatchRequest(worker.req))
 		for _, task := range remainTasks {
 			// do not set busy threshold again.
 			task.busyThreshold = 0
@@ -3004,9 +3125,5 @@ func isAnalyzeStoreBatchRequest(req *kv.Request) bool {
 	if req.ReplicaRead != kv.ReplicaReadLeader || req.Paging.Enable {
 		return false
 	}
-	analyzeReq := &tipb.AnalyzeReq{}
-	if err := proto.Unmarshal(req.Data, analyzeReq); err != nil {
-		return false
-	}
-	return analyzeReq.GetTp() == tipb.AnalyzeType_TypeFullSampling && analyzeReq.GetColReq() != nil
+	return req.AnalyzeFullSampling
 }

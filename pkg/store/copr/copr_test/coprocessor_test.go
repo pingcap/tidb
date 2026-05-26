@@ -283,12 +283,13 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.NoError(t, err)
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
-		Tp:             kv.ReqTypeAnalyze,
-		Data:           analyzeReqData,
-		KeyRanges:      kv.NewNonPartitionedKeyRanges(ranges),
-		Concurrency:    15,
-		StoreBatchSize: 3,
-		KeepOrder:      true,
+		Tp:                  kv.ReqTypeAnalyze,
+		Data:                analyzeReqData,
+		KeyRanges:           kv.NewNonPartitionedKeyRanges(ranges),
+		Concurrency:         15,
+		StoreBatchSize:      3,
+		KeepOrder:           true,
+		AnalyzeFullSampling: true,
 		RequestSource: kv.RequestSource{
 			RequestSourceInternal: true,
 		},

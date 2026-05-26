@@ -642,6 +642,10 @@ type Request struct {
 	RequestSource util.RequestSource
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+	// AnalyzeFullSampling indicates this request is an ANALYZE full-sampling table request.
+	AnalyzeFullSampling bool
+	// AnalyzeFullSamplingTrace collects statement-level trace data for ANALYZE full-sampling.
+	AnalyzeFullSamplingTrace AnalyzeFullSamplingTraceCollector
 	// ResourceGroupName is the name of the bind resource group.
 	ResourceGroupName string
 	// LimitSize indicates whether the request is scan and limit
@@ -703,6 +707,16 @@ type Response interface {
 	Next(ctx context.Context) (resultSubset ResultSubset, err error)
 	// Close response.
 	Close() error
+}
+
+// AnalyzeFullSamplingTraceCollector records aggregate trace data for one ANALYZE
+// full-sampling statement.
+type AnalyzeFullSamplingTraceCollector interface {
+	RecordMarshalAnalyzeReq(elapsed time.Duration, requestBytes int, success bool)
+	RecordBuildCopTasks(elapsed time.Duration, inputRangeCount, physicalRegionTasks, topLevelTasks, batchedSubTasks, storeBatchSize int)
+	RecordDistSQLAnalyzeSend(elapsed time.Duration, requestBytes, storeBatchSize, concurrency int, success bool)
+	RecordCopSendRequest(elapsed time.Duration, responseBytes, batchResponses, batchedSubTasks int, success bool)
+	RecordCopSplitBatchResponse(elapsed time.Duration, expectedTasks, batchResponses, resultResponses, remainTasks int, success bool)
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.

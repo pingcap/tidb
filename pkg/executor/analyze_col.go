@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -51,7 +52,8 @@ type AnalyzeColumnsExec struct {
 	baseCount               int64
 	baseModifyCnt           int64
 
-	memTracker *memory.Tracker
+	memTracker               *memory.Tracker
+	fullSamplingTraceSummary *analyzeFullSamplingTraceSummary
 }
 
 // isColumnCoveredBySingleColUniqueIndex returns true if there exists a public, non-prefix,
@@ -101,9 +103,14 @@ func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) e
 }
 
 func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
+	if e.fullSamplingTraceSummary == nil {
+		e.fullSamplingTraceSummary = &analyzeFullSamplingTraceSummary{}
+	}
+	rangeBuildStart := time.Now()
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+	e.fullSamplingTraceSummary.recordBuildKeyRanges(time.Since(rangeBuildStart), len(ranges))
 	startTS := uint64(math.MaxUint64)
 	isoLevel := kv.RC
 	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
@@ -112,7 +119,9 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
+	requestBuildStart := time.Now()
 	kvReq, err := reqBuilder.
+		SetAnalyzeFullSamplingTrace(e.fullSamplingTraceSummary).
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
@@ -122,10 +131,24 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
 		Build()
+	requestBytes := 0
+	physicalKeyRanges := 0
+	storeBatchSize := 0
+	concurrency := 0
+	if kvReq != nil {
+		requestBytes = len(kvReq.Data)
+		physicalKeyRanges = countKVKeyRanges(kvReq.KeyRanges)
+		storeBatchSize = kvReq.StoreBatchSize
+		concurrency = kvReq.Concurrency
+	}
+	e.fullSamplingTraceSummary.recordBuildAnalyzeRequest(time.Since(requestBuildStart),
+		requestBytes, physicalKeyRanges, storeBatchSize, concurrency, err == nil)
 	if err != nil {
 		return nil, err
 	}
+	dispatchStart := time.Now()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
+	e.fullSamplingTraceSummary.recordDispatchAnalyzeRequest(time.Since(dispatchStart), err == nil)
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +157,17 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 
 func hasPkHist(handleCols plannerutil.HandleCols) bool {
 	return handleCols != nil && handleCols.IsInt()
+}
+
+func countKVKeyRanges(keyRanges *kv.KeyRanges) int {
+	if keyRanges == nil {
+		return 0
+	}
+	count := 0
+	keyRanges.ForEachPartition(func(ranges []kv.KeyRange) {
+		count += len(ranges)
+	})
+	return count
 }
 
 // prepareColumns prepares the columns for the analyze job.

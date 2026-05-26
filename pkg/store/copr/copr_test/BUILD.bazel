@@ -24,6 +24,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/meta_storagepb",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",

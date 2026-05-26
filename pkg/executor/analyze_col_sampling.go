@@ -18,6 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -47,10 +48,340 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 )
 
+const analyzeFullSamplingTraceLog = "analyze full sampling trace"
+
+type analyzeFullSamplingTraceSummary struct {
+	marshalRequests             atomic.Int64
+	marshalFailures             atomic.Int64
+	marshalElapsedNanos         atomic.Int64
+	marshalRequestBytes         atomic.Int64
+	buildKeyRangeRequests       atomic.Int64
+	buildKeyRangeElapsedNanos   atomic.Int64
+	buildKeyRangeLogicalRanges  atomic.Int64
+	buildAnalyzeRequests        atomic.Int64
+	buildAnalyzeFailures        atomic.Int64
+	buildAnalyzeElapsedNanos    atomic.Int64
+	buildAnalyzeRequestBytes    atomic.Int64
+	buildAnalyzePhysicalRanges  atomic.Int64
+	buildAnalyzeStoreBatchSize  atomic.Int64
+	buildAnalyzeConcurrency     atomic.Int64
+	dispatchRequests            atomic.Int64
+	dispatchFailures            atomic.Int64
+	dispatchElapsedNanos        atomic.Int64
+	distsqlSendRequests         atomic.Int64
+	distsqlSendFailures         atomic.Int64
+	distsqlSendElapsedNanos     atomic.Int64
+	distsqlSendRequestBytes     atomic.Int64
+	distsqlSendStoreBatchSize   atomic.Int64
+	distsqlSendConcurrency      atomic.Int64
+	copBuildTaskRequests        atomic.Int64
+	copBuildTaskElapsedNanos    atomic.Int64
+	copBuildTaskInputRanges     atomic.Int64
+	copBuildTaskPhysicalRegions atomic.Int64
+	copBuildTaskTopLevelTasks   atomic.Int64
+	copBuildTaskBatchedSubTasks atomic.Int64
+	copBuildTaskStoreBatchSize  atomic.Int64
+	copSendRequests             atomic.Int64
+	copSendFailures             atomic.Int64
+	copSendElapsedNanos         atomic.Int64
+	copSendResponseBytes        atomic.Int64
+	copSendBatchResponses       atomic.Int64
+	copSendBatchedSubTasks      atomic.Int64
+	copSplitRequests            atomic.Int64
+	copSplitFailures            atomic.Int64
+	copSplitElapsedNanos        atomic.Int64
+	copSplitExpectedTasks       atomic.Int64
+	copSplitBatchResponses      atomic.Int64
+	copSplitResultResponses     atomic.Int64
+	copSplitRemainTasks         atomic.Int64
+}
+
+// RecordMarshalAnalyzeReq records AnalyzeReq marshaling cost.
+func (s *analyzeFullSamplingTraceSummary) RecordMarshalAnalyzeReq(elapsed time.Duration, requestBytes int, success bool) {
+	s.marshalRequests.Add(1)
+	if !success {
+		s.marshalFailures.Add(1)
+	}
+	s.marshalElapsedNanos.Add(elapsed.Nanoseconds())
+	s.marshalRequestBytes.Add(int64(requestBytes))
+}
+
+func (s *analyzeFullSamplingTraceSummary) recordBuildKeyRanges(elapsed time.Duration, logicalRanges int) {
+	s.buildKeyRangeRequests.Add(1)
+	s.buildKeyRangeElapsedNanos.Add(elapsed.Nanoseconds())
+	s.buildKeyRangeLogicalRanges.Add(int64(logicalRanges))
+}
+
+func (s *analyzeFullSamplingTraceSummary) recordBuildAnalyzeRequest(elapsed time.Duration, requestBytes, physicalKeyRanges, storeBatchSize, concurrency int, success bool) {
+	s.buildAnalyzeRequests.Add(1)
+	if !success {
+		s.buildAnalyzeFailures.Add(1)
+	}
+	s.buildAnalyzeElapsedNanos.Add(elapsed.Nanoseconds())
+	s.buildAnalyzeRequestBytes.Add(int64(requestBytes))
+	s.buildAnalyzePhysicalRanges.Add(int64(physicalKeyRanges))
+	s.buildAnalyzeStoreBatchSize.Store(int64(storeBatchSize))
+	s.buildAnalyzeConcurrency.Store(int64(concurrency))
+}
+
+func (s *analyzeFullSamplingTraceSummary) recordDispatchAnalyzeRequest(elapsed time.Duration, success bool) {
+	s.dispatchRequests.Add(1)
+	if !success {
+		s.dispatchFailures.Add(1)
+	}
+	s.dispatchElapsedNanos.Add(elapsed.Nanoseconds())
+}
+
+// RecordDistSQLAnalyzeSend records the cost of opening the DistSQL analyze response.
+func (s *analyzeFullSamplingTraceSummary) RecordDistSQLAnalyzeSend(elapsed time.Duration, requestBytes, storeBatchSize, concurrency int, success bool) {
+	s.distsqlSendRequests.Add(1)
+	if !success {
+		s.distsqlSendFailures.Add(1)
+	}
+	s.distsqlSendElapsedNanos.Add(elapsed.Nanoseconds())
+	s.distsqlSendRequestBytes.Add(int64(requestBytes))
+	s.distsqlSendStoreBatchSize.Store(int64(storeBatchSize))
+	s.distsqlSendConcurrency.Store(int64(concurrency))
+}
+
+// RecordBuildCopTasks records coprocessor task construction for the statement.
+func (s *analyzeFullSamplingTraceSummary) RecordBuildCopTasks(elapsed time.Duration, inputRangeCount, physicalRegionTasks, topLevelTasks, batchedSubTasks, storeBatchSize int) {
+	s.copBuildTaskRequests.Add(1)
+	s.copBuildTaskElapsedNanos.Add(elapsed.Nanoseconds())
+	s.copBuildTaskInputRanges.Add(int64(inputRangeCount))
+	s.copBuildTaskPhysicalRegions.Add(int64(physicalRegionTasks))
+	s.copBuildTaskTopLevelTasks.Add(int64(topLevelTasks))
+	s.copBuildTaskBatchedSubTasks.Add(int64(batchedSubTasks))
+	s.copBuildTaskStoreBatchSize.Store(int64(storeBatchSize))
+}
+
+// RecordCopSendRequest records one TiKV coprocessor send attempt.
+func (s *analyzeFullSamplingTraceSummary) RecordCopSendRequest(elapsed time.Duration, responseBytes, batchResponses, batchedSubTasks int, success bool) {
+	s.copSendRequests.Add(1)
+	if !success {
+		s.copSendFailures.Add(1)
+	}
+	s.copSendElapsedNanos.Add(elapsed.Nanoseconds())
+	s.copSendResponseBytes.Add(int64(responseBytes))
+	s.copSendBatchResponses.Add(int64(batchResponses))
+	s.copSendBatchedSubTasks.Add(int64(batchedSubTasks))
+}
+
+// RecordCopSplitBatchResponse records splitting one store-batched response.
+func (s *analyzeFullSamplingTraceSummary) RecordCopSplitBatchResponse(elapsed time.Duration, expectedTasks, batchResponses, resultResponses, remainTasks int, success bool) {
+	s.copSplitRequests.Add(1)
+	if !success {
+		s.copSplitFailures.Add(1)
+	}
+	s.copSplitElapsedNanos.Add(elapsed.Nanoseconds())
+	s.copSplitExpectedTasks.Add(int64(expectedTasks))
+	s.copSplitBatchResponses.Add(int64(batchResponses))
+	s.copSplitResultResponses.Add(int64(resultResponses))
+	s.copSplitRemainTasks.Add(int64(remainTasks))
+}
+
+func (s *analyzeFullSamplingTraceSummary) log(e *AnalyzeColumnsExec) {
+	if s == nil {
+		return
+	}
+	e.logAnalyzeFullSamplingTrace("tidb.marshal_analyze_req", "summary",
+		zap.Int64("requests", s.marshalRequests.Load()),
+		zap.Int64("failures", s.marshalFailures.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.marshalElapsedNanos.Load())),
+		zap.Int64("requestBytes", s.marshalRequestBytes.Load()))
+	e.logAnalyzeFullSamplingTrace("tidb.build_key_ranges", "summary",
+		zap.Int64("requests", s.buildKeyRangeRequests.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.buildKeyRangeElapsedNanos.Load())),
+		zap.Int64("logicalRanges", s.buildKeyRangeLogicalRanges.Load()))
+	e.logAnalyzeFullSamplingTrace("tidb.build_analyze_request", "summary",
+		zap.Int64("requests", s.buildAnalyzeRequests.Load()),
+		zap.Int64("failures", s.buildAnalyzeFailures.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.buildAnalyzeElapsedNanos.Load())),
+		zap.Int64("requestBytes", s.buildAnalyzeRequestBytes.Load()),
+		zap.Int64("physicalKeyRanges", s.buildAnalyzePhysicalRanges.Load()),
+		zap.Int64("storeBatchSize", s.buildAnalyzeStoreBatchSize.Load()),
+		zap.Int64("concurrency", s.buildAnalyzeConcurrency.Load()))
+	e.logAnalyzeFullSamplingTrace("tidb.dispatch_analyze_request", "summary",
+		zap.Int64("requests", s.dispatchRequests.Load()),
+		zap.Int64("failures", s.dispatchFailures.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.dispatchElapsedNanos.Load())))
+	e.logAnalyzeFullSamplingTrace("tidb.distsql_analyze_send", "summary",
+		zap.Int64("requests", s.distsqlSendRequests.Load()),
+		zap.Int64("failures", s.distsqlSendFailures.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.distsqlSendElapsedNanos.Load())),
+		zap.Int64("requestBytes", s.distsqlSendRequestBytes.Load()),
+		zap.Int64("storeBatchSize", s.distsqlSendStoreBatchSize.Load()),
+		zap.Int64("concurrency", s.distsqlSendConcurrency.Load()))
+	e.logAnalyzeFullSamplingTrace("tidb.copr.build_tasks", "summary",
+		zap.Int64("requests", s.copBuildTaskRequests.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.copBuildTaskElapsedNanos.Load())),
+		zap.Int64("inputRangeCount", s.copBuildTaskInputRanges.Load()),
+		zap.Int64("physicalRegionTasks", s.copBuildTaskPhysicalRegions.Load()),
+		zap.Int64("topLevelTasks", s.copBuildTaskTopLevelTasks.Load()),
+		zap.Int64("batchedSubTasks", s.copBuildTaskBatchedSubTasks.Load()),
+		zap.Int64("storeBatchSize", s.copBuildTaskStoreBatchSize.Load()))
+	e.logAnalyzeFullSamplingTrace("tidb.copr.send_request", "summary",
+		zap.Int64("requests", s.copSendRequests.Load()),
+		zap.Int64("failures", s.copSendFailures.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.copSendElapsedNanos.Load())),
+		zap.Int64("responseBytes", s.copSendResponseBytes.Load()),
+		zap.Int64("batchResponses", s.copSendBatchResponses.Load()),
+		zap.Int64("batchedSubTasks", s.copSendBatchedSubTasks.Load()))
+	e.logAnalyzeFullSamplingTrace("tidb.copr.split_batch_response", "summary",
+		zap.Int64("requests", s.copSplitRequests.Load()),
+		zap.Int64("failures", s.copSplitFailures.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.copSplitElapsedNanos.Load())),
+		zap.Int64("expectedBatchedTasks", s.copSplitExpectedTasks.Load()),
+		zap.Int64("batchResponses", s.copSplitBatchResponses.Load()),
+		zap.Int64("resultResponses", s.copSplitResultResponses.Load()),
+		zap.Int64("remainTasks", s.copSplitRemainTasks.Load()))
+}
+
+type samplingProtoTraceSummary struct {
+	responseCount              atomic.Int64
+	responseBytes              atomic.Int64
+	rowCount                   atomic.Int64
+	sampleCount                atomic.Int64
+	fmSketchCount              atomic.Int64
+	unmarshalElapsedNanos      atomic.Int64
+	fromProtoElapsedNanos      atomic.Int64
+	mergeCollectorElapsedNanos atomic.Int64
+}
+
+type samplingBuildTraceSummary struct {
+	taskCount       atomic.Int64
+	failureCount    atomic.Int64
+	elapsedNanos    atomic.Int64
+	sampleItems     atomic.Int64
+	histMemoryBytes atomic.Int64
+	topNMemoryBytes atomic.Int64
+}
+
+type samplingReadTraceSummary struct {
+	fetches             int
+	dataResponses       int
+	enqueuedResponses   int
+	responseBytes       int64
+	fetchElapsedTotal   time.Duration
+	enqueueElapsedTotal time.Duration
+}
+
+func (s *samplingReadTraceSummary) log(e *AnalyzeColumnsExec, success bool, err error) {
+	e.logAnalyzeFullSamplingTrace("tidb.fetch_raw_response", "summary",
+		zap.Int("fetches", s.fetches),
+		zap.Int("dataResponses", s.dataResponses),
+		zap.Int64("responseBytes", s.responseBytes),
+		zap.Duration("fetchElapsedTotal", s.fetchElapsedTotal),
+		zap.Bool("success", success),
+		zap.Error(err))
+	e.logAnalyzeFullSamplingTrace("tidb.enqueue_merge_task", "summary",
+		zap.Int("enqueuedResponses", s.enqueuedResponses),
+		zap.Int64("responseBytes", s.responseBytes),
+		zap.Duration("enqueueElapsedTotal", s.enqueueElapsedTotal),
+		zap.Bool("success", success),
+		zap.Error(err))
+}
+
+func (s *samplingBuildTraceSummary) record(elapsed time.Duration, sampleItems int, histMemoryBytes int64, topNMemoryBytes int64, success bool) {
+	s.taskCount.Add(1)
+	if !success {
+		s.failureCount.Add(1)
+	}
+	s.elapsedNanos.Add(elapsed.Nanoseconds())
+	s.sampleItems.Add(int64(sampleItems))
+	s.histMemoryBytes.Add(histMemoryBytes)
+	s.topNMemoryBytes.Add(topNMemoryBytes)
+}
+
+func (s *samplingBuildTraceSummary) log(e *AnalyzeColumnsExec) {
+	e.logAnalyzeFullSamplingTrace("tidb.build_hist_topn", "summary",
+		zap.Int64("tasks", s.taskCount.Load()),
+		zap.Int64("failures", s.failureCount.Load()),
+		zap.Duration("elapsedTotal", time.Duration(s.elapsedNanos.Load())),
+		zap.Int64("sampleItems", s.sampleItems.Load()),
+		zap.Int64("histMemoryBytes", s.histMemoryBytes.Load()),
+		zap.Int64("topNMemoryBytes", s.topNMemoryBytes.Load()))
+}
+
+func (s *samplingProtoTraceSummary) recordUnmarshal(elapsed time.Duration, responseBytes int, rowCount int64, sampleCount int, fmSketchCount int) {
+	s.responseCount.Add(1)
+	s.responseBytes.Add(int64(responseBytes))
+	s.rowCount.Add(rowCount)
+	s.sampleCount.Add(int64(sampleCount))
+	s.fmSketchCount.Add(int64(fmSketchCount))
+	s.unmarshalElapsedNanos.Add(elapsed.Nanoseconds())
+}
+
+func (s *samplingProtoTraceSummary) recordFromProto(elapsed time.Duration) {
+	s.fromProtoElapsedNanos.Add(elapsed.Nanoseconds())
+}
+
+func (s *samplingProtoTraceSummary) recordMergeCollector(elapsed time.Duration) {
+	s.mergeCollectorElapsedNanos.Add(elapsed.Nanoseconds())
+}
+
+func (s *samplingProtoTraceSummary) log(e *AnalyzeColumnsExec) {
+	baseFields := []zap.Field{
+		zap.Int64("protoResponses", s.responseCount.Load()),
+		zap.Int64("responseBytes", s.responseBytes.Load()),
+		zap.Int64("rowCount", s.rowCount.Load()),
+		zap.Int64("sampleCount", s.sampleCount.Load()),
+		zap.Int64("fmSketches", s.fmSketchCount.Load()),
+	}
+	e.logAnalyzeFullSamplingTrace("tidb.unmarshal_sampling_response", "summary",
+		append(baseFields, zap.Duration("elapsedTotal", time.Duration(s.unmarshalElapsedNanos.Load())))...)
+	e.logAnalyzeFullSamplingTrace("tidb.from_proto_sampling_collector", "summary",
+		append(baseFields, zap.Duration("elapsedTotal", time.Duration(s.fromProtoElapsedNanos.Load())))...)
+	e.logAnalyzeFullSamplingTrace("tidb.merge_sampling_collector", "summary",
+		append(baseFields, zap.Duration("elapsedTotal", time.Duration(s.mergeCollectorElapsedNanos.Load())))...)
+}
+
+func (e *AnalyzeColumnsExec) logAnalyzeFullSamplingTrace(phase string, event string, fields ...zap.Field) {
+	baseFields := []zap.Field{
+		zap.String("component", "tidb"),
+		zap.String("phase", phase),
+		zap.String("event", event),
+		zap.Int64("tableID", e.tableID.TableID),
+		zap.Int64("partitionID", e.tableID.PartitionID),
+		zap.Bool("partitionTable", e.tableID.IsPartitionTable()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Uint64("snapshot", e.snapshot),
+	}
+	logutil.BgLogger().Info(analyzeFullSamplingTraceLog, append(baseFields, fields...)...)
+}
+
+func (e *AnalyzeColumnsExec) logAnalyzeFullSamplingTraceDebug(phase string, event string, fields ...zap.Field) {
+	logger := logutil.BgLogger()
+	if !logger.Core().Enabled(zapcore.DebugLevel) {
+		return
+	}
+	baseFields := []zap.Field{
+		zap.String("component", "tidb"),
+		zap.String("phase", phase),
+		zap.String("event", event),
+		zap.Int64("tableID", e.tableID.TableID),
+		zap.Int64("partitionID", e.tableID.PartitionID),
+		zap.Bool("partitionTable", e.tableID.IsPartitionTable()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Uint64("snapshot", e.snapshot),
+	}
+	logger.Debug(analyzeFullSamplingTraceLog, append(baseFields, fields...)...)
+}
+
+func analyzeFullSamplingTraceDebugEnabled() bool {
+	return logutil.BgLogger().Core().Enabled(zapcore.DebugLevel)
+}
+
 func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
+	analyzeStart := time.Now()
+	e.fullSamplingTraceSummary = &analyzeFullSamplingTraceSummary{}
+	e.logAnalyzeFullSamplingTrace("tidb.analyze_columns_push_down", "start",
+		zap.Int("columns", len(e.colsInfo)),
+		zap.Int("indexes", len(e.indexes)))
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -86,6 +417,10 @@ func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.
 	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.ctx)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
+		e.logAnalyzeFullSamplingTrace("tidb.analyze_columns_push_down", "finish",
+			zap.Duration("elapsed", time.Since(analyzeStart)),
+			zap.Bool("success", false),
+			zap.Error(err))
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
@@ -93,6 +428,10 @@ func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.
 	count, hists, topNs, fmSketches, err := e.buildSamplingStats(ctx, gp, ranges, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
+		e.logAnalyzeFullSamplingTrace("tidb.analyze_columns_push_down", "finish",
+			zap.Duration("elapsed", time.Since(analyzeStart)),
+			zap.Bool("success", false),
+			zap.Error(err))
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
 	cLen := len(e.analyzePB.ColReq.ColumnsInfo)
@@ -116,6 +455,10 @@ func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.
 		Fms:   fmSketches[:cLen],
 	}
 
+	e.logAnalyzeFullSamplingTrace("tidb.analyze_columns_push_down", "finish",
+		zap.Duration("elapsed", time.Since(analyzeStart)),
+		zap.Bool("success", true),
+		zap.Int64("rowCount", count))
 	return &statistics.AnalyzeResults{
 		TableID:       e.tableID,
 		Ars:           []*statistics.AnalyzeResult{colResult, colGroupResult},
@@ -207,10 +550,24 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	fmSketches []*statistics.FMSketch,
 	err error,
 ) {
+	buildStart := time.Now()
+	e.logAnalyzeFullSamplingTrace("tidb.build_sampling_stats", "start",
+		zap.Int("logicalRanges", len(ranges)),
+		zap.Int("indexesWithVirtualOrPrefixColumns", len(indexesWithVirtualColOffsets)),
+		zap.Int("samplingStatsConcurrency", samplingStatsConcurrency))
 	// Open memory tracker and resultHandler.
+	openStart := time.Now()
 	if err = e.open(ctx, ranges); err != nil {
+		e.logAnalyzeFullSamplingTrace("tidb.open_result_handler", "finish",
+			zap.Duration("elapsed", time.Since(openStart)),
+			zap.Bool("success", false),
+			zap.Error(err))
+		e.fullSamplingTraceSummary.log(e)
 		return 0, nil, nil, nil, err
 	}
+	e.logAnalyzeFullSamplingTrace("tidb.open_result_handler", "finish",
+		zap.Duration("elapsed", time.Since(openStart)),
+		zap.Bool("success", true))
 	defer func() {
 		if err1 := e.resultHandler.Close(); err1 != nil {
 			err = err1
@@ -228,6 +585,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
 	mergeTaskCh := make(chan []byte, 1)
+	protoTraceSummary := &samplingProtoTraceSummary{}
+	readTraceSummary := &samplingReadTraceSummary{}
 	taskCtx, taskCancel := context.WithCancelCause(ctx)
 	defer taskCancel(nil)
 	var taskEg errgroup.Group
@@ -238,7 +597,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 				err = getAnalyzePanicErr(r)
 			}
 		}()
-		err = readDataAndSendTask(taskCtx, e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
+		err = readDataAndSendTask(taskCtx, e.ctx, e.resultHandler, mergeTaskCh, e.memTracker, readTraceSummary)
 		if err != nil {
 			taskCancel(err)
 		}
@@ -251,7 +610,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, totalLen, id)
+			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, totalLen, id, protoTraceSummary)
 		})
 	}
 	// Merge the result from collectors.
@@ -286,6 +645,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 		return err
 	})
+	mergeStart := time.Now()
 	err = taskEg.Wait()
 	if err != nil {
 		if err1 := mergeEg.Wait(); err1 != nil {
@@ -294,17 +654,37 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			}
 		}
 		drainPendingSamplingMergeTasks(mergeTaskCh, e.memTracker)
+		e.fullSamplingTraceSummary.log(e)
+		readTraceSummary.log(e, false, err)
+		protoTraceSummary.log(e)
+		e.logAnalyzeFullSamplingTrace("tidb.merge_sampling_response", "finish",
+			zap.Duration("elapsed", time.Since(mergeStart)),
+			zap.Bool("success", false),
+			zap.Error(err))
 		return 0, nil, nil, nil, getAnalyzePanicErr(err)
 	}
 	err = mergeEg.Wait()
 	drainPendingSamplingMergeTasks(mergeTaskCh, e.memTracker)
+	e.fullSamplingTraceSummary.log(e)
+	readTraceSummary.log(e, err == nil, err)
+	protoTraceSummary.log(e)
 	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
 		taskCancel(err)
+		e.logAnalyzeFullSamplingTrace("tidb.merge_sampling_response", "finish",
+			zap.Duration("elapsed", time.Since(mergeStart)),
+			zap.Bool("success", false),
+			zap.Error(err))
 		return 0, nil, nil, nil, err
 	}
+	e.logAnalyzeFullSamplingTrace("tidb.merge_sampling_response", "finish",
+		zap.Duration("elapsed", time.Since(mergeStart)),
+		zap.Bool("success", true),
+		zap.Int64("rowCount", rootRowCollector.Base().Count),
+		zap.Int("sampleCount", rootRowCollector.Base().Samples.Len()))
 
 	// Decode the data from sample collectors.
+	decodeStart := time.Now()
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
 	// Filling virtual columns is necessary here because these samples are used to build statistics for indexes that constructed by virtual columns.
 	if len(virtualColIdx) > 0 {
@@ -314,6 +694,11 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 		err = e.decodeSampleDataWithVirtualColumn(rootRowCollector, fieldTps, virtualColIdx, e.schemaForVirtualColEval)
 		if err != nil {
+			e.logAnalyzeFullSamplingTrace("tidb.decode_samples", "finish",
+				zap.Duration("elapsed", time.Since(decodeStart)),
+				zap.Bool("success", false),
+				zap.Int("virtualColumns", len(virtualColIdx)),
+				zap.Error(err))
 			return 0, nil, nil, nil, err
 		}
 	} else {
@@ -322,16 +707,31 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			for i := range sample.Columns {
 				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone())
 				if err != nil {
+					e.logAnalyzeFullSamplingTrace("tidb.decode_samples", "finish",
+						zap.Duration("elapsed", time.Since(decodeStart)),
+						zap.Bool("success", false),
+						zap.Int("virtualColumns", 0),
+						zap.Error(err))
 					return 0, nil, nil, nil, err
 				}
 			}
 		}
 	}
+	e.logAnalyzeFullSamplingTrace("tidb.decode_samples", "finish",
+		zap.Duration("elapsed", time.Since(decodeStart)),
+		zap.Bool("success", true),
+		zap.Int("virtualColumns", len(virtualColIdx)),
+		zap.Int("sampleCount", rootRowCollector.Base().Samples.Len()))
 
 	// Calculate handle from the row data for each row. It will be used to sort the samples.
+	sortStart := time.Now()
 	for _, sample := range rootRowCollector.Base().Samples {
 		sample.Handle, err = e.handleCols.BuildHandleByDatums(sc, sample.Columns)
 		if err != nil {
+			e.logAnalyzeFullSamplingTrace("tidb.sort_samples", "finish",
+				zap.Duration("elapsed", time.Since(sortStart)),
+				zap.Bool("success", false),
+				zap.Error(err))
 			return 0, nil, nil, nil, err
 		}
 	}
@@ -341,10 +741,15 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	slices.SortFunc(rootRowCollector.Base().Samples, func(i, j *statistics.ReservoirRowSampleItem) int {
 		return i.Handle.Compare(j.Handle)
 	})
+	e.logAnalyzeFullSamplingTrace("tidb.sort_samples", "finish",
+		zap.Duration("elapsed", time.Since(sortStart)),
+		zap.Bool("success", true),
+		zap.Int("sampleCount", rootRowCollector.Base().Samples.Len()))
 
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
+	buildTraceSummary := &samplingBuildTraceSummary{}
 	buildResultChan := make(chan error, totalLen+samplingStatsConcurrency)
 	buildTaskChan := make(chan *samplingBuildTask, totalLen)
 	if totalLen < samplingStatsConcurrency {
@@ -357,7 +762,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	// Start workers to build stats.
 	for range samplingStatsConcurrency {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(ctx, buildResultChan, buildTaskChan, hists, topns, exitCh)
+			e.subBuildWorker(ctx, buildResultChan, buildTaskChan, hists, topns, exitCh, buildTraceSummary)
 		})
 	}
 	// Generate tasks for building stats.
@@ -376,6 +781,10 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if indexPushedDownResult.err != nil {
 		close(exitCh)
 		channel.Clear(buildResultChan)
+		e.logAnalyzeFullSamplingTrace("tidb.build_sampling_stats", "finish",
+			zap.Duration("elapsed", time.Since(buildStart)),
+			zap.Bool("success", false),
+			zap.Error(indexPushedDownResult.err))
 		return 0, nil, nil, nil, indexPushedDownResult.err
 	}
 	for _, offset := range indexesWithVirtualColOffsets {
@@ -412,10 +821,23 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	}
 	if err != nil {
+		buildTraceSummary.log(e)
+		e.logAnalyzeFullSamplingTrace("tidb.build_sampling_stats", "finish",
+			zap.Duration("elapsed", time.Since(buildStart)),
+			zap.Bool("success", false),
+			zap.Error(err))
 		return 0, nil, nil, nil, err
 	}
 
 	count = rootRowCollector.Base().Count
+	buildTraceSummary.log(e)
+	e.logAnalyzeFullSamplingTrace("tidb.build_sampling_stats", "finish",
+		zap.Duration("elapsed", time.Since(buildStart)),
+		zap.Bool("success", true),
+		zap.Int64("rowCount", count),
+		zap.Int("histograms", len(hists)),
+		zap.Int("topNs", len(topns)),
+		zap.Int("fmSketches", len(fmSketches)))
 	return
 }
 
@@ -603,6 +1025,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	taskCh <-chan []byte,
 	totalLen int,
 	index int,
+	protoTraceSummary *samplingProtoTraceSummary,
 ) {
 	// Only close the resultCh in the first worker.
 	closeTheResultCh := index == 0
@@ -659,7 +1082,22 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			}
 			inflightDataSize = int64(cap(data))
 			colResp := &tipb.AnalyzeColumnsResp{}
+			unmarshalStart := time.Now()
 			err := colResp.Unmarshal(data)
+			unmarshalElapsed := time.Since(unmarshalStart)
+			rowCollector := colResp.GetRowCollector()
+			protoTraceSummary.recordUnmarshal(unmarshalElapsed, len(data), rowCollector.GetCount(),
+				len(rowCollector.GetSamples()), len(rowCollector.GetFmSketch()))
+			if analyzeFullSamplingTraceDebugEnabled() {
+				e.logAnalyzeFullSamplingTraceDebug("tidb.unmarshal_sampling_response", "finish",
+					zap.Duration("elapsed", unmarshalElapsed),
+					zap.Int("responseBytes", len(data)),
+					zap.Int64("rowCount", rowCollector.GetCount()),
+					zap.Int("sampleCount", len(rowCollector.GetSamples())),
+					zap.Int("fmSketches", len(rowCollector.GetFmSketch())),
+					zap.Int("mergeWorker", index),
+					zap.Error(err))
+			}
 			if err != nil {
 				e.memTracker.Release(inflightDataSize)
 				inflightDataSize = 0
@@ -671,13 +1109,34 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			e.memTracker.Consume(inflightRespSize)
 
 			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
+			fromProtoStart := time.Now()
 			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+			fromProtoElapsed := time.Since(fromProtoStart)
+			protoTraceSummary.recordFromProto(fromProtoElapsed)
+			if analyzeFullSamplingTraceDebugEnabled() {
+				e.logAnalyzeFullSamplingTraceDebug("tidb.from_proto_sampling_collector", "finish",
+					zap.Duration("elapsed", fromProtoElapsed),
+					zap.Int64("rowCount", subCollector.Base().Count),
+					zap.Int("sampleCount", subCollector.Base().Samples.Len()),
+					zap.Int("mergeWorker", index))
+			}
 			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 
 			oldRetCollectorSize := retCollector.Base().MemSize
 			oldRetCollectorCount := retCollector.Base().Count
+			mergeStart := time.Now()
 			retCollector.MergeCollector(subCollector)
+			mergeElapsed := time.Since(mergeStart)
+			protoTraceSummary.recordMergeCollector(mergeElapsed)
 			newRetCollectorCount := retCollector.Base().Count
+			if analyzeFullSamplingTraceDebugEnabled() {
+				e.logAnalyzeFullSamplingTraceDebug("tidb.merge_sampling_collector", "finish",
+					zap.Duration("elapsed", mergeElapsed),
+					zap.Int64("oldRowCount", oldRetCollectorCount),
+					zap.Int64("newRowCount", newRetCollectorCount),
+					zap.Int64("subRowCount", subCollector.Base().Count),
+					zap.Int("mergeWorker", index))
+			}
 			printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
 				e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
 				"merge subMergeWorker in AnalyzeColumnsExec", index)
@@ -712,7 +1171,7 @@ func drainPendingSamplingMergeTasks(taskCh <-chan []byte, memTracker *memory.Tra
 	}
 }
 
-func (e *AnalyzeColumnsExec) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExec) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}, buildTraceSummary *samplingBuildTraceSummary) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze subBuildWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -733,6 +1192,7 @@ workLoop:
 			if !ok {
 				break workLoop
 			}
+			taskStart := time.Now()
 			// Track per-task allocations: curBufferedMemSize is pending charges to the tracker,
 			// totalBuffered accumulates bytes that become part of collector.MemSize.
 			curBufferedMemSize := int64(0)
@@ -881,15 +1341,40 @@ workLoop:
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
+			buildElapsed := time.Since(taskStart)
 			if err != nil {
+				buildTraceSummary.record(buildElapsed, len(collector.Samples), 0, 0, false)
+				if analyzeFullSamplingTraceDebugEnabled() {
+					e.logAnalyzeFullSamplingTraceDebug("tidb.build_hist_topn", "finish",
+						zap.Duration("elapsed", buildElapsed),
+						zap.Bool("success", false),
+						zap.Int64("statsID", task.id),
+						zap.Bool("isColumn", task.isColumn),
+						zap.Int("slicePos", task.slicePos),
+						zap.Int("sampleItems", len(collector.Samples)),
+						zap.Error(err))
+				}
 				resultCh <- err
 				releaseCollectorMemory()
 				continue
 			}
-			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
+			histMemSize, topNMemSize := hist.MemoryUsage(), topn.MemoryUsage()
+			finalMemSize := histMemSize + topNMemSize
 			e.memTracker.Consume(finalMemSize)
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
+			buildTraceSummary.record(buildElapsed, len(collector.Samples), histMemSize, topNMemSize, true)
+			if analyzeFullSamplingTraceDebugEnabled() {
+				e.logAnalyzeFullSamplingTraceDebug("tidb.build_hist_topn", "finish",
+					zap.Duration("elapsed", buildElapsed),
+					zap.Bool("success", true),
+					zap.Int64("statsID", task.id),
+					zap.Bool("isColumn", task.isColumn),
+					zap.Int("slicePos", task.slicePos),
+					zap.Int("sampleItems", len(collector.Samples)),
+					zap.Int64("histMemoryBytes", histMemSize),
+					zap.Int64("topNMemoryBytes", topNMemSize))
+			}
 			resultCh <- nil
 			releaseCollectorMemory()
 		case <-exitCh:
@@ -919,7 +1404,7 @@ type samplingBuildTask struct {
 	slicePos         int
 }
 
-func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {
+func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker, traceSummary *samplingReadTraceSummary) (err error) {
 	// After all tasks are sent, close the mergeTaskCh to notify the mergeWorker that all tasks have been sent.
 	defer close(mergeTaskCh)
 	for {
@@ -944,7 +1429,10 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 			}
 		})
 
+		nextStart := time.Now()
 		data, err := handler.nextRaw(ctx)
+		traceSummary.fetches++
+		traceSummary.fetchElapsedTotal += time.Since(nextStart)
 		if err != nil {
 			err = normalizeCtxErrWithCause(ctx, err)
 			return errors.Trace(err)
@@ -952,11 +1440,16 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 		if data == nil {
 			break
 		}
+		traceSummary.dataResponses++
+		traceSummary.responseBytes += int64(len(data))
 
 		dataSize := int64(cap(data))
 		memTracker.Consume(dataSize)
+		enqueueStart := time.Now()
 		select {
 		case mergeTaskCh <- data:
+			traceSummary.enqueuedResponses++
+			traceSummary.enqueueElapsedTotal += time.Since(enqueueStart)
 		case <-ctx.Done():
 			memTracker.Release(dataSize)
 			return errors.Trace(normalizeCtxErrWithCause(ctx, ctx.Err()))
