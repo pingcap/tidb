@@ -63,7 +63,6 @@ func TestActivateRequestMetadata(t *testing.T) {
 
 	keyspaceID := controller.ActivationKeyspaceID()
 	require.Equal(t, uint32(42), keyspaceID)
-	keyspaceID = 43
 	require.Equal(t, uint32(42), controller.ActivationKeyspaceID())
 }
 
