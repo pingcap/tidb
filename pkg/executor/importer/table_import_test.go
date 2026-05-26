@@ -120,9 +120,9 @@ func TestCalculateSubtaskCnt(t *testing.T) {
 			e := &LoadDataController{
 				Plan: &Plan{
 					MaxEngineSize:   tt.maxEngineSize,
-					TotalFileSize:   tt.totalSize,
 					CloudStorageURI: tt.cloudStorageURL,
 				},
+				TotalRealSize: tt.totalSize,
 			}
 			e.SetExecuteNodeCnt(tt.executeNodeCnt)
 			if got := e.calculateSubtaskCnt(); got != tt.want {
@@ -168,9 +168,9 @@ func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
 			e := &LoadDataController{
 				Plan: &Plan{
 					MaxEngineSize:   tt.maxEngineSize,
-					TotalFileSize:   tt.totalSize,
 					CloudStorageURI: tt.cloudStorageURL,
 				},
+				TotalRealSize: tt.totalSize,
 			}
 			e.SetExecuteNodeCnt(tt.executeNodeCnt)
 			if got := e.getAdjustedMaxEngineSize(); got != tt.want {

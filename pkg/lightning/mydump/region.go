@@ -437,7 +437,11 @@ func makeParquetFileRegion(
 			RowIDMax:     numberRows,
 		},
 	}
-	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.FileSize)}, nil
+	// Use RealSize (estimated uncompressed size for parquet) to match MakeSourceFileRegion
+	// and keep the per-file sizes consistent with the EngineDataSize budget passed to
+	// AllocateEngineIDs. Using compressed FileSize here would mis-bucket parquet files,
+	// since each engine's sort/encode footprint scales with decoded data, not on-disk bytes.
+	return []*TableRegion{region}, []float64{float64(dataFile.FileMeta.RealSize)}, nil
 }
 
 func openCSVParser(

@@ -416,7 +416,10 @@ func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
 func (e *LoadDataController) calculateSubtaskCnt() int {
 	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
 	// and evenly distribute them to subtasks.
-	// we calculate subtask count first by round(TotalFileSize / maxEngineSize)
+	// we calculate subtask count first by round(TotalRealSize / maxEngineSize).
+	// TotalRealSize is the estimated uncompressed size (== FileSize for uncompressed sources),
+	// which is the right basis here since each engine's local-sort footprint is driven by the
+	// decoded data, not the on-disk compressed bytes.
 
 	// AllocateEngineIDs is using ceil() to calculate subtask count, engine size might be too small in some case,
 	// such as 501G data, maxEngineSize will be about 250G, so we don't relay on it.
@@ -431,11 +434,12 @@ func (e *LoadDataController) calculateSubtaskCnt() int {
 	var (
 		subtaskCount  float64
 		maxEngineSize = int64(e.MaxEngineSize)
+		totalSize     = e.TotalRealSize
 	)
-	if e.TotalFileSize <= maxEngineSize {
+	if totalSize <= maxEngineSize {
 		subtaskCount = 1
 	} else {
-		subtaskCount = math.Round(float64(e.TotalFileSize) / float64(e.MaxEngineSize))
+		subtaskCount = math.Round(float64(totalSize) / float64(e.MaxEngineSize))
 	}
 
 	// for global sort task, since there is no overlap,
@@ -449,7 +453,9 @@ func (e *LoadDataController) calculateSubtaskCnt() int {
 func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
 	subtaskCount := e.calculateSubtaskCnt()
 	// we adjust MaxEngineSize to make sure each subtask has a similar amount of data to import.
-	return int64(math.Ceil(float64(e.TotalFileSize) / float64(subtaskCount)))
+	// Use TotalRealSize so the resulting value is in the same units as the per-file sizes that
+	// AllocateEngineIDs walks (see MakeSourceFileRegion / makeParquetFileRegion).
+	return int64(math.Ceil(float64(e.TotalRealSize) / float64(subtaskCount)))
 }
 
 // SetExecuteNodeCnt sets the execute node count.
