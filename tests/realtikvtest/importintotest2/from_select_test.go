@@ -68,6 +68,10 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 	s.Equal(uint64(count), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.Contains(s.tk.Session().LastMessage(), fmt.Sprintf("Records: %d,", count))
 	s.tk.MustQuery("select * from dst").Sort().Check(testkit.Rows(queryResult...))
+
+	s.tk.MustExec("create table t(id varchar(100));")
+	s.tk.MustExec("import into t from select 1;")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 }
 
 func (s *mockGCSSuite) TestImportFromSelectColumnList() {
