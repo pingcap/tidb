@@ -417,7 +417,7 @@ func (e *LoadDataController) calculateSubtaskCnt() int {
 	// we want to split data files into subtask of size close to MaxEngineSize to reduce range overlap,
 	// and evenly distribute them to subtasks.
 	// we calculate subtask count first by round(TotalRealSize / maxEngineSize).
-	// TotalRealSize is the estimated uncompressed size (== FileSize for uncompressed sources),
+	// TotalRealSize is the estimated uncompressed size (~= FileSize for uncompressed sources),
 	// which is the right basis here since each engine's local-sort footprint is driven by the
 	// decoded data, not the on-disk compressed bytes.
 
