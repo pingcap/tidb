@@ -463,7 +463,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		// keeping pushdown self-consistent guards against any future code
 		// path that builds an FTSMysqlMatchAgainst around the planner.
 		sig, ok := function.Function.(*builtinFtsMysqlMatchAgainstSig)
-		return ok && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
+		return ok && !sig.hasLocalEvalInfo() && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}
