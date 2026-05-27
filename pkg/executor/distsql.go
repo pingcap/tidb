@@ -868,41 +868,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		indexTypes := e.getRetTpsForIndexReader()
 
 		if !needMerge {
-			if len(kvRanges) == 1 {
-				result, err := e.buildIndexSelectResultForRange(
-					ctx,
-					0,
-					kvRanges[0],
-					tblScanIdxForRewritePartitionID,
-					tps,
-					idxID,
-					tracker,
-					len(kvRanges),
-					worker.batchSize,
-					0,
-					nil,
-				)
-				if err != nil {
-					if result != nil {
-						result.Close()
-					}
-					worker.syncErr(err)
-					return
-				}
-				ctx1, cancel := context.WithCancel(ctx)
-				selResultList := newSelectResultList([]distsql.SelectResult{result})
-				err = worker.fetchHandles(ctx1, selResultList, indexTypes)
-				cancel()
-				if err != nil {
-					worker.syncErr(err)
-				}
-				return
-			}
-			logutil.Logger(ctx).Info("index lookup skip single-range fast path",
-				zap.Int("kvRanges", len(kvRanges)),
-				zap.Bool("keepOrder", e.keepOrder),
-				zap.Int("byItems", len(e.byItems)),
-				zap.Uint64("connectionID", e.dctx.ConnectionID))
 			maxInFlight := getIndexScanMaxInFlight(e.dctx.DistSQLConcurrency)
 			nextRange := 0
 			pushDownIntermediateTypes := [][]*types.FieldType{indexTypes}
