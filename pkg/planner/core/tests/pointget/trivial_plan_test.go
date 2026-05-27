@@ -262,3 +262,25 @@ func TestTrivialPlanWithWhere(t *testing.T) {
 	err := tk.ExecToErr("select * from t_w where nonexistent = 1")
 	require.Error(t, err)
 }
+
+// TestTrivialPlanEnumPredicate guards against a regression where a WHERE
+// expression returning an enum (or other ETString hybrid type) was treated as
+// always-false because the trivial path skipped the bool-cast that
+// PlanBuilder.buildSelection applies. With the cast in place, the runtime
+// reads the enum index for truthiness so all four rows match.
+func TestTrivialPlanEnumPredicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_enum")
+	tk.MustExec("create table t_enum(e enum('c', 'b', 'a'))")
+	tk.MustExec("insert into t_enum values ('a'),('b'),('a'),('b')")
+
+	rows := tk.MustQuery("select e from t_enum where if(e>1, e, e)").Sort().Rows()
+	require.Len(t, rows, 4)
+	requireTrivialPlan(t, tk, true)
+
+	rows = tk.MustQuery("select e from t_enum where case e when 1 then e else e end").Sort().Rows()
+	require.Len(t, rows, 4)
+	requireTrivialPlan(t, tk, true)
+}

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -242,6 +243,25 @@ func TryTrivialPlan(ctx base.PlanContext, node *resolve.NodeW) (base.Plan, types
 			return nil, nil
 		}
 		conditions = expression.SplitCNFItems(whereExpr)
+
+		// PlanBuilder.buildSelection casts string-typed predicates (notably
+		// enum/set) to a numeric type so the runtime treats them as boolean.
+		// Without this, `WHERE if(e>1,e,e)` on an enum column always evaluates
+		// to false because the raw enum value is read as 0. Mirror that
+		// transformation before handing the Selection to the coprocessor.
+		exprCtx := ctx.GetExprCtx()
+		evalCtx := exprCtx.GetEvalCtx()
+		for i, expr := range conditions {
+			if expr.GetType(evalCtx).EvalType() != ptypes.ETString {
+				continue
+			}
+			tp := ptypes.NewFieldType(mysql.TypeDouble)
+			tp.SetFlag(expr.GetType(evalCtx).GetFlag())
+			tp.SetFlen(mysql.MaxRealWidth)
+			tp.SetDecimal(ptypes.UnspecifiedLength)
+			types.SetBinChsClnFlag(tp)
+			conditions[i] = expression.TryPushCastIntoControlFunctionForHybridType(exprCtx, expr, tp)
+		}
 
 		// Every condition needs to serialize to TiKV PB, because we hand the
 		// whole Selection to the coprocessor. The full planner splits
