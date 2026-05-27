@@ -959,6 +959,10 @@ func (m MigrationExt) MergeAndMigrateTo(
 		result.Warnings = append(result.Warnings, errors.New("User aborted, nothing will happen"))
 		return
 	}
+	if err := ctx.Err(); err != nil {
+		result.Warnings = append(result.Warnings, errors.Annotate(err, "context canceled before applying migration"))
+		return
+	}
 
 	migTo := &result.MigratedTo
 

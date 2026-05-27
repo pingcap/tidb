@@ -2975,6 +2975,18 @@ func TestUserAbort(t *testing.T) {
 	require.Len(t, res.Warnings, 1)
 	require.ErrorContains(t, res.Warnings[0], "aborted")
 	require.Empty(t, effs)
+
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	effs = est.DryRun(func(me MigrationExt) {
+		res = me.MergeAndMigrateTo(cancelCtx, 1, MMOptSkipLockingInTest(), MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+			cancel()
+			return true
+		}))
+	})
+	require.Len(t, res.Warnings, 1)
+	require.ErrorIs(t, res.Warnings[0], context.Canceled)
+	require.Empty(t, effs)
 }
 
 func TestUnsupportedVersion(t *testing.T) {

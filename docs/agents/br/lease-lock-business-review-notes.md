@@ -83,6 +83,11 @@ Scope refinement for restore review:
   cancel the caller's parent context. Correctness therefore depends on the
   canceled child context making protected operations fail and on callers
   treating those failures as command failures rather than non-fatal warnings.
+- Interactive confirmation may block on user input after the write lock is
+  acquired. The current branch keeps that behavior, but `MergeAndMigrateTo`
+  explicitly checks `ctx.Err()` after the interactive check and before any BASE
+  write/delete/migrate operation, so lease loss during the prompt cannot proceed
+  into the destructive phase.
 
 #### `br/pkg/stream/stream_metas.go`: `BASE_TMP` recovery
 
@@ -173,11 +178,16 @@ Automatic review follow-up, after scope refinement:
 
 #### `pkg/objstore/locking.go`: unlock waits for renewal goroutine
 
+- Status: reviewed and kept as-is in the current branch.
 - `Unlock` stops renewal and waits for `done` before deleting the lock file.
 - This prevents a late renewal write from recreating a deleted lock.
 - The wait is not itself bounded by the cleanup context; if a storage operation
   inside the renewal goroutine blocks indefinitely, cleanup can block too.
 - This is an infrastructure risk exposed by business callers that start renewal.
+- Review decision: do not change this now. Keeping cleanup ordered behind
+  renewal teardown is more important for the current lease-lock correctness
+  work; bounded wait behavior can be revisited only with a separate cleanup
+  semantics design.
 
 #### `pkg/objstore/locking.go`: stale cleanup race
 
@@ -251,6 +261,5 @@ Automatic review follow-up, after scope refinement:
    tied lease loss to the child work context.
 5. Done: moved `AppendMigration` read-lock and append-write-lock renewal into
    `LockWithRetry` and tied lease loss to the child work context.
-6. Keep `Unlock` waiting for renewal goroutine teardown, but separately decide
-   whether the wait needs a bounded context/deadline. This is lower priority
-   cleanup robustness.
+6. Done: keep `Unlock` waiting for renewal goroutine teardown. Do not add a
+   bounded wait in the current branch.
