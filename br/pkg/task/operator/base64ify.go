@@ -12,7 +12,7 @@ import (
 )
 
 func Base64ify(ctx context.Context, cfg Base64ifyConfig) error {
-	return runEncode(ctx, cfg) // Assuming runEncode will be similarly modified to accept Base64ifyConfig
+	return runEncode(ctx, cfg)
 }
 
 func runEncode(ctx context.Context, cfg Base64ifyConfig) error {
@@ -20,13 +20,17 @@ func runEncode(ctx context.Context, cfg Base64ifyConfig) error {
 	if err != nil {
 		return err
 	}
+
+	store, err := objstore.New(ctx, s, &storeapi.Options{
+		SendCredentials:          cfg.LoadCerd,
+		CheckS3ObjectLockOptions: true,
+	})
+	if err != nil {
+		return err
+	}
+	store.Close()
+
 	if cfg.LoadCerd {
-		_, err := objstore.New(ctx, s, &storeapi.Options{
-			SendCredentials: true,
-		})
-		if err != nil {
-			return err
-		}
 		fmt.Fprintln(os.Stderr, color.HiRedString("Credientials are encoded to the base64 string. DON'T share this with untrusted people!"))
 	}
 
