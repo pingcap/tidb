@@ -571,13 +571,13 @@ func getRegionCommitIndexesFromBatch(
 					}
 				}
 
-				raftLocalState := resp.GetRaftLocalState()
-				if raftLocalState == nil || raftLocalState.HardState == nil {
-					return errors.Errorf("region %d got nil raft local state from store %s", task.regionID, storeAddr)
+				commitIndex, err := regionCommitIndexFromInfo(resp, task.regionID, storeAddr)
+				if err != nil {
+					return err
 				}
 				result[task.idx] = regionCommitIndex{
 					region:      batch[task.idx].Meta,
-					commitIndex: raftLocalState.GetHardState().GetCommit(),
+					commitIndex: commitIndex,
 				}
 			}
 			return nil
@@ -587,6 +587,18 @@ func getRegionCommitIndexesFromBatch(
 		return nil, err
 	}
 	return result, nil
+}
+
+func regionCommitIndexFromInfo(resp *debugpb.RegionInfoResponse, regionID uint64, storeAddr string) (uint64, error) {
+	if raftApplyState := resp.GetRaftApplyState(); raftApplyState != nil && raftApplyState.GetAppliedIndex() > 0 {
+		return raftApplyState.GetAppliedIndex(), nil
+	}
+
+	raftLocalState := resp.GetRaftLocalState()
+	if raftLocalState == nil || raftLocalState.HardState == nil {
+		return 0, errors.Errorf("region %d got nil raft local state from store %s", regionID, storeAddr)
+	}
+	return raftLocalState.GetHardState().GetCommit(), nil
 }
 
 type rawKVScanClient interface {

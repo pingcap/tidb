@@ -231,6 +231,65 @@ func TestFetchRegionCommitIndexInBatchReturnOrder(t *testing.T) {
 	require.Equal(t, uint64(1), <-returnOrder)
 }
 
+func TestFetchRegionCommitIndexInBatchUsesAppliedIndex(t *testing.T) {
+	addr := startTestWaitDataSyncDebugServerWithHandler(t, func(_ context.Context, req *debugpb.RegionInfoRequest) (*debugpb.RegionInfoResponse, error) {
+		return &debugpb.RegionInfoResponse{
+			RaftLocalState: &raft_serverpb.RaftLocalState{
+				HardState: &eraftpb.HardState{Commit: 9},
+			},
+			RaftApplyState: &raft_serverpb.RaftApplyState{
+				AppliedIndex: 8,
+				CommitIndex:  9,
+			},
+			RegionLocalState: &raft_serverpb.RegionLocalState{
+				Region: &metapb.Region{
+					Id: req.RegionId,
+					RegionEpoch: &metapb.RegionEpoch{
+						ConfVer: testWaitDataSyncEpochConfVer,
+						Version: testWaitDataSyncEpochVersion,
+					},
+				},
+			},
+		}, nil
+	})
+
+	pool := newPkdbDebugClientPool([]grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	})
+	t.Cleanup(pool.Close)
+
+	batch := []*pd.Region{
+		{
+			Meta: &metapb.Region{
+				Id:       1,
+				StartKey: []byte{},
+				EndKey:   []byte{},
+				RegionEpoch: &metapb.RegionEpoch{
+					ConfVer: testWaitDataSyncEpochConfVer,
+					Version: testWaitDataSyncEpochVersion,
+				},
+			},
+			Leader: &metapb.Peer{StoreId: 1},
+		},
+	}
+	scanner := &scriptedBatchScanRegionsClient{
+		t: t,
+		steps: []batchScanRegionsStep{
+			{startKey: nil, resp: batch},
+		},
+	}
+
+	var got [][]regionCommitIndex
+	err := fetchRegionCommitIndexInBatch(context.Background(), scanner, map[uint64]string{1: addr}, pool, func(batch []regionCommitIndex) error {
+		got = append(got, batch)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Len(t, got[0], 1)
+	require.Equal(t, uint64(8), got[0][0].commitIndex)
+}
+
 func TestFetchRegionCommitIndexInBatchReturnsErrorWhenStoreAddrMissing(t *testing.T) {
 	pool := newPkdbDebugClientPool([]grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
