@@ -597,6 +597,10 @@ func GetKeyspaceMetaServiceAddrs(store kv.Storage) ([]string, *tls.Config, error
 	return keyspaceMetaServiceAddrs, ebd.TLSConfig(), nil
 }
 
+// openStoreForAutoIDService opens storage for AutoID service registration.
+// It is a variable to allow tests to inject a mock store.
+var openStoreForAutoIDService = store.New
+
 // setupAutoIDService initializes and registers the AutoID service for TiKV stores.
 func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
 	keyspaceName := config.GetGlobalKeyspaceName()
@@ -608,7 +612,7 @@ func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
 		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
 	}
 
-	store, err := store.New(fullPath)
+	store, err := openStoreForAutoIDService(fullPath)
 	if err != nil {
 		logutil.BgLogger().Warn("skip auto service registration because opening tikv store failed", zap.Error(err))
 		return
