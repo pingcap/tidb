@@ -29,6 +29,7 @@
   - [DataSource Plumbing and Column Pruning](#datasource-plumbing-and-column-pruning)
   - [Costing and Selectivity](#costing-and-selectivity)
   - [CBO Between TiCI and Local MATCH](#cbo-between-tici-and-local-match)
+    - [CBO Implementation Plan](#cbo-implementation-plan)
   - [Plan Cache and Prepared Statements](#plan-cache-and-prepared-statements)
   - [Compatibility and Error Handling](#compatibility-and-error-handling)
   - [Implementation Plan](#implementation-plan)
@@ -1046,6 +1047,25 @@ Costing rules:
   and multi-column MATCH until full-text-specific statistics exist.
 - Do not use the no-score match flag as a ranking signal in costing.
 
+CBO implementation should make the estimate boundary explicit:
+
+- TiCI FTS estimates belong to the TiCI access path first. The current code
+  refines `AccessPath.CountAfterAccess` in `deriveSearchPathStats`, but that is
+  path-local. If a TiCI-only alternative is expected to influence join order,
+  the chosen TiCI estimate must also be reflected in the alternative's
+  `DataSource.StatsInfo`.
+- Local `MATCH` estimates belong to the residual `LogicalSelection`, not the
+  child `DataSource`. The child should still be costed as an ordinary table or
+  index access path; the parent selection applies local full-text selectivity
+  and CPU cost.
+- The current generic selection cost treats one scalar function as one unit of
+  CPU. Local full-text filters should get an expression-specific cost weight
+  because their work scales with matched text bytes and normalized query terms.
+- The current `ast.FTSMysqlMatchAgainst` selectivity substitution to ILIKE is a
+  temporary bridge. Once local binding exists, selectivity should distinguish
+  local-bound `FTSMysqlMatchAgainst` from TiCI helper functions and from
+  unbound scalar uses.
+
 ### CBO Between TiCI and Local MATCH
 
 The column-pruning split between TiCI FTS and local residual `MATCH ... AGAINST`
@@ -1166,6 +1186,146 @@ selective outer table
 Therefore, local-vs-TiCI CBO should compare complete physical plans, including
 join order and index-join enumeration. Choosing only at single-table access
 path selection time is too early for the motivating join cases.
+
+#### CBO Implementation Plan
+
+The first implementable CBO version should reuse the alternative logical-plan
+round driver. It should not store TiCI and local state on one shared
+`DataSource` path list.
+
+1. Add a statement-local planning mode for the local residual round.
+   - Add a new signal such as
+     `StatementContext.AlternativeLogicalPlanFTSLocalResidual`. This is a
+     planning mode, not a user-visible semantic guard.
+   - Reset it in `ResetAlternativeLogicalPlanSignals`.
+   - Restore it around each alternative round in `planner/optimize.go`, the
+     same way the current `AlternativeLogicalPlanFTSLikeFallback` setup is
+     restored after a round.
+   - Keep it separate from `AlternativeLogicalPlanFTSLikeFallback`. The local
+     round must preserve `FTSMysqlMatchAgainst` and attach
+     `FTSLocalEvalInfo`; the ILIKE round rewrites the AST expression to
+     substring predicates.
+
+2. Record a local CBO candidate during expression rewriting.
+   - In `pkg/planner/core/expression_rewriter.go`, when
+     `inDirectMatchBooleanContext()` is true and
+     `tidb_enable_local_match_against` is enabled for an
+     `IN BOOLEAN MODE` predicate, record the local guard as a relevant
+     optimizer variable. Also record
+     `tidb_opt_enable_alternative_logical_plans`, because the local-vs-TiCI
+     CBO round is gated by that optimizer switch. Then mark that a local
+     residual alternative is worth exploring.
+   - The signal can be a new builder method, for example
+     `MarkLocalMatchCandidate`, or a narrower variant of the existing
+     predicate-MATCH signal. It should only require direct-filter boolean
+     eligibility; table/index metadata is resolved later in `DataSource`.
+   - Continue marking the legacy ILIKE fallback only when local matching is
+     disabled or a local/native planning error is explicitly fallbackable.
+     A successfully local-bound predicate must not automatically enable the
+     ILIKE cost competitor.
+
+3. Add a local residual alternative round in `planner/optimize.go`.
+   - Enable the round only when:
+     - `tidb_opt_enable_alternative_logical_plans` is ON;
+     - `tidb_enable_local_match_against` is ON;
+     - round 1 saw at least one direct-filter local MATCH candidate.
+   - Place it before the `fts-like-fallback` round.
+   - Its setup sets `AlternativeLogicalPlanFTSLocalResidual = true` and leaves
+     `AlternativeLogicalPlanFTSLikeFallback = false`.
+   - The normal `bestCost` comparison chooses between the default TiCI-capable
+     round and the local-residual round. If the local round fails but the TiCI
+     round is valid, keep the TiCI plan. If both native/TiCI and local are
+     invalid and the error is fallbackable, the existing ILIKE fallback round
+     may still be tried.
+
+4. Teach `DataSource.analyzeTiCIIndex` to honor the local residual mode.
+   - Default mode keeps the current behavior: choose a TiCI FULLTEXT path when
+     one covers the predicate, rewrite to TiCI helper functions, build
+     `FtsQueryInfo`, and call `keepOnlyTiCIPath`.
+   - Local residual mode must skip TiCI consumption for eligible
+     `FTSMysqlMatchAgainst` predicates, call the local binder, remove the
+     containing top-level condition from `DataSource.PushedDownConds`, and
+     return that condition as a residual predicate from
+     `PredicatePushDown`.
+   - Reuse the existing residual shape from `bindLocalFTSConds`: delete TiCI
+     access paths for this local alternative and let table paths, row indexes,
+     index merge, and index join enumeration proceed normally.
+   - Keep the whole top-level condition residual. Do not extract only the inner
+     `MATCH` expression from an `OR`, `NOT`, or other boolean wrapper.
+
+5. Make TiCI and local statistics visible at the right layer.
+   - For the TiCI round, keep using `deriveSearchPathStats` for
+     `path.CountAfterAccess`. When the TiCI path is the only path left after
+     `keepOnlyTiCIPath`, propagate that estimated row count back to
+     `DataSource.StatsInfo` before upper logical operators and join reorder use
+     the alternative's stats.
+   - For the local round, leave the child `DataSource` stats based on the
+     ordinary access predicates. Apply the local MATCH selectivity in the
+     residual `LogicalSelection`.
+   - `LogicalSelection.DeriveStats` currently applies the fixed
+     `cost.SelectionFactor`. The CBO patch should add a targeted path for
+     local-bound `FTSMysqlMatchAgainst` conditions, or a shared helper that can
+     call `cardinality.Selectivity` for these residual filters and fall back to
+     `cost.SelectionFactor` on error.
+   - In `pkg/planner/cardinality/selectivity.go`, split the current
+     `ast.FTSMysqlMatchAgainst` handling into:
+     - local-bound MATCH: use simple ILIKE substitution only for simple
+       single-column `STANDARD_V1` word cases where it is known to be an
+       approximation, otherwise use a conservative full-text default;
+     - TiCI helper functions: keep them path-owned and do not estimate them as
+       residual scalar filters;
+     - unbound MATCH: keep the existing conservative fallback or unsupported
+       behavior.
+
+6. Add local full-text CPU cost.
+   - In cost model v2, extend `filterCostVer2` or add a helper called from
+     `getPlanCostVer24PhysicalSelection` that detects local-bound
+     `FTSMysqlMatchAgainst`.
+   - Estimate per-row work as:
+
+     ```text
+     local_match_cost =
+         rows *
+         (base_match_cost
+          + matched_text_bytes_per_row * analyzer_cost_per_byte
+          + normalized_query_terms * query_match_cost)
+     ```
+
+   - Estimate `matched_text_bytes_per_row` from the child stats and matched
+     columns recorded in `FTSLocalEvalInfo` (`ColumnUniqueIDs` / column
+     metadata). Use the existing row-size helpers as a model, and fall back to
+     a small default when stats are unavailable.
+   - For mutable prepared-statement search strings, use a conservative default
+     query-term count at plan time. Do not parse and bake parameter-specific
+     query terms into a reusable plan.
+   - Either mirror a coarse multiplier in cost model v1 or gate local-vs-TiCI
+     CBO to cost model v2 until v1 has an equivalent estimate. Do not let v1
+     treat a row-local analyzer as a normal one-function predicate while v2
+     applies the full CPU cost.
+
+7. Preserve winner state and plan-cache boundaries.
+   - The winner's logical-plan build state is restored through
+     `saveLogicalPlanBuildCtx` / `restoreLogicalPlanBuildCtx`. Ensure any new
+     local-round planning mode is not accidentally restored as a winner-visible
+     semantic flag.
+   - A local winner must keep the existing plan-cache skip reason until the
+     analyzer configuration is persisted in FULLTEXT index metadata.
+   - A TiCI winner keeps the current TiCI plan-cache boundary. An ILIKE winner
+     keeps the existing mutable-search-string cache guard.
+
+8. Add CBO-focused tests before changing default behavior.
+   - Default/TiCI round still wins when the TiCI FTS estimate is cheaper than a
+     full scan plus local MATCH.
+   - Local residual round wins when a normal selective index plus local MATCH is
+     cheaper than the TiCI FTS path.
+   - A selective outer table can choose index join into the matched table and
+     apply local MATCH after fetching the full text column.
+   - Local residual predicates keep matched text columns for
+     `SELECT 1 ... WHERE MATCH(...)`, while the TiCI round can still prune text
+     columns that are needed only by `FtsQueryInfo`.
+   - The ILIKE fallback round is not enabled for a successfully local-bound
+     predicate, but still works when local binding is rejected and the strict
+     ILIKE subset applies.
 
 ### Plan Cache and Prepared Statements
 
@@ -1314,17 +1474,27 @@ Stopwords:
    - Keep ILIKE fallback behind a compatibility path until local matching is
      enabled by default.
 
-5. Follow-up work
+5. Local-vs-TiCI CBO
+   - Implement the local residual alternative round described in
+     [CBO Implementation Plan](#cbo-implementation-plan).
+   - Keep the default non-CBO behavior unchanged when
+     `tidb_opt_enable_alternative_logical_plans` is OFF.
+   - Add a planner signal separate from the ILIKE fallback mode so the local
+     round preserves `FTSMysqlMatchAgainst` and the ILIKE round remains a
+     last-resort compatibility rewrite.
+   - Propagate TiCI search estimates into `DataSource.StatsInfo` only inside
+     the TiCI alternative where `keepOnlyTiCIPath` has selected the TiCI path.
+   - Apply local MATCH selectivity and CPU cost at the residual
+     `LogicalSelection` layer.
+   - Add CBO tests for single-table index choice, join order, index join,
+     column pruning, and ILIKE fallback isolation.
+
+6. Follow-up work
    - Add consistent group parsing for both parser paths.
    - Add `MULTILINGUAL_V1` once its analyzer exists.
    - Design natural-language local matching only after the TiCI indexed path has
      a matching no-score contract for it.
    - Design relevance scoring separately.
-   - Add a local-vs-TiCI CBO mode using separate logical alternatives instead
-     of path-local flags on one shared `DataSource`.
-   - If TiCI estimates should affect join order, propagate the selected TiCI
-     alternative's row-count estimate into `DataSource.StatsInfo` in that
-     alternative round.
    - Add query expansion after scoring and executor interfaces are designed.
 
 ## Test Design
