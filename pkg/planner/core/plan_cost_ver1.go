@@ -58,9 +58,14 @@ func getPlanCostVer14PhysicalSelection(pp base.PhysicalPlan, taskType property.T
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
-	selfCost = getCardinality(p.Children()[0], costFlag) * cpuFactor * (1 + localMatchAgainstFilterCostWeight(p.Conditions))
+	inputRows := getCardinality(p.Children()[0], costFlag)
+	localMatchWeight := localMatchAgainstFilterCostWeight(p.Conditions)
+	selfCost = inputRows * cpuFactor * (1 + localMatchWeight)
 	if p.FromDataSource {
 		selfCost = 0 // for compatibility, see https://github.com/pingcap/tidb/issues/36243
+		if localMatchWeight > 0 {
+			selfCost = inputRows * cpuFactor * localMatchWeight
+		}
 	}
 
 	childCost, err := p.Children()[0].GetPlanCostVer1(taskType, option)

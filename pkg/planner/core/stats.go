@@ -261,10 +261,12 @@ func applyTiCISearchPathStatsToDataSource(ds *logicalop.DataSource, path *util.A
 		return
 	}
 	rowCount := path.CountAfterIndex
+	statsToScale := ds.TableStats
 	if stats := ds.StatsInfo(); stats != nil {
 		rowCount = min(rowCount, stats.RowCount)
+		statsToScale = stats
 	}
-	ds.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount))
+	ds.SetStats(statsToScale.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount))
 }
 
 func isOnlySelectedTiCIFTSPath(ds *logicalop.DataSource, path *util.AccessPath) bool {
