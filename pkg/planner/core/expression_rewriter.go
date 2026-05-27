@@ -2380,6 +2380,12 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
 		if er.inDirectMatchBooleanContext() {
 			sessVars.RecordRelevantOptVar(vardef.TiDBEnableLocalMatchAgainst)
+			if sessVars.EnableLocalMatchAgainst && expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+				sessVars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+				if sessVars.EnableAlternativeLogicalPlans {
+					er.planCtx.builder.MarkLocalMatchCandidate()
+				}
+			}
 			if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
 				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
 				useLikeFallback = true

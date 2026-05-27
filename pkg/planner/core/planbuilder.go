@@ -331,6 +331,11 @@ type PlanBuilder struct {
 	// uses this to enable the fts-like-fallback round even when round 1's
 	// native plan is executable, so the LIKE-based plan can compete on cost.
 	predicateMatchSeen bool
+
+	// localMatchCandidateSeen is set during build when the expression rewriter
+	// encounters a direct-filter boolean MATCH...AGAINST that may be planned as
+	// a TiDB-side residual filter in a dedicated alternative round.
+	localMatchCandidateSeen bool
 }
 
 // HasNonViableFTSMatch reports whether the most recent build round saw a
@@ -359,6 +364,18 @@ func (b *PlanBuilder) HasPredicateMatch() bool {
 // direct-boolean-context MATCH...AGAINST. See HasPredicateMatch.
 func (b *PlanBuilder) MarkPredicateMatch() {
 	b.predicateMatchSeen = true
+}
+
+// HasLocalMatchCandidate reports whether the most recent build round saw a
+// direct-filter MATCH...AGAINST candidate for local residual planning.
+func (b *PlanBuilder) HasLocalMatchCandidate() bool {
+	return b.localMatchCandidateSeen
+}
+
+// MarkLocalMatchCandidate records that a local residual MATCH...AGAINST round
+// is worth attempting for the current statement.
+func (b *PlanBuilder) MarkLocalMatchCandidate() {
+	b.localMatchCandidateSeen = true
 }
 
 type handleColHelper struct {

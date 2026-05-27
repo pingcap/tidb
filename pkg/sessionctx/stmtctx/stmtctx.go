@@ -502,11 +502,21 @@ type StatementContext struct {
 	// true outside the round so any intervening rounds (correlate, etc.) also
 	// produce executable LIKE-based plans.
 	AlternativeLogicalPlanFTSLikeFallback bool
+	// AlternativeLogicalPlanFTSLocalResidual is a mode flag for the local
+	// MATCH...AGAINST residual alternative. When true, direct-filter
+	// FTSMysqlMatchAgainst predicates stay as TiDB-side residual filters with
+	// local evaluation metadata instead of being consumed by a TiCI full-text
+	// access path.
+	AlternativeLogicalPlanFTSLocalResidual bool
 	// AlternativeLogicalPlanHasPredicateContextMatch indicates that round 1
 	// encountered a direct-boolean-context MATCH...AGAINST. The round driver
 	// uses this to enable the fts-like-fallback round for cost competition even
 	// when round 1's native plan is executable.
 	AlternativeLogicalPlanHasPredicateContextMatch bool
+	// AlternativeLogicalPlanHasLocalMatchCandidate indicates that round 1 saw a
+	// direct-filter boolean MATCH...AGAINST occurrence that can be explored by
+	// the local residual alternative.
+	AlternativeLogicalPlanHasLocalMatchCandidate bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -683,7 +693,9 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
 	sc.AlternativeLogicalPlanFTSLikeFallback = false
+	sc.AlternativeLogicalPlanFTSLocalResidual = false
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
+	sc.AlternativeLogicalPlanHasLocalMatchCandidate = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 }
 
