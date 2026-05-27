@@ -45,6 +45,7 @@ func defaultRUV2WeightsForTest() RUV2Weights {
 		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
 		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
 		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		WriteKeys:               cfg.WriteKeys,
 		SessionParserTotal:      cfg.SessionParserTotal,
 		TxnCnt:                  cfg.TxnCnt,
 	}
@@ -399,10 +400,10 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	tikvRU := float64(157258)
 	tiflashRU := float64(24680)
 	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
-	require.InEpsilon(t, 40.2906903357, tidbRU, 0.01)
+	require.InEpsilon(t, 42.2851783309, tidbRU, 0.01)
 	require.InEpsilon(t, 157258.0, tikvRU, 0.01)
 	require.InEpsilon(t, 24680.0, tiflashRU, 0.01)
-	require.InEpsilon(t, 181978.2906903357, totalRU, 0.01)
+	require.InEpsilon(t, 181980.2851783309, totalRU, 0.01)
 	require.Equal(t, int64(3), metrics.WriteKeys())
 	require.Equal(t, int64(66), metrics.WriteSize())
 
@@ -444,7 +445,7 @@ func TestUpdateRUV2MetricsFromCommitDetails(t *testing.T) {
 
 	require.Equal(t, int64(3), metrics.WriteKeys())
 	require.Equal(t, int64(66), metrics.WriteSize())
-	require.Equal(t, beforeRU, metrics.CalculateRUValues(weights))
+	require.InEpsilon(t, beforeRU+float64(3)*weights.WriteKeys*weights.RUScale, metrics.CalculateRUValues(weights), 0.01)
 
 	detail := FormatRUV2Metrics(metrics, weights, 0, 0)
 	require.Contains(t, detail, "write_keys:3")

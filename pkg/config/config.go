@@ -390,6 +390,7 @@ type RUV2Config struct {
 	PlanDeriveStatsPaths    float64 `toml:"plan-derive-stats-paths" json:"plan-derive-stats-paths"`
 	ResourceManagerReadCnt  float64 `toml:"resource-manager-read-cnt" json:"resource-manager-read-cnt"`
 	ResourceManagerWriteCnt float64 `toml:"resource-manager-write-cnt" json:"resource-manager-write-cnt"`
+	WriteKeys               float64 `toml:"write-keys" json:"write-keys"`
 	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
 	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
 }
@@ -408,6 +409,7 @@ func DefaultRUV2Config() RUV2Config {
 		PlanDeriveStatsPaths:    0.24968182,
 		ResourceManagerReadCnt:  0.02072003,
 		ResourceManagerWriteCnt: 0.07179779,
+		WriteKeys:               0.330760861554226,
 		SessionParserTotal:      0.19230499,
 		TxnCnt:                  0.03013709,
 	}

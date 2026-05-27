@@ -132,7 +132,7 @@ func InitRUV2Metrics() {
 			Namespace: "tidb",
 			Subsystem: "ruv2",
 			Name:      "write_keys",
-			Help:      "Shadow counter of commit write keys for RU v2.",
+			Help:      "Counter of commit write keys for RU v2.",
 		},
 	)
 

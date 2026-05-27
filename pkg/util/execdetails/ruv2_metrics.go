@@ -44,6 +44,7 @@ type RUV2Weights struct {
 	PlanDeriveStatsPaths    float64
 	ResourceManagerReadCnt  float64
 	ResourceManagerWriteCnt float64
+	WriteKeys               float64
 	SessionParserTotal      float64
 	TxnCnt                  float64
 }
@@ -124,7 +125,7 @@ func SyncRUV2MetricsFromRUDetails(metrics *RUV2Metrics, ruDetails *tikvutil.RUDe
 	UpdateRUV2MetricsFromRUV2(metrics, ruDetails.DrainRUV2())
 }
 
-// UpdateRUV2MetricsFromCommitDetails adds commit write counters into RUv2 shadow metrics.
+// UpdateRUV2MetricsFromCommitDetails adds commit write counters into RUv2 metrics.
 func UpdateRUV2MetricsFromCommitDetails(metrics *RUV2Metrics, commitDetails *tikvutil.CommitDetails) {
 	if metrics == nil || commitDetails == nil || metrics.Bypass() {
 		return
@@ -277,7 +278,7 @@ func (m *RUV2Metrics) AddResourceManagerWriteCnt(delta int64) {
 	atomic.AddInt64(&m.resourceManagerWriteCnt, delta)
 }
 
-// AddWriteKeys records commit write keys for RUv2 shadow accounting.
+// AddWriteKeys records commit write keys for RUv2 accounting.
 func (m *RUV2Metrics) AddWriteKeys(delta int64) {
 	if m.Bypass() {
 		return
@@ -547,7 +548,7 @@ func (m *RUV2Metrics) ResourceManagerWriteCnt() int64 {
 	return atomic.LoadInt64(&m.resourceManagerWriteCnt)
 }
 
-// WriteKeys returns commit write keys for RUv2 shadow accounting.
+// WriteKeys returns commit write keys for RUv2 accounting.
 func (m *RUV2Metrics) WriteKeys() int64 {
 	if m == nil {
 		return 0
@@ -670,6 +671,7 @@ func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU 
 			float64(m.PlanDeriveStatsPaths())*weights.PlanDeriveStatsPaths +
 			float64(m.ResourceManagerReadCnt())*weights.ResourceManagerReadCnt +
 			float64(m.ResourceManagerWriteCnt())*weights.ResourceManagerWriteCnt +
+			float64(m.WriteKeys())*weights.WriteKeys +
 			float64(m.SessionParserTotal())*weights.SessionParserTotal +
 			float64(m.TxnCnt())*weights.TxnCnt
 
