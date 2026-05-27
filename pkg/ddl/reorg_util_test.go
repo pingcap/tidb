@@ -348,6 +348,81 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.ErrorContains(t, err, "store capacity check")
 	})
 
+	t.Run("prediction columns include generated column dependencies", func(t *testing.T) {
+		sctx := mock.NewContext()
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		tblInfo := &model.TableInfo{
+			ID:    100,
+			Name:  ast.NewCIStr("t"),
+			State: model.StatePublic,
+			Columns: []*model.ColumnInfo{
+				{ID: 1, Name: ast.NewCIStr("c28"), Offset: 0, State: model.StatePublic, FieldType: *intType},
+				{
+					ID:                  2,
+					Name:                ast.NewCIStr("c29"),
+					Offset:              1,
+					State:               model.StatePublic,
+					FieldType:           *intType,
+					GeneratedExprString: "t.c28 + 1",
+					Dependences:         map[string]struct{}{"c28": {}},
+				},
+			},
+		}
+		idxInfo := &model.IndexInfo{
+			Columns: []*model.IndexColumn{
+				{Name: ast.NewCIStr("c29"), Offset: 1, Length: types.UnspecifiedLength},
+			},
+		}
+
+		cols, err := buildIndexPredictionColumns(sctx, tblInfo, idxInfo)
+		require.NoError(t, err)
+		require.Len(t, cols, 2)
+		require.Equal(t, int64(2), cols[0].ID)
+		require.NotNil(t, cols[0].VirtualExpr)
+		depCols := expression.ExtractColumns(cols[0].VirtualExpr)
+		require.Len(t, depCols, 1)
+		require.Equal(t, int64(1), depCols[0].ID)
+		require.Equal(t, int64(model.ExtraHandleID), cols[1].ID)
+	})
+
+	t.Run("prediction columns include expression index dependencies", func(t *testing.T) {
+		sctx := mock.NewContext()
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		tblInfo := &model.TableInfo{
+			ID:    101,
+			Name:  ast.NewCIStr("t"),
+			State: model.StatePublic,
+			Columns: []*model.ColumnInfo{
+				{ID: 1, Name: ast.NewCIStr("c"), Offset: 0, State: model.StatePublic, FieldType: *intType},
+				{
+					ID:                  2,
+					Name:                ast.NewCIStr("_V$_idx2_0"),
+					Offset:              1,
+					State:               model.StatePublic,
+					FieldType:           *intType,
+					GeneratedExprString: "t.c + 2",
+					Dependences:         map[string]struct{}{"c": {}},
+					Hidden:              true,
+				},
+			},
+		}
+		idxInfo := &model.IndexInfo{
+			Columns: []*model.IndexColumn{
+				{Name: ast.NewCIStr("_V$_idx2_0"), Offset: 1, Length: types.UnspecifiedLength},
+			},
+		}
+
+		cols, err := buildIndexPredictionColumns(sctx, tblInfo, idxInfo)
+		require.NoError(t, err)
+		require.Len(t, cols, 2)
+		require.Equal(t, int64(2), cols[0].ID)
+		require.NotNil(t, cols[0].VirtualExpr)
+		depCols := expression.ExtractColumns(cols[0].VirtualExpr)
+		require.Len(t, depCols, 1)
+		require.Equal(t, int64(1), depCols[0].ID)
+		require.Equal(t, int64(model.ExtraHandleID), cols[1].ID)
+	})
+
 	t.Run("prediction rowsize uses unique id stats", func(t *testing.T) {
 		sessionVars := variable.NewSessionVars(nil)
 		indexCols := []*expression.Column{

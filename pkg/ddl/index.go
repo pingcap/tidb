@@ -3156,9 +3156,31 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			blockSamplePrediction            sampleTiKVIndexPredictionResult
 		)
 		if !reorgInfo.mergingTmpIdx {
+			predictionOK := true
+			clearPrediction := func() {
+				basicPredictedTiKVIndexBytes = 0
+				representPredictedTiKVIndexBytes = 0
+				staticSamplePrediction = sampleTiKVIndexPredictionResult{}
+				blockSamplePrediction = sampleTiKVIndexPredictionResult{}
+			}
+			skipPrediction := func(phase string, err error) {
+				logutil.DDLLogger().Warn("skip TiKV index size prediction and space precheck for add-index task because prediction failed",
+					zap.Int64("jobID", job.ID),
+					zap.String("task-key", taskKey),
+					zap.String("prediction-phase", phase),
+					zap.Error(err))
+				clearPrediction()
+				predictionOK = false
+				runTiKVSpacePrecheck = false
+			}
 			runTiKVSpacePrecheck, err = canRunTiKVSpacePrecheck(w.store)
 			if err != nil {
-				return err
+				logutil.DDLLogger().Warn("skip TiKV space precheck for add-index task because PD HTTP client capability check failed",
+					zap.Int64("jobID", job.ID),
+					zap.String("task-key", taskKey),
+					zap.Error(err))
+				runTiKVSpacePrecheck = false
+				err = nil
 			}
 			if !runTiKVSpacePrecheck {
 				logutil.DDLLogger().Info("skip TiKV space precheck for add-index task because PD HTTP client is unavailable",
@@ -3167,25 +3189,49 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			}
 			basicPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesBasic(w.sess.Session(), t, reorgInfo)
 			if err != nil {
-				return err
+				skipPrediction("basic", err)
+				err = nil
 			}
-			representPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesRepresent(w.sess.Session(), t, reorgInfo)
-			if err != nil {
-				return err
+			if predictionOK {
+				representPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesRepresent(w.sess.Session(), t, reorgInfo)
+				if err != nil {
+					skipPrediction("represent", err)
+					err = nil
+				}
 			}
-			if runTiKVSpacePrecheck {
+			if predictionOK && runTiKVSpacePrecheck {
 				staticSamplePrediction, err = w.predictTiKVIndexBytesStaticSample(ctx, w.sess.Session(), t, reorgInfo)
 				if err != nil {
-					return err
+					skipPrediction("static-sample", err)
+					err = nil
 				}
+			}
+			if predictionOK && runTiKVSpacePrecheck {
 				blockSamplePrediction, err = w.predictTiKVIndexBytesBlockSample(ctx, w.sess.Session(), t, reorgInfo)
 				if err != nil {
-					return err
+					skipPrediction("block-sample", err)
+					err = nil
 				}
+			}
+			if predictionOK && runTiKVSpacePrecheck {
 				initialCapacity, err = collectTiKVStoreCapacity(ctx, w.store)
 				if err != nil {
-					return err
+					logutil.DDLLogger().Warn("skip TiKV space precheck for add-index task because TiKV capacity snapshot failed",
+						zap.Int64("jobID", job.ID),
+						zap.String("task-key", taskKey),
+						zap.Error(err))
+					initialCapacity = nil
+					runTiKVSpacePrecheck = false
+					err = nil
+				} else if initialCapacity == nil || initialCapacity.StoreCount == 0 {
+					logutil.DDLLogger().Warn("skip TiKV space precheck for add-index task because TiKV capacity snapshot is empty",
+						zap.Int64("jobID", job.ID),
+						zap.String("task-key", taskKey))
+					initialCapacity = nil
+					runTiKVSpacePrecheck = false
 				}
+			}
+			if predictionOK && runTiKVSpacePrecheck {
 				if err := checkTiKVSpaceForAddIndex(initialCapacity, blockSamplePrediction.PredictedBytes); err != nil {
 					return err
 				}
@@ -5088,37 +5134,106 @@ func collectBackfillIndexes(tblInfo *model.TableInfo, reorgInfo *reorgInfo) ([]*
 }
 
 func buildIndexPredictionColumns(sctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) ([]*expression.Column, error) {
-	colInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns)+1)
+	targetColInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns)+1)
+	schemaColInfos := make([]*model.ColumnInfo, 0, len(idxInfo.Columns)+1)
 	seenColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns)+2)
-	appendColumn := func(col *model.ColumnInfo) {
+	seenSchemaColumnIDs := make(map[int64]struct{}, len(idxInfo.Columns)+2)
+	columnsByName := make(map[string]*model.ColumnInfo, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		columnsByName[col.Name.L] = col
+	}
+	appendSchemaColumn := func(col *model.ColumnInfo) {
 		if col == nil {
 			return
 		}
-		if _, ok := seenColumnIDs[col.ID]; ok {
+		if _, ok := seenSchemaColumnIDs[col.ID]; ok {
 			return
 		}
+		seenSchemaColumnIDs[col.ID] = struct{}{}
+		schemaColInfos = append(schemaColInfos, col)
+	}
+	var appendGeneratedColumnDependencies func(col *model.ColumnInfo) error
+	appendGeneratedColumnDependencies = func(col *model.ColumnInfo) error {
+		visiting := make(map[int64]struct{})
+		var appendDeps func(col *model.ColumnInfo) error
+		appendDeps = func(col *model.ColumnInfo) error {
+			if _, ok := visiting[col.ID]; ok {
+				return errors.Errorf("cyclic generated column dependency found for column %s", col.Name.O)
+			}
+			visiting[col.ID] = struct{}{}
+			defer delete(visiting, col.ID)
+			for depName := range col.Dependences {
+				depCol := columnsByName[depName]
+				if depCol == nil {
+					return errors.Errorf("generated column dependency %s not found for column %s", depName, col.Name.O)
+				}
+				if depCol.IsGenerated() {
+					if err := appendDeps(depCol); err != nil {
+						return err
+					}
+				}
+				appendSchemaColumn(depCol)
+			}
+			return nil
+		}
+		return appendDeps(col)
+	}
+	appendTargetColumn := func(col *model.ColumnInfo) error {
+		if col == nil {
+			return nil
+		}
+		if _, ok := seenColumnIDs[col.ID]; ok {
+			return nil
+		}
+		if col.IsGenerated() {
+			if err := appendGeneratedColumnDependencies(col); err != nil {
+				return err
+			}
+		}
 		seenColumnIDs[col.ID] = struct{}{}
-		colInfos = append(colInfos, col)
+		targetColInfos = append(targetColInfos, col)
+		appendSchemaColumn(col)
+		return nil
 	}
 	for _, idxCol := range idxInfo.Columns {
-		appendColumn(tblInfo.Columns[idxCol.Offset])
+		if err := appendTargetColumn(tblInfo.Columns[idxCol.Offset]); err != nil {
+			return nil, err
+		}
 	}
 	switch {
 	case tblInfo.PKIsHandle:
-		appendColumn(tblInfo.GetPkColInfo())
+		if err := appendTargetColumn(tblInfo.GetPkColInfo()); err != nil {
+			return nil, err
+		}
 	case tblInfo.IsCommonHandle:
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
 		if pkIdx != nil {
 			for _, pkCol := range pkIdx.Columns {
-				appendColumn(tblInfo.Columns[pkCol.Offset])
+				if err := appendTargetColumn(tblInfo.Columns[pkCol.Offset]); err != nil {
+					return nil, err
+				}
 			}
 		}
 	default:
-		appendColumn(model.NewExtraHandleColInfo())
+		if err := appendTargetColumn(model.NewExtraHandleColInfo()); err != nil {
+			return nil, err
+		}
 	}
-	expCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), ast.CIStr{}, tblInfo.Name, colInfos, tblInfo)
+	schemaCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), ast.CIStr{}, tblInfo.Name, schemaColInfos, tblInfo)
 	if err != nil {
 		return nil, err
+	}
+	colsByID := make(map[int64]*expression.Column, len(schemaCols))
+	for _, col := range schemaCols {
+		colsByID[col.ID] = col
+	}
+	expCols := make([]*expression.Column, 0, len(targetColInfos))
+	for _, colInfo := range targetColInfos {
+		expCol := colsByID[colInfo.ID]
+		if expCol == nil {
+			return nil, errors.Errorf("prediction column %s not found after expression column build", colInfo.Name.O)
+		}
+		expCols = append(expCols, expCol)
 	}
 	return expCols, nil
 }
