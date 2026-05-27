@@ -80,8 +80,15 @@ func AnalyzerConfigFromSessionContext(sctx sessionctx.Context, parserType model.
 	if sctx == nil || sctx.GetSessionVars() == nil {
 		return AnalyzerConfig{}, fmt.Errorf("missing session context for fulltext analyzer")
 	}
-	sessVars := sctx.GetSessionVars()
+	return AnalyzerConfigFromSessionVars(sctx.GetSessionVars(), parserType)
+}
 
+// AnalyzerConfigFromSessionVars builds an AnalyzerConfig from session/global
+// sysvars.
+func AnalyzerConfigFromSessionVars(sessVars *variable.SessionVars, parserType model.FullTextParserType) (AnalyzerConfig, error) {
+	if sessVars == nil {
+		return AnalyzerConfig{}, fmt.Errorf("missing session vars for fulltext analyzer")
+	}
 	enableStopword, err := getFulltextSysVar(sessVars, vardef.InnodbFtEnableStopword)
 	if err != nil {
 		return AnalyzerConfig{}, err

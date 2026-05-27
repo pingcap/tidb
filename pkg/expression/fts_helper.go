@@ -57,6 +57,31 @@ func ContainsFullTextSearchFn(exprs ...Expression) bool {
 	return false
 }
 
+// ContainsNonLocalFullTextSearchFn recursively checks whether the expression
+// tree contains an FTS function that has not been planner-bound for local
+// MATCH ... AGAINST evaluation.
+func ContainsNonLocalFullTextSearchFn(exprs ...Expression) bool {
+	for _, expr := range exprs {
+		switch x := expr.(type) {
+		case *ScalarFunction:
+			if _, ok := FTSFuncMap[x.FuncName.L]; ok {
+				if x.FuncName.L == ast.FTSMysqlMatchAgainst {
+					if sig, ok := x.Function.(*builtinFtsMysqlMatchAgainstSig); ok && sig.hasLocalEvalInfo() {
+						continue
+					}
+				}
+				return true
+			}
+			for _, arg := range x.GetArgs() {
+				if ContainsNonLocalFullTextSearchFn(arg) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // ExprCoveredByOneTiCIIndex checks whether the given expr is fully covered by one TiCI index.
 // Single-column FTS helper functions (`fts_match_xxx`) only require their matched column to
 // belong to the helper-eligible FTS column set, while multi-column FTS expressions must match

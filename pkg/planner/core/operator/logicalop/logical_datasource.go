@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -182,10 +183,11 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 	}
 	ds.PushedDownConds, predicates = expression.PushDownExprs(util.GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	if len(ds.PushedDownConds) > 0 {
-		err := ds.analyzeTiCIIndex()
+		localFTSConds, err := ds.analyzeTiCIIndex()
 		if err != nil {
 			return nil, nil, err
 		}
+		predicates = append(predicates, localFTSConds...)
 		// Removing the unused TiCI indexes is done later. Because we will not enter
 		// the predicate push down when the table doesn't have any filter.
 	}
@@ -654,31 +656,41 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // to one TiCI index path. FTS predicates must match a fulltext component; normal
 // predicates may choose a hybrid TiCI index when they are covered by its inverted
 // component.
-func (ds *DataSource) analyzeTiCIIndex() error {
+func (ds *DataSource) analyzeTiCIIndex() ([]expression.Expression, error) {
 	condHasFTSFunc := ds.collectPushedDownCondsHasFTSFuncSet()
 	hasFTSFuncLocal := !condHasFTSFunc.IsEmpty()
 
 	shouldSkip, err := ds.checkTiCIDirtyWrite(hasFTSFuncLocal)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if shouldSkip {
-		return nil
+		if hasFTSFuncLocal {
+			return ds.bindLocalFTSConds(condHasFTSFunc)
+		}
+		return nil, nil
 	}
 	matchedIdx, matchedExprSetForChosenIndex, hasUnmatchedFTSOverAllIdx := ds.chooseTiCIIndex(hasFTSFuncLocal, condHasFTSFunc)
 
 	// Currently TiDB doesn't support multiple fulltext search functions used with multiple index calls.
 	if hasUnmatchedFTSOverAllIdx {
+		if ds.SCtx().GetSessionVars().EnableLocalMatchAgainst {
+			localFTSConds, err := ds.bindLocalFTSConds(condHasFTSFunc)
+			if err == nil {
+				return localFTSConds, nil
+			}
+			return nil, &base.FTSLikeFallbackError{Cause: err}
+		}
 		regularFulltextCols, hybridFulltextCols := ds.collectTiCIFTSDefinitionsForDiagnosis()
 		for i, cond := range ds.PushedDownConds {
 			if !condHasFTSFunc.Has(i) {
 				continue
 			}
 			if reason := expression.DiagnoseUnmatchedFTSIndexReason(cond, regularFulltextCols, hybridFulltextCols); reason != "" {
-				return &base.FTSLikeFallbackError{Cause: errors.New(reason)}
+				return nil, &base.FTSLikeFallbackError{Cause: errors.New(reason)}
 			}
 		}
-		return &base.FTSLikeFallbackError{Cause: errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")}
+		return nil, &base.FTSLikeFallbackError{Cause: errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")}
 	}
 
 	if matchedIdx == nil {
@@ -687,15 +699,15 @@ func (ds *DataSource) analyzeTiCIIndex() error {
 		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
 			return path.Index != nil && path.Index.IsTiCIIndex()
 		})
-		return nil
+		return nil, nil
 	}
 
 	matchedCondIdxes, err := ds.rewriteMatchedTiCIFTSExprs(matchedIdx, matchedExprSetForChosenIndex)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedCondIdxes)
+	return nil, ds.buildTiCIFTSPathAndCleanUp(matchedIdx, matchedCondIdxes)
 }
 
 func (ds *DataSource) checkTiCIDirtyWrite(hasFTSFuncLocal bool) (shouldSkip bool, err error) {
@@ -704,6 +716,9 @@ func (ds *DataSource) checkTiCIDirtyWrite(hasFTSFuncLocal bool) (shouldSkip bool
 		return false, nil
 	}
 	if hasFTSFuncLocal {
+		if ds.SCtx().GetSessionVars().EnableLocalMatchAgainst {
+			return true, nil
+		}
 		return false, errors.Errorf("Fulltext search currently can not be used in transaction with uncommitted data")
 	}
 	// If there is no FTS function, and there're dirty writes on the table,
@@ -711,6 +726,121 @@ func (ds *DataSource) checkTiCIDirtyWrite(hasFTSFuncLocal bool) (shouldSkip bool
 	// Because the TiCI index may be not consistent with the table data.
 	// This TiCI indexes will be removed by CleanUpUnusedTiCIIndexes later.
 	return true, nil
+}
+
+func (ds *DataSource) bindLocalFTSConds(condHasFTSFunc intset.FastIntSet) ([]expression.Expression, error) {
+	localFTSConds := make([]expression.Expression, 0, condHasFTSFunc.Len())
+	tableFilters := make([]expression.Expression, 0, len(ds.PushedDownConds)-condHasFTSFunc.Len())
+	for i, cond := range ds.PushedDownConds {
+		if !condHasFTSFunc.Has(i) {
+			tableFilters = append(tableFilters, cond)
+			continue
+		}
+		if err := ds.bindLocalFTSExpr(cond); err != nil {
+			return nil, err
+		}
+		localFTSConds = append(localFTSConds, cond)
+	}
+	ds.PushedDownConds = tableFilters
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+		return path.Index != nil && path.Index.IsTiCIIndex()
+	})
+	return localFTSConds, nil
+}
+
+func (ds *DataSource) bindLocalFTSExpr(expr expression.Expression) error {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return nil
+	}
+	switch sf.FuncName.L {
+	case ast.FTSMysqlMatchAgainst:
+		return ds.bindLocalMatchAgainst(sf)
+	case ast.FTSMatchWord, ast.FTSMatchPrefix, ast.FTSMatchPhrase:
+		return errors.Errorf("local MATCH ... AGAINST does not support %s helper functions", sf.FuncName.L)
+	default:
+		for _, arg := range sf.GetArgs() {
+			if err := ds.bindLocalFTSExpr(arg); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func (ds *DataSource) bindLocalMatchAgainst(sf *expression.ScalarFunction) error {
+	usage, ok := expression.FTSMysqlMatchAgainstUsage(sf)
+	if !ok || usage != expression.FTSMatchUsageDirectFilter {
+		return errors.Errorf("local MATCH ... AGAINST requires direct boolean filter context")
+	}
+	modifier, ok := expression.FTSMysqlMatchAgainstModifier(sf)
+	if !ok || !expression.FTSModifierSupportedByLocalNoScore(modifier) {
+		return errors.Errorf("local MATCH ... AGAINST only supports IN BOOLEAN MODE")
+	}
+
+	index, columnIDs, columnUniqueIDs, err := ds.resolveLocalFTSIndex(sf)
+	if err != nil {
+		return err
+	}
+	config, err := fulltext.AnalyzerConfigFromSessionVars(ds.SCtx().GetSessionVars(), index.FullTextInfo.ParserType)
+	if err != nil {
+		return err
+	}
+	return expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, &expression.FTSLocalEvalInfo{
+		TableID:         ds.TableInfo.ID,
+		IndexID:         index.ID,
+		ParserType:      index.FullTextInfo.ParserType,
+		AnalyzerConfig:  config,
+		ColumnIDs:       columnIDs,
+		ColumnUniqueIDs: columnUniqueIDs,
+		NoScore:         true,
+	})
+}
+
+func (ds *DataSource) resolveLocalFTSIndex(sf *expression.ScalarFunction) (index *model.IndexInfo, columnIDs []int64, columnUniqueIDs []int64, err error) {
+	args := sf.GetArgs()
+	if len(args) <= 1 {
+		return nil, nil, nil, errors.Errorf("local MATCH ... AGAINST requires matched columns")
+	}
+
+	matchedColSet := intset.NewFastIntSet()
+	matchedColumns := make(map[int64]*expression.Column, len(args)-1)
+	for _, arg := range args[1:] {
+		col, ok := arg.(*expression.Column)
+		if !ok {
+			return nil, nil, nil, errors.Errorf("local MATCH ... AGAINST requires column arguments")
+		}
+		matchedColSet.Insert(int(col.ID))
+		matchedColumns[col.ID] = col
+	}
+
+	for _, index := range ds.TableInfo.Indices {
+		if index.FullTextInfo == nil || !index.IsPublic() {
+			continue
+		}
+		if !ds.localFTSIndexColumnSet(index).Equals(matchedColSet) {
+			continue
+		}
+		columnIDs := make([]int64, 0, len(index.Columns))
+		columnUniqueIDs := make([]int64, 0, len(index.Columns))
+		for _, indexCol := range index.Columns {
+			colInfo := ds.TableInfo.Columns[indexCol.Offset]
+			columnIDs = append(columnIDs, colInfo.ID)
+			if matchedCol, ok := matchedColumns[colInfo.ID]; ok {
+				columnUniqueIDs = append(columnUniqueIDs, matchedCol.UniqueID)
+			}
+		}
+		return index, columnIDs, columnUniqueIDs, nil
+	}
+	return nil, nil, nil, errors.Errorf("MATCH ... AGAINST local execution requires a matching FULLTEXT index")
+}
+
+func (ds *DataSource) localFTSIndexColumnSet(index *model.IndexInfo) intset.FastIntSet {
+	colSet := intset.NewFastIntSet()
+	for _, indexCol := range index.Columns {
+		colSet.Insert(int(ds.TableInfo.Columns[indexCol.Offset].ID))
+	}
+	return colSet
 }
 
 func (ds *DataSource) collectPushedDownCondsHasFTSFuncSet() intset.FastIntSet {

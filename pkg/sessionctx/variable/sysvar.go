@@ -2550,6 +2550,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableLocalMatchAgainst, Value: BoolToOnOff(vardef.DefTiDBEnableLocalMatchAgainst), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableLocalMatchAgainst = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil

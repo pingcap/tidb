@@ -2379,6 +2379,7 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
 		if er.inDirectMatchBooleanContext() {
+			sessVars.RecordRelevantOptVar(vardef.TiDBEnableLocalMatchAgainst)
 			if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
 				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
 				useLikeFallback = true
@@ -2389,7 +2390,7 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 				// so the driver discards round 1's plan; the rewrite continues
 				// with the native builtin to keep round 1 internally consistent.
 				er.planCtx.builder.MarkPredicateMatch()
-				if !er.ftsNativeViable(v.Modifier, numCols, stackLen) {
+				if !sessVars.EnableLocalMatchAgainst && !er.ftsNativeViable(v.Modifier, numCols, stackLen) {
 					er.planCtx.builder.MarkNonViableFTSMatch()
 				}
 			}
@@ -2528,6 +2529,12 @@ func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols
 	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
 		er.err = err
 		return
+	}
+	if er.inDirectMatchBooleanContext() {
+		if err := expression.SetFTSMysqlMatchAgainstUsage(sf, expression.FTSMatchUsageDirectFilter); err != nil {
+			er.err = err
+			return
+		}
 	}
 	er.ctxStackAppend(fn, types.EmptyName)
 }

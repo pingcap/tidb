@@ -257,6 +257,16 @@ func FTSMysqlMatchAgainstUsage(sf *ScalarFunction) (FTSMatchUsage, bool) {
 	return sig.usage, true
 }
 
+// FTSMysqlMatchAgainstModifier returns the modifier attached to the internal
+// MATCH ... AGAINST builtin signature.
+func FTSMysqlMatchAgainstModifier(sf *ScalarFunction) (ast.FulltextSearchModifier, bool) {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return ast.FulltextSearchModifierNaturalLanguageMode, false
+	}
+	return sig.modifier, true
+}
+
 // SetFTSMysqlMatchAgainstLocalEvalInfo attaches planner-validated local
 // no-score evaluation metadata to MATCH ... AGAINST.
 func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEvalInfo) error {

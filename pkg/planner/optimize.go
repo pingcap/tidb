@@ -595,7 +595,7 @@ func buildAndOptimizeLogicalPlanRound(
 	// alternative round reads this signal to decide whether to build a competing
 	// ILIKE-based plan alongside round 1's native plan, so the cheaper of the
 	// two wins via the normal alt-rounds cost comparison.
-	if builder.HasPredicateMatch() {
+	if builder.HasPredicateMatch() && !sctx.GetSessionVars().EnableLocalMatchAgainst {
 		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanHasPredicateContextMatch = true
 	}
 	// If this round saw a predicate-context MATCH that cannot be served by the

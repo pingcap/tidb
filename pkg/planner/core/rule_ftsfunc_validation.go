@@ -46,7 +46,7 @@ func (f *ftsFuncValidation) doQuickValidation(ctx context.Context, p base.Logica
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields. It can be used in WHERE only")
 		}
 	case *logicalop.LogicalSelection:
-		if expression.ContainsFullTextSearchFn(x.Conditions...) {
+		if expression.ContainsNonLocalFullTextSearchFn(x.Conditions...) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
 		}
 	case *logicalop.LogicalTopN:
