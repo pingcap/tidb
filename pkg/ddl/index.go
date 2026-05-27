@@ -555,7 +555,7 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr
 }
 
 func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	tblInfo, from, invisible, err := checkAlterIndexVisibility(jobCtx.metaMut, job)
+	tblInfo, from, invisible, err := checkAlterIndexVisibility(jobCtx.infoCache, jobCtx.metaMut, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
@@ -1975,6 +1975,66 @@ func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	tblInfo.Indices = append(tblInfo.Indices[:offset], tblInfo.Indices[offset+1:]...)
 }
 
+func buildEffectiveBaseTableInfoForDropIndexMViewMinMaxConstraints(
+	baseTableInfo *model.TableInfo,
+	indexInfos []*model.IndexInfo,
+	dropPrimaryKey bool,
+) *model.TableInfo {
+	effectiveBaseTableInfo := baseTableInfo.Clone()
+	for _, indexInfo := range indexInfos {
+		removeIndexInfo(effectiveBaseTableInfo, indexInfo)
+	}
+	if dropPrimaryKey {
+		effectiveBaseTableInfo.PKIsHandle = false
+	}
+	return effectiveBaseTableInfo
+}
+
+func buildEffectiveBaseTableInfoForAlterIndexVisibilityMViewMinMaxConstraints(
+	baseTableInfo *model.TableInfo,
+	indexName pmodel.CIStr,
+	invisible bool,
+) *model.TableInfo {
+	effectiveBaseTableInfo := baseTableInfo.Clone()
+	setIndexVisibility(effectiveBaseTableInfo, indexName, invisible)
+	return effectiveBaseTableInfo
+}
+
+func checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+	infoCache *infoschema.InfoCache,
+	job *model.Job,
+	baseTableInfo *model.TableInfo,
+	effectiveBaseTableInfo *model.TableInfo,
+	indexName pmodel.CIStr,
+	op string,
+) error {
+	// Multi-schema changes already validate dependent MV MIN/MAX constraints
+	// against the final effective table shape. Re-checking each sub-job here
+	// would validate an intermediate owner state and incorrectly reject
+	// drop+replace index combinations within the same multi-schema DDL.
+	if job.MultiSchemaInfo != nil {
+		return nil
+	}
+	if !hasMaterializedViewDependsOnBaseTable(baseTableInfo) {
+		return nil
+	}
+	if err := checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
+		context.Background(),
+		infoCache.GetLatest(),
+		nil,
+		pmodel.NewCIStr(job.SchemaName),
+		baseTableInfo,
+		effectiveBaseTableInfo,
+		pmodel.CIStr{},
+		indexName,
+		op,
+	); err != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
@@ -2007,6 +2067,23 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model
 			return nil, nil, false, errors.Trace(err)
 		}
 		indexInfos = append(indexInfos, indexInfo)
+	}
+	effectiveBaseTableInfo := buildEffectiveBaseTableInfoForDropIndexMViewMinMaxConstraints(
+		tblInfo,
+		indexInfos,
+		job.Type == model.ActionDropPrimaryKey,
+	)
+	for _, idxArg := range args.IndexArgs {
+		if err := checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+			infoCache,
+			job,
+			tblInfo,
+			effectiveBaseTableInfo,
+			idxArg.IndexName,
+			"DROP INDEX",
+		); err != nil {
+			return nil, nil, false, err
+		}
 	}
 	return tblInfo, indexInfos, false, nil
 }
@@ -2062,7 +2139,7 @@ func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel
 	return tblInfo, from, to, errors.Trace(err)
 }
 
-func checkAlterIndexVisibility(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel.CIStr, bool, error) {
+func checkAlterIndexVisibility(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel.CIStr, bool, error) {
 	var (
 		indexName pmodel.CIStr
 		invisible bool
@@ -2089,6 +2166,19 @@ func checkAlterIndexVisibility(t *meta.Mutator, job *model.Job) (*model.TableInf
 	if skip {
 		job.State = model.JobStateDone
 		return nil, indexName, invisible, nil
+	}
+	if invisible {
+		effectiveBaseTableInfo := buildEffectiveBaseTableInfoForAlterIndexVisibilityMViewMinMaxConstraints(tblInfo, indexName, true)
+		if err := checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+			infoCache,
+			job,
+			tblInfo,
+			effectiveBaseTableInfo,
+			indexName,
+			"ALTER INDEX INVISIBLE",
+		); err != nil {
+			return nil, indexName, invisible, err
+		}
 	}
 	return tblInfo, indexName, invisible, nil
 }

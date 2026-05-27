@@ -325,6 +325,75 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexes(t *testing.
 	require.ErrorContains(t, err, "MIN/MAX fast refresh")
 }
 
+func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcurrentDrop(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_concurrent_drop_idx (a int not null, b int not null, c int not null, index idx_ab(a, b), index idx_ba(b, a))")
+	tk.MustExec("create materialized view log on t_concurrent_drop_idx (a, b, c) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_concurrent_drop_idx (a, b, minc, cnt) refresh fast next now() as select a, b, min(c), count(1) from t_concurrent_drop_idx group by a, b")
+
+	var pausedJobID int64
+	pauseCh := make(chan struct{})
+	blockedCh := make(chan struct{}, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		if job.Type != model.ActionDropIndex || job.TableName != "t_concurrent_drop_idx" || job.SchemaState != model.StatePublic {
+			return
+		}
+		if !atomic.CompareAndSwapInt64(&pausedJobID, 0, job.ID) {
+			return
+		}
+		select {
+		case blockedCh <- struct{}{}:
+		default:
+		}
+		<-pauseCh
+	})
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	var (
+		err1 error
+		err2 error
+		wg   sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err1 = tk1.ExecToErr("drop index idx_ab on t_concurrent_drop_idx")
+	}()
+
+	select {
+	case <-blockedCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for first drop index job to pause")
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err2 = tk2.ExecToErr("drop index idx_ba on t_concurrent_drop_idx")
+	}()
+
+	require.Eventually(t, func() bool {
+		return fmt.Sprint(tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Rows()[0][0]) == "2"
+	}, 5*time.Second, 50*time.Millisecond)
+
+	close(pauseCh)
+	wg.Wait()
+
+	require.NoError(t, err1)
+	require.ErrorContains(t, err2, "required by materialized view mv_concurrent_drop_idx")
+	require.ErrorContains(t, err2, "MIN/MAX fast refresh")
+
+	tk.MustExec("insert into t_concurrent_drop_idx values (1, 2, 10), (1, 2, 5)")
+	tk.MustExec("refresh materialized view mv_concurrent_drop_idx fast")
+	tk.MustQuery("select a, b, minc, cnt from mv_concurrent_drop_idx").Check(testkit.Rows("1 2 5 2"))
+}
+
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
