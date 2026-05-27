@@ -849,6 +849,13 @@ func genBriefPlanWithSCtx(sctx sessionctx.Context, stmt ast.StmtNode) (planDiges
 		return "", "", nil, err
 	}
 
+	// This path generates plan variants for EXPLAIN EXPLORE and binding
+	// suggestions; the consumer extracts hints from the result. Optimizer
+	// fast paths (point-get, trivial plan) bypass hint-bearing operators,
+	// so mark the statement as InExplainStmt to opt out of them and force
+	// the regular planner that produces richer plan metadata.
+	sctx.GetSessionVars().StmtCtx.InExplainStmt = true
+
 	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetLatestInfoSchema().(infoschema.InfoSchema))
 	if err != nil {
 		return "", "", nil, err
