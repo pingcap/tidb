@@ -19,11 +19,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 )
 
-// buildTiCIShardInfosByAddrFromLocations assigns shards in loc order. Each shard
-// chooses the candidate store with the lowest current shard count; ties keep the
-// candidate order returned by TiCI.
+// buildTiCIShardInfosByAddrFromLocations pre-counts single-candidate shards as
+// fixed load, then assigns shards in loc order. Multi-candidate shards choose the
+// candidate store with the lowest current load; ties keep TiCI's candidate order.
 func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][]*coprocessor.ShardInfo, error) {
-	storeShard := make(map[string][]*coprocessor.ShardInfo)
 	addrLoad := make(map[string]int)
 	for _, loc := range locs {
 		if len(loc.localCacheAddrs) == 0 {
@@ -32,6 +31,13 @@ func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][
 		if loc.Ranges == nil {
 			return nil, errors.Errorf("tici shard %d has nil ranges", loc.ShardID)
 		}
+		if len(loc.localCacheAddrs) == 1 {
+			addrLoad[loc.localCacheAddrs[0]]++
+		}
+	}
+
+	storeShard := make(map[string][]*coprocessor.ShardInfo)
+	for _, loc := range locs {
 		addr := selectTiCIShardAddr(loc.localCacheAddrs, addrLoad)
 		storeShard[addr] = append(storeShard[addr], &coprocessor.ShardInfo{
 			ShardId:    loc.ShardID,
@@ -43,6 +49,9 @@ func buildTiCIShardInfosByAddrFromLocations(locs []*ShardLocation) (map[string][
 }
 
 func selectTiCIShardAddr(addrs []string, addrLoad map[string]int) string {
+	if len(addrs) == 1 {
+		return addrs[0]
+	}
 	selected := addrs[0]
 	selectedLoad := addrLoad[selected]
 	for _, addr := range addrs[1:] {

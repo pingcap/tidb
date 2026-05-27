@@ -469,7 +469,7 @@ func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
 		require.Len(t, infoByAddr["addr-b"][0].ShardInfos, 2)
 	})
 
-	t.Run("keeps loc input order when later shard is constrained", func(t *testing.T) {
+	t.Run("count single-candidate shards before selecting multi-candidate shards", func(t *testing.T) {
 		client := &mppTiCIMockShardClient{
 			result: []*ShardWithAddr{
 				{
@@ -493,10 +493,11 @@ func TestBuildTiCIShardInfosByStoreAddrContextPropagation(t *testing.T) {
 
 		infoByAddr, err := buildTiCIShardInfosByStoreAddr(context.Background(), cache, req, tiflashcompute.DispatchPolicyConsistentHash, tiflash.AllReplicas)
 		require.NoError(t, err)
-		require.Len(t, infoByAddr, 1)
-		require.Len(t, infoByAddr["addr-a"][0].ShardInfos, 2)
-		require.EqualValues(t, 1, infoByAddr["addr-a"][0].ShardInfos[0].ShardId)
-		require.EqualValues(t, 2, infoByAddr["addr-a"][0].ShardInfos[1].ShardId)
+		require.Len(t, infoByAddr, 2)
+		require.Len(t, infoByAddr["addr-a"][0].ShardInfos, 1)
+		require.EqualValues(t, 2, infoByAddr["addr-a"][0].ShardInfos[0].ShardId)
+		require.Len(t, infoByAddr["addr-b"][0].ShardInfos, 1)
+		require.EqualValues(t, 1, infoByAddr["addr-b"][0].ShardInfos[0].ShardId)
 	})
 
 	t.Run("return error when shard has no local cache addr", func(t *testing.T) {
