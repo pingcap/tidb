@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	mviewmerge "github.com/pingcap/tidb/pkg/planner/mview"
+	"github.com/pingcap/tidb/pkg/planner/mview"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -147,7 +147,7 @@ func (b *executorBuilder) buildMViewDeltaMerge(v *plannercore.MVDeltaMerge) exec
 
 func buildMViewDeltaMergeAggMappings(
 	sctx sessionctx.Context,
-	aggInfos []mviewmerge.AggInfo,
+	aggInfos []mview.AggInfo,
 	sourceFieldTypes []*types.FieldType,
 	deltaAggColCount int,
 ) ([]MViewDeltaMergeAggMapping, error) {
@@ -180,7 +180,7 @@ func buildMViewDeltaMergeAggMappings(
 			ColID:           []int{outputColID},
 			DependencyColID: deps,
 		}
-		if countStarMappingIdx < 0 && aggInfo.Kind == mviewmerge.AggCountStar {
+		if countStarMappingIdx < 0 && aggInfo.Kind == mview.AggCountStar {
 			countStarMappingIdx = mappingIdx
 		}
 		mappings = append(mappings, mapping)
@@ -292,15 +292,15 @@ func buildMViewDeltaMergeAggMappings(
 	return ordered, nil
 }
 
-func mviewDeltaMergeAggFuncName(kind mviewmerge.AggKind) (string, error) {
+func mviewDeltaMergeAggFuncName(kind mview.AggKind) (string, error) {
 	switch kind {
-	case mviewmerge.AggCountStar, mviewmerge.AggCount:
+	case mview.AggCountStar, mview.AggCount:
 		return ast.AggFuncCount, nil
-	case mviewmerge.AggSum:
+	case mview.AggSum:
 		return ast.AggFuncSum, nil
-	case mviewmerge.AggMin:
+	case mview.AggMin:
 		return ast.AggFuncMin, nil
-	case mviewmerge.AggMax:
+	case mview.AggMax:
 		return ast.AggFuncMax, nil
 	default:
 		return "", errors.Errorf("unsupported MViewDeltaMerge aggregate kind %v", kind)
@@ -308,11 +308,11 @@ func mviewDeltaMergeAggFuncName(kind mviewmerge.AggKind) (string, error) {
 }
 
 func mviewDeltaMergeAggArgExpr(
-	aggInfo mviewmerge.AggInfo,
+	aggInfo mview.AggInfo,
 	dependencies []int,
 	sourceFieldTypes []*types.FieldType,
 ) (expression.Expression, error) {
-	if aggInfo.Kind == mviewmerge.AggCountStar {
+	if aggInfo.Kind == mview.AggCountStar {
 		return expression.NewOne(), nil
 	}
 	if len(dependencies) == 0 {
@@ -340,7 +340,7 @@ func mviewDeltaMergeAggArgExpr(
 			dep,
 		)
 	}
-	if aggInfo.Kind == mviewmerge.AggMin || aggInfo.Kind == mviewmerge.AggMax {
+	if aggInfo.Kind == mview.AggMin || aggInfo.Kind == mview.AggMax {
 		if len(dependencies) != 4 && len(dependencies) != 5 {
 			return nil, errors.Errorf(
 				"MVDeltaMerge aggregate %v at mview offset %d expects 4 or 5 dependencies, got %d",
@@ -510,7 +510,7 @@ func buildMVDeltaMergeMinMaxResultColByMViewOffset(v *plannercore.MVDeltaMerge) 
 				v.MVColumnCount,
 			)
 		}
-		if aggInfo.Kind != mviewmerge.AggMin && aggInfo.Kind != mviewmerge.AggMax {
+		if aggInfo.Kind != mview.AggMin && aggInfo.Kind != mview.AggMax {
 			continue
 		}
 		if minMaxResultColByMViewOffset == nil {

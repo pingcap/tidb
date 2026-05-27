@@ -115,14 +115,14 @@ func TestBuildRefreshMVFastPlan(t *testing.T) {
 	var hasCountStar, hasCountExpr, hasSum bool
 	for _, aggInfo := range mergePlan.AggInfos {
 		switch aggInfo.Kind {
-		case mvmerge.AggCountStar:
+		case mview.AggCountStar:
 			hasCountStar = true
 			require.Equal(t, []int{0}, aggInfo.Dependencies)
-		case mvmerge.AggCount:
+		case mview.AggCount:
 			hasCountExpr = true
 			require.Equal(t, "b", aggInfo.ArgColName)
 			require.Equal(t, []int{1}, aggInfo.Dependencies)
-		case mvmerge.AggSum:
+		case mview.AggSum:
 			hasSum = true
 			require.Equal(t, "b", aggInfo.ArgColName)
 			require.Equal(t, []int{2, 5}, aggInfo.Dependencies)
@@ -240,7 +240,7 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 	require.NotNil(t, mergePlan.FullUpdateInnerSource)
 	minMaxCount := 0
 	for _, ai := range mergePlan.AggInfos {
-		if ai.Kind == mvmerge.AggMin || ai.Kind == mvmerge.AggMax {
+		if ai.Kind == mview.AggMin || ai.Kind == mview.AggMax {
 			minMaxCount++
 		}
 	}
@@ -259,7 +259,7 @@ func TestBuildRefreshMVFastPlanWithMinMaxHasFullUpdate(t *testing.T) {
 		mvOffsetCount[mvOffset]++
 	}
 	for _, ai := range mergePlan.AggInfos {
-		if ai.Kind == mvmerge.AggMin || ai.Kind == mvmerge.AggMax {
+		if ai.Kind == mview.AggMin || ai.Kind == mview.AggMax {
 			require.Equal(t, 1, mvOffsetCount[ai.MVOffset])
 		}
 	}
@@ -573,10 +573,10 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	var hasCountStar, hasSum bool
 	for _, aggInfo := range mergePlan.AggInfos {
 		switch aggInfo.Kind {
-		case mvmerge.AggCountStar:
+		case mview.AggCountStar:
 			hasCountStar = true
 			require.Equal(t, []int{0}, aggInfo.Dependencies)
-		case mvmerge.AggSum:
+		case mview.AggSum:
 			hasSum = true
 			require.Equal(t, "b", aggInfo.ArgColName)
 			require.Equal(t, []int{1}, aggInfo.Dependencies)
@@ -586,7 +586,7 @@ func TestBuildRefreshMVFastSumNotNullNoCountExpr(t *testing.T) {
 	require.True(t, hasSum)
 }
 
-func TestMVMergeBuildResultHandleCols(t *testing.T) {
+func TestMViewBuildResultHandleCols(t *testing.T) {
 	type handleCase struct {
 		name               string
 		baseID             int64
@@ -625,7 +625,7 @@ func TestMVMergeBuildResultHandleCols(t *testing.T) {
 			},
 			expectHandleIsInt:  true,
 			expectHandleIdxs:   []int{3},
-			expectHandleLayout: []string{"__mvmerge_mv_rowid"},
+			expectHandleLayout: []string{"__mview_mv_rowid"},
 		},
 		{
 			name:   "int_handle",
@@ -707,7 +707,7 @@ func TestMVMergeBuildResultHandleCols(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			baseTbl, mlogTbl := buildBaseAndMLogForHandleTest(tc.baseID, tc.mlogID, tc.baseCols)
 			mvTbl := tc.buildMV(tc.baseID, tc.mvID)
-			res, outputNames := buildMVMergeResultForHandleTest(t, baseTbl, mlogTbl, mvTbl)
+			res, outputNames := buildMViewResultForHandleTest(t, baseTbl, mlogTbl, mvTbl)
 			require.NotNil(t, res.MVTablePKCols)
 			require.Equal(t, tc.expectHandleIsInt, res.MVTablePKCols.IsInt())
 			require.Equal(t, len(tc.expectHandleIdxs), res.MVTablePKCols.NumCols())
@@ -767,20 +767,20 @@ func buildBaseAndMLogForHandleTest(baseID, mlogID int64, cols []handleColDef) (*
 	return baseTbl, mlogTbl
 }
 
-func buildMVMergeResultForHandleTest(
+func buildMViewResultForHandleTest(
 	t *testing.T,
 	baseTbl, mlogTbl, mvTbl *model.TableInfo,
-) (*mvmerge.BuildResult, types.NameSlice) {
+) (*mview.BuildResult, types.NameSlice) {
 	t.Helper()
 	sctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{baseTbl, mlogTbl, mvTbl})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
 
-	res, err := mvmerge.Build(
+	res, err := mview.Build(
 		sctx.GetPlanCtx(),
 		is,
 		mvTbl,
-		mvmerge.BuildOptions{FromTS: 1},
+		mview.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.NoError(t, err)
@@ -801,7 +801,7 @@ func buildMVMergeResultForHandleTest(
 
 func assertHandleColsMatchMergeSourceLayout(
 	t *testing.T,
-	res *mvmerge.BuildResult,
+	res *mview.BuildResult,
 	outputNames types.NameSlice,
 	expectedCols []string,
 ) {
