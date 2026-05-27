@@ -86,49 +86,29 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	ingest.LitInitialized = false
 
 	var checkErr error
-	var runDML, backfillDone, ddlDone bool
+	var runDML, backfillDone bool
 	// only trigger reload when schema version changed
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/disableOnTickReload", "return(true)")
-	ddlDoneCh := make(chan error, 1)
-	go func() {
-		_, err := tk.Exec("alter table t add primary key idx(c1);")
-		ddlDoneCh <- err
-	}()
-	deadline := time.After(30 * time.Second)
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for !runDML {
-		select {
-		case <-ticker.C:
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
+		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "primary")
 			if idx == nil {
-				continue
+				return
 			}
-			if idx.BackfillState != model.BackfillStateReadyToMerge && idx.BackfillState != model.BackfillStateMerging {
-				continue
+			if !backfillDone && idx.BackfillState == model.BackfillStateReadyToMerge {
+				// The backfill phase just completed and the state transitioned to ReadyToMerge.
+				// Wait one more round for it to enter Merging state.
+				backfillDone = true
+				return
 			}
-			backfillDone = true
-			runDML = true
-			// Add delete record 4 when add-primary-key enters the merge phase.
-			_, checkErr = tk2.Exec("delete from t where c1 = 4;")
-		case err := <-ddlDoneCh:
-			require.NoError(t, err)
-			ddlDone = true
-		case <-deadline:
-			require.FailNow(t, "timed out waiting for add primary key merge phase")
+			if backfillDone && !runDML && idx.BackfillState == model.BackfillStateMerging {
+				// The merge phase is starting. Delete record 4 to test merge correctness.
+				runDML = true
+				_, checkErr = tk2.Exec("delete from t where c1 = 4;")
+			}
 		}
-		if ddlDone {
-			break
-		}
-	}
-	if !ddlDone {
-		select {
-		case err := <-ddlDoneCh:
-			require.NoError(t, err)
-		case <-deadline:
-			require.FailNow(t, "timed out waiting for add primary key DDL completion")
-		}
-	}
+	})
+	tk.MustExec("alter table t add primary key idx(c1);")
 	require.True(t, backfillDone)
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
