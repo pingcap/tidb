@@ -1798,99 +1798,118 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if err != nil {
 		return finalizeFailure(err)
 	}
-	if err := insertMLogPurgeHistRunning(
-		kctx,
-		histSQLExec,
-		purgeJobID,
-		mlogID,
-		schemaName.O,
-		baseTableMeta.Name.O,
-		purgeMethod,
-		safePurgeTSO,
-		histTime(purgeStart),
-	); err != nil {
-		return errors.Trace(err)
+
+	purgeCutoffFenceTSO := uint64(0)
+	if lockedLastPurgedTSOReady {
+		purgeCutoffFenceTSO = lockedLastPurgedTSO
 	}
-	purgeHistRunningInserted = true
-	stopTaskMonitor, err = startMVTaskMonitor(
-		kctx,
-		e.GetSysSession,
-		func(sctx sessionctx.Context) {
-			e.ReleaseSysSession(releaseCtx, sctx)
-		},
-		taskCancelController,
-		fmt.Sprintf("mlog-purge-%d", purgeJobID),
-		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
-			return readPurgeHistCancelRequest(watchCtx, watchSQLExec, purgeJobID, mlogID)
-		},
-		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
-			return updatePurgeHistHeartbeat(watchCtx, watchSQLExec, purgeJobID, mlogID)
-		},
-	)
+	latestRecordedCutoffTSO, hasLatestRecordedCutoffTSO, err := readLatestMLogPurgeCutoffFenceTSO(kctx, histSQLExec, mlogID)
 	if err != nil {
 		return finalizeFailure(err)
 	}
-	failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
-	skipDeleteByCheckpoint := lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
-	if !skipDeleteByCheckpoint && safePurgeTSO > 0 {
-		throttlePlan = tryBuildMLogPurgeThrottlePlanBestEffort(
+	if hasLatestRecordedCutoffTSO && latestRecordedCutoffTSO > purgeCutoffFenceTSO {
+		purgeCutoffFenceTSO = latestRecordedCutoffTSO
+	}
+	// Do not write a lower PURGE_CUTOFF_TSO. This keeps the per-MLOG cutoff
+	// fence monotonic with PURGE_JOB_ID, which the FAST refresh integrity check
+	// depends on when it reads the latest hazardous purge history row.
+	skipPurgeByCutoffFence := safePurgeTSO < purgeCutoffFenceTSO
+	skipDeleteByCheckpoint := false
+	if !skipPurgeByCutoffFence {
+		if err := insertMLogPurgeHistRunning(
 			kctx,
-			e.Ctx().GetSessionVars(),
-			scheduleEvalSctx,
-			purgeSctx,
-			countSQLExec,
-			countSessVars,
-			mlogInfo,
-			isInternalSQL,
+			histSQLExec,
+			purgeJobID,
+			mlogID,
 			schemaName.O,
-			mlogName.O,
-			lockedLastPurgedTSO,
-			lockedLastPurgedTSOReady,
+			baseTableMeta.Name.O,
+			purgeMethod,
 			safePurgeTSO,
-			lockedNextTime,
-		)
-		if throttlePlan != nil {
-			effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
+			histTime(purgeStart),
+		); err != nil {
+			return errors.Trace(err)
 		}
-		deleteLoopStart = time.Now()
-		for {
-			batchPurgeRows, batchErr := purgeMaterializedViewLogData(
+		purgeHistRunningInserted = true
+		stopTaskMonitor, err = startMVTaskMonitor(
+			kctx,
+			e.GetSysSession,
+			func(sctx sessionctx.Context) {
+				e.ReleaseSysSession(releaseCtx, sctx)
+			},
+			taskCancelController,
+			fmt.Sprintf("mlog-purge-%d", purgeJobID),
+			func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
+				return readPurgeHistCancelRequest(watchCtx, watchSQLExec, purgeJobID, mlogID)
+			},
+			func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
+				return updatePurgeHistHeartbeat(watchCtx, watchSQLExec, purgeJobID, mlogID)
+			},
+		)
+		if err != nil {
+			return finalizeFailure(err)
+		}
+		failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
+		skipDeleteByCheckpoint = lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
+		if !skipDeleteByCheckpoint && safePurgeTSO > 0 {
+			throttlePlan = tryBuildMLogPurgeThrottlePlanBestEffort(
 				kctx,
-				deleteSQLExec,
-				deleteSessVars,
+				e.Ctx().GetSessionVars(),
+				scheduleEvalSctx,
+				purgeSctx,
+				countSQLExec,
+				countSessVars,
+				mlogInfo,
+				isInternalSQL,
 				schemaName.O,
 				mlogName.O,
 				lockedLastPurgedTSO,
 				lockedLastPurgedTSOReady,
 				safePurgeTSO,
-				effectiveBatchSize,
+				lockedNextTime,
 			)
-			totalPurgeRows += batchPurgeRows
-			failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
-			if batchErr != nil {
-				_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
-				txnFinished = true
-				return finalizeFailure(batchErr)
-			}
-			if batchPurgeRows < effectiveBatchSize {
-				break
-			}
 			if throttlePlan != nil {
-				if sleepErr := throttlePlan.maybeSleep(kctx, deleteLoopStart, totalPurgeRows); sleepErr != nil {
-					if taskCancelController.isManualCancelRequested() {
-						return finalizeFailure(sleepErr)
+				effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
+			}
+			deleteLoopStart = time.Now()
+			for {
+				batchPurgeRows, batchErr := purgeMaterializedViewLogData(
+					kctx,
+					deleteSQLExec,
+					deleteSessVars,
+					schemaName.O,
+					mlogName.O,
+					lockedLastPurgedTSO,
+					lockedLastPurgedTSOReady,
+					safePurgeTSO,
+					effectiveBatchSize,
+				)
+				totalPurgeRows += batchPurgeRows
+				failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
+				if batchErr != nil {
+					_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+					txnFinished = true
+					return finalizeFailure(batchErr)
+				}
+				if batchPurgeRows < effectiveBatchSize {
+					break
+				}
+				if throttlePlan != nil {
+					if sleepErr := throttlePlan.maybeSleep(kctx, deleteLoopStart, totalPurgeRows); sleepErr != nil {
+						if taskCancelController.isManualCancelRequested() {
+							return finalizeFailure(sleepErr)
+						}
+						logutil.BgLogger().Warn(
+							"purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge",
+							zap.String("schemaName", schemaName.O),
+							zap.String("tableName", mlogName.O),
+							zap.Uint64("safePurgeTSO", safePurgeTSO),
+							zap.Error(sleepErr),
+						)
+						throttlePlan = nil
+						effectiveBatchSize = batchSize
+					} else {
+						effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
 					}
-					logutil.BgLogger().Warn(
-						"purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge",
-						zap.String("schemaName", schemaName.O),
-						zap.String("tableName", mlogName.O),
-						zap.Uint64("safePurgeTSO", safePurgeTSO),
-						zap.Error(sleepErr),
-					)
-					throttlePlan = nil
-					effectiveBatchSize = batchSize
-				} else {
-					effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
 				}
 			}
 		}
@@ -1912,7 +1931,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		return finalizeFailure(err)
 	}
 	var lastPurgedTSOToPersist *uint64
-	if !skipDeleteByCheckpoint {
+	if !skipPurgeByCutoffFence && !skipDeleteByCheckpoint {
 		lastPurgedTSOToPersist = &safePurgeTSO
 	}
 	if err = updateMaterializedViewLogPurgeInfoOnSuccess(
@@ -4457,6 +4476,37 @@ func readMLogPurgeInfoLastPurgedTSO(
 	return rows[0].GetUint64(0), true, nil
 }
 
+func readLatestMLogPurgeCutoffFenceTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mlogID int64,
+) (purgeCutoffTSO uint64, hasCutoff bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT PURGE_CUTOFF_TSO
+FROM mysql.tidb_mlog_purge_hist
+WHERE MLOG_ID = %?
+  AND PURGE_CUTOFF_TSO IS NOT NULL
+ORDER BY PURGE_JOB_ID DESC
+LIMIT 1`,
+		mlogID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return 0, false, errors.New("purge materialized view log: required system table mysql.tidb_mlog_purge_hist does not exist")
+		}
+		return 0, false, errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return 0, false, nil
+	}
+	return rows[0].GetUint64(0), true, nil
+}
+
+// readLatestHazardousMLogPurgeCutoffTSO relies on purge-side monotonic cutoff
+// enforcement: purge skips before writing history if its newly computed
+// safePurgeTSO is lower than the latest recorded non-NULL PURGE_CUTOFF_TSO.
 func readLatestHazardousMLogPurgeCutoffTSO(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
