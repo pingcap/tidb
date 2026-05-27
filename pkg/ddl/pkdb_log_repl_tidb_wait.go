@@ -39,8 +39,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const logReplStateCf = "lr-state"
-
 const replicaClusterIDLabelKey = "replica_cluster_id"
 
 var (
@@ -177,15 +175,11 @@ func (j waitRegionsInit) wait(
 	clusterID uint64,
 ) error {
 	cfg := config.GetGlobalConfig()
-	kvCli, err := rawkv.NewClient(
-		runCtx,
-		strings.Split(cfg.Path, ","),
-		cfg.Security.ClusterSecurity(),
-	)
+	stateScanner, err := newLogReplStateScanner(runCtx, strings.Split(cfg.Path, ","))
 	if err != nil {
 		return err
 	}
-	defer kvCli.Close()
+	defer stateScanner.Close()
 
 	sourcePDCli, err := pd.NewClientWithContext(runCtx, sourcePDAddrs, pkdbPDSecurityOption())
 	if err != nil {
@@ -209,7 +203,7 @@ func (j waitRegionsInit) wait(
 		return err
 	}
 	return backoffWait(runCtx, func() (bool, error) {
-		return progressTracker.checkInitedAndUpdateProgress(runCtx, kvCli, estRegionCnt)
+		return progressTracker.checkInitedAndUpdateProgress(runCtx, stateScanner, estRegionCnt)
 	})
 }
 
@@ -256,15 +250,11 @@ func (w waitDataSync) checkAndWait(ctx context.Context, newJobBytes []byte, last
 
 func (w waitDataSync) wait(runCtx context.Context, sourcePDAddrs []string) error {
 	cfg := config.GetGlobalConfig()
-	cli, err := rawkv.NewClient(
-		runCtx,
-		strings.Split(cfg.Path, ","),
-		cfg.Security.ClusterSecurity(),
-	)
+	stateScanner, err := newLogReplStateScanner(runCtx, strings.Split(cfg.Path, ","))
 	if err != nil {
 		return err
 	}
-	defer cli.Close()
+	defer stateScanner.Close()
 
 	ctx, cancel := context.WithCancelCause(runCtx)
 	defer cancel(nil)
@@ -331,7 +321,7 @@ func (w waitDataSync) wait(runCtx context.Context, sourcePDAddrs []string) error
 			continue
 		}
 		err := backoffWait(ctx, func() (bool, error) {
-			return isSynced(ctx, cli, batch)
+			return isSynced(ctx, stateScanner, batch)
 		})
 		if err != nil {
 			waitErr = err
@@ -601,12 +591,11 @@ func regionCommitIndexFromInfo(resp *debugpb.RegionInfoResponse, regionID uint64
 	return raftLocalState.GetHardState().GetCommit(), nil
 }
 
-type rawKVScanClient interface {
-	Scan(ctx context.Context, startKey, endKey []byte, limit int, options ...rawkv.RawOption) (keys [][]byte, values [][]byte, err error)
-	ReverseScan(ctx context.Context, startKey, endKey []byte, limit int, options ...rawkv.RawOption) (keys [][]byte, values [][]byte, err error)
+type logReplStateScanClient interface {
+	ScanLogReplStates(ctx context.Context, startKey, endKey []byte, limit int) ([]*logreplicationpb.LogReplicationState, error)
 }
 
-func isSynced(ctx context.Context, cli rawKVScanClient, commitIndexes []regionCommitIndex) (bool, error) {
+func isSynced(ctx context.Context, cli logReplStateScanClient, commitIndexes []regionCommitIndex) (bool, error) {
 	if len(commitIndexes) == 0 {
 		return true, nil
 	}
@@ -738,9 +727,8 @@ func (w waitCleanupTiKV) checkAndWait(
 		return version, nil
 	}
 	// TiKV cleanup deletes the legacy lr-state CF. CSE keeps log replication
-	// progress in kvengine shard properties, and its CF_LR_STATE rawkv scan path
-	// is temporary bring-up debt. Do not extend that TiKV-shaped surface with a
-	// raw delete-range cleanup path.
+	// progress in kvengine shard properties. Do not add a TiKV-shaped raw
+	// delete-range cleanup path for CSE.
 	return version, nil
 }
 
@@ -857,20 +845,16 @@ func (r resetTS) checkAndWait(
 	}
 
 	cfg := config.GetGlobalConfig()
-	rawCli, err := rawkv.NewClient(
-		ctx,
-		strings.Split(cfg.Path, ","),
-		cfg.Security.ClusterSecurity(),
-	)
+	stateScanner, err := newLogReplStateScanner(ctx, strings.Split(cfg.Path, ","))
 	if err != nil {
 		return 0, err
 	}
-	defer rawCli.Close()
+	defer stateScanner.Close()
 
 	// TODO(lance6716): We only need max_ts, but scanReplStates materializes all
 	// states in memory. This can OOM on large-region clusters; consider scanning
 	// in a streaming fashion and only keeping the running max.
-	states, err := scanReplStates(ctx, rawCli)
+	states, err := scanReplStates(ctx, stateScanner)
 	if err != nil {
 		return 0, err
 	}
@@ -1376,7 +1360,7 @@ func backoffWait(ctx context.Context, f func() (bool, error)) error {
 
 func checkInited(
 	ctx context.Context,
-	cli rawKVScanClient,
+	cli logReplStateScanClient,
 	resumeKey []byte,
 ) (allDone bool, nextResumeKey []byte, err error) {
 	// resumeKey is also the end key of the last continuous state prefix obtained
@@ -1402,16 +1386,16 @@ func checkInited(
 	}
 
 	for {
-		keys, values, err := cli.Scan(ctx, currResumeKey, nil, pkdbDefaultScanPageSize, rawkv.SetColumnFamily(logReplStateCf))
+		states, err := cli.ScanLogReplStates(ctx, currResumeKey, nil, pkdbDefaultScanPageSize)
 		if err != nil {
 			return false, nil, err
 		}
 
-		if len(keys) == 0 || !bytes.Equal(keys[0], currResumeKey) {
+		if len(states) == 0 || bytes.Compare(states[0].StartKey, currResumeKey) > 0 {
 			if len(currResumeKey) == 0 {
 				gapEnd := "infinity"
-				if len(keys) > 0 {
-					gapEnd = redact.Key(keys[0])
+				if len(states) > 0 {
+					gapEnd = redact.Key(states[0].StartKey)
 				}
 				logutil.BgLogger().Info(
 					"range gap found during wait for standby init",
@@ -1420,41 +1404,9 @@ func checkInited(
 				)
 				return false, bytes.Clone(currResumeKey), nil
 			}
-
-			// Between two scans, the state whose start key equals scanKey may have been
-			// removed due to region merge. Reverse-scan one KV to see if a previous state
-			// now covers scanKey.
-			_, prevValues, err := cli.ReverseScan(ctx, currResumeKey, nil, 1, rawkv.SetColumnFamily(logReplStateCf))
-			if err != nil {
-				return false, nil, err
-			}
-			if len(prevValues) == 0 {
-				logutil.BgLogger().Info(
-					"range gap found during wait for standby init",
-					zap.String("from", "(unknown prev key)"),
-					zap.String("to", redact.Key(currResumeKey)),
-				)
-				return false, bytes.Clone(currResumeKey), nil
-			}
-
-			prev := &logreplicationpb.LogReplicationState{}
-			if err := prev.Unmarshal(prevValues[0]); err != nil {
-				return false, nil, err
-			}
-			allDone, gap := advanceWithState(prev)
-			if gap {
-				return false, bytes.Clone(currResumeKey), nil
-			}
-			if allDone {
-				return true, nil, nil
-			}
 		}
 
-		for _, v := range values {
-			state := &logreplicationpb.LogReplicationState{}
-			if err := state.Unmarshal(v); err != nil {
-				return false, nil, err
-			}
+		for _, state := range states {
 			allDone, gap := advanceWithState(state)
 			if gap {
 				return false, bytes.Clone(currResumeKey), nil
@@ -1465,7 +1417,7 @@ func checkInited(
 		}
 
 		// continue next scan if we have some progress
-		if len(keys) == pkdbDefaultScanPageSize {
+		if len(states) == pkdbDefaultScanPageSize {
 			continue
 		}
 		logutil.BgLogger().Info(
@@ -1511,7 +1463,7 @@ func (t *standbyInitProgressTracker) estimateTotalRegionCnt(ctx context.Context)
 
 func (t *standbyInitProgressTracker) checkInitedAndUpdateProgress(
 	ctx context.Context,
-	cli rawKVScanClient,
+	cli logReplStateScanClient,
 	estRegionCnt int,
 ) (bool, error) {
 	allDone, resumeKey, err := checkInited(ctx, cli, t.resumeKey)
@@ -1574,8 +1526,8 @@ func (*standbyInitProgressTracker) percentage(learnerCnt, estRegionCnt int) floa
 	return percentage
 }
 
-func scanReplStates(ctx context.Context, cli rawKVScanClient) ([]*logreplicationpb.LogReplicationState, error) {
-	// TODO(lance6716): This scans the whole lr-state CF and materializes all
+func scanReplStates(ctx context.Context, cli logReplStateScanClient) ([]*logreplicationpb.LogReplicationState, error) {
+	// TODO(lance6716): This scans all CSE log replication states and materializes all
 	// states into memory. In log replication workflows this may be invoked in
 	// retry loops (e.g. resetTS), so a large region count can cause
 	// repeated large allocations and OOM. Consider a streaming scan API that
@@ -1585,55 +1537,37 @@ func scanReplStates(ctx context.Context, cli rawKVScanClient) ([]*logreplication
 
 // scanReplStatesInRange returns the covering log replication states for
 // [startKey, endKey). It does not guarantee the returned states are continuous,
-// but different call sites may have enough knowledge to know that. For startKey
-// which is not minKey(""), it will prepend one previous state to covers startKey
-// to avoid false "gap" reports.
+// but different call sites may have enough knowledge to know that. The CSE
+// state scan API returns states overlapping the requested range, so a state
+// starting before startKey can still be included when it covers startKey.
 func scanReplStatesInRange(
 	ctx context.Context,
-	cli rawKVScanClient,
+	cli logReplStateScanClient,
 	startKey, endKey []byte,
 ) ([]*logreplicationpb.LogReplicationState, error) {
 	var states []*logreplicationpb.LogReplicationState
 
 	scanKey := startKey
 	for {
-		keys, values, err := cli.Scan(ctx, scanKey, endKey, pkdbDefaultScanPageSize, rawkv.SetColumnFamily(logReplStateCf))
+		batch, err := cli.ScanLogReplStates(ctx, scanKey, endKey, pkdbDefaultScanPageSize)
 		if err != nil {
 			return nil, err
 		}
-		if len(keys) == 0 {
+		if len(batch) == 0 {
 			break
 		}
-		for _, v := range values {
-			pb := &logreplicationpb.LogReplicationState{}
-			err := pb.Unmarshal(v)
-			if err != nil {
-				return nil, err
-			}
-			states = append(states, pb)
+		states = append(states, batch...)
+		last := batch[len(batch)-1]
+		if len(last.EndKey) == 0 || len(endKey) > 0 && bytes.Compare(last.EndKey, endKey) >= 0 {
+			break
 		}
-		scanKey = keys[len(keys)-1]
-		scanKey = append(scanKey, 0)
-	}
-
-	// The lr-state CF is usually keyed by range start key, but a state whose key
-	// is < startKey can still cover startKey (e.g. after split/merge changes). If
-	// the first scanned state starts after startKey, include one previous state
-	// to avoid false "gap" reports.
-	if len(startKey) > 0 && (len(states) == 0 || bytes.Compare(states[0].StartKey, startKey) > 0) {
-		_, prevValues, err := cli.ReverseScan(ctx, startKey, nil, 1, rawkv.SetColumnFamily(logReplStateCf))
-		if err != nil {
-			return nil, err
+		if len(batch) < pkdbDefaultScanPageSize {
+			break
 		}
-		if len(prevValues) > 0 {
-			prev := &logreplicationpb.LogReplicationState{}
-			if err := prev.Unmarshal(prevValues[0]); err != nil {
-				return nil, err
-			}
-			if len(prev.EndKey) == 0 || bytes.Compare(prev.EndKey, startKey) > 0 {
-				states = append([]*logreplicationpb.LogReplicationState{prev}, states...)
-			}
+		if bytes.Compare(last.EndKey, scanKey) <= 0 {
+			return nil, errors.New("log replication state scan returned non-progressing end key")
 		}
+		scanKey = bytes.Clone(last.EndKey)
 	}
 	return states, nil
 }

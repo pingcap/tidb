@@ -157,11 +157,10 @@ func TestStandbyInitProgressStateScanAndResume(t *testing.T) {
 	// First call: 2 continuous states, then a gap to infinity.
 	s1 := newTestReplState(1, "", "b", 1, 1)
 	s2 := newTestReplState(2, "b", "d", 1, 1)
-	keys12, values12 := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{s1, s2})
-	kvCli1 := &scriptedRawKVScanClient{
+	kvCli1 := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
-			{startKey: nil, endKey: nil, keys: keys12, values: values12},
+		steps: []logReplStateScanStep{
+			{startKey: nil, endKey: nil, states: []*logreplicationpb.LogReplicationState{s1, s2}},
 		},
 	}
 	finished, err := tracker.checkInitedAndUpdateProgress(context.Background(), kvCli1, estRegionCnt)
@@ -177,11 +176,10 @@ func TestStandbyInitProgressStateScanAndResume(t *testing.T) {
 	// Second call: extend one more state and resume scanning from "d".
 	pdHTTPCli.setStores(newTestStandbyInitStore(10, "replicator", testStandbyInitClusterID, 3))
 	s3 := newTestReplState(3, "d", "f", 1, 1)
-	keys3, values3 := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{s3})
-	kvCli2 := &scriptedRawKVScanClient{
+	kvCli2 := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
-			{startKey: []byte("d"), endKey: nil, keys: keys3, values: values3},
+		steps: []logReplStateScanStep{
+			{startKey: []byte("d"), endKey: nil, states: []*logreplicationpb.LogReplicationState{s3}},
 		},
 	}
 	finished, err = tracker.checkInitedAndUpdateProgress(context.Background(), kvCli2, estRegionCnt)
@@ -199,7 +197,7 @@ func TestStandbyInitProgressStateScanAndResume(t *testing.T) {
 	require.Equal(t, 2, pdHTTPCli.storeCallCount())
 }
 
-func TestStandbyInitProgressReverseScanWhenMerged(t *testing.T) {
+func TestStandbyInitProgressOverlappingScanWhenMerged(t *testing.T) {
 	pdHTTPCli := &scriptedStandbyInitPDHTTPClient{t: t, count: 10}
 	pdHTTPCli.setStores(newTestStandbyInitStore(10, "replicator", testStandbyInitClusterID, 4))
 	etcd := &scriptedStandbyInitEtcdPutter{}
@@ -212,15 +210,10 @@ func TestStandbyInitProgressReverseScanWhenMerged(t *testing.T) {
 
 	merge := newTestReplState(100, "c", "f", 1, 1)
 	next := newTestReplState(101, "f", "g", 1, 1)
-	mergeKeys, mergeValues := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{merge})
-	nextKeys, nextValues := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{next})
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		reverseScanSteps: []rawKVReverseScanStep{
-			{startKey: []byte("d"), endKey: nil, keys: mergeKeys, values: mergeValues},
-		},
-		scanSteps: []rawKVScanStep{
-			{startKey: []byte("d"), endKey: nil, keys: nextKeys, values: nextValues},
+		steps: []logReplStateScanStep{
+			{startKey: []byte("d"), endKey: nil, states: []*logreplicationpb.LogReplicationState{merge, next}},
 		},
 	}
 
@@ -246,11 +239,10 @@ func TestStandbyInitProgressClampToBelow100(t *testing.T) {
 	s1 := newTestReplState(1, "", "b", 1, 1)
 	s2 := newTestReplState(2, "b", "d", 1, 1)
 	s3 := newTestReplState(3, "d", "f", 1, 1)
-	keys, values := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{s1, s2, s3})
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
-			{startKey: nil, endKey: nil, keys: keys, values: values},
+		steps: []logReplStateScanStep{
+			{startKey: nil, endKey: nil, states: []*logreplicationpb.LogReplicationState{s1, s2, s3}},
 		},
 	}
 
@@ -269,11 +261,10 @@ func TestStandbyInitProgressInitedWrites100(t *testing.T) {
 		newTestReplState(1, "", "mid", 1, 1),
 		newTestReplState(2, "mid", "", 1, 1),
 	}
-	keys, values := marshalReplStatesToScanKVs(t, states)
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
-			{startKey: nil, endKey: nil, keys: keys, values: values},
+		steps: []logReplStateScanStep{
+			{startKey: nil, endKey: nil, states: states},
 		},
 	}
 
@@ -308,11 +299,10 @@ func TestStandbyInitProgressFiltersStores(t *testing.T) {
 	require.NoError(t, err)
 
 	state := newTestReplState(1, "", "b", 1, 1)
-	keys, values := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{state})
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
-			{startKey: nil, endKey: nil, keys: keys, values: values},
+		steps: []logReplStateScanStep{
+			{startKey: nil, endKey: nil, states: []*logreplicationpb.LogReplicationState{state}},
 		},
 	}
 
@@ -330,11 +320,10 @@ func TestStandbyInitCheckInitedReportsGapAtBeginning(t *testing.T) {
 	// The first state starts after min-key, which should be treated as a gap from
 	// min-key to that start key.
 	state := newTestReplState(1, "a", "b", 1, 1)
-	keys, values := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{state})
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
-			{startKey: nil, endKey: nil, keys: keys, values: values},
+		steps: []logReplStateScanStep{
+			{startKey: nil, endKey: nil, states: []*logreplicationpb.LogReplicationState{state}},
 		},
 	}
 
@@ -350,11 +339,10 @@ func TestStandbyInitCheckInitedStopsAtInternalGap(t *testing.T) {
 	// is a gap.
 	s1 := newTestReplState(1, "", "b", 1, 1)
 	s2 := newTestReplState(2, "c", "d", 1, 1)
-	keys, values := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{s1, s2})
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
-			{startKey: nil, endKey: nil, keys: keys, values: values},
+		steps: []logReplStateScanStep{
+			{startKey: nil, endKey: nil, states: []*logreplicationpb.LogReplicationState{s1, s2}},
 		},
 	}
 
@@ -365,18 +353,14 @@ func TestStandbyInitCheckInitedStopsAtInternalGap(t *testing.T) {
 	kvCli.assertDone()
 }
 
-func TestStandbyInitCheckInitedReverseScanEmptyReportsGap(t *testing.T) {
+func TestStandbyInitCheckInitedNoOverlappingStateReportsGap(t *testing.T) {
 	// Resume from a previously returned gap, but the exact resumeKey no longer
-	// exists and there is no previous state covering it.
+	// has an overlapping state covering it.
 	next := newTestReplState(101, "f", "g", 1, 1)
-	nextKeys, nextValues := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{next})
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		reverseScanSteps: []rawKVReverseScanStep{
-			{startKey: []byte("d"), endKey: nil},
-		},
-		scanSteps: []rawKVScanStep{
-			{startKey: []byte("d"), endKey: nil, keys: nextKeys, values: nextValues},
+		steps: []logReplStateScanStep{
+			{startKey: []byte("d"), endKey: nil, states: []*logreplicationpb.LogReplicationState{next}},
 		},
 	}
 
@@ -387,20 +371,14 @@ func TestStandbyInitCheckInitedReverseScanEmptyReportsGap(t *testing.T) {
 	kvCli.assertDone()
 }
 
-func TestStandbyInitCheckInitedReverseScanNotCoveringReportsGap(t *testing.T) {
-	// Reverse-scan returns a previous state, but it ends exactly at resumeKey and
-	// therefore does not cover resumeKey. This should still be treated as a gap.
-	prev := newTestReplState(100, "c", "d", 1, 1)
+func TestStandbyInitCheckInitedNonOverlappingPreviousStateReportsGap(t *testing.T) {
+	// A previous state ending exactly at resumeKey does not overlap resumeKey.
+	// The native scan should not return it, and the gap should remain.
 	next := newTestReplState(101, "f", "g", 1, 1)
-	prevKeys, prevValues := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{prev})
-	nextKeys, nextValues := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{next})
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		reverseScanSteps: []rawKVReverseScanStep{
-			{startKey: []byte("d"), endKey: nil, keys: prevKeys, values: prevValues},
-		},
-		scanSteps: []rawKVScanStep{
-			{startKey: []byte("d"), endKey: nil, keys: nextKeys, values: nextValues},
+		steps: []logReplStateScanStep{
+			{startKey: []byte("d"), endKey: nil, states: []*logreplicationpb.LogReplicationState{next}},
 		},
 	}
 
@@ -411,20 +389,15 @@ func TestStandbyInitCheckInitedReverseScanNotCoveringReportsGap(t *testing.T) {
 	kvCli.assertDone()
 }
 
-func TestStandbyInitCheckInitedReverseScanCoveringReportsGap(t *testing.T) {
-	// Reverse-scan returns a previous state, but it covers resumeKey but still has a
-	// gap.
+func TestStandbyInitCheckInitedOverlappingStateReportsGap(t *testing.T) {
+	// Native scan returns a previous state that overlaps resumeKey, but there is
+	// still a gap before the next state.
 	prev := newTestReplState(100, "c", "e", 1, 1)
 	next := newTestReplState(101, "f", "g", 1, 1)
-	prevKeys, prevValues := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{prev})
-	nextKeys, nextValues := marshalReplStatesToScanKVs(t, []*logreplicationpb.LogReplicationState{next})
-	kvCli := &scriptedRawKVScanClient{
+	kvCli := &scriptedLogReplStateScanClient{
 		t: t,
-		reverseScanSteps: []rawKVReverseScanStep{
-			{startKey: []byte("d"), endKey: nil, keys: prevKeys, values: prevValues},
-		},
-		scanSteps: []rawKVScanStep{
-			{startKey: []byte("d"), endKey: nil, keys: nextKeys, values: nextValues},
+		steps: []logReplStateScanStep{
+			{startKey: []byte("d"), endKey: nil, states: []*logreplicationpb.LogReplicationState{prev, next}},
 		},
 	}
 

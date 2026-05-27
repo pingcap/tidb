@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/raft_serverpb"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -497,126 +497,68 @@ func TestStreamRegionCommitIndexBatchesStopsOnContextCancel(t *testing.T) {
 	}
 }
 
-type rawKVScanStep struct {
+type logReplStateScanStep struct {
 	startKey []byte
 	endKey   []byte
 
-	keys   [][]byte
-	values [][]byte
+	states []*logreplicationpb.LogReplicationState
 	err    error
 }
 
-type rawKVReverseScanStep struct {
-	startKey []byte
-	endKey   []byte
-
-	keys   [][]byte
-	values [][]byte
-	err    error
-}
-
-type scriptedRawKVScanClient struct {
+type scriptedLogReplStateScanClient struct {
 	t *testing.T
 
-	scanSteps        []rawKVScanStep
-	reverseScanSteps []rawKVReverseScanStep
+	steps []logReplStateScanStep
 
-	scanCalls        int
-	reverseScanCalls int
+	calls int
 
 	gotFirstScanStart []byte
 	gotFirstScanEnd   []byte
 }
 
-func (c *scriptedRawKVScanClient) Scan(
+func (c *scriptedLogReplStateScanClient) ScanLogReplStates(
 	_ context.Context,
 	startKey, endKey []byte,
-	_ int,
-	_ ...rawkv.RawOption,
-) (keys [][]byte, values [][]byte, err error) {
+	limit int,
+) ([]*logreplicationpb.LogReplicationState, error) {
 	c.t.Helper()
 
-	if c.scanCalls == 0 {
+	if c.calls == 0 {
 		c.gotFirstScanStart = append([]byte{}, startKey...)
 		c.gotFirstScanEnd = append([]byte{}, endKey...)
 	}
 
-	if c.scanCalls >= len(c.scanSteps) {
-		c.t.Fatalf("unexpected extra Scan call, startKey=%q endKey=%q", startKey, endKey)
+	if c.calls >= len(c.steps) {
+		c.t.Fatalf("unexpected extra ScanLogReplStates call, startKey=%q endKey=%q", startKey, endKey)
 	}
-	step := c.scanSteps[c.scanCalls]
-	c.scanCalls++
+	step := c.steps[c.calls]
+	c.calls++
 
-	require.True(c.t, bytes.Equal(step.startKey, startKey), "unexpected Scan startKey")
-	require.True(c.t, bytes.Equal(step.endKey, endKey), "unexpected Scan endKey")
-	return step.keys, step.values, step.err
+	require.True(c.t, bytes.Equal(step.startKey, startKey), "unexpected ScanLogReplStates startKey")
+	require.True(c.t, bytes.Equal(step.endKey, endKey), "unexpected ScanLogReplStates endKey")
+	if len(step.states) > limit {
+		c.t.Fatalf("scripted step returned %d states over limit %d", len(step.states), limit)
+	}
+	return step.states, step.err
 }
 
-func (c *scriptedRawKVScanClient) ReverseScan(
-	_ context.Context,
-	startKey, endKey []byte,
-	_ int,
-	_ ...rawkv.RawOption,
-) (keys [][]byte, values [][]byte, err error) {
+func (c *scriptedLogReplStateScanClient) assertDone() {
 	c.t.Helper()
-
-	if c.reverseScanCalls >= len(c.reverseScanSteps) {
-		c.t.Fatalf("unexpected extra ReverseScan call, startKey=%q endKey=%q", startKey, endKey)
-	}
-	step := c.reverseScanSteps[c.reverseScanCalls]
-	c.reverseScanCalls++
-
-	require.True(c.t, bytes.Equal(step.startKey, startKey), "unexpected ReverseScan startKey")
-	require.True(c.t, bytes.Equal(step.endKey, endKey), "unexpected ReverseScan endKey")
-	return step.keys, step.values, step.err
+	require.Equal(c.t, len(c.steps), c.calls, "not all ScanLogReplStates steps consumed")
 }
 
-func (c *scriptedRawKVScanClient) assertDone() {
-	c.t.Helper()
-	require.Equal(c.t, len(c.scanSteps), c.scanCalls, "not all Scan steps consumed")
-	require.Equal(c.t, len(c.reverseScanSteps), c.reverseScanCalls, "not all ReverseScan steps consumed")
-}
-
-func marshalReplStatesToScanKVs(t *testing.T, states []*logreplicationpb.LogReplicationState) (keys [][]byte, values [][]byte) {
-	t.Helper()
-	for _, state := range states {
-		b, err := state.Marshal()
-		require.NoError(t, err)
-		keys = append(keys, append([]byte{}, state.StartKey...))
-		values = append(values, b)
-	}
-	return keys, values
-}
-
-func push0(key []byte) []byte {
-	return append(append([]byte{}, key...), 0)
-}
-
-func newRawKVScanClientForRange(
+func newLogReplStateScanClientForRange(
 	t *testing.T,
 	startKey, endKey []byte,
 	states []*logreplicationpb.LogReplicationState,
-) *scriptedRawKVScanClient {
+) *scriptedLogReplStateScanClient {
 	t.Helper()
 
-	keys, values := marshalReplStatesToScanKVs(t, states)
-	steps := []rawKVScanStep{
-		{
-			startKey: startKey,
-			endKey:   endKey,
-			keys:     keys,
-			values:   values,
+	return &scriptedLogReplStateScanClient{
+		t: t,
+		steps: []logReplStateScanStep{
+			{startKey: startKey, endKey: endKey, states: states},
 		},
-	}
-	if len(keys) > 0 {
-		steps = append(steps, rawKVScanStep{
-			startKey: push0(keys[len(keys)-1]),
-			endKey:   endKey,
-		})
-	}
-	return &scriptedRawKVScanClient{
-		t:         t,
-		scanSteps: steps,
 	}
 }
 
@@ -630,7 +572,7 @@ func TestIsSyncedReturnsTrueWhenAllCovered(t *testing.T) {
 		newTestReplState(1, "", "b", 1, 10),
 		newTestReplState(2, "b", "d", 1, 20),
 	}
-	cli := newRawKVScanClientForRange(
+	cli := newLogReplStateScanClientForRange(
 		t,
 		regions[0].region.StartKey,
 		regions[len(regions)-1].region.EndKey,
@@ -652,7 +594,7 @@ func TestIsSyncedReturnsFalseWhenStatesEmpty(t *testing.T) {
 		newTestRegionCommitIndex(1, "", "b", 1, 1),
 	}
 
-	cli := newRawKVScanClientForRange(
+	cli := newLogReplStateScanClientForRange(
 		t,
 		commitIndexes[0].region.StartKey,
 		commitIndexes[0].region.EndKey,
@@ -665,7 +607,7 @@ func TestIsSyncedReturnsFalseWhenStatesEmpty(t *testing.T) {
 	cli.assertDone()
 }
 
-func TestIsSyncedReverseScan4NonEmptyStartKey(t *testing.T) {
+func TestIsSyncedUsesOverlappingStateForNonEmptyStartKey(t *testing.T) {
 	commitIndexes := []regionCommitIndex{
 		newTestRegionCommitIndex(1, "b", "d", 1, 1),
 	}
@@ -676,26 +618,13 @@ func TestIsSyncedReverseScan4NonEmptyStartKey(t *testing.T) {
 	scannedStates := []*logreplicationpb.LogReplicationState{
 		newTestReplState(1, "c", "d", 1, 1),
 	}
-	scannedKeys, scannedValues := marshalReplStatesToScanKVs(t, scannedStates)
-
-	cli := &scriptedRawKVScanClient{
+	cli := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
+		steps: []logReplStateScanStep{
 			{
 				startKey: commitIndexes[0].region.StartKey,
 				endKey:   commitIndexes[0].region.EndKey,
-				keys:     scannedKeys,
-				values:   scannedValues,
-			},
-			{
-				startKey: push0(scannedKeys[len(scannedKeys)-1]),
-				endKey:   commitIndexes[0].region.EndKey,
-			},
-		},
-		reverseScanSteps: []rawKVReverseScanStep{
-			{
-				startKey: commitIndexes[0].region.StartKey,
-				endKey:   nil,
+				states:   scannedStates,
 			},
 		},
 	}
@@ -706,31 +635,17 @@ func TestIsSyncedReverseScan4NonEmptyStartKey(t *testing.T) {
 	cli.assertDone()
 
 	// a positive test
-	reverseScanStates := []*logreplicationpb.LogReplicationState{
+	coveringStates := []*logreplicationpb.LogReplicationState{
 		newTestReplState(1, "b", "c", 1, 1),
 	}
-	reverseScannedKeys, reverseScannedValues := marshalReplStatesToScanKVs(t, reverseScanStates)
 
-	cli2 := &scriptedRawKVScanClient{
+	cli2 := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
+		steps: []logReplStateScanStep{
 			{
 				startKey: commitIndexes[0].region.StartKey,
 				endKey:   commitIndexes[0].region.EndKey,
-				keys:     scannedKeys,
-				values:   scannedValues,
-			},
-			{
-				startKey: push0(scannedKeys[len(scannedKeys)-1]),
-				endKey:   commitIndexes[0].region.EndKey,
-			},
-		},
-		reverseScanSteps: []rawKVReverseScanStep{
-			{
-				startKey: commitIndexes[0].region.StartKey,
-				endKey:   nil,
-				keys:     reverseScannedKeys,
-				values:   reverseScannedValues,
+				states:   append(coveringStates, scannedStates...),
 			},
 		},
 	}
@@ -740,31 +655,17 @@ func TestIsSyncedReverseScan4NonEmptyStartKey(t *testing.T) {
 	cli2.assertDone()
 
 	// another positive test
-	reverseScanStates = []*logreplicationpb.LogReplicationState{
+	coveringStates = []*logreplicationpb.LogReplicationState{
 		newTestReplState(1, "a", "c", 1, 1),
 	}
-	reverseScannedKeys, reverseScannedValues = marshalReplStatesToScanKVs(t, reverseScanStates)
 
-	cli2 = &scriptedRawKVScanClient{
+	cli2 = &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
+		steps: []logReplStateScanStep{
 			{
 				startKey: commitIndexes[0].region.StartKey,
 				endKey:   commitIndexes[0].region.EndKey,
-				keys:     scannedKeys,
-				values:   scannedValues,
-			},
-			{
-				startKey: push0(scannedKeys[len(scannedKeys)-1]),
-				endKey:   commitIndexes[0].region.EndKey,
-			},
-		},
-		reverseScanSteps: []rawKVReverseScanStep{
-			{
-				startKey: commitIndexes[0].region.StartKey,
-				endKey:   nil,
-				keys:     reverseScannedKeys,
-				values:   reverseScannedValues,
+				states:   append(coveringStates, scannedStates...),
 			},
 		},
 	}
@@ -782,7 +683,7 @@ func TestIsSyncedReturnsFalseOnGapAtRegionStart(t *testing.T) {
 	states := []*logreplicationpb.LogReplicationState{
 		newTestReplState(1, "a", "b", 1, 1),
 	}
-	cli := newRawKVScanClientForRange(t, commitIndexes[0].region.StartKey, commitIndexes[0].region.EndKey, states)
+	cli := newLogReplStateScanClientForRange(t, commitIndexes[0].region.StartKey, commitIndexes[0].region.EndKey, states)
 
 	synced, err := isSynced(context.Background(), cli, commitIndexes)
 	require.NoError(t, err)
@@ -799,7 +700,7 @@ func TestIsSyncedReturnsFalseOnGapWithinRegion(t *testing.T) {
 		newTestReplState(1, "", "a", 1, 1),
 		newTestReplState(1, "b", "c", 1, 1),
 	}
-	cli := newRawKVScanClientForRange(t, commitIndexes[0].region.StartKey, commitIndexes[0].region.EndKey, states)
+	cli := newLogReplStateScanClientForRange(t, commitIndexes[0].region.StartKey, commitIndexes[0].region.EndKey, states)
 
 	synced, err := isSynced(context.Background(), cli, commitIndexes)
 	require.NoError(t, err)
@@ -815,7 +716,7 @@ func TestIsSyncedReturnsFalseWhenAppliedIndexNotEnough(t *testing.T) {
 	states := []*logreplicationpb.LogReplicationState{
 		newTestReplState(1, "", "b", 1, 9),
 	}
-	cli := newRawKVScanClientForRange(t, commitIndexes[0].region.StartKey, commitIndexes[0].region.EndKey, states)
+	cli := newLogReplStateScanClientForRange(t, commitIndexes[0].region.StartKey, commitIndexes[0].region.EndKey, states)
 
 	synced, err := isSynced(context.Background(), cli, commitIndexes)
 	require.NoError(t, err)
@@ -831,7 +732,7 @@ func TestIsSyncedReturnsFalseWhenEpochVersionNotEnough(t *testing.T) {
 	states := []*logreplicationpb.LogReplicationState{
 		newTestReplState(1, "", "b", 1, 100),
 	}
-	cli := newRawKVScanClientForRange(t, commitIndexes[0].region.StartKey, commitIndexes[0].region.EndKey, states)
+	cli := newLogReplStateScanClientForRange(t, commitIndexes[0].region.StartKey, commitIndexes[0].region.EndKey, states)
 
 	synced, err := isSynced(context.Background(), cli, commitIndexes)
 	require.NoError(t, err)
@@ -896,7 +797,7 @@ func TestIsSyncedHandlesRegionKeyRangeChangeAfterSplitMerge(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cli := newRawKVScanClientForRange(
+			cli := newLogReplStateScanClientForRange(
 				t,
 				tc.regions[0].region.StartKey,
 				tc.regions[len(tc.regions)-1].region.EndKey,
@@ -912,82 +813,63 @@ func TestIsSyncedHandlesRegionKeyRangeChangeAfterSplitMerge(t *testing.T) {
 }
 
 func TestScanReplStatesInRangeScansAllPagesAndAdvancesStartKey(t *testing.T) {
-	startKey := []byte("a")
-	endKey := []byte("d")
+	startKey := []byte("0000")
+	endKey := []byte("z")
 
-	statesPage1 := []*logreplicationpb.LogReplicationState{
-		newTestReplState(1, "a", "b", 1, 1),
+	statesPage1 := make([]*logreplicationpb.LogReplicationState, 0, pkdbDefaultScanPageSize)
+	for i := 0; i < pkdbDefaultScanPageSize; i++ {
+		statesPage1 = append(statesPage1, newTestReplState(
+			uint64(i+1),
+			fmt.Sprintf("%04d", i),
+			fmt.Sprintf("%04d", i+1),
+			1,
+			1,
+		))
 	}
 	statesPage2 := []*logreplicationpb.LogReplicationState{
-		newTestReplState(2, "b", "c", 1, 1),
+		newTestReplState(300, "0256", "z", 1, 1),
 	}
 
-	keys1, values1 := marshalReplStatesToScanKVs(t, statesPage1)
-	keys2, values2 := marshalReplStatesToScanKVs(t, statesPage2)
-	cli := &scriptedRawKVScanClient{
+	cli := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
+		steps: []logReplStateScanStep{
 			{
 				startKey: startKey,
 				endKey:   endKey,
-				keys:     keys1,
-				values:   values1,
+				states:   statesPage1,
 			},
 			{
-				startKey: push0(keys1[len(keys1)-1]),
+				startKey: []byte("0256"),
 				endKey:   endKey,
-				keys:     keys2,
-				values:   values2,
-			},
-			{
-				startKey: push0(keys2[len(keys2)-1]),
-				endKey:   endKey,
+				states:   statesPage2,
 			},
 		},
 	}
 
 	got, err := scanReplStatesInRange(context.Background(), cli, startKey, endKey)
 	require.NoError(t, err)
-	require.Len(t, got, 2)
-	require.True(t, bytes.Equal(got[0].StartKey, []byte("a")))
-	require.True(t, bytes.Equal(got[1].StartKey, []byte("b")))
+	require.Len(t, got, pkdbDefaultScanPageSize+1)
+	require.True(t, bytes.Equal(got[0].StartKey, []byte("0000")))
+	require.True(t, bytes.Equal(got[len(got)-1].StartKey, []byte("0256")))
 	cli.assertDone()
 }
 
-func TestScanReplStatesInRangePrependsPrevStateWhenItCoversStartKey(t *testing.T) {
+func TestScanReplStatesInRangeIncludesOverlappingState(t *testing.T) {
 	startKey := []byte("b")
 	endKey := []byte("d")
 
 	scanned := []*logreplicationpb.LogReplicationState{
+		newTestReplState(1, "a", "c", 1, 1), // covers startKey "b"
 		newTestReplState(2, "c", "d", 1, 1),
 	}
-	scannedKeys, scannedValues := marshalReplStatesToScanKVs(t, scanned)
 
-	prev := []*logreplicationpb.LogReplicationState{
-		newTestReplState(1, "a", "c", 1, 1), // covers startKey "b"
-	}
-	prevKeys, prevValues := marshalReplStatesToScanKVs(t, prev)
-
-	cli := &scriptedRawKVScanClient{
+	cli := &scriptedLogReplStateScanClient{
 		t: t,
-		scanSteps: []rawKVScanStep{
+		steps: []logReplStateScanStep{
 			{
 				startKey: startKey,
 				endKey:   endKey,
-				keys:     scannedKeys,
-				values:   scannedValues,
-			},
-			{
-				startKey: push0(scannedKeys[len(scannedKeys)-1]),
-				endKey:   endKey,
-			},
-		},
-		reverseScanSteps: []rawKVReverseScanStep{
-			{
-				startKey: startKey,
-				endKey:   nil,
-				keys:     prevKeys,
-				values:   prevValues,
+				states:   scanned,
 			},
 		},
 	}
