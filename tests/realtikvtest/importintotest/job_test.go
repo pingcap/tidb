@@ -445,6 +445,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 	s.Len(rows, 1)
 	// timing 1: before scheduler starts.
 	s.Equal(result, rows)
+	s.Equal("0B", result[0][fmap["SourceFileSize"]])
 
 	reachedBeforePrepare := make(chan struct{})
 	releaseBeforePrepare := make(chan struct{})
@@ -519,6 +520,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 	s.Equal(importer.JobStatusRunning, rows[0][fmap["Status"]])
 	s.Equal(importer.JobStepPreparing, rows[0][fmap["Phase"]])
 	s.Equal(createdBy, rows[0][fmap["CreatedBy"]])
+	s.EqualValues("3B", rows[0][fmap["SourceFileSize"]])
 	close(releasePrepared)
 
 	s.Require().Eventually(func() bool {
@@ -648,6 +650,7 @@ func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
 	s.NoError(err)
 	jobID64 := int64(jobID)
 	taskKey := importinto.TaskKey(jobID64)
+	// prepare_mode is 0 and omit when marshal to JSON, so "is null" return true.
 	s.tk.MustQuery(fmt.Sprintf(
 		"select json_extract(extra_params, '$.prepare_mode') is null from mysql.tidb_global_task where task_key = '%s'",
 		taskKey,

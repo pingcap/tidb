@@ -181,13 +181,6 @@ func TestJobHappyPath(t *testing.T) {
 		require.False(t, info.StartTime.IsZero())
 		startTime := info.StartTime
 
-		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepImporting))
-		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
-		require.NoError(t, err)
-		require.Equal(t, importer.JobStatusRunning, info.Status)
-		require.Equal(t, importer.JobStepImporting, info.Step)
-		require.Equal(t, startTime, info.StartTime)
-
 		require.NoError(t, importer.UpdateJobPreparedInfo(ctx, conn, jobID, 456, importer.DataFormatCSV))
 		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
 		require.NoError(t, err)
@@ -195,6 +188,13 @@ func TestJobHappyPath(t *testing.T) {
 		require.Equal(t, importer.DataFormatCSV, info.Parameters.Format)
 		require.Equal(t, createdParams.FileLocation, info.Parameters.FileLocation)
 		require.Equal(t, createdParams.Options, info.Parameters.Options)
+
+		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepGlobalSorting))
+		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepGlobalSorting, info.Step)
+		require.Equal(t, startTime, info.StartTime)
 	})
 }
 
