@@ -535,11 +535,9 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
-
 	// Local ingest may trigger partial import/reset while the scan transaction is
 	// still open, so only the global-sort path can stream results immediately.
-	enableStreaming := w.cpOp == nil
-	failpoint.InjectCall("checkEnableStreaming", enableStreaming)
+	enableStreaming := w.reorgMeta.UseCloudStorage
 	sendResult := func(idxResult IndexRecordChunk) {
 		if !idxResult.fetchedAt.IsZero() {
 			metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("scan_buffer").Observe(time.Since(idxResult.fetchedAt).Seconds())
