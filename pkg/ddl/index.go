@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
@@ -101,6 +103,9 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -111,6 +116,23 @@ const (
 )
 
 var telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+
+const (
+	tikvCapacitySourcePDGRPCStoreStats         = "pd_grpc_store_stats"
+	tikvCapacitySourcePDHTTPCapacityMinusAvail = "pd_http_capacity_minus_available"
+	pdStoreStatsRequestTimeout                 = 3 * time.Second
+)
+
+type observedTiKVCapacityIncrease struct {
+	increase int64
+	reliable bool
+	reason   string
+}
+
+type pdStoreStatsClient interface {
+	GetClusterID(context.Context) uint64
+	GetServiceDiscovery() sd.ServiceDiscovery
+}
 
 // DefaultCumulativeTimeout is the default cumulative timeout for analyze operation.
 // exported for testing.
@@ -3604,6 +3626,9 @@ func collectTiKVStoreUsage(ctx context.Context, store kv.Storage) (*TiKVStoreUsa
 }
 
 func canRunTiKVSpacePrecheck(store kv.Storage) (bool, error) {
+	if pdStore, ok := store.(kv.StorageWithPD); ok && pdStore.GetPDClient() != nil {
+		return true, nil
+	}
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return false, fmt.Errorf("store %T does not implement helper.Storage", store)
@@ -3612,6 +3637,16 @@ func canRunTiKVSpacePrecheck(store kv.Storage) (bool, error) {
 }
 
 func collectTiKVStoreCapacity(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
+	capacity, err := collectTiKVStoreCapacityFromPDGRPC(ctx, store)
+	if err == nil {
+		return capacity, nil
+	}
+	logutil.DDLLogger().Warn("failed to collect TiKV store capacity from PD gRPC, fallback to PD HTTP",
+		zap.Error(err))
+	return collectTiKVStoreCapacityFromPDHTTP(ctx, store)
+}
+
+func collectTiKVStoreCapacityFromPDHTTP(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
@@ -3628,10 +3663,122 @@ func collectTiKVStoreCapacity(ctx context.Context, store kv.Storage) (*TiKVClust
 	if err != nil {
 		return nil, err
 	}
-	return sumTiKVStoreCapacity(storesInfo.Stores)
+	capacity, err := sumTiKVStoreCapacity(storesInfo.Stores)
+	if err != nil {
+		return nil, err
+	}
+	capacity.Source = tikvCapacitySourcePDHTTPCapacityMinusAvail
+	return capacity, nil
 }
 
-func sumTiKVStoreUsage(stores []pdHttp.StoreInfo) (*TiKVStoreUsageSnapshot, error) {
+func collectTiKVStoreCapacityFromPDGRPC(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
+	pdStore, ok := store.(kv.StorageWithPD)
+	if !ok {
+		return nil, fmt.Errorf("store %T does not implement kv.StorageWithPD", store)
+	}
+	pdCli := pdStore.GetPDClient()
+	if pdCli == nil {
+		return nil, errors.New("pd client unavailable")
+	}
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
+	if err != nil {
+		return nil, err
+	}
+	capacity := &TiKVClusterCapacity{Source: tikvCapacitySourcePDGRPCStoreStats}
+	for _, store := range stores {
+		if isNonTiKVMetaStore(store) {
+			continue
+		}
+		storeCapacity, err := collectTiKVStoreCapacityFromStoreStats(ctx, pdCli, store)
+		if err != nil {
+			return nil, err
+		}
+		capacity.StoreCount++
+		capacity.TotalBytes += storeCapacity.TotalBytes
+		capacity.AvailableBytes += storeCapacity.AvailableBytes
+		capacity.UsedBytes += storeCapacity.UsedBytes
+		capacity.Stores = append(capacity.Stores, *storeCapacity)
+	}
+	return capacity, nil
+}
+
+func collectTiKVStoreCapacityFromStoreStats(ctx context.Context, pdCli pdStoreStatsClient, store *metapb.Store) (*TiKVStoreCapacity, error) {
+	if store == nil {
+		return nil, errors.New("store is nil")
+	}
+	stats, err := getPDStoreStats(ctx, pdCli, store.GetId())
+	if err != nil {
+		return nil, errors.Annotatef(err, "get store %d stats", store.GetId())
+	}
+	return &TiKVStoreCapacity{
+		StoreID:        int64(store.GetId()),
+		TotalBytes:     stats.GetCapacity(),
+		AvailableBytes: stats.GetAvailable(),
+		UsedBytes:      stats.GetUsedSize(),
+	}, nil
+}
+
+func getPDStoreStats(ctx context.Context, pdCli pdStoreStatsClient, storeID uint64) (*pdpb.StoreStats, error) {
+	serviceDiscovery := pdCli.GetServiceDiscovery()
+	if serviceDiscovery == nil {
+		return nil, errors.New("pd service discovery unavailable")
+	}
+	serviceClient := serviceDiscovery.GetServiceClient()
+	if serviceClient == nil || serviceClient.GetClientConn() == nil {
+		return nil, errors.New("pd grpc client unavailable")
+	}
+	req := &pdpb.GetStoreRequest{
+		Header: &pdpb.RequestHeader{
+			ClusterId:       pdCli.GetClusterID(ctx),
+			CallerId:        string(caller.GetCallerID()),
+			CallerComponent: string(caller.Ddl),
+		},
+		StoreId: storeID,
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, pdStoreStatsRequestTimeout)
+	defer cancel()
+	reqCtx = serviceClient.BuildGRPCTargetContext(reqCtx, true)
+	resp, err := pdpb.NewPDClient(serviceClient.GetClientConn()).GetStore(reqCtx, req)
+	if needRetryPDStoreStats(serviceClient, resp, err) {
+		serviceClient = serviceDiscovery.GetServiceClient()
+		if serviceClient != nil && serviceClient.GetClientConn() != nil {
+			reqCtx = serviceClient.BuildGRPCTargetContext(reqCtx, true)
+			resp, err = pdpb.NewPDClient(serviceClient.GetClientConn()).GetStore(reqCtx, req)
+		}
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if resp == nil {
+		return nil, errors.New("pd get store response is nil")
+	}
+	if resp.GetHeader().GetError() != nil {
+		return nil, errors.New(resp.GetHeader().GetError().String())
+	}
+	if resp.GetStore() == nil {
+		return nil, errors.New("store field in rpc response not set")
+	}
+	if resp.GetStore().GetState() == metapb.StoreState_Tombstone || resp.GetStore().GetNodeState() == metapb.NodeState_Removed {
+		return nil, errors.Errorf("store %d is removed", storeID)
+	}
+	stats := resp.GetStats()
+	if stats == nil {
+		return nil, errors.Errorf("store %d stats is nil", storeID)
+	}
+	return stats, nil
+}
+
+func needRetryPDStoreStats(serviceClient sd.ServiceClient, resp *pdpb.GetStoreResponse, err error) bool {
+	if serviceClient == nil {
+		return false
+	}
+	if resp == nil {
+		return serviceClient.NeedRetry(nil, err)
+	}
+	return serviceClient.NeedRetry(resp.GetHeader().GetError(), err)
+}
+
+func sumTiKVStoreUsage(stores []pdhttp.StoreInfo) (*TiKVStoreUsageSnapshot, error) {
 	capacity, err := sumTiKVStoreCapacity(stores)
 	if err != nil {
 		return nil, err
@@ -3642,8 +3789,8 @@ func sumTiKVStoreUsage(stores []pdHttp.StoreInfo) (*TiKVStoreUsageSnapshot, erro
 	}, nil
 }
 
-func sumTiKVStoreCapacity(stores []pdHttp.StoreInfo) (*TiKVClusterCapacity, error) {
-	capacity := &TiKVClusterCapacity{}
+func sumTiKVStoreCapacity(stores []pdhttp.StoreInfo) (*TiKVClusterCapacity, error) {
+	capacity := &TiKVClusterCapacity{Source: tikvCapacitySourcePDHTTPCapacityMinusAvail}
 	for _, store := range stores {
 		if isNonTiKVStoreInfo(store) {
 			continue
@@ -3661,7 +3808,7 @@ func sumTiKVStoreCapacity(stores []pdHttp.StoreInfo) (*TiKVClusterCapacity, erro
 	return capacity, nil
 }
 
-func buildTiKVStoreCapacity(store pdHttp.StoreInfo) (*TiKVStoreCapacity, error) {
+func buildTiKVStoreCapacity(store pdhttp.StoreInfo) (*TiKVStoreCapacity, error) {
 	capacityBytes, err := units.RAMInBytes(store.Status.Capacity)
 	if err != nil {
 		return nil, err
@@ -3684,13 +3831,74 @@ func buildTiKVStoreCapacity(store pdHttp.StoreInfo) (*TiKVStoreCapacity, error) 
 	}, nil
 }
 
-func isNonTiKVStoreInfo(store pdHttp.StoreInfo) bool {
-	return slices.ContainsFunc(store.Store.Labels, func(label pdHttp.StoreLabel) bool {
+func isNonTiKVStoreInfo(store pdhttp.StoreInfo) bool {
+	return slices.ContainsFunc(store.Store.Labels, func(label pdhttp.StoreLabel) bool {
 		if label.Key != placement.EngineLabelKey {
 			return false
 		}
 		return label.Value == placement.EngineLabelTiFlash || label.Value == placement.EngineLabelTiFlashCompute
 	})
+}
+
+func isNonTiKVMetaStore(store *metapb.Store) bool {
+	if store == nil {
+		return true
+	}
+	if store.GetState() == metapb.StoreState_Tombstone || store.GetNodeState() == metapb.NodeState_Removed {
+		return true
+	}
+	return slices.ContainsFunc(store.GetLabels(), func(label *metapb.StoreLabel) bool {
+		if label.GetKey() != placement.EngineLabelKey {
+			return false
+		}
+		return label.GetValue() == placement.EngineLabelTiFlash || label.GetValue() == placement.EngineLabelTiFlashCompute
+	})
+}
+
+func calcObservedTiKVCapacityIncrease(initial, final *TiKVClusterCapacity) observedTiKVCapacityIncrease {
+	if initial == nil {
+		return observedTiKVCapacityIncrease{reason: "initial_capacity_unavailable"}
+	}
+	if final == nil {
+		return observedTiKVCapacityIncrease{reason: "final_capacity_unavailable"}
+	}
+	if len(initial.Stores) == 0 {
+		return observedTiKVCapacityIncrease{reason: "initial_store_details_unavailable"}
+	}
+	if len(final.Stores) == 0 {
+		return observedTiKVCapacityIncrease{reason: "final_store_details_unavailable"}
+	}
+	initialStores := make(map[int64]uint64, len(initial.Stores))
+	var totalInitialUsedBytes uint64
+	for _, store := range initial.Stores {
+		if _, ok := initialStores[store.StoreID]; ok {
+			return observedTiKVCapacityIncrease{reason: "duplicate_store_id"}
+		}
+		initialStores[store.StoreID] = store.UsedBytes
+		totalInitialUsedBytes += store.UsedBytes
+	}
+	finalStores := make(map[int64]struct{}, len(final.Stores))
+	var totalFinalUsedBytes uint64
+	for _, store := range final.Stores {
+		if _, ok := finalStores[store.StoreID]; ok {
+			return observedTiKVCapacityIncrease{reason: "duplicate_store_id"}
+		}
+		finalStores[store.StoreID] = struct{}{}
+		_, ok := initialStores[store.StoreID]
+		if !ok {
+			return observedTiKVCapacityIncrease{reason: "store_set_changed"}
+		}
+		totalFinalUsedBytes += store.UsedBytes
+		delete(initialStores, store.StoreID)
+	}
+	if len(initialStores) > 0 {
+		return observedTiKVCapacityIncrease{reason: "store_set_changed"}
+	}
+	var increase uint64
+	if totalFinalUsedBytes > totalInitialUsedBytes {
+		increase = totalFinalUsedBytes - totalInitialUsedBytes
+	}
+	return observedTiKVCapacityIncrease{increase: int64(increase), reliable: true, reason: "ok"}
 }
 
 func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, taskKey string, jobID int64) {
@@ -3726,9 +3934,15 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 		UsedBytes:  finalCapacity.UsedBytes,
 		StoreCount: finalCapacity.StoreCount,
 	}
+	initialCapacity := taskMeta.InitialTiKVCapacity
 	initialStoreCount := taskMeta.InitialTiKVStoreUsage.StoreCount
 	if taskMeta.InitialTiKVCapacity != nil {
 		initialStoreCount = taskMeta.InitialTiKVCapacity.StoreCount
+	} else if taskMeta.InitialTiKVStoreUsage != nil {
+		initialCapacity = &TiKVClusterCapacity{
+			UsedBytes:  taskMeta.InitialTiKVStoreUsage.UsedBytes,
+			StoreCount: taskMeta.InitialTiKVStoreUsage.StoreCount,
+		}
 	}
 
 	subtasks, err := taskMgr.GetSubtasksWithHistory(w.workCtx, task.ID, proto.BackfillStepReadIndex)
@@ -3744,10 +3958,7 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 		return
 	}
 
-	var observedIncrease int64
-	if finalUsage.UsedBytes > taskMeta.InitialTiKVStoreUsage.UsedBytes {
-		observedIncrease = int64(finalUsage.UsedBytes - taskMeta.InitialTiKVStoreUsage.UsedBytes)
-	}
+	observedIncrease := calcObservedTiKVCapacityIncrease(initialCapacity, finalCapacity)
 	representPredictedTiKVIndexBytes := taskMeta.RepresentPredictedTiKVIndexBytes
 	if representPredictedTiKVIndexBytes == 0 {
 		representPredictedTiKVIndexBytes = taskMeta.PredictedTiKVIndexBytes
@@ -3781,14 +3992,18 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 		zap.Int("block_sample_prediction_row_count", fallbackPredictionCount(taskMeta.BlockSamplePredictionRowCount, taskMeta.SamplePredictionRowCount)),
 		zap.Int("block_sample_prediction_read_error_count", fallbackPredictionCount(taskMeta.BlockSamplePredictionReadErrorCount, taskMeta.SamplePredictionReadErrorCount)),
 		zap.Int64("logical_index_kv_bytes", logicalIndexKVBytes),
-		zap.Int64("observed_tikv_capacity_increase_bytes", observedIncrease),
+		zap.Int64("observed_tikv_capacity_increase_bytes", observedIncrease.increase),
+		zap.Bool("observed_tikv_capacity_reliable", observedIncrease.reliable),
+		zap.String("observed_tikv_capacity_reliable_reason", observedIncrease.reason),
+		zap.String("initial_tikv_capacity_source", initialCapacity.Source),
+		zap.String("final_tikv_capacity_source", finalCapacity.Source),
 		zap.Uint64("initial_tikv_used_bytes", taskMeta.InitialTiKVStoreUsage.UsedBytes),
 		zap.Uint64("final_tikv_used_bytes", finalUsage.UsedBytes),
 		zap.Int("initial_tikv_store_count", initialStoreCount),
 		zap.Int("final_tikv_store_count", finalUsage.StoreCount),
 	)
 	failpoint.InjectCall("afterLogObservedTiKVCapacityIncrease",
-		task.ID, logicalIndexKVBytes, observedIncrease,
+		task.ID, logicalIndexKVBytes, observedIncrease.increase,
 		int64(taskMeta.InitialTiKVStoreUsage.UsedBytes), int64(finalUsage.UsedBytes))
 }
 
@@ -4588,7 +4803,7 @@ func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physical
 	start, end := hStore.GetCodec().EncodeRegionRange(tableStart, tableEnd)
 	regions := make([]samplePredictionRegion, 0, 16)
 	for {
-		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdHttp.NewKeyRange(start, end), 128)
+		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), 128)
 		if err != nil {
 			return nil, err
 		}
@@ -4622,7 +4837,7 @@ func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physical
 	return regions, nil
 }
 
-func buildSamplePredictionRegion(codec tikv.Codec, tableStart, tableEnd []byte, regionInfo pdHttp.RegionInfo) (samplePredictionRegion, bool, error) {
+func buildSamplePredictionRegion(codec tikv.Codec, tableStart, tableEnd []byte, regionInfo pdhttp.RegionInfo) (samplePredictionRegion, bool, error) {
 	var region samplePredictionRegion
 	start, err := hex.DecodeString(regionInfo.StartKey)
 	if err != nil {

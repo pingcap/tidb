@@ -97,6 +97,7 @@ type TiKVClusterCapacity struct {
 	UsedBytes      uint64              `json:"used_bytes"`
 	StoreCount     int                 `json:"store_count"`
 	Stores         []TiKVStoreCapacity `json:"stores,omitempty"`
+	Source         string              `json:"source,omitempty"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
