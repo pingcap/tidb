@@ -170,6 +170,192 @@ disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
 }
 
+func TestKeyspaceObservability(t *testing.T) {
+	conf := NewConfig()
+	content := `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+slow-log-field = "keyspace_meta_slow_a"
+stmt-log-field = "stmt_meta_a"
+required = true
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+metric-label = "keyspace_meta_label_b"
+slow-log-field = "keyspace_meta_slow_b"
+`
+	_, err := toml.Decode(content, conf)
+	require.NoError(t, err)
+	require.NoError(t, conf.KeyspaceObservability.Valid())
+	require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{
+		"meta_a": "value_a",
+		"meta_b": "value_b",
+	}))
+	require.Equal(t, map[string]string{"keyspace_meta_label_a": "value_a", "keyspace_meta_label_b": "value_b"}, conf.GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, []KeyspaceObservabilityLogField{
+		{Name: "keyspace_meta_slow_a", Value: "value_a"},
+		{Name: "keyspace_meta_slow_b", Value: "value_b"},
+	}, conf.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, conf.GetKeyspaceObservabilityStmtLogFields())
+
+	require.ErrorContains(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_b": "value_b"}), `missing required keyspace metadata entry "meta_a"`)
+}
+
+func TestKeyspaceObservabilityInvalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		err     string
+	}{
+		{
+			name: "empty source",
+			content: `
+[[keyspace-observability.fields]]
+source = ""
+metric-label = "keyspace_meta_label_a"
+`,
+			err: "source cannot be empty",
+		},
+		{
+			name: "empty output",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+`,
+			err: "at least one output must be set",
+		},
+		{
+			name: "invalid label",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "1_label"
+`,
+			err: `invalid metric-label "1_label"`,
+		},
+		{
+			name: "duplicate label",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+metric-label = "KEYSPACE_META_LABEL_A"
+`,
+			err: `duplicated metric-label "KEYSPACE_META_LABEL_A"`,
+		},
+		{
+			name: "reserved label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "KEYSPACE_ID"
+`,
+			err: `metric-label "KEYSPACE_ID" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "metric variable label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "TYPE"
+`,
+			err: `metric-label "TYPE" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "api label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "api"
+`,
+			err: `metric-label "api" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "service scope label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "service_scope"
+`,
+			err: `metric-label "service_scope" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "task id label without prefix",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "task_id"
+`,
+			err: `metric-label "task_id" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "slow log field without prefix",
+			content: `
+	[[keyspace-observability.fields]]
+	source = "meta_a"
+	slow-log-field = "Digest"
+	`,
+			err: `slow-log-field "Digest" must start with "keyspace_meta_"`,
+		},
+		{
+			name: "invalid slow log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "Bad Field"
+`,
+			err: `invalid slow-log-field "Bad Field"`,
+		},
+		{
+			name: "duplicate slow log field",
+			content: `
+	[[keyspace-observability.fields]]
+	source = "meta_a"
+	slow-log-field = "keyspace_meta_slow"
+
+	[[keyspace-observability.fields]]
+	source = "meta_b"
+	slow-log-field = "KEYSPACE_META_SLOW"
+	`,
+			err: `duplicated slow-log-field "KEYSPACE_META_SLOW"`,
+		},
+		{
+			name: "duplicate stmt log field",
+			content: `
+[[keyspace-observability.fields]]
+source = "meta_a"
+stmt-log-field = "stmt_meta"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+stmt-log-field = "stmt_meta"
+`,
+			err: `duplicated stmt-log-field "stmt_meta"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := NewConfig()
+			_, err := toml.Decode(tt.content, conf)
+			require.NoError(t, err)
+			require.ErrorContains(t, conf.KeyspaceObservability.Valid(), tt.err)
+		})
+	}
+
+	conf := NewConfig()
+	_, err := toml.Decode(`
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+`, conf)
+	require.NoError(t, err)
+	require.ErrorContains(t, conf.Valid(), "keyspace-observability.fields can only be configured when deploy-mode is starter")
+}
+
 func TestRemovedVariableCheck(t *testing.T) {
 	configTest := []struct {
 		options string
@@ -1107,6 +1293,17 @@ dxf-resource-limit = 101`), 0644))
 	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)

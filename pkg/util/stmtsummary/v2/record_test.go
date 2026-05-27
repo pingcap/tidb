@@ -15,8 +15,10 @@
 package stmtsummary
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,4 +85,22 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalRUV2*2, record2.SumRUV2)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
+
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				StmtLogField: "stmt_meta_a",
+			}},
+		}
+		require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_a": "value_a"}))
+	})
+	b, err := marshalStmtRecord(record2)
+	require.NoError(t, err)
+	items := make(map[string]any)
+	require.NoError(t, json.Unmarshal(b, &items))
+	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
+	require.Equal(t, record2.Digest, items["digest"])
 }

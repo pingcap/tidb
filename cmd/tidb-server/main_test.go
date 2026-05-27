@@ -154,3 +154,71 @@ func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
 	require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
 	require.Equal(t, "8.0.11-TiDB-CLOUD.202603.0", mysql.ServerVersion)
 }
+
+func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	restore := config.RestoreFunc()
+	defer restore()
+
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeTiKV
+		conf.KeyspaceName = "ks"
+	})
+	err := prepareKeyspaceObservabilityForStarter(nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"keyspace_name": "ks"}, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				MetricLabel:  "keyspace_meta_label_a",
+				SlowLogField: "keyspace_meta_slow_a",
+				StmtLogField: "stmt_meta_a",
+				Required:     true,
+			}},
+		}
+	})
+
+	err = prepareKeyspaceObservabilityForStarter(map[string]string{
+		"meta_a": "value_a",
+	})
+	require.NoError(t, err)
+
+	cfg := config.GetGlobalConfig()
+	require.Equal(t, map[string]string{"keyspace_name": "ks", "keyspace_meta_label_a": "value_a"}, cfg.GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, []config.KeyspaceObservabilityLogField{
+		{Name: "keyspace_meta_slow_a", Value: "value_a"},
+	}, cfg.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, cfg.GetKeyspaceObservabilityStmtLogFields())
+}
+
+func TestSetupKeyspaceObservabilityForStarterSkipsNonTiKV(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	restore := config.RestoreFunc()
+	defer restore()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeUniStore
+		conf.Path = "invalid-pd-path"
+		conf.KeyspaceName = "test_keyspace"
+	})
+
+	require.NoError(t, prepareKeyspaceObservabilityForStarter(nil))
+	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
+}
