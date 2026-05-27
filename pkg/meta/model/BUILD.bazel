@@ -40,6 +40,7 @@ go_test(
     srcs = [
         "bdr_test.go",
         "column_test.go",
+        "index_foreign_key_test.go",
         "index_test.go",
         "job_args_test.go",
         "job_test.go",
@@ -57,6 +58,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/types/parser_driver",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//http",
     ],
