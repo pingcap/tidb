@@ -40,6 +40,16 @@ func newTaskGetter(ctx context.Context, t *testing.T, tk *testkit.TestKit) *task
 	}
 }
 
+func newTTLTaskTestKit(t *testing.T) *testkit.TestKit {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TimeZone = time.Local
+	return tk
+}
+
 func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 	sql, args := cache.SelectFromTTLTaskWithJobID("test-job")
 	rs, err := tg.tk.Session().ExecuteInternal(tg.ctx, sql, args...)
@@ -52,9 +62,7 @@ func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 }
 
 func TestRowToTTLTask(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().TimeZone = time.Local
+	tk := newTTLTaskTestKit(t)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tg := newTaskGetter(ctx, t, tk)
@@ -92,9 +100,7 @@ func TestRowToTTLTask(t *testing.T) {
 }
 
 func TestInsertIntoTTLTask(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().TimeZone = time.Local
+	tk := newTTLTaskTestKit(t)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tg := newTaskGetter(ctx, t, tk)
