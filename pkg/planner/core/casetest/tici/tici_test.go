@@ -444,6 +444,54 @@ func TestTiCIWithWrongColumn(t *testing.T) {
 	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('text1', a)", "Doesn't support match search on a non-string column without fulltext index")
 }
 
+func TestLocalMatchAgainstDirtyWriteFallback(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table t(
+			id int primary key,
+			title text,
+			body text,
+			fulltext index ft_title(title),
+			fulltext index ft_title_body(title, body)
+		)`)
+		tk.MustExec("set tidb_enable_local_match_against = on")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values (1, 'TiDB database', 'distributed sql')")
+		tk.MustExec("insert into t values (2, 'planner notes', 'TiDB optimizer')")
+		tk.MustExec("insert into t values (3, 'MySQL database', 'compatibility')")
+
+		tk.MustQuery("select id from t where match(title) against('+tidb -mysql' in boolean mode) order by id").Check(testkit.Rows("1"))
+		tk.MustQuery(`select id from t where match(title) against('"tidb database"' in boolean mode) order by id`).Check(testkit.Rows("1"))
+		tk.MustQuery("select id from t where match(body, title) against('+planner -mysql' in boolean mode) order by id").Check(testkit.Rows("2"))
+		tk.MustQuery("select 1 from t where match(title) against('tidb' in boolean mode) order by id").Check(testkit.Rows("1"))
+		tk.MustQuery("select id from t where match(title) against(NULL in boolean mode) order by id").Check(testkit.Rows())
+
+		err := tk.QueryToErr("select match(title) against('tidb' in boolean mode) from t")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot use 'MATCH ... AGAINST' outside of fulltext index")
+		tk.MustContainErrMsg("select id from t where (match(title) against('tidb' in boolean mode)) > 0", "local MATCH ... AGAINST requires direct boolean filter context")
+		tk.MustContainErrMsg("select id from t where case when match(title) against('tidb' in boolean mode) then 1 else 0 end = 1", "local MATCH ... AGAINST requires direct boolean filter context")
+		err = tk.QueryToErr("select id, title from t order by match(title) against('tidb' in boolean mode)")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot use 'MATCH ... AGAINST' outside of fulltext index")
+		tk.MustContainErrMsg("select id from t where match(title) against('tidb')", "MATCH...AGAINST with this modifier on the native FTS path")
+		tk.MustExec("rollback")
+	})
+}
+
+func TestLocalMatchAgainstGuardOffKeepsDirtyWriteError(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table t(
+			id int primary key,
+			title text,
+			fulltext index ft_title(title)
+		)`)
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values (1, 'TiDB database')")
+		tk.MustContainErrMsg("select id from t where match(title) against('tidb' in boolean mode)", "Fulltext search currently can not be used in transaction with uncommitted data")
+		tk.MustExec("rollback")
+	})
+}
+
 func runTiCITest(t *testing.T, fn func(*testkit.TestKit)) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
