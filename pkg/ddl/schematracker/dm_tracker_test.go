@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -575,4 +576,10 @@ func TestCreateMaterializedViewLogScheduleExprTypeCheck(t *testing.T) {
 
 	err = tracker.CreateMaterializedViewLog(sctx, parseStmt("create materialized view log on test.t (a) purge start with now() next 1"))
 	require.ErrorContains(t, err, "PURGE NEXT expression must return DATETIME/TIMESTAMP")
+
+	stmt := parseStmt("create materialized view log on test.t (a) purge start with now() next now()")
+	stmt.Purge.Next = nil
+	err = tracker.CreateMaterializedViewLog(sctx, stmt)
+	require.Truef(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "err %v", err)
+	require.ErrorContains(t, err, "PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
 }

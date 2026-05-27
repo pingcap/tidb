@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -135,6 +136,7 @@ func TestCreateMaterializedViewLogPurgeExprTypeValidation(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 
 	err := tk.ExecToErr("create materialized view log on t (a) purge immediate")
+	require.Truef(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "err %v", err)
 	require.ErrorContains(t, err, "PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
 
 	err = tk.ExecToErr("create materialized view log on t (a) purge start with 1 next now()")
@@ -425,6 +427,19 @@ func TestMaterializedViewRelatedTablesDDLRejected(t *testing.T) {
 	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
 	err = tk.ExecToErr("drop index idx_mlog_b_create on `$mlog$t_ddl_mv`")
 	require.ErrorContains(t, err, "DROP INDEX on materialized view log table")
+}
+
+func TestCreateVectorIndexOnMaterializedViewLogTableRejected(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mlog_vec (id int, v vector(3))")
+	tk.MustExec("create materialized view log on t_mlog_vec (v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("alter table `$mlog$t_mlog_vec` set tiflash replica 1")
+
+	err := tk.ExecToErr("create vector index idx_mlog_vec on `$mlog$t_mlog_vec`((vec_cosine_distance(v))) USING HNSW")
+	require.Truef(t, dbterror.ErrGeneralUnsupportedDDL.Equal(err), "err %v", err)
+	require.ErrorContains(t, err, "CREATE INDEX on materialized view log table")
 }
 
 func TestTruncateOrdinaryTableStillWorks(t *testing.T) {

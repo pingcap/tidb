@@ -327,7 +327,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	var purgeNext string
 	if s.Purge != nil {
 		if s.Purge.Immediate {
-			return errors.New("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
 		}
 		purgeMethod = "DEFERRED"
 		if s.Purge.StartWith != nil {
@@ -337,7 +337,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 			}
 		}
 		if s.Purge.Next == nil {
-			return errors.New("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
 		}
 		purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
 		if err != nil {

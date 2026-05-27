@@ -1142,7 +1142,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	var purgeNext string
 	if s.Purge != nil {
 		if s.Purge.Immediate {
-			return errors.New("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
 		}
 		purgeMethod = "DEFERRED"
 		if s.Purge.StartWith != nil {
@@ -1152,7 +1152,7 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 			}
 		}
 		if s.Purge.Next == nil {
-			return errors.New("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
 		}
 		purgeNext, err = BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
 		if err != nil {
@@ -5208,6 +5208,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
 	}
 	if keyType == ast.IndexKeyTypeVector {
+		_, t, err := e.getSchemaAndTableByIdent(ti)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := checkIndexOperationMaterializedViewConstraints(t.Meta(), "CREATE INDEX"); err != nil {
+			return errors.Trace(err)
+		}
 		return e.createVectorIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
