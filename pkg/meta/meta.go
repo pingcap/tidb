@@ -1281,7 +1281,6 @@ type MustLoadFilterAttr struct {
 }
 
 var checkAttributesInOrder = []MustLoadFilterAttr{
-	{Attr: `"partition":null`, LoadIfMissing: true},
 	{Attr: `"Lock":null`, LoadIfMissing: true},
 	{Attr: `"tiflash_replica":null`, LoadIfMissing: true},
 	{Attr: `"temp_table_type":0`, LoadIfMissing: true},
