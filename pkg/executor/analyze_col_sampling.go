@@ -59,6 +59,13 @@ type samplingMergeTrace struct {
 	fetchCount       atomic.Int64
 	fetchBytes       atomic.Int64
 	fetchElapsedNs   atomic.Int64
+	fetchMinNs       atomic.Int64 // min per-response fetch latency
+	fetchMaxNs       atomic.Int64 // max per-response fetch latency
+	fetchLt1msCount  atomic.Int64 // count of fetches < 1ms
+	fetchLt10msCount atomic.Int64 // count of fetches 1ms–10ms
+	fetchLt100msCount atomic.Int64 // count of fetches 10ms–100ms
+	fetchGe100msCount atomic.Int64 // count of fetches >= 100ms
+	scanConcurrency  int          // set once before goroutines start
 	// subMergeWorker (N goroutines)
 	responseCount    atomic.Int64
 	responseBytes    atomic.Int64
@@ -251,7 +258,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
 	mergeTaskCh := make(chan []byte, 1)
-	trace := &samplingMergeTrace{}
+	trace := &samplingMergeTrace{scanConcurrency: e.concurrency}
 	mergeStart := time.Now()
 	taskCtx, taskCancel := context.WithCancelCause(ctx)
 	defer taskCancel(nil)
@@ -337,14 +344,27 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if totalWait+totalBusy > 0 {
 		busyPct = float64(totalBusy) / float64(totalWait+totalBusy) * 100
 	}
+	fetchCount := trace.fetchCount.Load()
+	fetchAvgNs := int64(0)
+	if fetchCount > 0 {
+		fetchAvgNs = trace.fetchElapsedNs.Load() / fetchCount
+	}
 	logutil.BgLogger().Info("analyze full sampling merge trace",
 		zap.Int64("tableID", e.tableID.TableID),
 		zap.Duration("mergeWall", mergeWall),
 		zap.Int("mergeWorkers", samplingStatsConcurrency),
+		zap.Int("scanConcurrency", trace.scanConcurrency),
 		// fetch pipeline (single goroutine)
-		zap.Int64("fetchCount", trace.fetchCount.Load()),
+		zap.Int64("fetchCount", fetchCount),
 		zap.Int64("fetchBytes", trace.fetchBytes.Load()),
 		zap.Duration("fetchElapsed", time.Duration(trace.fetchElapsedNs.Load())),
+		zap.Duration("fetchAvg", time.Duration(fetchAvgNs)),
+		zap.Duration("fetchMin", time.Duration(trace.fetchMinNs.Load())),
+		zap.Duration("fetchMax", time.Duration(trace.fetchMaxNs.Load())),
+		zap.Int64("fetchLt1ms", trace.fetchLt1msCount.Load()),
+		zap.Int64("fetchLt10ms", trace.fetchLt10msCount.Load()),
+		zap.Int64("fetchLt100ms", trace.fetchLt100msCount.Load()),
+		zap.Int64("fetchGe100ms", trace.fetchGe100msCount.Load()),
 		// merge worker aggregates
 		zap.Int64("responses", trace.responseCount.Load()),
 		zap.Int64("responseBytes", trace.responseBytes.Load()),
@@ -1028,8 +1048,38 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 
 		fetchStart := time.Now()
 		data, err := handler.nextRaw(ctx)
-		trace.fetchElapsedNs.Add(time.Since(fetchStart).Nanoseconds())
+		fetchNs := time.Since(fetchStart).Nanoseconds()
+		trace.fetchElapsedNs.Add(fetchNs)
 		trace.fetchCount.Add(1)
+		// Track per-response latency distribution.
+		for {
+			cur := trace.fetchMinNs.Load()
+			if cur != 0 && cur <= fetchNs {
+				break
+			}
+			if trace.fetchMinNs.CompareAndSwap(cur, fetchNs) {
+				break
+			}
+		}
+		for {
+			cur := trace.fetchMaxNs.Load()
+			if cur >= fetchNs {
+				break
+			}
+			if trace.fetchMaxNs.CompareAndSwap(cur, fetchNs) {
+				break
+			}
+		}
+		switch {
+		case fetchNs < 1e6: // < 1ms
+			trace.fetchLt1msCount.Add(1)
+		case fetchNs < 10e6: // 1ms–10ms
+			trace.fetchLt10msCount.Add(1)
+		case fetchNs < 100e6: // 10ms–100ms
+			trace.fetchLt100msCount.Add(1)
+		default: // >= 100ms
+			trace.fetchGe100msCount.Add(1)
+		}
 		if err != nil {
 			err = normalizeCtxErrWithCause(ctx, err)
 			return errors.Trace(err)
