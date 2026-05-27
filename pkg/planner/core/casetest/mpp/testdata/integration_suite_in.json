@@ -156,6 +156,7 @@
     "name": "TestMppUnionAll",
     "cases": [
       "explain format = 'plan_tree' select count(*) from (select a , b from t union all select a , b from t1) tt",
+      "explain format = 'plan_tree' select a from t union all select a from t",
       "explain format = 'plan_tree' select count(*) from (select a , b from t union all select a , b from t1 union all select a, b from t where false) tt",
       "explain format = 'plan_tree' select count(*) from (select a , b from t union all select a , c from t1) tt",
       "explain format = 'plan_tree' select count(*) from (select a , b from t union all select a , c from t1 where false) tt",

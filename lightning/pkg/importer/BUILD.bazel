@@ -32,6 +32,8 @@ go_library(
         "//lightning/pkg/progress",
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/dumpformat/parquetfile",
+        "//pkg/dumpformat/parsedef",
         "//pkg/errno",
         "//pkg/ingestor/ingestctrl",
         "//pkg/keyspace",

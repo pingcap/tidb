@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
@@ -49,6 +51,7 @@ import (
 	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -59,11 +62,183 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
 )
+
+func TestMatchIdentityWithVariantsStarter(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is nextgen-only")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		restoreConfig()
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "SYSTEM"
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user if not exists `SYSTEM.test_user`@`%`")
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	srv, err := NewServer(cfg, NewTiDBDriver(store))
+	require.NoError(t, err)
+	defer srv.Close()
+
+	resp := handshake.Response41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthNativePassword,
+		Auth:       []byte{},
+	}
+	newClientConn := func(user string, connectionID uint64) *clientConn {
+		cc := &clientConn{
+			connectionID: connectionID,
+			alloc:        arena.NewAllocator(1024),
+			chunkAlloc:   chunk.NewAllocator(),
+			pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			server:       srv,
+			user:         user,
+			peerHost:     "localhost",
+		}
+
+		se, err := session.CreateSession4Test(store)
+		require.NoError(t, err)
+		cc.SetCtx(&TiDBContext{
+			Session: se,
+			stmts:   make(map[int]*TiDBStatement),
+		})
+		return cc
+	}
+
+	cc := newClientConn("test_user", 1)
+	_, err = cc.checkAuthPlugin(context.Background(), &resp)
+	require.NoError(t, err)
+	require.Equal(t, "SYSTEM.test_user", cc.user)
+
+	tk.MustExec("create user if not exists `SYSTEM.keao.yang`@`%`")
+	cc = newClientConn("keao.yang", 2)
+	_, err = cc.checkAuthPlugin(context.Background(), &resp)
+	require.NoError(t, err)
+	require.Equal(t, "SYSTEM.keao.yang", cc.user)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "OTHER"
+	})
+	tk.MustExec("create user if not exists `OTHER.test_user`@`%`")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "SYSTEM"
+	})
+
+	cc = newClientConn("OTHER.test_user", 3)
+	_, err = cc.checkAuthPlugin(context.Background(), &resp)
+	require.True(t, errors.ErrorEqual(err, servererr.ErrUserPrefixMismatch), "%v", err)
+}
+
+func TestReadHandshakeGatewayTLSAttrStarter(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is nextgen-only")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	originalSecureTransport := tlsutil.RequireSecureTransport.Load()
+	originalEnv := os.Getenv("GATEWAY_SECURECONN_ATTR_KEY")
+	t.Cleanup(func() {
+		restoreConfig()
+		require.NoError(t, deploymode.Set(originalMode))
+		tlsutil.RequireSecureTransport.Store(originalSecureTransport)
+		if originalEnv == "" {
+			require.NoError(t, os.Unsetenv("GATEWAY_SECURECONN_ATTR_KEY"))
+		} else {
+			require.NoError(t, os.Setenv("GATEWAY_SECURECONN_ATTR_KEY", originalEnv))
+		}
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "ks"
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	tlsutil.RequireSecureTransport.Store(true)
+	require.NoError(t, os.Setenv("GATEWAY_SECURECONN_ATTR_KEY", "secure_conn"))
+
+	capability := mysql.ClientProtocol41 | mysql.ClientPluginAuth | mysql.ClientConnectAtts
+	attrPayload := []byte{
+		byte(len("secure_conn")),
+	}
+	attrPayload = append(attrPayload, "secure_conn"...)
+	attrValue := `{"CipherSuite":4865,"Version":771}`
+	attrPayload = append(attrPayload, byte(len(attrValue)))
+	attrPayload = append(attrPayload, attrValue...)
+	data := buildHandshakeResponsePacket(capability, attrPayload, nil)
+	packet := append([]byte{byte(len(data)), byte(len(data) >> 8), byte(len(data) >> 16), 0}, data...)
+
+	brc := serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: *bytes.NewBuffer(packet)})
+	pkt := internal.NewPacketIO(brc)
+	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
+
+	store := testkit.CreateMockStore(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	srv, err := NewServer(cfg, NewTiDBDriver(store))
+	require.NoError(t, err)
+	defer srv.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		server:       srv,
+		pkt:          pkt,
+		bufReadConn:  brc,
+		collation:    mysql.DefaultCollationID,
+		capability:   defaultCapability,
+		peerHost:     "127.0.0.1",
+		peerPort:     "4000",
+		serverHost:   "127.0.0.1",
+	}
+	ctx, err := srv.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, "", nil, nil)
+	require.NoError(t, err)
+	cc.SetCtx(ctx)
+
+	err = cc.readOptionalSSLRequestAndHandshakeResponse(context.Background())
+	require.Error(t, err)
+	require.False(t, errors.ErrorEqual(err, servererr.ErrSecureTransportRequired))
+	require.NotNil(t, cc.tlsConnState)
+	require.Equal(t, uint16(771), cc.tlsConnState.Version)
+	require.Equal(t, uint16(4865), cc.tlsConnState.CipherSuite)
+
+	connInfo := cc.connectInfo()
+	require.Equal(t, variable.ConnTypeTLS, connInfo.ConnectionType)
+	require.Equal(t, "TLSv1.2", connInfo.SSLVersion)
+
+	ctx.SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+	srv.rwlock.Lock()
+	srv.clients[cc.connectionID] = cc
+	srv.rwlock.Unlock()
+	statusVars := srv.GetStatusVars()
+	require.Equal(t, tlsutil.CipherSuiteName(cc.tlsConnState.CipherSuite), statusVars[cc.connectionID]["Ssl_cipher"])
+	require.Equal(t, tlsutil.VersionName(cc.tlsConnState.Version), statusVars[cc.connectionID]["Ssl_version"])
+
+	tlsVersion := tlsutil.VersionName(cc.tlsConnState.Version)
+	tlsCipher := tlsutil.CipherSuiteName(cc.tlsConnState.CipherSuite)
+	versionBefore := promtestutils.ToFloat64(metrics.TLSVersion.WithLabelValues(tlsVersion))
+	cipherBefore := promtestutils.ToFloat64(metrics.TLSCipher.WithLabelValues(tlsCipher))
+	cc.addConnMetrics()
+	require.Equal(t, versionBefore+1, promtestutils.ToFloat64(metrics.TLSVersion.WithLabelValues(tlsVersion)))
+	require.Equal(t, cipherBefore+1, promtestutils.ToFloat64(metrics.TLSCipher.WithLabelValues(tlsCipher)))
+}
 
 type Issue33699CheckType struct {
 	name              string

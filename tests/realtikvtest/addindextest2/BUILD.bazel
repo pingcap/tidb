@@ -24,6 +24,7 @@ go_test(
         "//pkg/dxf/operator",
         "//pkg/ingestor/globalsort",
         "//pkg/ingestor/ingestctrl",
+        "//pkg/ingestor/simplesst",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/objstore",

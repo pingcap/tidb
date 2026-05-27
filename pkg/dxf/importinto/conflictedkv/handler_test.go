@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -112,7 +113,7 @@ func TestHandler(t *testing.T) {
 				require.NoError(t, dataKVHdl.Close(ctx))
 			})
 			require.NoError(t, dataKVHdl.PreRun())
-			var ch = make(chan *globalsort.KVPair, 10)
+			var ch = make(chan *simplesst.KVPair, 10)
 			eg := util.NewErrorGroupWithRecover()
 			eg.Go(func() error {
 				return dataKVHdl.Run(ctx, ch)
@@ -130,7 +131,7 @@ func TestHandler(t *testing.T) {
 					}
 					// completely same row repeat 10 times
 					for range 10 {
-						ch <- &globalsort.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
+						ch <- &simplesst.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
 					}
 				}
 				close(ch)
@@ -189,7 +190,7 @@ func TestHandler(t *testing.T) {
 				conflictedkv.NewHandleFilter(alreadyProcessedHandles),
 			)
 			require.NoError(t, indexKVHdl.PreRun())
-			var ch = make(chan *globalsort.KVPair, 10)
+			var ch = make(chan *simplesst.KVPair, 10)
 			eg := util.NewErrorGroupWithRecover()
 			eg.Go(func() error {
 				defer func() {
@@ -220,7 +221,7 @@ func TestHandler(t *testing.T) {
 						require.NoError(t, err)
 						// only send unique index kv pairs
 						if indexID == targetIndexID {
-							ch <- &globalsort.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
+							ch <- &simplesst.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
 						}
 					}
 				}

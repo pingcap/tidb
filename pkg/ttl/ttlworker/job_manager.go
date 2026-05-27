@@ -201,10 +201,18 @@ func (m *JobManager) jobLoopWithSession(se session.Session) (err error) {
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
 	scanTaskNotificationWatcher := m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
 	m.taskManager.resizeWorkersWithSysVar()
+	lastLeaderState := false
 	for {
 		m.reportMetrics(se)
 		m.taskManager.reportMetrics()
 		now := se.Now()
+		currentLeaderState := m.isLeader()
+		if currentLeaderState && !lastLeaderState {
+			gcCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
+			m.DoGC(gcCtx, se, now)
+			cancel()
+		}
+		lastLeaderState = currentLeaderState
 
 		select {
 		// misc

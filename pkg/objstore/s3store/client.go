@@ -169,6 +169,7 @@ func (c *s3Client) PutObject(ctx context.Context, name string, data []byte) erro
 	if c.s3Compatible {
 		optFns = []func(*s3.Options){withContentMD5}
 	}
+	s3like.RecordAPICall(s3like.BackendS3, s3like.APICallPutObject)
 	_, err := c.svc.PutObject(ctx, input, optFns...)
 	return errors.Trace(err)
 }
@@ -261,6 +262,7 @@ func (c *s3Client) IsObjectExists(ctx context.Context, name string) (bool, error
 		Key:    aws.String(key),
 	}
 
+	s3like.RecordAPICall(s3like.BackendS3, s3like.APICallHeadObjects)
 	_, err := c.svc.HeadObject(ctx, input)
 	if err != nil {
 		var aerr smithy.APIError
@@ -282,6 +284,7 @@ func (c *s3Client) HeadObject(ctx context.Context, name string) (*s3like.HeadObj
 		Key:    aws.String(key),
 	}
 
+	s3like.RecordAPICall(s3like.BackendS3, s3like.APICallHeadObjects)
 	output, err := c.svc.HeadObject(ctx, input)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -304,6 +307,7 @@ func (c *s3Client) ListObjects(ctx context.Context, extraPrefix, startAfter stri
 		ContinuationToken: continuationToken,
 		StartAfter:        startAfterKey,
 	}
+	s3like.RecordAPICall(s3like.BackendS3, s3like.APICallListObjects)
 	res, err := c.svc.ListObjectsV2(ctx, req)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -217,14 +218,14 @@ type SharedVars struct {
 	indexKVFileCount        *atomic.Int64
 }
 
-func (sv *SharedVars) mergeDataSummary(summary *globalsort.WriterSummary) {
+func (sv *SharedVars) mergeDataSummary(summary *simplesst.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.SortedDataMeta.MergeSummary(summary)
 	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
 }
 
-func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *globalsort.WriterSummary) {
+func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *simplesst.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.RecordedConflictKVCount += summary.ConflictInfo.Count

@@ -327,7 +327,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	schExt := schmock.NewMockExtension(ctrl)
 	schExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(func(base *proto.TaskBase) proto.Step {
 		switch base.Step {
-		case proto.StepInit:
+		case proto.StepInit, proto.StepPrepared:
 			return proto.StepOne
 		default:
 			return proto.StepDone
@@ -478,6 +478,90 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
+	})
+
+	t.Run("test onPending prepare mode required", func(t *testing.T) {
+		taskWithPrepare := task
+		taskWithPrepare.ExtraParams.PrepareMode = proto.PrepareModeRequired
+		scheduler.task.Store(&taskWithPrepare)
+		scheduler.Extension = schExt
+
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("prepare err"))
+		schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
+		require.ErrorContains(t, scheduler.onPending(), "prepare err")
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		nonRetryableErr := errors.New("prepare fatal err")
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(nonRetryableErr)
+		schExt.EXPECT().IsRetryableErr(nonRetryableErr).Return(false)
+		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, proto.TaskStatePending, nonRetryableErr).Return(fmt.Errorf("revert task err"))
+		require.ErrorContains(t, scheduler.onPending(), "revert task err")
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Return(nonRetryableErr)
+		schExt.EXPECT().IsRetryableErr(nonRetryableErr).Return(false)
+		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, proto.TaskStatePending, nonRetryableErr).Return(nil)
+		require.NoError(t, scheduler.onPending())
+		taskWithPrepare.State = proto.TaskStateReverting
+		taskWithPrepare.Error = nonRetryableErr
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		taskWithPrepare.State = proto.TaskStatePending
+		taskWithPrepare.Error = nil
+		scheduler.task.Store(&taskWithPrepare)
+
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
+				inTask.Meta = []byte(`{"prepare":"done"}`)
+				inTask.RequiredSlots = 8
+				inTask.MaxNodeCount = 6
+				return nil
+			})
+		taskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, inTask *proto.Task) (bool, error) {
+				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
+				require.Equal(t, 8, inTask.RequiredSlots)
+				require.Equal(t, 6, inTask.MaxNodeCount)
+				return true, nil
+			})
+		schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			Return(nil, nil)
+		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+		taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), proto.TaskStateRunning, proto.StepOne, gomock.Any()).Return(nil)
+		require.NoError(t, scheduler.onPending())
+		taskWithPrepare.State = proto.TaskStateRunning
+		taskWithPrepare.Step = proto.StepOne
+		taskWithPrepare.Meta = []byte(`{"prepare":"done"}`)
+		taskWithPrepare.RequiredSlots = 8
+		taskWithPrepare.MaxNodeCount = 6
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
+
+		taskWithPrepare.Step = proto.StepInit
+		taskWithPrepare.Meta = []byte(`{"prepare":"init"}`)
+		taskWithPrepare.RequiredSlots = task.RequiredSlots
+		taskWithPrepare.MaxNodeCount = task.MaxNodeCount
+		scheduler.task.Store(&taskWithPrepare)
+		schExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, inTask *proto.Task) error {
+				inTask.Meta = []byte(`{"prepare":"done"}`)
+				inTask.RequiredSlots = 8
+				inTask.MaxNodeCount = 6
+				return nil
+			})
+		taskMgr.EXPECT().SwitchTaskStepAfterPrepare(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, inTask *proto.Task) (bool, error) {
+				require.Equal(t, []byte(`{"prepare":"done"}`), inTask.Meta)
+				require.Equal(t, 8, inTask.RequiredSlots)
+				require.Equal(t, 6, inTask.MaxNodeCount)
+				return false, nil
+			})
+		require.NoError(t, scheduler.onPending())
+		require.Equal(t, taskWithPrepare, *scheduler.GetTask())
+		require.True(t, ctrl.Satisfied())
 	})
 
 	t.Run("test revertTask", func(t *testing.T) {

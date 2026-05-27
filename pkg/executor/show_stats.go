@@ -30,6 +30,7 @@ import (
 	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -44,6 +45,19 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 	if e.Extractor != nil {
 		fieldFilter = e.Extractor.Field()
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
+
+	var dbFilter, tableFilter set.StringSet
+	if raw, ok := e.Extractor.(interface {
+		StatsMetaDBFilters() set.StringSet
+		StatsMetaTableFilters() set.StringSet
+	}); ok {
+		if !raw.StatsMetaDBFilters().Empty() {
+			dbFilter = raw.StatsMetaDBFilters()
+		}
+		if !raw.StatsMetaTableFilters().Empty() {
+			tableFilter = raw.StatsMetaTableFilters()
+		}
 	}
 
 	// Build partitioned table ID map using V2 API for better memory efficiency
@@ -72,10 +86,15 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
 			continue
+		} else if dbFilter != nil && !dbFilter.Exist(db.L) {
+			continue
 		}
 		tableNames, err := is.SchemaSimpleTableInfos(ctx, db)
 		terror.Log(err)
 		for _, nameInfo := range tableNames {
+			if tableFilter != nil && !tableFilter.Exist(nameInfo.Name.L) {
+				continue
+			}
 			tblID := nameInfo.ID
 			partitionedTable, ok := partitionedTables[tblID]
 			// Partitioned table:
