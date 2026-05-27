@@ -398,6 +398,7 @@ func (s *BaseScheduler) onPending() error {
 		}
 		task.Step = proto.StepPrepared
 		s.task.Store(task)
+		failpoint.InjectCall("afterTaskPrepared", task)
 		// fall through to switch to next step to avoid wait another tick to
 		// schedule subtasks after prepare.
 	}

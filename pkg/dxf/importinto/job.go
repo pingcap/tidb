@@ -69,6 +69,9 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 // Nextgen only supports global sort for IMPORT INTO in production, but local
 // sort can still be exercised in tests, so keep the IsGlobalSort check.
 func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
+	failpoint.Inject("mockDisableAsyncPrepare", func() {
+		failpoint.Return(false)
+	})
 	return plan != nil && kerneltype.IsNextGen() && plan.IsGlobalSort()
 }
 
