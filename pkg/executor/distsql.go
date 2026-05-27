@@ -1062,6 +1062,8 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	}
 
 	var builder distsql.RequestBuilder
+	// Set concurrency before SetDAGRequest intentionally.
+	// SetDAGRequest may override this value (e.g. to 1) for small-limit DAGs.
 	if indexScanConcurrency > 0 {
 		builder.SetConcurrency(indexScanConcurrency)
 	}
