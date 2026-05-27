@@ -246,10 +246,30 @@ func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
 	if len(ds.SCtx().GetSessionVars().StmtCtx.Tables) > 1 {
 		if count, ok := deriveTiCISearchPathStats(ds, path); ok {
 			path.CountAfterAccess = count
+			path.CountAfterIndex = count
+			applyTiCISearchPathStatsToDataSource(ds, path)
 			return
 		}
 	}
 	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+	path.CountAfterIndex = path.CountAfterAccess
+	applyTiCISearchPathStatsToDataSource(ds, path)
+}
+
+func applyTiCISearchPathStatsToDataSource(ds *logicalop.DataSource, path *util.AccessPath) {
+	if !isOnlySelectedTiCIFTSPath(ds, path) || ds.TableStats == nil {
+		return
+	}
+	ds.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), path.CountAfterAccess))
+}
+
+func isOnlySelectedTiCIFTSPath(ds *logicalop.DataSource, path *util.AccessPath) bool {
+	return path != nil &&
+		path.Index != nil &&
+		path.Index.IsTiCIIndex() &&
+		path.FtsQueryInfo != nil &&
+		len(ds.PossibleAccessPaths) == 1 &&
+		ds.PossibleAccessPaths[0] == path
 }
 
 func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
