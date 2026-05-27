@@ -256,6 +256,51 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	createMinMaxMV := func(baseTable, mvName, indexDDL string) {
+		tk.MustExec(fmt.Sprintf(
+			"create table %s (a int not null, b int not null, c int not null%s)",
+			baseTable,
+			indexDDL,
+		))
+		tk.MustExec(fmt.Sprintf(
+			"create materialized view log on %s (a, b, c) purge next date_add(now(), interval 1 hour)",
+			baseTable,
+		))
+		tk.MustExec(fmt.Sprintf(
+			"create materialized view %s (a, b, minc, cnt) refresh fast next now() as select a, b, min(c), count(1) from %s group by a, b",
+			mvName,
+			baseTable,
+		))
+	}
+
+	createMinMaxMV("t_drop_idx", "mv_drop_idx", ", index idx_ab(a, b)")
+	err := tk.ExecToErr("drop index idx_ab on t_drop_idx")
+	require.ErrorContains(t, err, "required by materialized view mv_drop_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
+	createMinMaxMV("t_alter_drop_idx", "mv_alter_drop_idx", ", index idx_ab(a, b)")
+	err = tk.ExecToErr("alter table t_alter_drop_idx drop index idx_ab")
+	require.ErrorContains(t, err, "required by materialized view mv_alter_drop_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
+	createMinMaxMV("t_invisible_idx", "mv_invisible_idx", ", index idx_ab(a, b)")
+	err = tk.ExecToErr("alter table t_invisible_idx alter index idx_ab invisible")
+	require.ErrorContains(t, err, "required by materialized view mv_invisible_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
+	createMinMaxMV("t_alt_idx", "mv_alt_idx", ", index idx_ab(a, b), index idx_ba(b, a)")
+	tk.MustExec("alter table t_alt_idx alter index idx_ab invisible")
+	tk.MustExec("drop index idx_ab on t_alt_idx")
+	tk.MustExec("insert into t_alt_idx values (1, 2, 10), (1, 2, 5)")
+	tk.MustExec("refresh materialized view mv_alt_idx fast")
+	tk.MustQuery("select a, b, minc, cnt from mv_alt_idx").Check(testkit.Rows("1 2 5 2"))
+}
+
 func TestShowCreateMaterializedView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

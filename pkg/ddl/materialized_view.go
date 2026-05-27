@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -93,7 +94,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 
 	// Validate Stage-1 query contract and ensure MV LOG columns cover query references.
-	groupByInfos, err := validateCreateMaterializedViewQuery(
+	queryAnalysis, err := validateCreateMaterializedViewQuery(
 		ctx,
 		baseTableName,
 		baseTable.Meta(),
@@ -103,6 +104,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
+	groupByInfos := queryAnalysis.GroupByInfos
 
 	selectSQL, err := restoreNodeToCanonicalSQL(s.Select)
 	if err != nil {
@@ -707,13 +709,19 @@ type mviewGroupByInfo struct {
 	NotNull   bool
 }
 
+type mviewQueryAnalysis struct {
+	GroupByInfos []mviewGroupByInfo
+	GroupByCols  []string
+	HasMinOrMax  bool
+}
+
 func validateCreateMaterializedViewQuery(
 	sctx sessionctx.Context,
 	baseTableName *ast.TableName,
 	baseTableInfo *model.TableInfo,
 	mlogColumns []pmodel.CIStr,
 	selectNode ast.ResultSetNode,
-) (groupByInfos []mviewGroupByInfo, _ error) {
+) (*mviewQueryAnalysis, error) {
 	sel, ok := selectNode.(*ast.SelectStmt)
 	if !ok {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW only supports SELECT statement")
@@ -881,7 +889,7 @@ func validateCreateMaterializedViewQuery(
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW must contain count(*)/count(1)")
 	}
 
-	groupByInfos = make([]mviewGroupByInfo, 0, len(sel.GroupBy.Items))
+	groupByInfos := make([]mviewGroupByInfo, 0, len(sel.GroupBy.Items))
 	for _, item := range sel.GroupBy.Items {
 		colExpr := item.Expr.(*ast.ColumnNameExpr)
 		colName, err := resolveMViewColumnName(colExpr.Name, baseTableName, fromAlias, baseColMap)
@@ -905,7 +913,11 @@ func validateCreateMaterializedViewQuery(
 		}
 	}
 
-	return groupByInfos, nil
+	return &mviewQueryAnalysis{
+		GroupByInfos: groupByInfos,
+		GroupByCols:  groupByCols,
+		HasMinOrMax:  hasMinOrMax,
+	}, nil
 }
 
 func extractSingleTableNameFromSelect(sel *ast.SelectStmt) (*ast.TableName, error) {
@@ -988,6 +1000,23 @@ func isCountStarOrOne(arg ast.ExprNode) bool {
 }
 
 func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, groupByCols []string) bool {
+	return hasPrefixCoveringGroupByColumns(baseTableInfo, groupByCols, "", false)
+}
+
+func hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(
+	baseTableInfo *model.TableInfo,
+	groupByCols []string,
+	excludedIndexName string,
+) bool {
+	return hasPrefixCoveringGroupByColumns(baseTableInfo, groupByCols, excludedIndexName, true)
+}
+
+func hasPrefixCoveringGroupByColumns(
+	baseTableInfo *model.TableInfo,
+	groupByCols []string,
+	excludedIndexName string,
+	requireVisiblePublic bool,
+) bool {
 	prefixLen := len(groupByCols)
 	if prefixLen == 0 {
 		return false
@@ -997,10 +1026,9 @@ func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, gr
 		groupBySet[col] = struct{}{}
 	}
 
-	if baseTableInfo.PKIsHandle && prefixLen == 1 {
+	if baseTableInfo.PKIsHandle && prefixLen == 1 && excludedIndexName != strings.ToLower(mysql.PrimaryKeyName) {
 		if pkCol := baseTableInfo.GetPkColInfo(); pkCol != nil {
-			_, ok := groupBySet[pkCol.Name.L]
-			if ok {
+			if _, ok := groupBySet[pkCol.Name.L]; ok {
 				return true
 			}
 		}
@@ -1008,6 +1036,12 @@ func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, gr
 
 	for _, idx := range baseTableInfo.Indices {
 		if idx == nil || len(idx.Columns) < prefixLen {
+			continue
+		}
+		if requireVisiblePublic && (idx.State != model.StatePublic || idx.Invisible) {
+			continue
+		}
+		if excludedIndexName != "" && idx.Name.L == excludedIndexName {
 			continue
 		}
 		matched := make(map[string]struct{}, prefixLen)
@@ -1034,6 +1068,30 @@ func hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo *model.TableInfo, gr
 		}
 	}
 	return false
+}
+
+func analyzeStoredMaterializedViewQuery(
+	sctx sessionctx.Context,
+	baseTableName *ast.TableName,
+	baseTableInfo *model.TableInfo,
+	mlogColumns []pmodel.CIStr,
+	sql string,
+) (*mviewQueryAnalysis, error) {
+	charset, collation := "", ""
+	p := parser.New()
+	if sctx != nil && sctx.GetSessionVars() != nil {
+		charset, collation = sctx.GetSessionVars().GetCharsetInfo()
+		p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
+	}
+	stmt, err := p.ParseOneStmt(sql, charset, collation)
+	if err != nil {
+		return nil, err
+	}
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok {
+		return nil, errors.Errorf("expected select statement, got %T", stmt)
+	}
+	return validateCreateMaterializedViewQuery(sctx, baseTableName, baseTableInfo, mlogColumns, sel)
 }
 
 func hasMaterializedViewDependsOnBaseTable(baseTableInfo *model.TableInfo) bool {

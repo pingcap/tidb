@@ -1996,6 +1996,63 @@ func checkIndexOperationMaterializedViewConstraints(tblInfo *model.TableInfo, op
 	return nil
 }
 
+func checkBaseTableDependentMViewMinMaxIndexConstraints(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	schemaName pmodel.CIStr,
+	baseTableInfo *model.TableInfo,
+	indexName pmodel.CIStr,
+	op string,
+) error {
+	if baseTableInfo.MaterializedViewBase == nil || len(baseTableInfo.MaterializedViewBase.MViewIDs) == 0 {
+		return nil
+	}
+	mlogTbl, ok := is.TableByID(ctx, baseTableInfo.MaterializedViewBase.MLogID)
+	if !ok || mlogTbl.Meta().MaterializedViewLog == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s on base table with invalid materialized view log metadata", op),
+		)
+	}
+	baseTableName := &ast.TableName{Schema: schemaName, Name: baseTableInfo.Name}
+
+	for _, mvID := range baseTableInfo.MaterializedViewBase.MViewIDs {
+		mvTbl, ok := is.TableByID(ctx, mvID)
+		if !ok || mvTbl.Meta().MaterializedView == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with invalid dependent materialized view metadata", op),
+			)
+		}
+		queryAnalysis, err := analyzeStoredMaterializedViewQuery(
+			sctx,
+			baseTableName,
+			baseTableInfo,
+			mlogTbl.Meta().MaterializedViewLog.Columns,
+			mvTbl.Meta().MaterializedView.SQLContent,
+		)
+		if err != nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with invalid dependent materialized view %s metadata", op, mvTbl.Meta().Name.O),
+			)
+		}
+		if !queryAnalysis.HasMinOrMax {
+			continue
+		}
+		if hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(baseTableInfo, queryAnalysis.GroupByCols, indexName.L) {
+			continue
+		}
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf(
+				"%s on base table index %s required by materialized view %s for MIN/MAX fast refresh",
+				op,
+				indexName.O,
+				mvTbl.Meta().Name.O,
+			),
+		)
+	}
+	return nil
+}
+
 func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	return e.alterTable(ctx, sctx, stmt, false)
 }
@@ -5704,6 +5761,19 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		}
 		return err
 	}
+	if !isPK {
+		if err := checkBaseTableDependentMViewMinMaxIndexConstraints(
+			context.Background(),
+			is,
+			ctx,
+			schema.Name,
+			t.Meta(),
+			indexName,
+			"DROP INDEX",
+		); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	err = checkIndexNeededInForeignKey(is, schema.Name.L, t.Meta(), indexInfo)
 	if err != nil {
@@ -6256,6 +6326,19 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 	}
 	if skip {
 		return nil
+	}
+	if invisible {
+		if err := checkBaseTableDependentMViewMinMaxIndexConstraints(
+			context.Background(),
+			e.infoCache.GetLatest(),
+			ctx,
+			schema.Name,
+			tb.Meta(),
+			indexName,
+			"ALTER INDEX INVISIBLE",
+		); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job := &model.Job{
