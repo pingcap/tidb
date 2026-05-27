@@ -151,6 +151,25 @@ func TestInitJobMapStopsRetryOnContextDone(t *testing.T) {
 	require.Less(t, time.Since(start), 3*time.Second)
 }
 
+func TestWaitCleanupTiKVDoesNotUseRawKVForCSECleanup(t *testing.T) {
+	req := &pdpb.ReplicaCleanup{
+		Version:         7,
+		CleanupMetadata: true,
+	}
+	reqBytes, err := req.Marshal()
+	require.NoError(t, err)
+
+	version, err := (&waitCleanupTiKV{}).checkAndWait(
+		context.Background(),
+		reqBytes,
+		0,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), version)
+}
+
 func mustPutWaitJobReq(t *testing.T, cli *clientv3.Client, key string, value []byte) {
 	t.Helper()
 	_, err := cli.Put(context.Background(), key, string(value))

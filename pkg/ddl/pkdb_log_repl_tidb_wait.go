@@ -737,17 +737,11 @@ func (w waitCleanupTiKV) checkAndWait(
 	if !curr.GetCleanupMetadata() {
 		return version, nil
 	}
-	cfg := config.GetGlobalConfig()
-	cli, err := rawkv.NewClient(
-		ctx,
-		strings.Split(cfg.Path, ","),
-		cfg.Security.ClusterSecurity(),
-	)
-	if err != nil {
-		return 0, err
-	}
-	defer cli.Close()
-	return version, cli.DeleteRange(ctx, nil, nil, rawkv.SetColumnFamily(logReplStateCf))
+	// TiKV cleanup deletes the legacy lr-state CF. CSE keeps log replication
+	// progress in kvengine shard properties, and its CF_LR_STATE rawkv scan path
+	// is temporary bring-up debt. Do not extend that TiKV-shaped surface with a
+	// raw delete-range cleanup path.
+	return version, nil
 }
 
 type waitFlashback struct{}
