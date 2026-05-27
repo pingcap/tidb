@@ -232,9 +232,6 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	concurrency := int(r.GetResource().CPU.Capacity())
 	if r.isGlobalSort() {
-		// Multi-schema proxy jobs may not carry UseCloudStorage, while this executor
-		// has already selected the global-sort path by cloudStorageURI.
-		r.job.ReorgMeta.UseCloudStorage = true
 		return r.runGlobalPipeline(ctx, wctx, subtask, sm, concurrency, objStore)
 	}
 	return r.runLocalPipeline(ctx, wctx, subtask, sm, concurrency)
