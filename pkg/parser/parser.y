@@ -12167,14 +12167,14 @@ ShowStmt:
 |	"SHOW" "MATERIALIZED" "VIEW" ShowMaterializedViewName ShowMaterializedViewRemainLogs
 	{
 		$$ = &ast.ShowStmt{
-			Tp:    ast.ShowMaterializedView,
+			Tp:    ast.ShowMaterializedViewRemainLogs,
 			Table: $4.(*ast.TableName),
 		}
 	}
 |	"SHOW" "MATERIALIZED" "VIEW" "LOG" "ON" TableName ShowMaterializedViewLogWaitPurge
 	{
 		$$ = &ast.ShowStmt{
-			Tp:    ast.ShowMaterializedViewLog,
+			Tp:    ast.ShowMaterializedViewLogWaitPurge,
 			Table: $6.(*ast.TableName),
 		}
 	}

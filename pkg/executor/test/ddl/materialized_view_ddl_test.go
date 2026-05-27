@@ -628,6 +628,41 @@ func TestShowMaterializedViewStatusPrivilege(t *testing.T) {
 	tkUser.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(2)))
 }
 
+func TestShowMaterializedViewRemainLogs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_remain_logs (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_remain_logs (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_remain_logs (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_remain_logs group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_remain_logs"))
+	require.NoError(t, err)
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_remain_logs"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	mlogID := baseTable.Meta().MaterializedViewBase.MLogID
+	mlogTable, ok := is.TableByID(context.Background(), mlogID)
+	require.True(t, ok)
+
+	expectedRow := func(remainLogs int64) string {
+		return fmt.Sprintf("%d mv_remain_logs %d %s %d", mvTable.Meta().ID, mlogID, mlogTable.Meta().Name.O, remainLogs)
+	}
+	tk.MustQuery("show materialized view mv_remain_logs remain_logs").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("insert into t_remain_logs values (1, 10), (1, 20), (2, 30)")
+	tk.MustQuery("show materialized view mv_remain_logs remain_logs").Check(testkit.Rows(expectedRow(3)))
+
+	tk.MustExec("refresh materialized view mv_remain_logs fast")
+	tk.MustQuery("show materialized view mv_remain_logs remain_logs").Check(testkit.Rows(expectedRow(0)))
+
+	err = tk.QueryToErr("show materialized view t_remain_logs remain_logs")
+	require.ErrorContains(t, err, "is not MATERIALIZED VIEW")
+	err = tk.ExecToErr("show materialized view mv_remain_logs unknown_option")
+	require.ErrorContains(t, err, "unknown SHOW MATERIALIZED VIEW option unknown_option")
+}
+
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
