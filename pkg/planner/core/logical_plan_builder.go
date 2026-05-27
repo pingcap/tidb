@@ -1120,8 +1120,17 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
+	} else if b.ctx.GetSessionVars().EnableSPPlanCache {
+		colNameField, ok := innerNode.(*ast.ColumnNameExpr)
+		if ok && colNameField.Name.Table.L == "" {
+			if _, _, notFind := b.ctx.GetSessionVars().GetProcedureVariable(colNameField.Name.Name.L); !notFind {
+				colName = colNameField.Name.Name
+			}
+		}
 	} else {
 		// Other: field is an expression.
+	}
+	if colName.L == "" {
 		var err error
 		if colName, err = b.buildProjectionFieldNameFromExpressions(ctx, field); err != nil {
 			return nil, nil, err

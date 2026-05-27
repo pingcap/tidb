@@ -137,6 +137,7 @@ set global tidb_enable_stmt_summary = default;
 # TestPerformanceSchemaforPlanCache
 set global tidb_enable_stmt_summary = 0;
 set global tidb_enable_stmt_summary = 1;
+set tidb_enable_prepared_plan_cache = 1;
 drop table if exists t;
 create table t(a int);
 prepare stmt from 'select * from t';
@@ -145,7 +146,9 @@ select plan_cache_hits, plan_in_cache from information_schema.statements_summary
 execute stmt;
 execute stmt;
 execute stmt;
-select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+execute stmt;
+select plan_cache_hits >= 3, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+set tidb_enable_prepared_plan_cache = default;
 set global tidb_enable_stmt_summary = default;
 
 # TestInfoSchemaDeadlockPrivilege

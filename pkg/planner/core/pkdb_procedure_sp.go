@@ -162,9 +162,10 @@ type NeedCloseCur struct {
 // CacheAst Stores syntax tree
 // isInvalid Indicates whether it is invalid
 type CacheAst struct {
-	sql       string
-	isInvalid bool
-	stmts     []ast.StmtNode
+	sql            string
+	isInvalid      bool
+	stmts          []ast.StmtNode
+	planCacheStmts []*procedurePlanCacheStmt
 }
 
 // GetString gets SQL string.
@@ -198,6 +199,9 @@ func (node *CacheAst) Disable() {
 func (node *CacheAst) SetStmts(stmts []ast.StmtNode) {
 	node.isInvalid = false
 	node.stmts = stmts
+	if len(node.planCacheStmts) != len(stmts) {
+		node.planCacheStmts = make([]*procedurePlanCacheStmt, len(stmts))
+	}
 }
 
 // GetStmts gets cached stmts
@@ -1706,9 +1710,28 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 	}
 	ctx = WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: p.stmtOrdinal})
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	for _, stmt := range p.cacheStmt.stmts {
+	for stmtIdx, stmt := range p.cacheStmt.stmts {
+		planCacheStmt, err := p.getProcedurePlanCacheExecuteStmt(ctx, sctx, stmt, stmtIdx)
+		if err != nil {
+			return cache, err
+		}
+		runWithPlanCacheWarningIsolation := func(fn func() error) error {
+			if planCacheStmt == nil {
+				return fn()
+			}
+			return executeWithProcedurePlanCacheWarningIsolation(sctx.GetSessionVars(), fn)
+		}
 		if sctx.GetSessionVars().StmtCtx.TriggerCtx.InTrigger {
-			rows, _, err := p.executeStmt(ctx, exec, stmt, sqlexec.ExecOptionUseCurSession)
+			execStmt := stmt
+			if planCacheStmt != nil {
+				execStmt = planCacheStmt
+			}
+			var rows []chunk.Row
+			err = runWithPlanCacheWarningIsolation(func() error {
+				var execErr error
+				rows, _, execErr = p.executeStmt(ctx, exec, execStmt, sqlexec.ExecOptionUseCurSession)
+				return execErr
+			})
 			if err != nil {
 				return cache, err
 			}
@@ -1723,22 +1746,27 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 			if x.SelectIntoOpt != nil {
 				p.cacheStmt.isInvalid = true
 			}
-			err := executeSelectStmt(ctx, sctx, x, nil, &p.baseProcedureExecPlan)
+			err := runWithPlanCacheWarningIsolation(func() error {
+				return executeSelectStmt(ctx, sctx, x, planCacheStmt, &p.baseProcedureExecPlan)
+			})
 			if err != nil {
 				return cache, err
 			}
 
 		case *ast.ExplainStmt, *ast.SetOprStmt, *ast.ShowStmt:
-			if p.baseProcedureExecPlan.compileAndExec != nil {
-				_, _, err := p.executeStmt(WithExplainRoutineDrainRows(ctx), exec, x, sqlexec.ExecOptionUseCurSession)
-				if err != nil {
-					return cache, err
+			execStmt := ast.StmtNode(x)
+			if planCacheStmt != nil {
+				execStmt = planCacheStmt
+			}
+			err := runWithPlanCacheWarningIsolation(func() error {
+				if p.baseProcedureExecPlan.compileAndExec != nil {
+					_, _, err := p.executeStmt(WithExplainRoutineDrainRows(ctx), exec, execStmt, sqlexec.ExecOptionUseCurSession)
+					return err
 				}
-			} else {
-				err := sctx.GetSessionExec().MultiHanldeNodeWithResult(ctx, x)
-				if err != nil {
-					return cache, err
-				}
+				return sctx.GetSessionExec().MultiHanldeNodeWithResult(ctx, execStmt)
+			})
+			if err != nil {
+				return cache, err
 			}
 
 		case *ast.PrepareStmt:
@@ -1805,7 +1833,16 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 			}
 
 		default:
-			rows, _, err := p.executeStmt(ctx, exec, x, sqlexec.ExecOptionUseCurSession)
+			execStmt := ast.StmtNode(x)
+			if planCacheStmt != nil {
+				execStmt = planCacheStmt
+			}
+			var rows []chunk.Row
+			err := runWithPlanCacheWarningIsolation(func() error {
+				var execErr error
+				rows, _, execErr = p.executeStmt(ctx, exec, execStmt, sqlexec.ExecOptionUseCurSession)
+				return execErr
+			})
 			if err != nil {
 				return cache, err
 			}
@@ -2794,7 +2831,7 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 	case *ast.ProcedureReturnStmt:
 		ri := &returnInst{
 			context:     b.procedureNowContext,
-			cacheStmt:   &CacheAst{node.Text(), false, []ast.StmtNode{node}},
+			cacheStmt:   &CacheAst{sql: node.Text(), isInvalid: false, stmts: []ast.StmtNode{node}},
 			retType:     b.storedFuncRetType,
 			blockPath:   b.currentExplainRoutineBlockPath(),
 			stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
@@ -2806,7 +2843,7 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 	default:
 		exec := &executeBaseSQL{
 			context:     b.procedureNowContext,
-			cacheStmt:   &CacheAst{node.Text(), false, []ast.StmtNode{node}},
+			cacheStmt:   &CacheAst{sql: node.Text(), isInvalid: false, stmts: []ast.StmtNode{node}},
 			blockPath:   b.currentExplainRoutineBlockPath(),
 			stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
 		}

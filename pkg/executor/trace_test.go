@@ -105,7 +105,7 @@ end`)
 	})
 	require.True(t, ok, "rows=%v", rows)
 	outerStmtDepth, ok := traceRowFindOperationDepth(rows, func(op string) bool {
-		return strings.HasPrefix(op, "routine.statement SELECT") && strings.Contains(op, "fn_trace_inner_nested")
+		return strings.HasPrefix(op, "routine.statement SELECT") && strings.Contains(strings.ToLower(op), "fn_trace_inner_nested")
 	})
 	require.True(t, ok, "rows=%v", rows)
 	innerDepth, ok := traceRowFindOperationDepth(rows, func(op string) bool {

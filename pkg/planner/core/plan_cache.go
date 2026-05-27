@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
@@ -303,7 +304,29 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context, cachedVal *P
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	stmtCtx.StmtHints = *cachedVal.stmtHints
+	if stmt.ReplayWarningsOnHit {
+		replayCachedPlanWarnings(stmtCtx, cachedVal)
+	}
 	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
+}
+
+func replayCachedPlanWarnings(stmtCtx *stmtctx.StatementContext, cached *PlanCacheValue) {
+	if stmtCtx == nil || cached == nil {
+		return
+	}
+	if len(cached.Warnings) > 0 {
+		stmtCtx.AppendWarnings(cached.Warnings)
+	}
+	for _, warn := range cached.ExtraWarnings {
+		switch warn.Level {
+		case contextutil.WarnLevelError:
+			stmtCtx.AppendExtraError(warn.Err)
+		case contextutil.WarnLevelNote:
+			stmtCtx.AppendExtraNote(warn.Err)
+		default:
+			stmtCtx.AppendExtraWarning(warn.Err)
+		}
+	}
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
@@ -333,6 +356,10 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
 		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
+		if stmt.ReplayWarningsOnHit {
+			cached.Warnings = stmtCtx.CopyWarnings(nil)
+			cached.ExtraWarnings = append([]stmtctx.SQLWarn(nil), stmtCtx.GetExtraWarnings()...)
+		}
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)

@@ -463,6 +463,47 @@ func TestTriggerProcedureBlockNestedDMLFiresOtherTableTriggers(t *testing.T) {
 	tk.MustQuery("select x from b").Check(testkit.Rows())
 }
 
+func TestTriggerPseudoRecordProcedurePlanCacheDoesNotLeakFirstRow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key, val varchar(10))")
+	tk.MustExec("create table t2(id int auto_increment primary key, val varchar(10))")
+
+	dom := mustGetDomainWithInfoSchemaV1(t, tk, store)
+	db := mustGetDBInfo(t, dom, "test")
+
+	makeTrig := func(name string, timing ast.TriggerTiming, event ast.TriggerEvent, createdTS uint64) *model.TriggerInfo {
+		body := "BEGIN INSERT INTO t2(val) VALUES (NEW.val); END"
+		return &model.TriggerInfo{
+			Name:             pmodel.NewCIStr(name),
+			Timing:           timing,
+			Event:            event,
+			Table:            pmodel.NewCIStr("t1"),
+			CreateSQL:        "CREATE TRIGGER " + name + " " + timing.String() + " " + event.String() + " ON t1 FOR EACH ROW " + body + ";",
+			Body:             body,
+			State:            model.StatePublic,
+			SQLMode:          tk.Session().GetSessionVars().SQLMode,
+			CreatedTimestamp: createdTS,
+		}
+	}
+
+	mustSetTableTriggersAndReload(t, dom, store, db.ID, "test", "t1", []*model.TriggerInfo{
+		makeTrig("trg_t1_ai", ast.TriggerTimingAfter, ast.TriggerEventInsert, 1),
+		makeTrig("trg_t1_au", ast.TriggerTimingAfter, ast.TriggerEventUpdate, 2),
+	})
+
+	refreshSessionAndUseTestDB(tk, true)
+	tk.MustExec("set tidb_enable_prepared_plan_cache=1")
+
+	tk.MustExec("insert into t1 values (1, 'test1')")
+	tk.MustExec("insert into t1 values (2, 'test2')")
+	tk.MustExec("update t1 set val = 'test3' where id = 2")
+
+	tk.MustQuery("select val from t2 order by id").Check(testkit.Rows("test1", "test2", "test3"))
+}
+
 func TestTriggerNonProcedureStmtReturningResultSetRejected(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

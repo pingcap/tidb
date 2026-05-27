@@ -7,6 +7,9 @@ import (
 )
 
 const (
+	// TiDBEnableSPPlanCache indicates whether to enable the stored-routine hidden prepared plan-cache path
+	// and the related compatibility behavior added for it.
+	TiDBEnableSPPlanCache = "tidb_enable_sp_plan_cache"
 	// TiDBCreateFromSelectUsingImport indicates whether to use import into to create table as select.
 	TiDBCreateFromSelectUsingImport = "tidb_create_from_select_using_import"
 	// TiDBAlterSyncMaxLagSeconds controls the maximum checkpoint lag (in seconds) allowed when switching to sync
@@ -35,6 +38,7 @@ const (
 	DefTiDBLoginHistoryRetainDuration  = time.Hour * 24 * 90 // default 90 days.
 	DefStoredProgramCacheSize          = 256
 	DefTiDBEnableProcedure             = false
+	DefTiDBEnableSPPlanCache           = false
 	DefTiDBEnableDutySeparationMode    = false
 	DefTiDBEnableUDVSubstitute         = false
 	DefTiDBEnableSPParamSubstitute     = false

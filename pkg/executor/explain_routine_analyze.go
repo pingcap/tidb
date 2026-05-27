@@ -189,7 +189,11 @@ func resolveRoutineExplainRuntimeStmt(stmt ast.StmtNode, vars *variable.SessionV
 		if err != nil {
 			return nil, "", err
 		}
-		return prepared.PreparedAst.Stmt, routineExplainStmtText(prepared.PreparedAst.Stmt), nil
+		runtimeStmt := prepared.PreparedAst.Stmt
+		if plannercore.IsProcedurePlanCacheExecuteStmt(x) {
+			return runtimeStmt, "", nil
+		}
+		return runtimeStmt, routineExplainStmtText(runtimeStmt), nil
 	case *ast.PrepareStmt:
 		return nil, routineExplainPrepareSQLText(x, vars), nil
 	default:

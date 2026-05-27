@@ -3675,6 +3675,12 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableSPPlanCache, Value: BoolToOnOff(DefTiDBEnableSPPlanCache), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableSPPlanCache = TiDBOptOn(val)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAlterSyncMaxLagSeconds, Value: strconv.Itoa(DefTiDBAlterSyncMaxLagSeconds), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32},
 	{
 		Scope:    ScopeGlobal,

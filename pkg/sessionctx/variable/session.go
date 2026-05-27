@@ -1774,6 +1774,9 @@ type SessionVars struct {
 	// EnableSPParamSubstitute indicate whether to enable stored procedure parameter substitute, it is only used to control
 	// the replacement of parameters (in, out, inout) in stored procedures.
 	EnableSPParamSubstitute bool
+	// EnableSPPlanCache indicates whether to enable the stored-routine hidden prepared plan-cache path
+	// and the related compatibility behavior added for it.
+	EnableSPPlanCache bool
 	// CreateFromSelectUsingImport indicates whether to use import into to create table as select.
 	CreateFromSelectUsingImport bool
 
@@ -2371,6 +2374,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxQueryMemoryPerNode = DefTiFlashMemQuotaQueryPerNode
 	vars.TiFlashQuerySpillRatio = DefTiFlashQuerySpillRatio
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
+	vars.EnableSPPlanCache = DefTiDBEnableSPPlanCache
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true

@@ -1071,10 +1071,22 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		hasRoutineSite   bool
 		runtimeStmt      ast.StmtNode
 		runtimeSQLText   string
+		traceStmt        ast.StmtNode
 		stmtForExecution = stmtNode
 		stmtForStmtCtx   = stmtNode
 		captureDrilldown bool
 	)
+	traceStmt = stmtForExecution
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok && plannercore.IsProcedurePlanCacheExecuteStmt(execStmt) {
+		prepared, err := plannercore.GetPreparedStmt(execStmt, e.Ctx().GetSessionVars())
+		if err != nil {
+			return nil, nil, err
+		}
+		if prepared.PreparedAst != nil && prepared.PreparedAst.Stmt != nil {
+			traceStmt = prepared.PreparedAst.Stmt
+			stmtForStmtCtx = traceStmt
+		}
+	}
 	if e.routineAnalyzer != nil {
 		site, hasRoutineSite = plannercore.ExplainRoutineRuntimeSiteFromContext(ctx)
 		if hasRoutineSite {
@@ -1117,7 +1129,7 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	}
 	defer restoreReplacedStmtCtx()
 	callStmt, _ := e.Statement.(*ast.CallStmt)
-	span, ctx := startRoutineStatementTraceSpan(ctx, callStmt, stmtForExecution)
+	span, ctx := startRoutineStatementTraceSpan(ctx, callStmt, traceStmt)
 	defer span.Finish()
 	origTraceCtx := e.Ctx().GetTraceCtx()
 	e.Ctx().SetTraceCtx(ctx)
@@ -1206,7 +1218,6 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 			rows = append(rows, chk.GetRow(i))
 		}
 	}
-
 	closeErr := exec.Close(newExec)
 	if err == nil {
 		err = closeErr
@@ -1342,7 +1353,9 @@ func truncateRoutineTraceSQL(sqlText string) string {
 
 func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 	vars := sctx.GetSessionVars()
+	s = stmtNodeForRoutineStmtCtx(s, vars)
 	sc := vars.StmtCtx
+	restoreExecutionCaches := sc.ResetExecutionCaches()
 	strictSQLMode := vars.SQLMode.HasStrictMode()
 	errLevels := sc.ErrLevels()
 	originalFlags := sc.TypeFlags()
@@ -1386,6 +1399,7 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 		sc.Priority = originalPriority
 		sc.NotFillCache = originalNotFillCache
 		sc.WeakConsistency = originalWeakConsistency
+		restoreExecutionCaches()
 		sc.SetTypeFlags(originalFlags)
 		sc.SetErrLevels(originalErrLevels)
 	}
@@ -1561,4 +1575,16 @@ func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {
 	}
 
 	return restore
+}
+
+func stmtNodeForRoutineStmtCtx(s ast.StmtNode, vars *variable.SessionVars) ast.StmtNode {
+	execStmt, ok := s.(*ast.ExecuteStmt)
+	if !ok {
+		return s
+	}
+	prepared, err := plannercore.GetPreparedStmt(execStmt, vars)
+	if err != nil || prepared == nil || prepared.PreparedAst == nil || prepared.PreparedAst.Stmt == nil {
+		return s
+	}
+	return prepared.PreparedAst.Stmt
 }

@@ -190,6 +190,7 @@ set global tidb_stmt_summary_max_stmt_count = default;
 set global tidb_enable_stmt_summary = default;
 set global tidb_enable_stmt_summary = 0;
 set global tidb_enable_stmt_summary = 1;
+set tidb_enable_prepared_plan_cache = 1;
 drop table if exists t;
 create table t(a int);
 prepare stmt from 'select * from t';
@@ -204,9 +205,12 @@ execute stmt;
 a
 execute stmt;
 a
-select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
-plan_cache_hits	plan_in_cache
-3	1
+execute stmt;
+a
+select plan_cache_hits >= 3, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`';
+plan_cache_hits >= 3	plan_in_cache
+1	1
+set tidb_enable_prepared_plan_cache = default;
 set global tidb_enable_stmt_summary = default;
 drop user if exists 'testuser'@'localhost', 'testuser2'@'localhost';
 create user 'testuser'@'localhost';

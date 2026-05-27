@@ -1600,7 +1600,7 @@ type BackupStmtCtx struct {
 	ExtraWarnings []SQLWarn
 }
 
-// BackupForHandler backups session status.
+// BackupForHandler backs up session status.
 func (sc *StatementContext) BackupForHandler() (b *BackupStmtCtx) {
 	b = &BackupStmtCtx{}
 	sc.mu.Lock()
@@ -1617,4 +1617,29 @@ func (sc *StatementContext) BackupForHandler() (b *BackupStmtCtx) {
 	copy(b.Warnings, sc.WarnHandler.GetWarnings())
 	b.ErrorCount = 0
 	return
+}
+
+// ResetExecutionCaches clears statement-derived execution caches and returns
+// a restore closure so nested same-context execution can put them back.
+func (sc *StatementContext) ResetExecutionCaches() func() {
+	distSQLCtxCache := sc.distSQLCtxCache
+	rangerCtxCache := sc.rangerCtxCache
+	buildPBCtxCache := sc.buildPBCtxCache
+	sc.distSQLCtxCache = struct {
+		init sync.Once
+		dctx *distsqlctx.DistSQLContext
+	}{}
+	sc.rangerCtxCache = struct {
+		init sync.Once
+		rctx any
+	}{}
+	sc.buildPBCtxCache = struct {
+		init sync.Once
+		bctx any
+	}{}
+	return func() {
+		sc.distSQLCtxCache = distSQLCtxCache
+		sc.rangerCtxCache = rangerCtxCache
+		sc.buildPBCtxCache = buildPBCtxCache
+	}
 }
