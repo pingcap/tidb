@@ -145,7 +145,11 @@ func TestSeverHealth(t *testing.T) {
 
 		mockStore := &autoIDServiceTestStore{}
 		openStoreForAutoIDService = func(path string) (kv.Storage, error) {
-			require.Equal(t, "tikv://127.0.0.1:2379", path)
+			expectedPath := "tikv://127.0.0.1:2379"
+			if keyspaceName := config.GetGlobalKeyspaceName(); keyspaceName != "" {
+				expectedPath += "?keyspaceName=" + keyspaceName
+			}
+			require.Equal(t, expectedPath, path)
 			return mockStore, nil
 		}
 
