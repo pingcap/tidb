@@ -903,7 +903,7 @@ func validateCreateMaterializedViewQuery(
 		groupByInfos = append(groupByInfos, mviewGroupByInfo{SelectIdx: idx, NotNull: groupByNotNull[colName]})
 	}
 
-	if hasMinOrMax && !hasIndexWithPrefixCoveringGroupByColumns(baseTableInfo, groupByCols) {
+	if hasMinOrMax && !hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(baseTableInfo, groupByCols, "") {
 		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
 	}
 

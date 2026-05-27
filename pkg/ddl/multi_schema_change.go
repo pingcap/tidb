@@ -15,6 +15,9 @@
 package ddl
 
 import (
+	"context"
+
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -405,7 +408,151 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 	return nil
 }
 
-func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
+// buildEffectiveBaseTableInfoForMViewMinMaxIndexConstraints materializes the
+// post-DDL index view for multi-schema validation. We only need the fields that
+// affect MIN/MAX fast refresh index coverage checks.
+func buildEffectiveBaseTableInfoForMViewMinMaxIndexConstraints(baseTableInfo *model.TableInfo, info *model.MultiSchemaInfo) *model.TableInfo {
+	effectiveBaseTableInfo := baseTableInfo.Clone()
+	for _, subJob := range info.SubJobs {
+		switch subJob.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			for _, idxArg := range args.IndexArgs {
+				idxInfo := &model.IndexInfo{
+					Name:  idxArg.IndexName,
+					State: model.StatePublic,
+				}
+				if idxArg.IndexOption != nil && idxArg.IndexOption.Visibility == ast.IndexVisibilityInvisible {
+					idxInfo.Invisible = true
+				}
+				for _, spec := range idxArg.IndexPartSpecifications {
+					if spec == nil || spec.Column == nil || spec.Expr != nil {
+						idxInfo = nil
+						break
+					}
+					colInfo := model.FindColumnInfo(effectiveBaseTableInfo.Columns, spec.Column.Name.L)
+					if colInfo == nil {
+						idxInfo = nil
+						break
+					}
+					idxInfo.Columns = append(idxInfo.Columns, &model.IndexColumn{
+						Name:   spec.Column.Name,
+						Offset: colInfo.Offset,
+						Length: spec.Length,
+					})
+				}
+				if idxInfo != nil {
+					effectiveBaseTableInfo.Indices = append(effectiveBaseTableInfo.Indices, idxInfo)
+				}
+			}
+		case model.ActionDropIndex, model.ActionDropPrimaryKey:
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			for _, idxArg := range args.IndexArgs {
+				filtered := effectiveBaseTableInfo.Indices[:0]
+				for _, idx := range effectiveBaseTableInfo.Indices {
+					if idx.Name.L != idxArg.IndexName.L {
+						filtered = append(filtered, idx)
+					}
+				}
+				effectiveBaseTableInfo.Indices = filtered
+			}
+			if subJob.Type == model.ActionDropPrimaryKey {
+				effectiveBaseTableInfo.PKIsHandle = false
+			}
+		case model.ActionRenameIndex:
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			from, to := args.GetRenameIndexes()
+			if idxInfo := effectiveBaseTableInfo.FindIndexByName(from.L); idxInfo != nil {
+				idxInfo.Name = to
+			}
+		case model.ActionAlterIndexVisibility:
+			args := subJob.JobArgs.(*model.AlterIndexVisibilityArgs)
+			if idxInfo := effectiveBaseTableInfo.FindIndexByName(args.IndexName.L); idxInfo != nil {
+				idxInfo.Invisible = args.Invisible
+			}
+		}
+	}
+	return effectiveBaseTableInfo
+}
+
+// Multi-schema change collects sub-jobs incrementally while parsing ALTER
+// specs, so per-spec prechecks can observe an incomplete future index set.
+// Validate dependent MV MIN/MAX constraints here after all staged index changes
+// are available.
+func checkOperateBaseTableDependentMViewMinMaxIndexConstraints(
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	schemaName pmodel.CIStr,
+	t table.Table,
+	info *model.MultiSchemaInfo,
+) error {
+	baseTableInfo := t.Meta()
+	if baseTableInfo.MaterializedViewBase == nil || len(baseTableInfo.MaterializedViewBase.MViewIDs) == 0 {
+		return nil
+	}
+
+	hasDestructiveIndexChange := false
+	for _, subJob := range info.SubJobs {
+		switch subJob.Type {
+		case model.ActionDropIndex, model.ActionDropPrimaryKey:
+			hasDestructiveIndexChange = true
+		case model.ActionAlterIndexVisibility:
+			if subJob.JobArgs.(*model.AlterIndexVisibilityArgs).Invisible {
+				hasDestructiveIndexChange = true
+			}
+		}
+		if hasDestructiveIndexChange {
+			break
+		}
+	}
+	if !hasDestructiveIndexChange {
+		return nil
+	}
+
+	effectiveBaseTableInfo := buildEffectiveBaseTableInfoForMViewMinMaxIndexConstraints(baseTableInfo, info)
+	for _, subJob := range info.SubJobs {
+		switch subJob.Type {
+		case model.ActionDropIndex, model.ActionDropPrimaryKey:
+			args := subJob.JobArgs.(*model.ModifyIndexArgs)
+			for _, idxArg := range args.IndexArgs {
+				if err := checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
+					context.Background(),
+					is,
+					sctx,
+					schemaName,
+					baseTableInfo,
+					effectiveBaseTableInfo,
+					pmodel.CIStr{},
+					idxArg.IndexName,
+					"DROP INDEX",
+				); err != nil {
+					return err
+				}
+			}
+		case model.ActionAlterIndexVisibility:
+			args := subJob.JobArgs.(*model.AlterIndexVisibilityArgs)
+			if !args.Invisible {
+				continue
+			}
+			if err := checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
+				context.Background(),
+				is,
+				sctx,
+				schemaName,
+				baseTableInfo,
+				effectiveBaseTableInfo,
+				pmodel.CIStr{},
+				args.IndexName,
+				"ALTER INDEX INVISIBLE",
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table, is infoschema.InfoSchema, sctx sessionctx.Context, schemaName pmodel.CIStr) error {
 	err := checkOperateSameColAndIdx(info)
 	if err != nil {
 		return err
@@ -417,6 +564,11 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 	}
 
 	err = checkOperateDropIndexUseByForeignKey(info, t)
+	if err != nil {
+		return err
+	}
+
+	err = checkOperateBaseTableDependentMViewMinMaxIndexConstraints(is, sctx, schemaName, t, info)
 	if err != nil {
 		return err
 	}

@@ -293,12 +293,36 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexes(t *testing.
 	require.ErrorContains(t, err, "required by materialized view mv_invisible_idx")
 	require.ErrorContains(t, err, "MIN/MAX fast refresh")
 
+	tk.MustExec("create table t_create_invisible_idx (a int not null, b int not null, c int not null, index idx_ab(a, b))")
+	tk.MustExec("create materialized view log on t_create_invisible_idx (a, b, c) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("alter table t_create_invisible_idx alter index idx_ab invisible")
+	err = tk.ExecToErr("create materialized view mv_create_invisible_idx (a, b, minc, cnt) refresh fast next now() as select a, b, min(c), count(1) from t_create_invisible_idx group by a, b")
+	require.ErrorContains(t, err, "requires base table index whose leading columns cover all GROUP BY columns")
+
+	tk.MustExec("create table t_drop_pk (a int not null primary key nonclustered, c int not null)")
+	tk.MustExec("create materialized view log on t_drop_pk (a, c) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_drop_pk (a, minc, cnt) refresh fast next now() as select a, min(c), count(1) from t_drop_pk group by a")
+	err = tk.ExecToErr("alter table t_drop_pk drop primary key")
+	require.ErrorContains(t, err, "required by materialized view mv_drop_pk")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
 	createMinMaxMV("t_alt_idx", "mv_alt_idx", ", index idx_ab(a, b), index idx_ba(b, a)")
 	tk.MustExec("alter table t_alt_idx alter index idx_ab invisible")
 	tk.MustExec("drop index idx_ab on t_alt_idx")
 	tk.MustExec("insert into t_alt_idx values (1, 2, 10), (1, 2, 5)")
 	tk.MustExec("refresh materialized view mv_alt_idx fast")
 	tk.MustQuery("select a, b, minc, cnt from mv_alt_idx").Check(testkit.Rows("1 2 5 2"))
+
+	createMinMaxMV("t_multi_schema_replace_idx", "mv_multi_schema_replace_idx", ", index idx_ab(a, b)")
+	tk.MustExec("alter table t_multi_schema_replace_idx drop index idx_ab, add index idx_ba(b, a)")
+	tk.MustExec("insert into t_multi_schema_replace_idx values (1, 2, 10), (1, 2, 5)")
+	tk.MustExec("refresh materialized view mv_multi_schema_replace_idx fast")
+	tk.MustQuery("select a, b, minc, cnt from mv_multi_schema_replace_idx").Check(testkit.Rows("1 2 5 2"))
+
+	createMinMaxMV("t_multi_schema_bad_idx", "mv_multi_schema_bad_idx", ", index idx_ab(a, b)")
+	err = tk.ExecToErr("alter table t_multi_schema_bad_idx drop index idx_ab, add index idx_c(c)")
+	require.ErrorContains(t, err, "required by materialized view mv_multi_schema_bad_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
 }
 
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {

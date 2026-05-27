@@ -2005,6 +2005,30 @@ func checkBaseTableDependentMViewMinMaxIndexConstraints(
 	indexName pmodel.CIStr,
 	op string,
 ) error {
+	return checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
+		ctx,
+		is,
+		sctx,
+		schemaName,
+		baseTableInfo,
+		baseTableInfo,
+		indexName,
+		indexName,
+		op,
+	)
+}
+
+func checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	sctx sessionctx.Context,
+	schemaName pmodel.CIStr,
+	baseTableInfo *model.TableInfo,
+	effectiveBaseTableInfo *model.TableInfo,
+	excludedIndexName pmodel.CIStr,
+	indexNameForErr pmodel.CIStr,
+	op string,
+) error {
 	if baseTableInfo.MaterializedViewBase == nil || len(baseTableInfo.MaterializedViewBase.MViewIDs) == 0 {
 		return nil
 	}
@@ -2038,14 +2062,14 @@ func checkBaseTableDependentMViewMinMaxIndexConstraints(
 		if !queryAnalysis.HasMinOrMax {
 			continue
 		}
-		if hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(baseTableInfo, queryAnalysis.GroupByCols, indexName.L) {
+		if hasVisiblePublicIndexWithPrefixCoveringGroupByColumns(effectiveBaseTableInfo, queryAnalysis.GroupByCols, excludedIndexName.L) {
 			continue
 		}
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			fmt.Sprintf(
 				"%s on base table index %s required by materialized view %s for MIN/MAX fast refresh",
 				op,
-				indexName.O,
+				indexNameForErr.O,
 				mvTbl.Meta().Name.O,
 			),
 		)
@@ -2387,7 +2411,7 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 	job.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(ctx))
 	job.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
-	err = checkMultiSchemaInfo(info, t)
+	err = checkMultiSchemaInfo(info, t, e.infoCache.GetLatest(), ctx, schema.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5761,7 +5785,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		}
 		return err
 	}
-	if !isPK {
+	if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 		if err := checkBaseTableDependentMViewMinMaxIndexConstraints(
 			context.Background(),
 			is,
@@ -6328,16 +6352,18 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 		return nil
 	}
 	if invisible {
-		if err := checkBaseTableDependentMViewMinMaxIndexConstraints(
-			context.Background(),
-			e.infoCache.GetLatest(),
-			ctx,
-			schema.Name,
-			tb.Meta(),
-			indexName,
-			"ALTER INDEX INVISIBLE",
-		); err != nil {
-			return errors.Trace(err)
+		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
+			if err := checkBaseTableDependentMViewMinMaxIndexConstraints(
+				context.Background(),
+				e.infoCache.GetLatest(),
+				ctx,
+				schema.Name,
+				tb.Meta(),
+				indexName,
+				"ALTER INDEX INVISIBLE",
+			); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
