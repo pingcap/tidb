@@ -22,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -31,6 +32,80 @@ import (
 type Token struct {
 	Text     string
 	Position int
+}
+
+// AnalyzerConfig is the fulltext analyzer configuration used for local
+// MATCH ... AGAINST evaluation.
+type AnalyzerConfig struct {
+	ParserType             model.FullTextParserType
+	InnodbFtMinTokenSize   int
+	InnodbFtMaxTokenSize   int
+	InnodbFtEnableStopword bool
+	Stopwords              []string
+	NgramTokenSize         int
+}
+
+// Analyzer analyzes text into fulltext tokens.
+type Analyzer interface {
+	Analyze(text string) ([]Token, error)
+}
+
+type analyzerFunc func(text string) ([]Token, error)
+
+func (f analyzerFunc) Analyze(text string) ([]Token, error) {
+	return f(text)
+}
+
+// GetAnalyzer returns the analyzer for the selected fulltext parser type.
+func GetAnalyzer(config AnalyzerConfig) (Analyzer, error) {
+	parserInfo := parserInfoFromConfig(config)
+	switch config.ParserType {
+	case model.FullTextParserTypeStandardV1:
+		return analyzerFunc(func(text string) ([]Token, error) {
+			return analyzeStandardV1(text, parserInfo), nil
+		}), nil
+	case model.FullTextParserTypeNgramV1:
+		return analyzerFunc(func(text string) ([]Token, error) {
+			return analyzeNgramV1(text, parserInfo), nil
+		}), nil
+	default:
+		return nil, fmt.Errorf("unsupported fulltext parser type: %s", config.ParserType)
+	}
+}
+
+// AnalyzerConfigFromSessionContext builds an AnalyzerConfig from the current
+// session/global sysvars. Local index-backed MATCH should prefer index-bound
+// config once it is persisted in table metadata.
+func AnalyzerConfigFromSessionContext(sctx sessionctx.Context, parserType model.FullTextParserType) (AnalyzerConfig, error) {
+	if sctx == nil || sctx.GetSessionVars() == nil {
+		return AnalyzerConfig{}, fmt.Errorf("missing session context for fulltext analyzer")
+	}
+	sessVars := sctx.GetSessionVars()
+
+	enableStopword, err := getFulltextSysVar(sessVars, vardef.InnodbFtEnableStopword)
+	if err != nil {
+		return AnalyzerConfig{}, err
+	}
+	minTokenSize, err := getFulltextIntSysVar(sessVars, vardef.InnodbFtMinTokenSize)
+	if err != nil {
+		return AnalyzerConfig{}, err
+	}
+	maxTokenSize, err := getFulltextIntSysVar(sessVars, vardef.InnodbFtMaxTokenSize)
+	if err != nil {
+		return AnalyzerConfig{}, err
+	}
+	ngramTokenSize, err := getFulltextIntSysVar(sessVars, vardef.NgramTokenSize)
+	if err != nil {
+		return AnalyzerConfig{}, err
+	}
+
+	return AnalyzerConfig{
+		ParserType:             parserType,
+		InnodbFtMinTokenSize:   minTokenSize,
+		InnodbFtMaxTokenSize:   maxTokenSize,
+		InnodbFtEnableStopword: variable.TiDBOptOn(enableStopword),
+		NgramTokenSize:         ngramTokenSize,
+	}, nil
 }
 
 // PreserveUnderscoreTokenize tokenizes text with TiCI's PreserveUnderscore
@@ -69,11 +144,15 @@ func PreserveUnderscoreTokenize(text string) []Token {
 // PreserveUnderscore tokenizer, length filter, lower-case filter, and optional
 // stopword filter.
 func AnalyzeStandardV1(sctx sessionctx.Context, text string) ([]Token, error) {
-	parserInfo, err := parserInfoFromSessionContext(sctx)
+	config, err := AnalyzerConfigFromSessionContext(sctx, model.FullTextParserTypeStandardV1)
 	if err != nil {
 		return nil, err
 	}
-	return analyzeStandardV1(text, parserInfo), nil
+	analyzer, err := GetAnalyzer(config)
+	if err != nil {
+		return nil, err
+	}
+	return analyzer.Analyze(text)
 }
 
 func analyzeStandardV1(text string, parserInfo parserInfo) []Token {
@@ -87,11 +166,15 @@ func analyzeStandardV1(text string, parserInfo parserInfo) []Token {
 // AnalyzeNgramV1 runs the NGRAM_V1 analyzer:
 // PreserveUnderscore tokenizer, fixed-size ngram filter, and lower-case filter.
 func AnalyzeNgramV1(sctx sessionctx.Context, text string) ([]Token, error) {
-	parserInfo, err := parserInfoFromSessionContext(sctx)
+	config, err := AnalyzerConfigFromSessionContext(sctx, model.FullTextParserTypeNgramV1)
 	if err != nil {
 		return nil, err
 	}
-	return analyzeNgramV1(text, parserInfo), nil
+	analyzer, err := GetAnalyzer(config)
+	if err != nil {
+		return nil, err
+	}
+	return analyzer.Analyze(text)
 }
 
 func analyzeNgramV1(text string, parserInfo parserInfo) []Token {
@@ -109,43 +192,35 @@ type parserInfo struct {
 }
 
 func parserInfoFromSessionContext(sctx sessionctx.Context) (parserInfo, error) {
-	if sctx == nil || sctx.GetSessionVars() == nil {
-		return parserInfo{}, fmt.Errorf("missing session context for fulltext analyzer")
-	}
-	sessVars := sctx.GetSessionVars()
-
-	enableStopword, err := getFulltextSysVar(sessVars, vardef.InnodbFtEnableStopword)
+	config, err := AnalyzerConfigFromSessionContext(sctx, model.FullTextParserTypeStandardV1)
 	if err != nil {
 		return parserInfo{}, err
 	}
-	minTokenSize, err := getFulltextIntSysVar(sessVars, vardef.InnodbFtMinTokenSize)
-	if err != nil {
-		return parserInfo{}, err
-	}
-	maxTokenSize, err := getFulltextIntSysVar(sessVars, vardef.InnodbFtMaxTokenSize)
-	if err != nil {
-		return parserInfo{}, err
-	}
-	ngramTokenSize, err := getFulltextIntSysVar(sessVars, vardef.NgramTokenSize)
-	if err != nil {
-		return parserInfo{}, err
-	}
-	stopwords := stopwordSetFromSysVar(enableStopword)
-
-	return parserInfo{
-		innodbFtMinTokenSize: minTokenSize,
-		innodbFtMaxTokenSize: maxTokenSize,
-		ngramTokenSize:       ngramTokenSize,
-		stopwords:            stopwords,
-	}, nil
+	return parserInfoFromConfig(config), nil
 }
 
-func stopwordSetFromSysVar(enableStopword string) map[string]struct{} {
-	if !variable.TiDBOptOn(enableStopword) {
+func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
+	return parserInfo{
+		innodbFtMinTokenSize: config.InnodbFtMinTokenSize,
+		innodbFtMaxTokenSize: config.InnodbFtMaxTokenSize,
+		ngramTokenSize:       config.NgramTokenSize,
+		stopwords:            stopwordSetFromConfig(config),
+	}
+}
+
+func stopwordSetFromConfig(config AnalyzerConfig) map[string]struct{} {
+	if !config.InnodbFtEnableStopword {
 		return nil
 	}
 	// TiDB does not resolve InnoDB stopword table contents on this path yet.
-	return map[string]struct{}{}
+	if len(config.Stopwords) == 0 {
+		return map[string]struct{}{}
+	}
+	set := make(map[string]struct{}, len(config.Stopwords))
+	for _, word := range config.Stopwords {
+		set[strings.ToLower(word)] = struct{}{}
+	}
+	return set
 }
 
 func getFulltextSysVar(sessVars *variable.SessionVars, name string) (string, error) {

@@ -2,10 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "fulltext",
-    srcs = ["analyzer.go"],
+    srcs = [
+        "analyzer.go",
+        "document.go",
+        "query.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/expression/fulltext",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/expression/matchagainst",
+        "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
@@ -15,11 +21,15 @@ go_library(
 go_test(
     name = "fulltext_test",
     timeout = "short",
-    srcs = ["analyzer_test.go"],
+    srcs = [
+        "analyzer_test.go",
+        "query_test.go",
+    ],
     embed = [":fulltext"],
     flaky = False,
-    shard_count = 5,
+    shard_count = 12,
     deps = [
+        "//pkg/meta/model",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/util/mock",
