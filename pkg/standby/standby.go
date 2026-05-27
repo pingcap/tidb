@@ -625,5 +625,5 @@ func (c *LoadKeyspaceController) reportManagerFree(exitReason string) {
 		}
 		return
 	}
-	logutil.BgLogger().Error("failed to report free after retries", zap.Error(lastErr))
+	logutil.BgLogger().Warn("failed to report free after retries", zap.Error(lastErr))
 }
