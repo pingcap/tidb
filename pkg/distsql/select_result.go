@@ -67,6 +67,9 @@ var (
 type SelectResult interface {
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
+	// NextRawSubset gets the next raw result as a kv.ResultSubset,
+	// which exposes per-response metadata like RespTime().
+	NextRawSubset(context.Context) (kv.ResultSubset, error)
 	// Next reads the data into chunk.
 	Next(context.Context, *chunk.Chunk) error
 	// IntoIter converts the SelectResult into an iterator.
@@ -221,6 +224,10 @@ func (*sortedSelectResults) NextRaw(context.Context) ([]byte, error) {
 	panic("Not support NextRaw for sortedSelectResults")
 }
 
+func (*sortedSelectResults) NextRawSubset(context.Context) (kv.ResultSubset, error) {
+	panic("Not support NextRawSubset for sortedSelectResults")
+}
+
 func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err error) {
 	c.Reset()
 	for i := range ssr.cachedChunks {
@@ -296,6 +303,20 @@ func (ssr *serialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
 			return resultSubset, nil
 		}
 		ssr.cur++ // move to the next SelectResult
+	}
+	return nil, nil
+}
+
+func (ssr *serialSelectResults) NextRawSubset(ctx context.Context) (kv.ResultSubset, error) {
+	for ssr.cur < len(ssr.selectResults) {
+		rs, err := ssr.selectResults[ssr.cur].NextRawSubset(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if rs != nil {
+			return rs, nil
+		}
+		ssr.cur++
 	}
 	return nil, nil
 }
@@ -548,6 +569,16 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 		data = resultSubset.GetData()
 	}
 	return data, err
+}
+
+// NextRawSubset returns the next raw partial result as a kv.ResultSubset.
+func (r *selectResult) NextRawSubset(ctx context.Context) (kv.ResultSubset, error) {
+	if r.iter != nil {
+		return nil, errors.New("selectResult is invalid after IntoIter()")
+	}
+	resultSubset, err := r.resp.Next(ctx)
+	r.partialCount++
+	return resultSubset, err
 }
 
 func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {

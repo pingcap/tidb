@@ -704,6 +704,24 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	return data, nil
 }
 
+func (tr *tableResultHandler) nextRawSubset(ctx context.Context) (kv.ResultSubset, error) {
+	if !tr.optionalFinished {
+		rs, err := tr.optionalResult.NextRawSubset(ctx)
+		if err != nil {
+			return nil, normalizeCtxErrWithCause(ctx, err)
+		}
+		if rs != nil {
+			return rs, nil
+		}
+		tr.optionalFinished = true
+	}
+	rs, err := tr.result.NextRawSubset(ctx)
+	if err != nil {
+		return nil, normalizeCtxErrWithCause(ctx, err)
+	}
+	return rs, nil
+}
+
 func (tr *tableResultHandler) Close() error {
 	err := closeAll(tr.optionalResult, tr.result)
 	tr.optionalResult, tr.result = nil, nil
