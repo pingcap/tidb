@@ -786,6 +786,7 @@ func (ds *DataSource) bindLocalMatchAgainst(sf *expression.ScalarFunction) error
 	if err != nil {
 		return err
 	}
+	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("local MATCH ... AGAINST uses query-time fulltext analyzer config")
 	return expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, &expression.FTSLocalEvalInfo{
 		TableID:         ds.TableInfo.ID,
 		IndexID:         index.ID,

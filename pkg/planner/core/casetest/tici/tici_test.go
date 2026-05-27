@@ -492,6 +492,29 @@ func TestLocalMatchAgainstGuardOffKeepsDirtyWriteError(t *testing.T) {
 	})
 }
 
+func TestLocalMatchAgainstSkipsPreparedPlanCache(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table t(
+			id int primary key,
+			title text,
+			body text,
+			fulltext index ft_title(title),
+			fulltext index ft_body(body)
+		)`)
+		tk.MustExec("insert into t values (1, 'TiDB database', 'storage layer'), (2, 'MySQL database', 'storage layer')")
+		tk.MustExec("set tidb_enable_local_match_against = on")
+		tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+		tk.MustExec(`prepare stmt from 'select id from t where match(title) against(? in boolean mode) and match(body) against(? in boolean mode) order by id'`)
+
+		tk.MustExec("set @title = 'tidb'")
+		tk.MustExec("set @body = 'storage'")
+		tk.MustQuery("execute stmt using @title, @body").Check(testkit.Rows("1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("execute stmt using @title, @body").Check(testkit.Rows("1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	})
+}
+
 func runTiCITest(t *testing.T, fn func(*testkit.TestKit)) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
