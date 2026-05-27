@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "standby",
@@ -17,4 +17,14 @@ go_library(
         "//pkg/util/signal",
         "@org_uber_go_zap//:zap",
     ],
+)
+
+go_test(
+    name = "standby_test",
+    timeout = "short",
+    srcs = ["standby_test.go"],
+    embed = [":standby"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
 )

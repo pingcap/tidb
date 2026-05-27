@@ -385,6 +385,20 @@ func TestSlowLogFormat(t *testing.T) {
 	// Restore for subsequent assertions.
 	logItems.SessionConnectAttrs = nil
 
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				SlowLogField: "keyspace_meta_slow_a",
+			}},
+		}
+		require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_a": "value_a"}))
+	})
+	logString = seVar.SlowLogFormat(logItems)
+	require.Equal(t, resultFields+"\n"+"# keyspace_meta_slow_a: value_a\n"+sql, logString)
+
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
 		Fields: map[string]struct{}{
