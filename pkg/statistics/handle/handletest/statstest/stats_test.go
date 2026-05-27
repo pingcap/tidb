@@ -309,6 +309,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 func TestStatsStoreAndLoad(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	se := session.CreateSessionAndSetID(t, store)
+	defer se.Close()
 	session.MustExec(t, se, "use test")
 	session.MustExec(t, se, "create table t (c1 int, c2 int)")
 	recordCount := 1000
