@@ -17,11 +17,16 @@ package importer_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -328,11 +333,70 @@ func TestJobInfo_CanCancel(t *testing.T) {
 	}
 }
 
+type jobInfoSQLExecutor struct {
+	sqlexec.SQLExecutor
+	rows [][]any
+}
+
+func (e *jobInfoSQLExecutor) ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error) {
+	return &jobInfoRecordSet{rows: e.rows, maxChunkSize: len(e.rows)}, nil
+}
+
+type jobInfoRecordSet struct {
+	sqlexec.RecordSet
+	rows         [][]any
+	rowIdx       int
+	maxChunkSize int
+}
+
+func (r *jobInfoRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	fields := jobInfoFieldTypes()
+	if alloc != nil {
+		return alloc.Alloc(fields, 0, r.maxChunkSize)
+	}
+	return chunk.New(fields, r.maxChunkSize, r.maxChunkSize)
+}
+
+func (r *jobInfoRecordSet) Next(_ context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	for r.rowIdx < len(r.rows) && !req.IsFull() {
+		for i, value := range r.rows[r.rowIdx] {
+			datum := types.NewDatum(value)
+			req.AppendDatum(i, &datum)
+		}
+		r.rowIdx++
+	}
+	return nil
+}
+
+func (r *jobInfoRecordSet) Close() error {
+	r.rowIdx = 0
+	return nil
+}
+
+func jobInfoFieldTypes() []*types.FieldType {
+	return []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeDatetime),
+		types.NewFieldType(mysql.TypeDatetime),
+		types.NewFieldType(mysql.TypeDatetime),
+		types.NewFieldType(mysql.TypeDatetime),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+}
+
 func TestGetJobInfoNullField(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	conn := tk.Session().GetSQLExecutor()
 	jobInfo := &importer.JobInfo{
 		TableSchema: "test",
 		TableName:   "t",
@@ -350,20 +414,27 @@ func TestGetJobInfoNullField(t *testing.T) {
 		SourceFileSize: 123,
 		Status:         "pending",
 	}
-	// create jobs
-	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
-	require.NoError(t, err)
-	require.NoError(t, importer.StartJob(ctx, conn, jobID1, importer.JobStepImporting))
-	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed", mockSummary(0)))
-	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
-	require.NoError(t, err)
-	gotJobInfos, err := importer.GetAllViewableJobs(ctx, conn, "", true)
+	createTime := types.NewTime(types.FromGoTime(time.Date(2026, 5, 27, 1, 2, 3, 0, time.UTC)), mysql.TypeDatetime, 6)
+	startTime := types.NewTime(types.FromGoTime(time.Date(2026, 5, 27, 1, 2, 4, 0, time.UTC)), mysql.TypeDatetime, 6)
+	updateTime := types.NewTime(types.FromGoTime(time.Date(2026, 5, 27, 1, 2, 5, 0, time.UTC)), mysql.TypeDatetime, 6)
+	endTime := types.NewTime(types.FromGoTime(time.Date(2026, 5, 27, 1, 2, 6, 0, time.UTC)), mysql.TypeDatetime, 6)
+	rows := [][]any{
+		{
+			int64(1), createTime, startTime, updateTime, endTime,
+			jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID, jobInfo.CreatedBy, jobInfo.Parameters.String(),
+			jobInfo.SourceFileSize, "failed", importer.JobStepImporting, "{}", "failed", "",
+		},
+		{
+			int64(2), createTime, nil, updateTime, nil,
+			jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID, jobInfo.CreatedBy, jobInfo.Parameters.String(),
+			jobInfo.SourceFileSize, "pending", "", nil, nil, "",
+		},
+	}
+	gotJobInfos, err := importer.GetAllViewableJobs(ctx, &jobInfoSQLExecutor{rows: rows}, "", true)
 	require.NoError(t, err)
 	require.Len(t, gotJobInfos, 2)
 	// result should be in order, jobID1, jobID2
-	jobInfo.ID = jobID1
+	jobInfo.ID = 1
 	jobInfo.Status = "failed"
 	jobInfo.Step = importer.JobStepImporting
 	jobInfo.ErrorMessage = "failed"
@@ -371,7 +442,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobInfoEqual(t, jobInfo, gotJobInfos[0])
 	require.False(t, gotJobInfos[0].StartTime.IsZero())
 	require.False(t, gotJobInfos[0].EndTime.IsZero())
-	jobInfo.ID = jobID2
+	jobInfo.ID = 2
 	jobInfo.Status = "pending"
 	jobInfo.Step = ""
 	// err msg of jobID2 should be empty
