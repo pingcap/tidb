@@ -105,14 +105,14 @@ func TestForeignKeyRecordManager(t *testing.T) {
 	tk.MustExec("create table test.partial_child (id int, pid int, marker int, index unsafe_pid(pid) where marker is not null, index safe_pid(pid) where pid is not null, foreign key (pid) references test.partial_parent (id))")
 
 	infoSchema = s.Mock.InfoSchema()
-	partialChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("partial_child"))
+	partialChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("partial_child"))
 	require.NoError(t, err)
 	unsafeIdx := partialChildTableInfo.FindIndexByName("unsafe_pid")
 	require.NotNil(t, unsafeIdx)
 	safeIdx := partialChildTableInfo.FindIndexByName("safe_pid")
 	require.NotNil(t, safeIdx)
 
-	partialChildForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), partialChildTableInfo)
+	partialChildForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), partialChildTableInfo)
 	require.NoError(t, err)
 	require.Len(t, partialChildForeignKeyRecordManager.GetFKRecordMap(), 1)
 	partialChildForeignKeyRecordManager.RemoveForeignKeys(partialChildTableInfo, unsafeIdx)
@@ -124,14 +124,14 @@ func TestForeignKeyRecordManager(t *testing.T) {
 	tk.MustExec("create table test.partial_ref_child (id int, pid int, index child_pid(pid), foreign key (pid) references test.partial_ref_parent (id))")
 
 	infoSchema = s.Mock.InfoSchema()
-	partialRefParentInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("partial_ref_parent"))
+	partialRefParentInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("partial_ref_parent"))
 	require.NoError(t, err)
 	unsafeRefIdx := partialRefParentInfo.FindIndexByName("unsafe_id")
 	require.NotNil(t, unsafeRefIdx)
 	safeRefIdx := partialRefParentInfo.FindIndexByName("safe_id")
 	require.NotNil(t, safeRefIdx)
 
-	partialRefParentForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, ast.NewCIStr("test"), partialRefParentInfo)
+	partialRefParentForeignKeyRecordManager, err := ingestrec.NewForeignKeyRecordManagerForTables(ctx, infoSchema, pmodel.NewCIStr("test"), partialRefParentInfo)
 	require.NoError(t, err)
 	require.Len(t, partialRefParentForeignKeyRecordManager.GetReferredFKRecordMap(), 1)
 	partialRefParentForeignKeyRecordManager.RemoveForeignKeys(partialRefParentInfo, unsafeRefIdx)

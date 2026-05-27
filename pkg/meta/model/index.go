@@ -230,7 +230,7 @@ func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...model.CIS
 }
 
 // FindIndexByColumnsForForeignKey finds an index that can be safely used by a foreign key.
-func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, cols ...ast.CIStr) *IndexInfo {
+func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, cols ...model.CIStr) *IndexInfo {
 	for _, index := range indices {
 		if IsIndexPrefixCoveredForForeignKey(tbInfo, index, cols...) {
 			return index
@@ -241,7 +241,7 @@ func FindIndexByColumnsForForeignKey(tbInfo *TableInfo, indices []*IndexInfo, co
 
 // IsIndexPrefixCoveredForForeignKey checks whether the index covers the foreign key columns
 // and whether the partial index predicate, if any, is safe for foreign key checks.
-func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...ast.CIStr) bool {
+func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols ...model.CIStr) bool {
 	if !IsIndexPrefixCovered(tbInfo, index, cols...) {
 		return false
 	}
@@ -257,7 +257,7 @@ func IsIndexPrefixCoveredForForeignKey(tbInfo *TableInfo, index *IndexInfo, cols
 // key column is safe, because every row that needs a foreign key lookup satisfies
 // it. Predicates on non-foreign-key columns, or stricter predicates such as
 // comparisons, may filter out rows that still need checks and are not safe here.
-func isIndexConditionCoveredByForeignKeyCols(index *IndexInfo, cols ...ast.CIStr) bool {
+func isIndexConditionCoveredByForeignKeyCols(index *IndexInfo, cols ...model.CIStr) bool {
 	if !index.HasCondition() {
 		return true
 	}

@@ -40,6 +40,7 @@ go_test(
     srcs = [
         "bdr_test.go",
         "column_test.go",
+        "index_foreign_key_test.go",
         "index_test.go",
         "job_args_test.go",
         "job_test.go",

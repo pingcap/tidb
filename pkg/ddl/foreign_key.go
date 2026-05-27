@@ -452,13 +452,8 @@ func checkIndexNeededInForeignKey(is infoschema.InfoSchema, dbName string, tbInf
 		}
 		remainIdxs = append(remainIdxs, idx)
 	}
-<<<<<<< HEAD
 	checkFn := func(cols []pmodel.CIStr) error {
-		if !model.IsIndexPrefixCovered(tbInfo, idxInfo, cols...) {
-=======
-	checkFn := func(cols []ast.CIStr) error {
 		if !model.IsIndexPrefixCoveredForForeignKey(tbInfo, idxInfo, cols...) {
->>>>>>> a09db00c63f (ddl: validate partial indexes for foreign keys (#68628))
 			return nil
 		}
 		if tbInfo.PKIsHandle && len(cols) == 1 {

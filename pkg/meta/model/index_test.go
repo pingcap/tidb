@@ -18,13 +18,7 @@ import (
 	"fmt"
 	"testing"
 
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/model"
-=======
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	_ "github.com/pingcap/tidb/pkg/types/parser_driver"
->>>>>>> a09db00c63f (ddl: validate partial indexes for foreign keys (#68628))
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,45 +65,7 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_1"), model.NewCIStr("c_2")))
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_0"), model.NewCIStr("c_2")))
 
-<<<<<<< HEAD
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, model.NewCIStr("c_4")))
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, model.NewCIStr("c_4"), model.NewCIStr("c_2")))
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, model.NewCIStr("c_2")))
-=======
-	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, ast.NewCIStr("c_4")))
-	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, ast.NewCIStr("c_4"), ast.NewCIStr("c_2")))
-	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_2")))
-
-	safePartial := newIndexForTest(2, c0, c1)
-	safePartial.ConditionExprString = "`c_1` is not null"
-	require.True(t, IsIndexPrefixCoveredForForeignKey(tbl, safePartial, ast.NewCIStr("c_0"), ast.NewCIStr("c_1")))
-
-	safePartialOnFirstFKCol := newIndexForTest(3, c0, c1)
-	safePartialOnFirstFKCol.ConditionExprString = "`c_0` is not null"
-	require.True(t, IsIndexPrefixCoveredForForeignKey(tbl, safePartialOnFirstFKCol, ast.NewCIStr("c_0"), ast.NewCIStr("c_1")))
-
-	unsafePartialOnNonFKCol := newIndexForTest(4, c0, c1)
-	unsafePartialOnNonFKCol.ConditionExprString = "`c_2` is not null"
-	require.False(t, IsIndexPrefixCoveredForForeignKey(tbl, unsafePartialOnNonFKCol, ast.NewCIStr("c_0"), ast.NewCIStr("c_1")))
-
-	unsafePartialIsNull := newIndexForTest(5, c0)
-	unsafePartialIsNull.ConditionExprString = "`c_0` is null"
-	require.False(t, IsIndexPrefixCoveredForForeignKey(tbl, unsafePartialIsNull, ast.NewCIStr("c_0")))
-
-	unsafePartialBinaryCondition := newIndexForTest(6, c0)
-	unsafePartialBinaryCondition.ConditionExprString = "`c_0` > 0"
-	require.False(t, IsIndexPrefixCoveredForForeignKey(tbl, unsafePartialBinaryCondition, ast.NewCIStr("c_0")))
-
-	badCondition := newIndexForTest(7, c0)
-	badCondition.ConditionExprString = "`c_0` is"
-	require.False(t, IsIndexPrefixCoveredForForeignKey(tbl, badCondition, ast.NewCIStr("c_0")))
-
-	require.Same(t, safePartial, FindIndexByColumnsForForeignKey(tbl, []*IndexInfo{unsafePartialOnNonFKCol, safePartial}, ast.NewCIStr("c_0"), ast.NewCIStr("c_1")))
-}
-
-func TestGlobalIndexV1SupportedForNextGen(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		require.True(t, GetGlobalIndexV1Supported())
-	}
->>>>>>> a09db00c63f (ddl: validate partial indexes for foreign keys (#68628))
 }
