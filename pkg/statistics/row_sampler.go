@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"math/rand"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -34,7 +35,7 @@ import (
 
 // RowSampleCollector implements the needed interface for a row-based sample collector.
 type RowSampleCollector interface {
-	MergeCollector(collector RowSampleCollector)
+	MergeCollector(collector RowSampleCollector) time.Duration
 	sampleRow(row []types.Datum, rng *rand.Rand)
 	Base() *baseCollector
 	DestroyAndPutToPool()
@@ -292,13 +293,15 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
-func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) time.Duration {
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
+	fmStart := time.Now()
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
 	for _, pbSketch := range pbCollector.FmSketch {
 		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
 	}
+	fmSketchElapsed := time.Since(fmStart)
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
 	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
@@ -325,6 +328,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		s.MemSize += deltaSize
 	}
 	memTracker.Consume(bufferedMemSize)
+	return fmSketchElapsed
 }
 
 // Base implements the RowSampleCollector interface.
@@ -368,11 +372,13 @@ func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 }
 
 // MergeCollector merges the collectors to a final one.
-func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
+func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) time.Duration {
 	s.Count += subCollector.Base().Count
+	fmStart := time.Now()
 	for i, fms := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(fms)
 	}
+	fmSketchElapsed := time.Since(fmStart)
 	for i, nullCount := range subCollector.Base().NullCount {
 		s.NullCount[i] += nullCount
 	}
@@ -391,6 +397,7 @@ func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	} else {
 		s.MemSize = (s.MemSize + subCollector.Base().MemSize) * int64(newSampleNum) / int64(totalSampleNum)
 	}
+	return fmSketchElapsed
 }
 
 // DestroyAndPutToPool implements the interface RowSampleCollector.
@@ -462,11 +469,13 @@ func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 }
 
 // MergeCollector merges the collectors to a final one.
-func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
+func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) time.Duration {
 	s.Count += subCollector.Base().Count
+	fmStart := time.Now()
 	for i := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
 	}
+	fmSketchElapsed := time.Since(fmStart)
 	for i := range subCollector.Base().NullCount {
 		s.NullCount[i] += subCollector.Base().NullCount[i]
 	}
@@ -475,6 +484,7 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	}
 	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
 	s.MemSize += subCollector.Base().MemSize
+	return fmSketchElapsed
 }
 
 // Base implements the interface RowSampleCollector.

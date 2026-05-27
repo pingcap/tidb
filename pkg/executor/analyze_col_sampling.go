@@ -18,6 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -49,6 +50,28 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
+
+// samplingMergeTrace collects lightweight metrics that reveal the performance
+// profile of the merge-sampling pipeline.  All fields are updated atomically
+// so that concurrent merge workers can write without a mutex.
+type samplingMergeTrace struct {
+	// readDataAndSendTask (single goroutine)
+	fetchCount       atomic.Int64
+	fetchBytes       atomic.Int64
+	fetchElapsedNs   atomic.Int64
+	// subMergeWorker (N goroutines)
+	responseCount    atomic.Int64
+	responseBytes    atomic.Int64
+	fmSketchCount    atomic.Int64
+	fmSketchBytes    atomic.Int64
+	unmarshalNs      atomic.Int64
+	fromProtoNs      atomic.Int64
+	fmFromProtoNs    atomic.Int64
+	mergeNs          atomic.Int64
+	fmMergeNs        atomic.Int64
+	workerWaitNs     atomic.Int64
+	workerBusyNs     atomic.Int64
+}
 
 func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
 	var ranges []*ranger.Range
@@ -228,6 +251,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
 	mergeTaskCh := make(chan []byte, 1)
+	trace := &samplingMergeTrace{}
+	mergeStart := time.Now()
 	taskCtx, taskCancel := context.WithCancelCause(ctx)
 	defer taskCancel(nil)
 	var taskEg errgroup.Group
@@ -238,7 +263,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 				err = getAnalyzePanicErr(r)
 			}
 		}()
-		err = readDataAndSendTask(taskCtx, e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
+		err = readDataAndSendTask(taskCtx, e.ctx, e.resultHandler, mergeTaskCh, e.memTracker, trace)
 		if err != nil {
 			taskCancel(err)
 		}
@@ -251,7 +276,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, totalLen, id)
+			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, totalLen, id, trace)
 		})
 	}
 	// Merge the result from collectors.
@@ -303,6 +328,38 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		taskCancel(err)
 		return 0, nil, nil, nil, err
 	}
+
+	// Log the merge-sampling pipeline trace.
+	mergeWall := time.Since(mergeStart)
+	totalWait := time.Duration(trace.workerWaitNs.Load())
+	totalBusy := time.Duration(trace.workerBusyNs.Load())
+	busyPct := float64(0)
+	if totalWait+totalBusy > 0 {
+		busyPct = float64(totalBusy) / float64(totalWait+totalBusy) * 100
+	}
+	logutil.BgLogger().Info("analyze full sampling merge trace",
+		zap.Int64("tableID", e.tableID.TableID),
+		zap.Duration("mergeWall", mergeWall),
+		zap.Int("mergeWorkers", samplingStatsConcurrency),
+		// fetch pipeline (single goroutine)
+		zap.Int64("fetchCount", trace.fetchCount.Load()),
+		zap.Int64("fetchBytes", trace.fetchBytes.Load()),
+		zap.Duration("fetchElapsed", time.Duration(trace.fetchElapsedNs.Load())),
+		// merge worker aggregates
+		zap.Int64("responses", trace.responseCount.Load()),
+		zap.Int64("responseBytes", trace.responseBytes.Load()),
+		zap.Int64("fmSketchCount", trace.fmSketchCount.Load()),
+		zap.Int64("fmSketchBytes", trace.fmSketchBytes.Load()),
+		zap.Duration("unmarshalElapsed", time.Duration(trace.unmarshalNs.Load())),
+		zap.Duration("fromProtoElapsed", time.Duration(trace.fromProtoNs.Load())),
+		zap.Duration("fmSketchFromProtoElapsed", time.Duration(trace.fmFromProtoNs.Load())),
+		zap.Duration("mergeCollectorElapsed", time.Duration(trace.mergeNs.Load())),
+		zap.Duration("fmSketchMergeElapsed", time.Duration(trace.fmMergeNs.Load())),
+		// worker utilization
+		zap.Duration("workerWaitTotal", totalWait),
+		zap.Duration("workerBusyTotal", totalBusy),
+		zap.Float64("workerBusyPercent", busyPct),
+	)
 
 	// Decode the data from sample collectors.
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
@@ -603,6 +660,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	taskCh <-chan []byte,
 	totalLen int,
 	index int,
+	trace *samplingMergeTrace,
 ) {
 	// Only close the resultCh in the first worker.
 	closeTheResultCh := index == 0
@@ -651,15 +709,30 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	// Merge sampled batches until the producer closes taskCh or cancellation arrives.
 	for {
+		waitStart := time.Now()
 		select {
 		case data, ok := <-taskCh:
+			trace.workerWaitNs.Add(time.Since(waitStart).Nanoseconds())
 			if !ok {
 				resultCh <- &samplingMergeResult{collector: retCollector}
 				return
 			}
+			busyStart := time.Now()
 			inflightDataSize = int64(cap(data))
 			colResp := &tipb.AnalyzeColumnsResp{}
+			unmarshalStart := time.Now()
 			err := colResp.Unmarshal(data)
+			unmarshalElapsed := time.Since(unmarshalStart)
+			rowCollector := colResp.GetRowCollector()
+			fmSketchBytes := 0
+			for _, sketch := range rowCollector.GetFmSketch() {
+				fmSketchBytes += sketch.Size()
+			}
+			trace.responseCount.Add(1)
+			trace.responseBytes.Add(int64(len(data)))
+			trace.fmSketchCount.Add(int64(len(rowCollector.GetFmSketch())))
+			trace.fmSketchBytes.Add(int64(fmSketchBytes))
+			trace.unmarshalNs.Add(unmarshalElapsed.Nanoseconds())
 			if err != nil {
 				e.memTracker.Release(inflightDataSize)
 				inflightDataSize = 0
@@ -671,12 +744,20 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			e.memTracker.Consume(inflightRespSize)
 
 			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
-			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+			fromProtoStart := time.Now()
+			fmFromProtoElapsed := subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+			fromProtoElapsed := time.Since(fromProtoStart)
+			trace.fromProtoNs.Add(fromProtoElapsed.Nanoseconds())
+			trace.fmFromProtoNs.Add(fmFromProtoElapsed.Nanoseconds())
 			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 
 			oldRetCollectorSize := retCollector.Base().MemSize
 			oldRetCollectorCount := retCollector.Base().Count
-			retCollector.MergeCollector(subCollector)
+			mergeCollectorStart := time.Now()
+			fmMergeElapsed := retCollector.MergeCollector(subCollector)
+			mergeCollectorElapsed := time.Since(mergeCollectorStart)
+			trace.mergeNs.Add(mergeCollectorElapsed.Nanoseconds())
+			trace.fmMergeNs.Add(fmMergeElapsed.Nanoseconds())
 			newRetCollectorCount := retCollector.Base().Count
 			printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
 				e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
@@ -689,6 +770,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			inflightDataSize = 0
 			inflightRespSize = 0
 			subCollector.DestroyAndPutToPool()
+			trace.workerBusyNs.Add(time.Since(busyStart).Nanoseconds())
 		case <-ctx.Done():
 			err := normalizeCtxErrWithCause(ctx, ctx.Err())
 			if err != nil {
@@ -919,7 +1001,7 @@ type samplingBuildTask struct {
 	slicePos         int
 }
 
-func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {
+func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker, trace *samplingMergeTrace) error {
 	// After all tasks are sent, close the mergeTaskCh to notify the mergeWorker that all tasks have been sent.
 	defer close(mergeTaskCh)
 	for {
@@ -944,7 +1026,10 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 			}
 		})
 
+		fetchStart := time.Now()
 		data, err := handler.nextRaw(ctx)
+		trace.fetchElapsedNs.Add(time.Since(fetchStart).Nanoseconds())
+		trace.fetchCount.Add(1)
 		if err != nil {
 			err = normalizeCtxErrWithCause(ctx, err)
 			return errors.Trace(err)
@@ -952,6 +1037,7 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 		if data == nil {
 			break
 		}
+		trace.fetchBytes.Add(int64(len(data)))
 
 		dataSize := int64(cap(data))
 		memTracker.Consume(dataSize)
