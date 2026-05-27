@@ -17,11 +17,15 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -40,6 +44,9 @@ import (
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
+	sd "github.com/tikv/pd/client/servicediscovery"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/test/bufconn"
 )
 
 type mockCodec struct {
@@ -99,6 +106,124 @@ func (c *mockPDHTTPClient) GetStores(context.Context) (*pdhttp.StoresInfo, error
 		return &pdhttp.StoresInfo{}, nil
 	}
 	return c.storesInfo, nil
+}
+
+type mockPDStoreStatsClient struct {
+	clusterID        uint64
+	serviceDiscovery sd.ServiceDiscovery
+}
+
+func (c mockPDStoreStatsClient) GetClusterID(context.Context) uint64 {
+	return c.clusterID
+}
+
+func (c mockPDStoreStatsClient) GetServiceDiscovery() sd.ServiceDiscovery {
+	return c.serviceDiscovery
+}
+
+type mockServiceDiscovery struct {
+	serviceClient sd.ServiceClient
+}
+
+func (d mockServiceDiscovery) Init() error { return nil }
+func (d mockServiceDiscovery) Close()      {}
+func (mockServiceDiscovery) GetClusterID() uint64 {
+	return 0
+}
+func (mockServiceDiscovery) GetKeyspaceID() uint32 {
+	return 0
+}
+func (mockServiceDiscovery) SetKeyspaceID(uint32) {}
+func (mockServiceDiscovery) GetKeyspaceGroupID() uint32 {
+	return 0
+}
+func (mockServiceDiscovery) GetServiceURLs() []string { return nil }
+func (mockServiceDiscovery) GetServingEndpointClientConn() *grpc.ClientConn {
+	return nil
+}
+func (mockServiceDiscovery) GetClientConns() *sync.Map { return nil }
+func (mockServiceDiscovery) GetServingURL() string     { return "" }
+func (mockServiceDiscovery) GetBackupURLs() []string   { return nil }
+func (d mockServiceDiscovery) GetServiceClient() sd.ServiceClient {
+	return d.serviceClient
+}
+func (d mockServiceDiscovery) GetServiceClientByKind(sd.APIKind) sd.ServiceClient {
+	return d.serviceClient
+}
+func (d mockServiceDiscovery) GetAllServiceClients() []sd.ServiceClient {
+	if d.serviceClient == nil {
+		return nil
+	}
+	return []sd.ServiceClient{d.serviceClient}
+}
+func (mockServiceDiscovery) GetOrCreateGRPCConn(string) (*grpc.ClientConn, error) {
+	return nil, nil
+}
+func (mockServiceDiscovery) ScheduleCheckMemberChanged() {}
+func (mockServiceDiscovery) CheckMemberChanged() error   { return nil }
+func (mockServiceDiscovery) ExecAndAddLeaderSwitchedCallback(sd.LeaderSwitchedCallbackFunc) {
+}
+func (mockServiceDiscovery) AddLeaderSwitchedCallback(sd.LeaderSwitchedCallbackFunc) {}
+func (mockServiceDiscovery) AddMembersChangedCallback(func())                        {}
+
+type mockServiceClient struct {
+	conn *grpc.ClientConn
+}
+
+func (c mockServiceClient) GetURL() string { return "" }
+func (c mockServiceClient) GetClientConn() *grpc.ClientConn {
+	return c.conn
+}
+func (c mockServiceClient) BuildGRPCTargetContext(ctx context.Context, _ bool) context.Context {
+	return ctx
+}
+func (c mockServiceClient) IsConnectedToLeader() bool { return true }
+func (c mockServiceClient) Available() bool           { return true }
+func (c mockServiceClient) NeedRetry(*pdpb.Error, error) bool {
+	return false
+}
+
+type mockPDServer struct {
+	pdpb.UnimplementedPDServer
+	store *metapb.Store
+	stats *pdpb.StoreStats
+	err   error
+}
+
+func (s *mockPDServer) GetStore(context.Context, *pdpb.GetStoreRequest) (*pdpb.GetStoreResponse, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &pdpb.GetStoreResponse{
+		Header: &pdpb.ResponseHeader{},
+		Store:  s.store,
+		Stats:  s.stats,
+	}, nil
+}
+
+func newMockPDStoreStatsClient(t *testing.T, store *metapb.Store, stats *pdpb.StoreStats, err error) mockPDStoreStatsClient {
+	listener := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer()
+	pdpb.RegisterPDServer(server, &mockPDServer{store: store, stats: stats, err: err})
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		server.Stop()
+	})
+	conn, err := grpc.DialContext(context.Background(), "bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return listener.Dial()
+		}),
+		grpc.WithInsecure())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
+	return mockPDStoreStatsClient{
+		clusterID:        1,
+		serviceDiscovery: mockServiceDiscovery{serviceClient: mockServiceClient{conn: conn}},
+	}
 }
 
 func expectedRegionRange(tableID int64) ([]byte, []byte) {
@@ -271,6 +396,57 @@ func TestSumTiKVStoreUsage(t *testing.T) {
 		require.EqualValues(t, 2, capacity.Stores[1].StoreID)
 		require.EqualValues(t, 4, capacity.Stores[2].StoreID)
 	})
+}
+
+func TestGetPDStoreStatsUsesRawUsedSize(t *testing.T) {
+	store := &metapb.Store{Id: 1}
+	stats := &pdpb.StoreStats{
+		StoreId:   1,
+		Capacity:  1024,
+		Available: 960,
+		UsedSize:  321,
+	}
+	pdCli := newMockPDStoreStatsClient(t, store, stats, nil)
+
+	got, err := collectTiKVStoreCapacityFromStoreStats(context.Background(), pdCli, store)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, got.StoreID)
+	require.EqualValues(t, 1024, got.TotalBytes)
+	require.EqualValues(t, 960, got.AvailableBytes)
+	require.EqualValues(t, 321, got.UsedBytes)
+}
+
+func TestCalcObservedTiKVCapacityIncrease(t *testing.T) {
+	initial := &TiKVClusterCapacity{
+		Stores: []TiKVStoreCapacity{
+			{StoreID: 1, UsedBytes: 100},
+			{StoreID: 2, UsedBytes: 200},
+		},
+	}
+	final := &TiKVClusterCapacity{
+		Stores: []TiKVStoreCapacity{
+			{StoreID: 2, UsedBytes: 230},
+			{StoreID: 1, UsedBytes: 150},
+		},
+	}
+	observed := calcObservedTiKVCapacityIncrease(initial, final)
+	require.True(t, observed.reliable)
+	require.Equal(t, "ok", observed.reason)
+	require.EqualValues(t, 80, observed.increase)
+
+	observed = calcObservedTiKVCapacityIncrease(initial, &TiKVClusterCapacity{
+		Stores: []TiKVStoreCapacity{
+			{StoreID: 1, UsedBytes: 150},
+			{StoreID: 3, UsedBytes: 300},
+		},
+	})
+	require.False(t, observed.reliable)
+	require.Equal(t, "store_set_changed", observed.reason)
+	require.Zero(t, observed.increase)
+
+	observed = calcObservedTiKVCapacityIncrease(&TiKVClusterCapacity{UsedBytes: 100}, final)
+	require.False(t, observed.reliable)
+	require.Equal(t, "initial_store_details_unavailable", observed.reason)
 }
 
 func TestCollectTiKVStoreUsage(t *testing.T) {
