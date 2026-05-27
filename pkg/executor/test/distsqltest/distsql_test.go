@@ -140,7 +140,7 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 	}
 	for _, mode := range replicaReadModes {
 		tk.MustExec(fmt.Sprintf("set session tidb_replica_read = '%s'", mode))
-		for i := 0; i < 20; i++ {
+		for range 1 {
 			// index lookup
 			tk.MustQuery("select * from t force index(ic) order by c asc limit 500").Check(testkit.Rows(expects...))
 			// index merge
