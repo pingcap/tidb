@@ -82,6 +82,18 @@ func TestRevokeDBScope(t *testing.T) {
 	}
 }
 
+func TestRevokeDBScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
+	tk := newCollationDisabledBootstrapTestKit(t)
+
+	tk.MustExec(`DROP USER IF EXISTS 'testDBCaseRevoke'@'%'`)
+	tk.MustExec(`CREATE USER 'testDBCaseRevoke'@'%' IDENTIFIED BY '123'`)
+
+	tk.MustExec(`GRANT SELECT ON test.* TO 'testDBCaseRevoke'@'%'`)
+	tk.MustExec(`REVOKE SELECT ON TEST.* FROM 'testDBCaseRevoke'@'%'`)
+	tk.MustQuery(`SELECT DB FROM mysql.db WHERE User='testDBCaseRevoke' AND Host='%'`).
+		Check(testkit.Rows())
+}
+
 func TestRevokeTableScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -127,6 +139,51 @@ func TestRevokeTableScope(t *testing.T) {
 	//delete row when last prv , updated by issue #38421
 	rows := tk.MustQuery(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`).Rows()
 	require.Len(t, rows, 0)
+}
+
+func TestRevokeTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
+	t.Run("table-name", func(t *testing.T) {
+		tk := newCollationDisabledBootstrapTestKit(t)
+
+		tk.MustExec(`DROP USER IF EXISTS 'testTblCaseRevoke'@'%'`)
+		tk.MustExec(`CREATE USER 'testTblCaseRevoke'@'%' IDENTIFIED BY '123'`)
+		tk.MustExec(`DROP TABLE IF EXISTS test.issue66867_revoke`)
+		tk.MustExec(`CREATE TABLE test.issue66867_revoke(c1 int)`)
+
+		tk.MustExec(`GRANT SELECT ON test.issue66867_revoke TO 'testTblCaseRevoke'@'%'`)
+		tk.MustExec(`REVOKE SELECT ON test.ISSUE66867_REVOKE FROM 'testTblCaseRevoke'@'%'`)
+		tk.MustQuery(`SELECT Table_name FROM mysql.tables_priv WHERE User='testTblCaseRevoke' AND Host='%' AND DB='test'`).
+			Check(testkit.Rows())
+	})
+
+	t.Run("schema-name", func(t *testing.T) {
+		tk := newCollationDisabledBootstrapTestKit(t)
+
+		tk.MustExec(`DROP USER IF EXISTS 'testTblCaseSchemaRevoke'@'%'`)
+		tk.MustExec(`CREATE USER 'testTblCaseSchemaRevoke'@'%' IDENTIFIED BY '123'`)
+		tk.MustExec(`DROP TABLE IF EXISTS test.issue68406_revoke`)
+		tk.MustExec(`CREATE TABLE test.issue68406_revoke(c1 int)`)
+
+		tk.MustExec(`GRANT SELECT ON test.issue68406_revoke TO 'testTblCaseSchemaRevoke'@'%'`)
+		tk.MustExec(`REVOKE SELECT ON TEST.issue68406_revoke FROM 'testTblCaseSchemaRevoke'@'%'`)
+		tk.MustQuery(`SELECT Table_name FROM mysql.tables_priv WHERE User='testTblCaseSchemaRevoke' AND Host='%' AND DB='test'`).
+			Check(testkit.Rows())
+	})
+
+	t.Run("missing-table fallback", func(t *testing.T) {
+		tk := newCollationDisabledBootstrapTestKit(t)
+
+		tk.MustExec(`DROP USER IF EXISTS 'testTblCaseMissingRevoke'@'%'`)
+		tk.MustExec(`CREATE USER 'testTblCaseMissingRevoke'@'%' IDENTIFIED BY '123'`)
+		tk.MustExec(`DROP TABLE IF EXISTS test.issue68406_missing_revoke`)
+		tk.MustExec(`CREATE TABLE test.issue68406_missing_revoke(c1 int)`)
+
+		tk.MustExec(`GRANT SELECT ON test.issue68406_missing_revoke TO 'testTblCaseMissingRevoke'@'%'`)
+		tk.MustExec(`DROP TABLE test.issue68406_missing_revoke`)
+		tk.MustExec(`REVOKE SELECT ON TEST.issue68406_missing_revoke FROM 'testTblCaseMissingRevoke'@'%'`)
+		tk.MustQuery(`SELECT Table_name FROM mysql.tables_priv WHERE User='testTblCaseMissingRevoke' AND Host='%' AND DB='test'`).
+			Check(testkit.Rows())
+	})
 }
 
 func TestRevokeColumnScope(t *testing.T) {
@@ -175,6 +232,20 @@ func TestRevokeColumnScope(t *testing.T) {
 	//delete row when last prv , updated by issue #38421
 	rows := tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1Revoke" and host="localhost" and db="test" and Table_name="test3"`).Rows()
 	require.Len(t, rows, 0)
+}
+
+func TestRevokeColumnScopeCaseInsensitiveSchemaNameWithNewCollationDisabled(t *testing.T) {
+	tk := newCollationDisabledBootstrapTestKit(t)
+
+	tk.MustExec(`DROP USER IF EXISTS 'testColCaseSchemaRevoke'@'%'`)
+	tk.MustExec(`CREATE USER 'testColCaseSchemaRevoke'@'%' IDENTIFIED BY '123'`)
+	tk.MustExec(`DROP TABLE IF EXISTS test.issue68406_revoke_col`)
+	tk.MustExec(`CREATE TABLE test.issue68406_revoke_col(id int, name int)`)
+
+	tk.MustExec(`GRANT SELECT(id) ON test.issue68406_revoke_col TO 'testColCaseSchemaRevoke'@'%'`)
+	tk.MustExec(`REVOKE SELECT(id) ON TEST.issue68406_revoke_col FROM 'testColCaseSchemaRevoke'@'%'`)
+	tk.MustQuery(`SELECT Column_name FROM mysql.columns_priv WHERE User='testColCaseSchemaRevoke' AND Host='%' AND DB='test' AND Table_name='issue68406_revoke_col'`).
+		Check(testkit.Rows())
 }
 
 func TestRevokeColumnPriv(t *testing.T) {
