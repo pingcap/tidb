@@ -95,19 +95,22 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 		tk0.MustExec("insert into t select * from t") // 256 Lines
 	}
 	sql := "analyze table t with 1.0 samplerate;" // Need about 100MB
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	if intest.InTest && intest.EnableAssert {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
+	}
 	_, err = tk0.Exec(sql)
 	if intest.InTest && intest.EnableAssert {
 		require.ErrorContains(t, err, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.")
 	} else {
-		// The required untagged validation surface does not include failpoint instrumentation,
-		// so analyze should complete instead of being force-cancelled by the failpoint hook.
+		// Without the intest tag, failpoints are not enabled, so analyze completes normally.
 		require.NoError(t, err)
 	}
 	runtime.GC()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	if intest.InTest && intest.EnableAssert {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	}
 	tk0.MustExec(sql)
 }
 
