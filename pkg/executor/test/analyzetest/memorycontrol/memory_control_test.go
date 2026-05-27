@@ -180,7 +180,9 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	require.Len(t, childTrackers, 0)
 
 	h.HandleAutoAnalyze()
-	// Poll in the main test goroutine because TestKit assertions are not safe inside require.Eventually callbacks.
+	// Poll in the main test goroutine because require.Eventually runs the condition
+	// in a goroutine (go checkCond()), and TestKit.MustQuery calls t.FailNow() which
+	// panics when called from outside the test goroutine.
 	var rows [][]any
 	deadline := time.Now().Add(5 * time.Second)
 	for {
