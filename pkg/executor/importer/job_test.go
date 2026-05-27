@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,6 +39,28 @@ func jobInfoEqual(t *testing.T, expected, got *importer.JobInfo) {
 	cloned.UpdateTime = got.UpdateTime
 	cloned.EndTime = got.EndTime
 	require.Equal(t, &cloned, got)
+}
+
+type failJobBeforeStartExecutor struct {
+	sqlexec.SQLExecutor
+	t                 *testing.T
+	updatedPendingJob bool
+}
+
+func (e *failJobBeforeStartExecutor) ExecuteInternal(_ context.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+	e.t.Helper()
+	require.Contains(e.t, sql, "UPDATE mysql.tidb_import_jobs")
+	require.Contains(e.t, sql, "end_time = CURRENT_TIMESTAMP(6)")
+	require.Contains(e.t, sql, "status IN (%?, %?)")
+	require.Len(e.t, args, 6)
+	require.Equal(e.t, "failed", args[0])
+	require.Equal(e.t, "failed before start", args[1])
+	require.NotEmpty(e.t, args[2])
+	require.Equal(e.t, int64(1), args[3])
+	require.Equal(e.t, "pending", args[4])
+	require.Equal(e.t, importer.JobStatusRunning, args[5])
+	e.updatedPendingJob = true
+	return nil, nil
 }
 
 func TestJobHappyPath(t *testing.T) {
@@ -276,39 +299,11 @@ func TestGetAndCancelJob(t *testing.T) {
 }
 
 func TestFailJobBeforeStart(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	conn := tk.Session().GetSQLExecutor()
+	conn := &failJobBeforeStartExecutor{t: t}
 
-	jobInfo := &importer.JobInfo{
-		TableSchema: "test",
-		TableName:   "t",
-		TableID:     1,
-		CreatedBy:   "root@%",
-		Parameters: importer.ImportParameters{
-			Format: importer.DataFormatCSV,
-		},
-		SourceFileSize: 123,
-	}
-
-	jobID, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
-		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
-	require.NoError(t, err)
-
-	require.NoError(t, importer.FailJob(ctx, conn, jobID, "failed before start", mockSummary(0)))
-
-	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
-	require.NoError(t, err)
-	require.Equal(t, "failed", gotJobInfo.Status)
-	require.Equal(t, "failed before start", gotJobInfo.ErrorMessage)
-	require.True(t, gotJobInfo.StartTime.IsZero())
-	require.False(t, gotJobInfo.EndTime.IsZero())
-	require.Equal(t, mockSummary(0), gotJobInfo.Summary)
-
-	cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
-	require.NoError(t, err)
-	require.Equal(t, int64(0), cnt)
+	require.NoError(t, importer.FailJob(ctx, conn, 1, "failed before start", mockSummary(0)))
+	require.True(t, conn.updatedPendingJob)
 }
 
 func TestJobInfo_CanCancel(t *testing.T) {
