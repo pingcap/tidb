@@ -93,3 +93,17 @@ func requirePlanLineContains(t *testing.T, plan []string, expected ...string) {
 	}
 	require.Failf(t, "plan does not contain expected text", "expected: %s\nplan:\n%s", strings.Join(expected, ", "), strings.Join(plan, "\n"))
 }
+
+func requireNoPlanLineContains(t *testing.T, plan []string, unexpected ...string) {
+	t.Helper()
+	for _, line := range plan {
+		matched := true
+		for _, item := range unexpected {
+			if !strings.Contains(line, item) {
+				matched = false
+				break
+			}
+		}
+		require.Falsef(t, matched, "plan contains unexpected text", "unexpected: %s\nline: %s\nplan:\n%s", strings.Join(unexpected, ", "), line, strings.Join(plan, "\n"))
+	}
+}

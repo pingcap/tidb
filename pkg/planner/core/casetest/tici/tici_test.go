@@ -15,6 +15,7 @@
 package tici
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -512,6 +513,42 @@ func TestLocalMatchAgainstSkipsPreparedPlanCache(t *testing.T) {
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 		tk.MustQuery("execute stmt using @title, @body").Check(testkit.Rows("1"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	})
+}
+
+func TestLocalMatchAgainstCBOChoosesResidualIndex(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table t(
+			id int primary key,
+			status varchar(16),
+			title text,
+			fulltext index ft_title(title),
+			index idx_status(status)
+		)`)
+		for i := 1; i <= 1000; i++ {
+			status, title := "closed", "mysql notes"
+			if i == 1 {
+				status, title = "open", "tidb database"
+			}
+			tk.MustExec(fmt.Sprintf("insert into t values (%d, '%s', '%s')", i, status, title))
+		}
+		tk.MustExec("analyze table t")
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+		query := "select id from t where status = 'open' and match(title) against('+tidb' in boolean mode)"
+		tk.MustExec("set tidb_enable_local_match_against = on")
+		tk.MustExec("set tidb_cost_model_version = 2")
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = off")
+		defaultPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + query).Rows())
+		requirePlanLineContains(t, defaultPlan, "IndexRangeScan", "search func:fts_match_word")
+
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = on")
+		cboPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + query).Rows())
+		requirePlanLineContains(t, cboPlan, "IndexRangeScan", "idx_status")
+		requirePlanLineContains(t, cboPlan, "Selection", "match_against")
+		requireNoPlanLineContains(t, cboPlan, "search func:fts_match_word")
+		tk.MustQuery(query).Check(testkit.Rows("1"))
 	})
 }
 
