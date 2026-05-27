@@ -1643,8 +1643,7 @@ func (e *LoadDataController) detectAndUpdateFormat(path string) {
 		e.Format = parseFileType(path)
 		e.logger.Info("detect and update import plan format based on file extension",
 			zap.String("file", path), zap.String("detected format", e.Format))
-		// Plan.Parameters is not persisted in dist-task task meta. Keep this
-		// in-memory update best-effort for non-prepare paths.
+		// Plan.Parameters doesn't exist if we run with async prepare.
 		if e.Parameters != nil {
 			e.Parameters.Format = e.Format
 		}

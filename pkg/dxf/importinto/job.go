@@ -101,6 +101,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	}
 	if ShouldUseAsyncPrepare(plan) {
 		logicalPlan.PrepareMode = proto.PrepareModeRequired
+		// below params will be filled later in async prepare, init to 1 temporarily.
 		planCtx.ThreadCnt = 1
 		planCtx.MaxNodeCnt = 1
 	}

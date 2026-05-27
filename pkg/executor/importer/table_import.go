@@ -461,9 +461,10 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
 func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[int32][]Chunk, err error) {
-	task := log.BeginTask(e.logger, "populate chunks")
+	task := log.BeginTask(e.logger.With(zap.Int("executeNodesCnt", e.ExecuteNodesCnt),
+		zap.Int64("totalFileSize", e.TotalFileSize)), "populate chunks")
 	defer func() {
-		task.End(zap.ErrorLevel, err)
+		task.End(zap.ErrorLevel, err, zap.Int("subtaskCnt", len(chunksMap)))
 	}()
 
 	tableMeta := &mydump.MDTableMeta{

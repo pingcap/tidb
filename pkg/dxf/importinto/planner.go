@@ -77,12 +77,12 @@ func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 	taskMeta := TaskMeta{
-		JobID:                        p.JobID,
-		Plan:                         p.Plan,
-		Stmt:                         p.Stmt,
-		EligibleInstances:            p.EligibleInstances,
-		ChunkMap:                     p.ChunkMap,
-		PreparedChunkMapExternalPath: p.PreparedChunkMapExternalPath,
+		JobID:                    p.JobID,
+		Plan:                     p.Plan,
+		Stmt:                     p.Stmt,
+		EligibleInstances:        p.EligibleInstances,
+		ChunkMap:                 p.ChunkMap,
+		PreparedMetaExternalPath: p.PreparedChunkMapExternalPath,
 	}
 	return json.Marshal(taskMeta)
 }
@@ -98,7 +98,7 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 	p.Stmt = taskMeta.Stmt
 	p.EligibleInstances = taskMeta.EligibleInstances
 	p.ChunkMap = taskMeta.ChunkMap
-	p.PreparedChunkMapExternalPath = taskMeta.PreparedChunkMapExternalPath
+	p.PreparedChunkMapExternalPath = taskMeta.PreparedMetaExternalPath
 	return nil
 }
 
@@ -425,23 +425,13 @@ func readPreparedChunkMap(
 		return nil, err
 	}
 	defer store.Close()
-	preparedChunkMapMeta := PreparedChunkMapMeta{
+	preparedChunkMapMeta := PreparedMeta{
 		BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
 	}
 	if err := preparedChunkMapMeta.ReadJSONFromExternalStorage(ctx, store, &preparedChunkMapMeta); err != nil {
 		return nil, err
 	}
-	if preparedChunkMapMeta.ChunkMap != nil {
-		return preparedChunkMapMeta.ChunkMap, nil
-	}
-
-	// Compatible with legacy format where the external file stored chunkMap
-	// directly as the top-level JSON object.
-	var legacyChunkMap map[int32][]importer.Chunk
-	if err := preparedChunkMapMeta.ReadJSONFromExternalStorage(ctx, store, &legacyChunkMap); err != nil {
-		return nil, err
-	}
-	return legacyChunkMap, nil
+	return preparedChunkMapMeta.ChunkMap, nil
 }
 
 func skipMergeSort(kvGroup string, stats []simplesst.MultipleFilesStat, concurrency int) bool {

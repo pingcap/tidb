@@ -300,7 +300,7 @@ func (sch *importScheduler) writePreparedChunkMap(
 		return "", err
 	}
 	defer store.Close()
-	preparedMeta := PreparedChunkMapMeta{
+	preparedMeta := PreparedMeta{
 		BaseExternalMeta: globalsort.BaseExternalMeta{
 			ExternalPath: globalsort.PreparedMetaPath(taskID),
 		},
@@ -358,8 +358,7 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	}
 
 	taskMeta.Plan = *controller.Plan
-	taskMeta.ChunkMap = nil
-	taskMeta.PreparedChunkMapExternalPath = chunkMapPath
+	taskMeta.PreparedMetaExternalPath = chunkMapPath
 	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta); err != nil {
 		return err
 	}

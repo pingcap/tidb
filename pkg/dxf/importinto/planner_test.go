@@ -151,7 +151,7 @@ func TestToPhysicalPlan(t *testing.T) {
 			1: {{Path: "gs://test-load/2.csv"}},
 		}
 		externalPath := globalsort.PreparedMetaPath(100)
-		preparedMeta := PreparedChunkMapMeta{
+		preparedMeta := PreparedMeta{
 			BaseExternalMeta: globalsort.BaseExternalMeta{ExternalPath: externalPath},
 			ChunkMap:         preparedChunkMap,
 		}
@@ -172,34 +172,6 @@ func TestToPhysicalPlan(t *testing.T) {
 		require.Equal(t, int32(1), importSpec.ID)
 		require.Len(t, importSpec.Chunks, 1)
 		require.Equal(t, "gs://test-load/2.csv", importSpec.Chunks[0].Path)
-	})
-
-	t.Run("legacy prepared chunk map format is still readable", func(t *testing.T) {
-		cloudStorageURI := "local://" + filepath.ToSlash(t.TempDir())
-		store, err := importer.GetSortStore(context.Background(), cloudStorageURI)
-		require.NoError(t, err)
-		defer store.Close()
-
-		preparedChunkMap := map[int32][]importer.Chunk{
-			1: {{Path: "gs://test-load/legacy.csv"}},
-		}
-		externalPath := globalsort.PreparedMetaPath(101)
-		data, err := json.Marshal(preparedChunkMap)
-		require.NoError(t, err)
-		require.NoError(t, store.WriteFile(context.Background(), externalPath, data))
-
-		specs, err := generateImportSpecs(planner.PlanCtx{Ctx: context.Background()}, &LogicalPlan{
-			Plan: importer.Plan{
-				CloudStorageURI: cloudStorageURI,
-			},
-			PreparedChunkMapExternalPath: externalPath,
-		})
-		require.NoError(t, err)
-		require.Len(t, specs, 1)
-		importSpec := specs[0].(*ImportSpec)
-		require.Equal(t, int32(1), importSpec.ID)
-		require.Len(t, importSpec.Chunks, 1)
-		require.Equal(t, "gs://test-load/legacy.csv", importSpec.Chunks[0].Path)
 	})
 }
 
