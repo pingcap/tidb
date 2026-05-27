@@ -1104,7 +1104,6 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 
 var checkAttributesInOrder = []string{
 	`"fk_info":null`,
-	`"partition":null`,
 	`"Lock":null`,
 	`"tiflash_replica":null`,
 	`"temp_table_type":0`,
