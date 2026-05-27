@@ -4777,6 +4777,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tblInfo.MaterializedViewLog != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on materialized view log table")
 	}
+	if tblInfo.MaterializedViewBase != nil && tblInfo.MaterializedViewBase.MLogID != 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("TRUNCATE TABLE on base table with materialized view log")
+	}
 	if err := checkTableMaterializedViewConstraints(ctx.GetSessionVars(), tblInfo, "TRUNCATE TABLE"); err != nil {
 		return errors.Trace(err)
 	}
