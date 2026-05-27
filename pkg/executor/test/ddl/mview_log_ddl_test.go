@@ -528,7 +528,7 @@ func TestPurgeMaterializedViewLogDisallowExplicitTransaction(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_mlog_purge_txn (a int not null, b int not null)")
-	tk.MustExec("create materialized view log on t_mlog_purge_txn (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t_mlog_purge_txn (a, b) purge next date_add(now(), interval 1 hour)")
 
 	tk.MustExec("begin")
 	tk.MustGetErrMsg(

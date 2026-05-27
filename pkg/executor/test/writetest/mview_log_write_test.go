@@ -950,63 +950,24 @@ func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
 	))
 }
 
-// TODO: DDL should reject dropping a tracked column
-func TestMLogOnlineDDLDropTrackedColumnCurrentBehavior(t *testing.T) {
+func TestMLogDropTrackedColumnRejected(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
 
 	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
 	tk.MustExec("create materialized view log on t (id, tracked)")
+	err := tk.ExecToErr("alter table t drop column tracked")
+	require.ErrorContains(t, err, "Unsupported ALTER TABLE on base table column tracked referenced by materialized view log")
+
+	// The failed DDL should leave both the base table schema and mlog behavior intact.
 	tk.MustExec("insert into t values (1, 10, 100)")
-	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
-
-	tkDDL := testkit.NewTestKit(t, store)
-	tkDDL.MustExec("use test")
-	ctrl := startDDLPausedAtFailpoint(
-		t,
-		tkDDL,
-		dropColumnStateWriteOnlyFailpoint,
-		"alter table t drop column tracked",
-	)
-	defer ctrl.releaseAndWaitFinish(t)
-
-	ctrl.waitUntilPaused(t, "drop-tracked-column write-only")
-
-	// While online DDL is paused in an intermediate state, tracked column offsets in mlog metadata
-	// can no longer match the partial insert row layout, so mlog writing fails in the DML path.
-	err := tk.ExecToErr("insert into t (id, untracked) values (2, 200)")
-	require.ErrorContains(t, err, "write mlog row: column at offset")
-
-	ctrl.releaseAndWaitFinish(t)
-
-	// Current behavior after DDL completion: wrapped DML fails because tracked column metadata
-	// still exists in mlog definition but is removed from the base table schema.
-	err = tk.ExecToErr("insert into t (id, untracked) values (3, 300)")
-	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
-}
-
-// TODO: DDL should reject dropping a tracked column
-func TestMLogDropTrackedColumnCurrentBehavior(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
-	tk.MustExec("create materialized view log on t (id, tracked)")
-	tk.MustExec("alter table t drop column tracked")
-
-	// Current behavior: DDL succeeds, then wrapped DML fails at execution build time because
-	// mlog metadata still references a tracked column that no longer exists on base table.
-	err := tk.ExecToErr("insert into t values (1, 100)")
-	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
-
-	err = tk.ExecToErr("update t set untracked = 101 where id = 1")
-	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
-
-	err = tk.ExecToErr("delete from t where id = 1")
-	require.ErrorContains(t, err, "wrap table with mlog: base column tracked not found")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"1 10 I 1",
+	))
+	tk.MustQuery("select id, tracked, untracked from t").Check(testkit.Rows("1 10 100"))
 }
 
 func TestMLogGeneratedColumn(t *testing.T) {
