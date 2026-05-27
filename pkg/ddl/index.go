@@ -3241,7 +3241,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					zap.String("task-key", taskKey),
 					zap.Error(err))
 				runTiKVSpacePrecheck = false
-				err = nil
 			}
 			if !runTiKVSpacePrecheck {
 				logutil.DDLLogger().Info("skip TiKV space precheck for add-index task because PD HTTP client is unavailable",
@@ -3251,27 +3250,23 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			basicPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesBasic(w.sess.Session(), t, reorgInfo)
 			if err != nil {
 				skipPrediction("basic", err)
-				err = nil
 			}
 			if predictionOK {
 				representPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesRepresent(w.sess.Session(), t, reorgInfo)
 				if err != nil {
 					skipPrediction("represent", err)
-					err = nil
 				}
 			}
 			if predictionOK && runTiKVSpacePrecheck {
 				staticSamplePrediction, err = w.predictTiKVIndexBytesStaticSample(ctx, w.sess.Session(), t, reorgInfo)
 				if err != nil {
 					skipPrediction("static-sample", err)
-					err = nil
 				}
 			}
 			if predictionOK && runTiKVSpacePrecheck {
 				blockSamplePrediction, err = w.predictTiKVIndexBytesBlockSample(ctx, w.sess.Session(), t, reorgInfo)
 				if err != nil {
 					skipPrediction("block-sample", err)
-					err = nil
 				}
 			}
 			if predictionOK && runTiKVSpacePrecheck {
@@ -3283,7 +3278,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 						zap.Error(err))
 					initialCapacity = nil
 					runTiKVSpacePrecheck = false
-					err = nil
 				} else if initialCapacity == nil || initialCapacity.StoreCount == 0 {
 					logutil.DDLLogger().Warn("skip TiKV space precheck for add-index task because TiKV capacity snapshot is empty",
 						zap.Int64("jobID", job.ID),
@@ -5406,8 +5400,7 @@ func buildIndexPredictionColumns(sctx sessionctx.Context, tblInfo *model.TableIn
 		seenSchemaColumnIDs[col.ID] = struct{}{}
 		schemaColInfos = append(schemaColInfos, col)
 	}
-	var appendGeneratedColumnDependencies func(col *model.ColumnInfo) error
-	appendGeneratedColumnDependencies = func(col *model.ColumnInfo) error {
+	appendGeneratedColumnDependencies := func(col *model.ColumnInfo) error {
 		visiting := make(map[int64]struct{})
 		var appendDeps func(col *model.ColumnInfo) error
 		appendDeps = func(col *model.ColumnInfo) error {
