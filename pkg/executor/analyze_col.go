@@ -117,14 +117,17 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		startTS = e.snapshot
 		isoLevel = kv.SI
 	}
-	// Always set KeepOrder of the request to be true, in order to compute
-	// correct `correlation` of columns.
+	// KeepOrder is not required here. Although `correlation` must be computed
+	// from rows ordered by handle, the rows are merged out of order across the
+	// reservoir sub-collectors and then re-sorted by handle in buildSamplingStats
+	// before `correlation` is computed, so the coprocessor need not preserve the
+	// key order of the returned rows.
 	requestBuildStart := time.Now()
 	kvReq, err := reqBuilder.
 		SetAnalyzeFullSamplingTrace(e.fullSamplingTraceSummary).
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
-		SetKeepOrder(true).
+		SetKeepOrder(false).
 		SetConcurrency(e.concurrency).
 		SetStoreBatchSize(e.ctx.GetSessionVars().StoreBatchSize).
 		SetMemTracker(e.memTracker).
