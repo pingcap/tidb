@@ -237,8 +237,8 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	require.True(t, valid)
 	valid, _ = job2.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
-	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, job2.Analyze(handle, dom.SysProcTracker()))
+	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	// Insert 9 rows into t1.
