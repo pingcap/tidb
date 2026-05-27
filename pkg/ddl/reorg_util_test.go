@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"slices"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -77,11 +79,12 @@ func (mockHelperStorage) GetRegionCache() *tikv.RegionCache {
 
 type mockPDHTTPClient struct {
 	pdhttp.Client
-	regionInfos []*pdhttp.RegionsInfo
-	storesInfo  *pdhttp.StoresInfo
-	callCount   int
-	firstRange  *pdhttp.KeyRange
-	firstLimit  int
+	regionInfos     []*pdhttp.RegionsInfo
+	storesInfo      *pdhttp.StoresInfo
+	replicateConfig map[string]any
+	callCount       int
+	firstRange      *pdhttp.KeyRange
+	firstLimit      int
 }
 
 func (c *mockPDHTTPClient) WithCallerID(string) pdhttp.Client {
@@ -106,6 +109,10 @@ func (c *mockPDHTTPClient) GetStores(context.Context) (*pdhttp.StoresInfo, error
 		return &pdhttp.StoresInfo{}, nil
 	}
 	return c.storesInfo, nil
+}
+
+func (c *mockPDHTTPClient) GetReplicateConfig(context.Context) (map[string]any, error) {
+	return c.replicateConfig, nil
 }
 
 type mockPDStoreStatsClient struct {
@@ -522,6 +529,94 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 			},
 		}, 120)
 		require.ErrorContains(t, err, "store capacity check")
+	})
+
+	t.Run("replica count from placement bundle excludes non-TiKV rules", func(t *testing.T) {
+		bundle := &placement.Bundle{
+			Rules: []*pdhttp.Rule{
+				{Role: pdhttp.Leader, Count: 1},
+				{Role: pdhttp.Voter, Count: 2},
+				{Role: pdhttp.Follower, Count: 1},
+				{Role: pdhttp.Learner, Count: 1, GroupID: placement.TiFlashRuleGroupID},
+				{
+					Role:  pdhttp.Learner,
+					Count: 1,
+					LabelConstraints: []pdhttp.LabelConstraint{
+						{Key: placement.EngineLabelKey, Op: pdhttp.In, Values: []string{placement.EngineLabelTiFlash}},
+					},
+				},
+				{
+					Role:  pdhttp.Learner,
+					Count: 1,
+					LabelConstraints: []pdhttp.LabelConstraint{
+						{Key: placement.EngineLabelKey, Op: pdhttp.NotIn, Values: []string{placement.EngineLabelTiFlash}},
+					},
+				},
+			},
+		}
+
+		require.EqualValues(t, 5, tiKVReplicaCountFromBundle(bundle, 0))
+
+		tableStartKey, tableEndKey := placementBundleRuleKeyRangeHex(100)
+		firstPartitionStartKey, firstPartitionEndKey := placementBundleRuleKeyRangeHex(101)
+		secondPartitionStartKey, secondPartitionEndKey := placementBundleRuleKeyRangeHex(102)
+		partitionedBundle := &placement.Bundle{
+			Rules: []*pdhttp.Rule{
+				{Role: pdhttp.Voter, Count: 2, StartKeyHex: tableStartKey, EndKeyHex: tableEndKey},
+				{Role: pdhttp.Voter, Count: 4, StartKeyHex: firstPartitionStartKey, EndKeyHex: firstPartitionEndKey},
+				{Role: pdhttp.Voter, Count: 6, StartKeyHex: secondPartitionStartKey, EndKeyHex: secondPartitionEndKey},
+			},
+		}
+		require.EqualValues(t, 4, tiKVReplicaCountFromBundle(partitionedBundle, 101))
+		require.EqualValues(t, 2, tiKVReplicaCountFromBundle(partitionedBundle, 100))
+	})
+
+	t.Run("representative replica physical ID uses global index before first partition", func(t *testing.T) {
+		tblInfo := &model.TableInfo{
+			ID: 100,
+			Partition: &model.PartitionInfo{
+				Enable: true,
+				Definitions: []model.PartitionDefinition{
+					{ID: 101},
+					{ID: 102},
+				},
+			},
+		}
+		localIdx := &model.IndexInfo{ID: 1}
+		globalIdx := &model.IndexInfo{ID: 2, Global: true}
+
+		require.EqualValues(t, 101, representativeAddIndexTiKVReplicaPhysicalID(tblInfo, []*model.IndexInfo{localIdx}))
+		require.EqualValues(t, 100, representativeAddIndexTiKVReplicaPhysicalID(tblInfo, []*model.IndexInfo{globalIdx}))
+		require.EqualValues(t, 100, representativeAddIndexTiKVReplicaPhysicalID(tblInfo, []*model.IndexInfo{localIdx, globalIdx}))
+		require.EqualValues(t, 100, representativeAddIndexTiKVReplicaPhysicalID(&model.TableInfo{ID: 100}, []*model.IndexInfo{localIdx}))
+	})
+
+	t.Run("PD max replicas parsing and collection", func(t *testing.T) {
+		replicaCount, ok := pdReplicateConfigMaxReplicas(map[string]any{"max-replicas": float64(5)})
+		require.True(t, ok)
+		require.EqualValues(t, 5, replicaCount)
+
+		replicaCount, ok = pdReplicateConfigMaxReplicas(map[string]any{"max-replicas": "7"})
+		require.True(t, ok)
+		require.EqualValues(t, 7, replicaCount)
+
+		_, ok = pdReplicateConfigMaxReplicas(map[string]any{"max-replicas": float64(2.5)})
+		require.False(t, ok)
+
+		replicaCount, err := collectPDMaxReplicas(context.Background(), mockHelperStorage{
+			codec: mockCodec{},
+			pdCli: &mockPDHTTPClient{replicateConfig: map[string]any{
+				"max-replicas": float64(6),
+			}},
+		})
+		require.NoError(t, err)
+		require.EqualValues(t, 6, replicaCount)
+	})
+
+	t.Run("prediction bytes scale by replica count with saturation", func(t *testing.T) {
+		require.EqualValues(t, 300, scalePredictedBytesByReplicaCount(100, 3))
+		require.EqualValues(t, 100, scalePredictedBytesByReplicaCount(100, 1))
+		require.Equal(t, uint64(math.MaxUint64), scalePredictedBytesByReplicaCount(math.MaxUint64, 2))
 	})
 
 	t.Run("prediction columns include generated column dependencies", func(t *testing.T) {

@@ -91,6 +91,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	utilcodec "github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -121,6 +122,11 @@ const (
 	tikvCapacitySourcePDGRPCStoreStats         = "pd_grpc_store_stats"
 	tikvCapacitySourcePDHTTPCapacityMinusAvail = "pd_http_capacity_minus_available"
 	pdStoreStatsRequestTimeout                 = 3 * time.Second
+
+	defaultTiKVReplicaCount                         = 3
+	tikvReplicaCountSourceInfoSchemaPlacementBundle = "infoschema_placement_bundle"
+	tikvReplicaCountSourcePDMaxReplicas             = "pd_replicate_config_max_replicas"
+	tikvReplicaCountSourceFallbackDefault           = "fallback_default_3"
 )
 
 type observedTiKVCapacityIncrease struct {
@@ -3215,6 +3221,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			representPredictedTiKVIndexBytes uint64
 			staticSamplePrediction           sampleTiKVIndexPredictionResult
 			blockSamplePrediction            sampleTiKVIndexPredictionResult
+			tikvReplicaCount                 uint64
+			tikvReplicaCountSource           string
+			tikvReplicaCountPhysicalID       int64
 		)
 		if !reorgInfo.mergingTmpIdx {
 			predictionOK := true
@@ -3223,6 +3232,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 				representPredictedTiKVIndexBytes = 0
 				staticSamplePrediction = sampleTiKVIndexPredictionResult{}
 				blockSamplePrediction = sampleTiKVIndexPredictionResult{}
+				tikvReplicaCount = 0
+				tikvReplicaCountSource = ""
+				tikvReplicaCountPhysicalID = 0
 			}
 			skipPrediction := func(phase string, err error) {
 				logutil.DDLLogger().Warn("skip TiKV index size prediction and space precheck for add-index task because prediction failed",
@@ -3269,6 +3281,17 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					skipPrediction("block-sample", err)
 				}
 			}
+			if predictionOK {
+				tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID, err = w.resolveAddIndexTiKVReplicaCount(ctx, w.sess.Session(), t, reorgInfo)
+				if err != nil {
+					skipPrediction("tikv-replica-count", err)
+				} else {
+					basicPredictedTiKVIndexBytes = scalePredictedBytesByReplicaCount(basicPredictedTiKVIndexBytes, tikvReplicaCount)
+					representPredictedTiKVIndexBytes = scalePredictedBytesByReplicaCount(representPredictedTiKVIndexBytes, tikvReplicaCount)
+					staticSamplePrediction.PredictedBytes = scalePredictedBytesByReplicaCount(staticSamplePrediction.PredictedBytes, tikvReplicaCount)
+					blockSamplePrediction.PredictedBytes = scalePredictedBytesByReplicaCount(blockSamplePrediction.PredictedBytes, tikvReplicaCount)
+				}
+			}
 			if predictionOK && runTiKVSpacePrecheck {
 				initialCapacity, err = collectTiKVStoreCapacity(ctx, w.store)
 				if err != nil {
@@ -3297,6 +3320,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
 					zap.Uint64("static_sample_predicted_tikv_index_bytes", staticSamplePrediction.PredictedBytes),
 					zap.Uint64("block_sample_predicted_tikv_index_bytes", blockSamplePrediction.PredictedBytes),
+					zap.Uint64("tikv_replica_count", tikvReplicaCount),
+					zap.String("tikv_replica_count_source", tikvReplicaCountSource),
+					zap.Int64("tikv_replica_count_physical_id", tikvReplicaCountPhysicalID),
 					zap.Int("static_sample_prediction_region_count", staticSamplePrediction.SampledRegionCount),
 					zap.Int("static_sample_prediction_row_count", staticSamplePrediction.SampledRowCount),
 					zap.Int("static_sample_prediction_read_error_count", staticSamplePrediction.ReadErrorCount),
@@ -3326,6 +3352,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			RepresentPredictedTiKVIndexBytes:     representPredictedTiKVIndexBytes,
 			StaticSamplePredictedTiKVIndexBytes:  staticSamplePrediction.PredictedBytes,
 			BlockSamplePredictedTiKVIndexBytes:   blockSamplePrediction.PredictedBytes,
+			TiKVReplicaCount:                     tikvReplicaCount,
+			TiKVReplicaCountSource:               tikvReplicaCountSource,
+			TiKVReplicaCountPhysicalID:           tikvReplicaCountPhysicalID,
 			StaticSamplePredictionRegionCount:    staticSamplePrediction.SampledRegionCount,
 			StaticSamplePredictionRowCount:       staticSamplePrediction.SampledRowCount,
 			StaticSamplePredictionReadErrorCount: staticSamplePrediction.ReadErrorCount,
@@ -3983,6 +4012,9 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 		zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
 		zap.Uint64("static_sample_predicted_tikv_index_bytes", staticSamplePredictedTiKVIndexBytes),
 		zap.Uint64("block_sample_predicted_tikv_index_bytes", blockSamplePredictedTiKVIndexBytes),
+		zap.Uint64("tikv_replica_count", taskMeta.TiKVReplicaCount),
+		zap.String("tikv_replica_count_source", taskMeta.TiKVReplicaCountSource),
+		zap.Int64("tikv_replica_count_physical_id", taskMeta.TiKVReplicaCountPhysicalID),
 		zap.Int("static_sample_prediction_region_count", fallbackPredictionCount(taskMeta.StaticSamplePredictionRegionCount, taskMeta.SamplePredictionRegionCount)),
 		zap.Int("static_sample_prediction_row_count", fallbackPredictionCount(taskMeta.StaticSamplePredictionRowCount, taskMeta.SamplePredictionRowCount)),
 		zap.Int("static_sample_prediction_read_error_count", fallbackPredictionCount(taskMeta.StaticSamplePredictionReadErrorCount, taskMeta.SamplePredictionReadErrorCount)),
@@ -4038,6 +4070,203 @@ func remainingTiKVBytes(availableBytes, predictBytes uint64) uint64 {
 		return 0
 	}
 	return availableBytes - predictBytes
+}
+
+func (w *worker) resolveAddIndexTiKVReplicaCount(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tbl table.Table,
+	reorgInfo *reorgInfo,
+) (uint64, string, int64, error) {
+	if reorgInfo == nil {
+		return 0, "", 0, errors.New("reorg info is nil")
+	}
+	tblInfo := tbl.Meta()
+	targetIndexes, err := collectBackfillIndexes(tblInfo, reorgInfo)
+	if err != nil {
+		return 0, "", 0, err
+	}
+	if len(targetIndexes) == 0 {
+		return 0, "", 0, errors.New("no backfill indexes found")
+	}
+
+	physicalID := representativeAddIndexTiKVReplicaPhysicalID(tblInfo, targetIndexes)
+	if is := sctx.GetLatestInfoSchema(); is != nil {
+		if bundle, ok := is.PlacementBundleByPhysicalTableID(physicalID); ok {
+			if replicaCount := tiKVReplicaCountFromBundle(bundle, physicalID); replicaCount > 0 {
+				return replicaCount, tikvReplicaCountSourceInfoSchemaPlacementBundle, physicalID, nil
+			}
+		}
+		if physicalID != tblInfo.ID {
+			if bundle, ok := is.PlacementBundleByPhysicalTableID(tblInfo.ID); ok {
+				if replicaCount := tiKVReplicaCountFromBundle(bundle, physicalID); replicaCount > 0 {
+					return replicaCount, tikvReplicaCountSourceInfoSchemaPlacementBundle, physicalID, nil
+				}
+			}
+		}
+	}
+
+	if replicaCount, err := collectPDMaxReplicas(ctx, w.store); err == nil && replicaCount > 0 {
+		return replicaCount, tikvReplicaCountSourcePDMaxReplicas, physicalID, nil
+	}
+	return defaultTiKVReplicaCount, tikvReplicaCountSourceFallbackDefault, physicalID, nil
+}
+
+func representativeAddIndexTiKVReplicaPhysicalID(tblInfo *model.TableInfo, targetIndexes []*model.IndexInfo) int64 {
+	for _, idxInfo := range targetIndexes {
+		if idxInfo != nil && idxInfo.Global {
+			return tblInfo.ID
+		}
+	}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+		return pi.Definitions[0].ID
+	}
+	return tblInfo.ID
+}
+
+func tiKVReplicaCountFromBundle(bundle *placement.Bundle, physicalID int64) uint64 {
+	if bundle == nil {
+		return 0
+	}
+	startKeyHex, endKeyHex, filterByRange := bundleRuleRangeForPhysicalID(bundle, physicalID)
+	var replicaCount uint64
+	for _, rule := range bundle.Rules {
+		if rule == nil || rule.Count <= 0 || ruleTargetsNonTiKV(rule) {
+			continue
+		}
+		if filterByRange && (rule.StartKeyHex != startKeyHex || rule.EndKeyHex != endKeyHex) {
+			continue
+		}
+		switch rule.Role {
+		case pdHttp.Leader, pdHttp.Voter, pdHttp.Follower, pdHttp.Learner:
+			replicaCount += uint64(rule.Count)
+		}
+	}
+	return replicaCount
+}
+
+func bundleRuleRangeForPhysicalID(bundle *placement.Bundle, physicalID int64) (string, string, bool) {
+	if physicalID > 0 {
+		startKeyHex, endKeyHex := placementBundleRuleKeyRangeHex(physicalID)
+		if bundleHasRuleRange(bundle, startKeyHex, endKeyHex) {
+			return startKeyHex, endKeyHex, true
+		}
+	}
+	return firstBundleRuleRange(bundle)
+}
+
+func placementBundleRuleKeyRangeHex(physicalID int64) (string, string) {
+	startKey := utilcodec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID))
+	endKey := utilcodec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID+1))
+	return hex.EncodeToString(startKey), hex.EncodeToString(endKey)
+}
+
+func bundleHasRuleRange(bundle *placement.Bundle, startKeyHex, endKeyHex string) bool {
+	for _, rule := range bundle.Rules {
+		if rule != nil && rule.StartKeyHex == startKeyHex && rule.EndKeyHex == endKeyHex {
+			return true
+		}
+	}
+	return false
+}
+
+func firstBundleRuleRange(bundle *placement.Bundle) (string, string, bool) {
+	for _, rule := range bundle.Rules {
+		if rule == nil {
+			continue
+		}
+		if rule.StartKeyHex != "" || rule.EndKeyHex != "" {
+			return rule.StartKeyHex, rule.EndKeyHex, true
+		}
+	}
+	return "", "", false
+}
+
+func ruleTargetsNonTiKV(rule *pdHttp.Rule) bool {
+	if rule.GroupID == placement.TiFlashRuleGroupID {
+		return true
+	}
+	for _, constraint := range rule.LabelConstraints {
+		if constraint.Key != placement.EngineLabelKey || constraint.Op != pdHttp.In || len(constraint.Values) == 0 {
+			continue
+		}
+		allNonTiKV := true
+		for _, value := range constraint.Values {
+			if value != placement.EngineLabelTiFlash && value != placement.EngineLabelTiFlashCompute {
+				allNonTiKV = false
+				break
+			}
+		}
+		if allNonTiKV {
+			return true
+		}
+	}
+	return false
+}
+
+func collectPDMaxReplicas(ctx context.Context, store kv.Storage) (uint64, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return 0, fmt.Errorf("store %T does not implement helper.Storage", store)
+	}
+	pdCli, err := helper.NewHelper(hStore).TryGetPDHTTPClient()
+	if err != nil {
+		return 0, err
+	}
+	replicateConfig, err := pdCli.GetReplicateConfig(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if replicaCount, ok := pdReplicateConfigMaxReplicas(replicateConfig); ok {
+		return replicaCount, nil
+	}
+	return 0, errors.New("PD replicate config max-replicas is unavailable")
+}
+
+func pdReplicateConfigMaxReplicas(replicateConfig map[string]any) (uint64, bool) {
+	value, ok := replicateConfig["max-replicas"]
+	if !ok {
+		return 0, false
+	}
+	switch v := value.(type) {
+	case uint64:
+		return v, v > 0
+	case uint:
+		return uint64(v), v > 0
+	case int:
+		if v <= 0 {
+			return 0, false
+		}
+		return uint64(v), true
+	case int64:
+		if v <= 0 {
+			return 0, false
+		}
+		return uint64(v), true
+	case float64:
+		if v <= 0 || v > float64(math.MaxUint64) || math.Trunc(v) != v {
+			return 0, false
+		}
+		return uint64(v), true
+	case json.Number:
+		replicaCount, err := strconv.ParseUint(v.String(), 10, 64)
+		return replicaCount, err == nil && replicaCount > 0
+	case string:
+		replicaCount, err := strconv.ParseUint(v, 10, 64)
+		return replicaCount, err == nil && replicaCount > 0
+	default:
+		return 0, false
+	}
+}
+
+func scalePredictedBytesByReplicaCount(predictedBytes, replicaCount uint64) uint64 {
+	if predictedBytes == 0 || replicaCount <= 1 {
+		return predictedBytes
+	}
+	if predictedBytes > math.MaxUint64/replicaCount {
+		return math.MaxUint64
+	}
+	return predictedBytes * replicaCount
 }
 
 const (
