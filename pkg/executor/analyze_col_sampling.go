@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	stderrors "errors"
-	"fmt"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -52,32 +51,14 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func analyzeSummaryBottleneck(fetchPct, busyPct float64) string {
-	if fetchPct > 90 {
-		return "response fetch pipeline (>90% of wall time spent waiting for TiKV responses; " +
-			"try increasing tidb_store_batch_size to reduce request count, " +
-			"or tidb_analyze_distsql_scan_concurrency to increase concurrency)"
-	}
-	if busyPct > 50 {
-		return "merge computation (merge workers busy >50% of time; " +
-			"try increasing tidb_build_sampling_stats_concurrency)"
-	}
-	return "mixed (no single dominant bottleneck)"
-}
-
 // samplingMergeTrace collects lightweight metrics that reveal the performance
 // profile of the merge-sampling pipeline.  All fields are updated atomically
 // so that concurrent merge workers can write without a mutex.
 type samplingMergeTrace struct {
 	// readDataAndSendTask (single goroutine)
-	fetchCount       atomic.Int64
-	fetchBytes       atomic.Int64
-	fetchElapsedNs   atomic.Int64
-	fetchMinNs       atomic.Int64 // min per-response fetch latency
-	fetchMaxNs       atomic.Int64 // max per-response fetch latency
-	fetchLt1msCount  atomic.Int64 // count of fetches < 1ms
-	fetchLt10msCount atomic.Int64 // count of fetches 1ms–10ms
-	fetchLt100msCount atomic.Int64 // count of fetches 10ms–100ms
+	fetchElapsedNs    atomic.Int64
+	fetchMaxNs        atomic.Int64 // max per-response fetch latency
+	fetchLt1msCount   atomic.Int64 // count of fetches < 1ms
 	fetchGe100msCount atomic.Int64 // count of fetches >= 100ms
 	scanConcurrency  int          // set once before goroutines start
 	// per-response cop timing (from copIterator)
@@ -360,77 +341,57 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if totalWait+totalBusy > 0 {
 		busyPct = float64(totalBusy) / float64(totalWait+totalBusy) * 100
 	}
-	fetchCount := trace.fetchCount.Load()
+	responseCount := trace.responseCount.Load()
 	fetchElapsed := time.Duration(trace.fetchElapsedNs.Load())
-	fetchAvgNs := int64(0)
-	if fetchCount > 0 {
-		fetchAvgNs = trace.fetchElapsedNs.Load() / fetchCount
-	}
 	copRespTimeSum := time.Duration(trace.copRespTimeNs.Load())
+	// fetchAvg and copRespAvg use responseCount (excludes the final nil-returning EOF call).
+	fetchAvgNs := int64(0)
+	copRespAvgNs := int64(0)
+	if responseCount > 0 {
+		fetchAvgNs = trace.fetchElapsedNs.Load() / responseCount
+		copRespAvgNs = trace.copRespTimeNs.Load() / responseCount
+	}
+	fetchPct := float64(0)
+	if mergeWall > 0 {
+		fetchPct = float64(fetchElapsed) / float64(mergeWall) * 100
+	}
 	logutil.BgLogger().Info("analyze full sampling merge trace",
 		zap.Int64("tableID", e.tableID.TableID),
+		// overall
 		zap.Duration("mergeWall", mergeWall),
 		zap.Int("mergeWorkers", samplingStatsConcurrency),
 		zap.Int("scanConcurrency", trace.scanConcurrency),
-		// fetch pipeline (single goroutine)
-		zap.Int64("fetchCount", fetchCount),
-		zap.Int64("fetchBytes", trace.fetchBytes.Load()),
+		// fetch pipeline — single goroutine reads cop responses in region order (KeepOrder=true).
+		// fetchElapsed: wall time this goroutine spent inside nextRawSubset() calls.
+		// Most calls return instantly (<1ms) because the response is already buffered;
+		// a few block >=100ms waiting for TiKV (head-of-line blocking due to ordered consumption).
+		zap.Int64("responses", responseCount),
+		zap.Int64("responseBytes", trace.responseBytes.Load()),
 		zap.Duration("fetchElapsed", fetchElapsed),
-		zap.Duration("fetchAvg", time.Duration(fetchAvgNs)),
-		zap.Duration("fetchMin", time.Duration(trace.fetchMinNs.Load())),
+		zap.Float64("fetchPctOfWall", fetchPct),
+		zap.Duration("fetchAvgPerResp", time.Duration(fetchAvgNs)),
 		zap.Duration("fetchMax", time.Duration(trace.fetchMaxNs.Load())),
 		zap.Int64("fetchLt1ms", trace.fetchLt1msCount.Load()),
-		zap.Int64("fetchLt10ms", trace.fetchLt10msCount.Load()),
-		zap.Int64("fetchLt100ms", trace.fetchLt100msCount.Load()),
 		zap.Int64("fetchGe100ms", trace.fetchGe100msCount.Load()),
-		// cop response time (TiDB-measured per-request RPC round-trip)
+		// copRespTimeSum: sum of all per-request RPC round-trip times as measured by TiDB cop workers.
+		// Because workers run concurrently, these times overlap — copRespTimeSum is NOT wall time.
+		// copRespAvg × responses / scanConcurrency ≈ fetchElapsed under ideal parallelism.
 		zap.Duration("copRespTimeSum", copRespTimeSum),
-		// merge worker aggregates
-		zap.Int64("responses", trace.responseCount.Load()),
-		zap.Int64("responseBytes", trace.responseBytes.Load()),
+		zap.Duration("copRespAvg", time.Duration(copRespAvgNs)),
+		// merge worker aggregates — what happens after a response is received and decoded.
 		zap.Int64("fmSketchCount", trace.fmSketchCount.Load()),
 		zap.Int64("fmSketchBytes", trace.fmSketchBytes.Load()),
 		zap.Duration("unmarshalElapsed", time.Duration(trace.unmarshalNs.Load())),
 		zap.Duration("fromProtoElapsed", time.Duration(trace.fromProtoNs.Load())),
-		zap.Duration("fmSketchFromProtoElapsed", time.Duration(trace.fmFromProtoNs.Load())),
-		zap.Duration("mergeCollectorElapsed", time.Duration(trace.mergeNs.Load())),
-		zap.Duration("fmSketchMergeElapsed", time.Duration(trace.fmMergeNs.Load())),
-		// worker utilization
-		zap.Duration("workerWaitTotal", totalWait),
+		zap.Duration("fmFromProtoElapsed", time.Duration(trace.fmFromProtoNs.Load())),
+		zap.Duration("mergeElapsed", time.Duration(trace.mergeNs.Load())),
+		zap.Duration("fmMergeElapsed", time.Duration(trace.fmMergeNs.Load())),
+		// worker utilization — how much time merge workers spend computing vs waiting for data.
+		// Low utilization (<1%) means the bottleneck is upstream (fetch), not merge.
 		zap.Duration("workerBusyTotal", totalBusy),
-		zap.Float64("workerBusyPercent", busyPct),
+		zap.Duration("workerWaitTotal", totalWait),
+		zap.Float64("workerUtilPct", busyPct),
 	)
-
-	// Human-readable summary explaining where time is spent.
-	fetchPct := float64(0)
-	mergePct := float64(0)
-	if mergeWall > 0 {
-		fetchPct = float64(fetchElapsed) / float64(mergeWall) * 100
-		mergePct = float64(totalBusy) / float64(mergeWall) * 100
-	}
-	responseCount := trace.responseCount.Load()
-	copRespAvg := time.Duration(0)
-	if responseCount > 0 {
-		copRespAvg = copRespTimeSum / time.Duration(responseCount)
-	}
-	logutil.BgLogger().Info(fmt.Sprintf(
-		"analyze full sampling summary: wall=%v, fetch=%v (%.1f%% of wall), "+
-			"merge_compute=%v (%.1f%% of wall, workers %.1f%% utilized). "+
-			"Fetch breakdown: %d cop responses via %d concurrent workers, "+
-			"copRespTimeSum=%v (sum of per-request RPC round-trips, concurrent requests overlap), "+
-			"avg_rpc_per_request=%v. "+
-			"Fetch latency distribution: %d (<1ms, already buffered) + %d (1-10ms) + %d (10-100ms) + %d (>=100ms, waiting for TiKV). "+
-			"Note: ANALYZE uses KeepOrder=true for correlation, so responses must be consumed in region order; "+
-			"head-of-line blocking occurs when the next region's response has not arrived yet. "+
-			"Bottleneck: %s",
-		mergeWall, fetchElapsed, fetchPct,
-		totalBusy, mergePct, busyPct,
-		responseCount, trace.scanConcurrency,
-		copRespTimeSum, copRespAvg,
-		trace.fetchLt1msCount.Load(), trace.fetchLt10msCount.Load(),
-		trace.fetchLt100msCount.Load(), trace.fetchGe100msCount.Load(),
-		analyzeSummaryBottleneck(fetchPct, busyPct),
-	), zap.Int64("tableID", e.tableID.TableID))
 
 	// Decode the data from sample collectors.
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
@@ -1101,17 +1062,7 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 		rs, err := handler.nextRawSubset(ctx)
 		fetchNs := time.Since(fetchStart).Nanoseconds()
 		trace.fetchElapsedNs.Add(fetchNs)
-		trace.fetchCount.Add(1)
 		// Track per-response latency distribution.
-		for {
-			cur := trace.fetchMinNs.Load()
-			if cur != 0 && cur <= fetchNs {
-				break
-			}
-			if trace.fetchMinNs.CompareAndSwap(cur, fetchNs) {
-				break
-			}
-		}
 		for {
 			cur := trace.fetchMaxNs.Load()
 			if cur >= fetchNs {
@@ -1124,10 +1075,6 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 		switch {
 		case fetchNs < 1e6: // < 1ms
 			trace.fetchLt1msCount.Add(1)
-		case fetchNs < 10e6: // 1ms–10ms
-			trace.fetchLt10msCount.Add(1)
-		case fetchNs < 100e6: // 10ms–100ms
-			trace.fetchLt100msCount.Add(1)
 		default: // >= 100ms
 			trace.fetchGe100msCount.Add(1)
 		}
@@ -1139,7 +1086,6 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 			break
 		}
 		data := rs.GetData()
-		trace.fetchBytes.Add(int64(len(data)))
 		trace.copRespTimeNs.Add(rs.RespTime().Nanoseconds())
 
 		dataSize := int64(cap(data))
