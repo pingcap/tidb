@@ -4,8 +4,8 @@
 
 Context: branch `feat/objstore-lease-based-lock-expiration` adds lease expiration,
 renewal, and stale-lock cleanup to `pkg/objstore`. The low-level lock mechanics
-have been reviewed separately. This note tracks remaining business-layer review
-items for BR callers that acquire object-store locks.
+have been reviewed separately. This note tracks business-layer review decisions
+for BR callers that acquire object-store locks.
 
 ### Review principle
 
@@ -15,8 +15,10 @@ Each business caller must be reviewed as an independent critical section:
 2. Identify the exact business operations protected by the lock.
 3. Confirm renewal starts before any operation that may outlive `LeaseTTL`.
 4. Confirm lease-loss cancellation stops subsequent remote writes/deletes.
-5. Confirm errors caused by lease loss are returned as failures, not only logged
-   or collected as warnings.
+5. Confirm lease-loss cancellation prevents subsequent protected remote
+   writes/deletes from continuing under a lost lease. If the business flow is an
+   existing best-effort/retryable warning model, document why warning-only
+   propagation is acceptable instead of converting it to a hard error.
 6. Confirm unlock happens once, late enough, and with a context that can still
    perform cleanup.
 
@@ -56,33 +58,38 @@ Scope refinement for restore review:
 
 #### `br/pkg/task/stream.go`: truncate lease loss and warnings
 
-- Status: renewal ownership resolved in current branch. `RunStreamTruncate`
-  keeps the existing cleanup-once/acquire-once behavior, but now acquires via
-  `LockRemoteTruncate(ctx, ..., cancelFn)`, so renewal starts inside the
-  lifecycle acquire API rather than through a business-layer `StartRenewal`
-  call.
+- Status: reviewed and kept as the existing best-effort/retryable warning
+  semantics.
+- `RunStreamTruncate` keeps the existing cleanup-once/acquire-once behavior, but
+  now acquires via `LockRemoteTruncate(ctx, ..., cancelFn)`, so renewal starts
+  inside the lifecycle acquire API rather than through a business-layer
+  `StartRenewal` call.
 - The `--clean-up-compactions` path calls `MergeAndMigrateTo` and prints
   returned warnings before returning `nil`.
-- Review whether `context.Canceled` caused by lease loss can be captured only as
-  a warning and reported as command success. If so, convert lease-loss-induced
-  cancellation into a returned error.
+- This warning-only result handling matches `origin/master`. The reviewed
+  business model is that `MergeAndMigrateTo` is a best-effort flow: unfinished
+  operations are represented in the new BASE/migration state for a later retry.
+  The current branch does not convert those warnings to command-level hard
+  errors.
 
 #### `br/pkg/stream/stream_metas.go`: `MergeAndMigrateTo`
 
-- Status: renewal ownership resolved in current branch.
+- Status: renewal ownership and lease-loss warning semantics reviewed in current
+  branch.
 - `MergeAndMigrateTo` acquires a write lock on `lockPrefix` through
   `LockWithRetry(workCtx, ..., cancel)`. The lifecycle acquire API starts
   renewal before returning the lock handle.
 - The protected region can write a new BASE migration, delete merged migration
   files, execute `migrateTo`, and write BASE again.
 - Lease loss cancels the child work context used by the destructive critical
-  section. A remaining business-level review question is whether cancellation
-  from lease loss can still be returned only as a warning to truncate callers.
+  section. Internal review confirmed the protected remote reads/writes/deletes
+  use that child context rather than an uncanceled outer context.
 - Context propagation note: `context.WithCancel(ctx)` creates an internal child
   context for the critical section. Calling that child cancel function does not
-  cancel the caller's parent context. Correctness therefore depends on the
-  canceled child context making protected operations fail and on callers
-  treating those failures as command failures rather than non-fatal warnings.
+  cancel the caller's parent context. This is acceptable here because
+  `MergeAndMigrateTo` already uses a best-effort/retryable warning model: failed
+  operations are preserved for a later retry rather than treated as an atomic
+  command failure.
 - Interactive confirmation may block on user input after the write lock is
   acquired. The current branch keeps that behavior, but `MergeAndMigrateTo`
   explicitly checks `ctx.Err()` after the interactive check and before any BASE
@@ -242,10 +249,10 @@ Automatic review follow-up, after scope refinement:
 
 | Caller | File | Lock type | Current concern |
 | --- | --- | --- | --- |
-| `RunStreamTruncate` | `br/pkg/task/stream.go` | standalone truncate instance lock | fixed-path stale cleanup race resolved; lease-loss warning/success behavior still needs review |
+| `RunStreamTruncate` | `br/pkg/task/stream.go` | standalone truncate instance lock | fixed-path stale cleanup race resolved; warning-only truncate retry semantics reviewed and kept |
 | `restoreStream` / `GetLockedMigrations` | `br/pkg/task/stream.go`, `br/pkg/restore/log_client/client.go` | migration read lock | renewal ownership resolved; restore sub-step cancellation is out of scope |
 | `AppendMigration` | `br/pkg/stream/stream_metas.go` | migration read lock + append write lock | renewal ownership resolved |
-| `MergeAndMigrateTo` | `br/pkg/stream/stream_metas.go` | migration write lock | renewal ownership resolved; lease-loss warning/success behavior still needs review |
+| `MergeAndMigrateTo` | `br/pkg/stream/stream_metas.go` | migration write lock | renewal ownership resolved; best-effort warning/retry semantics reviewed and kept |
 
 ### Suggested review order
 
@@ -263,3 +270,6 @@ Automatic review follow-up, after scope refinement:
    `LockWithRetry` and tied lease loss to the child work context.
 6. Done: keep `Unlock` waiting for renewal goroutine teardown. Do not add a
    bounded wait in the current branch.
+7. Done: reviewed `MergeAndMigrateTo` / truncate warning-only behavior against
+   `origin/master`. Keep the existing best-effort retry semantics instead of
+   converting lease-loss-induced warnings into command-level hard errors.
