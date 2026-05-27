@@ -22,9 +22,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -343,80 +346,90 @@ func TestFindTTLIndex(t *testing.T) {
 			require.Nil(t, idx, "table %s should not have TTL index", tblName)
 		}
 	}
+
+	tk.MustExec("create table ttl_idx_nil_time(id int primary key, t datetime, index idx_t(t)) ttl = `t` + interval 1 day")
+	tb, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_idx_nil_time"))
+	require.NoError(t, err)
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tb.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+	ttlTbl.TimeColumn = nil
+	require.Nil(t, ttlTbl.FindTTLIndex())
 }
 
 func TestSplitIndexScanRanges(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table test.ttl_split(id int primary key, t datetime) ttl = `t` + interval 1 day")
+	tk.MustExec("create table test.ttl_split(id int primary key, t datetime, index idx_t(t)) ttl = `t` + interval 1 day")
 
 	tb, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_split"))
 	require.NoError(t, err)
-	tblInfo := tb.Meta()
-	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tb.Meta(), ast.NewCIStr(""))
 	require.NoError(t, err)
+	idx := ttlTbl.FindTTLIndex()
+	require.NotNil(t, idx)
+
+	indexKey := func(s string) []byte {
+		tm, err := time.ParseInLocation(time.DateTime, s, time.UTC)
+		require.NoError(t, err)
+		ft := ttlTbl.TimeColumn.FieldType
+		datum := types.NewTimeDatum(types.NewTime(types.FromGoTime(tm), ft.GetType(), ft.GetDecimal()))
+		encoded, err := codec.EncodeKey(time.UTC, nil, datum)
+		require.NoError(t, err)
+		encoded = codec.EncodeInt(encoded, 1)
+		return tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, encoded)
+	}
+	minNotNullIndexKey := func() []byte {
+		encoded, err := codec.EncodeKey(time.UTC, nil, types.MinNotNullDatum())
+		require.NoError(t, err)
+		return tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, encoded)
+	}
+	requireScanRange := func(r cache.ScanRange, start, end string) {
+		if start == "" {
+			require.Empty(t, r.Start)
+		} else {
+			require.Len(t, r.Start, 1)
+			require.Equal(t, start, r.Start[0].GetMysqlTime().String())
+		}
+		if end == "" {
+			require.Empty(t, r.End)
+		} else {
+			require.Len(t, r.End, 1)
+			require.Equal(t, end, r.End[0].GetMysqlTime().String())
+		}
+	}
 
 	expireTime := time.Date(2025, 5, 14, 0, 0, 0, 0, time.UTC)
-	splitCnt := 64
-	ranges := ttlTbl.SplitIndexScanRanges(expireTime, splitCnt)
-	require.Len(t, ranges, splitCnt)
+	tikvStore := newMockTiKVStore(t)
 
-	// All ranges should have start < end
-	for i, r := range ranges {
-		require.Len(t, r.Start, 1, "range %d start should have 1 datum", i)
-		require.Len(t, r.End, 1, "range %d end should have 1 datum", i)
-		startTime := r.Start[0].GetMysqlTime()
-		endTime := r.End[0].GetMysqlTime()
-		require.False(t, startTime.Compare(endTime) >= 0, "range %d start should be before end", i)
-	}
-
-	// For DATETIME, the split starts from the minimum representable time (0001-01-01).
-	firstStart := ranges[0].Start[0].GetMysqlTime()
-	require.Equal(t, "0001-01-01 00:00:00", firstStart.String())
-
-	// Last range should end at expireTime
-	lastEnd := ranges[len(ranges)-1].End[0].GetMysqlTime()
-	require.Equal(t, expireTime.Format(time.DateTime), lastEnd.String())
-
-	// Regression: ranges should be evenly sized, not bunched up in year ~288.
-	// With the old time.Duration-based code, 64 ranges for DATETIME would overflow
-	// and cluster around year 1-288 because max Duration is ~290 years.
-	minTime := time.Time{}
-	totalSeconds := expireTime.Unix() - minTime.Unix()
-	expectedInterval := totalSeconds / int64(splitCnt)
-	for i := 0; i < splitCnt-1; i++ {
-		startTime := ranges[i].Start[0].GetMysqlTime()
-		endTime := ranges[i].End[0].GetMysqlTime()
-		startGo := time.Date(startTime.Year(), time.Month(startTime.Month()), startTime.Day(),
-			startTime.Hour(), startTime.Minute(), startTime.Second(), 0, time.UTC)
-		endGo := time.Date(endTime.Year(), time.Month(endTime.Month()), endTime.Day(),
-			endTime.Hour(), endTime.Minute(), endTime.Second(), 0, time.UTC)
-		actualInterval := endGo.Unix() - startGo.Unix()
-		require.Equal(t, expectedInterval, actualInterval,
-			"range %d should be evenly sized", i)
-	}
-	// Range 63 start should be near 2025, not year ~288 (overflow bug).
-	range63Start := ranges[63].Start[0].GetMysqlTime()
-	require.GreaterOrEqual(t, range63Start.Year(), 1990,
-		"range 63 start should be near 2025, not year ~288 (overflow bug)")
-	// Test with splitCnt <= 1 returns full range
-	ranges = ttlTbl.SplitIndexScanRanges(expireTime, 1)
+	ranges, err := ttlTbl.SplitIndexScanRanges(context.TODO(), tikvStore, idx, expireTime, time.UTC, 4)
+	require.NoError(t, err)
 	require.Len(t, ranges, 1)
 	require.Empty(t, ranges[0].Start)
 	require.Empty(t, ranges[0].End)
 
-	// Test with TIMESTAMP column: split should start from 1970-01-01.
-	tk.MustExec("create table test.ttl_split_ts(id int primary key, ts timestamp) ttl = `ts` + interval 1 day")
-	tbTS, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ttl_split_ts"))
-	require.NoError(t, err)
-	ttlTblTS, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbTS.Meta(), ast.NewCIStr(""))
-	require.NoError(t, err)
+	indexPrefix := tablecodec.EncodeIndexSeekKey(ttlTbl.ID, idx.ID, nil)
+	startKey := minNotNullIndexKey()
+	endKey := indexKey(expireTime.Format(time.DateTime))
+	tikvStore.clearRegions()
+	tikvStore.addRegion(indexPrefix, startKey)
+	tikvStore.addRegion(startKey, indexKey("2020-01-01 00:00:00"))
+	tikvStore.addRegion(indexKey("2020-01-01 00:00:00"), indexKey("2021-01-01 00:00:00"))
+	tikvStore.addRegion(indexKey("2021-01-01 00:00:00"), indexKey("2022-01-01 00:00:00"))
+	tikvStore.addRegion(indexKey("2022-01-01 00:00:00"), endKey)
 
-	ranges = ttlTblTS.SplitIndexScanRanges(expireTime, splitCnt)
-	require.Len(t, ranges, splitCnt)
-	firstStartTS := ranges[0].Start[0].GetMysqlTime()
-	require.Equal(t, "1970-01-01 00:00:00", firstStartTS.String())
-	lastEndTS := ranges[len(ranges)-1].End[0].GetMysqlTime()
-	require.Equal(t, expireTime.Format(time.DateTime), lastEndTS.String())
+	ranges, err = ttlTbl.SplitIndexScanRanges(context.TODO(), tikvStore, idx, expireTime, time.UTC, 4)
+	require.NoError(t, err)
+	require.Len(t, ranges, 4)
+	requireScanRange(ranges[0], "", "2020-01-01 00:00:00")
+	requireScanRange(ranges[1], "2020-01-01 00:00:00", "2021-01-01 00:00:00")
+	requireScanRange(ranges[2], "2021-01-01 00:00:00", "2022-01-01 00:00:00")
+	requireScanRange(ranges[3], "2022-01-01 00:00:00", "")
+
+	ttlTbl.TimeColumn = nil
+	ranges, err = ttlTbl.SplitIndexScanRanges(context.TODO(), tikvStore, idx, expireTime, time.UTC, 4)
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	require.Empty(t, ranges[0].Start)
+	require.Empty(t, ranges[0].End)
 }

@@ -993,13 +993,14 @@ func TestIndexScanQueryGenerator(t *testing.T) {
 	require.Equal(t, "", sql)
 	require.True(t, g.IsExhausted())
 
-	// Test with range
-	g, err = sqlbuilder.NewScanQueryGenerator(t1, expire, d(1), d(100), indexName)
+	startTime := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.UnixMilli(0).In(time.UTC)), mysql.TypeDatetime, 0))
+	endTime := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Unix(100, 0).In(time.UTC)), mysql.TypeDatetime, 0))
+	g, err = sqlbuilder.NewScanQueryGenerator(t1, expire, []types.Datum{startTime}, []types.Datum{endTime}, indexName)
 	require.NoError(t, err)
 
 	sql, err = g.NextSQL(nil, 5)
 	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created`) WHERE `created_time` >= 1 AND `created_time` < 100 AND `created_time` < FROM_UNIXTIME(0) ORDER BY `created_time`, `id` ASC LIMIT 5", sql)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created`) WHERE `created_time` >= '1970-01-01 00:00:00' AND `created_time` < '1970-01-01 00:01:40' AND `created_time` < FROM_UNIXTIME(0) ORDER BY `created_time`, `id` ASC LIMIT 5", sql)
 }
 
 func TestSQLBuilderForceIndex(t *testing.T) {
@@ -1024,4 +1025,8 @@ func TestSQLBuilderForceIndex(t *testing.T) {
 	s, err := b.Build()
 	require.NoError(t, err)
 	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` FORCE INDEX(`idx_time`) WHERE `time` < FROM_UNIXTIME(0)", s)
+
+	b = sqlbuilder.NewSQLBuilder(t1)
+	require.NoError(t, b.WriteDelete())
+	require.Error(t, b.WriteForceIndex("idx_time"))
 }

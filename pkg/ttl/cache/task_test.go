@@ -102,6 +102,12 @@ func TestRowToTTLTask(t *testing.T) {
 	task = tg.mustGetTestTask()
 	require.Equal(t, []types.Datum{types.NewDatum(1)}, task.ScanRangeStart)
 	require.Equal(t, []types.Datum{types.NewDatum(2)}, task.ScanRangeEnd)
+
+	splitBy := int64(42)
+	tk.MustExec("UPDATE mysql.tidb_ttl_task SET split_by = ? WHERE job_id = 'test-job'", splitBy)
+	task = tg.mustGetTestTask()
+	require.NotNil(t, task.SplitBy)
+	require.Equal(t, splitBy, *task.SplitBy)
 }
 
 func TestInsertIntoTTLTask(t *testing.T) {

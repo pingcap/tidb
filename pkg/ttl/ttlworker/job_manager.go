@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -858,12 +857,11 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 		var splitBy *int64
 		if vardef.TTLEnableIndexScan.Load() {
 			if idx := table.FindTTLIndex(); idx != nil {
-				splitExpireTime, err := normalizeIndexSplitExpireTime(ctx, se, table, expireTime)
+				ranges, err = table.SplitIndexScanRanges(ctx, m.store, idx, expireTime, se.GetSessionVars().Location(), getScanSplitCnt(se.GetStore()))
 				if err != nil {
-					return err
+					return errors.Wrap(err, "split index scan ranges")
 				}
 				splitBy = &idx.ID
-				ranges = table.SplitIndexScanRanges(splitExpireTime, getScanSplitCnt(se.GetStore()))
 			}
 		}
 		if ranges == nil {
@@ -891,24 +889,6 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 	}
 
 	return m.appendLockedJob(jobID, se, now, expireTime, table.ID)
-}
-
-func normalizeIndexSplitExpireTime(ctx context.Context, se session.Session, table *cache.PhysicalTable, expireTime time.Time) (time.Time, error) {
-	if table.TimeColumn.FieldType.GetType() == mysql.TypeTimestamp {
-		return expireTime.UTC(), nil
-	}
-
-	globalTz, err := se.GlobalTimeZone(ctx)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	// DATETIME and DATE are compared as wall-clock values. Shift the instant by
-	// the global time-zone offset, then put it in UTC so SplitIndexScanRanges can
-	// do location-independent Unix-second arithmetic. expireTime.UTC() would keep
-	// the same instant and shift the wall-clock boundary.
-	_, offset := expireTime.In(globalTz).Zone()
-	return expireTime.Add(time.Duration(offset) * time.Second).UTC(), nil
 }
 
 func (m *JobManager) getTableStatusForUpdateNotWait(ctx context.Context, se session.Session, physicalID int64, parentTableID int64, createIfNotExist bool) (*cache.TableStatus, error) {

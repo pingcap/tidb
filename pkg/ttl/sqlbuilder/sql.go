@@ -135,8 +135,8 @@ func (b *SQLBuilder) WriteSelect(cols []*model.ColumnInfo) error {
 
 // WriteForceIndex writes a FORCE INDEX hint
 func (b *SQLBuilder) WriteForceIndex(indexName string) error {
-	if b.state != writeSelOrDel {
-		return errors.Errorf("invalid state: %v", b.state)
+	if b.state != writeSelOrDel || !b.isReadOnly {
+		return errors.Errorf("invalid state for FORCE INDEX: %v", b.state)
 	}
 	b.restoreCtx.WritePlain(" FORCE INDEX(")
 	b.restoreCtx.WriteName(indexName)
@@ -343,6 +343,15 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 
 	if err := tbl.ValidateKeyPrefix(rangeEnd); err != nil {
 		return nil, err
+	}
+
+	if indexName != "" {
+		if len(rangeStart) > 1 {
+			return nil, errors.Errorf("invalid index scan range start length: %d, expected 1", len(rangeStart))
+		}
+		if len(rangeEnd) > 1 {
+			return nil, errors.Errorf("invalid index scan range end length: %d, expected 1", len(rangeEnd))
+		}
 	}
 
 	return &ScanQueryGenerator{
