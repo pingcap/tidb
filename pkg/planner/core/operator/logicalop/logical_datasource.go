@@ -659,6 +659,15 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 func (ds *DataSource) analyzeTiCIIndex() ([]expression.Expression, error) {
 	condHasFTSFunc := ds.collectPushedDownCondsHasFTSFuncSet()
 	hasFTSFuncLocal := !condHasFTSFunc.IsEmpty()
+	if ds.SCtx().GetSessionVars().StmtCtx.AlternativeLogicalPlanFTSLocalResidual && hasFTSFuncLocal {
+		condHasLocalMatchCandidate := ds.collectPushedDownCondsHasLocalMatchCandidateSet()
+		if !condHasLocalMatchCandidate.IsEmpty() {
+			if condHasLocalMatchCandidate.Len() != condHasFTSFunc.Len() {
+				return nil, errors.New("local MATCH residual alternative does not support mixed TiCI helper predicates")
+			}
+			return ds.bindLocalFTSConds(condHasLocalMatchCandidate)
+		}
+	}
 
 	shouldSkip, err := ds.checkTiCIDirtyWrite(hasFTSFuncLocal)
 	if err != nil {
@@ -852,6 +861,37 @@ func (ds *DataSource) collectPushedDownCondsHasFTSFuncSet() intset.FastIntSet {
 		}
 	}
 	return condHasFTSFunc
+}
+
+func (ds *DataSource) collectPushedDownCondsHasLocalMatchCandidateSet() intset.FastIntSet {
+	condHasLocalMatchCandidate := intset.NewFastIntSet()
+	for i, cond := range ds.PushedDownConds {
+		if containsLocalMatchCandidate(cond) {
+			condHasLocalMatchCandidate.Insert(i)
+		}
+	}
+	return condHasLocalMatchCandidate
+}
+
+func containsLocalMatchCandidate(expr expression.Expression) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+		usage, ok := expression.FTSMysqlMatchAgainstUsage(sf)
+		if !ok || usage != expression.FTSMatchUsageDirectFilter {
+			return false
+		}
+		modifier, ok := expression.FTSMysqlMatchAgainstModifier(sf)
+		return ok && expression.FTSModifierSupportedByLocalNoScore(modifier)
+	}
+	for _, arg := range sf.GetArgs() {
+		if containsLocalMatchCandidate(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 func (ds *DataSource) chooseTiCIIndex(
