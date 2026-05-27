@@ -142,6 +142,21 @@ func (j *JobInfo) IsSuccess() bool {
 	return j.Status == JobStatusFinished
 }
 
+// IsSourceFileSizeUnknown returns whether source_file_size has not been
+// determined yet for async-prepare jobs.
+func (j *JobInfo) IsSourceFileSizeUnknown() bool {
+	// if the job is not using async prepare, source_file_size is determined
+	// when creating the job, and it will never be 0 since we check total file
+	// size > 0 in precheck.
+	if j.SourceFileSize > 0 {
+		return false
+	}
+	if j.Status == jobStatusPending {
+		return true
+	}
+	return j.Status == JobStatusRunning && j.Step == JobStepPreparing
+}
+
 // GetJob returns the job with the given id if the user has privilege.
 // hasSuperPriv: whether the user has super privilege.
 // If the user has super privilege, the user can show or operate all jobs,

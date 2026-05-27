@@ -445,7 +445,7 @@ func (s *mockGCSSuite) TestShowImportJobTimingAroundPrepare() {
 	s.Len(rows, 1)
 	// timing 1: before scheduler starts.
 	s.Equal(result, rows)
-	s.Equal("0B", result[0][fmap["SourceFileSize"]])
+	s.Equal("N/A", result[0][fmap["SourceFileSize"]])
 
 	reachedBeforePrepare := make(chan struct{})
 	releaseBeforePrepare := make(chan struct{})

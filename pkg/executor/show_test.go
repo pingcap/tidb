@@ -54,6 +54,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 
 	fmap := plannercore.ImportIntoFieldMap
 	rowCntIdx := fmap["ImportedRows"]
+	sourceFileSizeIdx := fmap["SourceFileSize"]
 	startIdx := fmap["StartTime"]
 	endIdx := fmap["EndTime"]
 
@@ -116,6 +117,28 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	executor.FillOneImportJobInfo(c, jobInfo, ri)
 	require.Equal(t, importer.JobStepPreparing, c.GetRow(6).GetString(fmap["Phase"]))
 	require.Equal(t, proto.Step2Str(proto.ImportInto, proto.StepInit), c.GetRow(6).GetString(fmap["CurStep"]))
+
+	// source_file_size may be unknown for pending or running(preparing) jobs in async prepare.
+	jobInfo.Status = "pending"
+	jobInfo.Step = ""
+	jobInfo.SourceFileSize = 0
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.Equal(t, "N/A", c.GetRow(7).GetString(sourceFileSizeIdx))
+
+	jobInfo.Status = importer.JobStatusRunning
+	jobInfo.Step = importer.JobStepPreparing
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.Equal(t, "N/A", c.GetRow(8).GetString(sourceFileSizeIdx))
+
+	// For other states/steps, keep the existing size formatting.
+	jobInfo.Step = importer.JobStepImporting
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.Equal(t, "0B", c.GetRow(9).GetString(sourceFileSizeIdx))
+
+	jobInfo.Step = importer.JobStepPreparing
+	jobInfo.SourceFileSize = 3
+	executor.FillOneImportJobInfo(c, jobInfo, nil)
+	require.Equal(t, "3B", c.GetRow(10).GetString(sourceFileSizeIdx))
 }
 
 func TestShow(t *testing.T) {
