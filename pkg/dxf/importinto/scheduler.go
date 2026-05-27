@@ -341,10 +341,10 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 			"No file matched, or the file is empty. Please provide a valid file location.",
 		)
 	}
-	if err = sch.checkImportTableEmpty(ctx, taskMeta); err != nil {
+	if err = controller.CalResourceParams(ctx, sch.TaskStore.GetCodec().GetKeyspace()); err != nil {
 		return err
 	}
-	if err = controller.CalResourceParams(ctx, sch.TaskStore.GetCodec().GetKeyspace()); err != nil {
+	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta.JobID, controller.Plan); err != nil {
 		return err
 	}
 	controller.SetExecuteNodeCnt(controller.MaxNodeCnt)
@@ -359,9 +359,6 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 
 	taskMeta.Plan = *controller.Plan
 	taskMeta.PreparedMetaExternalPath = chunkMapPath
-	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta); err != nil {
-		return err
-	}
 	metaBytes, err := json.Marshal(taskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -787,7 +784,7 @@ func (sch *importScheduler) job2Step(ctx context.Context, logger *zap.Logger, ta
 	)
 }
 
-func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta) error {
+func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *zap.Logger, jobID int64, plan *importer.Plan) error {
 	taskManager, err := sch.getTaskMgrForAccessingImportJob()
 	if err != nil {
 		return err
@@ -800,9 +797,9 @@ func (sch *importScheduler) updatePreparedJobInfo(ctx context.Context, logger *z
 				return importer.UpdateJobPreparedInfo(
 					ctx,
 					exec,
-					taskMeta.JobID,
-					taskMeta.Plan.TotalFileSize,
-					taskMeta.Plan.Format,
+					jobID,
+					plan.TotalFileSize,
+					plan.Format,
 				)
 			})
 		},
