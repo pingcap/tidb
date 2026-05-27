@@ -14482,11 +14482,9 @@ AlterUserStmt:
 			ByAuthString: true,
 		}
 		$$ = &ast.AlterUserStmt{
-			IfExists:    $3.(bool),
-			CurrentAuth: auth,
-			CurrentDualPasswordOption: &ast.DualPasswordOption{
-				Type: ast.DualPasswordRetainCurrent,
-			},
+			IfExists:                  $3.(bool),
+			CurrentAuth:               auth,
+			CurrentDualPasswordOption: ast.DualPasswordRetainCurrent,
 		}
 	}
 |	"ALTER" "USER" IfExists "USER" '(' ')' "DISCARD" "OLD" "PASSWORD"
@@ -14494,10 +14492,8 @@ AlterUserStmt:
 		// MySQL 8.0 user_func_auth_option allows DISCARD OLD PASSWORD as a
 		// standalone clause on the current-user form (no IDENTIFIED BY).
 		$$ = &ast.AlterUserStmt{
-			IfExists: $3.(bool),
-			CurrentDualPasswordOption: &ast.DualPasswordOption{
-				Type: ast.DualPasswordDiscardOld,
-			},
+			IfExists:                  $3.(bool),
+			CurrentDualPasswordOption: ast.DualPasswordDiscardOld,
 		}
 	}
 
@@ -14579,20 +14575,16 @@ AlterUserSpec:
 |	Username AuthOptionWithPassword "RETAIN" "CURRENT" "PASSWORD"
 	{
 		$$ = &ast.UserSpec{
-			User:    $1.(*auth.UserIdentity),
-			AuthOpt: $2.(*ast.AuthOption),
-			DualPasswordOption: &ast.DualPasswordOption{
-				Type: ast.DualPasswordRetainCurrent,
-			},
+			User:               $1.(*auth.UserIdentity),
+			AuthOpt:            $2.(*ast.AuthOption),
+			DualPasswordOption: ast.DualPasswordRetainCurrent,
 		}
 	}
 |	Username "DISCARD" "OLD" "PASSWORD"
 	{
 		$$ = &ast.UserSpec{
-			User: $1.(*auth.UserIdentity),
-			DualPasswordOption: &ast.DualPasswordOption{
-				Type: ast.DualPasswordDiscardOld,
-			},
+			User:               $1.(*auth.UserIdentity),
+			DualPasswordOption: ast.DualPasswordDiscardOld,
 		}
 	}
 

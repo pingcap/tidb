@@ -1658,11 +1658,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	//
 	// Both the named-user form (Specs) and the current-user form
 	// (CurrentDualPasswordOption on the USER() branch) are caught here.
-	if s.CurrentDualPasswordOption != nil {
+	if s.CurrentDualPasswordOption != 0 {
 		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
 	}
 	for _, spec := range s.Specs {
-		if spec.DualPasswordOption != nil {
+		if spec.DualPasswordOption != 0 {
 			return plannererrors.ErrNotSupportedYet.GenWithStackByArgs("dual password (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD)")
 		}
 	}
