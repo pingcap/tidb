@@ -985,7 +985,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionAddVectorIndex:
 		ver, err = w.onCreateVectorIndex(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = onDropIndex(jobCtx, job)
+		ver, err = onDropIndex(w.sess.Session(), jobCtx, job)
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(jobCtx, job)
 	case model.ActionAddForeignKey:
@@ -1027,7 +1027,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(jobCtx, job)
 	case model.ActionAlterIndexVisibility:
-		ver, err = onAlterIndexVisibility(jobCtx, job)
+		ver, err = onAlterIndexVisibility(w.sess.Session(), jobCtx, job)
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(jobCtx, job)
 	case model.ActionRenameTables:

@@ -313,6 +313,34 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexes(t *testing.
 	tk.MustExec("refresh materialized view mv_alt_idx fast")
 	tk.MustQuery("select a, b, minc, cnt from mv_alt_idx").Check(testkit.Rows("1 2 5 2"))
 
+	createMinMaxMVWithWhere := func(baseTable, mvName string) {
+		tk.MustExec(fmt.Sprintf(
+			"create table %s (a int not null, b int not null, c int not null, index idx_ab(a, b), index idx_ba(b, a))",
+			baseTable,
+		))
+		tk.MustExec(fmt.Sprintf(
+			"create materialized view log on %s (a, b, c) purge next date_add(now(), interval 1 hour)",
+			baseTable,
+		))
+		tk.MustExec(fmt.Sprintf(
+			"create materialized view %s (a, b, minc, cnt) refresh fast next now() as select a, b, min(c), count(1) from %s where c > 0 group by a, b",
+			mvName,
+			baseTable,
+		))
+	}
+
+	createMinMaxMVWithWhere("t_where_drop_idx", "mv_where_drop_idx")
+	tk.MustExec("drop index idx_ab on t_where_drop_idx")
+	err = tk.ExecToErr("drop index idx_ba on t_where_drop_idx")
+	require.ErrorContains(t, err, "required by materialized view mv_where_drop_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
+	createMinMaxMVWithWhere("t_where_invisible_idx", "mv_where_invisible_idx")
+	tk.MustExec("alter table t_where_invisible_idx alter index idx_ab invisible")
+	err = tk.ExecToErr("alter table t_where_invisible_idx alter index idx_ba invisible")
+	require.ErrorContains(t, err, "required by materialized view mv_where_invisible_idx")
+	require.ErrorContains(t, err, "MIN/MAX fast refresh")
+
 	createMinMaxMV("t_multi_schema_replace_idx", "mv_multi_schema_replace_idx", ", index idx_ab(a, b)")
 	tk.MustExec("alter table t_multi_schema_replace_idx drop index idx_ab, add index idx_ba(b, a)")
 	tk.MustExec("insert into t_multi_schema_replace_idx values (1, 2, 10), (1, 2, 5)")

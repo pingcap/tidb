@@ -554,8 +554,8 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr
 	return false, nil
 }
 
-func onAlterIndexVisibility(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	tblInfo, from, invisible, err := checkAlterIndexVisibility(jobCtx.infoCache, jobCtx.metaMut, job)
+func onAlterIndexVisibility(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	tblInfo, from, invisible, err := checkAlterIndexVisibility(sctx, jobCtx.infoCache, jobCtx.metaMut, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
@@ -729,7 +729,7 @@ func checkAndBuildIndexInfo(
 func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropIndex(jobCtx, job)
+		ver, err = onDropIndex(w.sess.Session(), jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -957,7 +957,7 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropIndex(jobCtx, job)
+		ver, err = onDropIndex(w.sess.Session(), jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1808,8 +1808,8 @@ func runReorgJobAndHandleErr(
 	return true, ver, nil
 }
 
-func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	tblInfo, allIndexInfos, ifExists, err := checkDropIndex(jobCtx.infoCache, jobCtx.metaMut, job)
+func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	tblInfo, allIndexInfos, ifExists, err := checkDropIndex(sctx, jobCtx.infoCache, jobCtx.metaMut, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
 			job.Warning = toTError(err)
@@ -2001,6 +2001,7 @@ func buildEffectiveBaseTableInfoForAlterIndexVisibilityMViewMinMaxConstraints(
 }
 
 func checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+	sctx sessionctx.Context,
 	infoCache *infoschema.InfoCache,
 	job *model.Job,
 	baseTableInfo *model.TableInfo,
@@ -2021,7 +2022,7 @@ func checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
 	if err := checkBaseTableDependentMViewMinMaxIndexConstraintsWithEffectiveTable(
 		context.Background(),
 		infoCache.GetLatest(),
-		nil,
+		sctx,
 		pmodel.NewCIStr(job.SchemaName),
 		baseTableInfo,
 		effectiveBaseTableInfo,
@@ -2035,7 +2036,7 @@ func checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
 	return nil
 }
 
-func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
+func checkDropIndex(sctx sessionctx.Context, infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -2075,6 +2076,7 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model
 	)
 	for _, idxArg := range args.IndexArgs {
 		if err := checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+			sctx,
 			infoCache,
 			job,
 			tblInfo,
@@ -2139,7 +2141,7 @@ func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel
 	return tblInfo, from, to, errors.Trace(err)
 }
 
-func checkAlterIndexVisibility(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel.CIStr, bool, error) {
+func checkAlterIndexVisibility(sctx sessionctx.Context, infoCache *infoschema.InfoCache, t *meta.Mutator, job *model.Job) (*model.TableInfo, pmodel.CIStr, bool, error) {
 	var (
 		indexName pmodel.CIStr
 		invisible bool
@@ -2170,6 +2172,7 @@ func checkAlterIndexVisibility(infoCache *infoschema.InfoCache, t *meta.Mutator,
 	if invisible {
 		effectiveBaseTableInfo := buildEffectiveBaseTableInfoForAlterIndexVisibilityMViewMinMaxConstraints(tblInfo, indexName, true)
 		if err := checkBaseTableDependentMViewMinMaxIndexConstraintsInOwner(
+			sctx,
 			infoCache,
 			job,
 			tblInfo,
