@@ -103,10 +103,16 @@ var ExtraVersionName = ast.NewCIStr("_tidb_mvcc_version")
 // ExtraCommitTSName is the name of ExtraCommitTSID Column.
 var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 
+// FTSBM25ScoreName is the name of the virtual BM25 score column used by TiCI FTS.
+var FTSBM25ScoreName = ast.NewCIStr("_tidb_fts_bm25_score")
+
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,
 // so a distance column will be added to table_scan. this field is used in the action.
 const VirtualColVecSearchDistanceID int64 = -2000
+
+// VirtualColFTSBM25ScoreID is the ID of the column who holds the TiCI FTS BM25 score.
+const VirtualColFTSBM25ScoreID int64 = -2050
 
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive

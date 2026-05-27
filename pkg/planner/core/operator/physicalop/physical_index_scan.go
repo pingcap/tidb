@@ -528,6 +528,18 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 		}
 	}
 
+	if p.FtsQueryInfo != nil {
+		p.FtsQueryInfo.QueryType = tipb.FTSQueryType_FTSQueryTypeWithScore
+		scoreType := types.NewFieldType(mysql.TypeDouble)
+		scoreType.SetFlag(mysql.NotNullFlag)
+		rowLayout = append(rowLayout, &expression.Column{
+			RetType:  scoreType,
+			ID:       model.VirtualColFTSBM25ScoreID,
+			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+			OrigName: model.FTSBM25ScoreName.O,
+		})
+	}
+
 	rowLayout = append(rowLayout, &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		ID:       model.ExtraVersionID,
@@ -662,6 +674,8 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
 		} else if col.ID == model.ExtraVersionID {
 			columns = append(columns, model.NewExtraVersionColInfo())
+		} else if col.ID == model.VirtualColFTSBM25ScoreID {
+			columns = append(columns, model.NewFTSBM25ScoreColInfo())
 		} else {
 			columns = append(columns, model.FindColumnInfoByID(tableColumns, col.ID))
 		}

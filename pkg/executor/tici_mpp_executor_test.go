@@ -182,6 +182,47 @@ func TestGetHandleOffsetsForTiCIMPPUsesPKHandleWhenHandleColsEmpty(t *testing.T)
 	require.Equal(t, []int{0}, offsets)
 }
 
+func TestHandleOutputOffsetsForTiCIIndexLookUpWithBM25Score(t *testing.T) {
+	schemaCols := []*expression.Column{
+		{ID: model.ExtraHandleID},
+		{ID: model.ExtraPhysTblID},
+		{ID: model.VirtualColFTSBM25ScoreID},
+		{ID: model.ExtraVersionID},
+	}
+
+	offsets := handleOutputOffsetsForTiCIIndexLookUp(nil, 1, schemaCols, true)
+
+	require.Equal(t, []uint32{2, 0, 1, 3}, offsets)
+}
+
+func TestGetRetTpsForTiCIIndexReaderIncludesBM25Score(t *testing.T) {
+	ctx := defaultCtx()
+	table := buildMockPhysicalTableForTiCIMPPTests(t, 88)
+	handleCol := &expression.Column{ID: model.ExtraHandleID, Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	scoreType := types.NewFieldType(mysql.TypeDouble)
+	scoreType.SetFlag(mysql.NotNullFlag)
+	scoreCol := &expression.Column{ID: model.VirtualColFTSBM25ScoreID, Index: 1, RetType: scoreType}
+	versionType := types.NewFieldType(mysql.TypeLonglong)
+	versionType.SetFlag(mysql.NotNullFlag)
+	versionCol := &expression.Column{ID: model.ExtraVersionID, Index: 2, RetType: versionType}
+	indexScan := buildMockIndexScanForTiCITests(ctx, true, nil, handleCol, scoreCol, versionCol)
+
+	exec := &IndexLookUpExecutor{
+		BaseExecutorV2: exec.NewBaseExecutorV2(ctx.GetSessionVars(), expression.NewSchema(), 0),
+		table:          table,
+		index:          indexScan.Index,
+		idxPlans:       []base.PhysicalPlan{indexScan},
+		dagPB:          &tipb.DAGRequest{OutputOffsets: []uint32{1, 0, 2}},
+		handleCols:     []*expression.Column{handleCol},
+		isVersionAware: true,
+	}
+
+	tps := exec.getRetTpsForIndexReader()
+
+	require.Len(t, tps, 3)
+	require.Equal(t, mysql.TypeDouble, tps[0].GetType())
+}
+
 func TestUseMPPExecutionTreatsTiCIIndexAsTiCIPath(t *testing.T) {
 	ctx := defaultCtx()
 	planCtx := ctx.GetPlanCtx()

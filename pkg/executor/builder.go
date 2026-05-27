@@ -4549,7 +4549,7 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 	}
 
 	if p.Index.IsTiCIIndex() {
-		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen, p.Schema().Len(), needExtraOutputCol), nil
+		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen, p.Schema().Columns, needExtraOutputCol), nil
 	}
 
 	return handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, needExtraOutputCol), nil
@@ -4571,16 +4571,26 @@ func handleOutputOffsetsForTiKVIndexLookUp(outputOffsets []uint32, handleLen int
 
 // handleOutputOffsetsForTiCIIndexLookUp handles the output offsets for TiCI index look up requests.
 // See the InitSchemaForTiCIIndex for the row layout.
-func handleOutputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int, schemaLen int, needExtraOutputCol bool) []uint32 {
+func handleOutputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int, schemaCols []*expression.Column, needExtraOutputCol bool) []uint32 {
+	findOffsetByID := func(id int64, fallback int) int {
+		for i, col := range schemaCols {
+			if col.ID == id {
+				return i
+			}
+		}
+		return fallback
+	}
+	if scoreOffset := findOffsetByID(model.VirtualColFTSBM25ScoreID, -1); scoreOffset >= 0 {
+		outputOffsets = append(outputOffsets, uint32(scoreOffset))
+	}
 	for i := range handleLen {
 		outputOffsets = append(outputOffsets, uint32(i))
 	}
+	schemaLen := len(schemaCols)
 	if needExtraOutputCol {
-		// When TiCI index scan includes `ExtraPhysTblID`, it's appended right before the version column.
-		outputOffsets = append(outputOffsets, uint32(schemaLen-2))
+		outputOffsets = append(outputOffsets, uint32(findOffsetByID(model.ExtraPhysTblID, schemaLen-2)))
 	}
-	// TiCI index scan always appends the per-row MVCC version (`_tidb_mvcc_version`) as the last column.
-	outputOffsets = append(outputOffsets, uint32(schemaLen-1))
+	outputOffsets = append(outputOffsets, uint32(findOffsetByID(model.ExtraVersionID, schemaLen-1)))
 	return outputOffsets
 }
 
