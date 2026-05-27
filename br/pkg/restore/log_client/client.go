@@ -1529,6 +1529,26 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	return wrapper.WithSplit(ctx, logIter, strategy), nil
 }
 
+// WrapLogFilesIterWithCheckpointFilter applies only the checkpoint skip filter to
+// the log files iterator, without performing any region splitting. Used when
+// pre-split has already been done and per-batch splitting is skipped, but
+// checkpoint-based file filtering still needs to happen.
+func (rc *LogClient) WrapLogFilesIterWithCheckpointFilter(
+	ctx context.Context,
+	logIter LogIter,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+) (LogIter, error) {
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, SplitFileThresholdDefault)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return iter.FilterOut(logIter, func(file *LogDataFileInfo) bool {
+		return strategy.ShouldSkip(file)
+	}), nil
+}
+
 // PreSplitRegions performs a full pre-scan over ALL DML files and issues region
 // splits based on the total cumulative data volume. This avoids the problem where
 // per-batch splitting (4096 files at a time) resets accumulated sizes at each batch

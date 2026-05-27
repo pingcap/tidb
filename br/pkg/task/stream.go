@@ -1755,9 +1755,13 @@ func restoreStream(
 		logFilesIter = iter.WithEmitSizeTrace(logFilesIter, metrics.KVLogFileEmittedMemory.WithLabelValues("0-loaded"))
 		// Skip per-batch splitting when pre-split already covered all files;
 		// doing both passes would produce redundant split+scatter calls.
+		// Checkpoint filtering must still be applied on the pre-split path.
 		var logFilesIterWithSplit logclient.LogIter
 		if preSplitDone {
-			logFilesIterWithSplit = logFilesIter
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithCheckpointFilter(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		} else {
 			logFilesIterWithSplit, err = client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 			if err != nil {
