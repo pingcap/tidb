@@ -73,6 +73,21 @@ func TestExitCodeForSignal(t *testing.T) {
 	}
 }
 
+func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
+	originalArgs := os.Args
+	os.Args = []string{"tidb-server"}
+	t.Cleanup(func() {
+		os.Args = originalArgs
+	})
+
+	fset := initFlagSet()
+	require.NoError(t, fset.Parse([]string{"--keyspace-activate=true"}))
+
+	cfg := config.NewConfig()
+	overrideConfig(cfg, fset)
+	require.True(t, cfg.KeyspaceActivateMode)
+}
+
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value)

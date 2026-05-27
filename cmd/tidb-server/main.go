@@ -152,6 +152,7 @@ const (
 	nmStandby           = "standby"
 	nmActivationTimeout = "activation-timeout"
 	nmMaxIdleSeconds    = "max-idle-seconds"
+	nmKeyspaceActivate  = "keyspace-activate"
 )
 
 const (
@@ -225,6 +226,8 @@ var (
 	standbyMode       *bool
 	activationTimeout *uint
 	maxIdleSeconds    *uint
+	// Keyspace activate
+	keyspaceActivateMode *bool
 )
 
 func initFlagSet() *flag.FlagSet {
@@ -292,6 +295,7 @@ func initFlagSet() *flag.FlagSet {
 	standbyMode = flagBoolean(fset, nmStandby, false, "start tidb-server as standby")
 	activationTimeout = fset.Uint(nmActivationTimeout, 0, "max time in second allowed for tidb to activate from standby, 0 means no limit")
 	maxIdleSeconds = fset.Uint(nmMaxIdleSeconds, 0, "max idle seconds for a connection, 0 means no limit")
+	keyspaceActivateMode = flagBoolean(fset, nmKeyspaceActivate, false, "exit after activating the keyspace")
 
 	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
@@ -334,8 +338,8 @@ func main() {
 	if kerneltype.IsNextGen() && len(config.GetGlobalConfig().KeyspaceName) == 0 && !config.GetGlobalConfig().Standby.StandByMode {
 		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is required for nextgen TiDB")
 		os.Exit(0)
-	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().Standby.StandByMode) {
-		fmt.Fprintln(os.Stderr, "invalid config: keyspace name or standby mode is not supported for classic TiDB")
+	} else if kerneltype.IsClassic() && (len(config.GetGlobalConfig().KeyspaceName) > 0 || config.GetGlobalConfig().Standby.StandByMode || config.GetGlobalConfig().KeyspaceActivateMode) {
+		fmt.Fprintln(os.Stderr, "invalid config: keyspace name, standby mode or keyspace-activate mode is not supported for classic TiDB")
 		os.Exit(0)
 	}
 
@@ -437,6 +441,9 @@ func main() {
 		svr.StandbyController = standbyController
 		svr.StandbyController.OnServerCreated(svr)
 	}
+	if deploymode.IsStarter() && config.GetGlobalConfig().KeyspaceActivateMode {
+		exitAfterKeyspaceActivate(svr, storage, dom)
+	}
 
 	exited := make(chan struct{})
 	exitCode := exitCodeOK
@@ -469,6 +476,23 @@ func exitCodeForSignal(sig os.Signal) int {
 		return exitCodeInt
 	}
 	return exitCodeOK
+}
+
+func exitAfterKeyspaceActivate(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
+	logutil.BgLogger().Info("keyspace activation completed, exiting")
+	exitCode := exitCodeOK
+	svr.Close()
+	resourcemanager.InstanceResourceManager.Stop()
+	cleanup(svr, storage, dom)
+	cpuprofile.StopCPUProfiler()
+	executor.Stop()
+	if err := syncLog(); err != nil {
+		exitCode = exitCodeErr
+	}
+	if exitCode != exitCodeOK {
+		os.Exit(exitCode)
+	}
+	os.Exit(exitCodeOK)
 }
 
 func syncLog() error {
@@ -848,6 +872,10 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 
 	if actualFlags[nmMaxIdleSeconds] {
 		cfg.Standby.MaxIdleSeconds = *maxIdleSeconds
+	}
+
+	if actualFlags[nmKeyspaceActivate] {
+		cfg.KeyspaceActivateMode = *keyspaceActivateMode
 	}
 }
 

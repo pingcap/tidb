@@ -327,6 +327,8 @@ type Config struct {
 	// InitializeSQLFile is a file that will be executed after first bootstrap only.
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
+	// KeyspaceActivateMode indicates whether TiDB should exit after activating the keyspace.
+	KeyspaceActivateMode bool `toml:"keyspace-activate" json:"keyspace-activate"`
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
 
@@ -1578,6 +1580,12 @@ func (c *Config) Valid() error {
 	}
 	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	if c.Standby.StandByMode && c.KeyspaceActivateMode {
+		return fmt.Errorf("can't set standby and keyspace-activate mode at the same time")
+	}
+	if c.KeyspaceActivateMode && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("keyspace-activate can only be configured for starter deploy mode")
 	}
 	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
 		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)

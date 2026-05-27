@@ -1211,6 +1211,24 @@ max-allowed-packet = %d`, packetSize)), 0644))
 	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
 }
 
+func TestKeyspaceActivateModeConfig(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.KeyspaceActivateMode = true
+	require.NoError(t, conf.Valid())
+
+	conf.Standby.StandByMode = true
+	require.ErrorContains(t, conf.Valid(), "can't set standby and keyspace-activate mode at the same time")
+
+	conf.Standby.StandByMode = false
+	conf.DeployMode = deploymode.Premium
+	require.ErrorContains(t, conf.Valid(), "keyspace-activate can only be configured for starter deploy mode")
+}
+
 func TestConflictInstanceConfig(t *testing.T) {
 	t.Cleanup(func() {
 		ConflictOptions = nil
