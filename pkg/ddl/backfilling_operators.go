@@ -528,12 +528,17 @@ func (w *tableScanWorker) newDistSQLCtx() (*distsqlctx.DistSQLContext, error) {
 }
 
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) error {
+	taskStart := time.Now()
+	defer func() {
+		metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("scan_task_total").Observe(time.Since(taskStart).Seconds())
+	}()
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
 	var (
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
+		loopEnd     time.Time
 	)
 	// Local ingest may trigger partial import/reset while the scan transaction is
 	// still open, so only the global-sort path can stream results immediately.
@@ -608,13 +613,19 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				idxResults = append(idxResults, idxResult)
 			}
 		}
+		loopEnd = time.Now()
 		return rs.Close()
 	})
+	if !loopEnd.IsZero() {
+		metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("scan_loop").Observe(loopEnd.Sub(taskStart).Seconds())
+	}
 
 	if !enableStreaming {
+		sendPhaseStart := time.Now()
 		for _, idxResult := range idxResults {
 			sendResult(idxResult)
 		}
+		metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("send_phase").Observe(time.Since(sendPhaseStart).Seconds())
 	}
 
 	return err

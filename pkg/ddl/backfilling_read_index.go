@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -194,6 +195,10 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 }
 
 func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	subtaskStart := time.Now()
+	defer func() {
+		metrics.AddIndexReadIndexChunkStageSeconds.WithLabelValues("subtask_total").Observe(time.Since(subtaskStart).Seconds())
+	}()
 	logutil.DDLLogger().Info("read index executor run subtask",
 		zap.Bool("use cloud", r.isGlobalSort()))
 
