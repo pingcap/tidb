@@ -1131,6 +1131,11 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 			"from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
 	)).Check(testkit.Rows("success 5 1 1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select PURGE_CUTOFF_TSO is not null, PURGE_CUTOFF_TSO >= %d from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		maxCommitTS,
+		mlogID,
+	)).Check(testkit.Rows("1 1"))
 	tk.MustQuery(fmt.Sprintf("select BASE_TABLE_SCHEMA, BASE_TABLE_NAME from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
 		Check(testkit.Rows("test t_purge_batch_delete"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where BASE_TABLE_SCHEMA = 'TEST' and BASE_TABLE_NAME = 'T_PURGE_BATCH_DELETE' and MLOG_ID = %d", mlogID)).
@@ -1179,6 +1184,54 @@ func TestPurgeMaterializedViewLogLastPurgedTSOShortCircuit(t *testing.T) {
 		Check(testkit.Rows("success 0"))
 	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
 		Check(testkit.Rows(fmt.Sprintf("%d", maxCommitTS)))
+}
+
+func TestPurgeMaterializedViewLogSkipsWhenCutoffFenceWouldGoBackward(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_cutoff_fence (a int not null, b int)")
+	tk.MustExec("create materialized view log on t_purge_cutoff_fence (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_purge_cutoff_fence (a, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, count(1) from t_purge_cutoff_fence group by a")
+	tk.MustExec("insert into t_purge_cutoff_fence values (1, 10), (1, 20), (2, 30)")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_purge_cutoff_fence"))
+	require.NoError(t, err)
+	mvID := mvTable.Meta().ID
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_cutoff_fence"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	maxCommitTS, err := strconv.ParseUint(fmt.Sprint(tk.MustQuery("select max(_tidb_commit_ts) from `$mlog$t_purge_cutoff_fence`").Rows()[0][0]), 10, 64)
+	require.NoError(t, err)
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_READ_TSO = %d where MVIEW_ID = %d", maxCommitTS, mvID))
+
+	cutoffFenceTSO := maxCommitTS + 1000
+	tk.MustExec(fmt.Sprintf(
+		`insert into mysql.tidb_mlog_purge_hist (
+			PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
+			PURGE_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_AT
+		) values (
+			%[1]d, %[2]d, 'test', 't_purge_cutoff_fence', 'manual',
+			now(6), 0, 'success', %[1]d, now(6)
+		)`,
+		cutoffFenceTSO,
+		mlogID,
+	))
+
+	tk.MustExec("purge materialized view log on t_purge_cutoff_fence")
+	require.Equal(t, uint64(0), tk.Session().AffectedRows())
+	tk.CheckLastMessage("Rows inserted: 0  Updated: 0  Deleted: 0")
+
+	tk.MustQuery("select count(*) from `$mlog$t_purge_cutoff_fence`").Check(testkit.Rows("3"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select PURGE_CUTOFF_TSO from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows(fmt.Sprintf("%d", cutoffFenceTSO)))
+	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("1"))
 }
 
 func TestPurgeMaterializedViewLogDeleteErrorNoDirtyWrite(t *testing.T) {

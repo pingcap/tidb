@@ -130,6 +130,8 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("mlog_id", "base_table_schema", "base_table_name", "purge_method", "purge_time", "purge_endtime", "purge_duration_sec"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_DURATION_SEC'").
 		Check(testkit.Rows("decimal(18,6)"))
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_CUTOFF_TSO'").
+		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('PURGE_TIME', 'PURGE_ENDTIME') order by column_name").
 		Check(testkit.Rows("6", "6"))
 	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='CANCEL_REQUESTED_AT'").
@@ -406,6 +408,8 @@ func TestUpgradeToVer224MaterializedViewHistoryDurationIndexesAndAlertTable(t *t
 		Check(testkit.Rows("6"))
 	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='LAST_HEARTBEAT_AT'").
 		Check(testkit.Rows("6"))
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_CUTOFF_TSO'").
+		Check(testkit.Rows("bigint(20) unsigned"))
 }
 
 func TestUpgradeToVer222MaterializedViewHistoryCancelRequestColumns(t *testing.T) {
@@ -603,4 +607,58 @@ func TestUpgradeToVer226MaterializedViewRefreshCommitTSO(t *testing.T) {
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_mv_name_commit_tso' order by seq_in_index").
 		Check(testkit.Rows("mv_schema", "mv_name", "refresh_commit_tso"))
+}
+
+func TestUpgradeToVer228MaterializedViewLogPurgeCutoffTSO(t *testing.T) {
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV227 := session.CreateSessionAndSetID(t, store)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	require.NoError(t, m.FinishBootstrap(int64(227)))
+	require.NoError(t, txn.Commit(ctx))
+
+	revertVersionAndVariables(t, seV227, 227)
+	session.MustExec(t, seV227, "drop table if exists mysql.tidb_mlog_purge_hist")
+	session.MustExec(t, seV227, `create table mysql.tidb_mlog_purge_hist (
+		PURGE_JOB_ID bigint unsigned NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		BASE_TABLE_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		BASE_TABLE_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		PURGE_METHOD varchar(32) NOT NULL,
+		PURGE_TIME datetime(6) DEFAULT NULL,
+		PURGE_ENDTIME datetime(6) DEFAULT NULL,
+		PURGE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		PURGE_ROWS bigint NOT NULL,
+		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PURGE_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_AT datetime(6) DEFAULT NULL,
+		PRIMARY KEY(PURGE_JOB_ID),
+		KEY idx_mlog_time (MLOG_ID, PURGE_TIME),
+		KEY idx_table_name_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_TIME),
+		KEY idx_mlog_status (MLOG_ID, PURGE_STATUS, PURGE_TIME),
+		KEY idx_purge_duration_sec (PURGE_DURATION_SEC),
+		KEY idx_purge_time (PURGE_TIME),
+		KEY idx_purge_status (PURGE_STATUS, PURGE_TIME))`)
+	session.MustExec(t, seV227, "commit")
+
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV227)
+	require.NoError(t, err)
+	require.Equal(t, int64(227), ver)
+
+	dom.Close()
+	domUpgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domUpgraded.Close()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_CUTOFF_TSO'").
+		Check(testkit.Rows("bigint(20) unsigned"))
 }
