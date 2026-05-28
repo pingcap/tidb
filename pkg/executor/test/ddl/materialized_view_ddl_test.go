@@ -427,7 +427,7 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_show_mv (a int, b int not null)")
-	tk.MustExec("create materialized view log on t_show_mv (a, b) purge immediate")
+	tk.MustExec("create materialized view log on t_show_mv (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_show_mv (a, s, cnt) comment = 'c1' refresh fast next now() shard_row_id_bits = 2 pre_split_regions = 2 as select a, sum(b), count(1) from t_show_mv group by a")
 
 	rows := tk.MustQuery("show create materialized view mv_show_mv").Rows()
