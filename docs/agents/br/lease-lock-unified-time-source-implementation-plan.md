@@ -32,7 +32,7 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
 - [x] (2026-05-28) Addressed Milestone 1 review: detached post-acquire cleanup from canceled caller contexts, kept `LeaseClock` as a stable one-method interface, kept the lease-time meta constructor internal, and added read/truncate explicit-clock coverage.
 - [x] (2026-05-28) Implemented Milestone 2: objstore renewal uses the same lease clock. Commit is pending review.
 - [x] (2026-05-28) Addressed Milestone 2 review: renewal now treats a missing `RemoteLock` lease clock as invalid construction and fails closed instead of silently falling back to local time.
-- [ ] Resolve pre-M3 review findings: add explicit-clock retry/cleanup API boundaries, decide renewal post-write proof scope, and add append explicit-clock acquire coverage.
+- [x] (2026-05-28) Implemented Milestone 2.5: pre-M3 explicit-clock API boundary hardening.
 - [ ] Implement Milestone 3: objstore stale cleanup uses the explicit lease clock.
 - [ ] Implement Milestone 4: BR PD time helper.
 - [ ] Implement Milestone 5: `MigrationExt`, `LogClient`, and PiTR collector propagation.
@@ -98,6 +98,17 @@ Milestone 2 validation:
     make bazel_prepare
 
 Remaining gaps after Milestone 2: stale cleanup still uses local time until Milestone 3, `LockWithRetry` still has only the legacy locker shape, append explicit-clock acquire needs targeted coverage, and renewal post-write proof needs a separate decision before production migration.
+
+Milestone 2.5 hardened the explicit-clock acquire boundary before cleanup migration. The internal exact-acquire helper now rejects nil lease clocks before writing any lock file, append write acquire has explicit-clock metadata and generation coverage, and Milestone 3 now has a concrete `LockerWithLeaseClock` / `LockWithRetryWithLeaseClock` API shape to implement together with cleanup clock threading.
+
+Milestone 2.5 validation:
+
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemoteExactWithLeaseClockRejectsNilClock' -count=1
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemoteExactWithLeaseClockRejectsNilClock|TestTryLockRemoteAppendWriteWithLeaseClockUsesClockForMetaAndGeneration|TestTryLockRemoteWriteWithLeaseClock' -count=1
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemote.*WithLeaseClock|TestTryLockRemoteWrite|TestTryLockRemoteRead|TestTryLockRemoteTruncate|TestMakeLockMeta' -count=1
+    make bazel_prepare
+
+Remaining gaps after Milestone 2.5: stale cleanup still uses local time until Milestone 3, `LockWithRetryWithLeaseClock` is designed but not implemented, and renewal post-write proof still needs a separate delayed-write correctness decision before production migration.
 
 ## Context and Orientation
 
@@ -181,6 +192,8 @@ BR PD helper should live outside `pkg/objstore`, for example `br/pkg/leaseclock`
 Milestone 1 adds the minimal lease-clock interface and explicit-clock single-attempt acquire variants. It changes acquire metadata and generation construction to use the clock and adds post-acquire proof before returning a lock. Legacy acquire functions remain and keep current local-time behavior.
 
 Milestone 2 stores the lease clock on `RemoteLock` and converts renewal to use it for expiry checks and refreshed `ExpireAt`. This milestone proves that `LockWithRetryWithLeaseClock` can start renewal without falling back to local time.
+
+Milestone 2.5 hardens the explicit-clock boundary before cleanup work. It rejects nil clocks at the internal exact-acquire helper, adds append-lock explicit-clock acquire coverage, and records the retry API shape that Milestone 3 must implement.
 
 Milestone 3 converts stale cleanup decisions to the explicit lease clock. It must carefully preserve the existing difference between public cleanup, which may return candidate errors, and retry-loop cleanup, which logs candidate errors and continues.
 
@@ -338,6 +351,60 @@ TDD steps:
 
     git add pkg/objstore/locking.go pkg/objstore/export_test.go pkg/objstore/locking_test.go docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
     git commit -m "pkg/objstore: renew locks with explicit lease clock"
+
+### Milestone 2.5: Pre-M3 Explicit-Clock Boundary Hardening
+
+Files:
+
+- Modify `pkg/objstore/locking_helper.go`.
+- Modify `pkg/objstore/export_test.go`.
+- Modify `pkg/objstore/locking_test.go`.
+- Modify this plan.
+
+TDD steps:
+
+- [x] Add `TestTryLockRemoteExactWithLeaseClockRejectsNilClock`.
+
+    This test should call a test-only wrapper around `tryLockRemoteExactWithLeaseClock` with a nil clock and assert:
+
+    - returned lock is nil;
+    - error contains `lease clock is required`;
+    - no target lock file is created.
+
+- [x] Run RED:
+
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemoteExactWithLeaseClockRejectsNilClock' -count=1
+
+  Expected before implementation: panic or failure because the helper tries to use a nil clock after writing.
+
+- [x] Implement:
+
+    Add a nil-clock check at the start of `tryLockRemoteExactWithLeaseClock`, before constructing or committing the conditional write.
+
+- [x] Add append explicit-clock acquire coverage:
+
+    `TestTryLockRemoteAppendWriteWithLeaseClockUsesClockForMetaAndGeneration`
+
+    This test should call `TryLockRemoteWriteWithLeaseClock(ctx, storage, "v1/APPEND_LOCK", hint, clock)`, read back the `v1/APPEND_LOCK.WRIT.<generation>` file, and assert the generation prefix, `LockedAt`, and `ExpireAt` come from the fake clock.
+
+- [x] Record API shape for Milestone 3:
+
+        type LockerWithLeaseClock = func(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error)
+
+        func LockWithRetryWithLeaseClock(ctx context.Context, locker LockerWithLeaseClock, storage storeapi.Storage, lockPath, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error)
+
+    Milestone 3 should implement this together with explicit-clock cleanup, because retry acquisition and cleanup must use the same lease clock.
+
+- [x] Run GREEN:
+
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemoteExactWithLeaseClockRejectsNilClock|TestTryLockRemoteAppendWriteWithLeaseClockUsesClockForMetaAndGeneration|TestTryLockRemoteWriteWithLeaseClock' -count=1
+
+- [x] Run `make bazel_prepare` because this milestone adds new top-level Go test functions.
+
+- [ ] Commit:
+
+    git add pkg/objstore/locking_helper.go pkg/objstore/export_test.go pkg/objstore/locking_test.go docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
+    git commit -m "pkg/objstore: harden lease clock acquire boundary"
 
 ### Milestone 3: Objstore Cleanup Lease Clock
 

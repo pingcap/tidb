@@ -45,6 +45,12 @@ func TESTTryLockRemoteExact(ctx context.Context, storage storeapi.Storage, physi
 	return tryLockRemoteExact(ctx, storage, physicalPath, hint, nil)
 }
 
+// TESTTryLockRemoteExactWithLeaseClock exposes exact-target conditionalPut with
+// an explicit lease clock for tests that exercise helper-level validation.
+func TESTTryLockRemoteExactWithLeaseClock(ctx context.Context, storage storeapi.Storage, physicalPath, hint string, clock LeaseClock) (*RemoteLock, error) {
+	return tryLockRemoteExactWithLeaseClock(ctx, storage, physicalPath, MakeLockMeta(hint), clock, nil)
+}
+
 // TESTStartRenewal exposes the unexported renewal owner for direct testing.
 func TESTStartRenewal(ctx context.Context, l *RemoteLock, onLeaseLost func()) {
 	l.startRenewal(ctx, onLeaseLost)

@@ -152,6 +152,10 @@ func tryLockRemoteExactWithLeaseClock(
 	clock LeaseClock,
 	verify func(VerifyWriteContext) error,
 ) (*RemoteLock, error) {
+	if clock == nil {
+		return nil, errors.New("lease clock is required")
+	}
+
 	writer := conditionalPut{
 		Target:  physicalPath,
 		Content: makeLockContent(physicalPath, meta),
