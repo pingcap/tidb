@@ -73,6 +73,13 @@ type RefreshMaterializedViewExec struct {
 	done                  bool
 }
 
+// CompareMaterializedViewExec executes "COMPARE MATERIALIZED VIEW" as a utility-style statement.
+type CompareMaterializedViewExec struct {
+	exec.BaseExecutor
+	stmt *ast.CompareMaterializedViewStmt
+	done bool
+}
+
 // CancelMaterializedViewJobExec executes "CANCEL MATERIALIZED VIEW ... JOB" as a utility-style statement.
 type CancelMaterializedViewJobExec struct {
 	exec.BaseExecutor
@@ -516,8 +523,8 @@ func checkCancelMaterializedViewJobPrivilege(
 	sqlExec sqlexec.SQLExecutor,
 	stmt *ast.CancelMaterializedViewJobStmt,
 ) error {
-	if stmt == nil {
-		return errors.New("cancel materialized view job: missing statement")
+	if err := validateCancelMaterializedViewJobStmt(stmt); err != nil {
+		return err
 	}
 	pm := privilege.GetPrivilegeManager(ctx)
 	user := ctx.GetSessionVars().User
@@ -533,18 +540,116 @@ func checkCancelMaterializedViewJobPrivilege(
 	switch stmt.Tp {
 	case ast.CancelMaterializedViewJobTypeRefresh:
 		dbName, tableName, found, err = resolveCancelRefreshJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return cancelMaterializedViewJobNotRunningUserError(stmt)
+		}
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.OperateViewPriv) {
+			return nil
+		}
+		return cancelMaterializedViewJobPrecheckUserError(stmt,
+			plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName))
 	case ast.CancelMaterializedViewJobTypeLogPurge:
 		dbName, tableName, found, err = resolveCancelPurgeJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return cancelMaterializedViewJobNotRunningUserError(stmt)
+		}
+		baseTable, err := is.TableByName(kctx, pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := checkOperateViewOnAnyDependentMView(ctx, is, baseTable.Meta()); err != nil {
+			return cancelMaterializedViewJobPrecheckUserError(stmt, err)
+		}
+		return nil
 	default:
 		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
 	}
-	if err != nil || !found {
-		return err
-	}
-	if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.AlterPriv) {
+}
+
+func checkOperateViewOnAnyDependentMView(
+	ctx sessionctx.Context,
+	is infoschema.InfoSchema,
+	baseTableMeta *model.TableInfo,
+) error {
+	pm := privilege.GetPrivilegeManager(ctx)
+	user := ctx.GetSessionVars().User
+	if pm == nil || user == nil {
 		return nil
 	}
-	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, tableName)
+
+	var lastTableName string
+	if baseTableMeta != nil {
+		lastTableName = baseTableMeta.Name.L
+	}
+	if baseTableMeta == nil || baseTableMeta.MaterializedViewBase == nil || len(baseTableMeta.MaterializedViewBase.MViewIDs) == 0 {
+		return errors.NewNoStackErrorf(
+			"no dependent materialized view found for materialized view log on table %s",
+			lastTableName,
+		)
+	}
+
+	for _, id := range baseTableMeta.MaterializedViewBase.MViewIDs {
+		mvTable, ok := is.TableByID(context.Background(), id)
+		if !ok || mvTable.Meta().MaterializedView == nil {
+			continue
+		}
+		dbInfo, ok := infoschema.SchemaByTable(is, mvTable.Meta())
+		if !ok {
+			continue
+		}
+		mvName := mvTable.Meta().Name.L
+		lastTableName = mvName
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbInfo.Name.L, mvName, "", mysql.OperateViewPriv) {
+			return nil
+		}
+	}
+	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, lastTableName)
+}
+
+func checkRefreshMaterializedViewBaseTableSelect(
+	ctx sessionctx.Context,
+	is infoschema.InfoSchema,
+	mvInfo *model.MaterializedViewInfo,
+) error {
+	sessVars := ctx.GetSessionVars()
+	if sessVars.InMaterializedViewMaintenance {
+		if !sessVars.InRestrictedSQL {
+			return plannererrors.ErrInternal.GenWithStack(
+				"materialized view maintenance should only run in restricted SQL mode",
+			)
+		}
+		return nil
+	}
+	if sessVars.InRestrictedSQL {
+		return nil
+	}
+
+	pm := privilege.GetPrivilegeManager(ctx)
+	user := sessVars.User
+	if pm == nil || user == nil || mvInfo == nil {
+		return nil
+	}
+	for _, id := range mvInfo.BaseTableIDs {
+		baseTable, ok := is.TableByID(context.Background(), id)
+		if !ok {
+			continue
+		}
+		dbInfo, ok := infoschema.SchemaByTable(is, baseTable.Meta())
+		if !ok {
+			continue
+		}
+		baseName := baseTable.Meta().Name.L
+		if !pm.RequestVerification(sessVars.ActiveRoles, dbInfo.Name.L, baseName, "", mysql.SelectPriv) {
+			return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, baseName)
+		}
+	}
+	return nil
 }
 
 func resolveCancelRefreshJobPrivilegeTarget(
@@ -1490,11 +1595,89 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 }
 
 // Next implements the Executor Next interface.
+func (e *CompareMaterializedViewExec) Next(_ context.Context, _ *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	_, tblInfo, err := e.resolveCompareMaterializedViewTarget()
+	if err != nil {
+		return err
+	}
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
+		return err
+	}
+	if err := e.checkCompareMaterializedViewOutputTableNotExists(); err != nil {
+		return err
+	}
+	return errors.NewNoStackError("COMPARE MATERIALIZED VIEW is not implemented")
+}
+
+func (e *CompareMaterializedViewExec) checkCompareMaterializedViewOutputTableNotExists() error {
+	if e.stmt.OutputTable == nil {
+		return nil
+	}
+
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemaName := e.stmt.OutputTable.Schema
+	if schemaName.O == "" {
+		if e.Ctx().GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		e.stmt.OutputTable.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	if is.TableExists(schemaName, e.stmt.OutputTable.Name) {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: e.stmt.OutputTable.Name})
+	}
+	return nil
+}
+
+func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewTarget() (pmodel.CIStr, *model.TableInfo, error) {
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemaName := e.stmt.ViewName.Schema
+	if schemaName.O == "" {
+		if e.Ctx().GetSessionVars().CurrentDB == "" {
+			return pmodel.CIStr{}, nil, errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		e.stmt.ViewName.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return pmodel.CIStr{}, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	tbl, err := is.TableByName(context.Background(), schemaName, e.stmt.ViewName.Name)
+	if err != nil {
+		return pmodel.CIStr{}, nil, err
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo.MaterializedView == nil {
+		return pmodel.CIStr{}, nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, e.stmt.ViewName.Name.O, "MATERIALIZED VIEW")
+	}
+	if len(tblInfo.MaterializedView.SQLContent) == 0 {
+		return pmodel.CIStr{}, nil, errors.New("compare materialized view: invalid select sql")
+	}
+	if err := checkRefreshMaterializedViewReady(schemaName, tblInfo); err != nil {
+		return pmodel.CIStr{}, nil, err
+	}
+	return schemaName, tblInfo, nil
+}
+
+// Next implements the Executor Next interface.
 func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
 	e.done = true
+
+	if err := validateCancelMaterializedViewJobStmt(e.stmt); err != nil {
+		return err
+	}
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	requester := formatMVManualCancelRequester(e.Ctx().GetSessionVars().User)
@@ -1520,10 +1703,7 @@ func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk
 			return err
 		}
 		if !applied {
-			return errors.NewNoStackErrorf(
-				"cannot cancel materialized view refresh job %d: job not running, not found, or cancel already requested",
-				e.stmt.JobID,
-			)
+			return cancelMaterializedViewJobNotRunningUserError(e.stmt)
 		}
 	case ast.CancelMaterializedViewJobTypeLogPurge:
 		applied, err = requestPurgeHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
@@ -1531,15 +1711,54 @@ func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk
 			return err
 		}
 		if !applied {
-			return errors.NewNoStackErrorf(
-				"cannot cancel materialized view log purge job %d: job not running, not found, or cancel already requested",
-				e.stmt.JobID,
-			)
+			return cancelMaterializedViewJobNotRunningUserError(e.stmt)
 		}
 	default:
 		return errors.Errorf("cancel materialized view job: unsupported type %d", e.stmt.Tp)
 	}
 	return nil
+}
+
+func validateCancelMaterializedViewJobStmt(stmt *ast.CancelMaterializedViewJobStmt) error {
+	if stmt == nil {
+		return errors.New("cancel materialized view job: missing statement")
+	}
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh, ast.CancelMaterializedViewJobTypeLogPurge:
+		return nil
+	default:
+		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
+	}
+}
+
+func cancelMaterializedViewJobPrecheckUserError(stmt *ast.CancelMaterializedViewJobStmt, cause error) error {
+	logutil.BgLogger().Warn("cannot cancel materialized view job because privilege target check failed",
+		zap.Int64("jobID", stmt.JobID),
+		zap.Uint8("type", uint8(stmt.Tp)),
+		zap.Error(cause))
+	return cancelMaterializedViewJobUserError(stmt)
+}
+
+func cancelMaterializedViewJobNotRunningUserError(stmt *ast.CancelMaterializedViewJobStmt) error {
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		return errors.NewNoStackErrorf("cannot cancel materialized view refresh job %d: job not running, not found, or cancel already requested", stmt.JobID)
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d: job not running, not found, or cancel already requested", stmt.JobID)
+	default:
+		return errors.Errorf("cancel materialized view job: unsupported type %d", stmt.Tp)
+	}
+}
+
+func cancelMaterializedViewJobUserError(stmt *ast.CancelMaterializedViewJobStmt) error {
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		return errors.NewNoStackErrorf("cannot cancel materialized view refresh job %d", stmt.JobID)
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d", stmt.JobID)
+	default:
+		return errors.Errorf("cancel materialized view job: unsupported type %d", stmt.Tp)
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -1566,6 +1785,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	schemaName, baseTableMeta, mlogName, mlogID, mlogInfo, err := e.resolvePurgeMaterializedViewLogMeta(s)
 	if err != nil {
+		return err
+	}
+	if err := checkOperateViewOnAnyDependentMView(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), baseTableMeta); err != nil {
 		return err
 	}
 	releaseCtx := kctx
@@ -3108,6 +3330,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	schemaName, tblInfo, err := e.resolveRefreshMaterializedViewTarget(s)
 	if err != nil {
+		return err
+	}
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
 		return err
 	}
 	reportRefreshFailed := tblInfo.MaterializedView != nil && tblInfo.MaterializedView.AlertRefreshFailed

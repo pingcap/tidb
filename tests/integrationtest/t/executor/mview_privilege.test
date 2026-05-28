@@ -1,0 +1,358 @@
+# TestMaterializedViewPrivilege
+
+drop database if exists mview_privilege_test;
+create database mview_privilege_test;
+use mview_privilege_test;
+
+create table t (a int not null, b int not null);
+insert into t values (1, 10), (1, 5), (2, 7);
+create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t group by a;
+insert into t values (3, 4);
+
+create table t_hidden (a int not null, b int not null);
+insert into t_hidden values (10, 100);
+create materialized view log on t_hidden (a, b) purge next date_add(now(), interval 1 hour);
+
+show privileges;
+
+drop role if exists r_operate;
+create role r_operate;
+grant operate view on mview_privilege_test.mv to r_operate;
+grant select on mview_privilege_test.t to r_operate;
+create user 'u_role'@'%';
+grant r_operate to 'u_role'@'%';
+set default role r_operate to 'u_role'@'%';
+
+create user 'u_show_mv'@'%';
+create user 'u_show_create'@'%';
+create user 'u_show_log'@'%';
+create user 'u_refresh_select'@'%';
+grant show view on mview_privilege_test.mv to 'u_show_mv'@'%';
+grant show view, select on mview_privilege_test.mv to 'u_show_create'@'%';
+grant select on mview_privilege_test.t to 'u_show_log'@'%';
+grant operate view on mview_privilege_test.mv to 'u_refresh_select'@'%';
+grant select on mview_privilege_test.t to 'u_refresh_select'@'%';
+
+create user 'u_db_refresh'@'%';
+grant operate view on mview_privilege_test.* to 'u_db_refresh'@'%';
+grant select on mview_privilege_test.t to 'u_db_refresh'@'%';
+show grants for 'u_db_refresh'@'%';
+
+create user 'u_compare_none'@'%';
+create user 'u_compare_operate'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_operate'@'%';
+create user 'u_compare_no_create'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_no_create'@'%';
+grant select on mview_privilege_test.t to 'u_compare_no_create'@'%';
+create user 'u_compare_no_insert'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_no_insert'@'%';
+grant select on mview_privilege_test.t to 'u_compare_no_insert'@'%';
+grant create on mview_privilege_test.* to 'u_compare_no_insert'@'%';
+create user 'u_compare_output_exists'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_output_exists'@'%';
+grant select on mview_privilege_test.t to 'u_compare_output_exists'@'%';
+grant create, insert on mview_privilege_test.* to 'u_compare_output_exists'@'%';
+create table mv_compare_output_exists (a int);
+
+create user 'u_purge_sel'@'%';
+create user 'u_purge_op'@'%';
+create user 'u_purge_global'@'%';
+grant select on mview_privilege_test.t to 'u_purge_sel'@'%';
+grant operate view on mview_privilege_test.mv to 'u_purge_op'@'%';
+grant operate view on *.* to 'u_purge_global'@'%';
+
+create user 'u_dml'@'%';
+grant select, insert, update, delete on mview_privilege_test.* to 'u_dml'@'%';
+
+connect (u_show_mv, localhost, u_show_mv,,mview_privilege_test);
+connection u_show_mv;
+--replace_column 1 <mview_id>
+show materialized view mv remain_logs;
+--replace_column 1 <mview_id>
+show materialized views from mview_privilege_test;
+-- error 1142
+show create materialized view mv;
+disconnect u_show_mv;
+
+connect (u_show_create, localhost, u_show_create,,mview_privilege_test);
+connection u_show_create;
+show create materialized view mv;
+disconnect u_show_create;
+
+connection default;
+revoke select on mview_privilege_test.mv from 'u_show_create'@'%';
+show grants for 'u_show_create'@'%';
+connect (u_show_create, localhost, u_show_create,,mview_privilege_test);
+connection u_show_create;
+--replace_column 1 <mview_id>
+show materialized view mv remain_logs;
+-- error 1142
+show create materialized view mv;
+disconnect u_show_create;
+
+connection default;
+grant select on mview_privilege_test.mv to 'u_show_create'@'%';
+revoke show view on mview_privilege_test.mv from 'u_show_create'@'%';
+show grants for 'u_show_create'@'%';
+connect (u_show_create, localhost, u_show_create,,mview_privilege_test);
+connection u_show_create;
+-- error 1142
+--replace_column 1 <mview_id>
+show materialized view mv remain_logs;
+-- error 1142
+show create materialized view mv;
+disconnect u_show_create;
+
+connect (u_show_log, localhost, u_show_log,,mview_privilege_test);
+connection u_show_log;
+--replace_column 1 <mlog_id> 3 <base_table_id>
+show materialized view logs from mview_privilege_test;
+--replace_column 1 <mlog_id> 3 <base_table_id>
+show materialized view logs from mview_privilege_test like '$mlog$%';
+show materialized view logs from mview_privilege_test like 'mview_privilege_test.$mlog$%';
+--replace_column 1 <mlog_id> 3 <base_table_id>
+show materialized view log on t wait_purge;
+show create materialized view log on t;
+-- error 1142
+show materialized view log on t_hidden wait_purge;
+disconnect u_show_log;
+
+connection default;
+revoke select on mview_privilege_test.t from 'u_show_log'@'%';
+show grants for 'u_show_log'@'%';
+connect (u_show_log, localhost, u_show_log,,);
+connection u_show_log;
+show materialized views from mview_privilege_test;
+--replace_column 1 <mlog_id> 3 <base_table_id>
+show materialized view logs from mview_privilege_test;
+-- error 1142
+show materialized view log on mview_privilege_test.t wait_purge;
+-- error 1142
+show create materialized view log on mview_privilege_test.t;
+disconnect u_show_log;
+
+connect (u_role, localhost, u_role,,mview_privilege_test);
+connection u_role;
+refresh materialized view mv complete delta apply;
+disconnect u_role;
+
+connection default;
+revoke select on mview_privilege_test.t from 'u_refresh_select'@'%';
+show grants for 'u_refresh_select'@'%';
+connect (u_refresh_select, localhost, u_refresh_select,,mview_privilege_test);
+connection u_refresh_select;
+-- error 1142
+refresh materialized view mv complete delta apply;
+disconnect u_refresh_select;
+
+insert into t values (4, 8);
+
+connect (u_db_refresh, localhost, u_db_refresh,,mview_privilege_test);
+connection u_db_refresh;
+refresh materialized view mv complete delta apply;
+-- error 1142
+refresh materialized view mv complete delta apply dry run;
+disconnect u_db_refresh;
+
+connection default;
+grant show view on mview_privilege_test.mv to 'u_db_refresh'@'%';
+connect (u_db_refresh, localhost, u_db_refresh,,mview_privilege_test);
+connection u_db_refresh;
+refresh materialized view mv complete delta apply dry run;
+disconnect u_db_refresh;
+
+connection default;
+revoke operate view on mview_privilege_test.* from 'u_db_refresh'@'%';
+show grants for 'u_db_refresh'@'%';
+connect (u_db_refresh, localhost, u_db_refresh,,mview_privilege_test);
+connection u_db_refresh;
+-- error 1142
+refresh materialized view mv complete delta apply;
+disconnect u_db_refresh;
+
+connect (u_compare_none, localhost, u_compare_none,,);
+connection u_compare_none;
+-- error 1142
+compare materialized view mview_privilege_test.mv as of timestamp '2026-05-21 10:00:00';
+disconnect u_compare_none;
+
+connect (u_compare_operate, localhost, u_compare_operate,,mview_privilege_test);
+connection u_compare_operate;
+-- error 1142
+compare materialized view mv as of timestamp '2026-05-21 10:00:00';
+disconnect u_compare_operate;
+
+connect (u_compare_no_create, localhost, u_compare_no_create,,mview_privilege_test);
+connection u_compare_no_create;
+-- error 1142
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+disconnect u_compare_no_create;
+
+connect (u_compare_no_insert, localhost, u_compare_no_insert,,mview_privilege_test);
+connection u_compare_no_insert;
+-- error 1142
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+disconnect u_compare_no_insert;
+
+connect (u_compare_output_exists, localhost, u_compare_output_exists,,mview_privilege_test);
+connection u_compare_output_exists;
+-- error 1050
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output_exists;
+disconnect u_compare_output_exists;
+
+connection default;
+insert into t values (5, 9);
+
+connect (u_dml, localhost, u_dml,,mview_privilege_test);
+connection u_dml;
+-- error 1288
+insert into mv values (4, 1, 1);
+-- error 1288
+update mv set s = 1;
+-- error 1288
+delete from mv;
+-- error 1288
+insert into `$mlog$t` values (1, 2, 'I', 1);
+-- error 1288
+update `$mlog$t` set a = 1;
+-- error 1288
+delete from `$mlog$t`;
+disconnect u_dml;
+
+connect (u_purge_sel, localhost, u_purge_sel,,mview_privilege_test);
+connection u_purge_sel;
+-- error 1142
+purge materialized view log on t;
+disconnect u_purge_sel;
+
+connect (u_purge_op, localhost, u_purge_op,,mview_privilege_test);
+connection u_purge_op;
+purge materialized view log on t;
+disconnect u_purge_op;
+
+connection default;
+revoke operate view on mview_privilege_test.mv from 'u_purge_op'@'%';
+show grants for 'u_purge_op'@'%';
+connect (u_purge_op, localhost, u_purge_op,,);
+connection u_purge_op;
+-- error 1142
+purge materialized view log on mview_privilege_test.t;
+disconnect u_purge_op;
+
+connection default;
+connect (u_purge_global, localhost, u_purge_global,,mview_privilege_test);
+connection u_purge_global;
+purge materialized view log on t;
+disconnect u_purge_global;
+
+connection default;
+revoke operate view on *.* from 'u_purge_global'@'%';
+show grants for 'u_purge_global'@'%';
+connect (u_purge_global, localhost, u_purge_global,,);
+connection u_purge_global;
+-- error 1142
+purge materialized view log on mview_privilege_test.t;
+disconnect u_purge_global;
+
+connection default;
+drop materialized view mv;
+
+connect (u_purge_global, localhost, u_purge_global,,);
+connection u_purge_global;
+-- error 1105
+purge materialized view log on mview_privilege_test.t;
+disconnect u_purge_global;
+
+connection default;
+create table t_revoke_ddl (id int not null, v int not null);
+insert into t_revoke_ddl values (1, 10), (2, 20);
+create materialized view log on t_revoke_ddl (id, v) purge next date_add(now(), interval 1 hour);
+create materialized view mv_revoke_ddl (id, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select id, sum(v), count(1) from t_revoke_ddl group by id;
+
+create table t_revoke_create_mlog (id int not null, v int not null);
+insert into t_revoke_create_mlog values (1, 10);
+
+create user 'u_create_mv'@'%';
+grant create view on mview_privilege_test.* to 'u_create_mv'@'%';
+grant select on mview_privilege_test.t_revoke_ddl to 'u_create_mv'@'%';
+revoke create view on mview_privilege_test.* from 'u_create_mv'@'%';
+show grants for 'u_create_mv'@'%';
+connect (u_create_mv, localhost, u_create_mv,,mview_privilege_test);
+connection u_create_mv;
+-- error 1142
+create materialized view mv_revoke_create (id, s, cnt) as select id, sum(v), count(1) from t_revoke_ddl group by id;
+disconnect u_create_mv;
+
+connection default;
+create user 'u_create_mlog'@'%';
+grant create on mview_privilege_test.* to 'u_create_mlog'@'%';
+grant select on mview_privilege_test.t_revoke_create_mlog to 'u_create_mlog'@'%';
+revoke create on mview_privilege_test.* from 'u_create_mlog'@'%';
+show grants for 'u_create_mlog'@'%';
+connect (u_create_mlog, localhost, u_create_mlog,,mview_privilege_test);
+connection u_create_mlog;
+-- error 1142
+create materialized view log on t_revoke_create_mlog (id, v);
+disconnect u_create_mlog;
+
+connection default;
+create user 'u_alter_mv'@'%';
+grant alter on mview_privilege_test.mv_revoke_ddl to 'u_alter_mv'@'%';
+revoke alter on mview_privilege_test.mv_revoke_ddl from 'u_alter_mv'@'%';
+show grants for 'u_alter_mv'@'%';
+connect (u_alter_mv, localhost, u_alter_mv,,);
+connection u_alter_mv;
+-- error 1142
+alter materialized view mview_privilege_test.mv_revoke_ddl refresh next date_add(now(), interval 1 hour);
+disconnect u_alter_mv;
+
+connection default;
+create user 'u_drop_mv'@'%';
+grant drop on mview_privilege_test.mv_revoke_ddl to 'u_drop_mv'@'%';
+revoke drop on mview_privilege_test.mv_revoke_ddl from 'u_drop_mv'@'%';
+show grants for 'u_drop_mv'@'%';
+connect (u_drop_mv, localhost, u_drop_mv,,);
+connection u_drop_mv;
+-- error 1142
+drop materialized view mview_privilege_test.mv_revoke_ddl;
+disconnect u_drop_mv;
+
+connection default;
+create user 'u_mlog_select'@'%';
+grant select on mview_privilege_test.t_revoke_ddl to 'u_mlog_select'@'%';
+revoke select on mview_privilege_test.t_revoke_ddl from 'u_mlog_select'@'%';
+show grants for 'u_mlog_select'@'%';
+connect (u_mlog_select, localhost, u_mlog_select,,);
+connection u_mlog_select;
+-- error 1142
+alter materialized view log on mview_privilege_test.t_revoke_ddl purge next date_add(now(), interval 1 hour);
+-- error 1142
+drop materialized view log on mview_privilege_test.t_revoke_ddl;
+disconnect u_mlog_select;
+
+connection default;
+drop user if exists 'u_role'@'%';
+drop role if exists r_operate;
+drop user if exists 'u_show_mv'@'%';
+drop user if exists 'u_show_create'@'%';
+drop user if exists 'u_show_log'@'%';
+drop user if exists 'u_refresh_select'@'%';
+drop user if exists 'u_db_refresh'@'%';
+drop user if exists 'u_compare_none'@'%';
+drop user if exists 'u_compare_operate'@'%';
+drop user if exists 'u_compare_no_create'@'%';
+drop user if exists 'u_compare_no_insert'@'%';
+drop user if exists 'u_compare_output_exists'@'%';
+drop user if exists 'u_purge_sel'@'%';
+drop user if exists 'u_purge_op'@'%';
+drop user if exists 'u_purge_global'@'%';
+drop user if exists 'u_dml'@'%';
+drop user if exists 'u_create_mv'@'%';
+drop user if exists 'u_create_mlog'@'%';
+drop user if exists 'u_alter_mv'@'%';
+drop user if exists 'u_drop_mv'@'%';
+drop user if exists 'u_mlog_select'@'%';
+drop database if exists mview_privilege_test;

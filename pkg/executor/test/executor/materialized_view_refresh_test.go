@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -496,7 +495,7 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 7 1"))
 
-	tk.MustExec("refresh materialized view mv complete")
+	tk.MustExec("refresh materialized view mv complete delta apply")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
 
 	newTSRow := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Rows()
@@ -774,7 +773,7 @@ func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
 		lastAppliedMaintainQuota = maintainMemQuota
 	})
 
-	tk.MustExec("refresh materialized view mv_mv_quota_refresh complete")
+	tk.MustExec("refresh materialized view mv_mv_quota_refresh complete delta apply")
 	require.True(t, applied)
 	require.Equal(t, int64(268435456), lastAppliedMaintainQuota)
 	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
@@ -782,7 +781,7 @@ func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
 	applied = false
 	lastAppliedMemQuotaQuery = 0
 	lastAppliedMaintainQuota = 0
-	mustExecInternal(t, tk, "refresh materialized view mv_mv_quota_refresh complete")
+	mustExecInternal(t, tk, "refresh materialized view mv_mv_quota_refresh complete delta apply")
 	require.True(t, applied)
 	require.Equal(t, int64(268435456), lastAppliedMaintainQuota)
 	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
@@ -880,7 +879,7 @@ func TestMaterializedViewRefreshManualSQLUsesCurrentSessionTiFlashSessionVars(t 
 	prepareRefreshTiFlashSessionVarsForTest(t, tk)
 
 	requireRefreshTiFlashSessionVarsApplied(t, func() {
-		tk.MustExec("refresh materialized view mv_mv_refresh_tiflash_vars complete")
+		tk.MustExec("refresh materialized view mv_mv_refresh_tiflash_vars complete delta apply")
 	}, int64(8), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
 	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
 }
@@ -896,7 +895,7 @@ func TestMaterializedViewRefreshInternalSQLUsesCurrentSessionTiFlashSessionVars(
 	prepareRefreshTiFlashSessionVarsForTest(t, tk)
 
 	requireRefreshTiFlashSessionVarsApplied(t, func() {
-		mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_tiflash_vars complete")
+		mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_tiflash_vars complete delta apply")
 	}, int64(8), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
 	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
 }
@@ -916,7 +915,7 @@ func TestMaterializedViewRefreshManualSQLFailsWhenApplyExecutionSessionVarsFails
 		require.NoError(t, failpoint.Disable(failpointName))
 	})
 
-	err := tk.ExecToErr("refresh materialized view mv_mv_refresh_apply_vars_manual complete")
+	err := tk.ExecToErr("refresh materialized view mv_mv_refresh_apply_vars_manual complete delta apply")
 	require.ErrorContains(t, err, "mock refresh execution session vars apply error")
 }
 
@@ -936,7 +935,7 @@ func TestMaterializedViewRefreshInternalSQLFallsBackWhenApplyExecutionSessionVar
 	})
 
 	tk.MustExec("insert into t_mv_refresh_apply_vars_internal values (3, 30)")
-	mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_apply_vars_internal complete")
+	mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_apply_vars_internal complete delta apply")
 	tk.MustQuery("select * from mv_mv_refresh_apply_vars_internal order by a").Check(testkit.Rows("1 10 1", "2 20 1", "3 30 1"))
 }
 
@@ -956,7 +955,7 @@ func TestMaterializedViewRefreshManualSQLFailsWhenSingleExecutionSessionVarApply
 		require.NoError(t, failpoint.Disable(failpointName))
 	})
 
-	err := tk.ExecToErr("refresh materialized view mv_mv_refresh_single_apply_var_manual complete")
+	err := tk.ExecToErr("refresh materialized view mv_mv_refresh_single_apply_var_manual complete delta apply")
 	require.ErrorContains(t, err, variable.TiDBMaxTiFlashThreads)
 }
 
@@ -978,7 +977,7 @@ func TestMaterializedViewRefreshInternalSQLFallsBackPerVarWhenExecutionSessionVa
 
 	tk.MustExec("insert into t_mv_refresh_single_apply_var_internal values (3, 30)")
 	requireRefreshTiFlashSessionVarsApplied(t, func() {
-		mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_single_apply_var_internal complete")
+		mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_single_apply_var_internal complete delta apply")
 	}, int64(variable.DefTiFlashMaxThreads), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
 	tk.MustQuery("select * from mv_mv_refresh_single_apply_var_internal order by a").Check(testkit.Rows("1 10 1", "2 20 1", "3 30 1"))
 	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
@@ -1133,7 +1132,7 @@ func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) 
 	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = null where MVIEW_ID = %d", mviewID))
 
 	// User SQL refresh should not update NEXT_TIME.
-	tk.MustExec("refresh materialized view mv_internal_next complete")
+	tk.MustExec("refresh materialized view mv_internal_next complete delta apply")
 	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
@@ -1142,7 +1141,7 @@ func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) 
 	)).Check(testkit.Rows("complete delta apply manual"))
 
 	// Internal SQL refresh should update NEXT_TIME by evaluating RefreshNext.
-	mustExecInternal(t, tk, "refresh materialized view mv_internal_next complete")
+	mustExecInternal(t, tk, "refresh materialized view mv_internal_next complete delta apply")
 	tk.MustQuery(fmt.Sprintf(
 		"select NEXT_TIME is not null, NEXT_TIME > UTC_TIMESTAMP() + interval 20 minute, NEXT_TIME < UTC_TIMESTAMP() + interval 2 hour from mysql.tidb_mview_refresh_info where MVIEW_ID = %d",
 		mviewID,
@@ -1174,7 +1173,7 @@ func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *te
 	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = UTC_TIMESTAMP() + interval 3 hour where MVIEW_ID = %d", mviewID))
 
 	// User SQL refresh should keep NEXT_TIME unchanged.
-	tk.MustExec("refresh materialized view mv_internal_start_only complete")
+	tk.MustExec("refresh materialized view mv_internal_start_only complete delta apply")
 	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is not null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
@@ -1183,7 +1182,7 @@ func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *te
 	)).Check(testkit.Rows("complete delta apply manual"))
 
 	// Internal SQL refresh should explicitly set NEXT_TIME = NULL when START WITH exists and NEXT is empty.
-	mustExecInternal(t, tk, "refresh materialized view mv_internal_start_only complete")
+	mustExecInternal(t, tk, "refresh materialized view mv_internal_start_only complete delta apply")
 	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
@@ -1212,7 +1211,7 @@ func TestMaterializedViewRefreshInternalSQLNoScheduleSetsNextTimeNull(t *testing
 
 	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set NEXT_TIME = UTC_TIMESTAMP() + interval 3 hour where MVIEW_ID = %d", mviewID))
 
-	mustExecInternal(t, tk, "refresh materialized view mv_internal_no_schedule complete")
+	mustExecInternal(t, tk, "refresh materialized view mv_internal_no_schedule complete delta apply")
 	tk.MustQuery(fmt.Sprintf("select NEXT_TIME is null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf(
@@ -2055,7 +2054,7 @@ func TestMaterializedViewRefreshFastAsOfTimestampMinMaxUsesTargetSnapshotData(t 
 	tk.MustExec("create materialized view mv_refresh_asof_minmax_data (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_minmax_data group by a")
 
 	tk.MustExec("insert into t_mv_refresh_asof_minmax_data values (1, 10), (1, 20), (1, 30)")
-	tk.MustExec("refresh materialized view mv_refresh_asof_minmax_data complete")
+	tk.MustExec("refresh materialized view mv_refresh_asof_minmax_data complete delta apply")
 	tk.MustQuery("select * from mv_refresh_asof_minmax_data").Check(testkit.Rows("1 3 30 10"))
 
 	tk.MustExec("delete from t_mv_refresh_asof_minmax_data where a = 1 and b = 30")
@@ -2088,7 +2087,7 @@ func TestMaterializedViewRefreshFastAsOfTimestampMinMaxUsesTargetSnapshotSchema(
 	tk.MustExec("create materialized view mv_refresh_asof_minmax_schema (a, cnt, mx, mn) refresh fast as select a, count(1), max(b), min(b) from t_mv_refresh_asof_minmax_schema group by a")
 
 	tk.MustExec("insert into t_mv_refresh_asof_minmax_schema values (1, 10), (1, 20), (1, 30)")
-	tk.MustExec("refresh materialized view mv_refresh_asof_minmax_schema complete")
+	tk.MustExec("refresh materialized view mv_refresh_asof_minmax_schema complete delta apply")
 	tk.MustQuery("select * from mv_refresh_asof_minmax_schema").Check(testkit.Rows("1 3 30 10"))
 
 	tk.MustExec("delete from t_mv_refresh_asof_minmax_schema where a = 1 and b = 30")
@@ -2137,7 +2136,7 @@ func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 	tk.MustExec("create materialized view mv_fast_minmax (a, cnt, mx, mn) refresh fast next date_add(now(), interval 1 hour) as select a, count(1), max(b), min(b) from t_mv_fast_minmax group by a")
 
 	tk.MustExec("insert into t_mv_fast_minmax values (1, 10), (1, 20), (1, 30), (2, 5), (2, 8)")
-	tk.MustExec("refresh materialized view mv_fast_minmax complete")
+	tk.MustExec("refresh materialized view mv_fast_minmax complete delta apply")
 	tk.MustQuery("select * from mv_fast_minmax order by a").Check(testkit.Rows(
 		"1 3 30 10",
 		"2 2 8 5",
@@ -2163,7 +2162,7 @@ func TestMaterializedViewRefreshFastMinMaxRequiresSupportingIndex(t *testing.T) 
 	tk.MustExec("create materialized view mv_fast_minmax_noidx (a, cnt, mx, mn) refresh fast next date_add(now(), interval 1 hour) as select a, count(1), max(b), min(b) from t_mv_fast_minmax_noidx group by a")
 
 	tk.MustExec("insert into t_mv_fast_minmax_noidx values (1, 1, 10), (2, 1, 20)")
-	tk.MustExec("refresh materialized view mv_fast_minmax_noidx complete")
+	tk.MustExec("refresh materialized view mv_fast_minmax_noidx complete delta apply")
 
 	tk.MustExec("alter table t_mv_fast_minmax_noidx alter index idx_a invisible")
 	err := tk.ExecToErr("refresh materialized view mv_fast_minmax_noidx fast")
@@ -2184,7 +2183,7 @@ func TestMaterializedViewRefreshFastNullableAggregatesWithDuplicateCountExpr(t *
 		group by a`)
 
 	tk.MustExec("insert into t_mv_fast_nullable_dup_count values (1, 10), (1, null), (1, 5), (2, null)")
-	tk.MustExec("refresh materialized view mv_fast_nullable_dup_count complete")
+	tk.MustExec("refresh materialized view mv_fast_nullable_dup_count complete delta apply")
 	tk.MustQuery("select a, cnt, cnt_b1, cnt_b2, s, mx, mn from mv_fast_nullable_dup_count order by a").Check(testkit.Rows(
 		"1 3 2 2 15 10 5",
 		"2 1 0 0 <nil> <nil> <nil>",
@@ -2282,7 +2281,7 @@ group by a`)
 	// Keep creator/session semantics and refresh caller semantics different.
 	tk.MustExec("set @@session.sql_mode = ''")
 	tk.MustExec("set @@session.time_zone = '-01:00'")
-	tk.MustExec("refresh materialized view mv complete")
+	tk.MustExec("refresh materialized view mv complete delta apply")
 	tk.MustQuery("select a, s, cnt from mv").Check(testkit.Rows("1 10 1"))
 }
 
@@ -2308,7 +2307,7 @@ func TestMaterializedViewRefreshCompleteFinalizeHistoryRetry(t *testing.T) {
 		require.NoError(t, failpoint.Disable(finalizeFailpoint))
 	}()
 
-	tk.MustExec("refresh materialized view mv complete")
+	tk.MustExec("refresh materialized view mv complete delta apply")
 	tk.MustQuery("select a, s, cnt from mv order by a").Check(testkit.Rows("1 15 2", "2 10 2", "3 4 1"))
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
 		Check(testkit.Rows("success complete delta apply manual 1 1 1"))
@@ -2343,7 +2342,7 @@ func TestMaterializedViewRefreshFinalizeSuccessFailureWithCleanupErrorDoesNotRew
 		require.NoError(t, failpoint.Disable(releaseLockFailpoint))
 	}()
 
-	err = tk.ExecToErr("refresh materialized view mv complete")
+	err = tk.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "advisory lock cleanup invariant violated")
 
@@ -2394,7 +2393,7 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 	go func() {
 		tkRefresh := testkit.NewTestKit(t, store)
 		tkRefresh.MustExec("use test")
-		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete delta apply")
 	}()
 
 	select {
@@ -2459,7 +2458,7 @@ func TestMaterializedViewRefreshRunningHistHeartbeat(t *testing.T) {
 	go func() {
 		tkRefresh := testkit.NewTestKit(t, store)
 		tkRefresh.MustExec("use test")
-		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete delta apply")
 	}()
 
 	var firstHeartbeat string
@@ -2553,7 +2552,7 @@ UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointVal
 	go func() {
 		tkRefresh := testkit.NewTestKit(t, store)
 		tkRefresh.MustExec("use test")
-		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete delta apply")
 	}()
 
 	select {
@@ -2764,7 +2763,7 @@ func TestMaterializedViewRefreshCompleteRefreshInfoCASUpdateAfterConcurrentPreUp
 	go func() {
 		tkRefresh := testkit.NewTestKit(t, store)
 		tkRefresh.MustExec("use test")
-		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete delta apply")
 	}()
 
 	select {
@@ -2825,14 +2824,14 @@ func TestMaterializedViewRefreshCompleteConcurrentNowait(t *testing.T) {
 
 	tkRefresh := testkit.NewTestKit(t, store)
 	tkRefresh.MustExec("use test")
-	err = tkRefresh.ExecToErr("refresh materialized view mv complete")
+	err = tkRefresh.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "NOWAIT")
 
 	tkLocker.MustExec("rollback")
 
 	// After releasing the lock, refresh should succeed.
-	tkRefresh.MustExec("refresh materialized view mv complete")
+	tkRefresh.MustExec("refresh materialized view mv complete delta apply")
 }
 
 func TestMaterializedViewRefreshCompleteMissingRefreshInfoRow(t *testing.T) {
@@ -2850,7 +2849,7 @@ func TestMaterializedViewRefreshCompleteMissingRefreshInfoRow(t *testing.T) {
 	mviewID := mvTable.Meta().ID
 
 	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID))
-	err = tk.ExecToErr("refresh materialized view mv complete")
+	err = tk.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "tidb_mview_refresh_info")
 }
@@ -2865,7 +2864,7 @@ func TestMaterializedViewRefreshWithAsyncModeComplete(t *testing.T) {
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 
 	tk.MustExec("insert into t values (2, 3), (3, 4)")
-	err := tk.ExecToErr("refresh materialized view mv with async mode complete")
+	err := tk.ExecToErr("refresh materialized view mv with async mode complete delta apply")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "WITH ASYNC MODE is not supported yet")
 }
@@ -3094,7 +3093,7 @@ func TestMaterializedViewRefreshEarlyFailureWritesHist(t *testing.T) {
 		require.NoError(t, failpoint.Disable(failpointName))
 	}()
 
-	err = tk.ExecToErr("refresh materialized view mv complete")
+	err = tk.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "mock early refresh failure")
 
@@ -3461,7 +3460,7 @@ func TestMaterializedViewRefreshCompleteFailureKeepsRefreshInfoReadTSO(t *testin
 		require.NoError(t, failpoint.Disable(finalizeFailpoint))
 	}()
 
-	err = tk.ExecToErr("refresh materialized view mv complete")
+	err = tk.ExecToErr("refresh materialized view mv complete delta apply")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "Duplicate")
 
@@ -3531,7 +3530,7 @@ func TestMaterializedViewRefreshCompleteWithConstraintCheckInPlacePessimisticOff
 	tk.MustQuery("select @@tidb_constraint_check_in_place_pessimistic").Check(testkit.Rows("0"))
 }
 
-func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
+func TestMaterializedViewRefreshRequiresOperateViewPrivilege(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3545,12 +3544,68 @@ func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
 	tkUser := testkit.NewTestKit(t, store)
 	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_refresh_u", Hostname: "%"}, nil, nil, nil))
 
-	err := tkUser.ExecToErr("refresh materialized view test.mv complete")
+	err := tkUser.ExecToErr("refresh materialized view test.mv complete delta apply")
 	require.Error(t, err)
-	require.ErrorContains(t, err, "ALTER command denied")
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
 
-	tk.MustExec("grant alter on test.mv to 'mv_refresh_u'@'%'")
-	tkUser.MustExec("refresh materialized view test.mv complete")
+	tk.MustExec("grant operate view on test.mv to 'mv_refresh_u'@'%'")
+	err = tkUser.ExecToErr("refresh materialized view test.mv complete delta apply")
+	require.ErrorContains(t, err, "SELECT command denied")
+
+	tk.MustExec("grant select on test.t to 'mv_refresh_u'@'%'")
+	tkUser.MustExec("refresh materialized view test.mv complete delta apply")
+
+	err = tkUser.ExecToErr("refresh materialized view test.mv complete delta apply dry run")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
+
+	tk.MustExec("grant show view on test.mv to 'mv_refresh_u'@'%'")
+	rows := tkUser.MustQuery("refresh materialized view test.mv complete delta apply dry run").Rows()
+	dryRunOutput := fmt.Sprint(rows)
+	require.Contains(t, dryRunOutput, "INSERT_HIST_RUNNING")
+	require.Contains(t, dryRunOutput, "FINALIZE_HIST")
+}
+
+func TestCompareMaterializedViewPrivilegeSkeleton(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_priv (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_priv values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_compare_priv (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_priv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_priv group by a")
+	tk.MustExec("create user 'mv_compare_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'mv_compare_u'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_compare_u", Hostname: "%"}, nil, nil, nil))
+
+	compareSQL := "compare materialized view test.mv_compare_priv as of timestamp '2026-05-21 10:00:00'"
+	err := tkUser.ExecToErr(compareSQL)
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
+
+	tk.MustExec("grant operate view on test.mv_compare_priv to 'mv_compare_u'@'%'")
+	err = tkUser.QueryToErr(compareSQL)
+	require.ErrorContains(t, err, "SELECT command denied")
+
+	tk.MustExec("grant select on test.t_compare_priv to 'mv_compare_u'@'%'")
+	err = tkUser.QueryToErr(compareSQL)
+	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+
+	outputSQL := compareSQL + " output into table test.mv_compare_priv_diff"
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "CREATE command denied")
+
+	tk.MustExec("grant create on test.* to 'mv_compare_u'@'%'")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "INSERT command denied")
+
+	tk.MustExec("grant insert on test.* to 'mv_compare_u'@'%'")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+
+	tk.MustExec("create table mv_compare_priv_diff (a int)")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "Table 'test.mv_compare_priv_diff' already exists")
 }
 
 func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
@@ -3586,7 +3641,7 @@ func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
 	go func() {
 		tkRefresh := testkit.NewTestKit(t, store)
 		tkRefresh.MustExec("use test")
-		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_refresh_cancel_watch complete")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_refresh_cancel_watch complete delta apply")
 	}()
 
 	require.Eventually(t, func() bool {
@@ -3670,7 +3725,7 @@ func TestCancelMaterializedViewRefreshJob(t *testing.T) {
 	go func() {
 		tkRefresh := testkit.NewTestKit(t, store)
 		tkRefresh.MustExec("use test")
-		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_refresh_cancel_job complete")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_refresh_cancel_job complete delta apply")
 	}()
 
 	require.Eventually(t, func() bool {
@@ -3693,8 +3748,9 @@ func TestCancelMaterializedViewRefreshJob(t *testing.T) {
 
 	tkCancel := testkit.NewTestKit(t, store)
 	require.NoError(t, tkCancel.Session().Auth(&auth.UserIdentity{Username: "mv_refresh_cancel_u", Hostname: "%"}, nil, nil, nil))
-	tkCancel.MustGetErrCode(fmt.Sprintf("cancel materialized view refresh job %s", jobID), errno.ErrTableaccessDenied)
-	tk.MustExec("grant alter on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'")
+	err = tkCancel.ExecToErr(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
+	require.ErrorContains(t, err, "cannot cancel materialized view refresh job")
+	tk.MustExec("grant operate view on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'")
 	tkCancel.MustExec(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
 	time.Sleep(300 * time.Millisecond)
 
@@ -3752,7 +3808,7 @@ func TestMaterializedViewRefreshCancelWatcherStopsAfterTaskFinish(t *testing.T) 
 	})
 
 	tk.MustExec("insert into t_refresh_cancel_watch_stop values (2, 3), (3, 4)")
-	tk.MustExec("refresh materialized view mv_refresh_cancel_watch_stop complete")
+	tk.MustExec("refresh materialized view mv_refresh_cancel_watch_stop complete delta apply")
 
 	require.Greater(t, pollCount.Load(), int32(0))
 	countAfterReturn := pollCount.Load()
