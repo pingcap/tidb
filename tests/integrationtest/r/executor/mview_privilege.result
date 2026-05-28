@@ -1,0 +1,328 @@
+drop database if exists mview_privilege_test;
+create database mview_privilege_test;
+use mview_privilege_test;
+create table t (a int not null, b int not null);
+insert into t values (1, 10), (1, 5), (2, 7);
+create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour);
+create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select a, sum(b), count(1) from t group by a;
+insert into t values (3, 4);
+create table t_hidden (a int not null, b int not null);
+insert into t_hidden values (10, 100);
+create materialized view log on t_hidden (a, b) purge next date_add(now(), interval 1 hour);
+show privileges;
+Privilege	Context	Comment
+Alter	Tables	To alter the table
+Alter routine	Functions,Procedures	To alter or drop stored functions/procedures
+Config	Server Admin	To use SHOW CONFIG and SET CONFIG statements
+Create	Databases,Tables,Indexes	To create new databases and tables
+Create routine	Databases	To use CREATE FUNCTION/PROCEDURE
+Create role	Server Admin	To create new roles
+Create temporary tables	Databases	To use CREATE TEMPORARY TABLE
+Create view	Tables	To create new views
+Create user	Server Admin	To create new users
+Delete	Tables	To delete existing rows
+Drop	Databases,Tables	To drop databases, tables, and views
+Drop role	Server Admin	To drop roles
+Event	Server Admin	To create, alter, drop and execute events
+Execute	Functions,Procedures	To execute stored routines
+File	File access on server	To read and write files on the server
+Grant option	Databases,Tables,Functions,Procedures	To give to other users those privileges you possess
+Index	Tables	To create or drop indexes
+Insert	Tables	To insert data into tables
+Lock tables	Databases	To use LOCK TABLES (together with SELECT privilege)
+Process	Server Admin	To view the plain text of currently executing queries
+Proxy	Server Admin	To make proxy user possible
+Operate view	Tables	To execute materialized view and materialized view log maintenance operations
+References	Databases,Tables	To have references on tables
+Reload	Server Admin	To reload or refresh tables, logs and privileges
+Replication client	Server Admin	To ask where the slave or master servers are
+Replication slave	Server Admin	To read binary log events from the master
+Select	Tables	To retrieve rows from table
+Show databases	Server Admin	To see all databases with SHOW DATABASES
+Show view	Tables	To see views with SHOW CREATE VIEW
+Shutdown	Server Admin	To shut down the server
+Super	Server Admin	To use KILL thread, SET GLOBAL, CHANGE MASTER, etc.
+Trigger	Tables	To use triggers
+Create tablespace	Server Admin	To create/alter/drop tablespaces
+Update	Tables	To update existing rows
+Usage	Server Admin	No privileges - allow connect only
+BACKUP_ADMIN	Server Admin	
+RESTORE_ADMIN	Server Admin	
+SYSTEM_USER	Server Admin	
+SYSTEM_VARIABLES_ADMIN	Server Admin	
+ROLE_ADMIN	Server Admin	
+CONNECTION_ADMIN	Server Admin	
+PLACEMENT_ADMIN	Server Admin	
+DASHBOARD_CLIENT	Server Admin	
+RESTRICTED_TABLES_ADMIN	Server Admin	
+RESTRICTED_STATUS_ADMIN	Server Admin	
+RESTRICTED_VARIABLES_ADMIN	Server Admin	
+RESTRICTED_USER_ADMIN	Server Admin	
+RESTRICTED_CONNECTION_ADMIN	Server Admin	
+RESTRICTED_REPLICA_WRITER_ADMIN	Server Admin	
+RESOURCE_GROUP_ADMIN	Server Admin	
+RESOURCE_GROUP_USER	Server Admin	
+drop role if exists r_operate;
+create role r_operate;
+grant operate view on mview_privilege_test.mv to r_operate;
+grant select on mview_privilege_test.t to r_operate;
+create user 'u_role'@'%';
+grant r_operate to 'u_role'@'%';
+set default role r_operate to 'u_role'@'%';
+create user 'u_show_mv'@'%';
+create user 'u_show_create'@'%';
+create user 'u_show_log'@'%';
+create user 'u_refresh_select'@'%';
+grant show view on mview_privilege_test.mv to 'u_show_mv'@'%';
+grant show view, select on mview_privilege_test.mv to 'u_show_create'@'%';
+grant select on mview_privilege_test.t to 'u_show_log'@'%';
+grant operate view on mview_privilege_test.mv to 'u_refresh_select'@'%';
+grant select on mview_privilege_test.t to 'u_refresh_select'@'%';
+create user 'u_db_refresh'@'%';
+grant operate view on mview_privilege_test.* to 'u_db_refresh'@'%';
+grant select on mview_privilege_test.t to 'u_db_refresh'@'%';
+show grants for 'u_db_refresh'@'%';
+Grants for u_db_refresh@%
+GRANT USAGE ON *.* TO 'u_db_refresh'@'%'
+GRANT OPERATE VIEW ON `mview_privilege_test`.* TO 'u_db_refresh'@'%'
+GRANT SELECT ON `mview_privilege_test`.`t` TO 'u_db_refresh'@'%'
+create user 'u_compare_none'@'%';
+create user 'u_compare_operate'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_operate'@'%';
+create user 'u_compare_no_create'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_no_create'@'%';
+grant select on mview_privilege_test.t to 'u_compare_no_create'@'%';
+create user 'u_compare_no_insert'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_no_insert'@'%';
+grant select on mview_privilege_test.t to 'u_compare_no_insert'@'%';
+grant create on mview_privilege_test.* to 'u_compare_no_insert'@'%';
+create user 'u_compare_output_exists'@'%';
+grant operate view on mview_privilege_test.mv to 'u_compare_output_exists'@'%';
+grant select on mview_privilege_test.t to 'u_compare_output_exists'@'%';
+grant create, insert on mview_privilege_test.* to 'u_compare_output_exists'@'%';
+create table mv_compare_output_exists (a int);
+create user 'u_purge_sel'@'%';
+create user 'u_purge_op'@'%';
+create user 'u_purge_global'@'%';
+grant select on mview_privilege_test.t to 'u_purge_sel'@'%';
+grant operate view on mview_privilege_test.mv to 'u_purge_op'@'%';
+grant operate view on *.* to 'u_purge_global'@'%';
+create user 'u_dml'@'%';
+grant select, insert, update, delete on mview_privilege_test.* to 'u_dml'@'%';
+show materialized view mv remain_logs;
+mview_id	mview_name	pending_rows
+<mview_id>	mv	1
+show materialized views from mview_privilege_test;
+mview_id	mview_name
+<mview_id>	mv
+show create materialized view mv;
+Error 1142 (42000): SELECT command denied to user 'u_show_mv'@'%' for table 'mv'
+show create materialized view mv;
+Materialized View	Create Materialized View	character_set_client	collation_connection
+mv	CREATE MATERIALIZED VIEW `mv` (`a`, `s`, `cnt`) REFRESH FAST NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR) AS SELECT `a`,SUM(`b`),COUNT(1) FROM `mview_privilege_test`.`t` GROUP BY `a`	utf8mb4	utf8mb4_bin
+revoke select on mview_privilege_test.mv from 'u_show_create'@'%';
+show grants for 'u_show_create'@'%';
+Grants for u_show_create@%
+GRANT USAGE ON *.* TO 'u_show_create'@'%'
+GRANT SHOW VIEW ON `mview_privilege_test`.`mv` TO 'u_show_create'@'%'
+show materialized view mv remain_logs;
+mview_id	mview_name	pending_rows
+<mview_id>	mv	1
+show create materialized view mv;
+Error 1142 (42000): SELECT command denied to user 'u_show_create'@'%' for table 'mv'
+grant select on mview_privilege_test.mv to 'u_show_create'@'%';
+revoke show view on mview_privilege_test.mv from 'u_show_create'@'%';
+show grants for 'u_show_create'@'%';
+Grants for u_show_create@%
+GRANT USAGE ON *.* TO 'u_show_create'@'%'
+GRANT SELECT ON `mview_privilege_test`.`mv` TO 'u_show_create'@'%'
+show materialized view mv remain_logs;
+Error 1142 (42000): SHOW VIEW command denied to user 'u_show_create'@'%' for table 'mv'
+show create materialized view mv;
+Error 1142 (42000): SHOW VIEW command denied to user 'u_show_create'@'%' for table 'mv'
+show materialized view logs from mview_privilege_test;
+mlog_id	mlog_name	base_table_id	base_table_name
+<mlog_id>	$mlog$t	<base_table_id>	t
+show materialized view logs from mview_privilege_test like '$mlog$%';
+mlog_id	mlog_name	base_table_id	base_table_name
+<mlog_id>	$mlog$t	<base_table_id>	t
+show materialized view logs from mview_privilege_test like 'mview_privilege_test.$mlog$%';
+mlog_id	mlog_name	base_table_id	base_table_name
+show materialized view log on t wait_purge;
+mlog_id	mlog_name	base_table_id	base_table_name	pending_rows
+<mlog_id>	$mlog$t	<base_table_id>	t	0
+show create materialized view log on t;
+Materialized View Log	Create Materialized View Log
+t	CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`) PURGE NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)
+show materialized view log on t_hidden wait_purge;
+Error 1142 (42000): SELECT command denied to user 'u_show_log'@'%' for table 't_hidden'
+revoke select on mview_privilege_test.t from 'u_show_log'@'%';
+show grants for 'u_show_log'@'%';
+Grants for u_show_log@%
+GRANT USAGE ON *.* TO 'u_show_log'@'%'
+show materialized views from mview_privilege_test;
+mview_id	mview_name
+show materialized view logs from mview_privilege_test;
+mlog_id	mlog_name	base_table_id	base_table_name
+show materialized view log on mview_privilege_test.t wait_purge;
+Error 1142 (42000): SELECT command denied to user 'u_show_log'@'%' for table 't'
+show create materialized view log on mview_privilege_test.t;
+Error 1142 (42000): SELECT command denied to user 'u_show_log'@'%' for table 't'
+refresh materialized view mv complete delta apply;
+revoke select on mview_privilege_test.t from 'u_refresh_select'@'%';
+show grants for 'u_refresh_select'@'%';
+Grants for u_refresh_select@%
+GRANT USAGE ON *.* TO 'u_refresh_select'@'%'
+GRANT OPERATE VIEW ON `mview_privilege_test`.`mv` TO 'u_refresh_select'@'%'
+refresh materialized view mv complete delta apply;
+Error 1142 (42000): SELECT command denied to user 'u_refresh_select'@'%' for table 't'
+insert into t values (4, 8);
+refresh materialized view mv complete delta apply;
+refresh materialized view mv complete delta apply dry run;
+Error 1142 (42000): SHOW VIEW command denied to user 'u_db_refresh'@'%' for table 'mv'
+grant show view on mview_privilege_test.mv to 'u_db_refresh'@'%';
+refresh materialized view mv complete delta apply dry run;
+refresh steps
+[S01 TXN_BEGIN]
+[S02 LOCK_REFRESH_INFO]
+[S03 INSERT_HIST_RUNNING]
+[S04 DATA_CHANGE_COMPLETE_DELTA_APPLY]
+  MVCompleteDeltaApply | estRows:N/A | task:root | op_offset:0, m_marker_offset:1, q_marker_offset:4, m_group_keys_offset:[1], q_group_keys_offset:[4], m_handle_offset:[1], m_row_offset:[1,2,3], q_row_offset:[4,5,6]
+  └─Projection | estRows:8000.00 | task:root | case(isnull(mview_privilege_test.mv.a), 1, isnull(mview_privilege_test.t.a), 2, 3)->Column#11, mview_privilege_test.mv.a, mview_privilege_test.mv.s, mview_privilege_test.mv.cnt, mview_privilege_test.t.a, Column#5, Column#6
+    └─Selection | estRows:8000.00 | task:root | or(isnull(mview_privilege_test.t.a), or(isnull(mview_privilege_test.mv.a), not(and(nulleq(Column#5, mview_privilege_test.mv.s), eq(Column#6, mview_privilege_test.mv.cnt)))))
+      └─HashJoin | estRows:10000.00 | task:root | full outer join, equal:[eq(mview_privilege_test.t.a, mview_privilege_test.mv.a)]
+        ├─HashAgg(Build) | estRows:8000.00 | task:root | group by:mview_privilege_test.t.a, funcs:sum(Column#13)->Column#5, funcs:count(Column#14)->Column#6, funcs:firstrow(mview_privilege_test.t.a)->mview_privilege_test.t.a
+        │ └─TableReader | estRows:8000.00 | task:root | data:HashAgg_11
+        │   └─HashAgg | estRows:8000.00 | task:cop[tikv] | group by:mview_privilege_test.t.a, funcs:sum(mview_privilege_test.t.b)->Column#13, funcs:count(1)->Column#14
+        │     └─TableFullScan | estRows:10000.00 | task:cop[tikv] | table:t | keep order:false, stats:pseudo
+        └─TableReader(Probe) | estRows:10000.00 | task:root | data:TableFullScan_19
+          └─TableFullScan | estRows:10000.00 | task:cop[tikv] | table:__mvd_m | keep order:false, stats:pseudo
+[S05 PERSIST_REFRESH_INFO]
+[S06 TXN_COMMIT]
+[S07 FINALIZE_HIST]
+revoke operate view on mview_privilege_test.* from 'u_db_refresh'@'%';
+show grants for 'u_db_refresh'@'%';
+Grants for u_db_refresh@%
+GRANT USAGE ON *.* TO 'u_db_refresh'@'%'
+GRANT SELECT ON `mview_privilege_test`.`t` TO 'u_db_refresh'@'%'
+GRANT SHOW VIEW ON `mview_privilege_test`.`mv` TO 'u_db_refresh'@'%'
+refresh materialized view mv complete delta apply;
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_db_refresh'@'%' for table 'mv'
+compare materialized view mview_privilege_test.mv as of timestamp '2026-05-21 10:00:00';
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_compare_none'@'%' for table 'mv'
+compare materialized view mv as of timestamp '2026-05-21 10:00:00';
+Error 1142 (42000): SELECT command denied to user 'u_compare_operate'@'%' for table 't'
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+Error 1142 (42000): CREATE command denied to user 'u_compare_no_create'@'%' for table 'mv_compare_output'
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output;
+Error 1142 (42000): INSERT command denied to user 'u_compare_no_insert'@'%' for table 'mv_compare_output'
+compare materialized view mv as of timestamp '2026-05-21 10:00:00' output into table mv_compare_output_exists;
+Error 1050 (42S01): Table 'mview_privilege_test.mv_compare_output_exists' already exists
+insert into t values (5, 9);
+insert into mv values (4, 1, 1);
+Error 1288 (HY000): The target table mv of the INSERT is not updatable
+update mv set s = 1;
+Error 1288 (HY000): The target table mv of the UPDATE is not updatable
+delete from mv;
+Error 1288 (HY000): The target table mv of the DELETE is not updatable
+insert into `$mlog$t` values (1, 2, 'I', 1);
+Error 1288 (HY000): The target table $mlog$t of the INSERT is not updatable
+update `$mlog$t` set a = 1;
+Error 1288 (HY000): The target table $mlog$t of the UPDATE is not updatable
+delete from `$mlog$t`;
+Error 1288 (HY000): The target table $mlog$t of the DELETE is not updatable
+purge materialized view log on t;
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_sel'@'%' for table 'mv'
+purge materialized view log on t;
+revoke operate view on mview_privilege_test.mv from 'u_purge_op'@'%';
+show grants for 'u_purge_op'@'%';
+Grants for u_purge_op@%
+GRANT USAGE ON *.* TO 'u_purge_op'@'%'
+purge materialized view log on mview_privilege_test.t;
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_op'@'%' for table 'mv'
+purge materialized view log on t;
+revoke operate view on *.* from 'u_purge_global'@'%';
+show grants for 'u_purge_global'@'%';
+Grants for u_purge_global@%
+GRANT USAGE ON *.* TO 'u_purge_global'@'%'
+purge materialized view log on mview_privilege_test.t;
+Error 1142 (42000): OPERATE VIEW command denied to user 'u_purge_global'@'%' for table 'mv'
+drop materialized view mv;
+purge materialized view log on mview_privilege_test.t;
+Error 1105 (HY000): no dependent materialized view found for materialized view log on table t
+create table t_revoke_ddl (id int not null, v int not null);
+insert into t_revoke_ddl values (1, 10), (2, 20);
+create materialized view log on t_revoke_ddl (id, v) purge next date_add(now(), interval 1 hour);
+create materialized view mv_revoke_ddl (id, s, cnt) refresh fast next date_add(now(), interval 1 hour) as
+select id, sum(v), count(1) from t_revoke_ddl group by id;
+create table t_revoke_create_mlog (id int not null, v int not null);
+insert into t_revoke_create_mlog values (1, 10);
+create user 'u_create_mv'@'%';
+grant create view on mview_privilege_test.* to 'u_create_mv'@'%';
+grant select on mview_privilege_test.t_revoke_ddl to 'u_create_mv'@'%';
+revoke create view on mview_privilege_test.* from 'u_create_mv'@'%';
+show grants for 'u_create_mv'@'%';
+Grants for u_create_mv@%
+GRANT USAGE ON *.* TO 'u_create_mv'@'%'
+GRANT SELECT ON `mview_privilege_test`.`t_revoke_ddl` TO 'u_create_mv'@'%'
+create materialized view mv_revoke_create (id, s, cnt) as select id, sum(v), count(1) from t_revoke_ddl group by id;
+Error 1142 (42000): CREATE VIEW command denied to user 'u_create_mv'@'%' for table 'mv_revoke_create'
+create user 'u_create_mlog'@'%';
+grant create on mview_privilege_test.* to 'u_create_mlog'@'%';
+grant select on mview_privilege_test.t_revoke_create_mlog to 'u_create_mlog'@'%';
+revoke create on mview_privilege_test.* from 'u_create_mlog'@'%';
+show grants for 'u_create_mlog'@'%';
+Grants for u_create_mlog@%
+GRANT USAGE ON *.* TO 'u_create_mlog'@'%'
+GRANT SELECT ON `mview_privilege_test`.`t_revoke_create_mlog` TO 'u_create_mlog'@'%'
+create materialized view log on t_revoke_create_mlog (id, v);
+Error 1142 (42000): CREATE command denied to user 'u_create_mlog'@'%' for table 't_revoke_create_mlog'
+create user 'u_alter_mv'@'%';
+grant alter on mview_privilege_test.mv_revoke_ddl to 'u_alter_mv'@'%';
+revoke alter on mview_privilege_test.mv_revoke_ddl from 'u_alter_mv'@'%';
+show grants for 'u_alter_mv'@'%';
+Grants for u_alter_mv@%
+GRANT USAGE ON *.* TO 'u_alter_mv'@'%'
+alter materialized view mview_privilege_test.mv_revoke_ddl refresh next date_add(now(), interval 1 hour);
+Error 1142 (42000): ALTER command denied to user 'u_alter_mv'@'%' for table 'mv_revoke_ddl'
+create user 'u_drop_mv'@'%';
+grant drop on mview_privilege_test.mv_revoke_ddl to 'u_drop_mv'@'%';
+revoke drop on mview_privilege_test.mv_revoke_ddl from 'u_drop_mv'@'%';
+show grants for 'u_drop_mv'@'%';
+Grants for u_drop_mv@%
+GRANT USAGE ON *.* TO 'u_drop_mv'@'%'
+drop materialized view mview_privilege_test.mv_revoke_ddl;
+Error 1142 (42000): DROP command denied to user 'u_drop_mv'@'%' for table 'mv_revoke_ddl'
+create user 'u_mlog_select'@'%';
+grant select on mview_privilege_test.t_revoke_ddl to 'u_mlog_select'@'%';
+revoke select on mview_privilege_test.t_revoke_ddl from 'u_mlog_select'@'%';
+show grants for 'u_mlog_select'@'%';
+Grants for u_mlog_select@%
+GRANT USAGE ON *.* TO 'u_mlog_select'@'%'
+alter materialized view log on mview_privilege_test.t_revoke_ddl purge next date_add(now(), interval 1 hour);
+Error 1142 (42000): SELECT command denied to user 'u_mlog_select'@'%' for table 't_revoke_ddl'
+drop materialized view log on mview_privilege_test.t_revoke_ddl;
+Error 1142 (42000): SELECT command denied to user 'u_mlog_select'@'%' for table 't_revoke_ddl'
+drop user if exists 'u_role'@'%';
+drop role if exists r_operate;
+drop user if exists 'u_show_mv'@'%';
+drop user if exists 'u_show_create'@'%';
+drop user if exists 'u_show_log'@'%';
+drop user if exists 'u_refresh_select'@'%';
+drop user if exists 'u_db_refresh'@'%';
+drop user if exists 'u_compare_none'@'%';
+drop user if exists 'u_compare_operate'@'%';
+drop user if exists 'u_compare_no_create'@'%';
+drop user if exists 'u_compare_no_insert'@'%';
+drop user if exists 'u_compare_output_exists'@'%';
+drop user if exists 'u_purge_sel'@'%';
+drop user if exists 'u_purge_op'@'%';
+drop user if exists 'u_purge_global'@'%';
+drop user if exists 'u_dml'@'%';
+drop user if exists 'u_create_mv'@'%';
+drop user if exists 'u_create_mlog'@'%';
+drop user if exists 'u_alter_mv'@'%';
+drop user if exists 'u_drop_mv'@'%';
+drop user if exists 'u_mlog_select'@'%';
+drop database if exists mview_privilege_test;

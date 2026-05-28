@@ -94,6 +94,7 @@ const (
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Operate_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -157,6 +158,7 @@ const (
 		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Operate_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -171,7 +173,7 @@ const (
 		Table_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
+		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
@@ -1312,7 +1314,7 @@ const (
 	version227 = 227
 
 	// version 228
-	// Add PURGE_CUTOFF_TSO to MV log purge history table.
+	// Add OPERATE VIEW static privilege to grant tables and PURGE_CUTOFF_TSO to MV log purge history table.
 	version228 = 228
 
 	// next version should start with 229
@@ -3455,6 +3457,9 @@ func upgradeToVer228(s sessiontypes.Session, ver int64) {
 	if ver >= version228 {
 		return
 	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `PURGE_CUTOFF_TSO` bigint unsigned DEFAULT NULL AFTER `PURGE_STATUS`", infoschema.ErrColumnExists)
 }
 
@@ -3668,14 +3673,14 @@ func doDMLWorks(s sessiontypes.Session) {
 			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
-			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
 		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
-		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
-			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
+			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
 		    Shutdown_priv,Reload_priv,FILE_priv,Config_priv,Create_Tablespace_Priv,User_attributes,Token_issuer) VALUES
-		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
+		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", null, "")`)
 	}
 
 	// For GLOBAL scoped system variables, insert the initial value

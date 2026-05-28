@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -3538,7 +3537,7 @@ func TestMaterializedViewRefreshCompleteWithConstraintCheckInPlacePessimisticOff
 	tk.MustQuery("select @@tidb_constraint_check_in_place_pessimistic").Check(testkit.Rows("0"))
 }
 
-func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
+func TestMaterializedViewRefreshRequiresOperateViewPrivilege(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3554,10 +3553,66 @@ func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
 
 	err := tkUser.ExecToErr("refresh materialized view test.mv complete delta apply")
 	require.Error(t, err)
-	require.ErrorContains(t, err, "ALTER command denied")
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
 
-	tk.MustExec("grant alter on test.mv to 'mv_refresh_u'@'%'")
+	tk.MustExec("grant operate view on test.mv to 'mv_refresh_u'@'%'")
+	err = tkUser.ExecToErr("refresh materialized view test.mv complete delta apply")
+	require.ErrorContains(t, err, "SELECT command denied")
+
+	tk.MustExec("grant select on test.t to 'mv_refresh_u'@'%'")
 	tkUser.MustExec("refresh materialized view test.mv complete delta apply")
+
+	err = tkUser.ExecToErr("refresh materialized view test.mv complete delta apply dry run")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
+
+	tk.MustExec("grant show view on test.mv to 'mv_refresh_u'@'%'")
+	rows := tkUser.MustQuery("refresh materialized view test.mv complete delta apply dry run").Rows()
+	dryRunOutput := fmt.Sprint(rows)
+	require.Contains(t, dryRunOutput, "INSERT_HIST_RUNNING")
+	require.Contains(t, dryRunOutput, "FINALIZE_HIST")
+}
+
+func TestCompareMaterializedViewPrivilegeSkeleton(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_priv (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_priv values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_compare_priv (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_priv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_priv group by a")
+	tk.MustExec("create user 'mv_compare_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'mv_compare_u'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_compare_u", Hostname: "%"}, nil, nil, nil))
+
+	compareSQL := "compare materialized view test.mv_compare_priv as of timestamp '2026-05-21 10:00:00'"
+	err := tkUser.ExecToErr(compareSQL)
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
+
+	tk.MustExec("grant operate view on test.mv_compare_priv to 'mv_compare_u'@'%'")
+	err = tkUser.QueryToErr(compareSQL)
+	require.ErrorContains(t, err, "SELECT command denied")
+
+	tk.MustExec("grant select on test.t_compare_priv to 'mv_compare_u'@'%'")
+	err = tkUser.QueryToErr(compareSQL)
+	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+
+	outputSQL := compareSQL + " output into table test.mv_compare_priv_diff"
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "CREATE command denied")
+
+	tk.MustExec("grant create on test.* to 'mv_compare_u'@'%'")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "INSERT command denied")
+
+	tk.MustExec("grant insert on test.* to 'mv_compare_u'@'%'")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+
+	tk.MustExec("create table mv_compare_priv_diff (a int)")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "Table 'test.mv_compare_priv_diff' already exists")
 }
 
 func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
@@ -3705,8 +3760,9 @@ func TestCancelMaterializedViewRefreshJob(t *testing.T) {
 
 	tkCancel := testkit.NewTestKit(t, store)
 	require.NoError(t, tkCancel.Session().Auth(&auth.UserIdentity{Username: "mv_refresh_cancel_u", Hostname: "%"}, nil, nil, nil))
-	tkCancel.MustGetErrCode(fmt.Sprintf("cancel materialized view refresh job %s", jobID), errno.ErrTableaccessDenied)
-	tk.MustExec("grant alter on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'")
+	err = tkCancel.ExecToErr(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
+	require.ErrorContains(t, err, "cannot cancel materialized view refresh job")
+	tk.MustExec("grant operate view on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'")
 	requestedCh := waitMVTaskCancelWatcherRequested(t, "refresh-")
 	tkCancel.MustExec(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
 	select {

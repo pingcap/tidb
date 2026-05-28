@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -50,6 +51,14 @@ import (
  ************************************************************************************/
 var (
 	_ exec.Executor = (*GrantExec)(nil)
+
+	materializedViewTablePrivs = mysql.Privileges{
+		mysql.SelectPriv,
+		mysql.ShowViewPriv,
+		mysql.AlterPriv,
+		mysql.DropPriv,
+		mysql.OperateViewPriv,
+	}
 )
 
 // GrantExec executes GrantStmt.
@@ -122,6 +131,11 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
 				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
+			}
+		}
+		if tbl != nil {
+			if err := validateGrantOnSpecialMViewObject(tbl.Meta(), e.Privs); err != nil {
+				return err
 			}
 		}
 	}
@@ -564,6 +578,49 @@ func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, inte
 	return err
 }
 
+func validateGrantOnSpecialMViewObject(tblInfo *metamodel.TableInfo, privs []*ast.PrivElem) error {
+	if tblInfo.MaterializedView == nil && tblInfo.MaterializedViewLog == nil && tblInfo.MaterializedViewShadow == nil {
+		return nil
+	}
+	if tblInfo.MaterializedViewShadow != nil {
+		return errors.Errorf("cannot grant privileges on materialized view shadow table %s", tblInfo.Name.O)
+	}
+
+	allowed := isSafeMViewTableGrantPriv
+	objectType := "materialized view"
+	if tblInfo.MaterializedViewLog != nil {
+		allowed = isSafeMLogTableGrantPriv
+		objectType = "materialized view log"
+	}
+	for _, priv := range privs {
+		if len(priv.Cols) > 0 && priv.Priv != mysql.SelectPriv && priv.Priv != mysql.UsagePriv {
+			return errors.Errorf("cannot grant %s column privilege on %s %s", priv.Priv.String(), objectType, tblInfo.Name.O)
+		}
+		if len(priv.Cols) == 0 && !allowed(priv.Priv) {
+			return errors.Errorf("cannot grant %s privilege on %s %s", priv.Priv.String(), objectType, tblInfo.Name.O)
+		}
+	}
+	return nil
+}
+
+func isSafeMViewTableGrantPriv(priv mysql.PrivilegeType) bool {
+	switch priv {
+	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv:
+		return true
+	default:
+		return materializedViewTablePrivs.Has(priv)
+	}
+}
+
+func isSafeMLogTableGrantPriv(priv mysql.PrivilegeType) bool {
+	switch priv {
+	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv, mysql.SelectPriv:
+		return true
+	default:
+		return false
+	}
+}
+
 // grantColumnLevel manipulates mysql.tables_priv table.
 func (e *GrantExec) grantColumnLevel(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
 	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
@@ -648,17 +705,43 @@ func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder
 			newColumnPriv = addToSet(newColumnPriv, priv.SetString())
 		}
 	} else {
-		for _, p := range mysql.AllTablePrivs {
+		tablePrivs, columnPrivs := tablePrivsForGrantTarget(ctx, db, tbl)
+		for _, p := range tablePrivs {
 			newTablePriv = addToSet(newTablePriv, p.SetString())
 		}
 
-		for _, p := range mysql.AllColumnPrivs {
+		for _, p := range columnPrivs {
 			newColumnPriv = addToSet(newColumnPriv, p.SetString())
 		}
 	}
 
 	sqlescape.MustFormatSQL(sql, `Table_priv=%?, Column_priv=%?, Grantor=%?`, setToString(newTablePriv), setToString(newColumnPriv), ctx.GetSessionVars().User.String())
 	return nil
+}
+
+func tablePrivsForGrantTarget(ctx sessionctx.Context, db string, tbl string) (mysql.Privileges, mysql.Privileges) {
+	allColumnPrivs := mysql.AllColumnPrivs
+	allTablePrivs := mysql.AllTablePrivs
+	is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		return allTablePrivs, allColumnPrivs
+	}
+	tableInfo, err := is.TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tbl))
+	if err != nil {
+		return allTablePrivs, allColumnPrivs
+	}
+
+	meta := tableInfo.Meta()
+	switch {
+	case meta.MaterializedView != nil:
+		return materializedViewTablePrivs, nil
+	case meta.MaterializedViewLog != nil:
+		return mysql.Privileges{mysql.SelectPriv}, nil
+	case meta.MaterializedViewShadow != nil:
+		return nil, nil
+	default:
+		return allTablePrivs, allColumnPrivs
+	}
 }
 
 // composeColumnPrivUpdateForGrant composes update stmt assignment list for column scope privilege update.

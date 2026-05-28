@@ -275,6 +275,18 @@ func (e *RefreshMaterializedViewDryRunExec) generateRows(ctx context.Context) ([
 	if err != nil {
 		return nil, err
 	}
+	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
+	refreshExec := &RefreshMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
+	}
+	_, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
+	if err != nil {
+		return nil, err
+	}
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), is, tblInfo.MaterializedView); err != nil {
+		return nil, err
+	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	steps, err := buildMVRefreshObserveSteps(mode)
