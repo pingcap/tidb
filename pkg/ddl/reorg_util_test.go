@@ -656,6 +656,14 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Equal(t, uint64(math.MaxUint64), scalePredictedBytesByReplicaCount(math.MaxUint64, 2))
 	})
 
+	t.Run("mvcc overhead estimates short and long values", func(t *testing.T) {
+		require.Equal(t, float64(tikvMVCCShortValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, 1))
+		require.Equal(t, float64(tikvMVCCShortValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, tikvMVCCShortValueMaxBytes))
+		require.Equal(t, float64(tikvMVCCLongValueBaseOverheadBytes)+32, estimateTiKVMVCCOverheadBytesPerKV(32, tikvMVCCShortValueMaxBytes+1))
+		require.Equal(t, float64(tikvMVCCEmptyValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, 0))
+		require.Zero(t, estimateTiKVMVCCOverheadBytesPerKV(0, 10))
+	})
+
 	t.Run("prediction columns include generated column dependencies", func(t *testing.T) {
 		sctx := mock.NewContext()
 		intType := types.NewFieldType(mysql.TypeLonglong)
@@ -808,7 +816,7 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Greater(t, keyBytes+valueBytes, keyBytes+float64(40))
 	})
 
-	t.Run("represent prediction exceeds basic prediction for restored data index", func(t *testing.T) {
+	t.Run("basic and represent predictions include mvcc overhead for restored data index", func(t *testing.T) {
 		sctx := mock.NewContext()
 		intType := types.NewFieldType(mysql.TypeLonglong)
 		intType.AddFlag(mysql.NotNullFlag)
@@ -850,10 +858,13 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		})
 		statsTbl := &statistics.Table{HistColl: *statsColl}
 
-		basicBytes := estimateIndexKVBytesPerRowForBasicPrediction(sctx, tblInfo, idxInfo, statsTbl, indexCols)
-		representBytes, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idxInfo, tblInfo.ID, statsTbl)
+		basicBytes, basicMVCCBytes := estimateIndexKVBytesPerRowForBasicPrediction(sctx, tblInfo, idxInfo, statsTbl, indexCols)
+		representBytes, representMVCCBytes, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idxInfo, tblInfo.ID, statsTbl)
 		require.NoError(t, err)
-		require.Greater(t, representBytes, basicBytes)
+		require.Greater(t, basicBytes, float64(tikvMVCCShortValueOverheadBytes))
+		require.Greater(t, representBytes, float64(tikvMVCCShortValueOverheadBytes))
+		require.Positive(t, basicMVCCBytes)
+		require.Positive(t, representMVCCBytes)
 	})
 
 	t.Run("sampled row prediction uses actual row values", func(t *testing.T) {
@@ -894,7 +905,7 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		})
 		statsTbl := &statistics.Table{HistColl: *statsColl}
 
-		representBytes, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idxInfo, tblInfo.ID, statsTbl)
+		representBytes, _, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idxInfo, tblInfo.ID, statsTbl)
 		require.NoError(t, err)
 
 		row := []types.Datum{
@@ -980,9 +991,11 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		}
 		numericPrediction := estimateSampledIndexKVPredictionBytes(numericKVs)
 		require.NoError(t, numericPrediction.Err)
+		expectedNumericMVCC := int64(len(numericKVs) * tikvMVCCShortValueOverheadBytes)
+		require.GreaterOrEqual(t, numericPrediction.PredictedBytes, expectedNumericMVCC)
 		require.Greater(t, numericLogicalBytes, numericPrediction.PredictedBytes)
 		numericRatio := float64(numericPrediction.PredictedBytes) / float64(numericLogicalBytes)
-		require.Less(t, numericRatio, float64(0.6))
+		require.Less(t, numericRatio, float64(0.8))
 
 		restoredTblInfo := &model.TableInfo{
 			ID:    301,
@@ -1024,6 +1037,18 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Greater(t, restoredLogicalBytes, restoredPrediction.PredictedBytes)
 		restoredRatio := float64(restoredPrediction.PredictedBytes) / float64(restoredLogicalBytes)
 		require.Less(t, restoredRatio, float64(1))
+
+		longValueKVs := []sampledIndexKV{{
+			key:   []byte("short-key"),
+			value: []byte(strings.Repeat("v", tikvMVCCShortValueMaxBytes+1)),
+		}}
+		longValuePrediction := estimateSampledIndexKVPredictionBytes(longValueKVs)
+		require.NoError(t, longValuePrediction.Err)
+		longValuePhysicalBytes, err := estimateSampledIndexKVPhysicalBytes(longValueKVs)
+		require.NoError(t, err)
+		require.Equal(t,
+			longValuePhysicalBytes+int64(tikvMVCCLongValueBaseOverheadBytes+len(longValueKVs[0].key)),
+			longValuePrediction.PredictedBytes)
 
 		mixedKVs := append(slices.Clone(numericKVs), restoredKVs...)
 		mixedPrediction := estimateSampledIndexKVPredictionBytes(mixedKVs)
