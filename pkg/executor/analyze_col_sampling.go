@@ -762,6 +762,7 @@ workLoop:
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
 				// 8 means the pointer size of sampleItems slice.
 				// statistics.EmptySampleItemSize already accounts for the embedded types.Datum in SampleItem.Value.
+				// The real underlying byte slice of Datum in row.Columns has already be accounted FromProto().
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
 				e.memTracker.Consume(collectorMemSize)
 				var collator collate.Collator
