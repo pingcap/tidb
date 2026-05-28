@@ -435,6 +435,11 @@ func (ssMap *stmtSummaryByDigestMap) Clear() {
 	ssMap.Lock()
 	defer ssMap.Unlock()
 
+	ssMap.clearLocked()
+}
+
+// clearLocked removes all statement summaries. ssMap.Lock must be held.
+func (ssMap *stmtSummaryByDigestMap) clearLocked() {
 	ssMap.summaryMap.DeleteAll()
 	ssMap.other.Clear()
 	ssMap.beginTimeForCurInterval = 0
@@ -555,11 +560,7 @@ func (ssMap *stmtSummaryByDigestMap) SetGroupByUser(value bool) error {
 		return nil
 	}
 	ssMap.optGroupByUser.Store(value)
-	ssMap.summaryMap.DeleteAll()
-	ssMap.other.Clear()
-	ssMap.beginTimeForCurInterval = 0
-	ssMap.currentWindowEvictedCount = 0
-	ssMap.updateMetricsLocked()
+	ssMap.clearLocked()
 	return nil
 }
 
