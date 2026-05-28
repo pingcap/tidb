@@ -68,7 +68,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp 
 
 	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
 	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
-	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
+	// only the number of distinct values (NDV) is computed using TiKV. Other statistics
 	// are derived from sample data processed within TiDB.
 	// The reason is that we want to keep the same row sampling for all columns.
 	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))
