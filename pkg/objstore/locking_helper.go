@@ -133,17 +133,6 @@ func getLockMeta(ctx context.Context, storage storeapi.Storage, path string) (Lo
 	return meta, nil
 }
 
-func tryLockRemoteExact(
-	ctx context.Context,
-	storage storeapi.Storage,
-	physicalPath string,
-	hint string,
-	verify func(VerifyWriteContext) error,
-) (*RemoteLock, error) {
-	meta := MakeLockMeta(hint)
-	return tryLockRemoteExactWithClock(ctx, storage, physicalPath, meta, NewLocalLeaseClock(), verify)
-}
-
 func tryLockRemoteExactWithClock(
 	ctx context.Context,
 	storage storeapi.Storage,

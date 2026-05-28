@@ -174,7 +174,7 @@ Milestone 2.5 validation:
 
 Remaining gaps after Milestone 2.5: stale cleanup still uses local time until Milestone 3, `LockWithRetry` is designed but not implemented, and renewal post-write proof still needs a separate delayed-write correctness decision before production migration.
 
-Milestone 3 delivered `CleanUpStaleTruncateLock`, `LockerWithLeaseClock`, `LockWithRetry`, and `LockRemoteTruncateWithLeaseClock`. Legacy cleanup/retry/truncate APIs remain local-clock wrappers. Stale cleanup now uses the supplied lease clock for `ExpireAt.Add(LeaseTTL)` decisions; clock failure does not delete the candidate and is returned by the explicit cleanup API. Retry cleanup logs candidate errors and continues the retry loop.
+Milestone 3 delivered `CleanUpStaleTruncateLock`, `LockerWithLeaseClock`, `LockWithRetry`, and `LockRemoteTruncateWithLeaseClock`. At that point, legacy cleanup/retry/truncate APIs remained local-clock wrappers until Milestone 4.5 removed the parallel public API shape. Stale cleanup now uses the supplied lease clock for `ExpireAt.Add(LeaseTTL)` decisions; clock failure does not delete the candidate and is returned by the explicit cleanup API. Retry cleanup logs candidate errors and continues the retry loop.
 
 Milestone 3 validation:
 
@@ -203,6 +203,10 @@ Milestone 4.5 validation:
     go test -run 'Test.*StreamTruncate|TestGetLockedMigrations|Test.*PiTR' -tags=intest,deadlock ./br/pkg/task ./br/pkg/restore/log_client ./br/pkg/restore/snap_client -count=1
     go test -run TestNonExistent -tags=intest,deadlock ./pkg/objstore/s3store -count=1
 
+The third command ran matching `log_client` tests and served as compile
+coverage for `br/pkg/task` and `br/pkg/restore/snap_client`, where the selected
+patterns had no matching tests in this milestone.
+
 Remaining gaps after Milestone 4.5: `MigrationExt`, `LogClient`, PiTR collector, and stream truncate still need production PD-clock propagation. The temporary local-clock calls added in this milestone are intentional migration placeholders.
 
 ## Context and Orientation
@@ -218,12 +222,16 @@ A lease lock is stored as an object-storage file. Current physical paths include
 
 `LockMeta` in `pkg/objstore/locking.go` stores `LockedAt` and `ExpireAt`. `LeaseTTL` is the lease duration. `renewInterval` and retry backoff are local scheduling controls and are not lease-validity proofs.
 
-The current local-time call sites to replace in explicit-clock paths are:
+Before this plan, the lock-layer local-time call sites to replace were:
 
-- `newLockGeneration()` in `pkg/objstore/locking_helper.go`, which uses `nowFunc().UnixNano()` for the generation time prefix.
-- `MakeLockMeta()` in `pkg/objstore/locking.go`, which uses `nowFunc()` for `LockedAt` and `ExpireAt`.
-- `(*RemoteLock).tryRenew()` in `pkg/objstore/locking.go`, which uses `nowFunc()` for expiry check and refreshed `ExpireAt`.
-- `cleanUpStaleLockInstance()` in `pkg/objstore/locking_helper.go`, which uses `nowFunc()` to decide whether `ExpireAt.Add(LeaseTTL)` has passed.
+- lock generation timestamp construction in `pkg/objstore/locking_helper.go`;
+- `MakeLockMeta()` in `pkg/objstore/locking.go`, which remains only for explicit local-clock compatibility and tests;
+- `(*RemoteLock).tryRenew()` in `pkg/objstore/locking.go`;
+- stale cleanup decisions in `pkg/objstore/locking_helper.go`.
+
+After Milestone 4.5, exported objstore lock APIs require an explicit
+`LeaseClock`; local-time behavior is visible only through callers that pass
+`objstore.NewLocalLeaseClock()`.
 
 BR upper-layer paths that can provide PD time:
 
@@ -292,7 +300,7 @@ time cannot be obtained after retry.
 
 ## Plan of Work
 
-Milestone 1 adds the minimal lease-clock interface and explicit-clock single-attempt acquire variants. It changes acquire metadata and generation construction to use the clock and adds post-acquire proof before returning a lock. Legacy acquire functions remain and keep current local-time behavior.
+Milestone 1 adds the minimal lease-clock interface and explicit-clock single-attempt acquire variants. It changes acquire metadata and generation construction to use the clock and adds post-acquire proof before returning a lock. In that milestone, legacy acquire functions remain and keep current local-time behavior until Milestone 4.5 consolidates the API.
 
 Milestone 2 stores the lease clock on `RemoteLock` and converts renewal to use it for expiry checks and refreshed `ExpireAt`. This milestone proves that `LockWithRetry` can start renewal without falling back to local time.
 
@@ -702,6 +710,14 @@ Files:
 
 - Modify `br/pkg/stream/stream_metas.go`.
 - Modify `br/pkg/stream/stream_metas_test.go`.
+- Modify `br/pkg/task/stream.go` only enough to keep the
+  `MigrationExtension` constructor call compiling with an explicit local
+  compatibility clock. Production PD-clock wiring for this path remains
+  Milestone 6.
+- Modify `br/pkg/task/operator/migrate_to.go` and
+  `br/pkg/task/operator/list_migration.go` to pass
+  `objstore.NewLocalLeaseClock()` explicitly, because the manual operator paths
+  are excluded from PD-clock migration in this phase.
 - Modify `br/pkg/restore/log_client/client.go`.
 - Modify `br/pkg/restore/log_client/client_test.go`.
 - Modify `br/pkg/restore/snap_client/pitr_collector.go`.
@@ -720,6 +736,12 @@ TDD steps:
     either `restore.NewPDLeaseClock(...)` or `objstore.NewLocalLeaseClock()`.
     `DryRun` must preserve the clock.
 
+- [ ] Update every current `MigrationExtension(...)` caller in the same
+  milestone so the tree stays compileable. Use PD-backed clocks for
+  `LogClient` and PiTR collector, and explicit local clocks for the manual
+  operator paths plus the temporary stream-truncate placeholder that Milestone 6
+  will replace.
+
 - [ ] Add tests in `stream_metas_test.go` that create a deterministic clock and verify `GetReadLock`, `lockForAppend`, and `MergeAndMigrateTo` write lock metadata with clock time. Include a `DryRun` test that proves the clock is not dropped.
 
 - [ ] Run RED targeted stream tests.
@@ -734,16 +756,22 @@ TDD steps:
   `restore.NewPDLeaseClock(deps.PDCli)` and pass it into
   `MigrationExtension(c.taskStorage, clock)` before `AppendMigration`.
 
+- [ ] Update `br/pkg/task/stream.go`, `br/pkg/task/operator/migrate_to.go`,
+  and `br/pkg/task/operator/list_migration.go` call sites to pass
+  `objstore.NewLocalLeaseClock()` explicitly. These are compile-preserving
+  placeholders; do not claim stream truncate uses PD time until Milestone 6.
+
 - [ ] Run GREEN targeted tests:
 
     ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'Test.*LeaseClock|TestMergeAndMigrateTo|TestAppendMigration' -count=1
     go test -run 'TestGetLockedMigrations|Test.*PiTR' -tags=intest,deadlock ./br/pkg/restore/log_client ./br/pkg/restore/snap_client -count=1
+    go test -run TestNonExistent -tags=intest,deadlock ./br/pkg/task ./br/pkg/task/operator -count=1
 
 - [ ] Run `make bazel_prepare` if new top-level tests or Bazel metadata changes are required.
 
 - [ ] Commit:
 
-    git add br/pkg/stream br/pkg/restore/log_client br/pkg/restore/snap_client docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
+    git add br/pkg/stream br/pkg/task br/pkg/restore/log_client br/pkg/restore/snap_client docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
     git commit -m "br: propagate PD lease time through migration locks"
 
 ### Milestone 6: Stream Truncate Propagation

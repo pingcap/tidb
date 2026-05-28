@@ -300,14 +300,52 @@ func TestTryLockRemoteExactRejectsNilClock(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
 
-	var lock *objstore.RemoteLock
-	var err error
-	require.NotPanics(t, func() {
-		lock, err = objstore.TESTTryLockRemoteExact(ctx, strg, "v1/LOCK.WRIT.nilclock", "nil clock", nil)
+	assertLockError := func(t *testing.T, lock *objstore.RemoteLock, err error) {
+		t.Helper()
+		require.Nil(t, lock)
+		require.ErrorContains(t, err, "lease clock is required")
+	}
+
+	t.Run("exact helper", func(t *testing.T) {
+		var lock *objstore.RemoteLock
+		var err error
+		require.NotPanics(t, func() {
+			lock, err = objstore.TESTTryLockRemoteExact(ctx, strg, "v1/LOCK.WRIT.nilclock", "nil clock", nil)
+		})
+		assertLockError(t, lock, err)
+		require.Empty(t, requireListedPathsWithPrefix(t, strg, "v1/LOCK.WRIT.nilclock"))
 	})
-	require.Nil(t, lock)
-	require.ErrorContains(t, err, "lease clock is required")
-	require.Empty(t, requireListedPathsWithPrefix(t, strg, "v1/LOCK.WRIT.nilclock"))
+
+	t.Run("write", func(t *testing.T) {
+		lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "nil clock", nil)
+		assertLockError(t, lock, err)
+	})
+
+	t.Run("read", func(t *testing.T) {
+		lock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "nil clock", nil)
+		assertLockError(t, lock, err)
+	})
+
+	t.Run("truncate", func(t *testing.T) {
+		lock, err := objstore.TryLockRemoteTruncate(ctx, strg, "nil clock", nil)
+		assertLockError(t, lock, err)
+	})
+
+	t.Run("lock with retry", func(t *testing.T) {
+		lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "nil clock", func() {}, nil)
+		assertLockError(t, lock, err)
+	})
+
+	t.Run("lock truncate", func(t *testing.T) {
+		lock, err := objstore.LockRemoteTruncate(ctx, strg, "nil clock", func() {}, nil)
+		assertLockError(t, lock, err)
+	})
+
+	t.Run("cleanup truncate", func(t *testing.T) {
+		reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg, nil)
+		require.False(t, reclaimed)
+		require.ErrorContains(t, err, "lease clock is required")
+	})
 }
 
 func TestTryLockRemoteWriteFailsWhenInitialTimeFails(t *testing.T) {
