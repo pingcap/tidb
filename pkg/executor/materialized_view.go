@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannercorebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -785,8 +787,50 @@ func finalizeMLogPurgeHistWithRetry(
 	return errors.Annotatef(retryErr, "first finalize attempt failed: %v", firstErr)
 }
 
-func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) error {
+func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) (err error) {
+	const slowRefreshThreshold = 5 * time.Second
+	refreshStart := time.Now()
+	var (
+		lockRefreshInfoRowDur time.Duration
+		executeDataChangesDur time.Duration
+		txnTotalDur           time.Duration
+		mviewID               int64
+	)
 	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
+	defer func() {
+		total := time.Since(refreshStart)
+		if total < slowRefreshThreshold {
+			return
+		}
+
+		schemaName, mviewName, refreshType := "", "", ""
+		if s != nil {
+			refreshType = strings.ToLower(s.Type.String())
+			if s.ViewName != nil {
+				schemaName = s.ViewName.Schema.O
+				mviewName = s.ViewName.Name.O
+			}
+		}
+
+		fields := []zap.Field{
+			zap.Duration("total", total),
+			zap.Duration("slowThreshold", slowRefreshThreshold),
+			zap.String("schema", schemaName),
+			zap.String("mview", mviewName),
+			zap.Int64("mviewID", mviewID),
+			zap.String("refreshType", refreshType),
+			zap.Bool("internalSQL", isInternalSQL),
+			zap.Bool("success", err == nil),
+			zap.Duration("lockRefreshInfoRow", lockRefreshInfoRowDur),
+			zap.Duration("executeRefreshMaterializedViewDataChanges", executeDataChangesDur),
+			zap.Duration("transactionTotal", txnTotalDur),
+		}
+		if err != nil {
+			fields = append(fields, zap.String("error", err.Error()))
+		}
+		logutil.BgLogger().Info("refresh materialized view is slow", fields...)
+	}()
+
 	refreshMethod, err := validateRefreshMaterializedViewStmt(s, isInternalSQL)
 	if err != nil {
 		return err
@@ -805,6 +849,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	defer e.ReleaseSysSession(kctx, refreshSctx)
 	sqlExec := refreshSctx.GetSQLExecutor()
 	sessVars := refreshSctx.GetSessionVars()
+
 	restoreSessVars, err := initRefreshMaterializedViewSession(sessVars, tblInfo.MaterializedView)
 	if err != nil {
 		return err
@@ -823,24 +868,34 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	txnStarted := false
 	txnFinished := false
+	txnCommitTimerStarted := false
+	var txnCommitStart time.Time
 	defer func() {
 		if !txnStarted || txnFinished {
 			return
 		}
 		_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+		txnFinished = true
+		if txnCommitTimerStarted && txnTotalDur == 0 {
+			txnTotalDur = time.Since(txnCommitStart)
+		}
 	}()
 
 	// Use a pessimistic txn to ensure `FOR UPDATE NOWAIT` works as a mutex.
+	txnCommitStart = time.Now()
 	if _, err := sqlExec.ExecuteInternal(kctx, "BEGIN PESSIMISTIC"); err != nil {
 		return errors.Trace(err)
 	}
 	txnStarted = true
+	txnCommitTimerStarted = true
 
 	failpoint.InjectCall("refreshMaterializedViewAfterBegin")
 	failpoint.Inject("pauseRefreshMaterializedViewAfterBegin", func() {})
 
-	mviewID := tblInfo.ID
+	mviewID = tblInfo.ID
+	lockRefreshInfoRowStart := time.Now()
 	lockedReadTSO, lockedReadTSONull, err := lockRefreshInfoRow(kctx, sqlExec, mviewID)
+	lockRefreshInfoRowDur = time.Since(lockRefreshInfoRowStart)
 	if err != nil {
 		return err
 	}
@@ -874,16 +929,21 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				refreshErrMsg = refreshErrMsg + "; rollback error: " + err.Error()
 			}
 			txnFinished = true
+			if txnCommitTimerStarted && txnTotalDur == 0 {
+				txnTotalDur = time.Since(txnCommitStart)
+			}
 		}
-		if histErr := finalizeRefreshHistWithRetry(
+		histErr := finalizeRefreshHistWithRetry(
 			finalizeCtx,
 			histSQLExec,
 			refreshJobID,
 			mviewID,
 			refreshHistStatusFailed,
 			nil,
+			nil,
 			&refreshErrMsg,
-		); histErr != nil {
+		)
+		if histErr != nil {
 			if rollbackErr != nil {
 				return errors.Annotatef(histErr, "refresh materialized view: rollback failed (%v) and failed to finalize refresh history after error %v", rollbackErr, refreshErr)
 			}
@@ -907,6 +967,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		lastSuccessfulRefreshReadTSO = lockedReadTSO
 	}
 
+	executeDataChangesStart := time.Now()
 	if err := executeRefreshMaterializedViewDataChanges(
 		kctx,
 		sqlExec,
@@ -916,13 +977,21 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		tblInfo,
 		lastSuccessfulRefreshReadTSO,
 	); err != nil {
+		executeDataChangesDur = time.Since(executeDataChangesStart)
 		return finalizeFailure(err)
 	}
+	executeDataChangesDur = time.Since(executeDataChangesStart)
 
 	refreshReadTSO, err := getRefreshReadTSOForSuccess(sessVars)
 	if err != nil {
 		return finalizeFailure(err)
 	}
+
+	var refreshRows *int64
+	if s.Type == ast.RefreshMaterializedViewTypeFast {
+		refreshRows = collectFastRefreshMLogScanRows(sessVars)
+	}
+
 	nextTime, shouldUpdateNextTime, err := deriveRuntimeMaterializedScheduleNextTime(
 		kctx,
 		scheduleEvalSctx,
@@ -935,6 +1004,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return finalizeFailure(err)
 	}
+
 	if err := persistRefreshSuccess(
 		kctx,
 		sqlExec,
@@ -947,10 +1017,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	); err != nil {
 		return finalizeFailure(err)
 	}
+
 	if _, err := sqlExec.ExecuteInternal(kctx, "COMMIT"); err != nil {
 		return finalizeFailure(err)
 	}
 	txnFinished = true
+	if txnCommitTimerStarted && txnTotalDur == 0 {
+		txnTotalDur = time.Since(txnCommitStart)
+	}
+
 	if err := finalizeRefreshHistWithRetry(
 		finalizeCtx,
 		histSQLExec,
@@ -958,6 +1033,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		mviewID,
 		refreshHistStatusSuccess,
 		&refreshReadTSO,
+		refreshRows,
 		nil,
 	); err != nil {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
@@ -1260,6 +1336,86 @@ func getRefreshReadTSOForSuccess(sessVars *variable.SessionVars) (uint64, error)
 	return refreshReadTSO, nil
 }
 
+func collectFastRefreshMLogScanRows(sessVars *variable.SessionVars) *int64 {
+	if sessVars == nil || sessVars.StmtCtx == nil || sessVars.StmtCtx.RuntimeStatsColl == nil {
+		return nil
+	}
+	mergePlan, ok := sessVars.StmtCtx.GetPlan().(*plannercore.MVDeltaMerge)
+	if !ok || mergePlan.Source == nil || mergePlan.MLogTableID == 0 {
+		return nil
+	}
+
+	scanPlanIDs := make(map[int]struct{})
+	collectMLogScanPlanIDs(mergePlan.Source, mergePlan.MLogTableID, scanPlanIDs)
+	if len(scanPlanIDs) != 1 {
+		return nil
+	}
+
+	runtimeStatsColl := sessVars.StmtCtx.RuntimeStatsColl
+	var totalRows int64
+	hasRuntimeStats := false
+	for scanPlanID := range scanPlanIDs {
+		hasCopStats := runtimeStatsColl.ExistsCopStats(scanPlanID)
+		if !hasCopStats && !runtimeStatsColl.ExistsRootStats(scanPlanID) {
+			continue
+		}
+		hasRuntimeStats = true
+		if hasCopStats {
+			_, copRows := runtimeStatsColl.GetCopCountAndRows(scanPlanID)
+			totalRows += copRows
+			continue
+		}
+		totalRows += runtimeStatsColl.GetPlanActRows(scanPlanID)
+	}
+	if !hasRuntimeStats {
+		return nil
+	}
+	return &totalRows
+}
+
+func collectMLogScanPlanIDs(plan plannercorebase.PhysicalPlan, mlogTableID int64, target map[int]struct{}) {
+	if plan == nil {
+		return
+	}
+	switch p := plan.(type) {
+	case *plannercore.PhysicalTableScan:
+		if p.Table != nil && p.Table.ID == mlogTableID {
+			target[p.ID()] = struct{}{}
+		}
+	case *plannercore.PhysicalIndexScan:
+		if p.Table != nil && p.Table.ID == mlogTableID {
+			target[p.ID()] = struct{}{}
+		}
+	case *plannercore.PhysicalTableReader:
+		for _, child := range p.TablePlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+	case *plannercore.PhysicalIndexReader:
+		for _, child := range p.IndexPlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+	case *plannercore.PhysicalIndexLookUpReader:
+		for _, child := range p.IndexPlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+		for _, child := range p.TablePlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+	case *plannercore.PhysicalIndexMergeReader:
+		for _, partialPlan := range p.PartialPlans {
+			for _, child := range partialPlan {
+				collectMLogScanPlanIDs(child, mlogTableID, target)
+			}
+		}
+		for _, child := range p.TablePlans {
+			collectMLogScanPlanIDs(child, mlogTableID, target)
+		}
+	}
+	for _, child := range plan.Children() {
+		collectMLogScanPlanIDs(child, mlogTableID, target)
+	}
+}
+
 func deriveRuntimeMaterializedScheduleNextTime(
 	kctx context.Context,
 	evalSctx sessionctx.Context,
@@ -1452,6 +1608,7 @@ func finalizeRefreshHistWithRetry(
 	mviewID int64,
 	refreshStatus string,
 	refreshReadTSO *uint64,
+	refreshRows *int64,
 	refreshFailedReason *string,
 ) error {
 	firstErr := finalizeRefreshHist(
@@ -1461,6 +1618,7 @@ func finalizeRefreshHistWithRetry(
 		mviewID,
 		refreshStatus,
 		refreshReadTSO,
+		refreshRows,
 		refreshFailedReason,
 	)
 	if firstErr == nil {
@@ -1473,6 +1631,7 @@ func finalizeRefreshHistWithRetry(
 		mviewID,
 		refreshStatus,
 		refreshReadTSO,
+		refreshRows,
 		refreshFailedReason,
 	)
 	if retryErr == nil {
@@ -1495,6 +1654,7 @@ func finalizeRefreshHist(
 	mviewID int64,
 	refreshStatus string,
 	refreshReadTSO *uint64,
+	refreshRows *int64,
 	refreshFailedReason *string,
 ) error {
 	failpoint.Inject("mockFinalizeRefreshHistError", func(val failpoint.Value) {
@@ -1507,6 +1667,10 @@ func finalizeRefreshHist(
 	if refreshReadTSO != nil {
 		refreshReadTSOArg = *refreshReadTSO
 	}
+	var refreshRowsArg any
+	if refreshRows != nil {
+		refreshRowsArg = *refreshRows
+	}
 	var refreshFailedReasonArg any
 	if refreshFailedReason != nil {
 		refreshFailedReasonArg = *refreshFailedReason
@@ -1515,6 +1679,7 @@ func finalizeRefreshHist(
 SET
 	REFRESH_ENDTIME = NOW(6),
 	REFRESH_STATUS = %?,
+	REFRESH_ROWS = %?,
 	REFRESH_READ_TSO = %?,
 	REFRESH_FAILED_REASON = %?
 WHERE REFRESH_JOB_ID = %?
@@ -1523,6 +1688,7 @@ WHERE REFRESH_JOB_ID = %?
 		kctx,
 		updateSQL,
 		refreshStatus,
+		refreshRowsArg,
 		refreshReadTSOArg,
 		refreshFailedReasonArg,
 		refreshJobID,
