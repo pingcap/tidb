@@ -828,6 +828,7 @@ const (
 		PURGE_DURATION_SEC decimal(18,6) DEFAULT NULL,
 		PURGE_ROWS bigint NOT NULL,
 		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PURGE_CUTOFF_TSO bigint unsigned DEFAULT NULL,
 		PURGE_FAILED_REASON text DEFAULT NULL,
 		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
 		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
@@ -1313,7 +1314,7 @@ const (
 	version227 = 227
 
 	// version 228
-	// Add OPERATE VIEW static privilege to grant tables.
+	// Add OPERATE VIEW static privilege to grant tables and PURGE_CUTOFF_TSO to MV log purge history table.
 	version228 = 228
 
 	// next version should start with 229
@@ -3459,6 +3460,7 @@ func upgradeToVer228(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD COLUMN `Operate_view_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Show_view_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `PURGE_CUTOFF_TSO` bigint unsigned DEFAULT NULL AFTER `PURGE_STATUS`", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

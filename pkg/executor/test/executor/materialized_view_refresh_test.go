@@ -1567,6 +1567,116 @@ func TestMaterializedViewRefreshFastAsOfTimestampEarlyFailureWritesHistReadTSO(t
 	)).Check(testkit.Rows("failed 1 1 1 1 1 1"))
 }
 
+func TestMaterializedViewFastRefreshRejectsHazardousPurgeHist(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_refresh_purge_guard (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_refresh_purge_guard (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_purge_guard (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_refresh_purge_guard group by a")
+	tk.MustExec("insert into t_refresh_purge_guard values (1, 10), (2, 20)")
+	tk.MustExec("refresh materialized view mv_refresh_purge_guard fast")
+	tk.MustExec("insert into t_refresh_purge_guard values (3, 30)")
+
+	mvIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_purge_guard'").Rows()
+	require.Len(t, mvIDRows, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	mlogIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '$mlog$t_refresh_purge_guard'").Rows()
+	require.Len(t, mlogIDRows, 1)
+	mlogID, err := strconv.ParseInt(fmt.Sprintf("%v", mlogIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	lastSuccessRows := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).Rows()
+	require.Len(t, lastSuccessRows, 1)
+	lastSuccessReadTSO, err := strconv.ParseUint(fmt.Sprintf("%v", lastSuccessRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = %d where MLOG_ID = %d", lastSuccessReadTSO, mlogID))
+	tk.MustExec(fmt.Sprintf(
+		`insert into mysql.tidb_mlog_purge_hist (
+			PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
+			PURGE_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_AT
+		) values (
+			%[1]d, %[2]d, 'test', 't_refresh_purge_guard', 'manual',
+			now(6), 0, 'running', %[3]d, now(6)
+		)`,
+		lastSuccessReadTSO+1000,
+		mlogID,
+		lastSuccessReadTSO+1,
+	))
+
+	err = tk.ExecToErr("refresh materialized view mv_refresh_purge_guard fast")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
+
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).
+		Check(testkit.Rows(fmt.Sprintf("%d", lastSuccessReadTSO)))
+
+	const afterBeginFailpoint = "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterBegin"
+	pauseCh := make(chan struct{})
+	hitCh := make(chan struct{})
+	require.NoError(t, failpoint.EnableCall(afterBeginFailpoint, func() {
+		select {
+		case <-hitCh:
+		default:
+			close(hitCh)
+		}
+		<-pauseCh
+	}))
+	defer func() {
+		select {
+		case <-pauseCh:
+		default:
+			close(pauseCh)
+		}
+		require.NoError(t, failpoint.Disable(afterBeginFailpoint))
+	}()
+
+	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = %d where MLOG_ID = %d", lastSuccessReadTSO, mlogID))
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_refresh_purge_guard fast")
+	}()
+
+	select {
+	case <-hitCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh to reach failpoint")
+	}
+
+	tkConcurrent := testkit.NewTestKit(t, store)
+	tkConcurrent.MustExec("use test")
+	tkConcurrent.MustExec(fmt.Sprintf(
+		`insert into mysql.tidb_mlog_purge_hist (
+			PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
+			PURGE_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_AT
+		) values (
+			%[1]d, %[2]d, 'test', 't_refresh_purge_guard', 'manual',
+			now(6), 0, 'running', %[3]d, now(6)
+		)`,
+		lastSuccessReadTSO+2000,
+		mlogID,
+		lastSuccessReadTSO+1,
+	))
+
+	close(pauseCh)
+
+	select {
+	case err = <-refreshDone:
+		require.Error(t, err)
+		require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh to finish")
+	}
+}
+
 func TestMaterializedViewRefreshFailedAlertByAttribute(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
