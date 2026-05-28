@@ -561,6 +561,38 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 	}
 }
 
+func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewRefreshArgs{
+		RefreshMethod:    "FAST",
+		RefreshStartWith: "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		RefreshNext:      "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewRefresh)))
+		args, err := GetAlterMaterializedViewRefreshArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
+func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewLogPurgeArgs{
+		PurgeMethod:    "DEFERRED",
+		PurgeStartWith: "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		PurgeNext:      "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+	}
+
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewLogPurge)))
+		args, err := GetAlterMaterializedViewLogPurgeArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
 func TestGetAlterIndexVisibilityArgs(t *testing.T) {
 	inArgs := &AlterIndexVisibilityArgs{
 		IndexName: model.NewCIStr("index-name"),

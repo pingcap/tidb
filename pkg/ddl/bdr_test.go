@@ -220,6 +220,16 @@ func TestDeniedByBDR(t *testing.T) {
 		{ast.BDRRoleSecondary, model.ActionModifyTableComment, true},
 		{ast.BDRRoleNone, model.ActionModifyTableComment, false},
 
+		// Roles for ActionAlterMaterializedViewRefresh
+		{ast.BDRRolePrimary, model.ActionAlterMaterializedViewRefresh, false},
+		{ast.BDRRoleSecondary, model.ActionAlterMaterializedViewRefresh, true},
+		{ast.BDRRoleNone, model.ActionAlterMaterializedViewRefresh, false},
+
+		// Roles for ActionAlterMaterializedViewLogPurge
+		{ast.BDRRolePrimary, model.ActionAlterMaterializedViewLogPurge, false},
+		{ast.BDRRoleSecondary, model.ActionAlterMaterializedViewLogPurge, true},
+		{ast.BDRRoleNone, model.ActionAlterMaterializedViewLogPurge, false},
+
 		// Roles for ActionRenameIndex
 		{ast.BDRRolePrimary, model.ActionRenameIndex, false},
 		{ast.BDRRoleSecondary, model.ActionRenameIndex, true},
