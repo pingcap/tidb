@@ -158,7 +158,6 @@ func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *te
 	)).Check(testkit.Rows("complete automatically"))
 }
 
-/*
 func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -180,7 +179,6 @@ func TestMaterializedViewRefreshFastMethodTracksManualAndAutomatic(t *testing.T)
 	tk.MustQuery("select REFRESH_METHOD, REFRESH_ROWS > 0 from mysql.tidb_mview_refresh_hist order by REFRESH_JOB_ID desc limit 1").
 		Check(testkit.Rows("fast automatically 1"))
 }
-*/
 
 func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
