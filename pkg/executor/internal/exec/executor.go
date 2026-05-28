@@ -128,17 +128,17 @@ var ruv2ExecutorMetricByType = map[string]ruv2ExecutorMetric{
 // metrics container collapses to metrics==nil so Next() short-circuits with a
 // single check.
 type ruv2NextCacheState struct {
+	metrics    *execdetails.RUV2Metrics
 	regionName string
 	info       ruv2ExecutorMetric
 	hasInfo    bool
-	metrics    *execdetails.RUV2Metrics
 }
 
 type ruv2CacheProvider interface {
 	ruv2NextCache() *ruv2NextCacheState
 }
 
-func populateRUV2NextCache(cache *ruv2NextCacheState, ctx context.Context, e Executor) {
+func populateRUV2NextCache(ctx context.Context, cache *ruv2NextCacheState, e Executor) {
 	execType := reflect.TypeOf(e).String()
 	cache.regionName = execType + ".Next"
 	cache.info, cache.hasInfo = ruv2ExecutorMetricByType[execType]
@@ -406,14 +406,13 @@ func newExecutorKillerHandler(handler signalHandler) executorKillerHandler {
 
 // BaseExecutorV2 is a simplified version of `BaseExecutor`, which doesn't contain a full session context
 type BaseExecutorV2 struct {
-	_ constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
-
+	_              constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
+	ruv2CacheState ruv2NextCacheState
 	executorKillerHandler
 	executorStats
 	executorMeta
 	executorChunkAllocator
 	nextIOAccState nextIOAcc // reusable accumulator context for RUv2 tracking
-	ruv2CacheState ruv2NextCacheState
 }
 
 // NewBaseExecutorV2 creates a new BaseExecutorV2 instance.
@@ -575,7 +574,7 @@ func Open(ctx context.Context, e Executor) (err error) {
 		defer func() { e.RuntimeStats().RecordOpen(time.Since(start)) }()
 	}
 	if provider, ok := e.(ruv2CacheProvider); ok {
-		populateRUV2NextCache(provider.ruv2NextCache(), ctx, e)
+		populateRUV2NextCache(ctx, provider.ruv2NextCache(), e)
 	}
 	return e.Open(ctx)
 }
@@ -605,7 +604,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	if provider, ok := e.(ruv2CacheProvider); ok {
 		cache := provider.ruv2NextCache()
 		if cache.regionName == "" {
-			populateRUV2NextCache(cache, ctx, e)
+			populateRUV2NextCache(ctx, cache, e)
 		}
 		regionName = cache.regionName
 		info, trackRUV2 = cache.info, cache.hasInfo
