@@ -727,3 +727,31 @@ func TestTiCIAlternativeLogicalPlansIgnoreIndexRoutesToLikeFallback(t *testing.T
 		tk.MustQuery(sqlWithIgnoreHint).CheckNotContain("fts_match_word")
 	})
 }
+
+func TestTiCIMatchAgainstQuotedWordLikeFallback(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table amazon_review(
+			id bigint primary key,
+			review_body text,
+			review_headline text,
+			product_title text,
+			fulltext index review_body(review_body, review_headline, product_title)
+		)`)
+		tk.MustExec(`insert into amazon_review values
+			(1, 'stainless steel bottle', 'durable bottle', 'travel bottle'),
+			(2, 'stainless lunch box', 'steel lunch box', 'kitchen organizer'),
+			(3, 'plastic container', 'light container', 'storage box'),
+			(4, 'ceramic mug', 'coffee mug', 'kitchen mug')`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "amazon_review")
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = 1")
+
+		sql := `explain select count(*) from amazon_review ignore index(review_body)
+			where match(review_body, review_headline, product_title)
+			against('"stainless"' in boolean mode)`
+		tk.MustQuery(sql).CheckContain("ilike(")
+		tk.MustQuery(sql).CheckContain("%stainless%")
+		tk.MustQuery(sql).CheckContain("TableFullScan")
+		tk.MustQuery(sql).CheckNotContain("fts_match_word")
+	})
+}
