@@ -279,8 +279,11 @@ func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) 
 	// them, fall back to the full TiCI index columns so multi-column fulltext indexes
 	// still get a stable local estimate.
 	matchedCols := expression.ExtractColumnsFromExpressions(path.AccessConds, func(col *expression.Column) bool {
+		if col == nil {
+			return false
+		}
 		for _, idxCol := range path.FullIdxCols {
-			if col.EqualColumn(idxCol) {
+			if idxCol != nil && col.EqualColumn(idxCol) {
 				return true
 			}
 		}
@@ -291,6 +294,9 @@ func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) 
 	}
 	ndv := 0.0
 	for _, col := range matchedCols {
+		if col == nil {
+			continue
+		}
 		ndv = max(ndv, cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID))
 	}
 	return ndv
