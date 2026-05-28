@@ -242,15 +242,58 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 
 func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
 	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
-	countAfterAccess := min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+	countAfterAccess := defaultTiCISearchPathCount(ds)
 	// TiCI count estimation is only used to refine multi-table plan choices.
 	// StmtCtx.Tables is de-duplicated, so self-joins on one table use the local fallback.
 	if len(ds.SCtx().GetSessionVars().StmtCtx.Tables) > 1 {
 		if count, ok := deriveTiCISearchPathStats(ds, path); ok {
 			countAfterAccess = count
 		}
+	} else {
+		// For a single-table FTS query, there is no join-order decision to refine
+		// with a remote TiCI estimate. Use the average rows per distinct indexed
+		// text value as the local default instead of the capped selectivity fallback.
+		countAfterAccess = deriveSingleTableTiCISearchPathCount(ds, path)
 	}
 	updateTiCISearchPathStats(ds, path, countAfterAccess)
+}
+
+func defaultTiCISearchPathCount(ds *logicalop.DataSource) float64 {
+	return min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+}
+
+func deriveSingleTableTiCISearchPathCount(ds *logicalop.DataSource, path *util.AccessPath) float64 {
+	totalRows := float64(ds.StatisticTable.RealtimeCount)
+	if totalRows <= 0 {
+		return 0
+	}
+	ndv := estimateTiCISearchPathNDV(ds, path)
+	if ndv <= 0 {
+		return defaultTiCISearchPathCount(ds)
+	}
+	return totalRows / max(ndv, 1)
+}
+
+func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) float64 {
+	// Prefer the columns referenced by the FTS predicate. If extraction cannot find
+	// them, fall back to the full TiCI index columns so multi-column fulltext indexes
+	// still get a stable local estimate.
+	matchedCols := expression.ExtractColumnsFromExpressions(path.AccessConds, func(col *expression.Column) bool {
+		for _, idxCol := range path.FullIdxCols {
+			if col.EqualColumn(idxCol) {
+				return true
+			}
+		}
+		return false
+	}, false)
+	if len(matchedCols) == 0 {
+		matchedCols = path.FullIdxCols
+	}
+	ndv := 0.0
+	for _, col := range matchedCols {
+		ndv = max(ndv, cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID))
+	}
+	return ndv
 }
 
 func updateTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath, countAfterAccess float64) {
