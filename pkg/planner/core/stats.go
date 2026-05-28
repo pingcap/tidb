@@ -267,14 +267,14 @@ func deriveSingleTableTiCISearchPathCount(ds *logicalop.DataSource, path *util.A
 	if totalRows <= 0 {
 		return 0
 	}
-	ndv := estimateTiCISearchPathNDV(ds, path)
-	if ndv <= 0 {
+	ndv, ok := estimateTiCISearchPathNDV(ds, path)
+	if !ok || ndv <= 0 {
 		return defaultTiCISearchPathCount(ds)
 	}
 	return totalRows / max(ndv, 1)
 }
 
-func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) float64 {
+func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
 	// Prefer the columns referenced by the FTS predicate. If extraction cannot find
 	// them, fall back to the full TiCI index columns so multi-column fulltext indexes
 	// still get a stable local estimate.
@@ -297,9 +297,15 @@ func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) 
 		if col == nil {
 			continue
 		}
+		colStats := ds.StatisticTable.GetCol(col.ID)
+		if ds.StatisticTable.Pseudo || colStats == nil || !colStats.IsStatsInitialized() {
+			// Avoid EstimateColumnNDV's synthetic no-stats NDV; keep no-stats
+			// behavior on the conservative capped fallback.
+			return 0, false
+		}
 		ndv = max(ndv, cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID))
 	}
-	return ndv
+	return ndv, true
 }
 
 func updateTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath, countAfterAccess float64) {
