@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/pd/client/opt"
 )
 
@@ -141,6 +142,34 @@ func TestGetTSWithRetry(t *testing.T) {
 		_, err := restore.GetTSWithRetry(context.Background(), pDClient)
 		require.NoError(t, err)
 	})
+}
+
+func TestPDLeaseClockConvertsRetriedTSOTime(t *testing.T) {
+	retryTimes := 0
+	pDClient := split.NewFakePDClient(nil, true, &retryTimes)
+
+	clock := restore.NewPDLeaseClock(pDClient)
+	now, err := clock.Now(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, oracle.GetTimeFromTS(oracle.ComposeTS(1, 1)), now)
+	require.GreaterOrEqual(t, retryTimes, 3)
+}
+
+func TestPDLeaseClockNowReturnsGetTSError(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one", "1*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one"))
+	}()
+
+	retryTimes := -1000
+	pDClient := split.NewFakePDClient(nil, true, &retryTimes)
+
+	clock := restore.NewPDLeaseClock(pDClient)
+	now, err := clock.Now(context.Background())
+
+	require.Error(t, err)
+	require.True(t, now.IsZero())
 }
 
 func TestParseLogRestoreTableIDsBlocklistFileName(t *testing.T) {

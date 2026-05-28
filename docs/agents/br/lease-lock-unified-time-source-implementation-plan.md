@@ -34,7 +34,7 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
 - [x] (2026-05-28) Addressed Milestone 2 review: renewal now treats a missing `RemoteLock` lease clock as invalid construction and fails closed instead of silently falling back to local time.
 - [x] (2026-05-28) Implemented Milestone 2.5: pre-M3 explicit-clock API boundary hardening.
 - [x] (2026-05-28) Implemented Milestone 3: objstore stale cleanup and retry acquisition use the explicit lease clock.
-- [ ] Implement Milestone 4: BR PD time helper.
+- [x] (2026-05-28) Implemented Milestone 4: BR PD lease clock wrapper reuses existing `GetTSWithRetry`.
 - [ ] Implement Milestone 5: `MigrationExt`, `LogClient`, and PiTR collector propagation.
 - [ ] Implement Milestone 6: stream truncate propagation.
 - [ ] Run Ready validation before claiming the phase is complete.
@@ -97,7 +97,6 @@ Expected implications:
 Follow-up questions after accepting the TTL change:
 
 - Should cleanup keep using `ExpireAt + LeaseTTL`, or should the reclaim grace become a separate constant if `LeaseTTL` grows?
-- Should PDClock use BR's existing aggressive PD retry once the TTL is 60 minutes, or should it use a smaller lease-specific retry budget?
 - Should lock-layer storage operations get their own operation timeout, since S3 retry backoff is bounded but a single slow request is not bounded here?
 
 ## Surprises & Discoveries
@@ -130,6 +129,9 @@ Follow-up questions after accepting the TTL change:
   Date/Author: 2026-05-28 / design discussion.
 - Decision: Legacy storage-only lock functions may keep local-time behavior while new explicit-clock variants are introduced for BR correctness paths.
   Rationale: This keeps migration incremental and avoids forcing all tests/manual tools through PD time at once.
+  Date/Author: 2026-05-28 / design discussion.
+- Decision: Put the PD lease-clock wrapper in `br/pkg/restore` and make it call the existing `GetTSWithRetry`.
+  Rationale: BR already has `GetTS` and `GetTSWithRetry` in `br/pkg/restore`; wrapping that logic avoids a new package and avoids duplicating aggressive PD retry behavior. Lower-level `br/pkg/stream` will still only receive `objstore.LeaseClock` and will not import PD or restore helpers.
   Date/Author: 2026-05-28 / design discussion.
 
 ## Outcomes & Retrospective
@@ -180,6 +182,16 @@ Milestone 3 validation:
     make bazel_prepare
 
 Remaining gaps after Milestone 3: BR callers are still on legacy wrappers until PD clock propagation begins, and renewal post-write proof remains a separate delayed-write correctness decision before production migration.
+
+Milestone 4 delivered `restore.NewPDLeaseClock`, which returns an `objstore.LeaseClock` backed by the existing `restore.GetTSWithRetry`. The helper converts the returned TSO with `oracle.GetTimeFromTS` and returns PD retry failure without falling back to local time.
+
+Milestone 4 validation:
+
+    go test -run 'TestPDLeaseClock' -tags=intest,deadlock ./br/pkg/restore -count=1
+    go test -run 'TestPDLeaseClock|TestGetTSWithRetry' -tags=intest,deadlock ./br/pkg/restore -count=1
+    make bazel_prepare
+
+Remaining gaps after Milestone 4: BR callers still need to construct this clock and pass it through `MigrationExt`, `LogClient`, PiTR collector, and stream truncate.
 
 ## Context and Orientation
 
@@ -243,20 +255,19 @@ Later milestones add:
 
 `RemoteLock` must eventually store the clock so renewal uses the same lease clock as acquire. Do not migrate BR callers to `LockWithRetryWithLeaseClock` until renewal and cleanup are covered.
 
-BR PD helper should live outside `pkg/objstore`, for example `br/pkg/leaseclock`:
+BR PD helper should live in `br/pkg/restore`, next to the existing `GetTS`
+and `GetTSWithRetry` helpers:
 
-    type tsoClient interface {
-        GetTS(ctx context.Context) (int64, int64, error)
+    type PDLeaseClock struct {
+        pdClient pd.Client
     }
 
-    type PDClock struct {
-        client tsoClient
-    }
+    func NewPDLeaseClock(pdClient pd.Client) objstore.LeaseClock
+    func (c PDLeaseClock) Now(ctx context.Context) (time.Time, error)
 
-    func NewPDClock(client tsoClient) *PDClock
-    func (c *PDClock) Now(ctx context.Context) (time.Time, error)
-
-`PDClock.Now` should call `GetTS`, compose with `oracle.ComposeTS`, convert with `oracle.GetTimeFromTS`, and return an error without local-time fallback when `GetTS` fails.
+`PDLeaseClock.Now` should call the existing `GetTSWithRetry`, convert with
+`oracle.GetTimeFromTS`, and return an error without local-time fallback when PD
+time cannot be obtained after retry.
 
 ## Plan of Work
 
@@ -268,7 +279,9 @@ Milestone 2.5 hardens the explicit-clock boundary before cleanup work. It reject
 
 Milestone 3 converts stale cleanup decisions to the explicit lease clock. It must carefully preserve the existing difference between public cleanup, which may return candidate errors, and retry-loop cleanup, which logs candidate errors and continues.
 
-Milestone 4 adds the BR PD time helper and focused tests using a tiny `GetTS` fake instead of a full PD client fake.
+Milestone 4 adds the BR PD lease-clock wrapper in `br/pkg/restore`. It reuses
+the existing `GetTSWithRetry` implementation instead of duplicating PD retry
+logic in a new package.
 
 Milestone 5 propagates the lease clock through `MigrationExt`, `LogClient`, and PiTR collector. `MigrationExt.DryRun` and value-copy methods must preserve the clock.
 
@@ -373,7 +386,7 @@ TDD steps:
 
 - [x] Run `make bazel_prepare` because this milestone adds new top-level Go test functions.
 
-- [ ] Commit:
+- [x] Commit:
 
     git add pkg/objstore/locking.go pkg/objstore/locking_helper.go pkg/objstore/locking_test.go docs/agents/br/lease-lock-unified-time-source-spec.md docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
     git commit -m "pkg/objstore: add explicit lease clock for acquire"
@@ -528,44 +541,53 @@ TDD steps:
 
 Files:
 
-- Create `br/pkg/leaseclock/lease_clock.go`.
-- Create `br/pkg/leaseclock/lease_clock_test.go`.
+- Create `br/pkg/restore/pd_lease_clock.go`.
+- Create or extend `br/pkg/restore/*_test.go` with focused lease-clock tests.
 
 TDD steps:
 
-- [ ] Add tests using a tiny fake:
+- [x] Add tests using a tiny fake PD client:
 
         type fakeTSClient struct {
-            physical int64
-            logical  int64
-            err      error
+            physical  int64
+            logical   int64
+            err       error
+            callCount int
         }
 
-        func (c fakeTSClient) GetTS(context.Context) (int64, int64, error) {
+        func (c *fakeTSClient) GetTS(context.Context) (int64, int64, error) {
+            c.callCount++
             return c.physical, c.logical, c.err
         }
 
-    `TestNewPDClockConvertsTSOPhysicalTime` should assert `PDClock.Now` returns `oracle.GetTimeFromTS(oracle.ComposeTS(physical, logical))`.
+    `TestPDLeaseClockConvertsRetriedTSOTime` should assert
+    `PDLeaseClock.Now` returns `oracle.GetTimeFromTS(ts)` where `ts` comes
+    from the existing `GetTSWithRetry` path.
 
-    `TestPDClockNowReturnsGetTSError` should assert no fallback to local time.
+    `TestPDLeaseClockNowReturnsGetTSError` should assert no fallback to local
+    time when `GetTSWithRetry` fails.
 
-- [ ] Run RED:
+    Do not reimplement or broadly retest `GetTSWithRetry`; use its existing
+    behavior. The wrapper tests only need to prove that `PDLeaseClock.Now`
+    delegates to it and converts the resulting TSO to `time.Time`.
 
-    ./tools/check/failpoint-go-test.sh br/pkg/leaseclock -run 'Test(NewPDClock|PDClockNow)' -count=1
+- [x] Run RED:
 
-  If the package has no failpoints, plain `go test -run 'Test(NewPDClock|PDClockNow)' -tags=intest,deadlock ./br/pkg/leaseclock` is also acceptable after checking failpoint rules.
+    go test -run 'TestPDLeaseClock' -tags=intest,deadlock ./br/pkg/restore -count=1
 
-- [ ] Implement `NewPDClock(client tsoClient) *PDClock` and `(*PDClock).Now(ctx context.Context) (time.Time, error)`.
+- [x] Implement `NewPDLeaseClock(pdClient pd.Client) objstore.LeaseClock`
+  and `PDLeaseClock.Now(ctx context.Context) (time.Time, error)` by calling
+  `GetTSWithRetry` and converting the returned TSO with `oracle.GetTimeFromTS`.
 
-- [ ] Run GREEN:
+- [x] Run GREEN:
 
-    go test -run 'Test(NewPDClock|PDClockNow)' -tags=intest,deadlock ./br/pkg/leaseclock -count=1
+    go test -run 'TestPDLeaseClock' -tags=intest,deadlock ./br/pkg/restore -count=1
 
-- [ ] Run `make bazel_prepare` because this milestone adds a Go package and new top-level tests.
+- [x] Run `make bazel_prepare` because this milestone adds Go source and may add new top-level tests.
 
 - [ ] Commit:
 
-    git add br/pkg/leaseclock docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
+    git add br/pkg/restore docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
     git commit -m "br: add PD-backed lease clock"
 
 ### Milestone 5: MigrationExt, LogClient, and PiTR Propagation
@@ -593,9 +615,12 @@ TDD steps:
 
 - [ ] Implement `MigrationExt` propagation and use explicit-clock lock functions.
 
-- [ ] Update `LogClient.GetLockedMigrations` to pass `leaseclock.NewPDClock(rc.pdClient)` to `MigrationExtension(rc.storage)`.
+- [ ] Update `LogClient.GetLockedMigrations` to pass
+  `restore.NewPDLeaseClock(rc.pdClient)` to `MigrationExtension(rc.storage)`.
 
-- [ ] Update PiTR collector to store a clock built from `PiTRCollDep.PDCli` and pass it into `MigrationExtension(c.taskStorage)` before `AppendMigration`.
+- [ ] Update PiTR collector to store a clock built with
+  `restore.NewPDLeaseClock(deps.PDCli)` and pass it into
+  `MigrationExtension(c.taskStorage)` before `AppendMigration`.
 
 - [ ] Run GREEN targeted tests:
 
@@ -640,13 +665,13 @@ The phase is complete when all of the following are true:
 - BR production lock paths covered by this plan pass a PD-backed lease clock to `pkg/objstore`.
 - `pkg/objstore` acquire, renewal, and cleanup decisions use the explicit clock for migrated paths.
 - Existing legacy storage-only APIs still pass their existing tests.
-- PD time helper tests prove no local-time fallback on `GetTS` error.
+- PD lease-clock helper tests prove no local-time fallback on `GetTSWithRetry` error.
 - The manual `br operator migrate-to` path remains unchanged.
 
 Required final validation profile is `Ready` per `AGENTS.md`, because code changes are included. Run at least:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemote|TestTryRenew|TestCleanUpStaleTruncateLock|TestCleanup|TestLockWithRetry' -count=1
-    go test -run 'Test(NewPDClock|PDClockNow)' -tags=intest,deadlock ./br/pkg/leaseclock -count=1
+    go test -run 'TestPDLeaseClock' -tags=intest,deadlock ./br/pkg/restore -count=1
     ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'TestMergeAndMigrateTo|TestAppendMigration|Test.*LeaseClock' -count=1
     go test -run 'TestGetLockedMigrations|Test.*PiTR' -tags=intest,deadlock ./br/pkg/restore/log_client ./br/pkg/restore/snap_client -count=1
     make bazel_prepare

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "import_mode_switcher.go",
         "misc.go",
+        "pd_lease_clock.go",
         "restorer.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/restore",
@@ -26,6 +27,7 @@ go_library(
         "//pkg/meta",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
+        "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
         "//pkg/util",
@@ -60,7 +62,7 @@ go_test(
     ],
     embed = [":restore"],
     flaky = True,
-    shard_count = 22,
+    shard_count = 24,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/mock",
@@ -84,6 +86,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//opt",
         "@org_golang_google_grpc//:grpc",
     ],
