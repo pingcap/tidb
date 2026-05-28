@@ -663,6 +663,43 @@ func TestShowMaterializedViewRemainLogs(t *testing.T) {
 	require.ErrorContains(t, err, "unknown SHOW MATERIALIZED VIEW option unknown_option")
 }
 
+func TestShowMaterializedViewLogWaitPurge(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_wait_purge (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_wait_purge (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_wait_purge (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_wait_purge group by a")
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_wait_purge"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	mlogID := baseTable.Meta().MaterializedViewBase.MLogID
+	mlogTable, ok := is.TableByID(context.Background(), mlogID)
+	require.True(t, ok)
+
+	expectedRow := func(waitPurge int64) string {
+		return fmt.Sprintf("%d %s %d t_wait_purge %d", mlogID, mlogTable.Meta().Name.O, baseTable.Meta().ID, waitPurge)
+	}
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("insert into t_wait_purge values (1, 10), (1, 20), (2, 30)")
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("refresh materialized view mv_wait_purge fast")
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(3)))
+
+	tk.MustExec("purge materialized view log on t_wait_purge")
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
+
+	tk.MustExec("create table t_wait_purge_no_log (a int)")
+	err = tk.QueryToErr("show materialized view log on t_wait_purge_no_log wait_purge")
+	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_wait_purge_no_log")
+	err = tk.ExecToErr("show materialized view log on t_wait_purge unknown_option")
+	require.ErrorContains(t, err, "unknown SHOW MATERIALIZED VIEW LOG option unknown_option")
+}
+
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
