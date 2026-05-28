@@ -880,3 +880,32 @@ func TestInvalidBindingCheck(t *testing.T) {
 	tk.MustExec("create binding using select * from *.t where c=1")
 	tk.MustExec("create binding using select * from t where c=?")
 }
+
+func TestIssue68550(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, key(a), key(b))")
+
+	expectedWarning := "Warning 1105 The system ignores the hints in the current query and uses the hints specified in the bindSQL: SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` = 1 AND `b` = 1"
+
+	tk.MustExec("create global binding using select /*+ use_index(t, a) */ * from t where a=1 and b=1")
+
+	// Case 1 (repro): EXPLAIN + conflicting manual hint -> warning fires.
+	tk.MustQuery("explain select /*+ use_index(t, b) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(expectedWarning))
+
+	// Case 2 (regression guard): plain SELECT + conflicting hint still warns.
+	tk.MustQuery("select /*+ use_index(t, b) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(expectedWarning))
+
+	// Case 3 (false-positive guard): binding present, no manual hint -> no warning.
+	tk.MustQuery("explain select * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	// Case 4: no binding -> user's manual hint applies, no warning.
+	tk.MustExec("drop global binding for select * from t where a=1 and b=1")
+	tk.MustQuery("explain select /*+ use_index(t, b) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
