@@ -38,7 +38,7 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
 - [x] (2026-05-28) Implemented Milestone 4.5: collapsed objstore clock APIs into the original function names with explicit clock parameters.
 - [x] (2026-05-28) Implemented Milestone 5: `MigrationExt`, `LogClient`, and PiTR collector propagation.
 - [x] (2026-05-28) Implemented Milestone 6: stream truncate propagation.
-- [ ] Run Ready validation before claiming the phase is complete.
+- [x] (2026-05-28) Ran Ready validation for the unified time source phase.
 
 ## Pause Snapshot: Unified-Time Work Before TTL Re-evaluation
 
@@ -1051,6 +1051,21 @@ Required final validation profile is `Ready` per `AGENTS.md`, because code chang
     make lint
 
 If sandbox permissions block Go build cache or Bazel output base writes, rerun the same command with elevated permissions and record both attempts.
+
+Ready validation outcome on 2026-05-28:
+
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryLockRemote|TestTryRenew|TestCleanUpStaleTruncateLock|TestCleanup|TestLockWithRetry' -count=1
+    go test -run 'TestPDLeaseClock' -tags=intest,deadlock ./br/pkg/restore -count=1
+    ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'TestMergeAndMigrateTo|TestAppendMigration|Test.*LeaseClock' -count=1
+    go test -run 'TestGetLockedMigrations|Test.*PiTR' -tags=intest,deadlock ./br/pkg/restore/log_client ./br/pkg/restore/snap_client -count=1
+    make bazel_prepare
+    make lint
+
+All commands above passed. The first run of the restore log-client command hit
+a transient local-storage test observation of a `.tmp.<uuid>` renewal file in
+`TestGetLockedMigrationsRenewsReadLockWhileLoadingMigrations`; rerunning that
+single test and then rerunning the full restore log-client/snap-client command
+both passed. `make bazel_prepare` produced no worktree changes.
 
 ## Idempotence and Recovery
 
