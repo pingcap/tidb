@@ -63,7 +63,7 @@ func (p pitrCollectorT) Done() {
 }
 
 func (p pitrCollectorT) ExtFullBkups() []backuppb.IngestedSSTs {
-	est := stream.MigrationExtension(p.coll.taskStorage)
+	est := stream.MigrationExtension(p.coll.taskStorage, objstore.NewLocalLeaseClock())
 	migs, err := est.Load(p.cx)
 	require.NoError(p.t, err)
 	res := []backuppb.IngestedSSTs{}
@@ -90,6 +90,7 @@ func (p *pitrCollectorT) Reopen() {
 		restoreStorage: p.coll.restoreStorage,
 		name:           fmt.Sprintf("test-%s-%d", p.t.Name(), p.tsoCnt.Add(1)),
 		restoreUUID:    p.coll.restoreUUID,
+		leaseClock:     p.coll.leaseClock,
 		tso:            p.coll.tso,
 		restoreSuccess: p.coll.restoreSuccess,
 	}
@@ -133,6 +134,7 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 		restoreStorage: restoreStorage,
 		name:           "test-" + t.Name(),
 		restoreUUID:    uuid.New(),
+		leaseClock:     objstore.NewLocalLeaseClock(),
 	}
 	tsoCnt := new(atomic.Uint64)
 	restoreSuccess := new(atomic.Bool)

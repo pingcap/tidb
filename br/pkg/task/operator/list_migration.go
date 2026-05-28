@@ -26,7 +26,7 @@ func RunListMigrations(ctx context.Context, cfg ListMigrationConfig) error {
 	if err != nil {
 		return err
 	}
-	ext := stream.MigrationExtension(st)
+	ext := stream.MigrationExtension(st, objstore.NewLocalLeaseClock())
 	migs, err := ext.Load(ctx, stream.MLNotFoundIsErr())
 	if err != nil {
 		return err

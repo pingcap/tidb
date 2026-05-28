@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
@@ -103,7 +104,8 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 			startTS:   startTS,
 			restoreTS: restoreTS,
 		},
-		clusterID: clusterID,
+		clusterID:  clusterID,
+		leaseClock: objstore.NewLocalLeaseClock(),
 	}
 }
 
@@ -112,7 +114,10 @@ func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, 
 // storage-level behavior (lock acquisition, migration loading) and do
 // not need the full domain / session / checkpoint wiring.
 func TEST_NewLogClientWithStorage(s storeapi.Storage) *LogClient {
-	return &LogClient{storage: s}
+	return &LogClient{
+		storage:    s,
+		leaseClock: objstore.NewLocalLeaseClock(),
+	}
 }
 
 func (rc *LogClient) SetUseCheckpoint() {

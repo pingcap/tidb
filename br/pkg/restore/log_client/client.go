@@ -208,6 +208,7 @@ type LogClient struct {
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storeapi.Storage
+	leaseClock  objstore.LeaseClock
 
 	// unsafeSession is not thread-safe.
 	// Currently, it is only utilized in some initialization and post-handle functions.
@@ -261,6 +262,7 @@ func NewLogClient(
 		pdHTTPClient:       pdHTTPCli,
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
+		leaseClock:         restore.NewPDLeaseClock(pdClient),
 		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
 		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
@@ -687,7 +689,7 @@ func (m *LockedMigrations) Unlock(ctx context.Context) error {
 }
 
 func (rc *LogClient) GetLockedMigrations(ctx context.Context, onLeaseLost func()) (ret *LockedMigrations, retErr error) {
-	ext := stream.MigrationExtension(rc.storage)
+	ext := stream.MigrationExtension(rc.storage, rc.leaseClock)
 	readLock, err := ext.GetReadLock(ctx, "restore stream", onLeaseLost)
 	if err != nil {
 		return nil, err

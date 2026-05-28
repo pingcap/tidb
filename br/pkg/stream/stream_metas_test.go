@@ -40,6 +40,20 @@ func requireMigrationsEqual(t *testing.T, miga, migb *backuppb.Migration) {
 	require.Equal(t, hashMigration(miga), hashMigration(migb), "\n%s\n%s", miga, migb)
 }
 
+type advancingLeaseClock struct {
+	mu   sync.Mutex
+	now  time.Time
+	step time.Duration
+}
+
+func (c *advancingLeaseClock) Now(context.Context) (time.Time, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now
+	c.now = c.now.Add(c.step)
+	return now, nil
+}
+
 type effects struct {
 	Renames   map[string]string
 	Deletions map[string]struct{}
@@ -2500,7 +2514,7 @@ func TestBasicMigration(t *testing.T) {
 	)
 
 	bs := objstore.Batch(s)
-	est := MigrationExtension(bs)
+	est := MigrationExtension(bs, objstore.NewLocalLeaseClock())
 	res := MergeMigrations(mig1, mig2)
 
 	resE := mig(
@@ -2566,7 +2580,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	mig3p := pmig(s, 3, mig3)
 
 	bs := objstore.Batch(s)
-	est := MigrationExtension(bs)
+	est := MigrationExtension(bs, objstore.NewLocalLeaseClock())
 
 	ctx := context.Background()
 	migs, err := est.Load(ctx)
@@ -2633,7 +2647,12 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	s := tmp(t)
-	est := MigrationExtension(s)
+	leaseNow := time.Now().Round(0)
+	clock := &advancingLeaseClock{
+		now:  leaseNow,
+		step: 5 * time.Millisecond,
+	}
+	est := MigrationExtension(s, clock)
 	pmig(s, 1, mig(mTruncatedTo(42)))
 
 	enteredCheck := make(chan struct{})
@@ -2674,6 +2693,8 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 
 	initialMeta, initialLockPath, ok := readLockMeta()
 	require.True(t, ok)
+	require.Equal(t, leaseNow, initialMeta.LockedAt)
+	require.Equal(t, leaseNow.Add(leaseTTL), initialMeta.ExpireAt)
 	originalReclaimAt := initialMeta.ExpireAt.Add(leaseTTL)
 
 	require.Eventually(t, func() bool {
@@ -2703,30 +2724,63 @@ func TestLockForAppendRenewsBothLocks(t *testing.T) {
 		leaseTTL      = 80 * time.Millisecond
 		renewInterval = 10 * time.Millisecond
 	)
-	ctx := context.Background()
-	s := tmp(t)
-	est := MigrationExtension(s)
 	restoreLeaseConstants := objstore.SetLeaseConstantsForTest(leaseTTL, renewInterval, 3, 5*time.Millisecond)
 	defer restoreLeaseConstants()
 
-	readLock, appendLock, err := est.lockForAppend(ctx, "AppendMigration", func() {})
-	require.NoError(t, err)
-	defer readLock.UnlockOnCleanUp(ctx)
-	defer appendLock.UnlockOnCleanUp(ctx)
+	t.Run("get read lock uses supplied clock", func(t *testing.T) {
+		ctx := context.Background()
+		s := tmp(t)
+		leaseNow := time.Now().Round(0)
+		clock := &advancingLeaseClock{
+			now:  leaseNow,
+			step: 5 * time.Millisecond,
+		}
+		est := MigrationExtension(s, clock)
 
-	readMeta, readLockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
-	require.True(t, ok)
-	appendMeta, appendLockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, appendLockPrefix+".WRIT.")
-	require.True(t, ok)
+		readLock, err := est.GetReadLock(ctx, "read lock", func() {})
+		require.NoError(t, err)
+		defer readLock.UnlockOnCleanUp(ctx)
 
-	require.Eventually(t, func() bool {
-		meta, lockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
-		return ok && lockPath == readLockPath && meta.ExpireAt.After(readMeta.ExpireAt)
-	}, 2*time.Second, 10*time.Millisecond)
-	require.Eventually(t, func() bool {
-		meta, lockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, appendLockPrefix+".WRIT.")
-		return ok && lockPath == appendLockPath && meta.ExpireAt.After(appendMeta.ExpireAt)
-	}, 2*time.Second, 10*time.Millisecond)
+		readMeta, _, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
+		require.True(t, ok)
+		require.Equal(t, leaseNow, readMeta.LockedAt)
+		require.Equal(t, leaseNow.Add(leaseTTL), readMeta.ExpireAt)
+	})
+
+	t.Run("append locks use supplied clock and renew", func(t *testing.T) {
+		ctx := context.Background()
+		s := tmp(t)
+		leaseNow := time.Now().Round(0)
+		step := 5 * time.Millisecond
+		clock := &advancingLeaseClock{
+			now:  leaseNow,
+			step: step,
+		}
+		est := MigrationExtension(s, clock)
+
+		readLock, appendLock, err := est.lockForAppend(ctx, "AppendMigration", func() {})
+		require.NoError(t, err)
+		defer readLock.UnlockOnCleanUp(ctx)
+		defer appendLock.UnlockOnCleanUp(ctx)
+
+		readMeta, readLockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
+		require.True(t, ok)
+		require.Equal(t, leaseNow, readMeta.LockedAt)
+		require.Equal(t, leaseNow.Add(leaseTTL), readMeta.ExpireAt)
+		appendMeta, appendLockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, appendLockPrefix+".WRIT.")
+		require.True(t, ok)
+		require.Equal(t, leaseNow.Add(2*step), appendMeta.LockedAt)
+		require.Equal(t, leaseNow.Add(2*step).Add(leaseTTL), appendMeta.ExpireAt)
+
+		require.Eventually(t, func() bool {
+			meta, lockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, lockPrefix+".READ.")
+			return ok && lockPath == readLockPath && meta.ExpireAt.After(readMeta.ExpireAt)
+		}, 2*time.Second, 10*time.Millisecond)
+		require.Eventually(t, func() bool {
+			meta, lockPath, ok := readSingleLockMetaWithPrefix(t, ctx, s, appendLockPrefix+".WRIT.")
+			return ok && lockPath == appendLockPath && meta.ExpireAt.After(appendMeta.ExpireAt)
+		}, 2*time.Second, 10*time.Millisecond)
+	})
 }
 
 func TestRemoveCompaction(t *testing.T) {
@@ -2760,7 +2814,7 @@ func TestRemoveCompaction(t *testing.T) {
 		mTruncatedTo(20),
 	)
 	bs := objstore.Batch(s)
-	est := MigrationExtension(bs)
+	est := MigrationExtension(bs, objstore.NewLocalLeaseClock())
 
 	merged := MergeMigrations(mig1, mig2)
 	requireMigrationsEqual(t, merged, mig(
@@ -2799,7 +2853,7 @@ func TestRetry(t *testing.T) {
 	require.NoError(t,
 		failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err", `1*return("this disk remembers nothing")`))
 	ctx := context.Background()
-	est := MigrationExtension(s)
+	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 	mg := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
 	require.Len(t, mg.Warnings, 1)
 	require.ErrorContains(t, mg.Warnings[0], "this disk remembers nothing")
@@ -2830,7 +2884,7 @@ func TestRetryRemoveCompaction(t *testing.T) {
 	)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/local_delete_file_err", `1*return("this disk will never forget")`))
-	est := MigrationExtension(s)
+	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 	mg := est.migrateTo(ctx, mig1)
 	require.Len(t, mg.Warnings, 1)
 	require.ErrorContains(t, mg.Warnings[0], "this disk will never forget")
@@ -2874,7 +2928,7 @@ func TestWithSimpleTruncate(t *testing.T) {
 		},
 	}))
 
-	est := MigrationExtension(s)
+	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 	m := mig(mTruncatedTo(65))
 	var res MigratedTo
 	effs := est.DryRun(func(me MigrationExt) { res = me.migrateTo(ctx, m) })
@@ -2932,7 +2986,7 @@ func TestAppendingMigs(t *testing.T) {
 			asp(fi(80, 85, WriteCF, 72), sp(34, 5)),
 		},
 	}), lN(2))
-	est := MigrationExtension(s)
+	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 
 	cDir := func(n uint64) string { return fmt.Sprintf("%05d/output", n) }
 	aDir := func(n uint64) string { return fmt.Sprintf("%05d/metas", n) }
@@ -2965,9 +3019,14 @@ func TestUserAbort(t *testing.T) {
 
 	pmig(s, 0, mig(mTruncatedTo(42)))
 	pmig(s, 1, mig(mTruncatedTo(96)))
-	est := MigrationExtension(s)
+	clock := &advancingLeaseClock{
+		now:  time.Now(),
+		step: 5 * time.Millisecond,
+	}
+	est := MigrationExtension(s, clock)
 	var res MergeAndMigratedTo
 	effs := est.DryRun(func(me MigrationExt) {
+		require.Same(t, clock, me.clock)
 		res = me.MergeAndMigrateTo(ctx, 1, MMOptSkipLockingInTest(), MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
 			return false
 		}))
@@ -2994,7 +3053,7 @@ func TestUnsupportedVersion(t *testing.T) {
 	m := mig(mVersion(backuppb.MigrationVersion(65535)))
 	pmig(s, 1, m)
 
-	est := MigrationExtension(s)
+	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 	ctx := context.Background()
 	_, err := est.Load(ctx)
 	require.Error(t, err)
@@ -3004,7 +3063,7 @@ func TestUnsupportedVersion(t *testing.T) {
 func TestLoadIgnoresBaseTmp(t *testing.T) {
 	ctx := context.Background()
 	s := tmp(t)
-	est := MigrationExtension(s)
+	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 
 	base := mig(mTruncatedTo(42))
 	pmig(s, 0, base)
@@ -3133,7 +3192,7 @@ func TestGroupedExtFullBackup(t *testing.T) {
 				require.FileExists(t, path.Join(s.Base(), input.FilesPrefixHint))
 			}
 			mTruncatedTo(c.TruncatedTo)(m)
-			est := MigrationExtension(s)
+			est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 			res := est.migrateTo(ctx, m)
 			require.NoError(t, multierr.Combine(res.Warnings...))
 			chosen := []string{}
@@ -3167,7 +3226,7 @@ func TestMergeMigrationsPreservesIngestedSstPaths(t *testing.T) {
 func TestMergeAndMigrateToBoundsIngestedSstPathsOverTruncates(t *testing.T) {
 	ctx := context.Background()
 	s := tmp(t)
-	est := MigrationExtension(s)
+	est := MigrationExtension(s, objstore.NewLocalLeaseClock())
 
 	placeholder := func(pfx string) {
 		require.NoError(t, s.WriteFile(ctx, path.Join(pfx, "monolith"), []byte("sst")))

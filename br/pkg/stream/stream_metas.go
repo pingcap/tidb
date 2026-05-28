@@ -215,7 +215,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	updateFn func(num int64),
 ) ([]string, error) {
 	hst := ms.hook(st)
-	est := MigrationExtension(hst)
+	est := MigrationExtension(hst, objstore.NewLocalLeaseClock())
 	est.Hooks = updateFnHook{updateFn: updateFn}
 	res := MigratedTo{NewBase: NewMigration()}
 	est.doTruncateLogs(ctx, ms, from, &res)
@@ -487,6 +487,7 @@ layers = {
 type MigrationExt struct {
 	s      storeapi.Storage
 	prefix string
+	clock  objstore.LeaseClock
 	// The hooks used for tracking the execution.
 	// See the `Hooks` type for more details.
 	Hooks Hooks
@@ -595,10 +596,11 @@ func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                   
 func (NoHooks) HandingMetaEditDone()                                               {}
 
 // MigrationExtension installs the extension methods to an `Storage`.
-func MigrationExtension(s storeapi.Storage) MigrationExt {
+func MigrationExtension(s storeapi.Storage, clock objstore.LeaseClock) MigrationExt {
 	return MigrationExt{
 		s:      s,
 		prefix: migrationPrefix,
+		clock:  clock,
 		Hooks:  NoHooks{},
 	}
 }
@@ -653,7 +655,7 @@ type Migrations struct {
 
 // GetReadLock locks the storage and make sure there won't be other one modify this backup.
 func (m *MigrationExt) GetReadLock(ctx context.Context, hint string, onLeaseLost func()) (*objstore.RemoteLock, error) {
-	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint, onLeaseLost, objstore.NewLocalLeaseClock())
+	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint, onLeaseLost, m.clock)
 }
 
 // OrderedMigration is a migration with its path and sequence number.
@@ -766,6 +768,7 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 	batchSelf := MigrationExt{
 		s:      objstore.Batch(m.s),
 		prefix: m.prefix,
+		clock:  m.clock,
 		Hooks:  m.Hooks,
 	}
 	f(batchSelf)
@@ -778,14 +781,14 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 func (m MigrationExt) lockForAppend(ctx context.Context, hint string, onLeaseLost func()) (
 	readLock, appendLock *objstore.RemoteLock, err error) {
 	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
-	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)", onLeaseLost, objstore.NewLocalLeaseClock())
+	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)", onLeaseLost, m.clock)
 	if err != nil {
 		return nil, nil, errors.Annotate(err,
 			"failed to acquire read lock for append operation")
 	}
 
 	// Phase 2: Acquire write lock on append path to prevent concurrent appends
-	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)", onLeaseLost, objstore.NewLocalLeaseClock())
+	appendLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, m.s, appendLockPrefix, hint+" (append)", onLeaseLost, m.clock)
 	if err != nil {
 		// If append lock fails, release the read lock
 		readLock.UnlockOnCleanUp(ctx)
@@ -908,7 +911,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 	if !config.skipLockingInTest {
 		workCtx, cancel := context.WithCancel(ctx)
 		lock, err := objstore.LockWithRetry(workCtx, objstore.TryLockRemoteWrite, m.s, lockPrefix,
-			"StreamTruncation: MergeMigration", cancel, objstore.NewLocalLeaseClock())
+			"StreamTruncation: MergeMigration", cancel, m.clock)
 		if err != nil {
 			cancel()
 			result.MigratedTo = MigratedTo{

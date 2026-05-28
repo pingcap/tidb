@@ -155,6 +155,8 @@ type pitrCollector struct {
 	restoreUUID uuid.UUID
 	// maxCopyConcurrency is the maximum number of concurrent copy operations.
 	maxCopyConcurrency int
+	// leaseClock provides the shared time source for migration locks.
+	leaseClock objstore.LeaseClock
 
 	// Mutable state.
 	ingestedSSTMeta     ingestedSSTsMeta
@@ -415,7 +417,7 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 		return nil
 	}
 
-	est := stream.MigrationExtension(c.taskStorage)
+	est := stream.MigrationExtension(c.taskStorage, c.leaseClock)
 
 	m := stream.NewMigration()
 	m.IngestedSstPaths = append(m.IngestedSstPaths, c.metaPath())
@@ -515,6 +517,7 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 	coll := &pitrCollector{
 		enabled:            true,
 		maxCopyConcurrency: deps.maxCopyConcurrency,
+		leaseClock:         restore.NewPDLeaseClock(deps.PDCli),
 	}
 
 	strg, err := objstore.Create(ctx, ts[0].Info.Storage, false)
