@@ -63,7 +63,7 @@ func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.
 	}
 
 	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
-	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
+	// only the number of distinct values (NDV) is computed using TiKV. Other statistics
 	// are derived from sample data processed within TiDB.
 	// The reason is that we want to keep the same row sampling for all columns.
 	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))

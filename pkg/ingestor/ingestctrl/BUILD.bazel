@@ -40,6 +40,7 @@ go_library(
         "//pkg/ingestor/errdef",
         "//pkg/ingestor/globalsort",
         "//pkg/ingestor/ingestcli",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",
