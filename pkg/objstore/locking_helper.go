@@ -141,10 +141,10 @@ func tryLockRemoteExact(
 	verify func(VerifyWriteContext) error,
 ) (*RemoteLock, error) {
 	meta := MakeLockMeta(hint)
-	return tryLockRemoteExactWithLeaseClock(ctx, storage, physicalPath, meta, localLeaseClock{}, verify)
+	return tryLockRemoteExactWithClock(ctx, storage, physicalPath, meta, NewLocalLeaseClock(), verify)
 }
 
-func tryLockRemoteExactWithLeaseClock(
+func tryLockRemoteExactWithClock(
 	ctx context.Context,
 	storage storeapi.Storage,
 	physicalPath string,

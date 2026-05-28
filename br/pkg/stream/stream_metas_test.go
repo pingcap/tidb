@@ -2685,7 +2685,7 @@ func TestMergeAndMigrateToRenewsWriteLock(t *testing.T) {
 		time.Sleep(wait)
 	}
 
-	_, err := objstore.TryLockRemoteWrite(ctx, s, lockPrefix, "competing writer")
+	_, err := objstore.TryLockRemoteWrite(ctx, s, lockPrefix, "competing writer", objstore.NewLocalLeaseClock())
 	require.Error(t, err, "competing writer should not acquire the write lock while MergeAndMigrateTo is alive")
 
 	release()

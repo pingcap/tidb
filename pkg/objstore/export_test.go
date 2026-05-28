@@ -39,16 +39,11 @@ func TESTClearLeaseClock(l *RemoteLock) {
 	l.leaseClock = nil
 }
 
-// TESTTryLockRemoteExact exposes exact-target conditionalPut for tests that
-// need to exercise assertOnlyMyIntent without lock-family verification.
-func TESTTryLockRemoteExact(ctx context.Context, storage storeapi.Storage, physicalPath, hint string) (*RemoteLock, error) {
-	return tryLockRemoteExact(ctx, storage, physicalPath, hint, nil)
-}
-
-// TESTTryLockRemoteExactWithLeaseClock exposes exact-target conditionalPut with
-// an explicit lease clock for tests that exercise helper-level validation.
-func TESTTryLockRemoteExactWithLeaseClock(ctx context.Context, storage storeapi.Storage, physicalPath, hint string, clock LeaseClock) (*RemoteLock, error) {
-	return tryLockRemoteExactWithLeaseClock(ctx, storage, physicalPath, MakeLockMeta(hint), clock, nil)
+// TESTTryLockRemoteExact exposes exact-target conditionalPut with an explicit
+// lease clock for tests that exercise helper-level validation or
+// assertOnlyMyIntent without lock-family verification.
+func TESTTryLockRemoteExact(ctx context.Context, storage storeapi.Storage, physicalPath, hint string, clock LeaseClock) (*RemoteLock, error) {
+	return tryLockRemoteExactWithClock(ctx, storage, physicalPath, MakeLockMeta(hint), clock, nil)
 }
 
 // TESTStartRenewal exposes the unexported renewal owner for direct testing.

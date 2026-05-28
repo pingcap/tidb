@@ -1422,7 +1422,7 @@ func TestTryLockRemoteRootPathPrefix(t *testing.T) {
 			return nil, errors.New("stop")
 		})
 
-	_, err := TryLockRemoteTruncate(context.Background(), storage, "hint")
+	_, err := TryLockRemoteTruncate(context.Background(), storage, "hint", NewLocalLeaseClock())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "during initial check")
 }

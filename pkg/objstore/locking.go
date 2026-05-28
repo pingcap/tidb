@@ -188,6 +188,13 @@ func (localLeaseClock) Now(context.Context) (time.Time, error) {
 	return nowFunc(), nil
 }
 
+// NewLocalLeaseClock returns a lease clock backed by the local wall clock.
+// It is intended for tests, manual paths, and temporarily unmigrated callers
+// that explicitly keep local-time behavior.
+func NewLocalLeaseClock() LeaseClock {
+	return localLeaseClock{}
+}
+
 // LockMeta is the meta information of a lock.
 type LockMeta struct {
 	LockedAt   time.Time `json:"locked_at"`
@@ -327,16 +334,10 @@ func (l *RemoteLock) stopRenewalIfStarted() {
 	<-done
 }
 
-// CleanUpStaleTruncateLock reclaims only stale instance-form truncate locks.
-// It intentionally ignores the legacy fixed path "truncating.lock".
-func CleanUpStaleTruncateLock(ctx context.Context, storage storeapi.Storage) (bool, error) {
-	return CleanUpStaleTruncateLockWithLeaseClock(ctx, storage, localLeaseClock{})
-}
-
-// CleanUpStaleTruncateLockWithLeaseClock reclaims only stale instance-form
-// truncate locks using the provided lease clock for stale decisions. It
-// intentionally ignores the legacy fixed path "truncating.lock".
-func CleanUpStaleTruncateLockWithLeaseClock(ctx context.Context, storage storeapi.Storage, clock LeaseClock) (bool, error) {
+// CleanUpStaleTruncateLock reclaims only stale instance-form truncate locks
+// using the provided lease clock for stale decisions. It intentionally ignores
+// the legacy fixed path "truncating.lock".
+func CleanUpStaleTruncateLock(ctx context.Context, storage storeapi.Storage, clock LeaseClock) (bool, error) {
 	return cleanUpStaleLockFamily(ctx, storage, truncateLockPath, false, clock)
 }
 
@@ -506,12 +507,9 @@ func (l *RemoteLock) UnlockOnCleanUp(ctx context.Context) {
 	}
 }
 
-// Locker is a locker.
-type Locker = func(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error)
-
-// LockerWithLeaseClock is a locker that receives the same lease clock used by
-// the surrounding retry and cleanup flow.
-type LockerWithLeaseClock = func(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error)
+// Locker is a locker that receives the same lease clock used by the surrounding
+// retry and cleanup flow.
+type Locker = func(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error)
 
 const (
 	// lockRetryTimes specifies the maximum number of times to retry acquiring a lock.
@@ -531,15 +529,7 @@ func validateOnLeaseLost(onLeaseLost func()) error {
 // On each conflict it opportunistically deletes any stale (ExpireAt-past +
 // double-confirmed) lock files in the family rooted at `lockPath`, then
 // continues with the standard exponential backoff.
-func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, lockPath, hint string, onLeaseLost func()) (*RemoteLock, error) {
-	return LockWithRetryWithLeaseClock(ctx, func(ctx context.Context, storage storeapi.Storage, path, hint string, _ LeaseClock) (*RemoteLock, error) {
-		return locker(ctx, storage, path, hint)
-	}, storage, lockPath, hint, onLeaseLost, localLeaseClock{})
-}
-
-// LockWithRetryWithLeaseClock lock with retry using the same lease clock for
-// acquire, stale cleanup, and later renewal on the returned lock.
-func LockWithRetryWithLeaseClock(ctx context.Context, locker LockerWithLeaseClock, storage storeapi.Storage, lockPath, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error) {
+func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, lockPath, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error) {
 	if err := validateOnLeaseLost(onLeaseLost); err != nil {
 		return nil, err
 	}
@@ -586,16 +576,10 @@ func LockWithRetryWithLeaseClock(ctx context.Context, locker LockerWithLeaseCloc
 	}
 }
 
-// TryLockRemoteWrite is a single-attempt write-lock primitive. It does not
+// TryLockRemoteWrite is a single-attempt write-lock primitive using the
+// provided lease clock for lock metadata and post-acquire proof. It does not
 // retry, clean up stale locks, or start renewal.
-func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
-	return TryLockRemoteWriteWithLeaseClock(ctx, storage, path, hint, localLeaseClock{})
-}
-
-// TryLockRemoteWriteWithLeaseClock is a single-attempt write-lock primitive
-// using the provided lease clock for lock metadata and post-acquire proof. It
-// does not retry, clean up stale locks, or start renewal.
-func TryLockRemoteWriteWithLeaseClock(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error) {
+func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error) {
 	if clock == nil {
 		return nil, errors.New("lease clock is required")
 	}
@@ -614,7 +598,7 @@ func TryLockRemoteWriteWithLeaseClock(ctx context.Context, storage storeapi.Stor
 		}
 		target = fmt.Sprintf("%s.%s", migrationWriteLockPrefix, generation)
 		acquireKind = lockAcquireMigrationWrite
-		return tryLockRemoteExactWithLeaseClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
+		return tryLockRemoteExactWithClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
 			return verifyLockFamily(ctx, path, acquireKind)
 		})
 	case appendLockPath:
@@ -628,7 +612,7 @@ func TryLockRemoteWriteWithLeaseClock(ctx context.Context, storage storeapi.Stor
 		}
 		target = fmt.Sprintf("%s.%s", appendWriteLockPrefix, generation)
 		acquireKind = lockAcquireAppendWrite
-		return tryLockRemoteExactWithLeaseClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
+		return tryLockRemoteExactWithClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
 			return verifyLockFamily(ctx, path, acquireKind)
 		})
 	default:
@@ -636,16 +620,10 @@ func TryLockRemoteWriteWithLeaseClock(ctx context.Context, storage storeapi.Stor
 	}
 }
 
-// TryLockRemoteRead is a single-attempt read-lock primitive. It does not
-// retry, clean up stale locks, or start renewal.
-func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
-	return TryLockRemoteReadWithLeaseClock(ctx, storage, path, hint, localLeaseClock{})
-}
-
-// TryLockRemoteReadWithLeaseClock is a single-attempt read-lock primitive
-// using the provided lease clock for lock metadata and post-acquire proof. It
-// does not retry, clean up stale locks, or start renewal.
-func TryLockRemoteReadWithLeaseClock(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error) {
+// TryLockRemoteRead is a single-attempt read-lock primitive using the provided
+// lease clock for lock metadata and post-acquire proof. It does not retry,
+// clean up stale locks, or start renewal.
+func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error) {
 	if clock == nil {
 		return nil, errors.New("lease clock is required")
 	}
@@ -661,22 +639,16 @@ func TryLockRemoteReadWithLeaseClock(ctx context.Context, storage storeapi.Stora
 		return nil, err
 	}
 	target := fmt.Sprintf("%s.%s", migrationReadLockPrefix, generation)
-	return tryLockRemoteExactWithLeaseClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
+	return tryLockRemoteExactWithClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
 		return verifyLockFamily(ctx, path, lockAcquireMigrationRead)
 	})
 }
 
 // TryLockRemoteTruncate is a single-attempt primitive that tries to create an
-// instance lock for truncation. It does not retry, clean up stale locks, or
-// start renewal. Production truncate callers should use LockRemoteTruncate.
-func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string) (*RemoteLock, error) {
-	return TryLockRemoteTruncateWithLeaseClock(ctx, storage, hint, localLeaseClock{})
-}
-
-// TryLockRemoteTruncateWithLeaseClock is a single-attempt primitive that tries
-// to create an instance lock for truncation using the provided lease clock. It
-// does not retry, clean up stale locks, or start renewal.
-func TryLockRemoteTruncateWithLeaseClock(ctx context.Context, storage storeapi.Storage, hint string, clock LeaseClock) (*RemoteLock, error) {
+// instance lock for truncation using the provided lease clock. It does not
+// retry, clean up stale locks, or start renewal. Production truncate callers
+// should use LockRemoteTruncate.
+func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string, clock LeaseClock) (*RemoteLock, error) {
 	if clock == nil {
 		return nil, errors.New("lease clock is required")
 	}
@@ -689,19 +661,14 @@ func TryLockRemoteTruncateWithLeaseClock(ctx context.Context, storage storeapi.S
 		return nil, err
 	}
 	target := fmt.Sprintf("%s.%s", truncateLockPath, generation)
-	return tryLockRemoteExactWithLeaseClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
+	return tryLockRemoteExactWithClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
 		return verifyLockFamily(ctx, truncateLockPath, lockAcquireTruncate)
 	})
 }
 
-// LockRemoteTruncate acquires a truncate lock once and starts lease renewal.
-func LockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string, onLeaseLost func()) (*RemoteLock, error) {
-	return LockRemoteTruncateWithLeaseClock(ctx, storage, hint, onLeaseLost, localLeaseClock{})
-}
-
-// LockRemoteTruncateWithLeaseClock acquires a truncate lock once with the
-// provided lease clock and starts lease renewal.
-func LockRemoteTruncateWithLeaseClock(ctx context.Context, storage storeapi.Storage, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error) {
+// LockRemoteTruncate acquires a truncate lock once with the provided lease
+// clock and starts lease renewal.
+func LockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error) {
 	if err := validateOnLeaseLost(onLeaseLost); err != nil {
 		return nil, err
 	}
@@ -709,7 +676,7 @@ func LockRemoteTruncateWithLeaseClock(ctx context.Context, storage storeapi.Stor
 		return nil, errors.New("lease clock is required")
 	}
 
-	lock, err := TryLockRemoteTruncateWithLeaseClock(ctx, storage, hint, clock)
+	lock, err := TryLockRemoteTruncate(ctx, storage, hint, clock)
 	if err != nil {
 		return nil, err
 	}

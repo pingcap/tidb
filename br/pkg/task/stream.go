@@ -1118,10 +1118,11 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	if _, err := objstore.CleanUpStaleTruncateLock(ctx, extStorage); err != nil {
+	leaseClock := objstore.NewLocalLeaseClock()
+	if _, err := objstore.CleanUpStaleTruncateLock(ctx, extStorage, leaseClock); err != nil {
 		return err
 	}
-	lock, err := objstore.LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, cancelFn)
+	lock, err := objstore.LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, cancelFn, leaseClock)
 	if err != nil {
 		return err
 	}
