@@ -1540,7 +1540,8 @@ func (rc *LogClient) WrapLogFilesIterWithCheckpointFilter(
 	rules map[int64]*restoreutils.RewriteRules,
 	updateStatsFn func(uint64, uint64),
 ) (LogIter, error) {
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, SplitFileThresholdDefault)
+	// splitFileThreshold is unused here: Accumulate is never called on this path.
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, logCheckpointMetaManager, rules, updateStatsFn, 0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1565,9 +1566,6 @@ func (rc *LogClient) PreSplitRegions(
 	splitSize uint64,
 	splitKeys int64,
 ) (bool, error) {
-	log.Info("pre-split: get split threshold from tikv config",
-		zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
 	splitter := split.NewPipelineRegionsSplitter(client, splitSize, splitKeys)
 	strategy := split.NewBaseSplitStrategy(rules)
