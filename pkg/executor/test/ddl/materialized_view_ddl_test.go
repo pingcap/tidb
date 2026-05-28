@@ -29,6 +29,7 @@ import (
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -420,6 +421,30 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcu
 	tk.MustExec("insert into t_concurrent_drop_idx values (1, 2, 10), (1, 2, 5)")
 	tk.MustExec("refresh materialized view mv_concurrent_drop_idx fast")
 	tk.MustQuery("select a, b, minc, cnt from mv_concurrent_drop_idx").Check(testkit.Rows("1 2 5 2"))
+}
+
+func TestShowCreateMaterializedView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_show_mv (a int, b int not null)")
+	tk.MustExec("create materialized view log on t_show_mv (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_show_mv (a, s, cnt) comment = 'c1' refresh fast next now() shard_row_id_bits = 2 pre_split_regions = 2 as select a, sum(b), count(1) from t_show_mv group by a")
+
+	rows := tk.MustQuery("show create materialized view mv_show_mv").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "mv_show_mv", rows[0][0])
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW `mv_show_mv` (`a`, `s`, `cnt`)")
+	require.Contains(t, showCreate, "COMMENT = 'c1'")
+	require.Contains(t, showCreate, "REFRESH FAST NEXT NOW()")
+	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
+	require.Contains(t, showCreate, "AS SELECT `a`,SUM(`b`),COUNT(1) FROM `test`.`t_show_mv` GROUP BY `a`")
+	_, err := parser.New().ParseOneStmt(showCreate, "", "")
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4", rows[0][2])
+	require.Equal(t, "utf8mb4_bin", rows[0][3])
 }
 
 func TestCreateMaterializedViewRefreshExprTypeValidation(t *testing.T) {

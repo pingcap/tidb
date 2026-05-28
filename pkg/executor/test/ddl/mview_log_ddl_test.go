@@ -27,12 +27,14 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,6 +97,35 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 
 	// Duplicated MV LOG should fail (same derived table name).
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
+}
+
+func TestShowCreateMaterializedViewLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_show_mlog (a int, b int)")
+	tk.MustExec("create materialized view log on t_show_mlog (a, b) shard_row_id_bits = 2 pre_split_regions = 2 purge start with cast('2026-01-02 03:04:05' as datetime) next date_add(now(), interval 1 hour)")
+
+	rows := tk.MustQuery("show create materialized view log on t_show_mlog").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "t_show_mlog", rows[0][0])
+	showCreate, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_show_mlog` (`a`, `b`)")
+	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
+	require.Contains(t, showCreate, "PURGE START WITH CAST('2026-01-02 03:04:05' AS DATETIME) NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)")
+	_, err := parser.New().ParseOneStmt(showCreate, "", "")
+	require.NoError(t, err)
+
+	tk.MustExec("create temporary table t_show_mlog (a int)")
+	rows = tk.MustQuery("show create materialized view log on t_show_mlog").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "t_show_mlog", rows[0][0])
+	require.Contains(t, rows[0][1], "CREATE MATERIALIZED VIEW LOG ON `t_show_mlog` (`a`, `b`)")
+
+	tk.MustExec("create table t_no_mlog (a int)")
+	err = tk.QueryToErr("show create materialized view log on t_no_mlog")
+	require.Truef(t, exeerrors.ErrWrongObject.Equal(err), "err %v", err)
 }
 
 func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {
@@ -300,22 +331,24 @@ func TestAlterMaterializedViewLogPurgeUpdatesMetaAndNextTime(t *testing.T) {
 		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,
 	)).Rows()
-	tk.MustExec("alter materialized view log on t purge")
+	err := tk.ExecToErr("alter materialized view log on t purge")
+	require.Error(t, err)
 	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
 	require.Equal(t, "DEFERRED", purgeMethod)
 	require.Equal(t, "", purgeStartWith)
-	require.Equal(t, "", purgeNext)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", purgeNext)
 	afterRows := tk.MustQuery(fmt.Sprintf(
 		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,
 	)).Rows()
 	require.Equal(t, beforeRows, afterRows)
 
-	tk.MustExec("alter materialized view log on t purge immediate")
+	err = tk.ExecToErr("alter materialized view log on t purge immediate")
+	require.ErrorContains(t, err, "PURGE IMMEDIATE is not supported for ALTER MATERIALIZED VIEW LOG")
 	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
-	require.Equal(t, "IMMEDIATE", purgeMethod)
+	require.Equal(t, "DEFERRED", purgeMethod)
 	require.Equal(t, "", purgeStartWith)
-	require.Equal(t, "", purgeNext)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", purgeNext)
 	afterImmediateRows := tk.MustQuery(fmt.Sprintf(
 		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,

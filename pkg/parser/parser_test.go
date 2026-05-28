@@ -1282,6 +1282,12 @@ func TestDBAStmt(t *testing.T) {
 		// for show create view
 		{"show create view test.t", true, "SHOW CREATE VIEW `test`.`t`"},
 		{"show create view t", true, "SHOW CREATE VIEW `t`"},
+		// for show create materialized view
+		{"show create materialized view test.t", true, "SHOW CREATE MATERIALIZED VIEW `test`.`t`"},
+		{"show create materialized view t", true, "SHOW CREATE MATERIALIZED VIEW `t`"},
+		// for show create materialized view log
+		{"show create materialized view log on test.t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `test`.`t`"},
+		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
@@ -5378,8 +5384,8 @@ func TestMaterializedViewStatements(t *testing.T) {
 		},
 		{
 			"ALTER MATERIALIZED VIEW mv REFRESH START WITH now()",
-			true,
-			"ALTER MATERIALIZED VIEW `mv` REFRESH START WITH NOW()",
+			false,
+			"",
 		},
 		{
 			"ALTER MATERIALIZED VIEW mv REFRESH NEXT 300",
@@ -5393,13 +5399,13 @@ func TestMaterializedViewStatements(t *testing.T) {
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE",
-			true,
-			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE",
+			false,
+			"",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE START WITH now()",
-			true,
-			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE START WITH NOW()",
+			false,
+			"",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE NEXT 300",
