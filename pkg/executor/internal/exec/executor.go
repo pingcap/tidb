@@ -607,18 +607,22 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 			populateRUV2NextCache(ctx, cache, e)
 		}
 		regionName = cache.regionName
-		info, trackRUV2 = cache.info, cache.hasInfo
+		info = cache.info
 		ruv2Metrics = cache.metrics
 	} else {
 		execType := reflect.TypeOf(e).String()
 		regionName = execType + ".Next"
-		info, trackRUV2 = ruv2ExecutorMetricByType[execType]
-		if trackRUV2 {
+		var hasInfo bool
+		if info, hasInfo = ruv2ExecutorMetricByType[execType]; hasInfo {
 			if m := execdetails.RUV2MetricsFromContext(ctx); m != nil && !m.Bypass() {
 				ruv2Metrics = m
 			}
 		}
 	}
+	// trackRUV2 means "this Next call will record into the metrics container".
+	// A tracked-type executor whose statement is bypassed leaves ruv2Metrics nil
+	// and must skip the per-child IO accumulator setup as well as the late update.
+	trackRUV2 = ruv2Metrics != nil
 
 	r, ctx := tracing.StartRegionEx(ctx, regionName)
 	defer r.End()
@@ -649,7 +653,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		parentAcc.addInput(outRows, outCols)
 	}
 
-	if !trackRUV2 || ruv2Metrics == nil {
+	if !trackRUV2 {
 		// recheck whether the session/query is killed during the Next()
 		return e.HandleSQLKillerSignal()
 	}
