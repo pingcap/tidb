@@ -654,7 +654,7 @@ func buildMLogPurgeMeta(sctx sessionctx.Context, purge *ast.MLogPurgeClause) (me
 		return "", "", "", nil
 	}
 	if purge.Immediate {
-		return "IMMEDIATE", "", "", nil
+		return "", "", "", dbterror.ErrGeneralUnsupportedDDL.GenWithStack("PURGE IMMEDIATE is not supported for ALTER MATERIALIZED VIEW LOG")
 	}
 
 	method = "DEFERRED"

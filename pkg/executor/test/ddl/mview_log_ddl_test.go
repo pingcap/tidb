@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -112,9 +113,11 @@ func TestShowCreateMaterializedViewLog(t *testing.T) {
 	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_show_mlog` (`a`, `b`)")
 	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
 	require.Contains(t, showCreate, "PURGE START WITH CAST('2026-01-02 03:04:05' AS DATETIME) NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)")
+	_, err := parser.New().ParseOneStmt(showCreate, "", "")
+	require.NoError(t, err)
 
 	tk.MustExec("create table t_no_mlog (a int)")
-	err := tk.QueryToErr("show create materialized view log on t_no_mlog")
+	err = tk.QueryToErr("show create materialized view log on t_no_mlog")
 	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_no_mlog")
 }
 
@@ -321,22 +324,24 @@ func TestAlterMaterializedViewLogPurgeUpdatesMetaAndNextTime(t *testing.T) {
 		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,
 	)).Rows()
-	tk.MustExec("alter materialized view log on t purge")
+	err := tk.ExecToErr("alter materialized view log on t purge")
+	require.Error(t, err)
 	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
 	require.Equal(t, "DEFERRED", purgeMethod)
 	require.Equal(t, "", purgeStartWith)
-	require.Equal(t, "", purgeNext)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", purgeNext)
 	afterRows := tk.MustQuery(fmt.Sprintf(
 		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,
 	)).Rows()
 	require.Equal(t, beforeRows, afterRows)
 
-	tk.MustExec("alter materialized view log on t purge immediate")
+	err = tk.ExecToErr("alter materialized view log on t purge immediate")
+	require.ErrorContains(t, err, "PURGE IMMEDIATE is not supported for ALTER MATERIALIZED VIEW LOG")
 	_, purgeMethod, purgeStartWith, purgeNext = getMLogMeta()
-	require.Equal(t, "IMMEDIATE", purgeMethod)
+	require.Equal(t, "DEFERRED", purgeMethod)
 	require.Equal(t, "", purgeStartWith)
-	require.Equal(t, "", purgeNext)
+	require.Equal(t, "DATE_ADD(NOW(), INTERVAL 25 MINUTE)", purgeNext)
 	afterImmediateRows := tk.MustQuery(fmt.Sprintf(
 		"select TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,

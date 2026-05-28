@@ -5384,8 +5384,8 @@ func TestMaterializedViewStatements(t *testing.T) {
 		},
 		{
 			"ALTER MATERIALIZED VIEW mv REFRESH START WITH now()",
-			true,
-			"ALTER MATERIALIZED VIEW `mv` REFRESH START WITH NOW()",
+			false,
+			"",
 		},
 		{
 			"ALTER MATERIALIZED VIEW mv REFRESH NEXT 300",
@@ -5399,13 +5399,13 @@ func TestMaterializedViewStatements(t *testing.T) {
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE",
-			true,
-			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE",
+			false,
+			"",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE START WITH now()",
-			true,
-			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE START WITH NOW()",
+			false,
+			"",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE NEXT 300",

@@ -25,6 +25,7 @@ go_test(
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
+        "//pkg/parser",
         "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

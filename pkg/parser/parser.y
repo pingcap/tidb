@@ -1428,8 +1428,6 @@ import (
 	MViewCreateOption                      "materialized view create option"
 	MViewRefreshClause                     "materialized view refresh clause"
 	MViewRefreshOnClauseOpt                "materialized view refresh ON clause"
-	MViewStartWithOpt                      "materialized view START WITH option"
-	MViewNextOpt                           "materialized view NEXT option"
 	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
 	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
 	MLogCreateOptionListOpt                "materialized view log create options"
@@ -1438,7 +1436,6 @@ import (
 	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
 	MLogPurgeClause                        "materialized view log PURGE clause"
 	MLogStartWithOpt                       "materialized view log START WITH option"
-	MLogNextOpt                            "materialized view log NEXT option"
 	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
@@ -5382,26 +5379,6 @@ MViewStartWithOrNext:
 		$$ = &ast.MViewRefreshClause{Next: $2.(ast.ExprNode)}
 	}
 
-MViewStartWithOpt:
-	/* EMPTY */
-	{
-		$$ = nil
-	}
-|	"START" "WITH" Expression
-	{
-		$$ = $3
-	}
-
-MViewNextOpt:
-	/* EMPTY */
-	{
-		$$ = nil
-	}
-|	"NEXT" Expression
-	{
-		$$ = $2
-	}
-
 CreateMaterializedViewLogStmt:
 	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt MLogPurgeClauseOpt
 	{
@@ -5506,16 +5483,6 @@ MLogStartWithOpt:
 		$$ = $3
 	}
 
-MLogNextOpt:
-	/* EMPTY */
-	{
-		$$ = nil
-	}
-|	"NEXT" Expression
-	{
-		$$ = $2
-	}
-
 AlterMaterializedViewStmt:
 	"ALTER" "MATERIALIZED" "VIEW" TableName AlterMaterializedViewActionList
 	{
@@ -5541,17 +5508,14 @@ AlterMaterializedViewAction:
 	{
 		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
 	}
-|	"REFRESH" MViewStartWithOpt MViewNextOpt
+|	"REFRESH" MViewStartWithOrNextOpt
 	{
-		var startWith ast.ExprNode
+		refresh := &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodFast}
 		if $2 != nil {
-			startWith = $2.(ast.ExprNode)
+			schedule := $2.(*ast.MViewRefreshClause)
+			refresh.StartWith = schedule.StartWith
+			refresh.Next = schedule.Next
 		}
-		var next ast.ExprNode
-		if $3 != nil {
-			next = $3.(ast.ExprNode)
-		}
-		refresh := &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodFast, StartWith: startWith, Next: next}
 		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionRefresh, Refresh: refresh}
 	}
 
@@ -5576,21 +5540,9 @@ AlterMaterializedViewLogActionList:
 	}
 
 AlterMaterializedViewLogAction:
-	"PURGE" "IMMEDIATE"
+	MLogPurgeClause
 	{
-		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: true}}
-	}
-|	"PURGE" MLogStartWithOpt MLogNextOpt
-	{
-		var startWith ast.ExprNode
-		if $2 != nil {
-			startWith = $2.(ast.ExprNode)
-		}
-		var next ast.ExprNode
-		if $3 != nil {
-			next = $3.(ast.ExprNode)
-		}
-		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: next}}
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: $1.(*ast.MLogPurgeClause)}
 	}
 
 DropMaterializedViewStmt:

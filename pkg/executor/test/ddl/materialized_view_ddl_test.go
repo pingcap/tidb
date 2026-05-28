@@ -29,6 +29,7 @@ import (
 	ddlsess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -440,6 +441,8 @@ func TestShowCreateMaterializedView(t *testing.T) {
 	require.Contains(t, showCreate, "REFRESH FAST NEXT NOW()")
 	require.Contains(t, showCreate, "SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 2")
 	require.Contains(t, showCreate, "AS SELECT `a`,SUM(`b`),COUNT(1) FROM `test`.`t_show_mv` GROUP BY `a`")
+	_, err := parser.New().ParseOneStmt(showCreate, "", "")
+	require.NoError(t, err)
 	require.Equal(t, "utf8mb4", rows[0][2])
 	require.Equal(t, "utf8mb4_bin", rows[0][3])
 }
