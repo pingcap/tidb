@@ -93,17 +93,18 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		EligibleInstances: instances,
 		ChunkMap:          chunkMap,
 	}
+	asyncPrepare := ShouldUseAsyncPrepare(plan)
+	if asyncPrepare {
+		logicalPlan.PrepareMode = proto.PrepareModeRequired
+		// below params will be filled later in async prepare, init to 1 temporarily.
+		plan.ThreadCnt = 1
+		plan.MaxNodeCnt = 1
+	}
 	planCtx := planner.PlanCtx{
 		Ctx:        ctx,
 		TaskType:   proto.ImportInto,
 		ThreadCnt:  plan.ThreadCnt,
 		MaxNodeCnt: plan.MaxNodeCnt,
-	}
-	if ShouldUseAsyncPrepare(plan) {
-		logicalPlan.PrepareMode = proto.PrepareModeRequired
-		// below params will be filled later in async prepare, init to 1 temporarily.
-		planCtx.ThreadCnt = 1
-		planCtx.MaxNodeCnt = 1
 	}
 	var (
 		jobID, taskID int64
@@ -168,14 +169,21 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	if err != nil {
 		return 0, nil, err
 	}
-
-	logutil.BgLogger().Info("job submitted to task queue",
+	logFields := []zap.Field{
 		zap.Int64("job-id", jobID),
 		zap.String("task-key", task.Key),
 		zap.Int64("task-id", task.ID),
-		zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
-		zap.Int("thread-cnt", plan.ThreadCnt),
-		zap.Bool("global-sort", plan.IsGlobalSort()))
+		zap.Bool("global-sort", plan.IsGlobalSort()),
+		zap.Bool("async-prepare", asyncPrepare),
+	}
+	if !asyncPrepare {
+		logFields = append(logFields,
+			zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
+			zap.Int("thread-cnt", plan.ThreadCnt),
+			zap.Int("max-node-cnt", plan.MaxNodeCnt),
+		)
+	}
+	logutil.BgLogger().Info("job submitted to task queue", logFields...)
 
 	return jobID, task, nil
 }
