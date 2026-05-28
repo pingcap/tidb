@@ -127,12 +127,24 @@ const (
 	tikvReplicaCountSourceInfoSchemaPlacementBundle = "infoschema_placement_bundle"
 	tikvReplicaCountSourcePDMaxReplicas             = "pd_replicate_config_max_replicas"
 	tikvReplicaCountSourceFallbackDefault           = "fallback_default_3"
+
+	observedTiKVUsagePhaseTaskEnd  = "task_end"
+	observedTiKVUsagePhasePostTask = "post_task"
+
+	addIndexPostTaskObservationCount = 3
 )
 
 type observedTiKVCapacityIncrease struct {
 	increase int64
 	reliable bool
 	reason   string
+}
+
+type observedTiKVUsageLogOptions struct {
+	phase          string
+	sequence       int
+	scheduledDelay time.Duration
+	observedAt     time.Time
 }
 
 type pdStoreStatsClient interface {
@@ -3433,6 +3445,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	err = g.Wait()
 	if err == nil {
 		w.logDistTaskObservedTiKVUsage(taskManager, taskKey, reorgInfo.Job.ID)
+		w.scheduleDelayedDistTaskObservedTiKVUsage(taskManager, taskKey, reorgInfo.Job.ID)
 	}
 	return err
 }
@@ -3929,6 +3942,102 @@ func calcObservedTiKVCapacityIncrease(initial, final *TiKVClusterCapacity) obser
 }
 
 func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, taskKey string, jobID int64) {
+	w.logDistTaskObservedTiKVUsageWithOptions(taskMgr, taskKey, jobID, observedTiKVUsageLogOptions{
+		phase:      observedTiKVUsagePhaseTaskEnd,
+		observedAt: time.Now(),
+	})
+}
+
+func buildAddIndexPostTaskObservationDelays(taskExecutionDuration time.Duration) []time.Duration {
+	if taskExecutionDuration <= 0 {
+		return nil
+	}
+	delays := make([]time.Duration, 0, addIndexPostTaskObservationCount)
+	for n := 1; n <= addIndexPostTaskObservationCount; n++ {
+		delay := taskExecutionDuration * time.Duration(n) / 2
+		if delay <= 0 {
+			continue
+		}
+		delays = append(delays, delay)
+	}
+	return delays
+}
+
+func observedTiKVUsageTaskTiming(task *proto.Task, fallbackObservedAt time.Time) (time.Time, time.Duration) {
+	if task == nil {
+		return time.Time{}, 0
+	}
+	taskEndTime := task.StateUpdateTime
+	if taskEndTime.IsZero() {
+		taskEndTime = fallbackObservedAt
+	}
+	if task.StartTime.IsZero() || taskEndTime.IsZero() || taskEndTime.Before(task.StartTime) {
+		return taskEndTime, 0
+	}
+	return taskEndTime, taskEndTime.Sub(task.StartTime)
+}
+
+func (w *worker) scheduleDelayedDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, taskKey string, jobID int64) {
+	task, err := taskMgr.GetTaskByKeyWithHistory(w.workCtx, taskKey)
+	if err != nil {
+		logutil.DDLLogger().Warn("cannot get add-index task for delayed TiKV capacity logging",
+			zap.String("task_key", taskKey), zap.Int64("jobID", jobID), zap.Error(err))
+		return
+	}
+	if task == nil || task.State != proto.TaskStateSucceed {
+		return
+	}
+
+	now := time.Now()
+	taskEndTime, taskExecutionDuration := observedTiKVUsageTaskTiming(task, now)
+	delays := buildAddIndexPostTaskObservationDelays(taskExecutionDuration)
+	if len(delays) == 0 {
+		logutil.DDLLogger().Info("skip delayed TiKV capacity logging because task execution duration is unavailable for add-index task",
+			zap.String("task_key", taskKey),
+			zap.Int64("jobID", jobID),
+			zap.Int64("taskID", task.ID))
+		return
+	}
+
+	delayMillis := make([]int64, 0, len(delays))
+	for i, delay := range delays {
+		delayMillis = append(delayMillis, delay.Milliseconds())
+		sequence := i + 1
+		remainingDelay := delay
+		if !taskEndTime.IsZero() && !now.Before(taskEndTime) {
+			elapsedSinceTaskEnd := now.Sub(taskEndTime)
+			if elapsedSinceTaskEnd >= delay {
+				remainingDelay = 0
+			} else {
+				remainingDelay = delay - elapsedSinceTaskEnd
+			}
+		}
+		w.wg.Run(func() {
+			timer := time.NewTimer(remainingDelay)
+			defer timer.Stop()
+			select {
+			case <-w.workCtx.Done():
+				return
+			case <-timer.C:
+			}
+			w.logDistTaskObservedTiKVUsageWithOptions(taskMgr, taskKey, jobID, observedTiKVUsageLogOptions{
+				phase:          observedTiKVUsagePhasePostTask,
+				sequence:       sequence,
+				scheduledDelay: delay,
+				observedAt:     time.Now(),
+			})
+		})
+	}
+
+	logutil.DDLLogger().Info("scheduled delayed TiKV capacity logging for add-index task",
+		zap.Int64("jobID", jobID),
+		zap.Int64("taskID", task.ID),
+		zap.String("task_key", taskKey),
+		zap.Int64("task_execution_duration_ms", taskExecutionDuration.Milliseconds()),
+		zap.Int64s("scheduled_delay_ms", delayMillis))
+}
+
+func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskManager, taskKey string, jobID int64, opts observedTiKVUsageLogOptions) {
 	task, err := taskMgr.GetTaskByKeyWithHistory(w.workCtx, taskKey)
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get add-index task for observed TiKV capacity logging",
@@ -4004,10 +4113,28 @@ func (w *worker) logDistTaskObservedTiKVUsage(taskMgr *storage.TaskManager, task
 	if blockSamplePredictedTiKVIndexBytes == 0 {
 		blockSamplePredictedTiKVIndexBytes = taskMeta.PredictedTiKVIndexBytes
 	}
+	phase := opts.phase
+	if phase == "" {
+		phase = observedTiKVUsagePhaseTaskEnd
+	}
+	observedAt := opts.observedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	taskEndTime, taskExecutionDuration := observedTiKVUsageTaskTiming(task, observedAt)
+	actualDelay := time.Duration(0)
+	if !taskEndTime.IsZero() && !observedAt.Before(taskEndTime) {
+		actualDelay = observedAt.Sub(taskEndTime)
+	}
 	logutil.DDLLogger().Info("observed TiKV capacity increase for add-index task",
 		zap.Int64("jobID", jobID),
 		zap.Int64("taskID", task.ID),
 		zap.String("task_key", taskKey),
+		zap.String("observation_phase", phase),
+		zap.Int("observation_sequence", opts.sequence),
+		zap.Int64("task_execution_duration_ms", taskExecutionDuration.Milliseconds()),
+		zap.Int64("scheduled_delay_ms", opts.scheduledDelay.Milliseconds()),
+		zap.Int64("actual_delay_ms", actualDelay.Milliseconds()),
 		zap.Uint64("basic_predicted_tikv_index_bytes", taskMeta.BasicPredictedTiKVIndexBytes),
 		zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
 		zap.Uint64("static_sample_predicted_tikv_index_bytes", staticSamplePredictedTiKVIndexBytes),
