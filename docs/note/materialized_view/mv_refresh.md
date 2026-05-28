@@ -266,7 +266,7 @@ Core execution semantics:
 - `FAST` uses internal-only statement `RefreshMaterializedViewImplementStmt` and a dedicated incremental merge plan.
 - For `FAST`, executor constructs `RefreshMaterializedViewImplementStmt` with:
   - original `RefreshMaterializedViewStmt` (must be `Type=FAST`)
-  - `LAST_SUCCESS_READ_TSO` value (must be non-`NULL` int64)
+  - `LAST_SUCCESS_READ_TSO` value (must be non-`NULL` unsigned TSO)
 - `FAST` execution goes through `ExecuteInternalStmt(ctx, stmtNode)`.
 - If `ExecuteInternalStmt` returns non-nil `RecordSet`, refresh drains it before `Close()` to guarantee full executor-tree execution.
 - `RefreshMaterializedViewStmt` is a normal `StmtNode` with no DDL-statement semantics
