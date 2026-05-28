@@ -339,11 +339,12 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
 	for _, task := range r.batchTaskList {
 		storeBatchTask := &coprocessor.StoreBatchTask{
-			RegionId:    task.region.GetRegionId(),
-			RegionEpoch: task.region.GetRegionEpoch(),
-			Peer:        task.peer,
-			Ranges:      task.region.GetRanges(),
-			TaskId:      task.task.taskID,
+			RegionId:       task.region.GetRegionId(),
+			RegionEpoch:    task.region.GetRegionEpoch(),
+			Peer:           task.peer,
+			Ranges:         task.region.GetRanges(),
+			TaskId:         task.task.taskID,
+			BucketsVersion: task.task.bucketsVer,
 		}
 		pbTasks = append(pbTasks, storeBatchTask)
 	}
@@ -2340,6 +2341,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			batchResp.RegionError = &errorpb.Error{}
 		})
 		if regionErr := getRegionError(bo.GetCtx(), batchResp); regionErr != nil {
+			worker.handleBatchBucketVersionNotMatch(bo, task, regionErr)
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
@@ -2437,6 +2439,19 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		remainTasks = handler.build()
 	}
 	return batchRespList, remainTasks, nil
+}
+
+func (worker *copIteratorWorker) handleBatchBucketVersionNotMatch(bo *Backoffer, task *copTask, regionErr *errorpb.Error) {
+	bucketVersionNotMatch := regionErr.GetBucketVersionNotMatch()
+	if bucketVersionNotMatch == nil {
+		return
+	}
+	logutil.Logger(bo.GetCtx()).Debug("tikv reports `BucketVersionNotMatch` for batched cop task",
+		zap.Uint64("latest bucket version", bucketVersionNotMatch.GetVersion()),
+		zap.Uint64("request bucket version", task.bucketsVer),
+		zap.Uint64("regionID", task.region.GetID()))
+	childRPCCtx := &tikv.RPCContext{Region: task.region}
+	worker.store.GetRegionCache().OnBucketVersionNotMatch(childRPCCtx, bucketVersionNotMatch.GetVersion(), bucketVersionNotMatch.GetKeys())
 }
 
 func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {

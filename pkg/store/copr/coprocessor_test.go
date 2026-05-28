@@ -16,10 +16,12 @@ package copr
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -986,4 +988,123 @@ func TestBatchStoreCoprOnlySendToLeader(t *testing.T) {
 	for _, task := range tasks {
 		require.Equal(t, task.busyThreshold, time.Second)
 	}
+}
+
+func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("n"), []byte("x"))
+	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'n'}}, 101)
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'x'}}, 202)
+	cluster.SplitRegionBuckets(regionIDs[2], [][]byte{{'x'}, {}}, 303)
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{StoreBatchSize: 3}
+	tasks, err := buildCopTasks(bo, buildCopRanges("a", "b", "o", "p", "y", "z"), &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 1},
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	pbTasks := tasks[0].ToPBBatchTasks()
+	require.Len(t, pbTasks, 2)
+	versionByRegion := make(map[uint64]uint64, len(pbTasks))
+	for _, pbTask := range pbTasks {
+		versionByRegion[pbTask.GetRegionId()] = pbTask.GetBucketsVersion()
+	}
+	require.Equal(t, map[uint64]uint64{
+		regionIDs[1]: 202,
+		regionIDs[2]: 303,
+	}, versionByRegion)
+}
+
+func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
+	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'m'}}, 7)
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'m'}, {'n'}, {}}, 11)
+
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, tikvStore.Close())
+	}()
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	defer copStore.Close()
+
+	cache := copStore.GetRegionCache()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{}
+
+	parentTasks, err := buildCopTasks(bo, buildCopRanges("a", "b"), &buildCopTaskOpt{
+		req:   req,
+		cache: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, parentTasks, 1)
+	childTasks, err := buildCopTasks(bo, buildCopRanges("n", "o"), &buildCopTaskOpt{
+		req:   req,
+		cache: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, childTasks, 1)
+	parentTask := parentTasks[0]
+	childTask := childTasks[0]
+	require.Equal(t, uint64(7), parentTask.bucketsVer)
+	require.Equal(t, uint64(11), childTask.bucketsVer)
+
+	childTask.taskID = 1
+	var storeBatchedNum atomic.Uint64
+	var storeBatchedFallbackNum atomic.Uint64
+	worker := &copIteratorWorker{
+		store:                   copStore,
+		req:                     req,
+		storeBatchedNum:         &storeBatchedNum,
+		storeBatchedFallbackNum: &storeBatchedFallbackNum,
+	}
+	parentRPCCtx := &tikv.RPCContext{
+		Region:        parentTask.region,
+		BucketVersion: parentTask.bucketsVer,
+	}
+	bucketKeys := [][]byte{[]byte("m"), []byte("n"), []byte{}}
+	resp := &coprocessor.Response{
+		BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+			{
+				TaskId: childTask.taskID,
+				RegionError: &errorpb.Error{
+					BucketVersionNotMatch: &errorpb.BucketVersionNotMatch{
+						Version: 99,
+						Keys:    bucketKeys,
+					},
+				},
+			},
+		},
+	}
+
+	_, remains, err := worker.handleBatchCopResponse(bo, parentRPCCtx, resp, map[uint64]*batchedCopTask{
+		childTask.taskID: {task: childTask},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, remains)
+
+	loc, err := cache.LocateKey(bo.TiKVBackoffer(), []byte("n"))
+	require.NoError(t, err)
+	require.Equal(t, regionIDs[1], loc.Region.GetID())
+	require.Equal(t, uint64(99), loc.Buckets.GetVersion())
+	require.Equal(t, bucketKeys, loc.Buckets.GetKeys())
 }
