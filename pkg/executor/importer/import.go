@@ -321,7 +321,6 @@ type Plan struct {
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// only initialized for IMPORT INTO, used when format is detected automatically
-	specifiedOptions     map[string]*plannercore.LoadDataOpt
 	SpecifiedOptionNames map[string]struct{} `json:",omitempty"`
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
@@ -764,9 +763,8 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		specifiedOptions[opt.Name] = opt
 	}
-	p.specifiedOptions = specifiedOptions
 	p.SpecifiedOptionNames = make(map[string]struct{}, len(specifiedOptions))
-	for k := range p.specifiedOptions {
+	for k := range specifiedOptions {
 		p.SpecifiedOptionNames[k] = struct{}{}
 	}
 

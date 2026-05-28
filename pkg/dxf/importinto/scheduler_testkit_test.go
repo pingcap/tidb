@@ -195,7 +195,6 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", gotJobInfo.Status)
-
 }
 
 func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(t *testing.T) {
@@ -204,18 +203,17 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 	}
 
 	host := "127.0.0.1"
-	port := uint16(4447)
 	opt := fakestorage.Options{
 		Scheme:     "http",
 		Host:       host,
-		Port:       port,
+		Port:       0,
 		PublicHost: host,
 	}
-	gcsEndpoint := fmt.Sprintf("http://%s:%d/storage/v1/", host, port)
-	sortStorageURI := fmt.Sprintf("gs://sort-bucket/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	server, err := fakestorage.NewServerWithOptions(opt)
-	defer server.Stop()
 	require.NoError(t, err)
+	defer server.Stop()
+	gcsEndpoint := fmt.Sprintf("%s/storage/v1/", server.URL())
+	sortStorageURI := fmt.Sprintf("gs://sort-bucket/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sort-bucket"})
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "test-load"})
 	server.CreateObject(fakestorage.Object{
