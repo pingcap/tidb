@@ -33,7 +33,7 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
 - [x] (2026-05-28) Implemented Milestone 2: objstore renewal uses the same lease clock. Commit is pending review.
 - [x] (2026-05-28) Addressed Milestone 2 review: renewal now treats a missing `RemoteLock` lease clock as invalid construction and fails closed instead of silently falling back to local time.
 - [x] (2026-05-28) Implemented Milestone 2.5: pre-M3 explicit-clock API boundary hardening.
-- [ ] Implement Milestone 3: objstore stale cleanup uses the explicit lease clock.
+- [x] (2026-05-28) Implemented Milestone 3: objstore stale cleanup and retry acquisition use the explicit lease clock.
 - [ ] Implement Milestone 4: BR PD time helper.
 - [ ] Implement Milestone 5: `MigrationExt`, `LogClient`, and PiTR collector propagation.
 - [ ] Implement Milestone 6: stream truncate propagation.
@@ -109,6 +109,16 @@ Milestone 2.5 validation:
     make bazel_prepare
 
 Remaining gaps after Milestone 2.5: stale cleanup still uses local time until Milestone 3, `LockWithRetryWithLeaseClock` is designed but not implemented, and renewal post-write proof still needs a separate delayed-write correctness decision before production migration.
+
+Milestone 3 delivered `CleanUpStaleTruncateLockWithLeaseClock`, `LockerWithLeaseClock`, `LockWithRetryWithLeaseClock`, and `LockRemoteTruncateWithLeaseClock`. Legacy cleanup/retry/truncate APIs remain local-clock wrappers. Stale cleanup now uses the supplied lease clock for `ExpireAt.Add(LeaseTTL)` decisions; clock failure does not delete the candidate and is returned by the explicit cleanup API. Retry cleanup logs candidate errors and continues the retry loop.
+
+Milestone 3 validation:
+
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestCleanUpStaleTruncateLockWithLeaseClock|TestLockWithRetryWithLeaseClock' -count=1
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestCleanUpStaleTruncateLock|TestLockWithRetry|TestLockRemoteTruncate' -count=1
+    make bazel_prepare
+
+Remaining gaps after Milestone 3: BR callers are still on legacy wrappers until PD clock propagation begins, and renewal post-write proof remains a separate delayed-write correctness decision before production migration.
 
 ## Context and Orientation
 
@@ -416,7 +426,7 @@ Files:
 
 TDD steps:
 
-- [ ] Add tests:
+- [x] Add tests:
 
     `TestCleanUpStaleTruncateLockWithLeaseClockUsesClockForStaleDecision`
 
@@ -426,11 +436,11 @@ TDD steps:
 
     Use a clock returning an error. Assert cleanup returns false with the error and the candidate still exists.
 
-- [ ] Run RED:
+- [x] Run RED:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestCleanUpStaleTruncateLockWithLeaseClock' -count=1
 
-- [ ] Implement:
+- [x] Implement:
 
     Add `CleanUpStaleTruncateLockWithLeaseClock(ctx, storage, clock)`.
 
@@ -442,11 +452,11 @@ TDD steps:
     - retry cleanup with `returnCandidateErrors=true` logs candidate errors and returns reclaimed status;
     - a clock failure for a candidate must not delete that candidate.
 
-- [ ] Run GREEN:
+- [x] Run GREEN:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestCleanUpStaleTruncateLock|TestCleanup|TestLockWithRetry' -count=1
 
-- [ ] Run `make bazel_prepare` if new top-level tests were added.
+- [x] Run `make bazel_prepare` if new top-level tests were added.
 
 - [ ] Commit:
 

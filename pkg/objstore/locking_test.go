@@ -1208,6 +1208,53 @@ func TestCleanUpStaleTruncateLockReclaimsOnlyInstancePath(t *testing.T) {
 	requireFileExists(t, filepath.Join(pth, "truncating.lock.backup"))
 }
 
+func TestCleanUpStaleTruncateLockWithLeaseClockUsesClockForStaleDecision(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	stalePath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	alivePath := "truncating.lock.33333333333333333333333333333333"
+	writeLockMeta(t, strg, stalePath, objstore.LockMeta{
+		LockedAt: leaseNow.Add(-time.Hour),
+		ExpireAt: leaseNow.Add(-objstore.LeaseTTL).Add(-time.Nanosecond),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "stale-by-lease-clock",
+	})
+	writeLockMeta(t, strg, alivePath, objstore.LockMeta{
+		LockedAt: leaseNow.Add(-time.Hour),
+		ExpireAt: leaseNow.Add(-objstore.LeaseTTL).Add(time.Nanosecond),
+		TxnID:    []byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
+		Hint:     "alive-by-lease-clock",
+	})
+	clock := &sequenceLeaseClock{
+		times: []time.Time{leaseNow, leaseNow},
+	}
+
+	reclaimed, err := objstore.CleanUpStaleTruncateLockWithLeaseClock(ctx, strg, clock)
+	require.NoError(t, err)
+	require.True(t, reclaimed)
+	requireFileNotExists(t, filepath.Join(pth, stalePath))
+	requireFileExists(t, filepath.Join(pth, alivePath))
+}
+
+func TestCleanUpStaleTruncateLockWithLeaseClockFailureDoesNotDelete(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	expectedErr := errors.New("pd tso unavailable")
+	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, lockPath, staleLockMeta(time.Now(), "stale-but-clock-fails"))
+	clock := &sequenceLeaseClock{err: expectedErr}
+
+	reclaimed, err := objstore.CleanUpStaleTruncateLockWithLeaseClock(ctx, strg, clock)
+	require.ErrorIs(t, err, expectedErr)
+	require.False(t, reclaimed)
+	requireFileExists(t, filepath.Join(pth, lockPath))
+}
+
 func TestLockWithRetryReclaimsStaleWriteLock(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
@@ -1221,6 +1268,34 @@ func TestLockWithRetryReclaimsStaleWriteLock(t *testing.T) {
 	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
 	lock, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new truncate", func() {})
+	require.Error(t, err)
+	require.Nil(t, lock)
+	requireFileNotExists(t, filepath.Join(pth, instancePath))
+}
+
+func TestLockWithRetryWithLeaseClockReclaimsUsingLeaseClock(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	instancePath := "v1/LOCK.READ.0123456789abcdef0123456789abcdef"
+	writeLockMeta(t, strg, instancePath, objstore.LockMeta{
+		LockedAt: leaseNow.Add(-time.Hour),
+		ExpireAt: leaseNow.Add(-objstore.LeaseTTL).Add(-time.Nanosecond),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "stale-by-lease-clock",
+	})
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow, // first acquire attempt
+			leaseNow, // stale cleanup decision
+		},
+	}
+
+	shortCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	lock, err := objstore.LockWithRetryWithLeaseClock(shortCtx, objstore.TryLockRemoteWriteWithLeaseClock, strg, "v1/LOCK", "new writer", func() {}, clock)
 	require.Error(t, err)
 	require.Nil(t, lock)
 	requireFileNotExists(t, filepath.Join(pth, instancePath))

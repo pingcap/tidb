@@ -373,7 +373,19 @@ func lockFamilyConflicts(acquireKind lockAcquireKind, memberKind lockMemberKind)
 
 var errLockMissingExpireAt = stderrors.New("lock missing ExpireAt")
 
-func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, path string) (reclaimed bool, err error) {
+type cleanupLeaseClockError struct {
+	err error
+}
+
+func (e cleanupLeaseClockError) Error() string {
+	return fmt.Sprintf("CleanUpStaleLock: get lease time: %v", e.err)
+}
+
+func (e cleanupLeaseClockError) Unwrap() error {
+	return e.err
+}
+
+func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, path string, clock LeaseClock) (reclaimed bool, err error) {
 	meta, err := getLockMeta(ctx, storage, path)
 	if err != nil {
 		// Lock file may have been deleted between caller's observation and
@@ -394,7 +406,10 @@ func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, pat
 			zap.String("path", path), zap.Stringer("meta", meta))
 		return false, errLockMissingExpireAt
 	}
-	now := nowFunc()
+	now, err := clock.Now(ctx)
+	if err != nil {
+		return false, cleanupLeaseClockError{err: err}
+	}
 	reclaimAfter := meta.ExpireAt.Add(LeaseTTL)
 	if !now.After(reclaimAfter) {
 		return false, nil
@@ -410,7 +425,10 @@ func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, pat
 	return true, nil
 }
 
-func cleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logicalPath string, returnCandidateErrors bool) (bool, error) {
+func cleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logicalPath string, returnCandidateErrors bool, clock LeaseClock) (bool, error) {
+	if clock == nil {
+		return false, errors.New("lease clock is required")
+	}
 	if _, ok := lockFamilyPrefixes(logicalPath); !ok {
 		return false, nil
 	}
@@ -433,27 +451,32 @@ func cleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logic
 			continue
 		}
 
-		reclaimed, err := cleanUpStaleLockInstance(ctx, storage, member.path)
+		reclaimed, err := cleanUpStaleLockInstance(ctx, storage, member.path, clock)
 		if err != nil {
 			log.Warn("Stale-lock cleanup: candidate cleanup failed; continuing with next candidate.",
 				zap.String("logical_path", logicalPath),
 				zap.String("path", member.path),
 				logutil.ShortError(err))
 			cleanupErr = multierr.Append(cleanupErr, err)
+			var clockErr cleanupLeaseClockError
+			if stderrors.As(err, &clockErr) {
+				break
+			}
 			continue
 		}
 		if reclaimed {
 			anyReclaimed = true
 		}
 	}
-	if !returnCandidateErrors {
+	var clockErr cleanupLeaseClockError
+	if !returnCandidateErrors && !stderrors.As(cleanupErr, &clockErr) {
 		cleanupErr = nil
 	}
 	return anyReclaimed, cleanupErr
 }
 
-func tryCleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logicalPath string) bool {
-	reclaimed, err := cleanUpStaleLockFamily(ctx, storage, logicalPath, true)
+func tryCleanUpStaleLockFamily(ctx context.Context, storage storeapi.Storage, logicalPath string, clock LeaseClock) bool {
+	reclaimed, err := cleanUpStaleLockFamily(ctx, storage, logicalPath, true, clock)
 	if err != nil {
 		log.Warn("Stale-lock cleanup: family cleanup had candidate errors; continuing retry loop.",
 			zap.String("logical_path", logicalPath),

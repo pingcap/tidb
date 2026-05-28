@@ -330,7 +330,14 @@ func (l *RemoteLock) stopRenewalIfStarted() {
 // CleanUpStaleTruncateLock reclaims only stale instance-form truncate locks.
 // It intentionally ignores the legacy fixed path "truncating.lock".
 func CleanUpStaleTruncateLock(ctx context.Context, storage storeapi.Storage) (bool, error) {
-	return cleanUpStaleLockFamily(ctx, storage, truncateLockPath, false)
+	return CleanUpStaleTruncateLockWithLeaseClock(ctx, storage, localLeaseClock{})
+}
+
+// CleanUpStaleTruncateLockWithLeaseClock reclaims only stale instance-form
+// truncate locks using the provided lease clock for stale decisions. It
+// intentionally ignores the legacy fixed path "truncating.lock".
+func CleanUpStaleTruncateLockWithLeaseClock(ctx context.Context, storage storeapi.Storage, clock LeaseClock) (bool, error) {
+	return cleanUpStaleLockFamily(ctx, storage, truncateLockPath, false, clock)
 }
 
 // errRenewTxnIDMismatch is returned by tryRenew when the lock file on remote
@@ -502,6 +509,10 @@ func (l *RemoteLock) UnlockOnCleanUp(ctx context.Context) {
 // Locker is a locker.
 type Locker = func(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error)
 
+// LockerWithLeaseClock is a locker that receives the same lease clock used by
+// the surrounding retry and cleanup flow.
+type LockerWithLeaseClock = func(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error)
+
 const (
 	// lockRetryTimes specifies the maximum number of times to retry acquiring a lock.
 	// This prevents infinite retries while allowing enough attempts for temporary contention to resolve.
@@ -521,8 +532,19 @@ func validateOnLeaseLost(onLeaseLost func()) error {
 // double-confirmed) lock files in the family rooted at `lockPath`, then
 // continues with the standard exponential backoff.
 func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, lockPath, hint string, onLeaseLost func()) (*RemoteLock, error) {
+	return LockWithRetryWithLeaseClock(ctx, func(ctx context.Context, storage storeapi.Storage, path, hint string, _ LeaseClock) (*RemoteLock, error) {
+		return locker(ctx, storage, path, hint)
+	}, storage, lockPath, hint, onLeaseLost, localLeaseClock{})
+}
+
+// LockWithRetryWithLeaseClock lock with retry using the same lease clock for
+// acquire, stale cleanup, and later renewal on the returned lock.
+func LockWithRetryWithLeaseClock(ctx context.Context, locker LockerWithLeaseClock, storage storeapi.Storage, lockPath, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error) {
 	if err := validateOnLeaseLost(onLeaseLost); err != nil {
 		return nil, err
+	}
+	if clock == nil {
+		return nil, errors.New("lease clock is required")
 	}
 
 	const JitterMs = 5000
@@ -531,14 +553,14 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 	jitter := time.Duration(rand.Uint32()%JitterMs+(JitterMs/2)) * time.Millisecond
 	var err error
 	for {
-		lock, lockErr := locker(ctx, storage, lockPath, hint)
+		lock, lockErr := locker(ctx, storage, lockPath, hint, clock)
 		if lockErr == nil {
 			lock.startRenewal(ctx, onLeaseLost)
 			return lock, nil
 		}
 		err = lockErr
 
-		if tryCleanUpStaleLockFamily(ctx, storage, lockPath) {
+		if tryCleanUpStaleLockFamily(ctx, storage, lockPath, clock) {
 			log.Info("Stale locks cleaned up while waiting for lock.",
 				zap.String("path", lockPath))
 		}
@@ -674,11 +696,20 @@ func TryLockRemoteTruncateWithLeaseClock(ctx context.Context, storage storeapi.S
 
 // LockRemoteTruncate acquires a truncate lock once and starts lease renewal.
 func LockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string, onLeaseLost func()) (*RemoteLock, error) {
+	return LockRemoteTruncateWithLeaseClock(ctx, storage, hint, onLeaseLost, localLeaseClock{})
+}
+
+// LockRemoteTruncateWithLeaseClock acquires a truncate lock once with the
+// provided lease clock and starts lease renewal.
+func LockRemoteTruncateWithLeaseClock(ctx context.Context, storage storeapi.Storage, hint string, onLeaseLost func(), clock LeaseClock) (*RemoteLock, error) {
 	if err := validateOnLeaseLost(onLeaseLost); err != nil {
 		return nil, err
 	}
+	if clock == nil {
+		return nil, errors.New("lease clock is required")
+	}
 
-	lock, err := TryLockRemoteTruncate(ctx, storage, hint)
+	lock, err := TryLockRemoteTruncateWithLeaseClock(ctx, storage, hint, clock)
 	if err != nil {
 		return nil, err
 	}
