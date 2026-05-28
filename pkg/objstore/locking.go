@@ -159,7 +159,7 @@ func (cx VerifyWriteContext) assertOnlyMyIntent() error {
 var (
 	// LeaseTTL is how long a newly-acquired or just-renewed lock remains valid
 	// before other processes may consider it stale and attempt to reclaim it.
-	LeaseTTL = 5 * time.Minute
+	LeaseTTL = time.Hour
 
 	// renewInterval is the cadence at which a startRenewal-tracked lock
 	// refreshes its ExpireAt. Renewing at TTL/3 leaves 2*TTL/3 for retry

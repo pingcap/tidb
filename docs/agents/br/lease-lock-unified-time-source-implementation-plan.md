@@ -71,49 +71,34 @@ Not yet implemented:
 - Propagation through `MigrationExt`, `LogClient`, PiTR collector, and stream truncate.
 - Any production caller migration to the explicit-clock APIs.
 - Renewal post-write proof or a full delayed renewal-write protocol.
-- A policy change to `LeaseTTL`.
 
 Important open correctness notes:
 
 - Acquire has post-acquire proof; renewal does not yet have post-write proof.
-- With the current 5 minute TTL, BR's existing aggressive PD retry strategy can consume a large fraction of a lease window.
-- A longer TTL may simplify the PD-clock retry design, but it also lengthens crash recovery because cleanup currently waits until `ExpireAt.Add(LeaseTTL)`.
+- Even with a longer TTL, S3 writes do not have a lock-layer hard timeout today. A stuck `PutObject` can still exceed the lease window unless callers provide a deadline or the lock layer adds one.
+- A longer TTL simplifies the PD-clock retry design, but it also lengthens crash recovery because cleanup currently waits until `ExpireAt.Add(LeaseTTL)`.
 
-## TTL Policy Re-evaluation
+## TTL Policy Decision
 
-This is a design discussion thread, not an accepted decision yet.
+Accepted policy:
 
-Current defaults:
-
-    LeaseTTL = 5 * time.Minute
+    LeaseTTL = 60 * time.Minute
     renewInterval = LeaseTTL / 3
     stale cleanup threshold = ExpireAt + LeaseTTL
 
-Implications today:
-
-- A newly acquired or renewed lock is valid for about 5 minutes.
-- Renewal runs about every 1 minute 40 seconds.
-- A crashed holder's lock is automatically reclaimable only after about `2 * LeaseTTL`, so roughly 10 minutes in the worst case.
-
-Proposed policy to evaluate:
-
-    LeaseTTL = 30 * time.Minute
-    renewInterval = LeaseTTL / 3
-    stale cleanup threshold remains ExpireAt + LeaseTTL
-
 Expected implications:
 
-- Renewal runs about every 10 minutes.
-- A single PD `GetTS` retry sequence using `utils.NewAggressivePDBackoffStrategy()` has about 57.1 seconds of worst-case sleep time, plus RPC time. Under a 30 minute TTL this is much less dangerous than under a 5 minute TTL.
-- A crashed holder's lock becomes automatically reclaimable only after about 60 minutes in the worst case.
+- A newly acquired or renewed lock is valid for about 60 minutes.
+- Renewal runs about every 20 minutes.
+- A single PD `GetTS` retry sequence using `utils.NewAggressivePDBackoffStrategy()` has about 57.1 seconds of worst-case sleep time, plus RPC time. Under a 60 minute TTL this is much less dangerous than under the original 5 minute TTL.
+- A crashed holder's lock becomes automatically reclaimable only after about 120 minutes in the worst case.
 - The longer TTL reduces pressure to implement complicated local freshness watchdogs or renewal post-write proof before the first PD-clock migration, but it does not eliminate the delayed-write correctness question.
 
-Questions before accepting the TTL change:
+Follow-up questions after accepting the TTL change:
 
-- Is worst-case automatic recovery of about 60 minutes acceptable for BR migration metadata locks?
 - Should cleanup keep using `ExpireAt + LeaseTTL`, or should the reclaim grace become a separate constant if `LeaseTTL` grows?
-- Should PDClock use BR's existing aggressive PD retry once the TTL is 30 minutes, or should it use a smaller lease-specific retry budget?
-- Is 30 minutes enough, or is 40 minutes worth the additional crash recovery delay?
+- Should PDClock use BR's existing aggressive PD retry once the TTL is 60 minutes, or should it use a smaller lease-specific retry budget?
+- Should lock-layer storage operations get their own operation timeout, since S3 retry backoff is bounded but a single slow request is not bounded here?
 
 ## Surprises & Discoveries
 
