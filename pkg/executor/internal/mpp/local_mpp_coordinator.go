@@ -775,7 +775,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	c.nodeCnt = len(nodeInfo)
 
 	var allTiFlashStoreInfo map[string]uint64
-	if tikvStore, ok := c.sessionCtx.GetStore().(helper.Storage); ok && tikvStore != nil {
+	if tikvStore, ok := c.sessionCtx.GetStore().(helper.Storage); ok {
 		cache := tikvStore.GetRegionCache()
 		allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 		allTiFlashStoreInfo = make(map[string]uint64, len(allTiFlashStores))
