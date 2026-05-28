@@ -165,7 +165,7 @@ func tryLockRemoteExactWithLeaseClock(
 	if err := proveAcquiredLeaseIsValid(ctx, storage, physicalPath, meta, clock); err != nil {
 		return nil, errors.Annotatef(err, "failed to acquire lock on '%s'", physicalPath)
 	}
-	return &RemoteLock{txnID: txnID, storage: storage, path: physicalPath}, nil
+	return &RemoteLock{txnID: txnID, storage: storage, path: physicalPath, leaseClock: clock}, nil
 }
 
 func proveAcquiredLeaseIsValid(ctx context.Context, storage storeapi.Storage, physicalPath string, meta LockMeta, clock LeaseClock) error {

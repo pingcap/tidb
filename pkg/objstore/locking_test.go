@@ -96,12 +96,18 @@ func require32HexSuffix(t *testing.T, p, prefix string) {
 type sequenceLeaseClock struct {
 	times []time.Time
 	err   error
+	errs  []error
 	idx   int
 }
 
 func (c *sequenceLeaseClock) Now(context.Context) (time.Time, error) {
 	if c.err != nil {
 		return time.Time{}, c.err
+	}
+	if c.idx < len(c.errs) && c.errs[c.idx] != nil {
+		err := c.errs[c.idx]
+		c.idx++
+		return time.Time{}, err
 	}
 	now := c.times[c.idx]
 	c.idx++
@@ -687,6 +693,74 @@ func TestTryRenewSuccess(t *testing.T) {
 	require.Equal(t, advanced.Add(objstore.LeaseTTL), newMeta.ExpireAt,
 		"renewed ExpireAt must be nowFunc + LeaseTTL")
 	require.Equal(t, origMeta.TxnID, newMeta.TxnID, "TxnID must stay unchanged across renewal")
+}
+
+func TestTryRenewWithLeaseClockUsesOneTimeForExpiryAndRefresh(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	renewNow := leaseNow.Add(time.Minute)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+			renewNow,
+		},
+	}
+
+	lock, err := objstore.TryLockRemoteWriteWithLeaseClock(ctx, strg, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
+
+	restoreNow := objstore.TESTSetNow(func() time.Time { return leaseNow.Add(30 * time.Second) })
+	defer restoreNow()
+
+	require.NoError(t, objstore.TESTTryRenew(ctx, lock))
+
+	data, err := strg.ReadFile(ctx, physicalPath)
+	require.NoError(t, err)
+	var meta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(data, &meta))
+	require.Equal(t, renewNow.Add(objstore.LeaseTTL), meta.ExpireAt)
+	require.Equal(t, 3, clock.idx)
+}
+
+func TestTryRenewWithLeaseClockErrorIsTransient(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	expectedErr := errors.New("pd tso unavailable during renewal")
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+		},
+		errs: []error{
+			nil,
+			nil,
+			expectedErr,
+		},
+	}
+
+	lock, err := objstore.TryLockRemoteWriteWithLeaseClock(ctx, strg, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+	physicalPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
+
+	origData, err := strg.ReadFile(ctx, physicalPath)
+	require.NoError(t, err)
+	var origMeta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(origData, &origMeta))
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorIs(t, err, expectedErr)
+	require.NotErrorIs(t, err, objstore.TESTRenewTxnIDMismatch)
+	require.NotErrorIs(t, err, objstore.TESTRenewLeaseExpired)
+
+	newData, err := strg.ReadFile(ctx, physicalPath)
+	require.NoError(t, err)
+	var newMeta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(newData, &newMeta))
+	require.Equal(t, origMeta.ExpireAt, newMeta.ExpireAt)
 }
 
 func TestTryRenewTxnIDMismatch(t *testing.T) {

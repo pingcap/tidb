@@ -30,7 +30,7 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
 - [ ] Commit the unified time source spec and this implementation plan as the planning baseline.
 - [x] (2026-05-28) Implemented Milestone 1: objstore acquire lease-clock API and post-acquire proof. Commit is pending review.
 - [x] (2026-05-28) Addressed Milestone 1 review: detached post-acquire cleanup from canceled caller contexts, kept `LeaseClock` as a stable one-method interface, kept the lease-time meta constructor internal, and added read/truncate explicit-clock coverage.
-- [ ] Implement Milestone 2: objstore renewal uses the same lease clock.
+- [x] (2026-05-28) Implemented Milestone 2: objstore renewal uses the same lease clock. Commit is pending review.
 - [ ] Implement Milestone 3: objstore stale cleanup uses the explicit lease clock.
 - [ ] Implement Milestone 4: BR PD time helper.
 - [ ] Implement Milestone 5: `MigrationExt`, `LogClient`, and PiTR collector propagation.
@@ -77,6 +77,16 @@ Milestone 1 validation:
     make bazel_prepare
 
 Remaining gaps after Milestone 1: renewal and stale cleanup still use local time until Milestones 2 and 3.
+
+Milestone 2 delivered `RemoteLock.leaseClock` and changed `tryRenew` to call that clock once per renewal attempt. The same lease time is used for both the existing `ExpireAt` check and the refreshed `ExpireAt = leaseNow.Add(LeaseTTL)`. Clock errors are returned as transient renewal errors and do not rewrite lock metadata.
+
+Milestone 2 validation:
+
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenewWithLeaseClock' -count=1
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenew|TestStartRenewal|TestLockWithRetryStartsRenewal|TestLockRemoteTruncate' -count=1
+    make bazel_prepare
+
+Remaining gaps after Milestone 2: stale cleanup still uses local time until Milestone 3, so BR production callers should still wait for cleanup clock conversion before migration.
 
 ## Context and Orientation
 
@@ -283,7 +293,7 @@ Files:
 
 TDD steps:
 
-- [ ] Add tests proving renewal uses the clock stored on `RemoteLock`:
+- [x] Add tests proving renewal uses the clock stored on `RemoteLock`:
 
     `TestTryRenewWithLeaseClockUsesOneTimeForExpiryAndRefresh`
 
@@ -293,13 +303,13 @@ TDD steps:
 
     The clock returns an error during renewal. Assert `TESTTryRenew` returns that error or an annotated error and does not write a new `ExpireAt`.
 
-- [ ] Run RED:
+- [x] Run RED:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenewWithLeaseClock' -count=1
 
   Expected before implementation: tests fail because renewal still uses local time or the clock cannot be controlled.
 
-- [ ] Implement:
+- [x] Implement:
 
     Store `leaseClock LeaseClock` on `RemoteLock`. Explicit-clock acquire variants set it to the provided clock. Legacy wrappers set it to `localLeaseClock{}`.
 
@@ -307,11 +317,11 @@ TDD steps:
 
     Ensure `startRenewal` and `LockRemoteTruncateWithLeaseClock` use locks whose clock is already stored on `RemoteLock`.
 
-- [ ] Run GREEN:
+- [x] Run GREEN:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenew|TestLockWithRetryStartsRenewal|TestLockRemoteTruncateStartsRenewal' -count=1
 
-- [ ] Run `make bazel_prepare` if new top-level test functions were added.
+- [x] Run `make bazel_prepare` if new top-level test functions were added.
 
 - [ ] Commit:
 

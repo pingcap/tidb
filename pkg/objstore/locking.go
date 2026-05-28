@@ -253,9 +253,10 @@ const (
 // renewal activates, callers must not copy a RemoteLock after startRenewal
 // has been invoked on it; pass pointers instead.
 type RemoteLock struct {
-	txnID   uuid.UUID
-	storage storeapi.Storage
-	path    string
+	txnID      uuid.UUID
+	storage    storeapi.Storage
+	path       string
+	leaseClock LeaseClock
 
 	mu           sync.Mutex
 	renewalState renewalState
@@ -339,8 +340,8 @@ func CleanUpStaleTruncateLock(ctx context.Context, storage storeapi.Storage) (bo
 var errRenewTxnIDMismatch = errors.New("renewal: txn id mismatch (lock was taken by another holder)")
 
 // errRenewLeaseExpired is returned by tryRenew when the on-disk ExpireAt is
-// already in the past relative to nowFunc(). The renewal goroutine reached
-// this read too late to refresh; the lease is irrecoverably gone.
+// already in the past relative to the lock's lease clock. The renewal goroutine
+// reached this read too late to refresh; the lease is irrecoverably gone.
 var errRenewLeaseExpired = errors.New("renewal: lease already expired")
 
 // tryRenew performs one Read → Verify → Write cycle to refresh ExpireAt.
@@ -365,10 +366,19 @@ func (l *RemoteLock) tryRenew(ctx context.Context) error {
 	if !bytes.Equal(meta.TxnID, l.txnID[:]) {
 		return errRenewTxnIDMismatch
 	}
-	if !meta.ExpireAt.IsZero() && nowFunc().After(meta.ExpireAt) {
+
+	leaseClock := l.leaseClock
+	if leaseClock == nil {
+		leaseClock = localLeaseClock{}
+	}
+	leaseNow, err := leaseClock.Now(ctx)
+	if err != nil {
+		return errors.Annotate(err, "tryRenew: get lease time")
+	}
+	if !meta.ExpireAt.IsZero() && leaseNow.After(meta.ExpireAt) {
 		return errRenewLeaseExpired
 	}
-	meta.ExpireAt = nowFunc().Add(LeaseTTL)
+	meta.ExpireAt = leaseNow.Add(LeaseTTL)
 	newData, err := json.Marshal(meta)
 	if err != nil {
 		log.Panic("Unreachable: LockMeta JSON marshal failed during renewal.",
