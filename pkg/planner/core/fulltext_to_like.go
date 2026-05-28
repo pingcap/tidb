@@ -57,14 +57,16 @@ import (
 // Search-string subset accepted by the rewrite (enforced upstream by
 // expression.ValidateFTSSearchStringForLikeFallback):
 //
-//   - Natural-language mode: whitespace-separated alphanumeric words only.
+//   - Natural-language mode: whitespace-separated alphanumeric words, where
+//     a single-word token may optionally be wrapped in double quotes.
 //   - Boolean mode: each token is `word`, `+word` (required), or `-word`
-//     (excluded), where `word` is alphanumeric (ASCII or non-ASCII UTF-8).
+//     (excluded), where `word` is alphanumeric (ASCII or non-ASCII UTF-8) and
+//     may optionally be wrapped in double quotes.
 //
-// Anything outside that subset — phrases, * prefix, > < ~ relevance
-// modifiers, () grouping, mid-word punctuation like `xx-yy` — is rejected
-// at plan time with ErrNotSupportedYet because MySQL FTS tokenizes those
-// constructs in ways a substring LIKE cannot reproduce. WITH QUERY
+// Anything outside that subset — multi-word phrases, * prefix, > < ~
+// relevance modifiers, () grouping, mid-word punctuation like `xx-yy` — is
+// rejected at plan time with ErrNotSupportedYet because MySQL FTS tokenizes
+// those constructs in ways a substring LIKE cannot reproduce. WITH QUERY
 // EXPANSION is likewise rejected (no LIKE approximation exists for the
 // second-pass tokenization).
 func (er *expressionRewriter) convertMatchAgainstToLike(
