@@ -224,6 +224,7 @@ Milestone 5 validation:
 
     ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'Test.*LeaseClock|TestMergeAndMigrateToRenewsWriteLock|TestLockForAppendRenewsBothLocks' -count=1
     ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'Test.*LeaseClock|TestMergeAndMigrateTo|TestAppendMigration|TestLockForAppendRenewsBothLocks' -count=1
+    ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'TestUserAbort|TestLockForAppendRenewsBothLocks|TestMergeAndMigrateToRenewsWriteLock' -count=1
     go test -run 'TestGetLockedMigrations|Test.*PiTR' -tags=intest,deadlock ./br/pkg/restore/log_client ./br/pkg/restore/snap_client -count=1
     go test -run TestNonExistent -tags=intest,deadlock ./br/pkg/task ./br/pkg/task/operator -count=1
     rg -n "MigrationExtension\\([^,\\n]+\\)" br/pkg --glob '*.go'
@@ -239,6 +240,10 @@ the nil-PD-client test helper issue described above; it passed after
 `make bazel_prepare` was not required for Milestone 5: no Go source files were
 added, removed, renamed, or moved; no new top-level Go test functions were
 added; no Bazel metadata or module files changed.
+
+Code review follow-up: the supplemental stream command above was added after
+review noted that `TestUserAbort` is the test covering `DryRun` clock
+preservation and was not matched by the original M5 GREEN regex.
 
 Remaining gaps after Milestone 5: stream truncate still uses explicit local
 time for its command-level truncate lock and temporary `MigrationExtension`
@@ -766,7 +771,7 @@ Files:
   `objstore.NewLocalLeaseClock()` explicitly, because the manual operator paths
   are excluded from PD-clock migration in this phase.
 - Modify `br/pkg/restore/log_client/client.go`.
-- Modify `br/pkg/restore/log_client/client_test.go`.
+- Modify `br/pkg/restore/log_client/export_test.go`.
 - Modify `br/pkg/restore/snap_client/pitr_collector.go`.
 - Modify related PiTR collector tests if needed.
 
@@ -785,8 +790,9 @@ TDD steps:
       - `v1/APPEND_LOCK.WRIT.<generation>` for the append-write phase.
     - `MergeAndMigrateTo` writes `v1/LOCK.WRIT.<generation>` with the
       deterministic clock when locking is not skipped.
-    - `DryRun` preserves the same clock, so lock acquisition inside the dry-run
-      batch still uses the deterministic clock.
+    - `DryRun` preserves the same clock when copying the batch
+      `MigrationExt`, so later lock acquisition cannot silently fall back to a
+      different clock.
 
     Reuse helper style from existing tests:
 
@@ -878,6 +884,7 @@ TDD steps:
 - [x] Run GREEN targeted tests:
 
     ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'Test.*LeaseClock|TestMergeAndMigrateTo|TestAppendMigration' -count=1
+    ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'TestUserAbort|TestLockForAppendRenewsBothLocks|TestMergeAndMigrateToRenewsWriteLock' -count=1
     go test -run 'TestGetLockedMigrations|Test.*PiTR' -tags=intest,deadlock ./br/pkg/restore/log_client ./br/pkg/restore/snap_client -count=1
     go test -run TestNonExistent -tags=intest,deadlock ./br/pkg/task ./br/pkg/task/operator -count=1
 
