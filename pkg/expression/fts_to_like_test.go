@@ -34,26 +34,31 @@ func TestValidateFTSSearchStringForLikeFallback(t *testing.T) {
 		modifier ast.FulltextSearchModifier
 		wantErr  bool
 	}{
-		// Natural-language mode: plain alphanumeric words only.
+		// Natural-language mode: plain alphanumeric words, optionally quoted one word at a time.
 		{name: "natural empty", text: "", modifier: naturalMode, wantErr: false},
 		{name: "natural whitespace only", text: " \t\n ", modifier: naturalMode, wantErr: false},
 		{name: "natural single word", text: "MySQL", modifier: naturalMode, wantErr: false},
 		{name: "natural multi word", text: "MySQL tutorial PostgreSQL", modifier: naturalMode, wantErr: false},
 		{name: "natural alphanumeric mix", text: "abc123 mysql8", modifier: naturalMode, wantErr: false},
+		{name: "natural quoted single word", text: `"phrase"`, modifier: naturalMode, wantErr: false},
+		{name: "natural quoted words", text: `"word" "hello"`, modifier: naturalMode, wantErr: false},
 		{name: "natural rejects mid-word dash", text: "x-x", modifier: naturalMode, wantErr: true},
 		{name: "natural rejects punctuation suffix", text: "MySQL,", modifier: naturalMode, wantErr: true},
 		{name: "natural rejects + operator", text: "+word", modifier: naturalMode, wantErr: true},
 		{name: "natural rejects - operator", text: "-word", modifier: naturalMode, wantErr: true},
-		{name: "natural rejects quote", text: `"phrase"`, modifier: naturalMode, wantErr: true},
+		{name: "natural rejects quoted phrase", text: `"exact phrase"`, modifier: naturalMode, wantErr: true},
 		{name: "natural rejects wildcard", text: "word*", modifier: naturalMode, wantErr: true},
 		{name: "natural rejects percent", text: "100%", modifier: naturalMode, wantErr: true},
 		{name: "natural rejects underscore", text: "test_file", modifier: naturalMode, wantErr: true},
 
-		// Boolean mode: plain word, +word, -word with alphanumeric body only.
+		// Boolean mode: plain word, +word, -word with alphanumeric body, optionally quoted.
 		{name: "boolean empty", text: "", modifier: booleanMode, wantErr: false},
 		{name: "boolean plain word", text: "MySQL", modifier: booleanMode, wantErr: false},
 		{name: "boolean required word", text: "+MySQL", modifier: booleanMode, wantErr: false},
 		{name: "boolean excluded word", text: "-MySQL", modifier: booleanMode, wantErr: false},
+		{name: "boolean quoted word", text: `"MySQL"`, modifier: booleanMode, wantErr: false},
+		{name: "boolean quoted required word", text: `+"MySQL"`, modifier: booleanMode, wantErr: false},
+		{name: "boolean quoted excluded word", text: `-"MySQL"`, modifier: booleanMode, wantErr: false},
 		{name: "boolean mix", text: "+apple -cherry pie", modifier: booleanMode, wantErr: false},
 		{name: "boolean rejects mid-word dash", text: "xx-yy", modifier: booleanMode, wantErr: true},
 		{name: "boolean rejects bare operator", text: "+", modifier: booleanMode, wantErr: true},
@@ -85,6 +90,38 @@ func TestValidateFTSSearchStringForLikeFallback(t *testing.T) {
 	}
 }
 
+func TestNormalizeFTSSearchStringForLikeFallbackQuotedWords(t *testing.T) {
+	naturalMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
+	booleanMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierBooleanMode)
+
+	tests := []struct {
+		name     string
+		text     string
+		modifier ast.FulltextSearchModifier
+		expected []string
+		wantErr  bool
+	}{
+		{name: "natural quoted word", text: `"word"`, modifier: naturalMode, expected: []string{"word"}},
+		{name: "natural quoted words", text: `"word" "hello"`, modifier: naturalMode, expected: []string{"word", "hello"}},
+		{name: "boolean quoted words", text: `+"word" -"hello" plain`, modifier: booleanMode, expected: []string{"+word", "-hello", "plain"}},
+		{name: "reject quoted phrase", text: `"wo rd"`, modifier: naturalMode, wantErr: true},
+		{name: "reject wildcard", text: `*hello`, modifier: booleanMode, wantErr: true},
+		{name: "reject quote inside word", text: `aa'bb`, modifier: naturalMode, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokens, err := normalizeFTSSearchStringForLikeFallback(tt.text, tt.modifier)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, tokens)
+		})
+	}
+}
+
 // TestParseFTSBooleanSearchString covers the strict-subset inputs the boolean
 // parser is expected to handle in production. Inputs outside the subset
 // (phrases, wildcards, relevance modifiers, mid-word punctuation, etc.) are
@@ -107,6 +144,14 @@ func TestParseFTSBooleanSearchString(t *testing.T) {
 			expected: []ftsSearchTerm{
 				{word: "apple", isRequired: true},
 				{word: "cherry", isExcluded: true},
+			},
+		},
+		{
+			input: `+"apple" -"cherry" pie`,
+			expected: []ftsSearchTerm{
+				{word: "apple", isRequired: true},
+				{word: "cherry", isExcluded: true},
+				{word: "pie"},
 			},
 		},
 		{

@@ -24,8 +24,8 @@ import (
 )
 
 // ftsSearchTerm represents a single token in a boolean-mode FTS search string
-// surviving the strict-subset validator: a plain alphanumeric word optionally
-// prefixed with `+` (required) or `-` (excluded).
+// surviving the strict-subset validator: a plain alphanumeric word, optionally
+// quoted and optionally prefixed with `+` (required) or `-` (excluded).
 type ftsSearchTerm struct {
 	word       string
 	isRequired bool
@@ -35,14 +35,19 @@ type ftsSearchTerm struct {
 // parseFTSBooleanSearchString splits a boolean-mode search string into terms.
 // Inputs reach this function only after ValidateFTSSearchStringForLikeFallback
 // has accepted them, so every whitespace-separated field is either a bare
-// alphanumeric word or `+word`/`-word`.
+// alphanumeric word or `+word`/`-word`, with an optional pair of double quotes
+// around the word body.
 func parseFTSBooleanSearchString(text string) []ftsSearchTerm {
-	fields := strings.Fields(text)
-	if len(fields) == 0 {
+	tokens, err := normalizeFTSSearchStringForLikeFallback(text, ast.FulltextSearchModifierBooleanMode)
+	if err != nil || len(tokens) == 0 {
 		return nil
 	}
-	terms := make([]ftsSearchTerm, 0, len(fields))
-	for _, w := range fields {
+	return parseFTSBooleanSearchTokens(tokens)
+}
+
+func parseFTSBooleanSearchTokens(tokens []string) []ftsSearchTerm {
+	terms := make([]ftsSearchTerm, 0, len(tokens))
+	for _, w := range tokens {
 		terms = append(terms, parseFTSSearchTerm(w))
 	}
 	return terms
@@ -50,7 +55,8 @@ func parseFTSBooleanSearchString(text string) []ftsSearchTerm {
 
 // parseFTSSearchTerm parses a single boolean-mode token. The strict-subset
 // validator guarantees `word`, `+word`, or `-word` with an alphanumeric body,
-// so only the leading operator needs interpretation.
+// so only the leading operator needs interpretation. Quoted words have already
+// been normalized to their unquoted form.
 func parseFTSSearchTerm(word string) ftsSearchTerm {
 	if word == "" {
 		return ftsSearchTerm{}
@@ -97,46 +103,90 @@ func escapeFTSLikePattern(term string) string {
 	return result.String()
 }
 
-// ValidateFTSSearchStringForLikeFallback reports whether searchText falls
-// inside the strict subset that the LIKE fallback is allowed to translate.
-// The supported subset is, by mode:
+// normalizeFTSSearchStringForLikeFallback reports whether searchText falls
+// inside the strict subset that the LIKE fallback is allowed to translate and
+// returns the normalized tokens used to build the ILIKE predicates. The
+// supported subset is, by mode:
 //
 //   - Boolean mode: each whitespace-separated token must be `word`, `+word`,
-//     or `-word`, where `word` consists of ASCII alphanumeric characters or
-//     non-ASCII UTF-8 bytes (the same definition used by isFTSWordByte).
+//     `-word`, `"word"`, `+"word"`, or `-"word"`, where `word` consists of
+//     ASCII alphanumeric characters or non-ASCII UTF-8 bytes (the same
+//     definition used by isFTSWordByte).
 //   - Natural-language mode: each whitespace-separated token must be a `word`
-//     of the same alphanumeric form (no leading +/- operators).
+//     or `"word"` of the same alphanumeric form (no leading +/- operators).
 //
 // An empty or whitespace-only search string is valid; BuildFTSToILikeExpression
 // short-circuits to a constant-0 result for it.
 //
-// Anything outside this subset (phrases, * prefix, > < ~ relevance modifiers,
-// () grouping, mid-word punctuation like `xx-yy`, etc.) is rejected because
-// MySQL FTS tokenizes those constructs in ways that differ from a substring
-// LIKE match. The planner uses this signal to skip the LIKE fallback for
-// rejected strings; the native FTSMysqlMatchAgainst builtin can still serve
-// the query when an FTS index is available.
-func ValidateFTSSearchStringForLikeFallback(searchText string, modifier ast.FulltextSearchModifier) error {
+// Anything outside this subset (multi-word phrases like `"xx yy"`, * prefix,
+// > < ~ relevance modifiers, () grouping, mid-word punctuation like `xx-yy`,
+// etc.) is rejected because MySQL FTS tokenizes those constructs in ways that
+// differ from a substring LIKE match. The planner uses this signal to skip the
+// LIKE fallback for rejected strings; the native FTSMysqlMatchAgainst builtin
+// can still serve the query when an FTS index is available.
+func normalizeFTSSearchStringForLikeFallback(searchText string, modifier ast.FulltextSearchModifier) ([]string, error) {
 	isBoolean := modifier.IsBooleanMode()
-	for _, token := range strings.Fields(searchText) {
-		body := token
-		// strings.Fields never returns an empty token (consecutive whitespace
-		// is collapsed), so body[0] is safe today. Keep the len(body) > 0
-		// guard explicit so the indexing is obviously bounded and the check
-		// stays correct if the tokenization ever changes.
-		if isBoolean && len(body) > 0 && (body[0] == '+' || body[0] == '-') {
-			body = body[1:]
+	fields := strings.Fields(searchText)
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	tokens := make([]string, 0, len(fields))
+	for _, token := range fields {
+		normalized, err := normalizeFTSSearchTokenForLikeFallback(token, isBoolean)
+		if err != nil {
+			return nil, err
 		}
-		if body == "" {
-			return ErrNotSupportedYet.GenWithStackByArgs(
+		tokens = append(tokens, normalized)
+	}
+	return tokens, nil
+}
+
+// normalizeFTSSearchTokenForLikeFallback validates one whitespace-delimited
+// search token and strips optional double quotes around a single word body.
+//
+// Examples:
+//   - natural mode: `word` -> `word`, `"word"` -> `word`
+//   - boolean mode: `+word` -> `+word`, `+"word"` -> `+word`,
+//     `-"word"` -> `-word`
+//   - rejected: `"wo rd"` because it is split into invalid partial tokens,
+//     `*hello` because `*` is not a word byte, `aa'bb` because `'` is not a
+//     word byte
+func normalizeFTSSearchTokenForLikeFallback(token string, isBoolean bool) (string, error) {
+	body := token
+	prefix := byte(0)
+	// strings.Fields never returns an empty token (consecutive whitespace is
+	// collapsed), so body[0] is safe today. Keep the len(body) > 0 guard
+	// explicit so the indexing is obviously bounded and the check stays
+	// correct if the tokenization ever changes.
+	if isBoolean && len(body) > 0 && (body[0] == '+' || body[0] == '-') {
+		prefix = body[0]
+		body = body[1:]
+	}
+	if len(body) >= 2 && body[0] == '"' && body[len(body)-1] == '"' {
+		body = body[1 : len(body)-1]
+	}
+	if body == "" {
+		return "", ErrNotSupportedYet.GenWithStackByArgs(
+			"MATCH...AGAINST search term '" + token + "' is not supported in the LIKE fallback")
+	}
+	for i := range len(body) {
+		if !isFTSWordByte(body[i]) {
+			return "", ErrNotSupportedYet.GenWithStackByArgs(
 				"MATCH...AGAINST search term '" + token + "' is not supported in the LIKE fallback")
 		}
-		for i := range len(body) {
-			if !isFTSWordByte(body[i]) {
-				return ErrNotSupportedYet.GenWithStackByArgs(
-					"MATCH...AGAINST search term '" + token + "' is not supported in the LIKE fallback")
-			}
-		}
+	}
+	if prefix != 0 {
+		return string(prefix) + body, nil
+	}
+	return body, nil
+}
+
+// ValidateFTSSearchStringForLikeFallback reports whether searchText falls
+// inside the strict subset that the LIKE fallback is allowed to translate.
+func ValidateFTSSearchStringForLikeFallback(searchText string, modifier ast.FulltextSearchModifier) error {
+	_, err := normalizeFTSSearchStringForLikeFallback(searchText, modifier)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -184,19 +234,20 @@ func BuildFTSToILikeExpression(
 	// redirecting to the native builtin, or selectivity estimation falling
 	// through to a default estimate) should call this validator directly and
 	// react to its error.
-	if err := ValidateFTSSearchStringForLikeFallback(searchText, modifier); err != nil {
+	tokens, err := normalizeFTSSearchStringForLikeFallback(searchText, modifier)
+	if err != nil {
 		return nil, err
 	}
 
-	if searchText == "" {
+	if len(tokens) == 0 {
 		return ftsZeroIntConst(), nil
 	}
 
 	if modifier.IsBooleanMode() {
-		return buildFTSBooleanModeILikeExpression(ctx, columns, searchText)
+		return buildFTSBooleanModeILikeExpression(ctx, columns, tokens)
 	}
 	if modifier.IsNaturalLanguageMode() {
-		return buildFTSNaturalLanguageModeILikeExpression(ctx, columns, searchText)
+		return buildFTSNaturalLanguageModeILikeExpression(ctx, columns, tokens)
 	}
 	return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST modifier is not supported in the LIKE fallback")
 }
@@ -215,8 +266,8 @@ func ftsZeroIntConst() Expression {
 // terms become an AND of per-term column-DNFs, excluded terms become NOT over
 // per-term column-DNFs, and optional terms anchor the result only when no
 // required terms exist (since LIKE cannot rank).
-func buildFTSBooleanModeILikeExpression(ctx BuildContext, columns []Expression, searchText string) (Expression, error) {
-	terms := parseFTSBooleanSearchString(searchText)
+func buildFTSBooleanModeILikeExpression(ctx BuildContext, columns []Expression, tokens []string) (Expression, error) {
+	terms := parseFTSBooleanSearchTokens(tokens)
 	if len(terms) == 0 {
 		return ftsZeroIntConst(), nil
 	}
@@ -316,8 +367,7 @@ func buildFTSBooleanModeILikeExpression(ctx BuildContext, columns []Expression, 
 // buildFTSNaturalLanguageModeILikeExpression handles the default
 // natural-language mode by splitting the search string into whitespace
 // tokens and OR-ing per-column per-word ILIKE predicates together.
-func buildFTSNaturalLanguageModeILikeExpression(ctx BuildContext, columns []Expression, searchText string) (Expression, error) {
-	words := strings.Fields(searchText)
+func buildFTSNaturalLanguageModeILikeExpression(ctx BuildContext, columns []Expression, words []string) (Expression, error) {
 	if len(words) == 0 {
 		return ftsZeroIntConst(), nil
 	}
