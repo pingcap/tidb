@@ -56,6 +56,10 @@ type BackfillTaskMeta struct {
 	RepresentPredictedTiKVIndexBytes     uint64                  `json:"represent_predicted_tikv_index_bytes,omitempty"`
 	StaticSamplePredictedTiKVIndexBytes  uint64                  `json:"static_sample_predicted_tikv_index_bytes,omitempty"`
 	BlockSamplePredictedTiKVIndexBytes   uint64                  `json:"block_sample_predicted_tikv_index_bytes,omitempty"`
+	BasicMVCCOverheadTotalBytes          uint64                  `json:"basic_mvcc_overhead_total_bytes,omitempty"`
+	RepresentMVCCOverheadTotalBytes      uint64                  `json:"represent_mvcc_overhead_total_bytes,omitempty"`
+	StaticSampleMVCCOverheadTotalBytes   uint64                  `json:"static_sample_mvcc_overhead_total_bytes,omitempty"`
+	BlockSampleMVCCOverheadTotalBytes    uint64                  `json:"block_sample_mvcc_overhead_total_bytes,omitempty"`
 	TiKVReplicaCount                     uint64                  `json:"tikv_replica_count,omitempty"`
 	TiKVReplicaCountSource               string                  `json:"tikv_replica_count_source,omitempty"`
 	TiKVReplicaCountPhysicalID           int64                   `json:"tikv_replica_count_physical_id,omitempty"`
