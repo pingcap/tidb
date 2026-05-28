@@ -141,6 +141,16 @@ func normalizeFTSSearchStringForLikeFallback(searchText string, modifier ast.Ful
 	return tokens, nil
 }
 
+// normalizeFTSSearchTokenForLikeFallback validates one whitespace-delimited
+// search token and strips optional double quotes around a single word body.
+//
+// Examples:
+//   - natural mode: `word` -> `word`, `"word"` -> `word`
+//   - boolean mode: `+word` -> `+word`, `+"word"` -> `+word`,
+//     `-"word"` -> `-word`
+//   - rejected: `"wo rd"` because it is split into invalid partial tokens,
+//     `*hello` because `*` is not a word byte, `aa'bb` because `'` is not a
+//     word byte
 func normalizeFTSSearchTokenForLikeFallback(token string, isBoolean bool) (string, error) {
 	body := token
 	prefix := byte(0)
