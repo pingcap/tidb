@@ -544,9 +544,6 @@ func TestSetPwd(t *testing.T) {
 	// Session user is empty.
 	err := tk.ExecToErr(setPwdSQL)
 	require.Error(t, err)
-	sess, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	tk.SetSession(sess)
 	ctx := tk.Session().(sessionctx.Context)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost", AuthUsername: "testpwd1", AuthHostname: "localhost"}
 	// Session user doesn't exist.
