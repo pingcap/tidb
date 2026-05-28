@@ -775,6 +775,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// Init DB connection sessions
 	err = client.Init(g, mgr.GetStorage())
 	defer client.Close()
+	client.SetGlue(g)
 
 	if err != nil {
 		return errors.Trace(err)
