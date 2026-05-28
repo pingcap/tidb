@@ -4145,7 +4145,10 @@ func tiKVReplicaCountFromBundle(bundle *placement.Bundle, physicalID int64) uint
 	return replicaCount
 }
 
-func bundleRuleRangeForPhysicalID(bundle *placement.Bundle, physicalID int64) (string, string, bool) {
+func bundleRuleRangeForPhysicalID(
+	bundle *placement.Bundle,
+	physicalID int64,
+) (startKeyHex, endKeyHex string, filterByRange bool) {
 	if physicalID > 0 {
 		startKeyHex, endKeyHex := placementBundleRuleKeyRangeHex(physicalID)
 		if bundleHasRuleRange(bundle, startKeyHex, endKeyHex) {
@@ -4155,7 +4158,7 @@ func bundleRuleRangeForPhysicalID(bundle *placement.Bundle, physicalID int64) (s
 	return firstBundleRuleRange(bundle)
 }
 
-func placementBundleRuleKeyRangeHex(physicalID int64) (string, string) {
+func placementBundleRuleKeyRangeHex(physicalID int64) (startKeyHex, endKeyHex string) {
 	startKey := utilcodec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID))
 	endKey := utilcodec.EncodeBytes(nil, tablecodec.GenTablePrefix(physicalID+1))
 	return hex.EncodeToString(startKey), hex.EncodeToString(endKey)
@@ -4170,7 +4173,7 @@ func bundleHasRuleRange(bundle *placement.Bundle, startKeyHex, endKeyHex string)
 	return false
 }
 
-func firstBundleRuleRange(bundle *placement.Bundle) (string, string, bool) {
+func firstBundleRuleRange(bundle *placement.Bundle) (startKeyHex, endKeyHex string, filterByRange bool) {
 	for _, rule := range bundle.Rules {
 		if rule == nil {
 			continue
