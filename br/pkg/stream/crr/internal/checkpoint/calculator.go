@@ -51,7 +51,6 @@ type CheckpointEvent struct {
 
 	LoopIteration      uint64
 	UpstreamCheckpoint uint64
-	SafeCheckpoint     uint64
 	SyncedTS           uint64
 
 	AliveStoreCount  int
@@ -312,7 +311,6 @@ func (c *Calculator) observeCheckpointAdvanced(
 		Type:               EventCheckpointAdvanced,
 		TaskName:           c.cfg.TaskName,
 		UpstreamCheckpoint: upstreamCheckpoint,
-		SafeCheckpoint:     upstreamCheckpoint,
 		SyncedTS:           c.state.syncedTS,
 		AliveStoreCount:    len(aliveStores),
 		Statistic:          statistic,

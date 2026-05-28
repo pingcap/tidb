@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -34,12 +35,15 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
@@ -47,6 +51,7 @@ import (
 	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -57,11 +62,183 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
 )
+
+func TestMatchIdentityWithVariantsStarter(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is nextgen-only")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		restoreConfig()
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "SYSTEM"
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user if not exists `SYSTEM.test_user`@`%`")
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	srv, err := NewServer(cfg, NewTiDBDriver(store))
+	require.NoError(t, err)
+	defer srv.Close()
+
+	resp := handshake.Response41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthNativePassword,
+		Auth:       []byte{},
+	}
+	newClientConn := func(user string, connectionID uint64) *clientConn {
+		cc := &clientConn{
+			connectionID: connectionID,
+			alloc:        arena.NewAllocator(1024),
+			chunkAlloc:   chunk.NewAllocator(),
+			pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			server:       srv,
+			user:         user,
+			peerHost:     "localhost",
+		}
+
+		se, err := session.CreateSession4Test(store)
+		require.NoError(t, err)
+		cc.SetCtx(&TiDBContext{
+			Session: se,
+			stmts:   make(map[int]*TiDBStatement),
+		})
+		return cc
+	}
+
+	cc := newClientConn("test_user", 1)
+	_, err = cc.checkAuthPlugin(context.Background(), &resp)
+	require.NoError(t, err)
+	require.Equal(t, "SYSTEM.test_user", cc.user)
+
+	tk.MustExec("create user if not exists `SYSTEM.keao.yang`@`%`")
+	cc = newClientConn("keao.yang", 2)
+	_, err = cc.checkAuthPlugin(context.Background(), &resp)
+	require.NoError(t, err)
+	require.Equal(t, "SYSTEM.keao.yang", cc.user)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "OTHER"
+	})
+	tk.MustExec("create user if not exists `OTHER.test_user`@`%`")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "SYSTEM"
+	})
+
+	cc = newClientConn("OTHER.test_user", 3)
+	_, err = cc.checkAuthPlugin(context.Background(), &resp)
+	require.True(t, errors.ErrorEqual(err, servererr.ErrUserPrefixMismatch), "%v", err)
+}
+
+func TestReadHandshakeGatewayTLSAttrStarter(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is nextgen-only")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	originalSecureTransport := tlsutil.RequireSecureTransport.Load()
+	originalEnv := os.Getenv("GATEWAY_SECURECONN_ATTR_KEY")
+	t.Cleanup(func() {
+		restoreConfig()
+		require.NoError(t, deploymode.Set(originalMode))
+		tlsutil.RequireSecureTransport.Store(originalSecureTransport)
+		if originalEnv == "" {
+			require.NoError(t, os.Unsetenv("GATEWAY_SECURECONN_ATTR_KEY"))
+		} else {
+			require.NoError(t, os.Setenv("GATEWAY_SECURECONN_ATTR_KEY", originalEnv))
+		}
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "ks"
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	tlsutil.RequireSecureTransport.Store(true)
+	require.NoError(t, os.Setenv("GATEWAY_SECURECONN_ATTR_KEY", "secure_conn"))
+
+	capability := mysql.ClientProtocol41 | mysql.ClientPluginAuth | mysql.ClientConnectAtts
+	attrPayload := []byte{
+		byte(len("secure_conn")),
+	}
+	attrPayload = append(attrPayload, "secure_conn"...)
+	attrValue := `{"CipherSuite":4865,"Version":771}`
+	attrPayload = append(attrPayload, byte(len(attrValue)))
+	attrPayload = append(attrPayload, attrValue...)
+	data := buildHandshakeResponsePacket(capability, attrPayload, nil)
+	packet := append([]byte{byte(len(data)), byte(len(data) >> 8), byte(len(data) >> 16), 0}, data...)
+
+	brc := serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: *bytes.NewBuffer(packet)})
+	pkt := internal.NewPacketIO(brc)
+	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
+
+	store := testkit.CreateMockStore(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	srv, err := NewServer(cfg, NewTiDBDriver(store))
+	require.NoError(t, err)
+	defer srv.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		server:       srv,
+		pkt:          pkt,
+		bufReadConn:  brc,
+		collation:    mysql.DefaultCollationID,
+		capability:   defaultCapability,
+		peerHost:     "127.0.0.1",
+		peerPort:     "4000",
+		serverHost:   "127.0.0.1",
+	}
+	ctx, err := srv.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, "", nil, nil)
+	require.NoError(t, err)
+	cc.SetCtx(ctx)
+
+	err = cc.readOptionalSSLRequestAndHandshakeResponse(context.Background())
+	require.Error(t, err)
+	require.False(t, errors.ErrorEqual(err, servererr.ErrSecureTransportRequired))
+	require.NotNil(t, cc.tlsConnState)
+	require.Equal(t, uint16(771), cc.tlsConnState.Version)
+	require.Equal(t, uint16(4865), cc.tlsConnState.CipherSuite)
+
+	connInfo := cc.connectInfo()
+	require.Equal(t, variable.ConnTypeTLS, connInfo.ConnectionType)
+	require.Equal(t, "TLSv1.2", connInfo.SSLVersion)
+
+	ctx.SetProcessInfo("", time.Now(), mysql.ComSleep, 0)
+	srv.rwlock.Lock()
+	srv.clients[cc.connectionID] = cc
+	srv.rwlock.Unlock()
+	statusVars := srv.GetStatusVars()
+	require.Equal(t, tlsutil.CipherSuiteName(cc.tlsConnState.CipherSuite), statusVars[cc.connectionID]["Ssl_cipher"])
+	require.Equal(t, tlsutil.VersionName(cc.tlsConnState.Version), statusVars[cc.connectionID]["Ssl_version"])
+
+	tlsVersion := tlsutil.VersionName(cc.tlsConnState.Version)
+	tlsCipher := tlsutil.CipherSuiteName(cc.tlsConnState.CipherSuite)
+	versionBefore := promtestutils.ToFloat64(metrics.TLSVersion.WithLabelValues(tlsVersion))
+	cipherBefore := promtestutils.ToFloat64(metrics.TLSCipher.WithLabelValues(tlsCipher))
+	cc.addConnMetrics()
+	require.Equal(t, versionBefore+1, promtestutils.ToFloat64(metrics.TLSVersion.WithLabelValues(tlsVersion)))
+	require.Equal(t, cipherBefore+1, promtestutils.ToFloat64(metrics.TLSCipher.WithLabelValues(tlsCipher)))
+}
 
 type Issue33699CheckType struct {
 	name              string
@@ -1900,6 +2077,38 @@ func TestMaxAllowedPacket(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)), string(readBytes))
 	require.Equal(t, uint8(2), pkt.Sequence())
+
+	if kerneltype.IsNextGen() {
+		originalMode := deploymode.Get()
+		originalMaxAllowedPacket := config.GetGlobalConfig().MaxAllowedPacket
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originalMode))
+			config.UpdateGlobal(func(c *config.Config) {
+				c.MaxAllowedPacket = originalMaxAllowedPacket
+			})
+		})
+
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		config.UpdateGlobal(func(c *config.Config) {
+			c.MaxAllowedPacket = maxAllowedPacket
+		})
+
+		store := testkit.CreateMockStore(t)
+		tc, err := NewTiDBDriver(store).OpenCtx(1, 0, mysql.DefaultCollationID, "", nil, nil)
+		require.NoError(t, err)
+		require.False(t, tc.GetSessionVars().CommonGlobalLoaded)
+		require.Equal(t, uint64(maxAllowedPacket), tc.GetSessionVars().MaxAllowedPacket)
+
+		inBuffer.Reset()
+		bytes = append([]byte{0x00, 0x08, 0x00, 0x00}, strings.Repeat("a", 2048)...)
+		_, err = inBuffer.Write(bytes)
+		require.NoError(t, err)
+		brc = serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+		cc := &clientConn{pkt: internal.NewPacketIO(brc)}
+		cc.SetCtx(tc)
+		_, err = cc.readPacket()
+		require.ErrorContains(t, err, "Got a packet bigger than 'max_allowed_packet' bytes")
+	}
 }
 
 func TestOkEof(t *testing.T) {
@@ -2314,18 +2523,19 @@ func TestConnAddMetrics(t *testing.T) {
 
 func TestIssue54335(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	// There is no underlying netCon, use failpoint to avoid panic
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/FakeClientConn", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeClientConn"))
 	}()
-	tk := testkit.NewTestKit(t, store)
 
 	connID := uint64(1)
-	tk.Session().SetConnectionID(connID)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
-		Session: tk.Session(),
+		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
@@ -2333,6 +2543,7 @@ func TestIssue54335(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(io.Discard)),
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
 	}
@@ -2346,12 +2557,12 @@ func TestIssue54335(t *testing.T) {
 	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()
 
-	tk.MustExec("use test;")
-	tk.MustExec("CREATE TABLE testTable2 (id bigint,  age int)")
+	session.MustExec(t, se, "use test;")
+	session.MustExec(t, se, "CREATE TABLE testTable2 (id bigint,  age int)")
 	str := fmt.Sprintf("insert into testTable2 values(%d, %d)", 1, 1)
-	tk.MustExec(str)
+	session.MustExec(t, se, str)
 	for range 14 {
-		tk.MustExec("insert into testTable2 select * from testTable2")
+		session.MustExec(t, se, "insert into testTable2 select * from testTable2")
 	}
 
 	times := 100

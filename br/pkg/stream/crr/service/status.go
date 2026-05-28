@@ -22,7 +22,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
+	"go.uber.org/zap"
 )
 
 const (
@@ -41,7 +43,7 @@ func normalizeStorageSubDir(subDir string) (string, error) {
 	}
 	cleaned := path.Clean(trimmed)
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("state storage subdir must stay within upstream storage, got %q", subDir)
+		return "", fmt.Errorf("state storage subdir must stay within selected storage, got %q", subDir)
 	}
 	return cleaned, nil
 }
@@ -169,9 +171,6 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 	if event.UpstreamCheckpoint > 0 {
 		s.snapshot.LastUpstreamCheckpoint = event.UpstreamCheckpoint
 	}
-	if event.SafeCheckpoint > 0 {
-		s.snapshot.SafeCheckpoint = event.SafeCheckpoint
-	}
 	if event.SyncedTS > 0 {
 		s.snapshot.SyncedTS = event.SyncedTS
 	}
@@ -195,6 +194,7 @@ func (s *statusStore) applyEvent(event checkpoint.CheckpointEvent) {
 		s.snapshot.Ready = false
 		s.snapshot.State = stateDegraded
 		if event.Err != nil {
+			log.Error("calculation failed", zap.Error(event.Err))
 			s.snapshot.LastError = event.Err.Error()
 		}
 		s.snapshot.LastErrorTime = event.Time

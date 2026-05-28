@@ -43,6 +43,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	indexJoinPruneMinProbeRows = 100000.0
+	indexJoinPruneMinBuildRows = 100.0
+)
+
 // exhaustPhysicalPlans generates all possible plans that can match the required property.
 // It will return:
 // 1. All possible plans that can match the required property.
@@ -453,7 +458,7 @@ func completePhysicalIndexJoin(physic *physicalop.PhysicalIndexJoin, rt *physica
 }
 
 // enumerateIndexJoinByOuterIdx will enumerate temporary index joins by index join prop required for its inner child.
-func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
+func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.PhysicalProperty, outerIdx int, enableRatioPrune bool) (joins []base.PhysicalPlan) {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	stats0, stats1, schema0, schema1 := getJoinChildStatsAndSchema(ge, p)
 	var outerSchema *expression.Schema
@@ -482,8 +487,22 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	}
 	// computed the avgInnerRowCnt
 	var avgInnerRowCnt float64
-	if count := outerStats.RowCount; count > 0 {
+	buildRows := 0.0
+	if outerStats != nil {
+		buildRows = outerStats.RowCount
+	}
+	if buildRows > 0 {
+		count := buildRows
 		avgInnerRowCnt = p.EqualCondOutCnt / count
+	}
+	if enableRatioPrune && shouldPruneIndexJoinByScanRatio(
+		p.SCtx().GetSessionVars().IndexJoinMaxScanRowsRatio,
+		buildRows,
+		avgInnerRowCnt,
+		p.Children()[outerIdx],
+		p.Children()[1-outerIdx],
+	) {
+		return nil
 	}
 	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
@@ -506,6 +525,57 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)...)
 	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
 	return indexJoins
+}
+
+func getProbeFullScanRowsForIndexJoinPrune(p base.LogicalPlan) float64 {
+	stats := p.StatsInfo()
+	if stats != nil && stats.HistColl != nil && stats.HistColl.RealtimeCount > 0 {
+		return float64(stats.HistColl.RealtimeCount)
+	}
+	return 0
+}
+
+func hasPseudoStatsForIndexJoinPrune(p base.LogicalPlan) bool {
+	stats := p.StatsInfo()
+	return stats == nil || stats.HistColl == nil || stats.HistColl.Pseudo
+}
+
+// shouldPruneIndexJoinByScanRatio decides whether to drop index-join candidates by
+// comparing estimated scan rows:
+//
+//	index-join scans ~= buildRows + buildRows*probeRowsOne
+//	hash-join scans  ~= buildRows + innerFullScanRows
+//
+// We only apply this pruning when:
+// 1) session threshold > 0,
+// 2) build/probe stats are non-pseudo,
+// 3) build/probe rows pass minimal gates to avoid over-pruning on tiny inputs.
+// If indexJoinScanRows/hashJoinScanRows >= threshold, index join is considered too
+// expensive in scan volume and gets pruned.
+func shouldPruneIndexJoinByScanRatio(
+	threshold, buildRows, probeRowsOne float64,
+	build, probe base.LogicalPlan,
+) bool {
+	if threshold <= 0 || buildRows < indexJoinPruneMinBuildRows {
+		return false
+	}
+	if hasPseudoStatsForIndexJoinPrune(build) || hasPseudoStatsForIndexJoinPrune(probe) {
+		return false
+	}
+	innerFullScanRows := getProbeFullScanRowsForIndexJoinPrune(probe)
+	if innerFullScanRows <= 0 {
+		return false
+	}
+	indexJoinProbeRows := buildRows * probeRowsOne
+	if indexJoinProbeRows < indexJoinPruneMinProbeRows {
+		return false
+	}
+	indexJoinScanRows := buildRows + indexJoinProbeRows
+	hashJoinScanRows := buildRows + innerFullScanRows
+	if hashJoinScanRows <= 0 {
+		return false
+	}
+	return indexJoinScanRows/hashJoinScanRows >= threshold
 }
 
 func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *property.PhysicalProperty) bool {
@@ -681,9 +751,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -702,9 +772,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -754,6 +824,8 @@ func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResul
 func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
 	ranges ranger.Ranges,
+	filterConds []expression.Expression,
+	accessConds []expression.Expression,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -771,7 +843,7 @@ func constructDS2TableScanTask(
 		Columns:         ds.Columns,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		FilterCondition: ds.PushedDownConds,
+		FilterCondition: filterConds,
 		Ranges:          ranges,
 		RangeInfo:       rangeInfo,
 		KeepOrder:       keepOrder,
@@ -822,9 +894,77 @@ func constructDS2TableScanTask(
 	}
 	copTask.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	ts.PlanPartInfo = copTask.PhysPlanPartInfo
+	var rootTaskConds []expression.Expression
+	// For IndexJoin probe-side scans, predicates that contain very large IN-lists and are not part of
+	// range construction can be expensive to execute in coprocessor. Keep them in TiDB.
+	ts.FilterCondition, rootTaskConds = splitLargeInListFiltersForIndexJoinProbe(ts.FilterCondition, indexJoinProbeSideLargeInNotInThreshold)
+	// Keep explicit probe-side selections for access predicates to preserve the previous
+	// plan shape (`TableReader data:Selection`) even when those predicates are already used
+	// to build ranges. This does not change range pruning or result correctness.
+	// NOTE: only keep predicates that are fully evaluable on the inner schema. Correlated
+	// access conditions (for example, `t2.col <= t1.col`) must not be attached here,
+	// otherwise later schema checks may fail when validating/cop-pushing table filters.
+	innerOnlyAccessConds := make([]expression.Expression, 0, len(accessConds))
+	for _, cond := range accessConds {
+		if expression.ExprFromSchema(cond, ds.Schema()) {
+			innerOnlyAccessConds = append(innerOnlyAccessConds, cond)
+		}
+	}
+	ts.FilterCondition = ranger.AppendConditionsIfNotExist(ds.SCtx().GetExprCtx().GetEvalCtx(), ts.FilterCondition, innerOnlyAccessConds)
+	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 	selStats := ts.StatsInfo().Scale(ds.SCtx().GetSessionVars(), selectivity)
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, selStats, ds.AstIndexHints)
 	return copTask
+}
+
+// splitLargeInListFiltersForIndexJoinProbe keeps most filters pushdown-able, but moves
+// predicates that contain large IN-lists to root execution for IndexJoin probe-side scans.
+func splitLargeInListFiltersForIndexJoinProbe(filters []expression.Expression, threshold int) (pushDownFilters, rootTaskFilters []expression.Expression) {
+	if len(filters) == 0 || threshold <= 0 {
+		return filters, nil
+	}
+	pushDownFilters = make([]expression.Expression, 0, len(filters))
+	for _, filter := range filters {
+		if containsLargeInList(filter, threshold) {
+			rootTaskFilters = append(rootTaskFilters, filter)
+			continue
+		}
+		pushDownFilters = append(pushDownFilters, filter)
+	}
+	return pushDownFilters, rootTaskFilters
+}
+
+// containsLargeInList checks whether an expression tree contains a large IN-list.
+// This is intentionally recursive so predicates like `a = 1 OR b IN (...)` are also captured.
+// NOTE: `NOT IN` is represented as `NOT(IN(...))`, so recursion naturally covers it.
+func containsLargeInList(expr expression.Expression, threshold int) bool {
+	inListLen := getInListLength(expr)
+	if inListLen > threshold {
+		return true
+	}
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	for _, arg := range sf.GetArgs() {
+		if containsLargeInList(arg, threshold) {
+			return true
+		}
+	}
+	return false
+}
+
+// getInListLength returns the element count of `a IN (...)`.
+// It returns -1 for non-IN predicates.
+func getInListLength(filter expression.Expression) int {
+	sf, ok := filter.(*expression.ScalarFunction)
+	if !ok {
+		return -1
+	}
+	if sf.FuncName.L == ast.In {
+		return max(len(sf.GetArgs())-1, 0)
+	}
+	return -1
 }
 
 // getColsNDVLowerBoundFromHistColl tries to get a lower bound of the NDV of columns (whose uniqueIDs are colUIDs).
@@ -970,6 +1110,10 @@ func constructDS2IndexScanTask(
 	}
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
+	// Only apply this gate to residual filters (not range builders) for IndexJoin probe side.
+	// Range-deriving predicates are decided earlier and remain unchanged.
+	pushDownIndexConds, rootTaskIndexConds := splitLargeInListFiltersForIndexJoinProbe(indexConds, indexJoinProbeSideLargeInNotInThreshold)
+	pushDownTblConds, rootTaskTblConds := splitLargeInListFiltersForIndexJoinProbe(tblConds, indexJoinProbeSideLargeInNotInThreshold)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
 	//
@@ -1007,8 +1151,8 @@ func constructDS2IndexScanTask(
 		rowCount = math.Min(rowCount, 1.0)
 	}
 	tmpPath := &util.AccessPath{
-		IndexFilters:        indexConds,
-		TableFilters:        tblConds,
+		IndexFilters:        pushDownIndexConds,
+		TableFilters:        pushDownTblConds,
 		CountAfterIndex:     rowCount,
 		CountAfterAccess:    rowCount,
 		MinCountAfterAccess: 0,
@@ -1054,6 +1198,8 @@ func constructDS2IndexScanTask(
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
 	finalStats := ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount)
+	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskIndexConds...)
+	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskTblConds...)
 	if err := addPushedDownSelection4PhysicalIndexScan(is, cop, ds, tmpPath, finalStats); err != nil {
 		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection4PhysicalIndexScan function", zap.Error(err))
 		return nil
@@ -1067,6 +1213,10 @@ const (
 	indexJoinMethod      = 0
 	indexHashJoinMethod  = 1
 	indexMergeJoinMethod = 2
+
+	// A fixed guardrail for step-1: do not push down probe-side residual predicates
+	// that contain IN-lists whose size is greater than this threshold.
+	indexJoinProbeSideLargeInNotInThreshold = 10000
 )
 
 func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod int, ok bool) {
@@ -1094,7 +1244,7 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 
 // tryToEnumerateIndexJoin returns all available index join family plans by
 // pushing IndexJoinProp down to the inner side during enumeration.
-func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
+func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty, enableRatioPrune bool) []base.PhysicalPlan {
 	if prop.IndexJoinProp != nil {
 		// Avoid nested index join enumeration under an index join inner side.
 		return nil
@@ -1114,10 +1264,10 @@ func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProp
 	// according join type to enumerate index join with inner children's indexJoinProp.
 	candidates := make([]base.PhysicalPlan, 0, 2)
 	if supportLeftOuter {
-		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 0)...)
+		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 0, enableRatioPrune)...)
 	}
 	if supportRightOuter {
-		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 1)...)
+		candidates = append(candidates, enumerateIndexJoinByOuterIdx(super, prop, 1, enableRatioPrune)...)
 	}
 	// Pre-Handle hints and variables about index join, which try to detect the contradictory hint and variables
 	// The priority is: force hints like TIDB_INLJ > filter hints like NO_INDEX_JOIN > variables and rec warns.
@@ -1139,6 +1289,13 @@ func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProp
 	// handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
 	// hint is specified in the query. So we can do it in physic enumeration phase here.
 	return handleFilterIndexJoinHints(p, candidates)
+}
+
+func hasForceIndexJoinFamilyHint(p *logicalop.LogicalJoin) bool {
+	return p.PreferAny(
+		h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner,
+	)
 }
 
 func enumerationContainIndexJoin(candidates [][]base.PhysicalPlan) bool {
@@ -2024,6 +2181,11 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		}
 	}
 
+	hashJoins, forced := getHashJoins(super, prop)
+	if forced && len(hashJoins) > 0 {
+		return hashJoins, true, nil
+	}
+
 	if !p.IsNAAJ() && prop.IndexJoinProp == nil { // gen merge join and index join only when non-naaj and index join prop is nil
 		// naaj refuse merge join and index join.
 		stats0, stats1, _, _ := getJoinChildStatsAndSchema(ge, p)
@@ -2033,7 +2195,8 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		}
 		joins = append(joins, mergeJoins...)
 
-		indexJoins := tryToEnumerateIndexJoin(super, prop)
+		enableRatioPrune := len(hashJoins) > 0 && !hasForceIndexJoinFamilyHint(p)
+		indexJoins := tryToEnumerateIndexJoin(super, prop, enableRatioPrune)
 		joins = append(joins, indexJoins...)
 
 		failpoint.Inject("MockOnlyEnableIndexHashJoinV2", func(val failpoint.Value) {
@@ -2049,10 +2212,6 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		})
 	}
 
-	hashJoins, forced := getHashJoins(super, prop)
-	if forced && len(hashJoins) > 0 {
-		return hashJoins, true, nil
-	}
 	joins = append(joins, hashJoins...)
 
 	if p.PreferJoinType > 0 {

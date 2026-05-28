@@ -617,11 +617,10 @@ func containGlobal(rs *Result) bool {
 	return false
 }
 
-// MustNoGlobalStats checks if there is no global stats.
+// MustNoGlobalStats checks if there are no global histograms or buckets.
+// It intentionally ignores global stats_meta rows, because stats-delta flushes
+// may maintain logical/global row counts even when no global histograms exist.
 func (tk *TestKit) MustNoGlobalStats(table string) {
-	if containGlobal(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
-		tk.require.Fail("global stats should not be found")
-	}
 	if containGlobal(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
 		tk.require.Fail("global stats should not be found")
 	}

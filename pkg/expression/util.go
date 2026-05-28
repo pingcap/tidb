@@ -535,6 +535,7 @@ func SetExprColumnInOperand(expr Expression) Expression {
 		for i, arg := range args {
 			args[i] = SetExprColumnInOperand(arg)
 		}
+		v.CleanHashCode()
 	}
 	return expr
 }
@@ -600,7 +601,11 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
-					e.(*ScalarFunction).Function.getArgs()[0] = newArg
+					sf := e.(*ScalarFunction)
+					sf.Function.getArgs()[0] = newArg
+					// Clone returns a ScalarFunction with cached hash keys. Since we mutate its args
+					// in-place here, clear them to avoid stale CanonicalHashCode/HashCode.
+					sf.CleanHashCode()
 				}
 				e.SetCoercibility(v.Coercibility())
 				e.GetType(ctx.GetEvalCtx()).SetFlag(flag)
@@ -794,7 +799,9 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf = BuildCastFunction(ctx, newArgs[0], x.RetType)
 		} else if x.FuncName.L == ast.Grouping {
 			newSf = x.Clone()
-			newSf.(*ScalarFunction).GetArgs()[0] = newArgs[0]
+			sf := newSf.(*ScalarFunction)
+			sf.GetArgs()[0] = newArgs[0]
+			sf.CleanHashCode()
 		} else {
 			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
 		}
@@ -1266,6 +1273,13 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 	extractedExpr := make([]Expression, 0, len(hashcode2Expr))
 	for _, expr := range hashcode2Expr {
 		extractedExpr = append(extractedExpr, expr)
+	}
+	// The map above is keyed by hash for set semantics; sort the extracted filters
+	// before returning them so plan and test output stay deterministic.
+	if len(extractedExpr) > 1 {
+		slices.SortFunc(extractedExpr, func(a, b Expression) int {
+			return bytes.Compare(a.HashCode(), b.HashCode())
+		})
 	}
 	if onlyNeedExtracted {
 		return extractedExpr, nil

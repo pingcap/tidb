@@ -1052,6 +1052,12 @@ func hasV0NewCollationStringHandle(ds *logicalop.DataSource) bool {
 }
 
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
+	// This function may set the two fields below for the PropMatchedNeedMergeSort case, so we reset them here to
+	// avoid leaving the AccessPath with an inconsistent state when there are multiple calls to matchProperty with
+	// different properties.
+	path.GroupedRanges = nil
+	path.GroupByColIdxs = nil
+
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
 		return property.PropNotMatched
@@ -1431,8 +1437,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// if there is some sort items and this path doesn't match this prop, continue.
 			match := true
 			for _, oneAccessPath := range oneAlternative {
-				// Satisfying the property by a merge sort is not supported for partial paths of index merge.
-				if !noSortItem && matchProperty(ds, oneAccessPath, prop) != property.PropMatched {
+				if !noSortItem && !matchProperty(ds, oneAccessPath, prop).Matched() {
 					match = false
 				}
 			}
@@ -1542,8 +1547,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 		return property.PropNotMatched
 	}
 	for _, partialPath := range path.PartialIndexPaths {
-		// Satisfying the property by a merge sort is not supported for partial paths of index merge.
-		if matchProperty(ds, partialPath, prop) != property.PropMatched {
+		if !matchProperty(ds, partialPath, prop).Matched() {
 			return property.PropNotMatched
 		}
 	}
@@ -2325,8 +2329,6 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 }
 
 func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (tablePlan base.PhysicalPlan) {
-	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
-		"partial paths of index merge path should not match property using merge sort")
 	ts, rowCount := physicalop.GetOriginalPhysicalTableScan(ds, prop, path, matchProp.Matched())
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
@@ -2345,6 +2347,10 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 			ts.SetSchema(tmpSchema)
 		}
 		ts.ByItems = byItems
+		if len(path.GroupedRanges) > 0 {
+			ts.GroupedRanges = path.GroupedRanges
+			ts.GroupByColIdxs = path.GroupByColIdxs
+		}
 	}
 	if len(ts.FilterCondition) > 0 {
 		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, nil)
@@ -2553,7 +2559,11 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, copTask *physicalop.CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
-	tableConds, copTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+	var rootTaskConds []expression.Expression
+	tableConds, rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+	// Preserve pre-collected root conditions (for example, large IN / NOT IN filters moved
+	// from IndexJoin probe side) instead of overwriting them.
+	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 
 	var newRootConds []expression.Expression
 	pctx := util.GetPushDownCtx(is.SCtx())
@@ -2720,7 +2730,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				prop.VectorProp.TopK,
 				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
 				prop.VectorProp.Vec.SerializeTo(nil),
-				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
+				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, true),
 			))
 			ts.SetStats(property.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
@@ -3019,7 +3029,11 @@ func addPushedDownSelectionToMppTask4PhysicalTableScan(ts *physicalop.PhysicalTa
 }
 
 func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, copTask *physicalop.CopTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) {
-	ts.FilterCondition, copTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
+	var rootTaskConds []expression.Expression
+	ts.FilterCondition, rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
+	// Preserve pre-collected root conditions (for example, large IN / NOT IN filters moved
+	// from IndexJoin probe side) instead of overwriting them.
+	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 	var newRootConds []expression.Expression
 	ts.FilterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), ts.FilterCondition, ts.StoreType)
 	copTask.RootTaskConds = append(copTask.RootTaskConds, newRootConds...)

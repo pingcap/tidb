@@ -496,9 +496,18 @@ const (
 	version258 = 258
 
 	// version259
+	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	// Use the current sysvar default when the row is missing.
+	version259 = 259
+
+	// Add mysql.tidb_masking_policy table.
+	version260 = 260
+
+	// version261
 	// increases resource group name related columns from varchar(32) to varchar(64)
 	// for MySQL compatibility.
-	version259 = 259
+	version261 = 261
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -512,7 +521,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version258
+var currentBootstrapVersion int64 = version261
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -696,6 +705,8 @@ var (
 		{version: version257, fn: upgradeToVer257},
 		{version: version258, fn: upgradeToVer258},
 		{version: version259, fn: upgradeToVer259},
+		{version: version260, fn: upgradeToVer260},
+		{version: version261, fn: upgradeToVer261},
 	}
 )
 
@@ -2117,11 +2128,19 @@ func upgradeToVer258(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
 }
 
-// upgradeToVer259 widens resource group name related columns from varchar(32) to
+func upgradeToVer259(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, vardef.Off)
+}
+
+func upgradeToVer260(s sessionapi.Session, _ int64) {
+	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
+}
+
+// upgradeToVer261 widens resource group name related columns from varchar(32) to
 // varchar(64) for MySQL compatibility. The corresponding CREATE TABLE definitions
 // in metadef/system_tables_def.go are updated in the same change so that new
 // clusters are created with varchar(64) from the start.
-func upgradeToVer259(s sessionapi.Session, _ int64) {
+func upgradeToVer261(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch MODIFY COLUMN `switch_group_name` VARCHAR(64) DEFAULT ''")

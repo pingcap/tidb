@@ -417,6 +417,29 @@ func TestDXFAPI(t *testing.T) {
 		require.Equal(t, 8, out.RequiredSlots)
 		require.Equal(t, 6, out.MaxRuntimeSlots)
 		require.Equal(t, []string{"encode"}, out.TargetSteps)
+
+		task, err := tm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 6, task.ExtraParams.MaxRuntimeSlots)
+		require.Equal(t, []proto.Step{proto.ImportStepEncodeAndSort}, task.ExtraParams.TargetSteps)
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.PostStatus(fmt.Sprintf("/dxf/task/%d/max_runtime_slots?value=6", id), "", bytes.NewBuffer([]byte("")))
+		})
+		out = struct {
+			RequiredSlots   int      `json:"required_slots"`
+			MaxRuntimeSlots int      `json:"max_runtime_slots"`
+			TargetSteps     []string `json:"target_steps"`
+		}{}
+		require.NoError(t, json.Unmarshal(body, &out))
+		require.Equal(t, 8, out.RequiredSlots)
+		require.Equal(t, 6, out.MaxRuntimeSlots)
+		require.Empty(t, out.TargetSteps)
+
+		task, err = tm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 6, task.ExtraParams.MaxRuntimeSlots)
+		require.Empty(t, task.ExtraParams.TargetSteps)
 	})
 }
 

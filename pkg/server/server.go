@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -811,9 +812,9 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	sslVersion := ""
 	if cc.isUnixSocket {
 		connType = variable.ConnTypeUnixSocket
-	} else if cc.tlsConn != nil {
+	} else if tlsState := cc.getTLSState(); tlsState != nil {
 		connType = variable.ConnTypeTLS
-		sslVersionNum := cc.tlsConn.ConnectionState().Version
+		sslVersionNum := tlsState.Version
 		switch sslVersionNum {
 		case tls.VersionTLS12:
 			sslVersion = "TLSv1.2"
@@ -968,6 +969,15 @@ func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]stri
 
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool) {
+	s.kill(connectionID, query, maxExecutionTime, runaway, "")
+}
+
+// KillWithNormalCloseMsg implements the sessmgr.NormalCloseKiller interface.
+func (s *Server) KillWithNormalCloseMsg(connectionID uint64, query bool, maxExecutionTime bool, runaway bool, normalCloseMsg string) {
+	s.kill(connectionID, query, maxExecutionTime, runaway, normalCloseMsg)
+}
+
+func (s *Server) kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool, normalCloseMsg string) {
 	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID),
 		zap.Bool("query", query), zap.Bool("maxExecutionTime", maxExecutionTime), zap.Bool("runawayExceed", runaway))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
@@ -994,6 +1004,10 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, ru
 				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 			}
 		}
+		if normalCloseMsg != "" && s.StandbyController != nil {
+			tidbGatewayConnID := conn.attrs[tidbGatewayAttrsConnKey]
+			s.SetNormalClosedConn(keyspace.GetKeyspaceNameBySettings(), tidbGatewayConnID, normalCloseMsg)
+		}
 	}
 	killQuery(conn, maxExecutionTime, runaway)
 }
@@ -1017,13 +1031,7 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	} else {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-
-	if cancelFunc != nil {
-		cancelFunc()
-	}
+	conn.cancelDispatch()
 	sessVars.SQLKiller.FinishResultSet()
 }
 
@@ -1253,8 +1261,7 @@ func (s *Server) GetStatusVars() map[uint64]map[string]string {
 	rs := make(map[uint64]map[string]string)
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
-			if client.tlsConn != nil {
-				connState := client.tlsConn.ConnectionState()
+			if connState := client.getTLSState(); connState != nil {
 				rs[pi.ID] = map[string]string{
 					"Ssl_cipher":  tlsutil.CipherSuiteName(connState.CipherSuite),
 					"Ssl_version": tlsutil.VersionName(connState.Version),
