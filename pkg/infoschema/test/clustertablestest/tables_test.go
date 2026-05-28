@@ -1445,8 +1445,10 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 
 	var tmp string
 	var ok bool
+	const expectedSQLDigest = "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b"
+	const expectedSQLText = "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a"
 	var beginTime = time.Now().Format(types.TimeFormat)
-	err = tk.QueryToErr("explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a")
+	err = tk.QueryToErr(expectedSQLText)
 	var endTime = time.Now().Format(types.TimeFormat)
 	require.NotNil(t, err)
 	// Check Memory Table
@@ -1479,7 +1481,13 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 
 	rows = tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE_OPS_HISTORY").Rows()
 	require.Greater(t, len(rows), 0)
-	row = rows[len(rows)-1]
+	row = nil
+	for _, historyRow := range rows {
+		if historyRow[10] == expectedSQLDigest && historyRow[11] == expectedSQLText {
+			row = historyRow
+		}
+	}
+	require.NotNil(t, row)
 	require.Len(t, row, 12)
 	require.GreaterOrEqual(t, row[0], beginTime) // TIME
 	require.LessOrEqual(t, row[0], endTime)
@@ -1491,14 +1499,14 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Nil(t, err)
 	require.Greater(t, val, uint64(536870912))
 
-	require.Greater(t, row[4], "0")                                                                                              // PROCESSID
-	require.Greater(t, row[5], "0")                                                                                              // MEM
-	require.Equal(t, row[6], "0")                                                                                                // DISK
-	require.Equal(t, row[7], "")                                                                                                 // CLIENT
-	require.Equal(t, row[8], "test")                                                                                             // DB
-	require.Equal(t, row[9], "")                                                                                                 // USER
-	require.Equal(t, row[10], "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b")                                // SQL_DIGEST
-	require.Equal(t, row[11], "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a") // SQL_TEXT
+	require.Greater(t, row[4], "0")              // PROCESSID
+	require.Greater(t, row[5], "0")              // MEM
+	require.Equal(t, row[6], "0")                // DISK
+	require.Equal(t, row[7], "")                 // CLIENT
+	require.Equal(t, row[8], "test")             // DB
+	require.Equal(t, row[9], "")                 // USER
+	require.Equal(t, row[10], expectedSQLDigest) // SQL_DIGEST
+	require.Equal(t, row[11], expectedSQLText)   // SQL_TEXT
 }
 
 func TestAddFieldsForBinding(t *testing.T) {
