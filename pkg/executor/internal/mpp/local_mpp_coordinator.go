@@ -40,11 +40,13 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -185,16 +187,8 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 	return coord
 }
 
-<<<<<<< HEAD
-func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) error {
+func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment, allTiFlashStoreInfo map[string]uint64) error {
 	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
-=======
-func (c *localMppCoordinator) appendMPPDispatchReq(
-	pf *physicalop.Fragment,
-	allTiFlashStoreInfo map[string]tiFlashStoreInfo,
-) error {
-	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.Sink}, kv.TiFlash)
->>>>>>> a9267dbdcbb (executor, distsql: reduce the log of dispatching mpp tasks (#68041))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -206,12 +200,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
-<<<<<<< HEAD
-	for _, mppTask := range pf.ExchangeSender.Tasks {
-=======
-	zoneHelper := taskZoneInfoHelper{}
-	zoneHelper.init(allTiFlashStoreInfo)
-	tasks := pf.Sink.GetSelfTasks()
+	tasks := pf.ExchangeSender.Tasks
 	if cap(c.dispatchTaskIDs) < len(tasks) {
 		c.dispatchTaskIDs = make([]int64, 0, len(tasks))
 	} else {
@@ -223,21 +212,10 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 		c.dispatchStoreIDs = c.dispatchStoreIDs[:0]
 	}
 	rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
-	if !vardef.EnableResourceControl.Load() {
+	if !variable.EnableResourceControl.Load() {
 		rgName = ""
 	}
-	_, stmtDigest := c.sessionCtx.GetSessionVars().StmtCtx.SQLDigest()
-	sqlDigest := ""
-	if stmtDigest != nil {
-		sqlDigest = stmtDigest.String()
-	}
-	_, planDigest := c.sessionCtx.GetSessionVars().StmtCtx.GetPlanDigest()
-	planDigestStr := ""
-	if planDigest != nil {
-		planDigestStr = planDigest.String()
-	}
 	for _, mppTask := range tasks {
->>>>>>> a9267dbdcbb (executor, distsql: reduce the log of dispatching mpp tasks (#68041))
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
@@ -248,39 +226,17 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 		if err != nil {
 			return errors.Trace(err)
 		}
-<<<<<<< HEAD
 		err = c.fixTaskForCTEStorageAndReader(dagReq.RootExecutor, mppTask.Meta)
 		if err != nil {
 			return err
 		}
-=======
-		zoneHelper.isRoot = pf.IsRoot
-		zoneHelper.currentTaskZone = zoneHelper.allTiFlashStoreInfo[mppTask.Meta.GetAddress()].zone
-		zoneHelper.fillSameZoneFlagForExchange(dagReq.RootExecutor)
->>>>>>> a9267dbdcbb (executor, distsql: reduce the log of dispatching mpp tasks (#68041))
 		pbData, err := dagReq.Marshal()
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-<<<<<<< HEAD
-		rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
-		if !variable.EnableResourceControl.Load() {
-			rgName = ""
-		}
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
-			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
-			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
-			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
-			zap.Uint64("GatherID", c.gatherID),
-			zap.String("resource_group", rgName),
-		)
-=======
 		c.dispatchTaskIDs = append(c.dispatchTaskIDs, mppTask.ID)
-		c.dispatchStoreIDs = append(c.dispatchStoreIDs, allTiFlashStoreInfo[mppTask.Meta.GetAddress()].storeID)
->>>>>>> a9267dbdcbb (executor, distsql: reduce the log of dispatching mpp tasks (#68041))
+		c.dispatchStoreIDs = append(c.dispatchStoreIDs, allTiFlashStoreInfo[mppTask.Meta.GetAddress()])
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
 			Meta:                   mppTask.Meta,
@@ -308,19 +264,16 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 			zap.Int64s("IDs", c.dispatchTaskIDs), zap.Uint64s("storeIDs", c.dispatchStoreIDs),
 			zap.Uint64("QueryTs", firstTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", firstTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", firstTask.MppQueryID.ServerID),
-			zap.String("plan", plannercore.ToString(pf.Sink)),
+			zap.String("plan", plannercore.ToString(pf.ExchangeSender)),
 			zap.Int64("mpp-version", firstTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
+			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
 			zap.Uint64("GatherID", c.gatherID),
 			zap.String("resource_group", rgName),
-			zap.String("sqlDigest", sqlDigest),
-			zap.String("planDigest", planDigestStr),
 		)
 	}
 	return nil
 }
 
-<<<<<<< HEAD
 // fixTaskForCTEStorageAndReader fixes the upstream/downstream tasks for the producers and consumers.
 // After we split the fragments. A CTE producer in the fragment will holds all the task address of the consumers.
 // For example, the producer has two task on node_1 and node_2. As we know that each consumer also has two task on the same nodes(node_1 and node_2)
@@ -328,97 +281,6 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 // And the same for the task on the node_2.
 // And the same for the consumer task. We need to prune the unnecessary task address of its producer tasks(i.e. the downstream tasks).
 func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor, meta kv.MPPTaskMeta) error {
-=======
-type tiFlashStoreInfo struct {
-	zone    string
-	storeID uint64
-}
-
-func addTiFlashStoreInfo(allTiFlashStoreInfo map[string]tiFlashStoreInfo, tiflashStore *tikv.Store) {
-	storeInfo := tiFlashStoreInfo{storeID: tiflashStore.StoreID()}
-	if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
-		storeInfo.zone = tiflashZone
-	}
-	allTiFlashStoreInfo[tiflashStore.GetAddr()] = storeInfo
-}
-
-// taskZoneInfoHelper used to help reset exchange executor's same zone flags
-type taskZoneInfoHelper struct {
-	allTiFlashStoreInfo map[string]tiFlashStoreInfo
-	// exchangeZoneInfo is used to cache one mpp task's zone info:
-	// key is executor id, value is zone info array
-	// for ExchangeSender, it's target tiflash nodes' zone info; for ExchangeReceiver, it's source tiflash nodes' zone info
-	exchangeZoneInfo map[string][]string
-	tidbZone         string
-	currentTaskZone  string
-	isRoot           bool
-}
-
-func (h *taskZoneInfoHelper) init(allTiFlashStoreInfo map[string]tiFlashStoreInfo) {
-	h.tidbZone = config.GetGlobalConfig().Labels[placement.DCLabelKey]
-	h.allTiFlashStoreInfo = allTiFlashStoreInfo
-	// initial capacity to 2, for one exchange sender and one exchange receiver
-	h.exchangeZoneInfo = make(map[string][]string, 2)
-}
-
-func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor, slots int, sameZoneFlags []bool) (bool, []bool) {
-	if exec.ExecutorId == nil || len(h.currentTaskZone) == 0 {
-		for range slots {
-			sameZoneFlags = append(sameZoneFlags, true)
-		}
-		return true, sameZoneFlags
-	}
-	if h.isRoot && exec.Tp == tipb.ExecType_TypeExchangeSender {
-		sameZoneFlags = append(sameZoneFlags, len(h.tidbZone) == 0 || h.currentTaskZone == h.tidbZone)
-		return true, sameZoneFlags
-	}
-
-	return false, sameZoneFlags
-}
-
-func (h *taskZoneInfoHelper) collectExchangeZoneInfos(encodedTaskMeta [][]byte, slots int) []string {
-	zoneInfos := make([]string, 0, slots)
-	for _, taskBytes := range encodedTaskMeta {
-		taskMeta := &mpp.TaskMeta{}
-		err := taskMeta.Unmarshal(taskBytes)
-		if err != nil {
-			zoneInfos = append(zoneInfos, "")
-			continue
-		}
-		zoneInfos = append(zoneInfos, h.allTiFlashStoreInfo[taskMeta.GetAddress()].zone)
-	}
-	return zoneInfos
-}
-
-func (h *taskZoneInfoHelper) inferSameZoneFlag(exec *tipb.Executor, encodedTaskMeta [][]byte) []bool {
-	slots := len(encodedTaskMeta)
-	sameZoneFlags := make([]bool, 0, slots)
-	filled := false
-	if filled, sameZoneFlags = h.tryQuickFillWithUncertainZones(exec, slots, sameZoneFlags); filled {
-		return sameZoneFlags
-	}
-	zoneInfos, exist := h.exchangeZoneInfo[*exec.ExecutorId]
-	if !exist {
-		zoneInfos = h.collectExchangeZoneInfos(encodedTaskMeta, slots)
-		h.exchangeZoneInfo[*exec.ExecutorId] = zoneInfos
-	}
-
-	if len(zoneInfos) != slots {
-		// This branch is for safety purpose, not expected
-		for range slots {
-			sameZoneFlags = append(sameZoneFlags, true)
-		}
-		return sameZoneFlags
-	}
-
-	for i := range slots {
-		sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
-	}
-	return sameZoneFlags
-}
-
-func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
->>>>>>> a9267dbdcbb (executor, distsql: reduce the log of dispatching mpp tasks (#68041))
 	children := make([]*tipb.Executor, 0, 2)
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan, tipb.ExecType_TypePartitionTableScan, tipb.ExecType_TypeIndexScan:
@@ -912,35 +774,29 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	}
 	c.nodeCnt = len(nodeInfo)
 
-<<<<<<< HEAD
-	for _, frag := range frags {
-		err = c.appendMPPDispatchReq(frag)
-=======
-	var allTiFlashStoreInfo map[string]tiFlashStoreInfo
-	if c.sessionCtx.GetStore() == nil {
-		allTiFlashStoreInfo = make(map[string]tiFlashStoreInfo)
-	} else if tikvStore, ok := c.sessionCtx.GetStore().(helper.Storage); ok {
+	var allTiFlashStoreInfo map[string]uint64
+	if tikvStore, ok := c.sessionCtx.GetStore().(helper.Storage); ok && tikvStore != nil {
 		cache := tikvStore.GetRegionCache()
 		allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-		allTiFlashStoreInfo = make(map[string]tiFlashStoreInfo, len(allTiFlashStores))
+		allTiFlashStoreInfo = make(map[string]uint64, len(allTiFlashStores))
 		for _, tiflashStore := range allTiFlashStores {
-			addTiFlashStoreInfo(allTiFlashStoreInfo, tiflashStore)
+			allTiFlashStoreInfo[tiflashStore.GetAddr()] = tiflashStore.StoreID()
 		}
 		if config.GetGlobalConfig().DisaggregatedTiFlash {
 			computeStores, getStoreErr := cache.GetTiFlashComputeStores(
 				backoff.NewBackoffer(ctx, copr.CopNextMaxBackoff).TiKVBackoffer())
 			if getStoreErr == nil {
 				for _, tiflashStore := range computeStores {
-					addTiFlashStoreInfo(allTiFlashStoreInfo, tiflashStore)
+					allTiFlashStoreInfo[tiflashStore.GetAddr()] = tiflashStore.StoreID()
 				}
 			}
 		}
 	} else {
-		allTiFlashStoreInfo = make(map[string]tiFlashStoreInfo)
+		allTiFlashStoreInfo = make(map[string]uint64)
 	}
+
 	for _, frag := range frags {
 		err = c.appendMPPDispatchReq(frag, allTiFlashStoreInfo)
->>>>>>> a9267dbdcbb (executor, distsql: reduce the log of dispatching mpp tasks (#68041))
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
