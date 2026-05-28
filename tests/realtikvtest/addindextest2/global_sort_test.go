@@ -200,6 +200,12 @@ func TestGlobalSortBasic(t *testing.T) {
 		jobID = job.ID
 	})
 
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkEnableStreaming",
+		func(enabled bool) {
+			require.True(t, enabled, "streaming should be enabled with global sort")
+		},
+	)
+
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
@@ -282,6 +288,14 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 					t.Skip("DXF is always enabled on nextgen")
 				}
 			}
+
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkEnableStreaming",
+				func(enabled bool) {
+					expected := tc.cloudStorageURI != ""
+					require.Equal(t, expected, enabled)
+				},
+			)
+
 			if kerneltype.IsClassic() {
 				tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
 				tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
