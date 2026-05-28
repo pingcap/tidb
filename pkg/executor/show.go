@@ -996,13 +996,7 @@ func hasAnyMaterializedViewVisiblePriv(
 	dbName string,
 	tableName string,
 ) bool {
-	for _, priv := range []mysql.PrivilegeType{
-		mysql.ShowViewPriv,
-		mysql.SelectPriv,
-		mysql.AlterPriv,
-		mysql.DropPriv,
-		mysql.OperateViewPriv,
-	} {
+	for _, priv := range materializedViewTablePrivs {
 		if checker.RequestVerification(activeRoles, dbName, tableName, "", priv) {
 			return true
 		}

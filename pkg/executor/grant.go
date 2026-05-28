@@ -51,6 +51,14 @@ import (
  ************************************************************************************/
 var (
 	_ exec.Executor = (*GrantExec)(nil)
+
+	materializedViewTablePrivs = mysql.Privileges{
+		mysql.SelectPriv,
+		mysql.ShowViewPriv,
+		mysql.AlterPriv,
+		mysql.DropPriv,
+		mysql.OperateViewPriv,
+	}
 )
 
 // GrantExec executes GrantStmt.
@@ -597,11 +605,10 @@ func validateGrantOnSpecialMViewObject(tblInfo *metamodel.TableInfo, privs []*as
 
 func isSafeMViewTableGrantPriv(priv mysql.PrivilegeType) bool {
 	switch priv {
-	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv,
-		mysql.SelectPriv, mysql.ShowViewPriv, mysql.AlterPriv, mysql.DropPriv, mysql.OperateViewPriv:
+	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv:
 		return true
 	default:
-		return false
+		return materializedViewTablePrivs.Has(priv)
 	}
 }
 
@@ -727,7 +734,7 @@ func tablePrivsForGrantTarget(ctx sessionctx.Context, db string, tbl string) (my
 	meta := tableInfo.Meta()
 	switch {
 	case meta.MaterializedView != nil:
-		return mysql.Privileges{mysql.SelectPriv, mysql.ShowViewPriv, mysql.AlterPriv, mysql.DropPriv, mysql.OperateViewPriv}, nil
+		return materializedViewTablePrivs, nil
 	case meta.MaterializedViewLog != nil:
 		return mysql.Privileges{mysql.SelectPriv}, nil
 	case meta.MaterializedViewShadow != nil:
