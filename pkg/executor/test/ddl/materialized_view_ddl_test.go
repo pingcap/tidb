@@ -586,7 +586,7 @@ func TestShowMaterializedViewStatusPrivilege(t *testing.T) {
 	require.True(t, ok)
 
 	mvExpected := func(pending int64) string {
-		return fmt.Sprintf("%d mv_show_status %d", mvID, pending)
+		return fmt.Sprintf("%d mv_show_status %d %s %d", mvID, mlogTable.Meta().ID, mlogTable.Meta().Name.O, pending)
 	}
 	mlogExpected := func(pending int64) string {
 		return fmt.Sprintf(
@@ -660,7 +660,7 @@ func TestShowMaterializedViewRemainLogs(t *testing.T) {
 	err = tk.QueryToErr("show materialized view t_remain_logs remain_logs")
 	require.ErrorContains(t, err, "is not MATERIALIZED VIEW")
 	err = tk.ExecToErr("show materialized view mv_remain_logs unknown_option")
-	require.ErrorContains(t, err, "unknown SHOW MATERIALIZED VIEW option unknown_option")
+	require.ErrorContains(t, err, "syntax error: expected REMAIN_LOGS")
 }
 
 func TestShowMaterializedViewLogWaitPurge(t *testing.T) {
@@ -697,7 +697,7 @@ func TestShowMaterializedViewLogWaitPurge(t *testing.T) {
 	err = tk.QueryToErr("show materialized view log on t_wait_purge_no_log wait_purge")
 	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_wait_purge_no_log")
 	err = tk.ExecToErr("show materialized view log on t_wait_purge unknown_option")
-	require.ErrorContains(t, err, "unknown SHOW MATERIALIZED VIEW LOG option unknown_option")
+	require.ErrorContains(t, err, "syntax error: expected WAIT_PURGE")
 }
 
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
