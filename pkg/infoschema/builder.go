@@ -58,6 +58,10 @@ type Builder struct {
 	infoData *Data
 	store    kv.Storage
 	crossKS  bool
+
+	// oldTableForPartitionDiff is set temporarily during applyTableUpdateV2 to cache the
+	// old table before it's removed, so that applyCreateTable can diff changed partitions.
+	oldTableForPartitionDiff table.Table
 }
 
 // SetSchemaVersion sets the schema version of the InfoSchema.
@@ -911,7 +915,14 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
 		tableNames.tables[tblInfo.Name.L] = tbl
 	}
-	b.addTable(schemaVersion, dbInfo, tblInfo, tbl)
+
+	// For partition-only DDLs, use the cached old table to diff changed partitions.
+	var oldTableForDiff table.Table
+	if isPartitionOnlyAction(tp) && b.enableV2 {
+		oldTableForDiff = b.oldTableForPartitionDiff
+		b.oldTableForPartitionDiff = nil // reset after use
+	}
+	b.addTableWithActionType(schemaVersion, dbInfo, tblInfo, tbl, tp, oldTableForDiff)
 
 	bucketIdx := tableBucketIdx(tableID)
 	slices.SortFunc(b.infoSchema.sortedTablesBuckets[bucketIdx], func(i, j table.Table) int {
@@ -1214,15 +1225,22 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 }
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
+	b.addTableWithActionType(schemaVersion, di, tblInfo, tbl, model.ActionNone, nil)
+}
+
+// addTableWithActionType inserts a table entry. For partition-only DDLs (add/drop/truncate/reorganize partition),
+// only changed partitions are inserted into pid2tid to avoid re-inserting all 1024+ partitions.
+func (b *Builder) addTableWithActionType(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table, tp model.ActionType, oldTable table.Table) {
 	if b.enableV2 {
 		b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
-		b.infoData.add(tableItem{
+		changedIDs := diffChangedPartitionIDs(oldTable, tblInfo, tp)
+		b.infoData.addPartitions(tableItem{
 			dbName:        di.Name,
 			dbID:          di.ID,
 			tableName:     tblInfo.Name,
 			tableID:       tblInfo.ID,
 			schemaVersion: schemaVersion,
-		}, tbl)
+		}, tbl, changedIDs)
 	} else {
 		sortedTbls := b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)]
 		b.infoSchema.sortedTablesBuckets[tableBucketIdx(tblInfo.ID)] = append(sortedTbls, tbl)

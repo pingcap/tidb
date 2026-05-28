@@ -837,3 +837,58 @@ func TestGCOldFKVersion(t *testing.T) {
 		ChildFKName: ast.NewCIStr("fk"),
 	}, got[0])
 }
+
+func TestGCOldPID2TIDVersion(t *testing.T) {
+	data := NewData()
+	// helper to make partitionItem
+	mk := func(partID, tblID, ver int64, tomb bool) partitionItem {
+		return partitionItem{
+			partitionID:   partID,
+			tableID:       tblID,
+			schemaVersion: ver,
+			tomb:          tomb,
+		}
+	}
+
+	// Simulate: partition 100 belongs to table 1, had 5 schema versions (3..7)
+	// partition 200 belongs to table 2, only 1 version
+	items := []partitionItem{
+		mk(100, 1, 7, false),
+		mk(100, 1, 6, false),
+		mk(100, 1, 5, true), // tomb (dropped)
+		mk(100, 1, 4, false),
+		mk(100, 1, 3, false),
+		mk(200, 2, 1, false), // unaffected - single version
+	}
+	for _, it := range items {
+		btreeSet(&data.pid2tid, it)
+	}
+	before := data.pid2tid.Load().Len()
+	require.Equal(t, 6, before)
+
+	// GC entries older than version 6
+	// For partitionID=100: keep pivot v5, delete v4 and v3
+	// For partitionID=200: keep pivot v1 (only one version)
+	deleted := data.gcOldPID2TIDVersion(6)
+	require.Equal(t, 2, deleted)
+	after := data.pid2tid.Load().Len()
+	require.Equal(t, 4, after) // v7,v6,v5 for partition 100, and v1 for partition 200
+
+	// verify surviving versions
+	type survivor struct {
+		partID int64
+		ver    int64
+		tomb   bool
+	}
+	var survivors []survivor
+	data.pid2tid.Load().Ascend(func(item partitionItem) bool {
+		survivors = append(survivors, survivor{item.partitionID, item.schemaVersion, item.tomb})
+		return true
+	})
+	require.Equal(t, []survivor{
+		{100, 5, true}, // pivot for partition 100 (tomb)
+		{100, 6, false},
+		{100, 7, false},
+		{200, 1, false}, // pivot for partition 200
+	}, survivors)
+}

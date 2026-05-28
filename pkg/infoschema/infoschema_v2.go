@@ -97,6 +97,98 @@ func btreeSet[T any](ptr *atomic.Pointer[btree.BTreeG[T]], item T) {
 	}
 }
 
+// isPartitionOnlyAction returns true if the DDL only modifies partitions (not the table itself).
+// For these actions, unchanged partitions don't need new pid2tid entries.
+func isPartitionOnlyAction(tp model.ActionType) bool {
+	switch tp {
+	case model.ActionAddTablePartition, model.ActionDropTablePartition,
+		model.ActionTruncateTablePartition, model.ActionReorganizePartition:
+		return true
+	}
+	return false
+}
+
+// diffChangedPartitionIDs returns the set of partition IDs that are NEW in the current table
+// compared to what was previously in pid2tid. For add partition, these are the newly added partitions.
+// Returns nil if all partitions should be inserted (non-partition DDL or unable to diff).
+func diffChangedPartitionIDs(oldTable table.Table, newTblInfo *model.TableInfo, tp model.ActionType) map[int64]struct{} {
+	if !isPartitionOnlyAction(tp) {
+		return nil
+	}
+	newPi := newTblInfo.GetPartitionInfo()
+	if newPi == nil {
+		return nil
+	}
+	logutil.BgLogger().Info("infoschema v2 diffChangedPartitionIDs", zap.String("actionType", tp.String()), zap.Bool("hasOldTable", oldTable != nil), zap.Int("newPartCount", len(newPi.Definitions)))
+
+	// For add/reorganize partition: find partition IDs in new table that were NOT in old table.
+	if oldTable != nil {
+		if oldPi := oldTable.Meta().GetPartitionInfo(); oldPi != nil {
+			oldIDs := make(map[int64]struct{}, len(oldPi.Definitions))
+			for _, def := range oldPi.Definitions {
+				oldIDs[def.ID] = struct{}{}
+			}
+			changed := make(map[int64]struct{})
+			for _, def := range newPi.Definitions {
+				if _, ok := oldIDs[def.ID]; !ok {
+					changed[def.ID] = struct{}{}
+				}
+			}
+			logutil.BgLogger().Info("infoschema v2 diffChangedPartitionIDs result", zap.Int("oldPartCount", len(oldPi.Definitions)), zap.Int("newPartCount", len(newPi.Definitions)), zap.Int("changedCount", len(changed)))
+			// For drop/truncate partition: old partitions are handled by tomb entries in applyDropTableV2.
+			// For add/reorganize: return the new partition IDs.
+			if len(changed) > 0 {
+				return changed
+			}
+			// If no difference found (e.g., same partitions re-ordered), fall through to insert all.
+			return nil
+		}
+	}
+
+	// Can't determine old partitions, insert all.
+	return nil
+}
+
+// diffDroppedPartitionIDs returns the set of partition IDs that should be tomb-marked.
+// For drop/truncate partition DDLs, only the dropped partitions need tomb entries.
+// Returns nil if all partitions should be tomb-marked (non-partition DDL).
+func diffDroppedPartitionIDs(diff *model.SchemaDiff, pi *model.PartitionInfo) map[int64]struct{} {
+	if !isPartitionOnlyAction(diff.Type) {
+		return nil
+	}
+
+	switch diff.Type {
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		// For drop/truncate partition, the partitions in old table but NOT in new table
+		// are the dropped ones. But at this point we only have the OLD table info.
+		// We use AffectedOpts from the diff which contains the dropped partition IDs.
+		if len(diff.AffectedOpts) > 0 {
+			dropped := make(map[int64]struct{}, len(diff.AffectedOpts))
+			for _, opt := range diff.AffectedOpts {
+				dropped[opt.TableID] = struct{}{}
+			}
+			return dropped
+		}
+	case model.ActionReorganizePartition:
+		// Reorganize replaces some partitions with new ones.
+		// Old partitions should be tomb-marked.
+		if len(diff.AffectedOpts) > 0 {
+			dropped := make(map[int64]struct{}, len(diff.AffectedOpts))
+			for _, opt := range diff.AffectedOpts {
+				dropped[opt.TableID] = struct{}{}
+			}
+			return dropped
+		}
+	}
+
+	// For add partition: no partitions are dropped, return empty set to skip tomb marking.
+	if diff.Type == model.ActionAddTablePartition {
+		return make(map[int64]struct{})
+	}
+
+	return nil
+}
+
 // Data is the core data struct of infoschema V2.
 type Data struct {
 	// For the TableByName API, sorted by {dbName, tableName, schemaVersion} => tableID
@@ -144,6 +236,10 @@ type Data struct {
 
 	// the minimum ts of the recent used infoschema
 	recentMinTS atomic.Uint64
+
+	// lastGCPartitionCutVer records the cutVer of the last gcCollectPartitionItem call.
+	// If cutVer hasn't changed, the next GC would find nothing to delete and can be skipped.
+	lastGCPartitionCutVer atomic.Int64
 }
 
 type tableInfoItem struct {
@@ -195,13 +291,32 @@ func (isd *Data) SetCacheCapacity(capacity uint64) {
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
+	isd.addPartitions(item, tbl, nil)
+}
+
+// addPartitions inserts table entry and partition entries into btrees.
+// If changedPartitionIDs is non-nil, only those partition IDs are inserted into pid2tid.
+// If changedPartitionIDs is nil, all partitions are inserted (backward compatible).
+func (isd *Data) addPartitions(item tableItem, tbl table.Table, changedPartitionIDs map[int64]struct{}) {
 	btreeSet(&isd.byID, &item)
 	btreeSet(&isd.byName, &item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
 	ti := tbl.Meta()
 	if pi := ti.GetPartitionInfo(); pi != nil {
-		for _, def := range pi.Definitions {
-			btreeSet(&isd.pid2tid, partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+		if changedPartitionIDs != nil {
+			cnt := 0
+			for _, def := range pi.Definitions {
+				if _, ok := changedPartitionIDs[def.ID]; ok {
+					btreeSet(&isd.pid2tid, partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+					cnt++
+				}
+			}
+			logutil.BgLogger().Info("infoschema v2 addPartitions delta", zap.Int("total_partitions", len(pi.Definitions)), zap.Int("inserted", cnt))
+		} else {
+			logutil.BgLogger().Info("infoschema v2 addPartitions full", zap.Int("total_partitions", len(pi.Definitions)))
+			for _, def := range pi.Definitions {
+				btreeSet(&isd.pid2tid, partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+			}
 		}
 	}
 	if infoschemacontext.HasSpecialAttributes(ti) {
@@ -433,6 +548,53 @@ func gcCollectTableItem(bt *btree.BTreeG[*tableItem], cutVer int64, maxItems int
 	return dels
 }
 
+// gcCollectPartitionItem returns up to maxItems old partitionItem versions for GC.
+// The logic mirrors gcCollectTableItem: for each partitionID, keep the latest version
+// below cutVer (the pivot) and delete all older versions of the same partitionID.
+func gcCollectPartitionItem(bt *btree.BTreeG[partitionItem], cutVer int64, maxItems int) []partitionItem {
+	var dels []partitionItem
+	var prev partitionItem
+	var hasPrev bool
+	bt.Descend(func(item partitionItem) bool {
+		if item.schemaVersion < cutVer &&
+			hasPrev &&
+			prev.partitionID == item.partitionID &&
+			prev.schemaVersion < cutVer {
+			dels = append(dels, item)
+			if len(dels) >= maxItems {
+				return false
+			}
+		}
+		prev = item
+		hasPrev = true
+		return true
+	})
+	return dels
+}
+
+// gcOldPID2TIDVersion performs GC of old partitionItem entries up to maxItems.
+func (isd *Data) gcOldPID2TIDVersion(schemaVersion int64) int {
+	// Skip the expensive tree iteration if cutVer hasn't advanced since last GC.
+	// gcCollectPartitionItem can only delete entries with version < cutVer,
+	// so if cutVer is unchanged, the result would be identical to the last call.
+	if schemaVersion <= isd.lastGCPartitionCutVer.Load() {
+		logutil.BgLogger().Info("infoschema v2 pid2tid GC skipped (cutVer unchanged)", zap.Int64("schemaVersion", schemaVersion))
+		return 0
+	}
+	isd.lastGCPartitionCutVer.Store(schemaVersion)
+
+	old := isd.pid2tid.Load()
+	newTree := old.Clone()
+	dels := gcCollectPartitionItem(old, schemaVersion, 1024)
+	for _, item := range dels {
+		newTree.Delete(item)
+	}
+	if !isd.pid2tid.CompareAndSwap(old, newTree) {
+		logutil.BgLogger().Info("infoschema v2 GCOldVersion() pid2tid gc conflict")
+	}
+	return len(dels)
+}
+
 // gcCollectReferredForeignKeyItem returns up to maxItems old referredForeignKeyItem versions for GC.
 func gcCollectReferredForeignKeyItem(bt *btree.BTreeG[*referredForeignKeyItem], cutVer int64, maxItems int) []*referredForeignKeyItem {
 	var dels []*referredForeignKeyItem
@@ -497,6 +659,9 @@ func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 
 	// collect and remove old referredForeignKeyItems
 	_ = isd.gcOldFKVersion(schemaVersion)
+
+	// collect and remove old partitionItems in pid2tid
+	_ = isd.gcOldPID2TIDVersion(schemaVersion)
 
 	return len(dels), int64(isd.byName.Load().Len())
 }
@@ -1633,6 +1798,21 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 	}
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 
+	// For partition-only DDLs, cache the old table before it's removed by dropTableForUpdate.
+	// This allows applyCreateTable to diff only the changed partitions instead of re-inserting all.
+	// Note: For add/drop partition, the table ID doesn't change (oldTableID=0, newTableID=tableID).
+	// For truncate/reorganize, oldTableID may differ. Use whichever is valid.
+	b.oldTableForPartitionDiff = nil
+	if isPartitionOnlyAction(diff.Type) {
+		lookupID := oldTableID
+		if !tableIDIsValid(lookupID) {
+			lookupID = newTableID // add partition: table ID doesn't change
+		}
+		if tableIDIsValid(lookupID) {
+			b.oldTableForPartitionDiff, _ = b.infoschemaV2.TableByID(context.Background(), lookupID)
+		}
+	}
+
 	tblIDs, allocs, err := dropTableForUpdate(b, newTableID, oldTableID, oldDBInfo, diff)
 	if err != nil {
 		return nil, err
@@ -1687,8 +1867,15 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	b.infoschemaV2.Data.deleteReferredForeignKeys(dbInfo.Name, tblInfo, diff.Version)
 
 	if pi := table.Meta().GetPartitionInfo(); pi != nil {
+		droppedPartitionIDs := diffDroppedPartitionIDs(diff, pi)
 		for _, def := range pi.Definitions {
-			btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+			if droppedPartitionIDs == nil {
+				// Non-partition DDL (e.g. drop table): tomb all partitions.
+				btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+			} else if _, ok := droppedPartitionIDs[def.ID]; ok {
+				// Partition DDL: only tomb the specifically dropped partitions.
+				btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+			}
 		}
 	}
 
