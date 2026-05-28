@@ -1919,7 +1919,9 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 	mayNeedChangeColData := !noReorgDataStrict(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
-	if mayNeedChangeColData {
+	shouldCheckGeneratedColumnDependency := mayNeedChangeColData ||
+		needCheckGeneratedColumnDependencyForNoReorg(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+	if shouldCheckGeneratedColumnDependency {
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1970,10 +1972,8 @@ func GetModifiableColumnJob(
 	if err = checkModifyGeneratedColumn(sctx, schema.Name, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
-	// NOTE: We no longer unconditionally block all modifications of columns with generated
-	// column dependencies. Instead, we rely on `isGeneratedRelatedColumn` (called above
-	// when mayNeedChangeColData is true) to block only modifications that require data
-	// reorganization. See https://github.com/pingcap/tidb/issues/43455
+	// NOTE: We only relax the generated dependency check for metadata-only changes
+	// and the narrow no-reorg collation-only path needed by issue 43455.
 
 	if t.Meta().TTLInfo != nil {
 		// the column referenced by TTL should be a time type
@@ -2096,6 +2096,63 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 		// conversion between float and double needs reorganization, see issue #31372
 	}
 
+	return false
+}
+
+func needCheckGeneratedColumnDependencyForNoReorg(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+	// The normal generated-column restriction is only relevant when another generated
+	// column or expression index depends on the modified column.
+	if ok, _, _ := hasDependentByGeneratedColumn(tblInfo, oldCol.Name); !ok {
+		return false
+	}
+
+	// Metadata-only changes do not change existing row values or generated expression results.
+	if oldCol.FieldType.Equal(&newCol.FieldType) {
+		return false
+	}
+
+	// Issue 43455 needs this narrow collation-only path. The base column bytes stay the
+	// same, so we only skip the dependency check when every dependent expression is known
+	// to preserve its result bytes under the new collation.
+	if isCharChange(oldCol, newCol) && oldCol.GetCharset() == newCol.GetCharset() &&
+		!collate.CompatibleCollate(oldCol.GetCollate(), newCol.GetCollate()) &&
+		allDependentGeneratedExprsPreserveStringResultBytes(tblInfo, oldCol.Name) {
+		return false
+	}
+
+	return true
+}
+
+func allDependentGeneratedExprsPreserveStringResultBytes(tblInfo *model.TableInfo, oldColName ast.CIStr) bool {
+	for _, col := range tblInfo.Columns {
+		if _, ok := col.Dependences[oldColName.L]; !ok {
+			continue
+		}
+		expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
+		if err != nil || !generatedExprPreservesStringResultBytes(expr) {
+			return false
+		}
+	}
+	return true
+}
+
+func generatedExprPreservesStringResultBytes(expr ast.ExprNode) bool {
+	switch x := expr.(type) {
+	case *ast.ParenthesesExpr:
+		return generatedExprPreservesStringResultBytes(x.Expr)
+	case *ast.ColumnNameExpr, ast.ValueExpr:
+		return true
+	case *ast.FuncCallExpr:
+		if x.FnName.L != ast.Concat {
+			return false
+		}
+		for _, arg := range x.Args {
+			if !generatedExprPreservesStringResultBytes(arg) {
+				return false
+			}
+		}
+		return true
+	}
 	return false
 }
 
