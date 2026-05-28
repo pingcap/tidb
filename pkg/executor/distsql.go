@@ -1846,8 +1846,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	handles []kv.Handle, handleVersionMap *kv.HandleMap, retChk *chunk.Chunk, err error) {
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
-	scoreOutputOffset := w.idxLookup.ticiBM25ScoreOutputOffset()
-	scoreLogged := false
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
 		if checkLimit {
@@ -1889,13 +1887,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 				}
 			}
 			row := chk.GetRow(i)
-			if scoreOutputOffset >= 0 && !scoreLogged {
-				logutil.Logger(ctx).Info("TiCI FTS BM25 pseudo score received",
-					zap.Float64("score", row.GetFloat64(scoreOutputOffset)),
-					zap.Int("scoreOffset", scoreOutputOffset),
-					zap.Int("rowLen", row.Len()))
-				scoreLogged = true
-			}
 			h, version, err := w.idxLookup.getHandle(row, handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return nil, nil, retChk, err
