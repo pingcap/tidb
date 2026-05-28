@@ -1362,6 +1362,17 @@ func TestSubtasksState(t *testing.T) {
 	endTime, err = testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
+
+	// 4. CancelSubtask should cancel all pending/running subtasks for one exec/task.
+	subtaskID1 := testutil.CreateSubTask(t, sm, 5, proto.StepInit, "for_test_multi", []byte("test"), proto.TaskTypeExample, 11)
+	testutil.CreateSubTask(t, sm, 5, proto.StepInit, "for_test_multi", []byte("test"), proto.TaskTypeExample, 11)
+	require.NoError(t, sm.StartSubtask(ctx, subtaskID1, "for_test_multi"))
+	require.NoError(t, sm.CancelSubtask(ctx, "for_test_multi", 5))
+	cntByStates, err := sm.GetSubtaskCntGroupByStates(ctx, 5, proto.StepInit)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cntByStates[proto.SubtaskStateCanceled])
+	require.Equal(t, int64(0), cntByStates[proto.SubtaskStatePending])
+	require.Equal(t, int64(0), cntByStates[proto.SubtaskStateRunning])
 }
 
 func checkBasicTaskEq(t *testing.T, expectedTask, task *proto.TaskBase) {
