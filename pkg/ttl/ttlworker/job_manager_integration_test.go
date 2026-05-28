@@ -849,8 +849,12 @@ func waitAndStopTTLManager(t *testing.T, dom *domain.Domain) {
 }
 
 func TestGCScanTasks(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	// stop TTLJobManager to avoid background GC racing with local assertions
+	waitAndStopTTLManager(t, dom)
+
 	addTableStatusRecord := func(tableID, parentTableID, curJobID int64) {
 		tk.MustExec("INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (?, ?)", tableID, parentTableID)
 		if curJobID == 0 {
@@ -938,8 +942,12 @@ func TestGCTableStatus(t *testing.T) {
 }
 
 func TestGCTTLHistory(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	// stop TTLJobManager to avoid background GC racing with local assertions
+	waitAndStopTTLManager(t, dom)
+
 	addHistory := func(jobID, createdBeforeDays int) {
 		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.tidb_ttl_job_history (
 				job_id,
