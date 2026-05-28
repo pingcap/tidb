@@ -33,6 +33,12 @@ func TESTTryRenew(ctx context.Context, l *RemoteLock) error {
 	return l.tryRenew(ctx)
 }
 
+// TESTClearLeaseClock clears the lock's lease clock for tests that exercise
+// invalid RemoteLock construction paths.
+func TESTClearLeaseClock(l *RemoteLock) {
+	l.leaseClock = nil
+}
+
 // TESTTryLockRemoteExact exposes exact-target conditionalPut for tests that
 // need to exercise assertOnlyMyIntent without lock-family verification.
 func TESTTryLockRemoteExact(ctx context.Context, storage storeapi.Storage, physicalPath, hint string) (*RemoteLock, error) {

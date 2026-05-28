@@ -763,6 +763,28 @@ func TestTryRenewWithLeaseClockErrorIsTransient(t *testing.T) {
 	require.Equal(t, origMeta.ExpireAt, newMeta.ExpireAt)
 }
 
+func TestTryRenewWithoutLeaseClockFails(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+		},
+	}
+
+	lock, err := objstore.TryLockRemoteWriteWithLeaseClock(ctx, strg, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+	objstore.TESTClearLeaseClock(lock)
+
+	restoreNow := objstore.TESTSetNow(func() time.Time { return leaseNow.Add(time.Minute) })
+	defer restoreNow()
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorContains(t, err, "lease clock is required")
+}
+
 func TestTryRenewTxnIDMismatch(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)

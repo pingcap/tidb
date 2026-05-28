@@ -369,7 +369,7 @@ func (l *RemoteLock) tryRenew(ctx context.Context) error {
 
 	leaseClock := l.leaseClock
 	if leaseClock == nil {
-		leaseClock = localLeaseClock{}
+		return errors.New("lease clock is required")
 	}
 	leaseNow, err := leaseClock.Now(ctx)
 	if err != nil {

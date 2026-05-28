@@ -31,6 +31,8 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
 - [x] (2026-05-28) Implemented Milestone 1: objstore acquire lease-clock API and post-acquire proof. Commit is pending review.
 - [x] (2026-05-28) Addressed Milestone 1 review: detached post-acquire cleanup from canceled caller contexts, kept `LeaseClock` as a stable one-method interface, kept the lease-time meta constructor internal, and added read/truncate explicit-clock coverage.
 - [x] (2026-05-28) Implemented Milestone 2: objstore renewal uses the same lease clock. Commit is pending review.
+- [x] (2026-05-28) Addressed Milestone 2 review: renewal now treats a missing `RemoteLock` lease clock as invalid construction and fails closed instead of silently falling back to local time.
+- [ ] Resolve pre-M3 review findings: add explicit-clock retry/cleanup API boundaries, decide renewal post-write proof scope, and add append explicit-clock acquire coverage.
 - [ ] Implement Milestone 3: objstore stale cleanup uses the explicit lease clock.
 - [ ] Implement Milestone 4: BR PD time helper.
 - [ ] Implement Milestone 5: `MigrationExt`, `LogClient`, and PiTR collector propagation.
@@ -47,6 +49,12 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
   Evidence: `br/pkg/restore/snap_client/pitr_collector.go` has `PiTRCollDep.PDCli` and calls `MigrationExtension(...).AppendMigration`.
 - Observation: PD TSO physical time is allocated during `GetTS`; it is not exactly the local receipt-time instant of the RPC.
   Evidence: independent design review; use it as a shared lease timestamp, not as object-storage linearization proof.
+- Observation: `tryRenew` must not repair a nil `RemoteLock.leaseClock` with `localLeaseClock`; that hides invalid construction and can silently reintroduce local time into migrated paths.
+  Evidence: review of `RemoteLock.tryRenew` after Milestone 2 and `TestTryRenewWithoutLeaseClockFails`.
+- Observation: migrated BR paths need explicit-clock retry and cleanup entry points, not only explicit-clock single-attempt acquire APIs.
+  Evidence: independent review found current `LockWithRetry` still owns cleanup and starts renewal while accepting only the legacy `Locker` shape.
+- Observation: renewal may need a post-write lease proof similar to acquire if delayed object-store writes are in scope for this phase.
+  Evidence: independent review noted `tryRenew` obtains lease time before `WriteFile` and currently returns success immediately after the write.
 
 ## Decision Log
 
@@ -80,13 +88,16 @@ Remaining gaps after Milestone 1: renewal and stale cleanup still use local time
 
 Milestone 2 delivered `RemoteLock.leaseClock` and changed `tryRenew` to call that clock once per renewal attempt. The same lease time is used for both the existing `ExpireAt` check and the refreshed `ExpireAt = leaseNow.Add(LeaseTTL)`. Clock errors are returned as transient renewal errors and do not rewrite lock metadata.
 
+Milestone 2 review tightened fail-closed behavior: `tryRenew` now returns `lease clock is required` when a `RemoteLock` has no lease clock instead of silently installing `localLeaseClock{}`. Legacy acquire wrappers still construct locks with `localLeaseClock{}` for compatibility; the invalid case is a lock object that reaches renewal without any clock at all.
+
 Milestone 2 validation:
 
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenewWithLeaseClock' -count=1
+    ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenewWithoutLeaseClockFails' -count=1
     ./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestTryRenew|TestStartRenewal|TestLockWithRetryStartsRenewal|TestLockRemoteTruncate' -count=1
     make bazel_prepare
 
-Remaining gaps after Milestone 2: stale cleanup still uses local time until Milestone 3, so BR production callers should still wait for cleanup clock conversion before migration.
+Remaining gaps after Milestone 2: stale cleanup still uses local time until Milestone 3, `LockWithRetry` still has only the legacy locker shape, append explicit-clock acquire needs targeted coverage, and renewal post-write proof needs a separate decision before production migration.
 
 ## Context and Orientation
 
