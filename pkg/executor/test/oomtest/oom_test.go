@@ -17,15 +17,22 @@
 package oomtest
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
+	"github.com/pingcap/tidb/pkg/expression"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/stretchr/testify/require"
@@ -290,27 +297,35 @@ func (h *oomCapture) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.C
 }
 
 func TestOOMActionPriority(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 1
+	ctx.GetSessionVars().MaxChunkSize = 1
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("drop table if exists t3")
-	tk.MustExec("drop table if exists t4")
-	tk.MustExec("create table t0(a int)")
-	tk.MustExec("insert into t0 values(1)")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("insert into t1 values(1)")
-	tk.MustExec("create table t2(a int)")
-	tk.MustExec("insert into t2 values(1)")
-	tk.MustExec("create table t3(a int)")
-	tk.MustExec("insert into t3 values(1)")
-	tk.MustExec("create table t4(a int)")
-	tk.MustExec("insert into t4 values(1)")
-	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
-	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(true)
-	// All actions are finished and removed.
-	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
+	sortCase := &testutil.SortCase{Rows: 1, OrderByIdx: []int{0}, Ndvs: []int{1}, Ctx: ctx}
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
+		Ctx:        ctx,
+		DataSchema: schema,
+		Rows:       sortCase.Rows,
+		Ndvs:       sortCase.Ndvs,
+	})
+	dataSource.PrepareChunks()
+	sortExec := &sortexec.SortExec{
+		BaseExecutor: exec.NewBaseExecutor(ctx, dataSource.Schema(), 0, dataSource),
+		ByItems:      []*plannerutil.ByItems{{Expr: sortCase.Columns()[0]}},
+		ExecSchema:   dataSource.Schema(),
+	}
+
+	require.NoError(t, sortExec.Open(context.Background()))
+	action := ctx.GetSessionVars().MemTracker.GetFallbackForTest(false)
+	require.NotNil(t, action)
+	require.Equal(t, int64(memory.DefSpillPriority), action.GetPriority())
+
+	require.NoError(t, sortExec.Close())
+	action = ctx.GetSessionVars().MemTracker.GetFallbackForTest(true)
+	require.NotNil(t, action)
+	require.Equal(t, int64(memory.DefLogPriority), action.GetPriority())
 }
