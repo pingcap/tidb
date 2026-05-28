@@ -39,6 +39,82 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
 - [ ] Implement Milestone 6: stream truncate propagation.
 - [ ] Run Ready validation before claiming the phase is complete.
 
+## Pause Snapshot: Unified-Time Work Before TTL Re-evaluation
+
+Status captured on 2026-05-28 before discussing whether to raise `LeaseTTL` from 5 minutes to 30-40 minutes.
+
+Current branch state:
+
+- Branch: `feat/objstore-lease-based-lock-expiration`.
+- Status at snapshot time: clean worktree, ahead of `origin/feat/objstore-lease-based-lock-expiration` by 6 commits.
+- Relevant commits:
+
+        99daa16a0b docs: analyze lease lock delayed renewal writes
+        282ed9ead9 pkg/objstore: add lease clock acquire path
+        4f3f8d2f6d pkg/objstore: renew locks with lease clock
+        9d88146e59 pkg/objstore: reject missing lease clock on renew
+        5165027848 pkg/objstore: harden lease clock acquire boundary
+        a78f5a3c1e pkg/objstore: clean stale locks with lease clock
+
+Completed scope:
+
+- `pkg/objstore` now has explicit `LeaseClock` acquire APIs for write/read/truncate and append write paths.
+- Acquired locks store the same `LeaseClock` on `RemoteLock`.
+- Renewal uses `RemoteLock.leaseClock` for both the old `ExpireAt` check and refreshed `ExpireAt`.
+- Renewal fails closed if a lock reaches renewal without a lease clock.
+- Stale cleanup and retry acquisition have explicit-clock entry points.
+- Legacy storage-only APIs remain local-clock wrappers for incremental migration.
+
+Not yet implemented:
+
+- BR-side PD-backed `LeaseClock` helper.
+- Propagation through `MigrationExt`, `LogClient`, PiTR collector, and stream truncate.
+- Any production caller migration to the explicit-clock APIs.
+- Renewal post-write proof or a full delayed renewal-write protocol.
+- A policy change to `LeaseTTL`.
+
+Important open correctness notes:
+
+- Acquire has post-acquire proof; renewal does not yet have post-write proof.
+- With the current 5 minute TTL, BR's existing aggressive PD retry strategy can consume a large fraction of a lease window.
+- A longer TTL may simplify the PD-clock retry design, but it also lengthens crash recovery because cleanup currently waits until `ExpireAt.Add(LeaseTTL)`.
+
+## TTL Policy Re-evaluation
+
+This is a design discussion thread, not an accepted decision yet.
+
+Current defaults:
+
+    LeaseTTL = 5 * time.Minute
+    renewInterval = LeaseTTL / 3
+    stale cleanup threshold = ExpireAt + LeaseTTL
+
+Implications today:
+
+- A newly acquired or renewed lock is valid for about 5 minutes.
+- Renewal runs about every 1 minute 40 seconds.
+- A crashed holder's lock is automatically reclaimable only after about `2 * LeaseTTL`, so roughly 10 minutes in the worst case.
+
+Proposed policy to evaluate:
+
+    LeaseTTL = 30 * time.Minute
+    renewInterval = LeaseTTL / 3
+    stale cleanup threshold remains ExpireAt + LeaseTTL
+
+Expected implications:
+
+- Renewal runs about every 10 minutes.
+- A single PD `GetTS` retry sequence using `utils.NewAggressivePDBackoffStrategy()` has about 57.1 seconds of worst-case sleep time, plus RPC time. Under a 30 minute TTL this is much less dangerous than under a 5 minute TTL.
+- A crashed holder's lock becomes automatically reclaimable only after about 60 minutes in the worst case.
+- The longer TTL reduces pressure to implement complicated local freshness watchdogs or renewal post-write proof before the first PD-clock migration, but it does not eliminate the delayed-write correctness question.
+
+Questions before accepting the TTL change:
+
+- Is worst-case automatic recovery of about 60 minutes acceptable for BR migration metadata locks?
+- Should cleanup keep using `ExpireAt + LeaseTTL`, or should the reclaim grace become a separate constant if `LeaseTTL` grows?
+- Should PDClock use BR's existing aggressive PD retry once the TTL is 30 minutes, or should it use a smaller lease-specific retry budget?
+- Is 30 minutes enough, or is 40 minutes worth the additional crash recovery delay?
+
 ## Surprises & Discoveries
 
 - Observation: `conditionalPut.Content` cannot return an error, so acquire must obtain time before constructing the content closure.
