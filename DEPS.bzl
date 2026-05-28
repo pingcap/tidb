@@ -9237,11 +9237,11 @@ def go_deps():
         name = "org_golang_x_crypto",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/crypto",
-        sha256 = "a28a63b8a6abbbfcbf9fecf8417ce734c50dd988564cadf301c72c2a944f3a6a",
-        strip_prefix = "golang.org/x/crypto@v0.51.0",
+        sha256 = "a4dca44f467a3d8745aef41147c7bc6a90cdcfda9c42ae0585888bf046c7941e",
+        strip_prefix = "golang.org/x/crypto@v0.52.0",
         urls = [
-            "https://cache.hawkingrei.com/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.51.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.51.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.52.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.52.0.zip",
         ],
     )
     go_repository(
@@ -9358,11 +9358,11 @@ def go_deps():
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-        sha256 = "f1fa1052808e6bd6eb9c5372c053b2370a582532fac5d6a4600e7a6fab190ff3",
-        strip_prefix = "golang.org/x/sys@v0.44.0",
+        sha256 = "e51c1c88045b4edbe48ad810122131381ff541c89edbd97ef833ed6653b59e6a",
+        strip_prefix = "golang.org/x/sys@v0.45.0",
         urls = [
-            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.44.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.44.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.45.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.45.0.zip",
         ],
     )
     go_repository(
