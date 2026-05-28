@@ -275,6 +275,9 @@ func deriveSingleTableTiCISearchPathCount(ds *logicalop.DataSource, path *util.A
 }
 
 func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
+	if !canUseTiCISearchPathNDV(path.AccessConds) {
+		return 0, false
+	}
 	// Prefer the columns referenced by the FTS predicate. If extraction cannot find
 	// them, fall back to the full TiCI index columns so multi-column fulltext indexes
 	// still get a stable local estimate.
@@ -306,6 +309,49 @@ func estimateTiCISearchPathNDV(ds *logicalop.DataSource, path *util.AccessPath) 
 		ndv = max(ndv, cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID))
 	}
 	return ndv, true
+}
+
+// canUseTiCISearchPathNDV returns true only for search literals whose selectivity
+// can be approximated from value NDV without invoking standard tokenization.
+// Terms with operators or punctuation, such as "ab.cd" or "*abc", must go
+// through the formal FTS tokenizer before we can reason about their real terms,
+// so they keep the conservative fallback estimate.
+func canUseTiCISearchPathNDV(accessConds []expression.Expression) bool {
+	if len(accessConds) != 1 {
+		return false
+	}
+	sf, ok := accessConds[0].(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch sf.FuncName.L {
+	case ast.FTSMatchWord, ast.FTSMatchPhrase:
+	default:
+		return false
+	}
+	args := sf.GetArgs()
+	if len(args) < 2 {
+		return false
+	}
+	query, ok := args[0].(*expression.Constant)
+	if !ok || query.Value.IsNull() {
+		return false
+	}
+	return isSimpleFTSSearchWord(query.Value.GetString())
+}
+
+func isSimpleFTSSearchWord(query string) bool {
+	if query == "" {
+		return false
+	}
+	for i := range len(query) {
+		ch := query[i]
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func updateTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath, countAfterAccess float64) {
