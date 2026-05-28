@@ -73,6 +73,13 @@ type RefreshMaterializedViewExec struct {
 	done                  bool
 }
 
+// CompareMaterializedViewExec executes "COMPARE MATERIALIZED VIEW" as a utility-style statement.
+type CompareMaterializedViewExec struct {
+	exec.BaseExecutor
+	stmt *ast.CompareMaterializedViewStmt
+	done bool
+}
+
 // CancelMaterializedViewJobExec executes "CANCEL MATERIALIZED VIEW ... JOB" as a utility-style statement.
 type CancelMaterializedViewJobExec struct {
 	exec.BaseExecutor
@@ -88,6 +95,7 @@ const (
 	purgeHistStatusRunning          = "running"
 	purgeHistStatusSuccess          = "success"
 	purgeHistStatusFailed           = "failed"
+	purgeHistStatusOrphaned         = "orphaned"
 	mvRefreshAdvisoryLockTimeoutSec = int64(1)
 	mvRefreshShadowTablePrefix      = "__mv_shadow_"
 	mvRefreshImportIntoStoreName    = "TiKV"
@@ -515,8 +523,8 @@ func checkCancelMaterializedViewJobPrivilege(
 	sqlExec sqlexec.SQLExecutor,
 	stmt *ast.CancelMaterializedViewJobStmt,
 ) error {
-	if stmt == nil {
-		return errors.New("cancel materialized view job: missing statement")
+	if err := validateCancelMaterializedViewJobStmt(stmt); err != nil {
+		return err
 	}
 	pm := privilege.GetPrivilegeManager(ctx)
 	user := ctx.GetSessionVars().User
@@ -532,18 +540,116 @@ func checkCancelMaterializedViewJobPrivilege(
 	switch stmt.Tp {
 	case ast.CancelMaterializedViewJobTypeRefresh:
 		dbName, tableName, found, err = resolveCancelRefreshJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return cancelMaterializedViewJobNotRunningUserError(stmt)
+		}
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.OperateViewPriv) {
+			return nil
+		}
+		return cancelMaterializedViewJobPrecheckUserError(stmt,
+			plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, tableName))
 	case ast.CancelMaterializedViewJobTypeLogPurge:
 		dbName, tableName, found, err = resolveCancelPurgeJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return cancelMaterializedViewJobNotRunningUserError(stmt)
+		}
+		baseTable, err := is.TableByName(kctx, pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := checkOperateViewOnAnyDependentMView(ctx, is, baseTable.Meta()); err != nil {
+			return cancelMaterializedViewJobPrecheckUserError(stmt, err)
+		}
+		return nil
 	default:
 		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
 	}
-	if err != nil || !found {
-		return err
-	}
-	if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.AlterPriv) {
+}
+
+func checkOperateViewOnAnyDependentMView(
+	ctx sessionctx.Context,
+	is infoschema.InfoSchema,
+	baseTableMeta *model.TableInfo,
+) error {
+	pm := privilege.GetPrivilegeManager(ctx)
+	user := ctx.GetSessionVars().User
+	if pm == nil || user == nil {
 		return nil
 	}
-	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, tableName)
+
+	var lastTableName string
+	if baseTableMeta != nil {
+		lastTableName = baseTableMeta.Name.L
+	}
+	if baseTableMeta == nil || baseTableMeta.MaterializedViewBase == nil || len(baseTableMeta.MaterializedViewBase.MViewIDs) == 0 {
+		return errors.NewNoStackErrorf(
+			"no dependent materialized view found for materialized view log on table %s",
+			lastTableName,
+		)
+	}
+
+	for _, id := range baseTableMeta.MaterializedViewBase.MViewIDs {
+		mvTable, ok := is.TableByID(context.Background(), id)
+		if !ok || mvTable.Meta().MaterializedView == nil {
+			continue
+		}
+		dbInfo, ok := infoschema.SchemaByTable(is, mvTable.Meta())
+		if !ok {
+			continue
+		}
+		mvName := mvTable.Meta().Name.L
+		lastTableName = mvName
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbInfo.Name.L, mvName, "", mysql.OperateViewPriv) {
+			return nil
+		}
+	}
+	return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("OPERATE VIEW", user.AuthUsername, user.AuthHostname, lastTableName)
+}
+
+func checkRefreshMaterializedViewBaseTableSelect(
+	ctx sessionctx.Context,
+	is infoschema.InfoSchema,
+	mvInfo *model.MaterializedViewInfo,
+) error {
+	sessVars := ctx.GetSessionVars()
+	if sessVars.InMaterializedViewMaintenance {
+		if !sessVars.InRestrictedSQL {
+			return plannererrors.ErrInternal.GenWithStack(
+				"materialized view maintenance should only run in restricted SQL mode",
+			)
+		}
+		return nil
+	}
+	if sessVars.InRestrictedSQL {
+		return nil
+	}
+
+	pm := privilege.GetPrivilegeManager(ctx)
+	user := sessVars.User
+	if pm == nil || user == nil || mvInfo == nil {
+		return nil
+	}
+	for _, id := range mvInfo.BaseTableIDs {
+		baseTable, ok := is.TableByID(context.Background(), id)
+		if !ok {
+			continue
+		}
+		dbInfo, ok := infoschema.SchemaByTable(is, baseTable.Meta())
+		if !ok {
+			continue
+		}
+		baseName := baseTable.Meta().Name.L
+		if !pm.RequestVerification(sessVars.ActiveRoles, dbInfo.Name.L, baseName, "", mysql.SelectPriv) {
+			return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, baseName)
+		}
+	}
+	return nil
 }
 
 func resolveCancelRefreshJobPrivilegeTarget(
@@ -1489,11 +1595,89 @@ func (e *RefreshMaterializedViewExec) Next(ctx context.Context, _ *chunk.Chunk) 
 }
 
 // Next implements the Executor Next interface.
+func (e *CompareMaterializedViewExec) Next(_ context.Context, _ *chunk.Chunk) error {
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+	_, tblInfo, err := e.resolveCompareMaterializedViewTarget()
+	if err != nil {
+		return err
+	}
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
+		return err
+	}
+	if err := e.checkCompareMaterializedViewOutputTableNotExists(); err != nil {
+		return err
+	}
+	return errors.NewNoStackError("COMPARE MATERIALIZED VIEW is not implemented")
+}
+
+func (e *CompareMaterializedViewExec) checkCompareMaterializedViewOutputTableNotExists() error {
+	if e.stmt.OutputTable == nil {
+		return nil
+	}
+
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemaName := e.stmt.OutputTable.Schema
+	if schemaName.O == "" {
+		if e.Ctx().GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		e.stmt.OutputTable.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+	if is.TableExists(schemaName, e.stmt.OutputTable.Name) {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: e.stmt.OutputTable.Name})
+	}
+	return nil
+}
+
+func (e *CompareMaterializedViewExec) resolveCompareMaterializedViewTarget() (pmodel.CIStr, *model.TableInfo, error) {
+	is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+	schemaName := e.stmt.ViewName.Schema
+	if schemaName.O == "" {
+		if e.Ctx().GetSessionVars().CurrentDB == "" {
+			return pmodel.CIStr{}, nil, errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		e.stmt.ViewName.Schema = schemaName
+	}
+	if _, ok := is.SchemaByName(schemaName); !ok {
+		return pmodel.CIStr{}, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	tbl, err := is.TableByName(context.Background(), schemaName, e.stmt.ViewName.Name)
+	if err != nil {
+		return pmodel.CIStr{}, nil, err
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo.MaterializedView == nil {
+		return pmodel.CIStr{}, nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, e.stmt.ViewName.Name.O, "MATERIALIZED VIEW")
+	}
+	if len(tblInfo.MaterializedView.SQLContent) == 0 {
+		return pmodel.CIStr{}, nil, errors.New("compare materialized view: invalid select sql")
+	}
+	if err := checkRefreshMaterializedViewReady(schemaName, tblInfo); err != nil {
+		return pmodel.CIStr{}, nil, err
+	}
+	return schemaName, tblInfo, nil
+}
+
+// Next implements the Executor Next interface.
 func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
 	e.done = true
+
+	if err := validateCancelMaterializedViewJobStmt(e.stmt); err != nil {
+		return err
+	}
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	requester := formatMVManualCancelRequester(e.Ctx().GetSessionVars().User)
@@ -1519,10 +1703,7 @@ func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk
 			return err
 		}
 		if !applied {
-			return errors.NewNoStackErrorf(
-				"cannot cancel materialized view refresh job %d: job not running, not found, or cancel already requested",
-				e.stmt.JobID,
-			)
+			return cancelMaterializedViewJobNotRunningUserError(e.stmt)
 		}
 	case ast.CancelMaterializedViewJobTypeLogPurge:
 		applied, err = requestPurgeHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
@@ -1530,15 +1711,54 @@ func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk
 			return err
 		}
 		if !applied {
-			return errors.NewNoStackErrorf(
-				"cannot cancel materialized view log purge job %d: job not running, not found, or cancel already requested",
-				e.stmt.JobID,
-			)
+			return cancelMaterializedViewJobNotRunningUserError(e.stmt)
 		}
 	default:
 		return errors.Errorf("cancel materialized view job: unsupported type %d", e.stmt.Tp)
 	}
 	return nil
+}
+
+func validateCancelMaterializedViewJobStmt(stmt *ast.CancelMaterializedViewJobStmt) error {
+	if stmt == nil {
+		return errors.New("cancel materialized view job: missing statement")
+	}
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh, ast.CancelMaterializedViewJobTypeLogPurge:
+		return nil
+	default:
+		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
+	}
+}
+
+func cancelMaterializedViewJobPrecheckUserError(stmt *ast.CancelMaterializedViewJobStmt, cause error) error {
+	logutil.BgLogger().Warn("cannot cancel materialized view job because privilege target check failed",
+		zap.Int64("jobID", stmt.JobID),
+		zap.Uint8("type", uint8(stmt.Tp)),
+		zap.Error(cause))
+	return cancelMaterializedViewJobUserError(stmt)
+}
+
+func cancelMaterializedViewJobNotRunningUserError(stmt *ast.CancelMaterializedViewJobStmt) error {
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		return errors.NewNoStackErrorf("cannot cancel materialized view refresh job %d: job not running, not found, or cancel already requested", stmt.JobID)
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d: job not running, not found, or cancel already requested", stmt.JobID)
+	default:
+		return errors.Errorf("cancel materialized view job: unsupported type %d", stmt.Tp)
+	}
+}
+
+func cancelMaterializedViewJobUserError(stmt *ast.CancelMaterializedViewJobStmt) error {
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		return errors.NewNoStackErrorf("cannot cancel materialized view refresh job %d", stmt.JobID)
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d", stmt.JobID)
+	default:
+		return errors.Errorf("cancel materialized view job: unsupported type %d", stmt.Tp)
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -1565,6 +1785,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	schemaName, baseTableMeta, mlogName, mlogID, mlogInfo, err := e.resolvePurgeMaterializedViewLogMeta(s)
 	if err != nil {
+		return err
+	}
+	if err := checkOperateViewOnAnyDependentMView(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), baseTableMeta); err != nil {
 		return err
 	}
 	releaseCtx := kctx
@@ -1781,39 +2004,6 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	purgeStartTS := txn.StartTS()
 	safePurgeTSO = purgeStartTS
 	purgeJobID = purgeStartTS
-	if err := insertMLogPurgeHistRunning(
-		kctx,
-		histSQLExec,
-		purgeJobID,
-		mlogID,
-		schemaName.O,
-		baseTableMeta.Name.O,
-		purgeMethod,
-		histTime(purgeStart),
-	); err != nil {
-		return errors.Trace(err)
-	}
-	purgeHistRunningInserted = true
-	stopTaskMonitor, err = startMVTaskMonitor(
-		kctx,
-		e.GetSysSession,
-		func(sctx sessionctx.Context) {
-			e.ReleaseSysSession(releaseCtx, sctx)
-		},
-		taskCancelController,
-		fmt.Sprintf("mlog-purge-%d", purgeJobID),
-		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
-			return readPurgeHistCancelRequest(watchCtx, watchSQLExec, purgeJobID, mlogID)
-		},
-		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
-			return updatePurgeHistHeartbeat(watchCtx, watchSQLExec, purgeJobID, mlogID)
-		},
-	)
-	if err != nil {
-		return finalizeFailure(err)
-	}
-	failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
-
 	publicMVIDs, buildingMVIDs, err := collectDependentMViewIDsForMLogPurge(kctx, sqlExec, baseTableMeta, mlogID)
 	if err != nil {
 		return finalizeFailure(err)
@@ -1830,66 +2020,118 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	if err != nil {
 		return finalizeFailure(err)
 	}
-	skipDeleteByCheckpoint := lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
-	if !skipDeleteByCheckpoint && safePurgeTSO > 0 {
-		throttlePlan = tryBuildMLogPurgeThrottlePlanBestEffort(
+
+	purgeCutoffFenceTSO := uint64(0)
+	if lockedLastPurgedTSOReady {
+		purgeCutoffFenceTSO = lockedLastPurgedTSO
+	}
+	latestRecordedCutoffTSO, hasLatestRecordedCutoffTSO, err := readLatestMLogPurgeCutoffFenceTSO(kctx, histSQLExec, mlogID)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	if hasLatestRecordedCutoffTSO && latestRecordedCutoffTSO > purgeCutoffFenceTSO {
+		purgeCutoffFenceTSO = latestRecordedCutoffTSO
+	}
+	// Do not write a lower PURGE_CUTOFF_TSO. This keeps the per-MLOG cutoff
+	// fence monotonic with PURGE_JOB_ID, which the FAST refresh integrity check
+	// depends on when it reads the latest hazardous purge history row.
+	skipPurgeByCutoffFence := safePurgeTSO < purgeCutoffFenceTSO
+	skipDeleteByCheckpoint := false
+	if !skipPurgeByCutoffFence {
+		if err := insertMLogPurgeHistRunning(
 			kctx,
-			e.Ctx().GetSessionVars(),
-			scheduleEvalSctx,
-			purgeSctx,
-			countSQLExec,
-			countSessVars,
-			mlogInfo,
-			isInternalSQL,
+			histSQLExec,
+			purgeJobID,
+			mlogID,
 			schemaName.O,
-			mlogName.O,
-			lockedLastPurgedTSO,
-			lockedLastPurgedTSOReady,
+			baseTableMeta.Name.O,
+			purgeMethod,
 			safePurgeTSO,
-			lockedNextTime,
-		)
-		if throttlePlan != nil {
-			effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
+			histTime(purgeStart),
+		); err != nil {
+			return errors.Trace(err)
 		}
-		deleteLoopStart = time.Now()
-		for {
-			batchPurgeRows, batchErr := purgeMaterializedViewLogData(
+		purgeHistRunningInserted = true
+		stopTaskMonitor, err = startMVTaskMonitor(
+			kctx,
+			e.GetSysSession,
+			func(sctx sessionctx.Context) {
+				e.ReleaseSysSession(releaseCtx, sctx)
+			},
+			taskCancelController,
+			fmt.Sprintf("mlog-purge-%d", purgeJobID),
+			func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
+				return readPurgeHistCancelRequest(watchCtx, watchSQLExec, purgeJobID, mlogID)
+			},
+			func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
+				return updatePurgeHistHeartbeat(watchCtx, watchSQLExec, purgeJobID, mlogID)
+			},
+		)
+		if err != nil {
+			return finalizeFailure(err)
+		}
+		failpoint.Inject("pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning", func() {})
+		skipDeleteByCheckpoint = lockedLastPurgedTSOReady && lockedLastPurgedTSO >= safePurgeTSO
+		if !skipDeleteByCheckpoint && safePurgeTSO > 0 {
+			throttlePlan = tryBuildMLogPurgeThrottlePlanBestEffort(
 				kctx,
-				deleteSQLExec,
-				deleteSessVars,
+				e.Ctx().GetSessionVars(),
+				scheduleEvalSctx,
+				purgeSctx,
+				countSQLExec,
+				countSessVars,
+				mlogInfo,
+				isInternalSQL,
 				schemaName.O,
 				mlogName.O,
 				lockedLastPurgedTSO,
 				lockedLastPurgedTSOReady,
 				safePurgeTSO,
-				effectiveBatchSize,
+				lockedNextTime,
 			)
-			totalPurgeRows += batchPurgeRows
-			failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
-			if batchErr != nil {
-				_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
-				txnFinished = true
-				return finalizeFailure(batchErr)
-			}
-			if batchPurgeRows < effectiveBatchSize {
-				break
-			}
 			if throttlePlan != nil {
-				if sleepErr := throttlePlan.maybeSleep(kctx, deleteLoopStart, totalPurgeRows); sleepErr != nil {
-					if taskCancelController.isManualCancelRequested() {
-						return finalizeFailure(sleepErr)
+				effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
+			}
+			deleteLoopStart = time.Now()
+			for {
+				batchPurgeRows, batchErr := purgeMaterializedViewLogData(
+					kctx,
+					deleteSQLExec,
+					deleteSessVars,
+					schemaName.O,
+					mlogName.O,
+					lockedLastPurgedTSO,
+					lockedLastPurgedTSOReady,
+					safePurgeTSO,
+					effectiveBatchSize,
+				)
+				totalPurgeRows += batchPurgeRows
+				failpoint.Inject("pausePurgeMaterializedViewLogAfterDeleteBatch", func() {})
+				if batchErr != nil {
+					_, _ = sqlExec.ExecuteInternal(finalizeCtx, "ROLLBACK")
+					txnFinished = true
+					return finalizeFailure(batchErr)
+				}
+				if batchPurgeRows < effectiveBatchSize {
+					break
+				}
+				if throttlePlan != nil {
+					if sleepErr := throttlePlan.maybeSleep(kctx, deleteLoopStart, totalPurgeRows); sleepErr != nil {
+						if taskCancelController.isManualCancelRequested() {
+							return finalizeFailure(sleepErr)
+						}
+						logutil.BgLogger().Warn(
+							"purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge",
+							zap.String("schemaName", schemaName.O),
+							zap.String("tableName", mlogName.O),
+							zap.Uint64("safePurgeTSO", safePurgeTSO),
+							zap.Error(sleepErr),
+						)
+						throttlePlan = nil
+						effectiveBatchSize = batchSize
+					} else {
+						effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
 					}
-					logutil.BgLogger().Warn(
-						"purge materialized view log: adaptive throttle sleep failed, fallback to unthrottled purge",
-						zap.String("schemaName", schemaName.O),
-						zap.String("tableName", mlogName.O),
-						zap.Uint64("safePurgeTSO", safePurgeTSO),
-						zap.Error(sleepErr),
-					)
-					throttlePlan = nil
-					effectiveBatchSize = batchSize
-				} else {
-					effectiveBatchSize = throttlePlan.effectiveDeleteBatchSize(batchSize)
 				}
 			}
 		}
@@ -1911,7 +2153,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		return finalizeFailure(err)
 	}
 	var lastPurgedTSOToPersist *uint64
-	if !skipDeleteByCheckpoint {
+	if !skipPurgeByCutoffFence && !skipDeleteByCheckpoint {
 		lastPurgedTSOToPersist = &safePurgeTSO
 	}
 	if err = updateMaterializedViewLogPurgeInfoOnSuccess(
@@ -2720,6 +2962,7 @@ func insertMLogPurgeHistRunning(
 	baseTableSchema string,
 	baseTableName string,
 	purgeMethod string,
+	purgeCutoffTSO uint64,
 	purgeStartAt time.Time,
 ) error {
 	insertSQL := `INSERT INTO mysql.tidb_mlog_purge_hist (
@@ -2731,8 +2974,10 @@ func insertMLogPurgeHistRunning(
 		PURGE_TIME,
 		PURGE_ROWS,
 		PURGE_STATUS,
+		PURGE_CUTOFF_TSO,
 		LAST_HEARTBEAT_AT
 	) VALUES (
+		%?,
 		%?,
 		%?,
 		%?,
@@ -2754,6 +2999,7 @@ func insertMLogPurgeHistRunning(
 		purgeStartAt,
 		int64(0),
 		purgeHistStatusRunning,
+		purgeCutoffTSO,
 		purgeStartAt,
 	)
 	if err != nil {
@@ -3086,6 +3332,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return err
 	}
+	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
+		return err
+	}
 	reportRefreshFailed := tblInfo.MaterializedView != nil && tblInfo.MaterializedView.AlertRefreshFailed
 	mviewID = tblInfo.ID
 	refreshHistRunningInserted := false
@@ -3368,10 +3617,29 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
 		return nil
 	}
+	histSctx, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(releaseCtx, histSctx)
+	histSQLExec := histSctx.GetSQLExecutor()
+
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
 		!lockedReadTSONull &&
 		targetRefreshReadTSO > 0 &&
 		targetRefreshReadTSO > lockedReadTSO
+	if refreshMode == ast.RefreshMaterializedViewModeFast && !lockedReadTSONull {
+		// Read purge metadata through an internal session so this precheck sees latest committed state
+		// instead of the refresh transaction's repeatable-read startTS snapshot.
+		//
+		// This is still a best-effort guard rather than a strict serialization point with future purge.
+		// In theory, a concurrently-started purge should still be safe because purge computes safePurgeTSO
+		// from persisted LAST_SUCCESS_READ_TSO, which does not advance until this refresh commits.
+		is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
+		if err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, schemaName, tblInfo, lockedReadTSO); err != nil {
+			return err
+		}
+	}
 
 	txn, err := refreshSctx.Txn(true)
 	if err != nil {
@@ -3382,13 +3650,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return errors.New("refresh materialized view: invalid transaction start tso")
 	}
 	refreshJobID = startTS
-
-	histSctx, err := e.GetSysSession()
-	if err != nil {
-		return err
-	}
-	defer e.ReleaseSysSession(releaseCtx, histSctx)
-	histSQLExec := histSctx.GetSQLExecutor()
 
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.insertHistRunning, func() error {
 		return insertRefreshHistRunning(
@@ -4245,6 +4506,38 @@ func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
 	return schemaName, tblInfo, nil
 }
 
+func resolveRefreshMaterializedViewLogInfo(
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+	tblInfo *model.TableInfo,
+) (int64, error) {
+	if tblInfo == nil || tblInfo.MaterializedView == nil {
+		return 0, errors.New("refresh materialized view: target is not a materialized view")
+	}
+	if len(tblInfo.MaterializedView.BaseTableIDs) != 1 {
+		return 0, errors.New("refresh materialized view: fast refresh requires exactly one base table")
+	}
+
+	baseTableID := tblInfo.MaterializedView.BaseTableIDs[0]
+	baseTable, ok := is.TableByID(context.Background(), baseTableID)
+	if !ok {
+		return 0, errors.Errorf("refresh materialized view: cannot resolve base table %d for materialized view %s.%s", baseTableID, schemaName.O, tblInfo.Name.O)
+	}
+	baseTableInfo := baseTable.Meta()
+	if baseTableInfo.MaterializedViewBase == nil {
+		return 0, errors.Errorf("refresh materialized view: base table %d is missing materialized view base metadata", baseTableID)
+	}
+	mlogID := baseTableInfo.MaterializedViewBase.MLogID
+	if mlogID == 0 {
+		return 0, errors.Errorf(
+			"refresh materialized view: materialized view log does not exist for base table %s.%s",
+			schemaName.O,
+			baseTableInfo.Name.O,
+		)
+	}
+	return mlogID, nil
+}
+
 func checkRefreshMaterializedViewReady(schemaName pmodel.CIStr, tblInfo *model.TableInfo) error {
 	if tblInfo == nil || tblInfo.MaterializedView == nil {
 		return nil
@@ -4380,6 +4673,140 @@ func readRefreshInfoReadTSO(
 		readTSO = recheckRow.GetUint64(0)
 	}
 	return readTSO, readTSONull, nil
+}
+
+func readMLogPurgeInfoLastPurgedTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mlogID int64,
+) (lastPurgedTSO uint64, hasLastPurgedTSO bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		"SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?",
+		mlogID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return 0, false, errors.New("refresh materialized view: required system table mysql.tidb_mlog_purge_info does not exist")
+		}
+		return 0, false, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return 0, false, errors.Errorf("refresh materialized view: mlog purge info row missing for mlog id %d", mlogID)
+	}
+	if rows[0].IsNull(0) {
+		return 0, false, nil
+	}
+	return rows[0].GetUint64(0), true, nil
+}
+
+func readLatestMLogPurgeCutoffFenceTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mlogID int64,
+) (purgeCutoffTSO uint64, hasCutoff bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT PURGE_CUTOFF_TSO
+FROM mysql.tidb_mlog_purge_hist
+WHERE MLOG_ID = %?
+  AND PURGE_CUTOFF_TSO IS NOT NULL
+ORDER BY PURGE_JOB_ID DESC
+LIMIT 1`,
+		mlogID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return 0, false, errors.New("purge materialized view log: required system table mysql.tidb_mlog_purge_hist does not exist")
+		}
+		return 0, false, errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return 0, false, nil
+	}
+	return rows[0].GetUint64(0), true, nil
+}
+
+// readLatestHazardousMLogPurgeCutoffTSO relies on purge-side monotonic cutoff
+// enforcement: purge skips before writing history if its newly computed
+// safePurgeTSO is lower than the latest recorded non-NULL PURGE_CUTOFF_TSO.
+func readLatestHazardousMLogPurgeCutoffTSO(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mlogID int64,
+) (purgeCutoffTSO uint64, hasHazard bool, err error) {
+	rows, err := sqlexec.ExecSQL(
+		kctx,
+		sqlExec,
+		`SELECT PURGE_CUTOFF_TSO
+FROM mysql.tidb_mlog_purge_hist
+WHERE MLOG_ID = %?
+  AND (
+    PURGE_STATUS = %?
+    OR PURGE_STATUS = %?
+    OR PURGE_ROWS > 0
+  )
+ORDER BY PURGE_JOB_ID DESC
+LIMIT 1`,
+		mlogID,
+		purgeHistStatusRunning,
+		purgeHistStatusOrphaned,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return 0, false, errors.New("refresh materialized view: required system table mysql.tidb_mlog_purge_hist does not exist")
+		}
+		return 0, false, errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return 0, false, nil
+	}
+	return rows[0].GetUint64(0), true, nil
+}
+
+func checkFastRefreshMLogIntegrity(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+	tblInfo *model.TableInfo,
+	lastSuccessfulRefreshReadTSO uint64,
+) error {
+	if lastSuccessfulRefreshReadTSO == 0 {
+		return nil
+	}
+
+	mlogID, err := resolveRefreshMaterializedViewLogInfo(is, schemaName, tblInfo)
+	if err != nil {
+		return err
+	}
+
+	lastPurgedTSO, hasLastPurgedTSO, err := readMLogPurgeInfoLastPurgedTSO(kctx, sqlExec, mlogID)
+	if err != nil {
+		return err
+	}
+	latestHazardCutoffTSO, hasLatestHazardCutoffTSO, err := readLatestHazardousMLogPurgeCutoffTSO(kctx, sqlExec, mlogID)
+	if err != nil {
+		return err
+	}
+
+	hazardTSO := uint64(0)
+	if hasLastPurgedTSO {
+		hazardTSO = lastPurgedTSO
+	}
+	if hasLatestHazardCutoffTSO && latestHazardCutoffTSO > hazardTSO {
+		hazardTSO = latestHazardCutoffTSO
+	}
+	if hazardTSO > lastSuccessfulRefreshReadTSO {
+		return errors.Errorf(
+			"refresh materialized view fast: materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO (hazard tso %d, LAST_SUCCESS_READ_TSO %d)",
+			hazardTSO,
+			lastSuccessfulRefreshReadTSO,
+		)
+	}
+	return nil
 }
 
 func executeRefreshMaterializedViewDataChanges(

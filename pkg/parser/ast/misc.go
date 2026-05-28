@@ -62,6 +62,7 @@ var (
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &PurgeMaterializedViewLogStmt{}
 	_ StmtNode = &RefreshMaterializedViewStmt{}
+	_ StmtNode = &CompareMaterializedViewStmt{}
 	_ StmtNode = &RefreshMaterializedViewImplementStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 
@@ -735,6 +736,66 @@ func (n *RefreshMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.AsOf = node.(*AsOfClause)
+	}
+	return v.Leave(n)
+}
+
+// CompareMaterializedViewStmt is a statement to compare a materialized view with its source query snapshot.
+type CompareMaterializedViewStmt struct {
+	stmtNode
+	ViewName    *TableName
+	AsOf        *AsOfClause
+	OutputTable *TableName
+}
+
+// Restore implements Node interface.
+func (n *CompareMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("COMPARE MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.ViewName")
+	}
+	if n.AsOf != nil {
+		ctx.WritePlain(" ")
+		if err := n.AsOf.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.AsOf")
+		}
+	}
+	if n.OutputTable != nil {
+		ctx.WriteKeyWord(" OUTPUT INTO TABLE ")
+		if err := n.OutputTable.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.OutputTable")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CompareMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CompareMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
+	}
+	if n.OutputTable != nil {
+		node, ok := n.OutputTable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OutputTable = node.(*TableName)
 	}
 	return v.Leave(n)
 }

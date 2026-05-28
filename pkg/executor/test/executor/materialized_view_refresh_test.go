@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1566,6 +1565,116 @@ func TestMaterializedViewRefreshFastAsOfTimestampEarlyFailureWritesHistReadTSO(t
 		targetTSO,
 		mvID,
 	)).Check(testkit.Rows("failed 1 1 1 1 1 1"))
+}
+
+func TestMaterializedViewFastRefreshRejectsHazardousPurgeHist(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_refresh_purge_guard (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t_refresh_purge_guard (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_purge_guard (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_refresh_purge_guard group by a")
+	tk.MustExec("insert into t_refresh_purge_guard values (1, 10), (2, 20)")
+	tk.MustExec("refresh materialized view mv_refresh_purge_guard fast")
+	tk.MustExec("insert into t_refresh_purge_guard values (3, 30)")
+
+	mvIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_purge_guard'").Rows()
+	require.Len(t, mvIDRows, 1)
+	mvID, err := strconv.ParseInt(fmt.Sprintf("%v", mvIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	mlogIDRows := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = '$mlog$t_refresh_purge_guard'").Rows()
+	require.Len(t, mlogIDRows, 1)
+	mlogID, err := strconv.ParseInt(fmt.Sprintf("%v", mlogIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	lastSuccessRows := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).Rows()
+	require.Len(t, lastSuccessRows, 1)
+	lastSuccessReadTSO, err := strconv.ParseUint(fmt.Sprintf("%v", lastSuccessRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = %d where MLOG_ID = %d", lastSuccessReadTSO, mlogID))
+	tk.MustExec(fmt.Sprintf(
+		`insert into mysql.tidb_mlog_purge_hist (
+			PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
+			PURGE_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_AT
+		) values (
+			%[1]d, %[2]d, 'test', 't_refresh_purge_guard', 'manual',
+			now(6), 0, 'running', %[3]d, now(6)
+		)`,
+		lastSuccessReadTSO+1000,
+		mlogID,
+		lastSuccessReadTSO+1,
+	))
+
+	err = tk.ExecToErr("refresh materialized view mv_refresh_purge_guard fast")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
+
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).
+		Check(testkit.Rows(fmt.Sprintf("%d", lastSuccessReadTSO)))
+
+	const afterBeginFailpoint = "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterBegin"
+	pauseCh := make(chan struct{})
+	hitCh := make(chan struct{})
+	require.NoError(t, failpoint.EnableCall(afterBeginFailpoint, func() {
+		select {
+		case <-hitCh:
+		default:
+			close(hitCh)
+		}
+		<-pauseCh
+	}))
+	defer func() {
+		select {
+		case <-pauseCh:
+		default:
+			close(pauseCh)
+		}
+		require.NoError(t, failpoint.Disable(afterBeginFailpoint))
+	}()
+
+	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_mlog_purge_hist where MLOG_ID = %d", mlogID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = %d where MLOG_ID = %d", lastSuccessReadTSO, mlogID))
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv_refresh_purge_guard fast")
+	}()
+
+	select {
+	case <-hitCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh to reach failpoint")
+	}
+
+	tkConcurrent := testkit.NewTestKit(t, store)
+	tkConcurrent.MustExec("use test")
+	tkConcurrent.MustExec(fmt.Sprintf(
+		`insert into mysql.tidb_mlog_purge_hist (
+			PURGE_JOB_ID, MLOG_ID, BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_METHOD,
+			PURGE_TIME, PURGE_ROWS, PURGE_STATUS, PURGE_CUTOFF_TSO, LAST_HEARTBEAT_AT
+		) values (
+			%[1]d, %[2]d, 'test', 't_refresh_purge_guard', 'manual',
+			now(6), 0, 'running', %[3]d, now(6)
+		)`,
+		lastSuccessReadTSO+2000,
+		mlogID,
+		lastSuccessReadTSO+1,
+	))
+
+	close(pauseCh)
+
+	select {
+	case err = <-refreshDone:
+		require.Error(t, err)
+		require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh to finish")
+	}
 }
 
 func TestMaterializedViewRefreshFailedAlertByAttribute(t *testing.T) {
@@ -3421,7 +3530,7 @@ func TestMaterializedViewRefreshCompleteWithConstraintCheckInPlacePessimisticOff
 	tk.MustQuery("select @@tidb_constraint_check_in_place_pessimistic").Check(testkit.Rows("0"))
 }
 
-func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
+func TestMaterializedViewRefreshRequiresOperateViewPrivilege(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3437,10 +3546,66 @@ func TestMaterializedViewRefreshRequiresAlterPrivilege(t *testing.T) {
 
 	err := tkUser.ExecToErr("refresh materialized view test.mv complete delta apply")
 	require.Error(t, err)
-	require.ErrorContains(t, err, "ALTER command denied")
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
 
-	tk.MustExec("grant alter on test.mv to 'mv_refresh_u'@'%'")
+	tk.MustExec("grant operate view on test.mv to 'mv_refresh_u'@'%'")
+	err = tkUser.ExecToErr("refresh materialized view test.mv complete delta apply")
+	require.ErrorContains(t, err, "SELECT command denied")
+
+	tk.MustExec("grant select on test.t to 'mv_refresh_u'@'%'")
 	tkUser.MustExec("refresh materialized view test.mv complete delta apply")
+
+	err = tkUser.ExecToErr("refresh materialized view test.mv complete delta apply dry run")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
+
+	tk.MustExec("grant show view on test.mv to 'mv_refresh_u'@'%'")
+	rows := tkUser.MustQuery("refresh materialized view test.mv complete delta apply dry run").Rows()
+	dryRunOutput := fmt.Sprint(rows)
+	require.Contains(t, dryRunOutput, "INSERT_HIST_RUNNING")
+	require.Contains(t, dryRunOutput, "FINALIZE_HIST")
+}
+
+func TestCompareMaterializedViewPrivilegeSkeleton(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_compare_priv (a int not null, b int not null)")
+	tk.MustExec("insert into t_compare_priv values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_compare_priv (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_compare_priv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_compare_priv group by a")
+	tk.MustExec("create user 'mv_compare_u'@'%' identified by ''")
+	defer tk.MustExec("drop user 'mv_compare_u'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_compare_u", Hostname: "%"}, nil, nil, nil))
+
+	compareSQL := "compare materialized view test.mv_compare_priv as of timestamp '2026-05-21 10:00:00'"
+	err := tkUser.ExecToErr(compareSQL)
+	require.ErrorContains(t, err, "OPERATE VIEW command denied")
+
+	tk.MustExec("grant operate view on test.mv_compare_priv to 'mv_compare_u'@'%'")
+	err = tkUser.QueryToErr(compareSQL)
+	require.ErrorContains(t, err, "SELECT command denied")
+
+	tk.MustExec("grant select on test.t_compare_priv to 'mv_compare_u'@'%'")
+	err = tkUser.QueryToErr(compareSQL)
+	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+
+	outputSQL := compareSQL + " output into table test.mv_compare_priv_diff"
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "CREATE command denied")
+
+	tk.MustExec("grant create on test.* to 'mv_compare_u'@'%'")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "INSERT command denied")
+
+	tk.MustExec("grant insert on test.* to 'mv_compare_u'@'%'")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "COMPARE MATERIALIZED VIEW is not implemented")
+
+	tk.MustExec("create table mv_compare_priv_diff (a int)")
+	err = tkUser.ExecToErr(outputSQL)
+	require.ErrorContains(t, err, "Table 'test.mv_compare_priv_diff' already exists")
 }
 
 func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
@@ -3583,8 +3748,9 @@ func TestCancelMaterializedViewRefreshJob(t *testing.T) {
 
 	tkCancel := testkit.NewTestKit(t, store)
 	require.NoError(t, tkCancel.Session().Auth(&auth.UserIdentity{Username: "mv_refresh_cancel_u", Hostname: "%"}, nil, nil, nil))
-	tkCancel.MustGetErrCode(fmt.Sprintf("cancel materialized view refresh job %s", jobID), errno.ErrTableaccessDenied)
-	tk.MustExec("grant alter on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'")
+	err = tkCancel.ExecToErr(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
+	require.ErrorContains(t, err, "cannot cancel materialized view refresh job")
+	tk.MustExec("grant operate view on test.mv_refresh_cancel_job to 'mv_refresh_cancel_u'@'%'")
 	tkCancel.MustExec(fmt.Sprintf("cancel materialized view refresh job %s", jobID))
 	time.Sleep(300 * time.Millisecond)
 

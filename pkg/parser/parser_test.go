@@ -84,7 +84,7 @@ func TestSimple(t *testing.T) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
-		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "operate", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",
@@ -1299,13 +1299,27 @@ func TestDBAStmt(t *testing.T) {
 		// for show materialized views
 		{"show materialized views", true, "SHOW MATERIALIZED VIEWS"},
 		{"show materialized views from test", true, "SHOW MATERIALIZED VIEWS IN `test`"},
+		{"show materialized views from 'test'", false, ""},
 		{"show materialized views in test like 'mv%'", true, "SHOW MATERIALIZED VIEWS IN `test` LIKE _UTF8MB4'mv%'"},
 		{"show materialized views where mview_id = 1", true, "SHOW MATERIALIZED VIEWS WHERE `mview_id`=1"},
+		// for show materialized view
+		{"show materialized view mv remain_logs", true, "SHOW MATERIALIZED VIEW `mv` REMAIN_LOGS"},
+		{"show materialized view test.mv remain_logs", true, "SHOW MATERIALIZED VIEW `test`.`mv` REMAIN_LOGS"},
+		{"show materialized view mv", false, ""},
+		{"show materialized view mv like 'mv%'", false, ""},
+		{"show materialized view mv where mview_id = 1", false, ""},
 		// for show materialized view logs
 		{"show materialized view logs", true, "SHOW MATERIALIZED VIEW LOGS"},
 		{"show materialized view logs from test", true, "SHOW MATERIALIZED VIEW LOGS IN `test`"},
+		{"show materialized view logs from 'test'", false, ""},
 		{"show materialized view logs in test like '$mlog$%'", true, "SHOW MATERIALIZED VIEW LOGS IN `test` LIKE _UTF8MB4'$mlog$%'"},
 		{"show materialized view logs where mlog_id = 1", true, "SHOW MATERIALIZED VIEW LOGS WHERE `mlog_id`=1"},
+		// for show materialized view log
+		{"show materialized view log on t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `t` WAIT_PURGE"},
+		{"show materialized view log on test.t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `test`.`t` WAIT_PURGE"},
+		{"show materialized view log on t", false, ""},
+		{"show materialized view log on t like '$mlog$%'", false, ""},
+		{"show materialized view log on t where mlog_id = 1", false, ""},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},

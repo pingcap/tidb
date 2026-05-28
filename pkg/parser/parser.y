@@ -373,6 +373,7 @@ import (
 	commit                "COMMIT"
 	committed             "COMMITTED"
 	compact               "COMPACT"
+	compare               "COMPARE"
 	complete              "COMPLETE"
 	compressed            "COMPRESSED"
 	compression           "COMPRESSION"
@@ -535,7 +536,9 @@ import (
 	only                  "ONLY"
 	onDuplicate           "ON_DUPLICATE"
 	open                  "OPEN"
+	operate               "OPERATE"
 	optional              "OPTIONAL"
+	output                "OUTPUT"
 	packKeys              "PACK_KEYS"
 	pageSym               "PAGE"
 	parser                "PARSER"
@@ -990,6 +993,7 @@ import (
 	CancelMaterializedViewJobStmt "CANCEL MATERIALIZED VIEW ... JOB statement"
 	CancelDistributionJobStmt     "CANCEL DISTRIBUTION JOB statement"
 	CommitStmt                    "COMMIT statement"
+	CompareMaterializedViewStmt   "COMPARE MATERIALIZED VIEW statement"
 	CreateTableStmt               "CREATE TABLE statement"
 	CreateViewStmt                "CREATE VIEW  statement"
 	CreateMaterializedViewStmt    "CREATE MATERIALIZED VIEW statement"
@@ -1385,6 +1389,9 @@ import (
 	TableLock                              "Table name and lock type"
 	TableLockList                          "Table lock list"
 	TableName                              "Table name"
+	ShowMaterializedViewName               "SHOW MATERIALIZED VIEW table name"
+	ShowMaterializedViewRemainLogs         "SHOW MATERIALIZED VIEW REMAIN_LOGS suffix"
+	ShowMaterializedViewLogWaitPurge       "SHOW MATERIALIZED VIEW LOG ON ... WAIT_PURGE suffix"
 	TableNameOptWild                       "Table name with optional wildcard"
 	TableNameList                          "Table name list"
 	TableNameListOpt                       "Table name list opt"
@@ -1450,6 +1457,7 @@ import (
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
 	RefreshCompleteMode                    "REFRESH MATERIALIZED VIEW COMPLETE mode option"
+	CompareMaterializedViewOutputOpt       "COMPARE MATERIALIZED VIEW OUTPUT INTO TABLE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5638,6 +5646,26 @@ CancelMaterializedViewJobStmt:
 		}
 	}
 
+CompareMaterializedViewStmt:
+	"COMPARE" "MATERIALIZED" "VIEW" TableName AsOfClause CompareMaterializedViewOutputOpt
+	{
+		$$ = &ast.CompareMaterializedViewStmt{
+			ViewName:    $4.(*ast.TableName),
+			AsOf:        $5.(*ast.AsOfClause),
+			OutputTable: $6.(*ast.TableName),
+		}
+	}
+
+CompareMaterializedViewOutputOpt:
+	%prec empty
+	{
+		$$ = (*ast.TableName)(nil)
+	}
+|	"OUTPUT" "INTO" "TABLE" TableName
+	{
+		$$ = $4.(*ast.TableName)
+	}
+
 RefreshMaterializedViewStmt:
 	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteMode RefreshMaterializedViewObserveOpt
 	{
@@ -7308,6 +7336,7 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPARE"
 |	"COMPLETE"
 |	"COMPRESSED"
 |	"CONSISTENCY"
@@ -7353,6 +7382,8 @@ UnReservedKeyword:
 |	"NAMES"
 |	"NVARCHAR"
 |	"OFFSET"
+|	"OPERATE"
+|	"OUTPUT"
 |	"PACK_KEYS"
 |	"PARSER"
 |	"PASSWORD" %prec lowerThanEq
@@ -9623,6 +9654,41 @@ TableName:
 |	'*' '.' Identifier
 	{
 		$$ = &ast.TableName{Schema: model.NewCIStr("*"), Name: model.NewCIStr($3)}
+	}
+
+ShowMaterializedViewName:
+	Identifier
+	{
+		$$ = &ast.TableName{Name: model.NewCIStr($1)}
+	}
+|	Identifier '.' Identifier
+	{
+		schema := $1
+		if isInCorrectIdentifierName(schema) {
+			yylex.AppendError(ErrWrongDBName.GenWithStackByArgs(schema))
+			return 1
+		}
+		$$ = &ast.TableName{Schema: model.NewCIStr(schema), Name: model.NewCIStr($3)}
+	}
+
+ShowMaterializedViewRemainLogs:
+	identifier
+	{
+		if !strings.EqualFold($1, "remain_logs") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected REMAIN_LOGS"))
+			return 1
+		}
+		$$ = nil
+	}
+
+ShowMaterializedViewLogWaitPurge:
+	identifier
+	{
+		if !strings.EqualFold($1, "wait_purge") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected WAIT_PURGE"))
+			return 1
+		}
+		$$ = nil
 	}
 
 TableNameList:
@@ -12098,6 +12164,20 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "MATERIALIZED" "VIEW" ShowMaterializedViewName ShowMaterializedViewRemainLogs
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowMaterializedView,
+			Table: $4.(*ast.TableName),
+		}
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" "LOG" "ON" TableName ShowMaterializedViewLogWaitPurge
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowMaterializedViewLog,
+			Table: $6.(*ast.TableName),
+		}
+	}
 |	"SHOW" "CREATE" "TABLE" TableName
 	{
 		$$ = &ast.ShowStmt{
@@ -12874,6 +12954,7 @@ Statement:
 |	CalibrateResourceStmt
 |	CancelMaterializedViewJobStmt
 |	CancelDistributionJobStmt
+|	CompareMaterializedViewStmt
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
@@ -15269,6 +15350,10 @@ PrivType:
 |	"SHOW" "VIEW"
 	{
 		$$ = mysql.ShowViewPriv
+	}
+|	"OPERATE" "VIEW"
+	{
+		$$ = mysql.OperateViewPriv
 	}
 |	"CREATE" "ROLE"
 	{
