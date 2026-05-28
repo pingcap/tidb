@@ -244,6 +244,10 @@ Automatic review follow-up, after scope refinement:
   protocol use a shared PD-derived time source, to reduce cross-host clock-skew
   ambiguity. This is a separate lease-correctness discussion and should not
   block the fixed-path stale-cleanup race fix.
+- Follow-up under discussion: a delayed final renewal write can theoretically
+  recreate an old generation after stale cleanup and a competing acquire. The
+  current consensus and rejected two-phase-field idea are recorded in
+  `lease-lock-renewal-delayed-write-analysis.md`.
 
 ### Business call sites to review
 
