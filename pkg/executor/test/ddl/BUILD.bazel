@@ -40,6 +40,7 @@ go_test(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/dbterror",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_failpoint//:failpoint",

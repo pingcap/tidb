@@ -3521,6 +3521,12 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(show.Table)
+	resolvedDBName := ""
+	if tnW != nil && tnW.DBInfo != nil {
+		resolvedDBName = tnW.DBInfo.Name.L
+	} else if show.Table != nil {
+		resolvedDBName = show.Table.Schema.L
+	}
 	p := logicalop.LogicalShow{
 		ShowContents: logicalop.ShowContents{
 			Tp:                    show.Tp,
@@ -3568,12 +3574,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, resolvedDBName, show.Table.Name.L, "", err)
 		} else {
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, resolvedDBName, show.Table.Name.L, "", err)
 		}
 	case ast.ShowConfig:
 		privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
@@ -3584,22 +3590,22 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		if user != nil {
 			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, resolvedDBName, show.Table.Name.L, "", err)
 		if user != nil {
 			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, resolvedDBName, show.Table.Name.L, "", err)
 	case ast.ShowCreateMaterializedView:
 		var err error
 		user := b.ctx.GetSessionVars().User
 		if user != nil {
 			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, resolvedDBName, show.Table.Name.L, "", err)
 		if user != nil {
 			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, resolvedDBName, show.Table.Name.L, "", err)
 	case ast.ShowBackups:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"BACKUP_ADMIN"}, false, err)

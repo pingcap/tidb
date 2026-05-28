@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -116,9 +117,15 @@ func TestShowCreateMaterializedViewLog(t *testing.T) {
 	_, err := parser.New().ParseOneStmt(showCreate, "", "")
 	require.NoError(t, err)
 
+	tk.MustExec("create temporary table t_show_mlog (a int)")
+	rows = tk.MustQuery("show create materialized view log on t_show_mlog").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "t_show_mlog", rows[0][0])
+	require.Contains(t, rows[0][1], "CREATE MATERIALIZED VIEW LOG ON `t_show_mlog` (`a`, `b`)")
+
 	tk.MustExec("create table t_no_mlog (a int)")
 	err = tk.QueryToErr("show create materialized view log on t_no_mlog")
-	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_no_mlog")
+	require.Truef(t, exeerrors.ErrWrongObject.Equal(err), "err %v", err)
 }
 
 func TestCreateMaterializedViewLogPreSplitOptions(t *testing.T) {

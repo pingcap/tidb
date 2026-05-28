@@ -1604,23 +1604,21 @@ func (e *ShowExec) fetchShowCreateMaterializedViewLog() error {
 	}
 
 	if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
-		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE WITH MATERIALIZED VIEW LOG")
 	}
 	mlogID := baseMeta.MaterializedViewBase.MLogID
 	mlogTable, ok := e.is.TableByID(context.Background(), mlogID)
 	if !ok {
-		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE WITH MATERIALIZED VIEW LOG")
 	}
 	mlogName := mlogTable.Meta().Name
 
 	mlogInfo := mlogTable.Meta().MaterializedViewLog
 	if mlogInfo == nil || mlogInfo.BaseTableID != baseMeta.ID {
-		return errors.Errorf(
-			"table %s.%s is not a materialized view log for base table %s.%s",
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(
 			e.DBName.O,
 			mlogName.O,
-			e.DBName.O,
-			baseMeta.Name.O,
+			fmt.Sprintf("MATERIALIZED VIEW LOG FOR BASE TABLE %s.%s", e.DBName.O, baseMeta.Name.O),
 		)
 	}
 
