@@ -61,6 +61,7 @@ const (
 	migrationWriteLockPrefix = "v1/LOCK.WRIT"
 	migrationReadLockPrefix  = "v1/LOCK.READ"
 	appendWriteLockPrefix    = "v1/APPEND_LOCK.WRIT"
+	acquireProofCleanupTTL   = 30 * time.Second
 )
 
 type lockFamilyMember struct {
@@ -79,17 +80,16 @@ func (e lockFamilyConflictError) Error() string {
 	return fmt.Sprintf("conflict file %s", e.member.path)
 }
 
-func newLockGeneration() (string, error) {
+func newLockGeneration(leaseNow time.Time) (string, error) {
 	var randomBytes [8]byte
 	if _, err := cryptorand.Read(randomBytes[:]); err != nil {
 		return "", errors.Annotate(err, "generate lock instance id")
 	}
-	return fmt.Sprintf("%016x%016x", nowFunc().UnixNano(), binary.BigEndian.Uint64(randomBytes[:])), nil
+	return fmt.Sprintf("%016x%016x", leaseNow.UnixNano(), binary.BigEndian.Uint64(randomBytes[:])), nil
 }
 
-func makeLockContent(path, hint string) func(uuid.UUID) []byte {
+func makeLockContent(path string, meta LockMeta) func(uuid.UUID) []byte {
 	return func(txnID uuid.UUID) []byte {
-		meta := MakeLockMeta(hint)
 		meta.TxnID = txnID[:]
 		res, err := json.Marshal(meta)
 		if err != nil {
@@ -140,9 +140,21 @@ func tryLockRemoteExact(
 	hint string,
 	verify func(VerifyWriteContext) error,
 ) (*RemoteLock, error) {
+	meta := MakeLockMeta(hint)
+	return tryLockRemoteExactWithLeaseClock(ctx, storage, physicalPath, meta, localLeaseClock{}, verify)
+}
+
+func tryLockRemoteExactWithLeaseClock(
+	ctx context.Context,
+	storage storeapi.Storage,
+	physicalPath string,
+	meta LockMeta,
+	clock LeaseClock,
+	verify func(VerifyWriteContext) error,
+) (*RemoteLock, error) {
 	writer := conditionalPut{
 		Target:  physicalPath,
-		Content: makeLockContent(physicalPath, hint),
+		Content: makeLockContent(physicalPath, meta),
 		Verify:  verify,
 	}
 
@@ -150,7 +162,36 @@ func tryLockRemoteExact(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to acquire lock on '%s'", physicalPath)
 	}
+	if err := proveAcquiredLeaseIsValid(ctx, storage, physicalPath, meta, clock); err != nil {
+		return nil, errors.Annotatef(err, "failed to acquire lock on '%s'", physicalPath)
+	}
 	return &RemoteLock{txnID: txnID, storage: storage, path: physicalPath}, nil
+}
+
+func proveAcquiredLeaseIsValid(ctx context.Context, storage storeapi.Storage, physicalPath string, meta LockMeta, clock LeaseClock) error {
+	nowAfterAcquire, err := clock.Now(ctx)
+	if err != nil {
+		deleteErr := deleteAcquiredLockAfterProofFailure(ctx, storage, physicalPath)
+		return multierr.Append(errors.Annotate(err, "prove acquired lease is still valid"), deleteErr)
+	}
+	if nowAfterAcquire.After(meta.ExpireAt) {
+		deleteErr := deleteAcquiredLockAfterProofFailure(ctx, storage, physicalPath)
+		return multierr.Append(errors.Errorf("lease expired before acquire returned: now=%s expire_at=%s", nowAfterAcquire, meta.ExpireAt), deleteErr)
+	}
+	return nil
+}
+
+func deleteAcquiredLockAfterProofFailure(ctx context.Context, storage storeapi.Storage, physicalPath string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), acquireProofCleanupTTL)
+	defer cancel()
+
+	if err := storage.DeleteFile(cleanupCtx, physicalPath); err != nil {
+		log.Warn("Failed to delete acquired lock after lease proof failure.",
+			zap.String("path", physicalPath),
+			logutil.ShortError(err))
+		return errors.Annotatef(err, "delete acquired lock after lease proof failure %s", physicalPath)
+	}
+	return nil
 }
 
 func is32Hex(s string) bool {

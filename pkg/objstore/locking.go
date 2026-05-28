@@ -176,6 +176,18 @@ var (
 	nowFunc = time.Now
 )
 
+// LeaseClock supplies the current lease time for lock metadata and lease
+// validity checks.
+type LeaseClock interface {
+	Now(ctx context.Context) (time.Time, error)
+}
+
+type localLeaseClock struct{}
+
+func (localLeaseClock) Now(context.Context) (time.Time, error) {
+	return nowFunc(), nil
+}
+
 // LockMeta is the meta information of a lock.
 type LockMeta struct {
 	LockedAt   time.Time `json:"locked_at"`
@@ -208,17 +220,20 @@ func (e ErrLocked) Error() string {
 // MakeLockMeta creates a LockMeta by the current node's metadata.
 // Including current time and hostname, etc..
 func MakeLockMeta(hint string) LockMeta {
+	return makeLockMetaAt(hint, nowFunc())
+}
+
+func makeLockMetaAt(hint string, lockedAt time.Time) LockMeta {
 	hname, err := os.Hostname()
 	if err != nil {
 		hname = fmt.Sprintf("UnknownHost(err=%s)", err)
 	}
-	now := nowFunc()
 	meta := LockMeta{
-		LockedAt:   now,
+		LockedAt:   lockedAt,
 		LockerHost: hname,
 		Hint:       hint,
 		LockerPID:  os.Getpid(),
-		ExpireAt:   now.Add(LeaseTTL),
+		ExpireAt:   lockedAt.Add(LeaseTTL),
 	}
 	return meta
 }
@@ -542,43 +557,79 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 // TryLockRemoteWrite is a single-attempt write-lock primitive. It does not
 // retry, clean up stale locks, or start renewal.
 func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
+	return TryLockRemoteWriteWithLeaseClock(ctx, storage, path, hint, localLeaseClock{})
+}
+
+// TryLockRemoteWriteWithLeaseClock is a single-attempt write-lock primitive
+// using the provided lease clock for lock metadata and post-acquire proof. It
+// does not retry, clean up stale locks, or start renewal.
+func TryLockRemoteWriteWithLeaseClock(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error) {
+	if clock == nil {
+		return nil, errors.New("lease clock is required")
+	}
+
 	var target string
 	var acquireKind lockAcquireKind
 	switch path {
 	case migrationLockPath:
-		generation, err := newLockGeneration()
+		leaseNow, err := clock.Now(ctx)
+		if err != nil {
+			return nil, errors.Annotate(err, "get lease time before acquiring lock")
+		}
+		generation, err := newLockGeneration(leaseNow)
 		if err != nil {
 			return nil, err
 		}
 		target = fmt.Sprintf("%s.%s", migrationWriteLockPrefix, generation)
 		acquireKind = lockAcquireMigrationWrite
+		return tryLockRemoteExactWithLeaseClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
+			return verifyLockFamily(ctx, path, acquireKind)
+		})
 	case appendLockPath:
-		generation, err := newLockGeneration()
+		leaseNow, err := clock.Now(ctx)
+		if err != nil {
+			return nil, errors.Annotate(err, "get lease time before acquiring lock")
+		}
+		generation, err := newLockGeneration(leaseNow)
 		if err != nil {
 			return nil, err
 		}
 		target = fmt.Sprintf("%s.%s", appendWriteLockPrefix, generation)
 		acquireKind = lockAcquireAppendWrite
+		return tryLockRemoteExactWithLeaseClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
+			return verifyLockFamily(ctx, path, acquireKind)
+		})
 	default:
 		return nil, errors.Errorf("unknown lock family %s", path)
 	}
-	return tryLockRemoteExact(ctx, storage, target, hint, func(ctx VerifyWriteContext) error {
-		return verifyLockFamily(ctx, path, acquireKind)
-	})
 }
 
 // TryLockRemoteRead is a single-attempt read-lock primitive. It does not
 // retry, clean up stale locks, or start renewal.
 func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
+	return TryLockRemoteReadWithLeaseClock(ctx, storage, path, hint, localLeaseClock{})
+}
+
+// TryLockRemoteReadWithLeaseClock is a single-attempt read-lock primitive
+// using the provided lease clock for lock metadata and post-acquire proof. It
+// does not retry, clean up stale locks, or start renewal.
+func TryLockRemoteReadWithLeaseClock(ctx context.Context, storage storeapi.Storage, path, hint string, clock LeaseClock) (*RemoteLock, error) {
+	if clock == nil {
+		return nil, errors.New("lease clock is required")
+	}
 	if path != migrationLockPath {
 		return nil, errors.Errorf("unknown lock family %s", path)
 	}
-	generation, err := newLockGeneration()
+	leaseNow, err := clock.Now(ctx)
+	if err != nil {
+		return nil, errors.Annotate(err, "get lease time before acquiring lock")
+	}
+	generation, err := newLockGeneration(leaseNow)
 	if err != nil {
 		return nil, err
 	}
 	target := fmt.Sprintf("%s.%s", migrationReadLockPrefix, generation)
-	return tryLockRemoteExact(ctx, storage, target, hint, func(ctx VerifyWriteContext) error {
+	return tryLockRemoteExactWithLeaseClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
 		return verifyLockFamily(ctx, path, lockAcquireMigrationRead)
 	})
 }
@@ -587,12 +638,26 @@ func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint
 // instance lock for truncation. It does not retry, clean up stale locks, or
 // start renewal. Production truncate callers should use LockRemoteTruncate.
 func TryLockRemoteTruncate(ctx context.Context, storage storeapi.Storage, hint string) (*RemoteLock, error) {
-	generation, err := newLockGeneration()
+	return TryLockRemoteTruncateWithLeaseClock(ctx, storage, hint, localLeaseClock{})
+}
+
+// TryLockRemoteTruncateWithLeaseClock is a single-attempt primitive that tries
+// to create an instance lock for truncation using the provided lease clock. It
+// does not retry, clean up stale locks, or start renewal.
+func TryLockRemoteTruncateWithLeaseClock(ctx context.Context, storage storeapi.Storage, hint string, clock LeaseClock) (*RemoteLock, error) {
+	if clock == nil {
+		return nil, errors.New("lease clock is required")
+	}
+	leaseNow, err := clock.Now(ctx)
+	if err != nil {
+		return nil, errors.Annotate(err, "get lease time before acquiring lock")
+	}
+	generation, err := newLockGeneration(leaseNow)
 	if err != nil {
 		return nil, err
 	}
 	target := fmt.Sprintf("%s.%s", truncateLockPath, generation)
-	return tryLockRemoteExact(ctx, storage, target, hint, func(ctx VerifyWriteContext) error {
+	return tryLockRemoteExactWithLeaseClock(ctx, storage, target, makeLockMetaAt(hint, leaseNow), clock, func(ctx VerifyWriteContext) error {
 		return verifyLockFamily(ctx, truncateLockPath, lockAcquireTruncate)
 	})
 }

@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +91,47 @@ func require32HexSuffix(t *testing.T, p, prefix string) {
 	require.Len(t, suffix, 32)
 	_, err := hex.DecodeString(suffix)
 	require.NoError(t, err)
+}
+
+type sequenceLeaseClock struct {
+	times []time.Time
+	err   error
+	idx   int
+}
+
+func (c *sequenceLeaseClock) Now(context.Context) (time.Time, error) {
+	if c.err != nil {
+		return time.Time{}, c.err
+	}
+	now := c.times[c.idx]
+	c.idx++
+	return now, nil
+}
+
+type cancelingProofLeaseClock struct {
+	leaseNow time.Time
+	cancel   context.CancelFunc
+	called   bool
+}
+
+func (c *cancelingProofLeaseClock) Now(context.Context) (time.Time, error) {
+	if !c.called {
+		c.called = true
+		return c.leaseNow, nil
+	}
+	c.cancel()
+	return time.Time{}, context.Canceled
+}
+
+type cancelAwareDeleteStorage struct {
+	storeapi.Storage
+}
+
+func (s cancelAwareDeleteStorage) DeleteFile(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Storage.DeleteFile(ctx, name)
 }
 
 func TestTryLockRemoteTruncate(t *testing.T) {
@@ -181,6 +224,138 @@ func TestTryLockRemoteReadWriteCreateInstancePaths(t *testing.T) {
 	requireFileExists(t, filepath.Join(pth, writePath))
 	require.NoError(t, writeLock.Unlock(ctx))
 	requireFileNotExists(t, filepath.Join(pth, writePath))
+}
+
+func TestTryLockRemoteWriteWithLeaseClockUsesClockForMetaAndGeneration(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+		},
+	}
+
+	lock, err := objstore.TryLockRemoteWriteWithLeaseClock(ctx, strg, "v1/LOCK", "clocked", clock)
+	require.NoError(t, err)
+	require.NotNil(t, lock)
+	t.Cleanup(func() {
+		require.NoError(t, lock.Unlock(ctx))
+	})
+
+	lockPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.WRIT.")
+	require.True(t, strings.HasPrefix(lockPath, fmt.Sprintf("v1/LOCK.WRIT.%016x", leaseNow.UnixNano())))
+	require32HexSuffix(t, lockPath, "v1/LOCK.WRIT.")
+
+	data, err := strg.ReadFile(ctx, lockPath)
+	require.NoError(t, err)
+	var meta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(data, &meta))
+	require.Equal(t, leaseNow, meta.LockedAt)
+	require.Equal(t, leaseNow.Add(objstore.LeaseTTL), meta.ExpireAt)
+}
+
+func TestTryLockRemoteWriteWithLeaseClockFailsWhenInitialTimeFails(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	expectedErr := errors.New("pd tso unavailable")
+	clock := &sequenceLeaseClock{err: expectedErr}
+
+	lock, err := objstore.TryLockRemoteWriteWithLeaseClock(ctx, strg, "v1/LOCK", "clocked", clock)
+	require.Nil(t, lock)
+	require.ErrorIs(t, err, expectedErr)
+	require.Empty(t, requireListedPathsWithPrefix(t, strg, "v1/LOCK.WRIT."))
+}
+
+func TestTryLockRemoteWriteWithLeaseClockFailsIfAcquireReturnsAfterExpireAt(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(objstore.LeaseTTL).Add(time.Nanosecond),
+		},
+	}
+
+	lock, err := objstore.TryLockRemoteWriteWithLeaseClock(ctx, strg, "v1/LOCK", "clocked", clock)
+	require.Nil(t, lock)
+	require.ErrorContains(t, err, "lease expired before acquire returned")
+	require.Empty(t, requireListedPathsWithPrefix(t, strg, "v1/LOCK.WRIT."))
+}
+
+func TestTryLockRemoteWriteWithLeaseClockCleansUpWhenPostAcquireClockFailsWithCanceledContext(t *testing.T) {
+	baseCtx := context.Background()
+	ctx, cancel := context.WithCancel(baseCtx)
+	strg, _ := createMockStorage(t)
+	leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	clock := &cancelingProofLeaseClock{
+		leaseNow: leaseNow,
+		cancel:   cancel,
+	}
+
+	lock, err := objstore.TryLockRemoteWriteWithLeaseClock(ctx, cancelAwareDeleteStorage{Storage: strg}, "v1/LOCK", "clocked", clock)
+	require.Nil(t, lock)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, requireListedPathsWithPrefix(t, strg, "v1/LOCK.WRIT."))
+}
+
+func TestTryLockRemoteReadAndTruncateWithLeaseClockUseClockForMetaAndGeneration(t *testing.T) {
+	ctx := context.Background()
+	leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
+
+	t.Run("read", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		clock := &sequenceLeaseClock{
+			times: []time.Time{
+				leaseNow,
+				leaseNow.Add(time.Millisecond),
+			},
+		}
+
+		lock, err := objstore.TryLockRemoteReadWithLeaseClock(ctx, strg, "v1/LOCK", "clocked read", clock)
+		require.NoError(t, err)
+		require.NotNil(t, lock)
+		t.Cleanup(func() {
+			require.NoError(t, lock.Unlock(ctx))
+		})
+
+		lockPath := requireSinglePathWithPrefix(t, strg, "v1/LOCK.READ.")
+		require.True(t, strings.HasPrefix(lockPath, fmt.Sprintf("v1/LOCK.READ.%016x", leaseNow.UnixNano())))
+		data, err := strg.ReadFile(ctx, lockPath)
+		require.NoError(t, err)
+		var meta objstore.LockMeta
+		require.NoError(t, json.Unmarshal(data, &meta))
+		require.Equal(t, leaseNow, meta.LockedAt)
+		require.Equal(t, leaseNow.Add(objstore.LeaseTTL), meta.ExpireAt)
+	})
+
+	t.Run("truncate", func(t *testing.T) {
+		strg, _ := createMockStorage(t)
+		clock := &sequenceLeaseClock{
+			times: []time.Time{
+				leaseNow,
+				leaseNow.Add(time.Millisecond),
+			},
+		}
+
+		lock, err := objstore.TryLockRemoteTruncateWithLeaseClock(ctx, strg, "clocked truncate", clock)
+		require.NoError(t, err)
+		require.NotNil(t, lock)
+		t.Cleanup(func() {
+			require.NoError(t, lock.Unlock(ctx))
+		})
+
+		lockPath := requireSinglePathWithPrefix(t, strg, "truncating.lock.")
+		require.True(t, strings.HasPrefix(lockPath, fmt.Sprintf("truncating.lock.%016x", leaseNow.UnixNano())))
+		data, err := strg.ReadFile(ctx, lockPath)
+		require.NoError(t, err)
+		var meta objstore.LockMeta
+		require.NoError(t, json.Unmarshal(data, &meta))
+		require.Equal(t, leaseNow, meta.LockedAt)
+		require.Equal(t, leaseNow.Add(objstore.LeaseTTL), meta.ExpireAt)
+	})
 }
 
 func TestTryLockRemoteAppendWriteCreatesInstancePath(t *testing.T) {
