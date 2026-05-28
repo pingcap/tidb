@@ -26,9 +26,13 @@ import (
 
 func (s *mockGCSSuite) TestExtraParamMaxRuntimeSlots() {
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
-		func(requiredSlots *int, params *proto.ExtraParams) {
-			*requiredSlots = 16
+		func(_ *int, params *proto.ExtraParams) {
 			params.MaxRuntimeSlots = 12
+		},
+	)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/afterPrepare",
+		func(task *proto.Task) {
+			task.RequiredSlots = 16
 		},
 	)
 	var callCnt int

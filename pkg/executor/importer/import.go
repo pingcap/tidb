@@ -321,7 +321,8 @@ type Plan struct {
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// only initialized for IMPORT INTO, used when format is detected automatically
-	specifiedOptions map[string]*plannercore.LoadDataOpt
+	specifiedOptions     map[string]*plannercore.LoadDataOpt
+	SpecifiedOptionNames map[string]struct{} `json:",omitempty"`
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
@@ -764,6 +765,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		specifiedOptions[opt.Name] = opt
 	}
 	p.specifiedOptions = specifiedOptions
+	p.SpecifiedOptionNames = make(map[string]struct{}, len(specifiedOptions))
+	for k := range p.specifiedOptions {
+		p.SpecifiedOptionNames[k] = struct{}{}
+	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
@@ -1574,7 +1579,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
-		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
+		if err2 = e.CheckNonCSVFormatOptions(); err2 != nil {
 			return err2
 		}
 	}
@@ -1835,11 +1840,11 @@ func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
 }
 
-// non CSV format should not specify CSV only options, we check it again if the
-// format is detected automatically.
-func (p *Plan) checkNonCSVFormatOptions() error {
+// CheckNonCSVFormatOptions non CSV format should not specify CSV only options,
+// we check it again if the format is detected automatically.
+func (p *Plan) CheckNonCSVFormatOptions() error {
 	for k := range csvOnlyOptions {
-		if _, ok := p.specifiedOptions[k]; ok {
+		if _, ok := p.SpecifiedOptionNames[k]; ok {
 			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
 		}
 	}

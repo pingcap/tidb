@@ -289,7 +289,7 @@ func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta 
 	})
 }
 
-func (sch *importScheduler) writePreparedChunkMap(
+func (*importScheduler) writePreparedChunkMap(
 	ctx context.Context,
 	taskID int64,
 	cloudStorageURI string,
@@ -332,7 +332,7 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 		return err
 	}
 	defer controller.Close()
-
+	isAutoDetectingFormat := controller.Format == importer.DataFormatAuto
 	if err = controller.InitDataFiles(ctx); err != nil {
 		return err
 	}
@@ -346,6 +346,16 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	}
 	if err = sch.updatePreparedJobInfo(ctx, sch.GetLogger(), taskMeta.JobID, controller.Plan); err != nil {
 		return err
+	}
+	// following the old behavior, but seems fine to remove this check, those
+	// specified options are not used anyway when the format is auto-detected as
+	// non-CSV. maybe remove them later, as we prepare in async way, if user
+	// use detached mode, user might get an invalid options after job submitted
+	// while from common sense, options should be validated before job submission.
+	if isAutoDetectingFormat && controller.Format != importer.DataFormatCSV {
+		if err = controller.CheckNonCSVFormatOptions(); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	controller.SetExecuteNodeCnt(controller.MaxNodeCnt)
 	chunkMap, err := controller.PopulateChunks(ctx)
@@ -366,6 +376,7 @@ func (sch *importScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle,
 	task.Meta = metaBytes
 	task.RequiredSlots = controller.ThreadCnt
 	task.MaxNodeCount = controller.MaxNodeCnt
+	failpoint.InjectCall("afterPrepare", task)
 	return nil
 }
 

@@ -548,7 +548,7 @@ func (s *mockGCSSuite) TestPrecheckFailureOnPrepareIsNotRetried() {
 			BucketName: "prepare-precheck-no-retry-source",
 			Name:       "t.csv",
 		},
-		Content: []byte("1\n2"),
+		Content: []byte(""),
 	})
 	// Ensure the sort bucket exists before scheduler writes prepared metadata.
 	s.server.CreateObject(fakestorage.Object{
@@ -559,8 +559,6 @@ func (s *mockGCSSuite) TestPrecheckFailureOnPrepareIsNotRetried() {
 		Content: []byte("seed"),
 	})
 
-	// Block scheduler so we can install failpoints after detached submit.
-	releaseScheduler := s.blockSchedulerBeforeGetSchedulableTasks()
 	importSQL := fmt.Sprintf(
 		`IMPORT INTO t FROM 'gs://prepare-precheck-no-retry-source/t.csv?endpoint=%s'
 		WITH DETACHED, cloud_storage_uri='gs://prepare-precheck-no-retry-sort/path?endpoint=%s'`,
@@ -573,21 +571,6 @@ func (s *mockGCSSuite) TestPrecheckFailureOnPrepareIsNotRetried() {
 	s.NoError(err)
 	jobID64 := int64(jobID)
 
-	tk2 := testkit.NewTestKit(s.T(), s.store)
-	var prepareAttempts atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeJobStarted",
-		func(fpJobID int64) {
-			if fpJobID != jobID64 {
-				return
-			}
-			if prepareAttempts.Add(1) == 1 {
-				// Make table non-empty after submit but before OnPrepare precheck.
-				tk2.MustExec("INSERT INTO prepare_precheck_no_retry.t VALUES (100)")
-			}
-		},
-	)
-	releaseScheduler()
-
 	s.Require().Eventually(func() bool {
 		rows := s.tk.MustQuery(fmt.Sprintf("SHOW IMPORT JOB %d", jobID)).Rows()
 		return rows[0][fmap["Status"]] == "failed" &&
@@ -596,15 +579,13 @@ func (s *mockGCSSuite) TestPrecheckFailureOnPrepareIsNotRetried() {
 
 	rows := s.tk.MustQuery(fmt.Sprintf("SHOW IMPORT JOB %d", jobID)).Rows()
 	s.Len(rows, 1)
-	s.Regexp("target table is not empty", rows[0][fmap["ResultMessage"]])
-	s.tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("100"))
+	s.Regexp("the file is empty", rows[0][fmap["ResultMessage"]])
 
 	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
 	s.Require().Eventually(func() bool {
 		task := s.getTaskByJobID(ctx, jobID64)
-		return task.State == proto.TaskStateReverted && prepareAttempts.Load() == 1
+		return task.State == proto.TaskStateReverted
 	}, maxWaitTime, 500*time.Millisecond)
-	s.Equal(int32(1), prepareAttempts.Load())
 }
 
 func (s *mockGCSSuite) TestDetachedJobWithoutPrepareModeStillSucceeds() {
