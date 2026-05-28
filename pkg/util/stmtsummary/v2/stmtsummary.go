@@ -607,17 +607,18 @@ type stmtStorage interface {
 type stmtEvicted struct {
 	sync.Mutex
 	keys map[string]struct{}
-	// inMemoryAggregate contains all evicted records in the current in-memory window.
-	inMemoryAggregate *StmtRecord
-	// persistFallback contains only records not already queued to the per-record evicted log.
-	persistFallback *StmtRecord
+	// other contains all evicted records in the current window.
+	other *StmtRecord
+	// otherForPersist contains records not covered by per-record evicted logs.
+	// When per-record evicted logging is disabled, it is equivalent to other.
+	otherForPersist *StmtRecord
 }
 
 func newStmtEvicted() *stmtEvicted {
 	return &stmtEvicted{
-		keys:              make(map[string]struct{}),
-		inMemoryAggregate: newEvictedAggregateRecord(),
-		persistFallback:   newEvictedAggregateRecord(),
+		keys:            make(map[string]struct{}),
+		other:           newEvictedAggregateRecord(),
+		otherForPersist: newEvictedAggregateRecord(),
 	}
 }
 
@@ -628,9 +629,9 @@ func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord, qu
 	e.Lock()
 	defer e.Unlock()
 	e.keys[string(key.Hash())] = struct{}{}
-	e.inMemoryAggregate.Merge(record)
+	e.other.Merge(record)
 	if !queuedForEvictedLog {
-		e.persistFallback.Merge(record)
+		e.otherForPersist.Merge(record)
 	}
 }
 

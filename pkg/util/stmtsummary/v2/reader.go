@@ -129,17 +129,17 @@ func (r *MemReader) Rows() [][]types.Datum {
 		func() {
 			evicted.Lock()
 			defer evicted.Unlock()
-			if evicted.inMemoryAggregate.ExecCount == 0 {
+			if evicted.other.ExecCount == 0 {
 				return
 			}
-			if !r.checker.hasPrivilege(evicted.inMemoryAggregate.AuthUsers) {
+			if !r.checker.hasPrivilege(evicted.other.AuthUsers) {
 				return
 			}
-			evicted.inMemoryAggregate.Begin = w.begin.Unix()
-			evicted.inMemoryAggregate.End = end
+			evicted.other.Begin = w.begin.Unix()
+			evicted.other.End = end
 			row := make([]types.Datum, len(r.columnFactories))
 			for i, factory := range r.columnFactories {
-				row[i] = types.NewDatum(factory(r, evicted.inMemoryAggregate))
+				row[i] = types.NewDatum(factory(r, evicted.other))
 			}
 			rows = append(rows, row)
 		}()
