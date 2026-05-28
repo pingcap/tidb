@@ -37,7 +37,7 @@ After this plan, BR correctness paths obtain lease time from PD TSO physical tim
 - [x] (2026-05-28) Implemented Milestone 4: BR PD lease clock wrapper reuses existing `GetTSWithRetry`.
 - [x] (2026-05-28) Implemented Milestone 4.5: collapsed objstore clock APIs into the original function names with explicit clock parameters.
 - [x] (2026-05-28) Implemented Milestone 5: `MigrationExt`, `LogClient`, and PiTR collector propagation.
-- [ ] Implement Milestone 6: stream truncate propagation.
+- [x] (2026-05-28) Implemented Milestone 6: stream truncate propagation.
 - [ ] Run Ready validation before claiming the phase is complete.
 
 ## Pause Snapshot: Unified-Time Work Before TTL Re-evaluation
@@ -248,6 +248,31 @@ preservation and was not matched by the original M5 GREEN regex.
 Remaining gaps after Milestone 5: stream truncate still uses explicit local
 time for its command-level truncate lock and temporary `MigrationExtension`
 placeholder until Milestone 6.
+
+Milestone 6 delivered PD-backed lease-clock propagation for the
+`RunStreamTruncate` production path. The command now creates a `conn.Mgr`
+inside the function, defers `mgr.Close()`, builds `restore.NewPDLeaseClock` from
+`mgr.GetPDClient()`, and reuses that one clock for truncate stale cleanup,
+truncate lock acquire/renewal, `MigrationExtension`, and
+`RemoveDataFilesAndUpdateMetadataInBatch`. The stream metadata cleanup helper
+now requires an explicit clock parameter instead of constructing a local clock
+internally. Manual operator commands remain explicit local-clock paths.
+
+Milestone 6 validation:
+
+    ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'Test.*Truncate|TestWithSimpleTruncate' -count=1
+    go test -run TestNonExistent -tags=intest,deadlock ./br/pkg/task -count=1
+    rg -n "NewLocalLeaseClock\\(" br/pkg/task/stream.go br/pkg/stream/stream_metas.go
+    rg -n "RemoveDataFilesAndUpdateMetadataInBatch\\(" br/pkg br/tests --glob '*.go'
+    git diff --check
+
+The RED check for Milestone 6 used the same stream command after updating test
+call sites first; it failed with the expected compile errors because
+`RemoveDataFilesAndUpdateMetadataInBatch` did not yet accept a clock.
+
+`make bazel_prepare` was not required for Milestone 6: no Go source files were
+added, removed, renamed, or moved; no new top-level Go test functions were
+added; no Bazel metadata or module files changed.
 
 ## Context and Orientation
 
@@ -911,25 +936,99 @@ TDD steps:
 Files:
 
 - Modify `br/pkg/task/stream.go`.
-- Modify targeted task tests or extract a helper for focused testing.
+- Modify `br/pkg/stream/stream_metas.go`.
+- Modify `br/pkg/stream/stream_metas_test.go`.
+- Modify this plan.
 
-TDD steps:
+Scope:
 
-- [ ] Extract a small helper if needed so tests do not need to exercise the entire interactive command. The helper should accept storage and a lease clock, then perform truncate stale cleanup, truncate lock acquire, and optional migration cleanup setup.
+- Wire PD-backed lease time into the `RunStreamTruncate` production path.
+- Use one `leaseClock` value for the truncate stale cleanup, truncate lock
+  acquire/renewal, migration cleanup, and stream metadata cleanup helper.
+- Keep manual operator commands on explicit local time.
+- Do not add a broad interactive command test unless a small helper naturally
+  falls out of the implementation. `RunStreamTruncate` combines storage,
+  prompts, progress bars, safe-point writes, and metadata deletion; broad tests
+  would be brittle for this wiring-only milestone.
 
-- [ ] Add tests proving `RunStreamTruncate` or the helper passes the
-  PD-backed lease clock to `CleanUpStaleTruncateLock`,
-  `LockRemoteTruncate`, and `MigrationExtension(..., clock)`.
+Execution steps:
 
-- [ ] Implement manager/client creation from `cfg.PD` and `cfg.TLS`, following existing `NewMgr` cleanup patterns in `br/pkg/task/stream.go`.
+- [x] Update `StreamMetadataSet.RemoveDataFilesAndUpdateMetadataInBatch` to
+  require an explicit `clock objstore.LeaseClock` parameter:
 
-- [ ] Run targeted tests. If no focused helper seam exists, add one before broad command tests.
+        func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
+            ctx context.Context,
+            from uint64,
+            st storeapi.Storage,
+            clock objstore.LeaseClock,
+            updateFn func(num int64),
+        ) ([]string, error)
 
-- [ ] Run `make bazel_prepare` if needed.
+    The implementation should pass `clock` to `MigrationExtension(hst, clock)`
+    instead of constructing `objstore.NewLocalLeaseClock()` internally. This
+    helper currently calls `doTruncateLogs` directly and does not acquire a
+    migration lock, so the primary validation is signature-level propagation and
+    residual local-clock scanning rather than lock-metadata assertions.
 
-- [ ] Commit:
+- [x] Update all existing
+  `RemoveDataFilesAndUpdateMetadataInBatch(...)` callers:
 
-    git add br/pkg/task/stream.go docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
+    - `br/pkg/task/stream.go`: pass the `leaseClock` constructed in
+      `RunStreamTruncate`.
+    - `br/pkg/stream/stream_metas_test.go`: pass
+      `objstore.NewLocalLeaseClock()` in existing tests.
+
+- [x] Run RED compile check after the test/call-site signature changes but
+  before production implementation is complete:
+
+        ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'Test.*Truncate|TestWithSimpleTruncate' -count=1
+
+    Expected: compile failure around the new
+    `RemoveDataFilesAndUpdateMetadataInBatch` signature until the production
+    implementation and task caller are updated.
+
+- [x] In `RunStreamTruncate`, create a PD-backed lease clock inside the
+  function after storage creation and before lock cleanup/acquire:
+
+        mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+            cfg.CheckRequirements, false, conn.StreamVersionChecker)
+        if err != nil {
+            return err
+        }
+        defer mgr.Close()
+        leaseClock := restore.NewPDLeaseClock(mgr.GetPDClient())
+
+    This keeps the PD client lifetime aligned with the truncate command
+    invocation.
+
+- [x] Replace the `RunStreamTruncate` local-clock placeholders with the same
+  `leaseClock`:
+
+    - `objstore.CleanUpStaleTruncateLock(ctx, extStorage, leaseClock)`
+    - `objstore.LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, cancelFn, leaseClock)`
+    - `stream.MigrationExtension(extStorage, leaseClock)`
+    - `metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, extStorage, leaseClock, p.IncBy)`
+
+- [x] Run GREEN targeted checks:
+
+        ./tools/check/failpoint-go-test.sh br/pkg/stream -run 'Test.*Truncate|TestWithSimpleTruncate' -count=1
+        go test -run TestNonExistent -tags=intest,deadlock ./br/pkg/task -count=1
+
+- [x] Run residual scans:
+
+        rg -n "NewLocalLeaseClock\\(" br/pkg/task/stream.go br/pkg/stream/stream_metas.go
+        rg -n "RemoveDataFilesAndUpdateMetadataInBatch\\(" br/pkg br/tests --glob '*.go'
+
+    Expected: no `NewLocalLeaseClock()` remains in
+    `br/pkg/task/stream.go` or `br/pkg/stream/stream_metas.go`. Every
+    `RemoveDataFilesAndUpdateMetadataInBatch` call passes an explicit clock.
+
+- [x] Run `make bazel_prepare` only if new top-level Go tests are added,
+  Go files are added/removed/renamed, or Bazel metadata changes are required.
+
+- [x] Commit:
+
+    git add br/pkg/task/stream.go br/pkg/stream/stream_metas.go br/pkg/stream/stream_metas_test.go docs/agents/br/lease-lock-unified-time-source-implementation-plan.md
     git commit -m "br: use PD lease time for stream truncate locks"
 
 ## Validation and Acceptance

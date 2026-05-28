@@ -248,7 +248,7 @@ func TestTruncateLog(t *testing.T) {
 	}
 
 	var total int64 = 0
-	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, func(num int64) {
+	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, objstore.NewLocalLeaseClock(), func(num int64) {
 		lock.Lock()
 		total += num
 		lock.Unlock()
@@ -321,7 +321,7 @@ func TestTruncateLogV2(t *testing.T) {
 	}
 
 	var total int64 = 0
-	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, func(num int64) {
+	notDeleted, err := s.RemoveDataFilesAndUpdateMetadataInBatch(ctx, 17, l, objstore.NewLocalLeaseClock(), func(num int64) {
 		lock.Lock()
 		total += num
 		lock.Unlock()
@@ -1368,7 +1368,7 @@ func TestTruncate1(t *testing.T) {
 				shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
 				require.NoError(t, err)
 				require.Equal(t, shiftUntilTS, ts.shiftUntilTS)
-				n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, func(num int64) {})
+				n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, objstore.NewLocalLeaseClock(), func(num int64) {})
 				require.Equal(t, len(n), 0)
 				require.NoError(t, err)
 
@@ -1884,7 +1884,7 @@ func TestTruncate2(t *testing.T) {
 				shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
 				require.NoError(t, err)
 				require.Equal(t, shiftUntilTS, ts.shiftUntilTS(until))
-				n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, func(num int64) {})
+				n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, objstore.NewLocalLeaseClock(), func(num int64) {})
 				require.Equal(t, len(n), 0)
 				require.NoError(t, err)
 
@@ -2268,7 +2268,7 @@ func TestTruncate3(t *testing.T) {
 					shiftUntilTS, err := metas.LoadUntilAndCalculateShiftTS(ctx, s, until)
 					require.NoError(t, err)
 					require.Equal(t, shiftUntilTS, ts.shiftUntilTS(until))
-					n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, func(num int64) {})
+					n, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, s, objstore.NewLocalLeaseClock(), func(num int64) {})
 					require.Equal(t, len(n), 0)
 					require.NoError(t, err)
 

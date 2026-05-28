@@ -211,11 +211,12 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	ctx context.Context,
 	from uint64,
 	st storeapi.Storage,
+	clock objstore.LeaseClock,
 	// num = deleted files
 	updateFn func(num int64),
 ) ([]string, error) {
 	hst := ms.hook(st)
-	est := MigrationExtension(hst, objstore.NewLocalLeaseClock())
+	est := MigrationExtension(hst, clock)
 	est.Hooks = updateFnHook{updateFn: updateFn}
 	res := MigratedTo{NewBase: NewMigration()}
 	est.doTruncateLogs(ctx, ms, from, &res)

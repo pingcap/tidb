@@ -1118,7 +1118,13 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	leaseClock := objstore.NewLocalLeaseClock()
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, false, conn.StreamVersionChecker)
+	if err != nil {
+		return err
+	}
+	defer mgr.Close()
+	leaseClock := restore.NewPDLeaseClock(mgr.GetPDClient())
 	if _, err := objstore.CleanUpStaleTruncateLock(ctx, extStorage, leaseClock); err != nil {
 		return err
 	}
@@ -1143,7 +1149,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.CleanUpCompactions {
-		est := stream.MigrationExtension(extStorage, objstore.NewLocalLeaseClock())
+		est := stream.MigrationExtension(extStorage, leaseClock)
 		est.Hooks = stream.NewProgressBarHooks(console)
 		newSN := math.MaxInt
 		optPrompt := stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
@@ -1230,7 +1236,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	)
 	defer p.Close()
 
-	notDeleted, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, extStorage, p.IncBy)
+	notDeleted, err := metas.RemoveDataFilesAndUpdateMetadataInBatch(ctx, shiftUntilTS, extStorage, leaseClock, p.IncBy)
 	if err != nil {
 		return err
 	}
