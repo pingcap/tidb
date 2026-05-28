@@ -727,3 +727,35 @@ func TestTiCIAlternativeLogicalPlansIgnoreIndexRoutesToLikeFallback(t *testing.T
 		tk.MustQuery(sqlWithIgnoreHint).CheckNotContain("fts_match_word")
 	})
 }
+
+func TestTiCIIsolationReadEnginesFiltersFTSPath(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table obj_new(
+			id bigint primary key,
+			label text,
+			fulltext index idx_label(label)
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "obj_new")
+		tk.MustExec("set @@sql_mode = ''")
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tikv,tiflash,tidb'")
+
+		sql := `explain format = 'brief' select id from obj_new
+			where match(label) against ('"BFACPXUZXEIN"' in boolean mode)`
+
+		_, err := tk.Exec(sql)
+		require.NoError(t, err)
+
+		tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
+		tk.MustExec("begin pessimistic")
+		_, err = tk.Exec(sql)
+		require.NoError(t, err)
+		tk.MustExec("rollback")
+
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tikv,tidb'") // TiCI indexes depend on the TiFlash store type.
+		tk.MustExec("begin pessimistic")
+		_, err = tk.Exec(sql)
+		require.EqualError(t, err, "[planner:1815]Internal : No access path for table 'obj_new' is found with 'tidb_isolation_read_engines' = 'tikv,tidb', valid values can be 'tiflash'.")
+		tk.MustExec("rollback")
+	})
+}
