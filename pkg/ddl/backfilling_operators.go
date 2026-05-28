@@ -181,7 +181,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgMeta.UseCloudStorage)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, false)
 
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
