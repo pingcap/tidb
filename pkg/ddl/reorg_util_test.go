@@ -23,11 +23,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -454,6 +456,41 @@ func TestCalcObservedTiKVCapacityIncrease(t *testing.T) {
 	observed = calcObservedTiKVCapacityIncrease(&TiKVClusterCapacity{UsedBytes: 100}, final)
 	require.False(t, observed.reliable)
 	require.Equal(t, "initial_store_details_unavailable", observed.reason)
+}
+
+func TestBuildAddIndexPostTaskObservationDelays(t *testing.T) {
+	require.Nil(t, buildAddIndexPostTaskObservationDelays(0))
+	require.Nil(t, buildAddIndexPostTaskObservationDelays(-time.Second))
+
+	delays := buildAddIndexPostTaskObservationDelays(4 * time.Second)
+	require.Equal(t, []time.Duration{2 * time.Second, 4 * time.Second, 6 * time.Second}, delays)
+}
+
+func TestObservedTiKVUsageTaskTiming(t *testing.T) {
+	start := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	end := start.Add(4 * time.Second)
+
+	task := &proto.Task{
+		StartTime:       start,
+		StateUpdateTime: end,
+	}
+	taskEndTime, taskExecutionDuration := observedTiKVUsageTaskTiming(task, time.Time{})
+	require.Equal(t, end, taskEndTime)
+	require.Equal(t, 4*time.Second, taskExecutionDuration)
+
+	fallbackObservedAt := start.Add(5 * time.Second)
+	task = &proto.Task{StartTime: start}
+	taskEndTime, taskExecutionDuration = observedTiKVUsageTaskTiming(task, fallbackObservedAt)
+	require.Equal(t, fallbackObservedAt, taskEndTime)
+	require.Equal(t, 5*time.Second, taskExecutionDuration)
+
+	task = &proto.Task{
+		StartTime:       start,
+		StateUpdateTime: start.Add(-time.Second),
+	}
+	taskEndTime, taskExecutionDuration = observedTiKVUsageTaskTiming(task, time.Time{})
+	require.Equal(t, start.Add(-time.Second), taskEndTime)
+	require.Zero(t, taskExecutionDuration)
 }
 
 func TestCollectTiKVStoreUsage(t *testing.T) {
