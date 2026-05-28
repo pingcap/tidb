@@ -3228,20 +3228,20 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
 		runTiKVSpacePrecheck := false
 		var (
-			initialCapacity                  *TiKVClusterCapacity
-			basicPredictedTiKVIndexBytes     uint64
-			representPredictedTiKVIndexBytes uint64
-			staticSamplePrediction           sampleTiKVIndexPredictionResult
-			blockSamplePrediction            sampleTiKVIndexPredictionResult
-			tikvReplicaCount                 uint64
-			tikvReplicaCountSource           string
-			tikvReplicaCountPhysicalID       int64
+			initialCapacity            *TiKVClusterCapacity
+			basicPrediction            tiKVIndexPredictionResult
+			representPrediction        tiKVIndexPredictionResult
+			staticSamplePrediction     sampleTiKVIndexPredictionResult
+			blockSamplePrediction      sampleTiKVIndexPredictionResult
+			tikvReplicaCount           uint64
+			tikvReplicaCountSource     string
+			tikvReplicaCountPhysicalID int64
 		)
 		if !reorgInfo.mergingTmpIdx {
 			predictionOK := true
 			clearPrediction := func() {
-				basicPredictedTiKVIndexBytes = 0
-				representPredictedTiKVIndexBytes = 0
+				basicPrediction = tiKVIndexPredictionResult{}
+				representPrediction = tiKVIndexPredictionResult{}
 				staticSamplePrediction = sampleTiKVIndexPredictionResult{}
 				blockSamplePrediction = sampleTiKVIndexPredictionResult{}
 				tikvReplicaCount = 0
@@ -3271,12 +3271,12 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					zap.Int64("jobID", job.ID),
 					zap.String("task-key", taskKey))
 			}
-			basicPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesBasic(w.sess.Session(), t, reorgInfo)
+			basicPrediction, err = w.predictTiKVIndexBytesBasic(w.sess.Session(), t, reorgInfo)
 			if err != nil {
 				skipPrediction("basic", err)
 			}
 			if predictionOK {
-				representPredictedTiKVIndexBytes, err = w.predictTiKVIndexBytesRepresent(w.sess.Session(), t, reorgInfo)
+				representPrediction, err = w.predictTiKVIndexBytesRepresent(w.sess.Session(), t, reorgInfo)
 				if err != nil {
 					skipPrediction("represent", err)
 				}
@@ -3298,10 +3298,14 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 				if err != nil {
 					skipPrediction("tikv-replica-count", err)
 				} else {
-					basicPredictedTiKVIndexBytes = scalePredictedBytesByReplicaCount(basicPredictedTiKVIndexBytes, tikvReplicaCount)
-					representPredictedTiKVIndexBytes = scalePredictedBytesByReplicaCount(representPredictedTiKVIndexBytes, tikvReplicaCount)
+					basicPrediction.PredictedBytes = scalePredictedBytesByReplicaCount(basicPrediction.PredictedBytes, tikvReplicaCount)
+					basicPrediction.MVCCOverheadBytes = scalePredictedBytesByReplicaCount(basicPrediction.MVCCOverheadBytes, tikvReplicaCount)
+					representPrediction.PredictedBytes = scalePredictedBytesByReplicaCount(representPrediction.PredictedBytes, tikvReplicaCount)
+					representPrediction.MVCCOverheadBytes = scalePredictedBytesByReplicaCount(representPrediction.MVCCOverheadBytes, tikvReplicaCount)
 					staticSamplePrediction.PredictedBytes = scalePredictedBytesByReplicaCount(staticSamplePrediction.PredictedBytes, tikvReplicaCount)
+					staticSamplePrediction.MVCCOverheadBytes = scalePredictedBytesByReplicaCount(staticSamplePrediction.MVCCOverheadBytes, tikvReplicaCount)
 					blockSamplePrediction.PredictedBytes = scalePredictedBytesByReplicaCount(blockSamplePrediction.PredictedBytes, tikvReplicaCount)
+					blockSamplePrediction.MVCCOverheadBytes = scalePredictedBytesByReplicaCount(blockSamplePrediction.MVCCOverheadBytes, tikvReplicaCount)
 				}
 			}
 			if predictionOK && runTiKVSpacePrecheck {
@@ -3328,10 +3332,14 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 				logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
 					zap.Int64("jobID", job.ID),
 					zap.String("task-key", taskKey),
-					zap.Uint64("basic_predicted_tikv_index_bytes", basicPredictedTiKVIndexBytes),
-					zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
+					zap.Uint64("basic_predicted_tikv_index_bytes", basicPrediction.PredictedBytes),
+					zap.Uint64("represent_predicted_tikv_index_bytes", representPrediction.PredictedBytes),
 					zap.Uint64("static_sample_predicted_tikv_index_bytes", staticSamplePrediction.PredictedBytes),
 					zap.Uint64("block_sample_predicted_tikv_index_bytes", blockSamplePrediction.PredictedBytes),
+					zap.Uint64("basic_mvcc_overhead_total_bytes", basicPrediction.MVCCOverheadBytes),
+					zap.Uint64("represent_mvcc_overhead_total_bytes", representPrediction.MVCCOverheadBytes),
+					zap.Uint64("static_sample_mvcc_overhead_total_bytes", staticSamplePrediction.MVCCOverheadBytes),
+					zap.Uint64("block_sample_mvcc_overhead_total_bytes", blockSamplePrediction.MVCCOverheadBytes),
 					zap.Uint64("tikv_replica_count", tikvReplicaCount),
 					zap.String("tikv_replica_count_source", tikvReplicaCountSource),
 					zap.Int64("tikv_replica_count_physical_id", tikvReplicaCountPhysicalID),
@@ -3360,10 +3368,14 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			MergeTempIndex:                       reorgInfo.mergingTmpIdx,
 			EstimateRowSize:                      rowSize,
 			InitialTiKVCapacity:                  initialCapacity,
-			BasicPredictedTiKVIndexBytes:         basicPredictedTiKVIndexBytes,
-			RepresentPredictedTiKVIndexBytes:     representPredictedTiKVIndexBytes,
+			BasicPredictedTiKVIndexBytes:         basicPrediction.PredictedBytes,
+			RepresentPredictedTiKVIndexBytes:     representPrediction.PredictedBytes,
 			StaticSamplePredictedTiKVIndexBytes:  staticSamplePrediction.PredictedBytes,
 			BlockSamplePredictedTiKVIndexBytes:   blockSamplePrediction.PredictedBytes,
+			BasicMVCCOverheadTotalBytes:          basicPrediction.MVCCOverheadBytes,
+			RepresentMVCCOverheadTotalBytes:      representPrediction.MVCCOverheadBytes,
+			StaticSampleMVCCOverheadTotalBytes:   staticSamplePrediction.MVCCOverheadBytes,
+			BlockSampleMVCCOverheadTotalBytes:    blockSamplePrediction.MVCCOverheadBytes,
 			TiKVReplicaCount:                     tikvReplicaCount,
 			TiKVReplicaCountSource:               tikvReplicaCountSource,
 			TiKVReplicaCountPhysicalID:           tikvReplicaCountPhysicalID,
@@ -4139,6 +4151,10 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		zap.Uint64("represent_predicted_tikv_index_bytes", representPredictedTiKVIndexBytes),
 		zap.Uint64("static_sample_predicted_tikv_index_bytes", staticSamplePredictedTiKVIndexBytes),
 		zap.Uint64("block_sample_predicted_tikv_index_bytes", blockSamplePredictedTiKVIndexBytes),
+		zap.Uint64("basic_mvcc_overhead_total_bytes", taskMeta.BasicMVCCOverheadTotalBytes),
+		zap.Uint64("represent_mvcc_overhead_total_bytes", taskMeta.RepresentMVCCOverheadTotalBytes),
+		zap.Uint64("static_sample_mvcc_overhead_total_bytes", taskMeta.StaticSampleMVCCOverheadTotalBytes),
+		zap.Uint64("block_sample_mvcc_overhead_total_bytes", taskMeta.BlockSampleMVCCOverheadTotalBytes),
 		zap.Uint64("tikv_replica_count", taskMeta.TiKVReplicaCount),
 		zap.String("tikv_replica_count_source", taskMeta.TiKVReplicaCountSource),
 		zap.Int64("tikv_replica_count_physical_id", taskMeta.TiKVReplicaCountPhysicalID),
@@ -4409,11 +4425,34 @@ const (
 	samplePredictionMaxSkipRows          = 256
 )
 
+const (
+	tikvMVCCTimestampBytes = 8
+	tikvMVCCWriteTypeBytes = 1
+	// Current TiDB TSOs encode to 9 bytes as TiKV write CF start_ts uvarints.
+	tikvMVCCEstimatedTSUvarintBytes    = 9
+	tikvMVCCShortValuePrefixBytes      = 1
+	tikvMVCCShortValueLengthBytes      = 1
+	tikvMVCCShortValueMaxBytes         = 64
+	tikvMVCCWriteCFValueMetaBytes      = tikvMVCCWriteTypeBytes + tikvMVCCEstimatedTSUvarintBytes
+	tikvMVCCShortWriteCFValueMetaBytes = tikvMVCCWriteCFValueMetaBytes + tikvMVCCShortValuePrefixBytes + tikvMVCCShortValueLengthBytes
+	tikvMVCCEmptyWriteCFValueMetaBytes = tikvMVCCWriteCFValueMetaBytes
+	tikvMVCCLongWriteCFValueMetaBytes  = tikvMVCCWriteCFValueMetaBytes
+	tikvMVCCShortValueOverheadBytes    = tikvMVCCTimestampBytes + tikvMVCCShortWriteCFValueMetaBytes
+	tikvMVCCEmptyValueOverheadBytes    = tikvMVCCTimestampBytes + tikvMVCCEmptyWriteCFValueMetaBytes
+	tikvMVCCLongValueBaseOverheadBytes = 2*tikvMVCCTimestampBytes + tikvMVCCLongWriteCFValueMetaBytes
+)
+
 type sampleTiKVIndexPredictionResult struct {
 	PredictedBytes     uint64
+	MVCCOverheadBytes  uint64
 	SampledRegionCount int
 	SampledRowCount    int
 	ReadErrorCount     int
+}
+
+type tiKVIndexPredictionResult struct {
+	PredictedBytes    uint64
+	MVCCOverheadBytes uint64
 }
 
 type samplePredictionRegion struct {
@@ -4422,21 +4461,23 @@ type samplePredictionRegion struct {
 	ApproximateKeys int64
 }
 
-func (w *worker) predictTiKVIndexBytesBasic(sctx sessionctx.Context, tbl table.Table, reorgInfo *reorgInfo) (uint64, error) {
+func (w *worker) predictTiKVIndexBytesBasic(sctx sessionctx.Context, tbl table.Table, reorgInfo *reorgInfo) (tiKVIndexPredictionResult, error) {
+	result := tiKVIndexPredictionResult{}
 	if reorgInfo == nil {
-		return 0, errors.New("reorg info is nil")
+		return result, errors.New("reorg info is nil")
 	}
 	tblInfo := tbl.Meta()
 	physicalIDs := predictionPhysicalTableIDs(tblInfo)
 	targetIndexes, err := collectBackfillIndexes(tblInfo, reorgInfo)
 	if err != nil {
-		return 0, err
+		return result, err
 	}
 	var totalBytes float64
+	var totalMVCCOverheadBytes float64
 	for _, idx := range targetIndexes {
 		indexCols, err := buildIndexPredictionColumns(sctx, tblInfo, idx)
 		if err != nil {
-			return 0, err
+			return result, err
 		}
 		for _, physicalID := range physicalIDs {
 			statsTbl := getPhysicalTableStatsForPrediction(physicalID, tblInfo, w.ddlCtx.statsHandle)
@@ -4444,26 +4485,34 @@ func (w *worker) predictTiKVIndexBytesBasic(sctx sessionctx.Context, tbl table.T
 			if rowCount <= 0 {
 				continue
 			}
-			totalBytes += estimateIndexKVBytesPerRowForBasicPrediction(sctx, tblInfo, idx, statsTbl, indexCols) * float64(rowCount)
+			perRowBytes, perRowMVCCOverheadBytes := estimateIndexKVBytesPerRowForBasicPrediction(sctx, tblInfo, idx, statsTbl, indexCols)
+			totalBytes += perRowBytes * float64(rowCount)
+			totalMVCCOverheadBytes += perRowMVCCOverheadBytes * float64(rowCount)
 		}
 	}
 	if totalBytes <= 0 {
-		return 0, nil
+		return result, nil
 	}
-	return uint64(totalBytes), nil
+	result.PredictedBytes = uint64(totalBytes)
+	if totalMVCCOverheadBytes > 0 {
+		result.MVCCOverheadBytes = uint64(totalMVCCOverheadBytes)
+	}
+	return result, nil
 }
 
-func (w *worker) predictTiKVIndexBytesRepresent(sctx sessionctx.Context, tbl table.Table, reorgInfo *reorgInfo) (uint64, error) {
+func (w *worker) predictTiKVIndexBytesRepresent(sctx sessionctx.Context, tbl table.Table, reorgInfo *reorgInfo) (tiKVIndexPredictionResult, error) {
+	result := tiKVIndexPredictionResult{}
 	if reorgInfo == nil {
-		return 0, errors.New("reorg info is nil")
+		return result, errors.New("reorg info is nil")
 	}
 	tblInfo := tbl.Meta()
 	physicalIDs := predictionPhysicalTableIDs(tblInfo)
 	targetIndexes, err := collectBackfillIndexes(tblInfo, reorgInfo)
 	if err != nil {
-		return 0, err
+		return result, err
 	}
 	var totalBytes float64
+	var totalMVCCOverheadBytes float64
 	for _, idx := range targetIndexes {
 		for _, physicalID := range physicalIDs {
 			statsTbl := getPhysicalTableStatsForPrediction(physicalID, tblInfo, w.ddlCtx.statsHandle)
@@ -4471,17 +4520,22 @@ func (w *worker) predictTiKVIndexBytesRepresent(sctx sessionctx.Context, tbl tab
 			if rowCount <= 0 {
 				continue
 			}
-			kvBytesPerRow, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idx, physicalID, statsTbl)
+			kvBytesPerRow, mvccOverheadBytesPerRow, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idx, physicalID, statsTbl)
 			if err != nil {
-				return 0, err
+				return result, err
 			}
 			totalBytes += kvBytesPerRow * float64(rowCount)
+			totalMVCCOverheadBytes += mvccOverheadBytesPerRow * float64(rowCount)
 		}
 	}
 	if totalBytes <= 0 {
-		return 0, nil
+		return result, nil
 	}
-	return uint64(totalBytes), nil
+	result.PredictedBytes = uint64(totalBytes)
+	if totalMVCCOverheadBytes > 0 {
+		result.MVCCOverheadBytes = uint64(totalMVCCOverheadBytes)
+	}
+	return result, nil
 }
 
 func (w *worker) predictTiKVIndexBytesStaticSample(
@@ -4539,7 +4593,7 @@ func (w *worker) predictTiKVIndexBytesStaticSample(
 			continue
 		}
 
-		predictedAvgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableStaticSampleBytesPerRow(
+		predictedAvgBytesPerRow, mvccAvgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableStaticSampleBytesPerRow(
 			jobCtx,
 			sctx,
 			physicalTbl,
@@ -4564,6 +4618,7 @@ func (w *worker) predictTiKVIndexBytesStaticSample(
 			continue
 		}
 		totalPredictedBytes += predictedAvgBytesPerRow * float64(rowCount)
+		result.MVCCOverheadBytes += uint64(mvccAvgBytesPerRow * float64(rowCount))
 	}
 
 	if totalPredictedBytes > 0 {
@@ -4582,13 +4637,14 @@ func (w *worker) estimatePhysicalTableStaticSampleBytesPerRow(
 	seed uint64,
 ) (
 	predictedAvgBytesPerRow float64,
+	mvccAvgBytesPerRow float64,
 	sampledRegions int,
 	totalRows int,
 	readErrorCount int,
 	err error,
 ) {
 	if len(regions) == 0 {
-		return 0, 0, 0, 0, nil
+		return 0, 0, 0, 0, 0, nil
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	var (
@@ -4605,7 +4661,7 @@ func (w *worker) estimatePhysicalTableStaticSampleBytesPerRow(
 				zap.Int("skipRows", skipRows),
 				zap.Error(err))
 			if readErrorCount > samplePredictionMaxReadErrors {
-				return 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				return 0, 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
 					fmt.Sprintf("add index sample prediction failed after %d read errors: %v", readErrorCount, err))
 			}
 			continue
@@ -4616,7 +4672,7 @@ func (w *worker) estimatePhysicalTableStaticSampleBytesPerRow(
 		sampledKVs = append(sampledKVs, kvs...)
 	}
 	if totalRows == 0 {
-		return 0, sampledRegions, totalRows, readErrorCount, nil
+		return 0, 0, sampledRegions, totalRows, readErrorCount, nil
 	}
 	estimatedBytes := estimateSampledIndexKVPredictionBytes(sampledKVs)
 	if estimatedBytes.Err != nil {
@@ -4629,7 +4685,8 @@ func (w *worker) estimatePhysicalTableStaticSampleBytesPerRow(
 	if estimatedBytes.PredictedBytes <= 0 {
 		estimatedBytes.PredictedBytes = totalLogicalBytes
 	}
-	return float64(estimatedBytes.PredictedBytes) / float64(totalRows), sampledRegions, totalRows, readErrorCount, nil
+	mvccOverheadBytes := estimateSampledIndexKVMVCCOverheadBytes(sampledKVs)
+	return float64(estimatedBytes.PredictedBytes) / float64(totalRows), float64(mvccOverheadBytes) / float64(totalRows), sampledRegions, totalRows, readErrorCount, nil
 }
 
 func (w *worker) predictTiKVIndexBytesBlockSample(
@@ -4687,7 +4744,7 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 			continue
 		}
 
-		predictedAvgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableBlockSampleBytesPerRow(
+		predictedAvgBytesPerRow, mvccAvgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableBlockSampleBytesPerRow(
 			jobCtx,
 			sctx,
 			physicalTbl,
@@ -4712,6 +4769,7 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 			continue
 		}
 		totalPredictedBytes += predictedAvgBytesPerRow * float64(rowCount)
+		result.MVCCOverheadBytes += uint64(mvccAvgBytesPerRow * float64(rowCount))
 	}
 
 	if totalPredictedBytes > 0 {
@@ -4730,18 +4788,20 @@ func (w *worker) estimatePhysicalTableBlockSampleBytesPerRow(
 	seed uint64,
 ) (
 	predictedAvgBytesPerRow float64,
+	mvccAvgBytesPerRow float64,
 	sampledRegions int,
 	totalRows int,
 	readErrorCount int,
 	err error,
 ) {
 	if len(regions) == 0 {
-		return 0, 0, 0, 0, nil
+		return 0, 0, 0, 0, 0, nil
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	var (
-		totalWeightedAvgBytes float64
-		totalRegionWeight     float64
+		totalWeightedAvgBytes  float64
+		totalWeightedMVCCBytes float64
+		totalRegionWeight      float64
 	)
 	for _, region := range regions {
 		skipRows := blockSamplePredictionSkipRows(region, rnd)
@@ -4753,7 +4813,7 @@ func (w *worker) estimatePhysicalTableBlockSampleBytesPerRow(
 				zap.Int("skipRows", skipRows),
 				zap.Error(err))
 			if readErrorCount > samplePredictionMaxReadErrors {
-				return 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				return 0, 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
 					fmt.Sprintf("add index block sample prediction failed after %d read errors: %v", readErrorCount, err))
 			}
 			continue
@@ -4780,13 +4840,15 @@ func (w *worker) estimatePhysicalTableBlockSampleBytesPerRow(
 		if regionWeight <= 0 {
 			continue
 		}
+		mvccOverheadBytes := estimateSampledIndexKVMVCCOverheadBytes(kvs)
 		totalWeightedAvgBytes += float64(estimatedBytes.PredictedBytes) / float64(rowCnt) * float64(regionWeight)
+		totalWeightedMVCCBytes += float64(mvccOverheadBytes) / float64(rowCnt) * float64(regionWeight)
 		totalRegionWeight += float64(regionWeight)
 	}
 	if totalRegionWeight == 0 {
-		return 0, sampledRegions, totalRows, readErrorCount, nil
+		return 0, 0, sampledRegions, totalRows, readErrorCount, nil
 	}
-	return totalWeightedAvgBytes / totalRegionWeight, sampledRegions, totalRows, readErrorCount, nil
+	return totalWeightedAvgBytes / totalRegionWeight, totalWeightedMVCCBytes / totalRegionWeight, sampledRegions, totalRows, readErrorCount, nil
 }
 
 func (w *worker) sampleBlockIndexKVsFromRegion(
@@ -4961,8 +5023,11 @@ func estimateIndexKVBytesForSampledRow(
 	row []types.Datum,
 	handle kv.Handle,
 ) (int64, error) {
-	_, totalBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
-	return totalBytes, err
+	kvs, totalBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
+	if err != nil {
+		return 0, err
+	}
+	return totalBytes + estimateSampledIndexKVMVCCOverheadBytes(kvs), nil
 }
 
 type sampledIndexKV struct {
@@ -5042,11 +5107,12 @@ func estimateSampledIndexKVPredictionBytes(kvs []sampledIndexKV) sampleTiKVIndex
 		totalLogicalBytes += int64(len(kv.key) + len(kv.value))
 	}
 	predictedBytes, predictedErr := estimateSampledIndexKVPhysicalBytes(kvs)
+	mvccOverheadBytes := estimateSampledIndexKVMVCCOverheadBytes(kvs)
 	if predictedErr != nil {
-		result.PredictedBytes = totalLogicalBytes
+		result.PredictedBytes = totalLogicalBytes + mvccOverheadBytes
 		result.Err = predictedErr
 	} else {
-		result.PredictedBytes = predictedBytes
+		result.PredictedBytes = predictedBytes + mvccOverheadBytes
 	}
 	return result
 }
@@ -5099,6 +5165,32 @@ func estimateSampledIndexKVPhysicalBytes(kvs []sampledIndexKV) (int64, error) {
 		physicalBytes = int64(meta.Size)
 	}
 	return physicalBytes, nil
+}
+
+func estimateSampledIndexKVMVCCOverheadBytes(kvs []sampledIndexKV) int64 {
+	if len(kvs) == 0 {
+		return 0
+	}
+	var total int64
+	for _, kv := range kvs {
+		total += int64(math.Round(estimateTiKVMVCCOverheadBytesPerKV(float64(len(kv.key)), float64(len(kv.value)))))
+	}
+	return total
+}
+
+func estimateTiKVMVCCOverheadBytesPerKV(keyBytes, valueBytes float64) float64 {
+	if keyBytes <= 0 {
+		return 0
+	}
+	if valueBytes <= 0 {
+		return float64(tikvMVCCEmptyValueOverheadBytes)
+	}
+	if valueBytes <= tikvMVCCShortValueMaxBytes {
+		return float64(tikvMVCCShortValueOverheadBytes)
+	}
+	// Long values are stored in default CF, while write CF stores the write record.
+	// Compared with a logical TiDB KV, that adds another MVCC key for write CF.
+	return float64(tikvMVCCLongValueBaseOverheadBytes) + keyBytes
 }
 
 func extractHandleRestoreDataFromRow(tblInfo *model.TableInfo, pkIdx *model.IndexInfo, row []types.Datum) []types.Datum {
@@ -5324,12 +5416,13 @@ func estimateIndexKVBytesPerRowForBasicPrediction(
 	idxInfo *model.IndexInfo,
 	statsTbl *statistics.Table,
 	indexCols []*expression.Column,
-) float64 {
+) (predictedBytes, mvccOverheadBytes float64) {
 	statsColl := statsTbl.HistColl.ID2UniqueID(indexCols)
 	sessVars := sctx.GetSessionVars() //nolint:forbidigo
 	keyBytes := rowsize.GetIndexAvgRowSize(sessVars, statsColl, indexCols, idxInfo.Unique)
 	valueBytes := estimateIndexValueBytesPerRowForPrediction(tblInfo, idxInfo, &statsTbl.HistColl)
-	return keyBytes + valueBytes
+	mvccOverheadBytes = estimateTiKVMVCCOverheadBytesPerKV(keyBytes, valueBytes)
+	return keyBytes + valueBytes + mvccOverheadBytes, mvccOverheadBytes
 }
 
 func estimateIndexKVBytesPerRowForRepresentPrediction(
@@ -5338,17 +5431,17 @@ func estimateIndexKVBytesPerRowForRepresentPrediction(
 	idxInfo *model.IndexInfo,
 	physicalID int64,
 	statsTbl *statistics.Table,
-) (float64, error) {
+) (predictedBytes, mvccOverheadBytes float64, err error) {
 	indexedValues := buildRepresentativeIndexDatumsForPrediction(tblInfo, idxInfo.Columns, &statsTbl.HistColl)
 	handle, restoredData, err := buildRepresentativeHandleForPrediction(sctx, tblInfo, physicalID, idxInfo, &statsTbl.HistColl)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	loc := predictionTimeLocation(sctx)
 	encodedValues := cloneDatumsForPrediction(indexedValues)
 	key, distinct, err := tablecodec.GenIndexKey(loc, tblInfo, idxInfo, physicalID, encodedValues, handle, nil)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	needRestoredData := tables.NeedRestoredData(idxInfo.Columns, tblInfo.Columns)
 	value, err := tablecodec.GenIndexValuePortal(
@@ -5365,9 +5458,12 @@ func estimateIndexKVBytesPerRowForRepresentPrediction(
 		nil,
 	)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return float64(len(key) + len(value)), nil
+	keyBytes := float64(len(key))
+	valueBytes := float64(len(value))
+	mvccOverheadBytes = estimateTiKVMVCCOverheadBytesPerKV(keyBytes, valueBytes)
+	return keyBytes + valueBytes + mvccOverheadBytes, mvccOverheadBytes, nil
 }
 
 func estimateIndexValueBytesPerRowForPrediction(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, statsColl *statistics.HistColl) float64 {
