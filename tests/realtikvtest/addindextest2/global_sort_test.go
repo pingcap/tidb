@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -54,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/opt"
 	uberatomic "go.uber.org/atomic"
@@ -529,22 +529,6 @@ func TestIngestUseGivenTS(t *testing.T) {
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-	var tblInfo *model.TableInfo
-	var idxInfo *model.IndexInfo
-	var useCloudStorage bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterLoadCloudStorageURI", func(job *model.Job) {
-		useCloudStorage = job.ReorgMeta.UseCloudStorage
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if idxInfo == nil {
-			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
-			tblInfo = tbl.Meta()
-			if len(tblInfo.Indices) == 0 {
-				return
-			}
-			idxInfo = tblInfo.Indices[0]
-		}
-	})
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -558,32 +542,45 @@ func TestIngestUseGivenTS(t *testing.T) {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 	})
 
-	presetTS := oracle.GoTimeToTS(time.Now())
-	failpointTerm := fmt.Sprintf(`return(%d)`, presetTS)
-
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", failpointTerm)
-	require.NoError(t, err)
-
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
 	tk.MustExec("alter table t add index idx(a);")
 
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort")
+	jobRows := tk.MustQuery("admin show ddl jobs 1").Rows()
+	require.Len(t, jobRows, 1)
+	jobID, err := strconv.ParseInt(fmt.Sprint(jobRows[0][0]), 10, 64)
 	require.NoError(t, err)
+	taskID := getTaskID(t, jobID)
+	subtaskRows := tk.MustQuery(fmt.Sprintf(`
+		select meta from mysql.tidb_background_subtask
+			where task_key = '%d' and step = %d
+		union all
+		select meta from mysql.tidb_background_subtask_history
+			where task_key = '%d' and step = %d
+		limit 1`,
+		taskID, proto.BackfillStepWriteAndIngest, taskID, proto.BackfillStepWriteAndIngest)).Rows()
+	require.Len(t, subtaskRows, 1)
+	var subtaskMeta ddl.BackfillSubTaskMeta
+	require.NoError(t, json.Unmarshal([]byte(subtaskRows[0][0].(string)), &subtaskMeta))
+	require.Greater(t, subtaskMeta.TS, uint64(0))
 
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("addindexlit"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	require.Len(t, tblInfo.Indices, 1)
+	idxInfo := tblInfo.Indices[0]
 	dts := []types.Datum{types.NewIntDatum(1)}
 	sctx := tk.Session().GetSessionVars().StmtCtx
 	idxKey, _, err := tablecodec.GenIndexKey(sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
 	require.NoError(t, err)
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
-	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, presetTS)
+	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, subtaskMeta.TS)
 	require.NoError(t, err)
 	require.NotNil(t, mvccResp)
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
-	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
-	require.True(t, useCloudStorage)
+	require.Equal(t, subtaskMeta.TS, mvccResp.Info.Writes[0].CommitTs)
 }
 
 func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
