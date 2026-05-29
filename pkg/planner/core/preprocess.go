@@ -561,6 +561,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		(p.showTp == ast.ShowCreateView ||
 			p.showTp == ast.ShowCreateMaterializedView ||
 			p.showTp == ast.ShowMaterializedViewRemainLogs ||
+			p.showTp == ast.ShowMaterializedViewLogWaitPurge ||
 			p.showTp == ast.ShowCreateSequence) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}

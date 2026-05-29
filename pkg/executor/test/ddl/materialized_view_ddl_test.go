@@ -693,6 +693,9 @@ func TestShowMaterializedViewLogWaitPurge(t *testing.T) {
 	tk.MustExec("purge materialized view log on t_wait_purge")
 	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
 
+	tk.MustExec("create temporary table t_wait_purge (a int)")
+	tk.MustQuery("show materialized view log on t_wait_purge wait_purge").Check(testkit.Rows(expectedRow(0)))
+
 	tk.MustExec("create table t_wait_purge_no_log (a int)")
 	err = tk.QueryToErr("show materialized view log on t_wait_purge_no_log wait_purge")
 	require.ErrorContains(t, err, "materialized view log does not exist for base table test.t_wait_purge_no_log")

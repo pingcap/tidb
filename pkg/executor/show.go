@@ -923,11 +923,11 @@ func (e *ShowExec) fetchShowMaterializedViewLogWaitPurge(ctx context.Context) er
 		lastPurgedTSO = rows[0].GetUint64(0)
 	}
 
-	publicMVIDs, buildingMVIDs, err := e.collectDependentMViewIDsForMLogShow(execCtx, sqlExec, baseMeta, mlogMeta.ID)
+	publicMVIDs, buildingMVIDs, err := collectDependentMViewIDsForMLogPurge(execCtx, sqlExec, baseMeta, mlogMeta.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	safePurgeTSO, err := e.calcMLogSafePurgeTSOForShow(
+	safePurgeTSO, err := calcMaterializedViewLogSafePurgeTSO(
 		execCtx,
 		sqlExec,
 		e.DBName.O,
@@ -1001,139 +1001,6 @@ func (e *ShowExec) beginMViewLogShowInternalTxn(ctx context.Context) (
 		return nil, nil, 0, nil, errors.Trace(err)
 	}
 	return execCtx, sqlExec, txn.StartTS(), cleanup, nil
-}
-
-func (e *ShowExec) collectDependentMViewIDsForMLogShow(
-	ctx context.Context,
-	sqlExec sqlexec.SQLExecutor,
-	baseTableMeta *model.TableInfo,
-	mlogID int64,
-) (publicMVIDs, buildingMVIDs map[int64]struct{}, _ error) {
-	publicMVIDs = make(map[int64]struct{})
-	if baseMeta := baseTableMeta.MaterializedViewBase; baseMeta != nil {
-		for _, id := range baseMeta.MViewIDs {
-			if id > 0 {
-				publicMVIDs[id] = struct{}{}
-			}
-		}
-	}
-
-	buildingMVIDs = make(map[int64]struct{})
-	jobSQL := sqlescape.MustEscapeSQL(
-		"SELECT job_meta FROM mysql.tidb_ddl_job WHERE type = %? AND FIND_IN_SET(%?, table_ids)",
-		model.ActionCreateMaterializedView,
-		mlogID,
-	)
-	jobRows, err := sqlexec.ExecSQL(ctx, sqlExec, jobSQL)
-	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return publicMVIDs, buildingMVIDs, errors.New("required system table mysql.tidb_ddl_job does not exist")
-		}
-		return publicMVIDs, buildingMVIDs, errors.Trace(err)
-	}
-	for _, row := range jobRows {
-		jobBytes := row.GetBytes(0)
-		if len(jobBytes) == 0 {
-			continue
-		}
-		job := model.Job{}
-		if err := job.Decode(jobBytes); err != nil {
-			return publicMVIDs, buildingMVIDs, errors.Trace(err)
-		}
-		if job.TableID > 0 {
-			if _, ok := publicMVIDs[job.TableID]; !ok {
-				buildingMVIDs[job.TableID] = struct{}{}
-			}
-		}
-	}
-	return publicMVIDs, buildingMVIDs, nil
-}
-
-func (e *ShowExec) calcMLogSafePurgeTSOForShow(
-	ctx context.Context,
-	sqlExec sqlexec.SQLExecutor,
-	baseSchema string,
-	baseTable string,
-	purgeStartTS uint64,
-	publicMVIDs map[int64]struct{},
-	buildingMVIDs map[int64]struct{},
-) (uint64, error) {
-	safePurgeTSO := purgeStartTS
-	buildINList := func(ids []int64) string {
-		var sb strings.Builder
-		for i, id := range ids {
-			if i > 0 {
-				sb.WriteString(",")
-			}
-			sb.WriteString(strconv.FormatInt(id, 10))
-		}
-		return sb.String()
-	}
-
-	publicIDs := make([]int64, 0, len(publicMVIDs))
-	for mvID := range publicMVIDs {
-		publicIDs = append(publicIDs, mvID)
-	}
-	if len(publicIDs) > 0 {
-		countSQL := fmt.Sprintf(
-			"SELECT COUNT(1) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%s)",
-			buildINList(publicIDs),
-		)
-		countRows, err := sqlexec.ExecSQL(ctx, sqlExec, countSQL)
-		if err != nil {
-			if infoschema.ErrTableNotExists.Equal(err) {
-				return safePurgeTSO, errors.New("required system table mysql.tidb_mview_refresh_info does not exist")
-			}
-			return safePurgeTSO, errors.Trace(err)
-		}
-
-		var cnt int64
-		if len(countRows) > 0 {
-			cnt = countRows[0].GetInt64(0)
-		}
-		if cnt != int64(len(publicIDs)) {
-			return safePurgeTSO, errors.Errorf(
-				"materialized view refresh info is missing for some dependent materialized views on base table %s.%s (expected %d, got %d)",
-				baseSchema,
-				baseTable,
-				len(publicIDs),
-				cnt,
-			)
-		}
-	}
-
-	allMVIDs := make(map[int64]struct{}, len(publicMVIDs)+len(buildingMVIDs))
-	for mvID := range publicMVIDs {
-		allMVIDs[mvID] = struct{}{}
-	}
-	for mvID := range buildingMVIDs {
-		allMVIDs[mvID] = struct{}{}
-	}
-	allIDs := make([]int64, 0, len(allMVIDs))
-	for mvID := range allMVIDs {
-		allIDs = append(allIDs, mvID)
-	}
-	if len(allIDs) > 0 {
-		minSQL := fmt.Sprintf(
-			"SELECT MIN(COALESCE(LAST_SUCCESS_READ_TSO, CAST(0 AS UNSIGNED))) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID IN (%s)",
-			buildINList(allIDs),
-		)
-		minRows, err := sqlexec.ExecSQL(ctx, sqlExec, minSQL)
-		if err != nil {
-			if infoschema.ErrTableNotExists.Equal(err) {
-				return safePurgeTSO, errors.New("required system table mysql.tidb_mview_refresh_info does not exist")
-			}
-			return safePurgeTSO, errors.Trace(err)
-		}
-
-		if len(minRows) > 0 && !minRows[0].IsNull(0) {
-			safePurgeTSO = minRows[0].GetUint64(0)
-			if safePurgeTSO > purgeStartTS {
-				safePurgeTSO = purgeStartTS
-			}
-		}
-	}
-	return safePurgeTSO, nil
 }
 
 func hasAnyMaterializedViewVisiblePriv(
