@@ -233,6 +233,17 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+
+	fn := func() bool {
+		if cc.bufReadConn != nil {
+			return cc.bufReadConn.IsAlive() != 0
+		}
+		return true
+	}
+	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
+	defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
+
+	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)

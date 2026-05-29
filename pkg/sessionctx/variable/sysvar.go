@@ -609,6 +609,16 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
+	{Scope: ScopeGlobal, Name: PerformanceSchemaSessionConnectAttrsSize,
+		Value: strconv.FormatInt(DefConnectAttrsSize, 10),
+		Type:  TypeInt, MinValue: -1, MaxValue: 65536,
+		GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+			return strconv.FormatInt(ConnectAttrsSize.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			ConnectAttrsSize.Store(TidbOptInt64(val, DefConnectAttrsSize))
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			num, err := strconv.ParseInt(val, 10, 64)
@@ -3911,6 +3921,10 @@ const (
 	LocalInFile = "local_infile"
 	// PerformanceSchema is the name for 'performance_schema' system variable.
 	PerformanceSchema = "performance_schema"
+	// PerformanceSchemaSessionConnectAttrsSize is the name for 'performance_schema_session_connect_attrs_size' system variable.
+	PerformanceSchemaSessionConnectAttrsSize = "performance_schema_session_connect_attrs_size"
+	// PerfSchemaSessionConnectAttrsSize is kept as a compatibility alias for release-8.5 backports.
+	PerfSchemaSessionConnectAttrsSize = PerformanceSchemaSessionConnectAttrsSize
 	// Flush is the name for 'flush' system variable.
 	Flush = "flush"
 	// SlaveAllowBatching is the name for 'slave_allow_batching' system variable.

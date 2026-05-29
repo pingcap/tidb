@@ -38,6 +38,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/external",
         "//pkg/testkit/testsetup",
+        "//pkg/testkit/testutil",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",

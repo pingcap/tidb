@@ -312,6 +312,17 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
 
+func TestIssue66339(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("set @a=1")
+	tk.MustHavePlan("select a from t where a=@a", "IndexRangeScan")
+	tk.MustExec("set @A=1")
+	tk.MustHavePlan("select a from t where a=@A", "IndexRangeScan")
+}
+
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

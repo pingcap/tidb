@@ -126,6 +126,8 @@ var defaultStatus = map[string]*StatusVal{
 	"Ssl_cipher_list": {ScopeGlobal | ScopeSession, ""},
 	"Ssl_verify_mode": {ScopeGlobal | ScopeSession, 0},
 	"Ssl_version":     {ScopeGlobal | ScopeSession, ""},
+	"Performance_schema_session_connect_attrs_longest_seen": {ScopeGlobal, int64(0)},
+	"Performance_schema_session_connect_attrs_lost":         {ScopeGlobal, int64(0)},
 }
 
 type defaultStatusStat struct {
@@ -141,6 +143,10 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 	for name, v := range defaultStatus {
 		statusVars[name] = v.Value
 	}
+
+	// Read live values from atomic counters for connect attrs status variables.
+	statusVars["Performance_schema_session_connect_attrs_longest_seen"] = ConnectAttrsLongestSeen.Load()
+	statusVars["Performance_schema_session_connect_attrs_lost"] = ConnectAttrsLost.Load()
 
 	// `vars` may be nil in unit tests.
 	if vars != nil && vars.TLSConnectionState != nil {
