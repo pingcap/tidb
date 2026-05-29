@@ -1144,6 +1144,16 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 	})
 	require.NoError(t, gotHandler(context.Background(), nil, dropMVTableEvent))
 	require.Equal(t, int32(3), called.Load())
+
+	alterMVRefreshEvent := &notifier.SchemaChangeEvent{}
+	require.NoError(t, alterMVRefreshEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionAlterMaterializedViewRefresh))))
+	require.NoError(t, gotHandler(context.Background(), nil, alterMVRefreshEvent))
+	require.Equal(t, int32(4), called.Load())
+
+	alterMLogPurgeEvent := &notifier.SchemaChangeEvent{}
+	require.NoError(t, alterMLogPurgeEvent.UnmarshalJSON([]byte(fmt.Sprintf(`{"type":%d}`, meta.ActionAlterMaterializedViewLogPurge))))
+	require.NoError(t, gotHandler(context.Background(), nil, alterMLogPurgeEvent))
+	require.Equal(t, int32(5), called.Load())
 }
 
 func TestServerHelperLoadAllTiDBMLogPurge(t *testing.T) {

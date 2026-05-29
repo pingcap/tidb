@@ -950,6 +950,31 @@ func TestMLogOnlineDDLDropUntrackedColumn(t *testing.T) {
 	))
 }
 
+func TestMLogOnlineDDLDropTrackedColumnRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_metadata_lock=0")
+
+	tk.MustExec("create table t (id int primary key, tracked int, untracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+	tk.MustExec("insert into t values (1, 10, 100)")
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	err := tkDDL.ExecToErr("alter table t drop column tracked")
+	require.ErrorContains(t, err, "Unsupported ALTER TABLE on base table column tracked referenced by materialized view log")
+
+	// The tracked column remains valid after rejected DDL and mlog writing should work.
+	tk.MustExec("insert into t values (2, 20, 200)")
+	tk.MustQuery(
+		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"2 20 I 1",
+	))
+}
+
 func TestMLogDropTrackedColumnRejected(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -960,14 +985,19 @@ func TestMLogDropTrackedColumnRejected(t *testing.T) {
 	err := tk.ExecToErr("alter table t drop column tracked")
 	require.ErrorContains(t, err, "Unsupported ALTER TABLE on base table column tracked referenced by materialized view log")
 
-	// The failed DDL should leave both the base table schema and mlog behavior intact.
+	// DML remains writable and tracked-column change logs are still generated as expected.
 	tk.MustExec("insert into t values (1, 10, 100)")
+	tk.MustExec("update t set tracked = 11 where id = 1")
+	tk.MustExec("delete from t where id = 1")
 	tk.MustQuery(
 		"select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
-	).Check(testkit.Rows(
+	).Sort().Check(testkit.Rows(
 		"1 10 I 1",
+		"1 10 U -1",
+		"1 11 D -1",
+		"1 11 U 1",
 	))
-	tk.MustQuery("select id, tracked, untracked from t").Check(testkit.Rows("1 10 100"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'test' and table_name = 't' and column_name = 'tracked'").Check(testkit.Rows("1"))
 }
 
 func TestMLogGeneratedColumn(t *testing.T) {

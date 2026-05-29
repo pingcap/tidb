@@ -96,7 +96,7 @@ alter table t drop column untracked;
 update t set tracked = 11 where id = 1;
 select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 
-# DDL on tracked columns is rejected up-front
+# DDL on tracked columns is rejected up-front and mlog remains usable
 
 drop table if exists t;
 drop table if exists `$mlog$t`;
@@ -104,8 +104,10 @@ create table t (id int primary key, tracked int, untracked int);
 create materialized view log on t (id, tracked);
 --error 8200
 alter table t drop column tracked;
-insert into t values (1, 100, 1000);
-select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`;
+insert into t values (1, 10, 100);
+update t set tracked = 11 where id = 1;
+delete from t where id = 1;
+select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 
 # Test for issue #66245, the mlog table should not use the base table's auto-increment id by mistake.
 drop table if exists t, `$mlog$t`;

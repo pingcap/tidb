@@ -109,10 +109,15 @@ create table t (id int primary key, tracked int, untracked int);
 create materialized view log on t (id, tracked);
 alter table t drop column tracked;
 Error 8200 (HY000): Unsupported ALTER TABLE on base table column tracked referenced by materialized view log
-insert into t values (1, 100, 1000);
-select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`;
+insert into t values (1, 10, 100);
+update t set tracked = 11 where id = 1;
+delete from t where id = 1;
+select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`;
 id	tracked	_MLOG$_DML_TYPE	_MLOG$_OLD_NEW
-1	100	I	1
+1	10	I	1
+1	10	U	-1
+1	11	D	-1
+1	11	U	1
 drop table if exists t, `$mlog$t`;
 create table t(a int);
 create materialized view log on t (a);
