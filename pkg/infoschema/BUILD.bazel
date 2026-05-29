@@ -93,8 +93,8 @@ go_test(
         "sieve_test.go",
     ],
     embed = [":infoschema"],
-    flaky = True,
-    shard_count = 28,
+        flaky = True,
+    shard_count = 41,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",
