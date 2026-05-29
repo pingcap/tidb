@@ -51,6 +51,8 @@ import (
 )
 
 func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
+	intest.Assert(e.samplingStatsConcurrency > 0,
+		"samplingStatsConcurrency must be resolved by AnalyzeExec.Next before workers fan out")
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
