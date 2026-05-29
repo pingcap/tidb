@@ -9,9 +9,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 )
 
 func (e *memtableRetriever) setDataForLogReplStatusGlobal(ctx context.Context, sctx sessionctx.Context) error {
@@ -141,7 +143,18 @@ func (e *memtableRetriever) setDataForLogReplWorkflowHistoryGlobal(ctx context.C
 	do := domain.GetDomain(sctx)
 	pdCli := do.GetPDClient()
 
-	workflows, err := pdCli.ListLogReplWorkflows(ctx)
+	opts := pd.ListLogReplWorkflowsOptions{}
+	if extractor, ok := e.extractor.(*plannercore.LogReplWorkflowHistoryGlobalExtractor); ok {
+		if extractor.SkipRequest {
+			e.rows = nil
+			return nil
+		}
+		opts.StartWorkflowID = extractor.StartWorkflowID
+		opts.EndWorkflowID = extractor.EndWorkflowID
+		opts.Limit = extractor.Limit
+	}
+
+	workflows, err := pdCli.ListLogReplWorkflows(ctx, opts)
 	if err != nil {
 		return err
 	}

@@ -133,9 +133,14 @@ type mockWorkflowListResult struct {
 type mockWorkflowLister struct {
 	results []mockWorkflowListResult
 	calls   int
+	opts    []pd.ListLogReplWorkflowsOptions
 }
 
-func (m *mockWorkflowLister) ListLogReplWorkflows(context.Context) ([]*pdpb.WorkflowInfo, error) {
+func (m *mockWorkflowLister) ListLogReplWorkflows(
+	_ context.Context,
+	opts pd.ListLogReplWorkflowsOptions,
+) ([]*pdpb.WorkflowInfo, error) {
+	m.opts = append(m.opts, opts)
 	if len(m.results) == 0 {
 		return nil, nil
 	}
@@ -160,6 +165,11 @@ func TestPollWorkflowCompleteRetriesListErrors(t *testing.T) {
 	err := pollWorkflowComplete(context.Background(), lister, 42, &sqlkiller.SQLKiller{})
 	require.NoError(t, err)
 	require.Equal(t, 3, lister.calls)
+	require.Equal(t, []pd.ListLogReplWorkflowsOptions{
+		{StartWorkflowID: 42, EndWorkflowID: 43, Limit: 1},
+		{StartWorkflowID: 42, EndWorkflowID: 43, Limit: 1},
+		{StartWorkflowID: 42, EndWorkflowID: 43, Limit: 1},
+	}, lister.opts)
 }
 
 func TestPollWorkflowCompleteReturnsWorkflowNotCancelableOnCancel(t *testing.T) {

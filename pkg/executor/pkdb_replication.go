@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"slices"
@@ -697,7 +698,7 @@ func astProtectionModeToPB(mode ast.ProtectionMode) pdpb.ProtectionMode {
 }
 
 type logReplWorkflowLister interface {
-	ListLogReplWorkflows(ctx context.Context) ([]*pdpb.WorkflowInfo, error)
+	ListLogReplWorkflows(ctx context.Context, opts pd.ListLogReplWorkflowsOptions) ([]*pdpb.WorkflowInfo, error)
 }
 
 func newWorkflowNotCancelableErr(workflowID uint64) error {
@@ -723,28 +724,33 @@ func pollWorkflowComplete(
 			return backoff.Permanent(err)
 		}
 
-		// TODO: optimize by adding a PD API to query workflow status by ID,
-		// instead of listing all workflows and find the target one.
-		workflows, err := workflowLister.ListLogReplWorkflows(ctx)
+		// Query the target workflow directly by its single-ID half-open range.
+		opts := pd.ListLogReplWorkflowsOptions{
+			StartWorkflowID: workflowID,
+			Limit:           1,
+		}
+		if workflowID < math.MaxUint64 {
+			opts.EndWorkflowID = workflowID + 1
+		}
+		workflows, err := workflowLister.ListLogReplWorkflows(ctx, opts)
 		if err != nil {
 			if ctx.Err() != nil {
 				return backoff.Permanent(err)
 			}
 			return err
 		}
-		for _, wf := range workflows {
-			if wf.Id == workflowID {
-				if wf.State == "COMPLETED" {
-					return nil
-				}
-				if wf.State == "CANCELLED" {
-					return backoff.Permanent(errors.Errorf("workflow %d is cancelled", workflowID))
-				}
-				return fmt.Errorf("workflow %d not completed, state=%s", workflowID, wf.State)
-			}
+		if len(workflows) == 0 || workflows[0].Id != workflowID {
+			return backoff.Permanent(errors.Errorf("workflow %d has been cleaned", workflowID))
 		}
-		// workflow not found in the list, treat as completed
-		return nil
+
+		wf := workflows[0]
+		if wf.State == "COMPLETED" {
+			return nil
+		}
+		if wf.State == "CANCELLED" {
+			return backoff.Permanent(errors.Errorf("workflow %d is cancelled", workflowID))
+		}
+		return fmt.Errorf("workflow %d not completed, state=%s", workflowID, wf.State)
 	}, backoff.WithContext(bo, ctx), func(err error, next time.Duration) {
 		logutil.Logger(ctx).Info(
 			"poll log replication workflow state",

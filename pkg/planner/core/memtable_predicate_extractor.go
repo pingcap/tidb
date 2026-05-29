@@ -618,6 +618,115 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
+// extracts the uint64 range column as a half-open interval [start, end), e.g:
+// SELECT * FROM t WHERE id=10
+// SELECT * FROM t WHERE id>=10 AND id<20
+func (helper extractHelper) extractUint64Range(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+	extractColName string,
+) (
+	remained []expression.Expression,
+	start uint64,
+	end uint64,
+	skip bool,
+) {
+	remained = make([]expression.Expression, 0, len(predicates))
+	startIsSet := false
+	endIsSet := false
+	extractCols := helper.findColumn(schema, names, extractColName)
+	if len(extractCols) == 0 {
+		return predicates, start, end, false
+	}
+
+	for _, expr := range predicates {
+		fn, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			remained = append(remained, expr)
+			continue
+		}
+
+		fnName := fn.FuncName.L
+		switch fnName {
+		case ast.EQ, ast.GT, ast.GE, ast.LT, ast.LE:
+		default:
+			remained = append(remained, expr)
+			continue
+		}
+
+		colName, datums := helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+		if colName != extractColName {
+			remained = append(remained, expr)
+			continue
+		}
+
+		switch datums[0].Kind() {
+		case types.KindUint64, types.KindInt64:
+		default:
+			remained = append(remained, expr)
+			continue
+		}
+		uintValue := datums[0].GetUint64()
+
+		switch fnName {
+		case ast.EQ:
+			if (startIsSet && uintValue < start) || (endIsSet && uintValue >= end) {
+				skip = true
+				break
+			}
+			start = uintValue
+			startIsSet = true
+			if uintValue < math.MaxUint64 {
+				end = uintValue + 1
+				endIsSet = true
+			} else {
+				end = 0
+				endIsSet = false
+			}
+		case ast.GT:
+			if uintValue == math.MaxUint64 {
+				skip = true
+				break
+			}
+			startValue := uintValue + 1
+			if !startIsSet || startValue > start {
+				start = startValue
+				startIsSet = true
+			}
+		case ast.GE:
+			if !startIsSet || uintValue > start {
+				start = uintValue
+				startIsSet = true
+			}
+		case ast.LT:
+			if !endIsSet || uintValue < end {
+				end = uintValue
+				endIsSet = true
+			}
+		case ast.LE:
+			if uintValue < math.MaxUint64 {
+				endValue := uintValue + 1
+				if !endIsSet || endValue < end {
+					end = endValue
+					endIsSet = true
+				}
+			}
+		}
+
+		if startIsSet && endIsSet && start >= end {
+			skip = true
+			break
+		}
+	}
+
+	if skip {
+		return nil, start, end, true
+	}
+	return remained, start, end, false
+}
+
 func (extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
 	quantiles := make([]float64, 0, len(quantileSet))
 	for k := range quantileSet {
@@ -1966,22 +2075,74 @@ func (*LogReplClusterStatusGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) str
 // LogReplWorkflowHistoryGlobalExtractor extracts predicates for LR_WORKFLOW_HISTORY_GLOBAL table
 type LogReplWorkflowHistoryGlobalExtractor struct {
 	extractHelper
+
+	// SkipRequest means the workflow_id predicates cannot match any workflow.
+	SkipRequest bool
+	// StartWorkflowID is the inclusive start ID extracted from workflow_id predicates.
+	StartWorkflowID uint64
+	// EndWorkflowID is the exclusive end ID extracted from workflow_id predicates.
+	EndWorkflowID uint64
+	// Limit is the maximum number of rows to request from PD for this scan.
+	// A value of 0 means no limit is pushed down to PD.
+	Limit uint64
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (*LogReplWorkflowHistoryGlobalExtractor) Extract(
-	_ base.PlanContext,
-	_ *expression.Schema,
-	_ []*types.FieldName,
+func (e *LogReplWorkflowHistoryGlobalExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	// TODO: Implement predicate push-down for workflow history
-	return predicates
+	remained, e.StartWorkflowID, e.EndWorkflowID, e.SkipRequest = e.extractUint64Range(
+		ctx,
+		schema,
+		names,
+		predicates,
+		"workflow_id",
+	)
+	if e.SkipRequest {
+		e.Limit = 0
+		return nil
+	}
+	return remained
+}
+
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *LogReplWorkflowHistoryGlobalExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+
+	if e.SkipRequest {
+		e.Limit = 0
+		return
+	}
+	if e.StartWorkflowID > 0 && e.EndWorkflowID > 0 {
+		rangeLimit := e.EndWorkflowID - e.StartWorkflowID
+		limit = min(rangeLimit, limit)
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
 }
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (*LogReplWorkflowHistoryGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
-	return ""
+func (e *LogReplWorkflowHistoryGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	items := make([]string, 0, 3)
+	if e.StartWorkflowID > 0 {
+		items = append(items, fmt.Sprintf("start_workflow_id:%d", e.StartWorkflowID))
+	}
+	if e.EndWorkflowID > 0 {
+		items = append(items, fmt.Sprintf("end_workflow_id:%d", e.EndWorkflowID))
+	}
+	if e.Limit > 0 {
+		items = append(items, fmt.Sprintf("limit:%d", e.Limit))
+	}
+	return strings.Join(items, ", ")
 }
 
 // LogReplStatusLocalExtractor extracts predicates for LR_STATUS_LOCAL table
