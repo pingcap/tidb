@@ -1265,8 +1265,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.CheckRequirements {
 		// When `restore point`, we have already checked changefeed compatibility outside.
 		if cfg.piTRTaskInfo == nil {
-			log.Info("Checking incompatible TiCDC changefeeds before restoring.",
-				logutil.ShortError(err), zap.Uint64("restore-ts", backupMeta.EndVersion))
+			log.Info("Checking incompatible TiCDC changefeeds before restoring.", zap.Uint64("restore-ts", backupMeta.EndVersion))
 			if err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient()); err != nil {
 				return errors.Trace(err)
 			}
