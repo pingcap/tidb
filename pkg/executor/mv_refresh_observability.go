@@ -237,6 +237,7 @@ func (e *RefreshMaterializedViewDryRunExec) generateRows(ctx context.Context) ([
 	if err != nil {
 		return nil, err
 	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	var completeDeleteRows [][]string
 	var completeInsertRows [][]string
@@ -276,6 +277,12 @@ func (e *RefreshMaterializedViewDryRunExec) generateRows(ctx context.Context) ([
 func (e *RefreshMaterializedViewDryRunExec) buildFastMergePlanRows(ctx context.Context) ([][]string, error) {
 	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
 	refreshStmt.ObserveType = ast.RefreshMaterializedViewObserveNone
+	refreshExec := &RefreshMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
+	}
+	if _, _, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt); err != nil {
+		return nil, err
+	}
 	implementStmt := &ast.RefreshMaterializedViewImplementStmt{
 		RefreshStmt:                  refreshStmt,
 		LastSuccessfulRefreshReadTSO: 0,
@@ -323,6 +330,16 @@ func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalStmt(ctx co
 
 	restore := enableMVRefreshObserveMaintenanceFlags(internalSctx)
 	defer restore()
+
+	txnPreparer, ok := internalSctx.(interface {
+		PrepareTxnCtx(context.Context) error
+	})
+	if !ok {
+		return nil, errors.New("dry run refresh materialized view: invalid internal session")
+	}
+	if err := txnPreparer.PrepareTxnCtx(ctx); err != nil {
+		return nil, err
+	}
 
 	is := e.is
 	if is == nil {

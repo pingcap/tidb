@@ -118,6 +118,20 @@ func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
 	requireRowsContainPrefix(t, completeRows, "[S08 FINALIZE_HIST]")
 }
 
+func TestFastDryRunMaterializedViewRefreshUsesCurrentDB(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_fast_dry_run (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_fast_dry_run values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t_mv_fast_dry_run (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_fast_dry_run (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_fast_dry_run group by a")
+
+	rows := tk.MustQuery("refresh materialized view mv_fast_dry_run fast dry run").Rows()
+	requireRowsContainPrefix(t, rows, "[S04 DATA_CHANGE_FAST_MERGE]")
+	requireRowsContainPrefix(t, rows, "  MVDeltaMerge")
+}
+
 func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
