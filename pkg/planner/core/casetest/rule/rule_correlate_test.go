@@ -127,11 +127,27 @@ where m.id in (
 and ic.company_id = 1`
 
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "aggregation_eliminate"`)
+	tk.MustExec("admin reload opt_rule_blacklist")
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "aggregation_eliminate"`)
+		tk.MustExec("admin reload opt_rule_blacklist")
+	}()
+	tk.MustExec(`insert into mysql.opt_rule_blacklist values ("aggregation_eliminate")`)
+	tk.MustExec("admin reload opt_rule_blacklist")
 	rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 	require.True(t, explainContains(rows, "Apply"),
-		"with alternative plans, expected Apply in plan:\n%s", joinExplainRows(rows))
+		"with aggregation_eliminate disabled, expected Apply in plan:\n%s", joinExplainRows(rows))
+	require.True(t, explainHasDistinctLikeAgg(rows),
+		"with aggregation_eliminate disabled, expected inner distinct agg in Apply plan:\n%s", joinExplainRows(rows))
+
+	tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "aggregation_eliminate"`)
+	tk.MustExec("admin reload opt_rule_blacklist")
+	rows = tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.True(t, explainContains(rows, "Apply"),
+		"with aggregation_eliminate enabled, expected Apply in plan:\n%s", joinExplainRows(rows))
 	require.False(t, explainHasDistinctLikeAgg(rows),
-		"expected correlated IN apply to eliminate inner distinct agg:\n%s", joinExplainRows(rows))
+		"with aggregation_eliminate enabled, expected correlated IN apply to eliminate inner distinct agg:\n%s", joinExplainRows(rows))
 	tk.MustQuery(sql).Check(testkit.Rows("2"))
 }
 
