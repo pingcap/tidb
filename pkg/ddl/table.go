@@ -563,6 +563,13 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 
 	tblInfo.ID = args.NewTableID
 
+	// Update masking policy table_id from old to new. Column IDs stay the same.
+	oldTableID := oldTblInfo.ID
+	if err := w.updateMaskingPolicyTableIDAfterTruncate(jobCtx, oldTableID, tblInfo.ID); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	// build table & partition bundles if any.
 	bundles, err := placement.NewFullTableBundles(metaMut, tblInfo)
 	if err != nil {

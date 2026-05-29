@@ -533,6 +533,11 @@ func (w *worker) deleteMaskingPolicyFromSysTable(jobCtx *jobContext, policyID in
 func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, tableID)
 	if err != nil {
+		// If the masking policy system table itself doesn't exist (e.g., during
+		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {
@@ -543,9 +548,53 @@ func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) e
 	return nil
 }
 
+// dropMaskingPoliciesByDBName deletes all masking policies for a given database
+// in a single SQL statement using the db_name column.
+func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) error {
+	const deleteSQL = "DELETE FROM mysql.tidb_masking_policy WHERE db_name = %?"
+	_, err := w.sess.Execute(jobCtx.stepCtx, deleteSQL, "drop-masking-policies-by-db", dbName)
+	if err != nil {
+		// If the masking policy system table itself doesn't exist (e.g., during
+		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// updateMaskingPolicyTableIDAfterTruncate updates the table_id in
+// mysql.tidb_masking_policy from the old table ID to the new one after TRUNCATE TABLE.
+// Column IDs remain the same across truncate, so column bindings are preserved.
+func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, oldTableID, newTableID int64) error {
+	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, oldTableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	const updateSQL = `UPDATE mysql.tidb_masking_policy
+		SET table_id = %?, updated_at = %?
+		WHERE policy_id = %?`
+	now := time.Now()
+	for _, policy := range policies {
+		_, err := w.sess.Execute(jobCtx.stepCtx, updateSQL, "update-masking-policy-table-id",
+			newTableID, now, policy.ID,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, columnID int64) error {
 	policies, err := w.getMaskingPoliciesByTableColumnFromSysTable(jobCtx.stepCtx, tableID, columnID)
 	if err != nil {
+		// If the masking policy system table itself doesn't exist (e.g., during
+		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {

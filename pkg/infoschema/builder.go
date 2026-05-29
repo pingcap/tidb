@@ -632,7 +632,9 @@ func needRefreshMaskingPoliciesForTableDiff(tp model.ActionType) bool {
 		model.ActionDropColumn,
 		model.ActionModifyColumn,
 		model.ActionRenameTable,
-		model.ActionRenameTables:
+		model.ActionRenameTables,
+		model.ActionTruncateTable,
+		model.ActionDropSchema:
 		return true
 	default:
 		return false

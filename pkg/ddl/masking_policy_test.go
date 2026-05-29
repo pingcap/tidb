@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMaskingPolicyDDLBasic(t *testing.T) {
@@ -227,4 +228,74 @@ func TestMaskingPolicyExpressionRejectsNonTargetColumn(t *testing.T) {
 
 	// ALTER TABLE ... MODIFY MASKING POLICY with target column reference must succeed.
 	tk.MustExec("alter table t_expr_dep modify masking policy p_valid set expression = concat(a, '_masked')")
+}
+
+func TestMaskingPolicyTruncateKeepsPolicy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_trunc")
+	tk.MustExec("create table t_trunc(id int primary key, c varchar(100))")
+	tk.MustExec("insert into t_trunc values (1, 'secret')")
+	tk.MustExec("create masking policy p_trunc on t_trunc(c) as c enable")
+
+	// Verify policy exists before truncate
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p_trunc'").
+		Check(testkit.Rows("1"))
+
+	// Capture the table_id before truncate
+	var oldTableID string
+	rs := tk.MustQuery("select table_id from mysql.tidb_masking_policy where policy_name = 'p_trunc'")
+	oldTableID = rs.Rows()[0][0].(string)
+
+	// Truncate the table
+	tk.MustExec("truncate table t_trunc")
+
+	// Verify policy still exists after truncate
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p_trunc'").
+		Check(testkit.Rows("1"))
+
+	// Verify table_id was updated to a new table ID (different from old)
+	rs = tk.MustQuery("select table_id from mysql.tidb_masking_policy where policy_name = 'p_trunc'")
+	newTableID := rs.Rows()[0][0].(string)
+	require.NotEqual(t, oldTableID, newTableID, "table_id should change after TRUNCATE TABLE")
+
+	// Verify we can still operate on the policy after truncate
+	tk.MustExec("alter table t_trunc disable masking policy p_trunc")
+	tk.MustQuery("select status from mysql.tidb_masking_policy where policy_name = 'p_trunc'").
+		Check(testkit.Rows("DISABLED"))
+
+	tk.MustExec("alter table t_trunc enable masking policy p_trunc")
+	tk.MustQuery("select status from mysql.tidb_masking_policy where policy_name = 'p_trunc'").
+		Check(testkit.Rows("ENABLED"))
+
+	// Verify we can drop the policy after truncate
+	tk.MustExec("alter table t_trunc drop masking policy p_trunc")
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where policy_name = 'p_trunc'").
+		Check(testkit.Rows("0"))
+}
+
+func TestMaskingPolicyDropDatabaseCleanup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Create a separate database with tables and masking policies
+	tk.MustExec("drop database if exists db_mask_cleanup")
+	tk.MustExec("create database db_mask_cleanup")
+	tk.MustExec("use db_mask_cleanup")
+	tk.MustExec("create table t1(c varchar(100))")
+	tk.MustExec("create table t2(c varchar(100))")
+	tk.MustExec("create masking policy p1 on t1(c) as c enable")
+	tk.MustExec("create masking policy p2 on t2(c) as c enable")
+
+	// Verify policies exist
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where db_name = 'db_mask_cleanup'").
+		Check(testkit.Rows("2"))
+
+	// Drop the database
+	tk.MustExec("drop database db_mask_cleanup")
+
+	// Verify all policies for this database are cleaned up
+	tk.MustQuery("select count(*) from mysql.tidb_masking_policy where db_name = 'db_mask_cleanup'").
+		Check(testkit.Rows("0"))
 }
