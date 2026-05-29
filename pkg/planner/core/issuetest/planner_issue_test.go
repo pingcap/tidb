@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -202,6 +203,20 @@ INNER JOIN
 ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 			"1 Alice 1 100",
 			"<nil> Bob <nil> <nil>"))
+	}
+
+	// issue-66322-nullif-type-leak
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t_nullif (c6 mediumtext null, c10 enum('value1','value2','value3') null, c14 float(8,2) null, c15 double(12,4) null)")
+		tk.MustExec("insert into t_nullif values ('sample_jNu', 'value3', 43.51, 49.92)")
+		tk.MustQuery("select nullif(nullif(c10, c15), c15) from t_nullif").Check(testkit.Rows("value3"))
+		tk.MustQuery("select c6 as v from t_nullif union all select nullif(nullif(c10, c15), c15) from t_nullif").Sort().Check(testkit.Rows("sample_jNu", "value3"))
+		tk.MustQuery("with cte_995 as (select (select s164.c10 as subq_col from t_nullif as s164 order by s164.c10 asc limit 1) as col_1, nullif(nullif(pft41.c10, pft41.c15), pft41.c15) as col_3 from t_nullif as pft41) (select distinct variance(car26.c14) as col_1, car26.c6 as c6 from t_nullif as car26 group by car26.c6) union all select ueb82.col_1 as col_1, ueb82.col_3 as col_5 from cte_995 as ueb82").Sort().Check(testkit.Rows("0 sample_jNu", "value3 value3"))
+		tk.MustExec("create table t_nullif_plan (u bigint unsigned not null)")
+		// The returned value branch should keep the original NULLIF argument type, not the comparison type.
+		plan := tk.MustQuery("explain format = 'plan_tree' select nullif(u, 1) from t_nullif_plan").String()
+		require.NotContains(t, plan, "cast(test.t_nullif_plan.u")
 	}
 
 	// update-join-covering-index
@@ -508,6 +523,22 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk.MustQuery("select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").Check(testkit.Rows("100 2"))
 	}
 
+	// merge-join-order-with-constant-leading-key
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t1(a int not null, b int not null, c int, primary key(a, b));")
+		tk.MustExec("create table t2(a int not null, b int not null, c int, primary key(a, b));")
+
+		tk.MustQuery("explain format='plan_tree' select /*+ merge_join(t1, t2) */ t1.a, t1.b from t1 join t2 on t1.a = t2.a and t1.b = t2.b where t1.a = 1 and t2.c > 10 group by t1.a, t1.b order by t1.b limit 2").Check(
+			testkit.Rows("Limit root  offset:0, count:2",
+				"└─MergeJoin root  inner join, left key:test.t2.a, test.t2.b, right key:test.t1.a, test.t1.b",
+				"  ├─TableReader(Build) root  data:TableRangeScan",
+				"  │ └─TableRangeScan cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo",
+				"  └─TableReader(Probe) root  data:Selection",
+				"    └─Selection cop[tikv]  gt(test.t2.c, 10)",
+				"      └─TableRangeScan cop[tikv] table:t2 range:[1,1], keep order:true, stats:pseudo"))
+	}
+
 	// instance-plan-cache-with-prepare
 	{
 		tk1 := prepareSharedTestKit(t)
@@ -530,6 +561,30 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		tk2.MustExec("admin check table t;")
 		tk2.MustExec("set global tidb_enable_instance_plan_cache = 0;")
+	}
+
+	// constant-group-having-firstrow-pushdown
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t0 (c0 int)")
+		tk.MustExec("create table t84 (c0 int)")
+		tk.MustExec("insert into t0 values (1), (0), (NULL)")
+		tk.MustExec("insert into t84 values (1), (0), (NULL)")
+
+		baseQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL ORDER BY t84.c0"
+		trueQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING t84.c0 ORDER BY t84.c0"
+		notQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING NOT (t84.c0) ORDER BY t84.c0"
+		isNullQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t84.c0 IS NULL) ORDER BY t84.c0"
+
+		tk.MustQuery(baseQuery).Check(testkit.Rows("1"))
+		tk.MustQuery(trueQuery).Check(testkit.Rows("1"))
+		tk.MustQuery(notQuery).Check(testkit.Rows())
+		tk.MustQuery(isNullQuery).Check(testkit.Rows())
+		tk.MustQuery(`SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING t84.c0
+UNION ALL
+SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING NOT (t84.c0)
+UNION ALL
+SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t84.c0 IS NULL)`).Check(testkit.Rows("1"))
 	}
 
 	// virtual-generated-column-substitute
@@ -734,6 +789,164 @@ GROUP BY field1
 HAVING (((field1 <> 6 AND field1 <= 8) OR field1 <> 7) OR field1 <= 9)
 ORDER BY field1`).Check(testkit.Rows())
 	}
+
+	// issue-63455-point-update-negative-to-unsigned
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, bing bigint unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #63455 it wrapped -1 to MAX_UINT64 without error.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-unsigned-decimal-negative
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, bing decimal(10, 0) unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #67534 it might wrap -1 using CAST semantics.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-unsigned-real-negative
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, bing double unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #67534 it might wrap -1 using CAST semantics.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-set-int-assignment
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, bing set('1','2','3') default null)")
+		tk.MustExec("insert into foo values (1, null), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		tk.MustExec("update foo set bing = (select 3) where id = 1")
+
+		// Fast point-update path should have the same enum/set-as-int behavior as the normal UPDATE path.
+		tk.MustExec("update foo set bing = 3 where id = 2")
+
+		tk.MustQuery("select id, bing + 0, bing from foo order by id").Check(testkit.Rows(
+			"1 3 1,2",
+			"2 3 1,2",
+		))
+	}
+
+	// issue-67967-unionscan-should-eliminate-tabledual-for-null-comparison
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t_issue_67967 (id bigint not null primary key auto_increment, delete_flag tinyint default null)")
+
+		for _, sql := range []string{
+			"begin",
+			"insert into t_issue_67967(delete_flag) values (null)",
+		} {
+			tk.MustExec(sql)
+		}
+		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 use index() where delete_flag = null").Check(testkit.Rows(
+			"Projection 0.00 root  1->Column#4",
+			"└─TableDual 0.00 root  rows:0",
+		))
+		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 where delete_flag = null").Check(testkit.Rows(
+			"Projection 0.00 root  1->Column#4",
+			"└─TableDual 0.00 root  rows:0",
+		))
+		tk.MustExec("rollback")
+	}
+
+	// issue-64854-in-subquery-inside-not-in-list
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t0(c1 float8, c2 double, unique(c2, c1))")
+
+		tk.MustQuery(`select /* issue:64854 */ t0.c1 as ca1, t0.c1 as ca2, t0.c2 as ca3
+			from t0
+			where ((t0.c2) in (select t0.c1 as ca4 from t0)) not in
+				(((t0.c1 is false)),
+				((((binary (null ^ true)) not regexp ((binary bit_length((default(t0.c2))) >> 17))) is not true)))`).Check(testkit.Rows())
+	})
+
+	// issue-67802-mutable-user-var-join-cond-should-not-become-inner-side-filter
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("set @@sql_mode = default")
+		tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern='OFF'")
+		tk.MustExec("set @@tidb_enable_unsafe_substitute=0")
+
+		tk.MustExec("create table t1(a int)")
+		tk.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
+		tk.MustExec("create table t2(a int)")
+		tk.MustExec("insert into t2 values (1), (3), (5), (7), (9)")
+		tk.MustExec("create table t3(a int)")
+		tk.MustExec("insert into t3 values (1), (4), (7), (10)")
+		tk.MustExec("set @var1 = 6")
+		tk.MustExec("analyze table t1, t2, t3 all columns")
+
+		query := `SELECT t1.a, t2.a, t3.a, (@var1:= @var1+0) AS var
+FROM t1
+LEFT JOIN t2 ON t1.a=t2.a AND t2.a < @var1
+LEFT JOIN t3 ON t1.a=t3.a AND t3.a < @var1
+ORDER BY t1.a, t2.a, t3.a, var`
+		tk.MustQuery(query).Check(testkit.Rows(
+			"1 1 1 6",
+			"2 <nil> <nil> 6",
+			"3 3 <nil> 6",
+			"4 <nil> 4 6",
+			"5 5 <nil> 6",
+			"6 <nil> <nil> 6",
+			"7 <nil> <nil> 6",
+			"8 <nil> <nil> 6",
+			"9 <nil> <nil> 6",
+			"10 <nil> <nil> 6",
+		))
+	})
+
+	// constant-left-nulleq-partition-pruning
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t_range(a int) partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+		tk.MustExec("insert into t_range values (1), (11), (null)")
+		tk.MustQuery("select /* issue:65991 */ a from t_range where 1 <=> a").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:65991 */ a from t_range where null <=> a").Check(testkit.Rows("<nil>"))
+
+		tk.MustExec("create table t_range_cols(a int) partition by range columns(a) (partition p0 values less than (10), partition p1 values less than (maxvalue))")
+		tk.MustExec("insert into t_range_cols values (1), (11), (null)")
+		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where 1 <=> a").Check(testkit.Rows("1"))
+		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where null <=> a").Check(testkit.Rows("<nil>"))
+	})
+
+	// issue-66706-decimal-scale-leak-through-sign-view-predicate
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("CREATE TABLE t0(c0 NUMERIC)")
+		tk.MustExec("CREATE TABLE t1 LIKE t0")
+		tk.MustExec("REPLACE INTO t0 VALUES (-1780864408)")
+		tk.MustExec("INSERT INTO t1 VALUES (1448472626)")
+		tk.MustExec("CREATE OR REPLACE VIEW v0(c0) AS SELECT 0.99 FROM t1, t0")
+
+		tk.MustQuery("SELECT /* issue:66706 */ v0.c0 FROM v0 WHERE SIGN(v0.c0)").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {

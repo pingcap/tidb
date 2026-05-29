@@ -673,6 +673,9 @@ func TestCreatePartition(t *testing.T) {
 	wrk.fillInTableNames()
 
 	now := time.Now()
+	// The test builds date-based partitions with AddDate and TO_DAYS, so anchor at noon to avoid
+	// instability around wall-clock day boundaries.
+	now = time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
 
 	/* Tables without partitions are not currently supported. */
 
@@ -711,7 +714,6 @@ func TestCreatePartition(t *testing.T) {
 	createTableWithParts(ctx, t, tk, getTable(t, "TIDB_STATEMENTS_STATS", wrk), sess, partitions)
 
 	// turn on the repository and see if it creates the remaining tables
-	now = time.Now()
 	wrk.setRepositoryDest(ctx, "table")
 	waitForTables(ctx, t, wrk, now)
 }

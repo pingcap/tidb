@@ -454,6 +454,15 @@ func (b *builtinIntAnyValueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	return b.args[0].EvalInt(ctx, row)
 }
 
+func (b *builtinIntAnyValueSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	if !b.tp.Hybrid() {
+		return b.baseBuiltinFunc.evalString(ctx, row)
+	}
+	// ANY_VALUE can preserve a hybrid return field while using the integer signature.
+	// String contexts still need the underlying hybrid value in its string form.
+	return b.args[0].EvalString(ctx, row)
+}
+
 type builtinJSONAnyValueSig struct {
 	baseBuiltinFunc
 

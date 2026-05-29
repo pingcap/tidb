@@ -17,6 +17,7 @@ package cbotest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -49,7 +50,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 		tk.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -147,6 +148,58 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			tk.MustQuery("show warnings").Check(testkit.Rows(output61792[i].Warn...))
 		}
 
+		// repro_hash_join_issue
+		tk.MustExec("create database if not exists repro_hash_join_issue")
+		tk.MustExec("use repro_hash_join_issue")
+		tk.MustExec("CREATE TABLE t_small (\n" +
+			"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+			"  id1 VARCHAR(10) NOT NULL,\n" +
+			"  id2 TINYINT NOT NULL,\n" +
+			"  id3 BIGINT NOT NULL,\n" +
+			"  id4 BIGINT NOT NULL,\n" +
+			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
+			")")
+		tk.MustExec("CREATE TABLE t_big (\n" +
+			"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+			"  id1 BIGINT NOT NULL,\n" +
+			"  id2 INT NOT NULL,\n" +
+			"  id3 TINYINT NOT NULL,\n" +
+			"  id4 INT NOT NULL,\n" +
+			"  id5 BIGINT NOT NULL,\n" +
+			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+			"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
+			")")
+		tk.MustExec("insert into t_small(id1, id2, id3, id4) values " + buildReproHashJoinIssueSmallRows(1000))
+		tk.MustExec("insert into t_big(id1, id2, id3, id4, id5) values " + buildReproHashJoinIssueBigRows(1000))
+		tk.MustExec("analyze table t_small, t_big all columns")
+		tk.MustExec("set @@session.tidb_cost_model_version = 2")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 100")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = 0.1")
+
+		var inputReproHashJoinIssue []string
+		var outputReproHashJoinIssue []struct {
+			SQL   string
+			Ratio float64
+			Plan  []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestReproHashJoinIssue", t, &inputReproHashJoinIssue, &outputReproHashJoinIssue, cascades, caller)
+		require.Len(t, inputReproHashJoinIssue, 2)
+		ratios := []float64{0, 0.5}
+		for i, tt := range inputReproHashJoinIssue {
+			ratio := ratios[i]
+			tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_index_join_max_scan_rows_ratio = %v", ratio))
+			plan := tk.MustQuery(tt)
+			testdata.OnRecord(func() {
+				outputReproHashJoinIssue[i].SQL = tt
+				outputReproHashJoinIssue[i].Ratio = ratio
+				outputReproHashJoinIssue[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(outputReproHashJoinIssue[i].Plan...))
+		}
+		tk.MustExec("set @@session.tidb_opt_index_join_max_scan_rows_ratio = 0")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor = default")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor = default")
+
 		// issue:59563
 		tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 		tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
@@ -212,6 +265,83 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 	})
 }
 
+func TestTop2SeedGreedyJoinReorderWithLoadedStats(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, _, _ string) {
+		// This regression is anchored by a sanitized TiDB replayer stats fixture.
+		//
+		// Fact check with the same schema, loaded stats, and SQL:
+		//   - 1fc24d3cae1d3b07b09bf3d814887d2ff29fb882 (pre-fix):
+		//     root join was gjo_p.id = gjo_pi.p_id
+		//   - 375e6a135fe1dcc4f3b164ac14f52e872c1ebea8 (with top-2 seeds):
+		//     root join became gjo_pie.t_id = gjo_dim.id
+		tk.MustExec("set @@session.tidb_opt_enable_advanced_join_reorder = 1")
+		tk.MustExec("set @@session.tidb_opt_join_reorder_threshold = 0")
+		tk.MustExec("drop database if exists gjo_stats")
+		tk.MustExec("create database gjo_stats")
+		tk.MustExec("use gjo_stats")
+
+		tk.MustExec(`CREATE TABLE gjo_p (
+  id bigint NOT NULL AUTO_INCREMENT,
+  c_id bigint DEFAULT NULL,
+  d_at date DEFAULT NULL,
+  s_id varchar(255) COLLATE utf8_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY idx_s_c_d (s_id,c_id,d_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`)
+
+		tk.MustExec(`CREATE TABLE gjo_pi (
+  id bigint NOT NULL AUTO_INCREMENT,
+  p_id bigint DEFAULT NULL,
+  e_id bigint DEFAULT NULL,
+  flag tinyint(1) DEFAULT '0',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY idx_flag_p_e (flag,p_id,e_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`)
+
+		tk.MustExec(`CREATE TABLE gjo_pie (
+  id bigint NOT NULL AUTO_INCREMENT,
+  pi_id bigint NOT NULL,
+  t_id bigint NOT NULL,
+  amt decimal(16,2) NOT NULL DEFAULT '0.00',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY idx_t_pi (t_id,pi_id),
+  KEY idx_pi (pi_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`)
+
+		tk.MustExec(`CREATE TABLE gjo_dim (
+  id bigint NOT NULL AUTO_INCREMENT,
+  c_id bigint DEFAULT NULL,
+  name char(255) COLLATE utf8_unicode_ci NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY idx_c_name (c_id,name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci`)
+
+		for _, statsFile := range []string{
+			"top2_seed_payrolls.json",
+			"top2_seed_payroll_items.json",
+			"top2_seed_payroll_item_earnings.json",
+			"top2_seed_company_earning_types.json",
+		} {
+			require.NoError(t, testkit.LoadTableStats(statsFile, dom))
+		}
+
+		query := "select 1 as one from gjo_pie inner join gjo_pi on gjo_pi.id = gjo_pie.pi_id " +
+			"inner join gjo_p on gjo_p.id = gjo_pi.p_id inner join gjo_dim on gjo_dim.id = gjo_pie.t_id " +
+			"where gjo_p.c_id = 7757616926251732 and gjo_p.d_at between '2026-01-01' and '2026-12-31' " +
+			"and gjo_dim.name in ('Paycheck Tips', 'Cash Tips') and gjo_p.s_id in ('processed', 'funded', 'paid', 'paid_and_unfunded') " +
+			"and gjo_pi.flag = false and amt > 0 limit 1"
+
+		briefPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + query).Rows())
+		require.NotContains(t, strings.Join(briefPlan, "\n"), "stats:pseudo")
+
+		planRows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + query).Rows())
+		require.GreaterOrEqual(t, len(planRows), 5)
+		require.Contains(t, planRows[2], "outer key:gjo_stats.gjo_pie.t_id, inner key:gjo_stats.gjo_dim.id")
+		require.Contains(t, planRows[3], "outer key:gjo_stats.gjo_pi.id, inner key:gjo_stats.gjo_pie.pi_id")
+		require.Contains(t, planRows[4], "outer key:gjo_stats.gjo_p.id, inner key:gjo_stats.gjo_pi.p_id")
+	})
+}
+
 func TestStraightJoin(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
@@ -242,7 +372,7 @@ func TestTableDual(t *testing.T) {
 		tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -274,12 +404,12 @@ func TestEstimation(t *testing.T) {
 		h := dom.StatsHandle()
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		tk.MustExec("analyze table t all columns")
 		for i := 1; i <= 8; i++ {
 			tk.MustExec("delete from t where a = ?", i)
 		}
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -459,12 +589,12 @@ func TestOutdatedAnalyze(t *testing.T) {
 		h := dom.StatsHandle()
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		tk.MustExec("analyze table t all columns")
 		tk.MustExec("insert into t select * from t")
 		tk.MustExec("insert into t select * from t")
 		tk.MustExec("insert into t select * from t")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []struct {
 			SQL                          string
@@ -747,4 +877,22 @@ func TestIndexJoinPreferIndexCoversMoreJoinKeyCols(t *testing.T) {
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 	})
+}
+
+func buildReproHashJoinIssueSmallRows(n int) string {
+	vals := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		// Keep predicates on t_small selective while preserving >=100 build rows.
+		vals = append(vals, fmt.Sprintf("('10001', 0, 123456789, %d)", i%10))
+	}
+	return strings.Join(vals, ",")
+}
+
+func buildReproHashJoinIssueBigRows(n int) string {
+	vals := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		// Low cardinality on id1 makes each outer-row probe hit many inner rows.
+		vals = append(vals, fmt.Sprintf("(%d, 10001, 0, 20991231, %d)", i%10, i))
+	}
+	return strings.Join(vals, ",")
 }

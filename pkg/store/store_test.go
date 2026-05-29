@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
+	pderr "github.com/tikv/pd/client/errs"
 )
 
 const (
@@ -739,17 +740,26 @@ func TestIsolationMultiInc(t *testing.T) {
 }
 
 func TestRetryOpenStore(t *testing.T) {
-	begin := time.Now()
-	require.NoError(t, Register(config.StoreTypeMockTiKV, &brokenStore{}))
-	store, err := newStoreWithRetry("mocktikv://dummy-store", 3)
-	if store != nil {
-		defer func() {
-			require.NoError(t, store.Close())
-		}()
-	}
-	require.Error(t, err)
-	elapse := time.Since(begin)
-	require.GreaterOrEqual(t, uint64(elapse), uint64(3*time.Second))
+	t.Run("RetryTxnRetryableError", func(t *testing.T) {
+		begin := time.Now()
+		require.NoError(t, Register(config.StoreTypeMockTiKV, &brokenStore{}))
+		store, err := newStoreWithRetry("mocktikv://dummy-store", 3)
+		if store != nil {
+			defer func() {
+				require.NoError(t, store.Close())
+			}()
+		}
+		require.Error(t, err)
+		elapse := time.Since(begin)
+		require.GreaterOrEqual(t, uint64(elapse), uint64(3*time.Second))
+	})
+
+	t.Run("OnlyRetryPDTSOLeaderErrors", func(t *testing.T) {
+		require.True(t, isNewStoreRetryableError(pderr.ErrClientGetTSO.FastGenByArgs(pderr.NotLeaderErr)))
+		require.True(t, isNewStoreRetryableError(pderr.ErrClientGetLeader.FastGenByArgs(pderr.NotLeaderErr)))
+		require.False(t, isNewStoreRetryableError(fmt.Errorf("autoid service: not leader")))
+		require.False(t, IsNotTSOLeaderError(fmt.Errorf("br: not leader")))
+	})
 }
 
 func TestRegister(t *testing.T) {

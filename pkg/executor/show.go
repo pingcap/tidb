@@ -2566,7 +2566,7 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 	result.AppendString(16, runInfo.ProcessedSize())
 	result.AppendString(17, runInfo.TotalSize())
 	result.AppendString(18, runInfo.Percent())
-	result.AppendString(19, fmt.Sprintf("%s/s", units.BytesSize(float64(runInfo.Speed))))
+	result.AppendString(19, runInfo.SpeedStr())
 	result.AppendString(20, runInfo.ETA())
 }
 

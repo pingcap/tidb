@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"text/template/parse"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -20,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -83,6 +85,10 @@ const (
 	flagClusterSSLCA             = "cluster-ssl-ca"
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
+	flagPartitions               = "partitions"
+	flagParquetCompress          = "parquet-compress"
+	flagParquetPageSize          = "parquet-page-size"
+	flagParquetRowGroupSize      = "parquet-row-group-size"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -186,6 +192,7 @@ type Config struct {
 	Tables              DatabaseTables
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
+	Partitions          []string
 
 	Labels        prometheus.Labels `json:"-"`
 	PromFactory   promutil.Factory  `json:"-"`
@@ -206,6 +213,14 @@ type Config struct {
 	ClusterSSLCA   string
 	ClusterSSLCert string
 	ClusterSSLKey  string
+
+	// ParquetCompressType is the parquet row-group compression type.
+	ParquetCompressType compressedio.CompressType
+	// ParquetPageSize is the parquet data page size in bytes.
+	ParquetPageSize int64
+	// ParquetRowGroupSize is the parquet row-group flush threshold by accounted
+	// in-memory bytes.
+	ParquetRowGroupSize int64
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -263,6 +278,9 @@ func DefaultConfig() *Config {
 		ClusterSSLCA:             "",
 		ClusterSSLCert:           "",
 		ClusterSSLKey:            "",
+		ParquetCompressType:      parquetfile.DefaultCompressionType,
+		ParquetPageSize:          units.MiB,
+		ParquetRowGroupSize:      parquetfile.DefaultRowGroupMemoryLimitBytes,
 	}
 }
 
@@ -352,7 +370,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
+	flags.String(flagFiletype, "", "The type of export file (sql/csv/parquet)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
@@ -369,7 +387,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
-	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
+	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r or --filesize/-F in split mode, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
@@ -379,11 +397,19 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
+	flags.StringSlice(flagPartitions, nil, "The table partitions to dump. Every listed partition must exist on all selected base tables; incompatible with --sql. TiDB >= v5.0.0 only")
 
 	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
+	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
+	flags.String(flagParquetPageSize, units.BytesSize(float64(units.MiB)), "Parquet page size in bytes, accepts human-readable units")
+	flags.String(
+		flagParquetRowGroupSize,
+		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
+		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
+	)
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -542,6 +568,11 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.Partitions, err = flags.GetStringSlice(flagPartitions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.Partitions = normalizePartitions(conf.Partitions)
 
 	if conf.Threads <= 0 {
 		return errors.Errorf("--threads is set to %d. It should be greater than 0", conf.Threads)
@@ -606,6 +637,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
+	outputSplitIntoMultipleFiles := conf.Rows != UnspecifiedSize || conf.FileSize != UnspecifiedSize
+	if flags.Changed(flagOutputFilenameTemplate) && outputSplitIntoMultipleFiles && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
+		return errors.New("--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F; otherwise chunk files may overwrite each other")
+	}
 	conf.OutputFileTemplate = tmpl
 
 	compressType, err := flags.GetString(flagCompress)
@@ -625,6 +660,23 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Errorf("%s is only supported when dumping whole table to csv, not compatible with %s", flagCsvOutputDialect, conf.FileType)
 	}
 	conf.CsvOutputDialect, err = ParseOutputDialect(dialect)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	parquetCompressType, err := flags.GetString(flagParquetCompress)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetCompressType, err = parseParquetCompressType(parquetCompressType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetPageSize, err = parseSizeFlag(flags, flagParquetPageSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetRowGroupSize, err = parseSizeFlag(flags, flagParquetRowGroupSize)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -656,6 +708,115 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	return nil
+}
+
+func outputTemplateUsesIndex(tmpl *template.Template, templateName string) bool {
+	if tmpl == nil {
+		return false
+	}
+
+	type templateVisitState struct {
+		name          string
+		inConditional bool
+	}
+	visitedTemplate := make(map[templateVisitState]struct{})
+
+	var visitTemplate func(name string, inConditional bool) bool
+	var visitNode func(node parse.Node, inConditional bool) bool
+	visitTemplate = func(name string, inConditional bool) bool {
+		state := templateVisitState{name: name, inConditional: inConditional}
+		if _, ok := visitedTemplate[state]; ok {
+			return false
+		}
+		visitedTemplate[state] = struct{}{}
+
+		t := tmpl.Lookup(name)
+		if t == nil || t.Tree == nil || t.Tree.Root == nil {
+			return false
+		}
+
+		return visitNode(t.Tree.Root, inConditional)
+	}
+
+	visitNode = func(node parse.Node, inConditional bool) bool {
+		if node == nil {
+			return false
+		}
+
+		switch n := node.(type) {
+		case *parse.ListNode:
+			if n == nil {
+				return false
+			}
+			for _, child := range n.Nodes {
+				if visitNode(child, inConditional) {
+					return true
+				}
+			}
+		case *parse.ActionNode:
+			if n == nil {
+				return false
+			}
+			if inConditional {
+				return false
+			}
+			return isStandaloneOutputIndexAction(n)
+		case *parse.TemplateNode:
+			if n == nil {
+				return false
+			}
+			return visitTemplate(n.Name, inConditional)
+		case *parse.IfNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.RangeNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		case *parse.WithNode:
+			if n == nil {
+				return false
+			}
+			if visitNode(n.List, true) {
+				return true
+			}
+			return visitNode(n.ElseList, true)
+		}
+
+		return false
+	}
+
+	return visitTemplate(templateName, false)
+}
+
+func isStandaloneOutputIndexAction(action *parse.ActionNode) bool {
+	if action == nil || action.Pipe == nil {
+		return false
+	}
+
+	// A standalone {{.Index}} must be a single command with a single argument.
+	if len(action.Pipe.Decl) != 0 || len(action.Pipe.Cmds) != 1 {
+		return false
+	}
+	cmd := action.Pipe.Cmds[0]
+	if cmd == nil || len(cmd.Args) != 1 {
+		return false
+	}
+
+	field, ok := cmd.Args[0].(*parse.FieldNode)
+	if !ok {
+		return false
+	}
+	return len(field.Ident) == 1 && field.Ident[0] == "Index"
 }
 
 // ParseFileSize parses file size from tables-list and filter arguments
@@ -730,6 +891,27 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
+func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
+	size, err := flags.GetString(flagName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	bytes, err := units.RAMInBytes(size)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to parse --%s", flagName)
+	}
+	return bytes, nil
+}
+
+// parseParquetCompressType parses the parquet compression flag value.
+// Empty means the flag is not configured, so Dumpling uses the parquet default.
+func parseParquetCompressType(compressType string) (compressedio.CompressType, error) {
+	if compressType == "" {
+		return parquetfile.DefaultCompressionType, nil
+	}
+	return compressedio.ParseCompressType(compressType)
+}
+
 func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
@@ -801,6 +983,9 @@ func validateSpecifiedSQL(conf *Config) error {
 	if conf.SQL != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	}
+	if conf.SQL != "" && len(conf.Partitions) > 0 {
+		return errors.New("can't specify both --sql and --partitions at the same time")
+	}
 	return nil
 }
 
@@ -818,6 +1003,10 @@ func adjustFileFormat(conf *Config) error {
 			return errors.Errorf("unsupported config.FileType '%s' when we specify --sql, please unset --filetype or set it to 'csv'", conf.FileType)
 		}
 	case FileFormatCSVString:
+	case FileFormatParquetString:
+		if conf.CompressType != compressedio.NoCompression {
+			return errors.Errorf("parquet does not support --compress, please unset it or use --parquet-compress instead")
+		}
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}
@@ -835,4 +1024,21 @@ func matchMysqlBugversion(info version.ServerInfo) bool {
 	bugVersionStart := semver.New("8.0.2")
 	bugVersionEnd := semver.New("8.0.23")
 	return bugVersionStart.LessThan(*currentVersion) && currentVersion.LessThan(*bugVersionEnd)
+}
+
+func normalizePartitions(partitions []string) []string {
+	seen := make(map[string]struct{}, len(partitions))
+	result := make([]string, 0, len(partitions))
+	for _, p := range partitions {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		result = append(result, p)
+	}
+	return result
 }

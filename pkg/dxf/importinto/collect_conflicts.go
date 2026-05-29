@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -68,6 +68,7 @@ type collectConflictsStepExecutor struct {
 }
 
 var _ execute.StepExecutor = &collectConflictsStepExecutor{}
+var _ execute.Collector = &collectConflictsStepExecutor{}
 
 // NewCollectConflictsStepExecutor creates a new collectConflictsStepExecutor.
 // exported for test.
@@ -173,7 +174,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
 
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
@@ -200,6 +201,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 			e.sharedHandleSet,
 			localSet,
 			&e.sizeOfConflictRowFiles,
+			e,
 			e.GetMeterRecorder(),
 		)
 		eg.Go(func() (err error) {
@@ -249,6 +251,14 @@ func (e *collectConflictsStepExecutor) RealtimeSummary() *execute.SubtaskSummary
 
 func (e *collectConflictsStepExecutor) ResetSummary() {
 	e.summary.Reset()
+}
+
+// Accepted implements Collector.Accepted interface.
+func (*collectConflictsStepExecutor) Accepted(_ int64) {}
+
+// Processed implements Collector.Processed interface.
+func (e *collectConflictsStepExecutor) Processed(processedConflictKVs, _ int64) {
+	e.summary.Processed.Add(processedConflictKVs)
 }
 
 // getConflictRowFilenamePrefix returns the file name prefix to store the conflict

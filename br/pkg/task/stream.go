@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -51,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
@@ -342,7 +344,7 @@ type streamMgr struct {
 }
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -966,7 +968,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	defer cancel()
 	log.Info("starting", zap.String("cmd", cmdName))
 
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return err
@@ -1053,7 +1055,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 	} else {
 		printer = stream.PrintTaskWithJSON(console)
 	}
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, err
@@ -1333,7 +1335,7 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logInfo, err := getLogInfoFromStorage(ctx, s)
+	logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1435,6 +1437,9 @@ func RunStreamRestore(
 
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
+		if cfg.RestorePhase == 2 {
+			return errors.Errorf("invalid phase for full restore because full restore is not finished, please specify 1 for full restore")
+		}
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 
@@ -1536,27 +1541,7 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
-	migs, err := client.GetLockedMigrations(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	client.BuildMigrations(migs.Migs)
-
-	skipCleanup := false
-	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
-		// Skip the cleanup - this keeps the read lock held
-		// and will cause lock conflicts for other restore operations
-		log.Info("Skipping migration read lock cleanup due to failpoint")
-		skipCleanup = true
-	})
-
-	if !skipCleanup {
-		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
-	}
-
 	defer client.RestoreSSTStatisticFields(&extraFields)
-
-	ddlFiles := cfg.ddlFiles
 
 	currentTS, err = getCurrentTSFromCheckpointOrPD(ctx, mgr, cfg)
 	if err != nil {
@@ -1621,6 +1606,13 @@ func restoreStream(
 	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.RestorePhase == 1 {
+		log.Info("full restore phase completed and id map persisted, stop before log restore in restore phase 1")
+		if err := WriteStringToConsole(g, "full restore phase completed, stop before log restore (restore-phase=1)\n"); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
 
 	// build schema replace
 	schemasReplace, err := buildSchemaReplace(client, cfg)
@@ -1661,6 +1653,24 @@ func restoreStream(
 	// mode or emptied schedulers
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 
+	migs, err := client.GetLockedMigrations(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	client.BuildMigrations(migs.Migs)
+
+	skipCleanup := false
+	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
+		// Skip the cleanup - this keeps the read lock held
+		// and will cause lock conflicts for other restore operations
+		log.Info("Skipping migration read lock cleanup due to failpoint")
+		skipCleanup = true
+	})
+
+	if !skipCleanup {
+		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+	}
+	ddlFiles := cfg.ddlFiles
 	updateStats := func(kvCount uint64, size uint64) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -1820,6 +1830,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := logclient.NewLogClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client.SetCheckRequirements(cfg.CheckRequirements)
 
 	err = client.Init(ctx, g, mgr.GetStorage())
 	if err != nil {
@@ -1928,12 +1939,15 @@ func getLogInfo(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	return getLogInfoFromStorage(ctx, s)
+	return getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, false, "")
 }
 
 func getLogInfoFromStorage(
 	ctx context.Context,
 	s storeapi.Storage,
+	checkRequirements bool,
+	fromReplicationStorage bool,
+	replicationStatusSubPrefix string,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1943,6 +1957,12 @@ func getLogInfoFromStorage(
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {
 		return backupLogInfo{}, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(metaData, backupMeta); err != nil {
+		if checkRequirements {
+			return backupLogInfo{}, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
 	// endVersion > 0 represents that the storage has been used for `br backup`
 	if backupMeta.GetEndVersion() > 0 {
@@ -1960,9 +1980,19 @@ func getLogInfoFromStorage(
 	logMinTS := max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, s)
-	if err != nil {
-		return backupLogInfo{}, errors.Trace(err)
+	var logMaxTS uint64
+	if fromReplicationStorage {
+		ts, err := getGlobalCheckpointFromReplicationStorage(ctx, s, replicationStatusSubPrefix)
+		if err != nil {
+			return backupLogInfo{}, errors.Trace(err)
+		}
+		logMaxTS = ts
+	} else {
+		ts, err := getGlobalCheckpointFromStorage(ctx, s)
+		if err != nil {
+			return backupLogInfo{}, errors.Trace(err)
+		}
+		logMaxTS = ts
 	}
 	logMaxTS = max(logMinTS, logMaxTS)
 
@@ -1992,6 +2022,23 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storeapi.Storage) (ui
 	return globalCheckPointTS, errors.Trace(err)
 }
 
+func getGlobalCheckpointFromReplicationStorage(ctx context.Context, s storeapi.Storage, replicationStatusSubPrefix string) (uint64, error) {
+	// parse the replication status
+	statusFileName, err := service.GetStatusFileName(replicationStatusSubPrefix)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	statusContent, err := s.ReadFile(ctx, statusFileName)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	var state service.PersistentState
+	if err := json.Unmarshal(statusContent, &state); err != nil {
+		return 0, fmt.Errorf("decode persisted resume state %s: %w", statusFileName, err)
+	}
+	return state.LastCheckpoint, nil
+}
+
 // getFullBackupTS gets the snapshot-ts of full backup
 func getFullBackupTS(
 	ctx context.Context,
@@ -2015,6 +2062,12 @@ func getFullBackupTS(
 	backupmeta := &backuppb.BackupMeta{}
 	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
 		return 0, 0, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptedMetaData, backupmeta); err != nil {
+		if cfg.CheckRequirements {
+			return 0, 0, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
 
 	// start and end are identical in full backup, pick random one
@@ -2089,7 +2142,7 @@ func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
 }
 
 func (p *PiTRTaskInfo) getRestoreStartTS(ctx context.Context, pdClient pd.Client) (uint64, error) {
-	if p.CheckpointInfo != nil && p.CheckpointInfo.Metadata != nil {
+	if p.CheckpointInfo != nil && p.CheckpointInfo.Metadata != nil && p.CheckpointInfo.Metadata.RestoreStartTS > 0 {
 		return p.CheckpointInfo.Metadata.RestoreStartTS, nil
 	}
 	return restore.GetTSWithRetry(ctx, pdClient)

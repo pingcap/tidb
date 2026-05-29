@@ -333,6 +333,32 @@ func TestDefault(t *testing.T) {
 	def := DefaultConfig()
 	defaultConfig := expectedDefaultConfig()
 	require.Equal(t, defaultConfig, def)
+
+	t.Run("ParseKeyspaceName", func(t *testing.T) {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		DefineCommonFlags(flags)
+		flags.String(FlagKeyspaceName, "", "")
+		require.NoError(t, flags.Set(FlagKeyspaceName, "restore-keyspace"))
+
+		var cfg Config
+		require.NoError(t, cfg.ParseFromFlags(flags))
+		require.Equal(t, "restore-keyspace", cfg.KeyspaceName)
+	})
+
+	t.Run("ParseRawBackupKeyspaceName", func(t *testing.T) {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		DefineCommonFlags(flags)
+		DefineBackupFlags(flags)
+		flags.String(flagKeyFormat, "hex", "")
+		flags.String(flagTiKVColumnFamily, "default", "")
+		flags.String(flagStartKey, "", "")
+		flags.String(flagEndKey, "", "")
+		require.NoError(t, flags.Set(flagKeyspaceName, "backup-keyspace"))
+
+		var cfg RawKvConfig
+		require.NoError(t, cfg.ParseBackupConfigFromFlags(flags))
+		require.Equal(t, "backup-keyspace", cfg.KeyspaceName)
+	})
 }
 
 func TestDefaultBackup(t *testing.T) {
