@@ -17,6 +17,7 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -828,14 +829,265 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
 		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
-		{"select 1 from b where (x) in ((1), ('3'), (2),('x'),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
-		{"select 1 from b where (x) in ((1), ('3'), (2),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'),('x'))", "select ? from `b` where `x` in ( ... )", "695a1f42dbae3cae4a5d475d7a9d67955aed6d9790c1ffa20106d80f79b33dc0"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'))", "select ? from `b` where `x` in ( ... )", "695a1f42dbae3cae4a5d475d7a9d67955aed6d9790c1ffa20106d80f79b33dc0"},
 	}
 	for _, test := range tests {
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)
 		n, digest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		require.Equalf(t, test.normalized, n, "sql: %s", test.sql)
 		require.Equalf(t, test.digest, digest, "sql: %s", test.sql)
+	}
+
+	parenthesesTests := []struct {
+		sql        string
+		normalized string
+	}{
+		// The inner addition is redundant inside a function argument and can be
+		// restored without changing the expression boundary.
+		{
+			"select 1 from b where abs((x + 1)) = 2",
+			"select ? from `b` where `abs` ( `x` + ? ) = ?",
+		},
+		// Addition has lower precedence than multiplication, so the left child
+		// parentheses are semantic.
+		{
+			"select 1 from b where (x + 1) * y = 2",
+			"select ? from `b` where ( `x` + ? ) * `y` = ?",
+		},
+		// The same precedence rule applies to the right child of multiplication.
+		{
+			"select 1 from b where x * (y + z) = 2",
+			"select ? from `b` where `x` * ( `y` + `z` ) = ?",
+		},
+		// OR has lower precedence than AND and must stay grouped as the right child.
+		{
+			"select 1 from b where x = 1 and (y = 1 or y = 2)",
+			"select ? from `b` where `x` = ? and ( `y` = ? or `y` = ? )",
+		},
+		// IN, LIKE, REGEXP, IS NULL, IS TRUE, BETWEEN, subquery comparison,
+		// MEMBER OF, BINARY, and COLLATE are not BinaryOperationExpr parents,
+		// but their operands still need precedence context so a lower-precedence
+		// OR group keeps its parentheses.
+		{
+			"select 1 from b where (x or y) in (1, 2)",
+			"select ? from `b` where ( `x` or `y` ) in ( ... )",
+		},
+		{
+			"select 1 from b where (x or y) like 'x%'",
+			"select ? from `b` where ( `x` or `y` ) like ?",
+		},
+		{
+			"select 1 from b where (x or y) regexp 'x'",
+			"select ? from `b` where ( `x` or `y` ) regexp ?",
+		},
+		{
+			"select 1 from b where (x or y) is null",
+			"select ? from `b` where ( `x` or `y` ) is ?",
+		},
+		{
+			"select 1 from b where (x or y) is true",
+			"select ? from `b` where ( `x` or `y` ) is true",
+		},
+		{
+			"select 1 from b where (x or y) between 1 and 2",
+			"select ? from `b` where ( `x` or `y` ) between ? and ?",
+		},
+		{
+			"select 1 from b where x between (y or z) and 1",
+			"select ? from `b` where `x` between ( `y` or `z` ) and ?",
+		},
+		// Operator-like expressions that are not BinaryOperationExpr still need
+		// to keep their outer parentheses under a tighter arithmetic parent.
+		// Otherwise `(x LIKE 'a') + 1` would be restored as `x LIKE 'a' + 1`,
+		// which MySQL parses as `x LIKE ('a' + 1)`.
+		{
+			"select 1 from b where (x like 'test') + 1",
+			"select ? from `b` where ( `x` like ? ) + ?",
+		},
+		{
+			"select 1 from b where x like ('test' or 'fallback')",
+			"select ? from `b` where `x` like ( ? or ? )",
+		},
+		{
+			"select 1 from b where (x regexp 'x') + 1",
+			"select ? from `b` where ( `x` regexp ? ) + ?",
+		},
+		{
+			"select 1 from b where (x in (1, 2)) + 1",
+			"select ? from `b` where ( `x` in ( ... ) ) + ?",
+		},
+		{
+			"select 1 from b where (x is null) + 1",
+			"select ? from `b` where ( `x` is ? ) + ?",
+		},
+		{
+			"select 1 from b where (x is true) + 1",
+			"select ? from `b` where ( `x` is true ) + ?",
+		},
+		{
+			"select 1 from b where (x between y and z) + 1",
+			"select ? from `b` where ( `x` between `y` and `z` ) + ?",
+		},
+		{
+			"select 1 from b where (x or y) = any (select z from b)",
+			"select ? from `b` where ( `x` or `y` ) = any ( select `z` from `b` )",
+		},
+		{
+			"select 1 from b where (x = any (select z from b)) + 1",
+			"select ? from `b` where ( `x` = any ( select `z` from `b` ) ) + ?",
+		},
+		{
+			"select 1 from b where exists (select 1 from b where (x or y) in (1, 2))",
+			"select ? from `b` where exists ( select ? from `b` where ( `x` or `y` ) in ( ... ) )",
+		},
+		{
+			"select 1 from b where (x or y) member of ('[true]')",
+			"select ? from `b` where ( `x` or `y` ) member of ( ? )",
+		},
+		{
+			"select 1 from b where 1 member of ((x or y))",
+			"select ? from `b` where ? member of ( ( `x` or `y` ) )",
+		},
+		{
+			"select 1 from b where (1 member of ('[true]')) + 1",
+			"select ? from `b` where ( ? member of ( ? ) ) + ?",
+		},
+		{
+			"select 1 from b where binary (x or y)",
+			"select ? from `b` where binary ( `x` or `y` )",
+		},
+		{
+			"select 1 from b where (x or y) collate utf8mb4_bin",
+			"select ? from `b` where ( `x` or `y` ) collate `utf8mb4_bin`",
+		},
+		// Unary NOT keeps its operand parenthesized so the restore output does not
+		// expose a different parse boundary.
+		{
+			"select 1 from b where not (x = 1)",
+			"select ? from `b` where not ( `x` = ? )",
+		},
+		{
+			"select 1 from b where (not x) = 1",
+			"select ? from `b` where ( not `x` ) = ?",
+		},
+		// Bitwise XOR binds tighter than addition, so `(x + y) ^ z` must preserve
+		// the addition group.
+		{
+			"select 1 from b where (x + y) ^ z = 1",
+			"select ? from `b` where ( `x` + `y` ) ^ `z` = ?",
+		},
+		// Bitwise XOR also binds tighter than multiplication in MySQL.
+		{
+			"select 1 from b where (x * y) ^ z = 1",
+			"select ? from `b` where ( `x` * `y` ) ^ `z` = ?",
+		},
+		// The XOR child binds tighter than addition, so the right-child
+		// parentheses are redundant here.
+		{
+			"select 1 from b where x + (y ^ z) = 1",
+			"select ? from `b` where `x` + `y` ^ `z` = ?",
+		},
+		// BETWEEN binds weaker than comparison operators, so the parentheses
+		// around BETWEEN are semantic in this shape.
+		{
+			"select 1 from b where (x between y and z) = 1",
+			"select ? from `b` where ( `x` between `y` and `z` ) = ?",
+		},
+		// Arithmetic operators are not safe to reassociate in binding
+		// normalization because finite-precision SQL evaluation can differ by
+		// grouping, for example with floating-point values.
+		{
+			"select 1 from b where x + (y + z) = 1",
+			"select ? from `b` where `x` + ( `y` + `z` ) = ?",
+		},
+		{
+			"select 1 from b where x * (y * z) = 1",
+			"select ? from `b` where `x` * ( `y` * `z` ) = ?",
+		},
+		// The outer parentheses are required because subtraction binds weaker
+		// than multiplication. The left addition can be restored without its own
+		// parentheses because the surrounding subtraction is left-associative,
+		// while the right addition must keep its grouping.
+		{
+			"select 1 from b where x * ((y + z) - (u + v)) = 1",
+			"select ? from `b` where `x` * ( `y` + `z` - ( `u` + `v` ) ) = ?",
+		},
+		// Function-call arguments can drop the redundant outer parentheses, but
+		// the right side of subtraction must still keep its addition group.
+		{
+			"select 1 from b where abs(((y + z) - (u + v))) = 1",
+			"select ? from `b` where `abs` ( `y` + `z` - ( `u` + `v` ) ) = ?",
+		},
+	}
+	for _, test := range parenthesesTests {
+		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)
+		n, _ := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		require.Equalf(t, test.normalized, n, "sql: %s", test.sql)
+	}
+
+	issue67363SQLs := []string{
+		"select pid from t where id=1 and (ptype=1 or ptype=2) order by pid limit 10",
+		"select pid from t where id=1 and ((ptype=1) or ptype=2) order by pid limit 10",
+		"select pid from t where id=1 and (ptype=1 or (ptype=2)) order by pid limit 10",
+		"select pid from t where id=1 and ((ptype=1) or (ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1) and (ptype=1 or ptype=2) order by pid limit 10",
+		"select pid from t where (id=1) and ((ptype=1) or ptype=2) order by pid limit 10",
+		"select pid from t where (id=1) and (ptype=1 or (ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1) and ((ptype=1) or (ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1 and (ptype=1 or ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1 and ((ptype=1) or ptype=2)) order by pid limit 10",
+		"select pid from t where (id=1 and (ptype=1 or (ptype=2))) order by pid limit 10",
+		"select pid from t where (id=1 and ((ptype=1) or (ptype=2))) order by pid limit 10",
+		"select pid from t where ((id=1) and (ptype=1 or ptype=2)) order by pid limit 10",
+		"select pid from t where ((id=1) and ((ptype=1) or ptype=2)) order by pid limit 10",
+		"select pid from t where ((id=1) and (ptype=1 or (ptype=2))) order by pid limit 10",
+		"select pid from t where ((id=1) and ((ptype=1) or (ptype=2))) order by pid limit 10",
+	}
+	var normalized, digest string
+	for i, sql := range issue67363SQLs {
+		stmt, _, _ := utilNormalizeWithDefaultDB(t, sql)
+		n, d := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		if i == 0 {
+			normalized, digest = n, d
+			continue
+		}
+		require.Equalf(t, normalized, n, "sql: %s", sql)
+		require.Equalf(t, digest, d, "sql: %s", sql)
+	}
+}
+
+func BenchmarkNormalizeStmtForBinding(b *testing.B) {
+	testParser := parser.New()
+	benchmarks := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "simple",
+			sql:  "select * from t where a = 1 and b = 1",
+		},
+		{
+			name: "redundant_parentheses",
+			sql:  "select * from t where ((a = 1) and ((b = 1) or (b = 2))) and abs((c + 1)) = 3",
+		},
+		{
+			name: "precedence_sensitive",
+			sql:  "select * from t where ((a + b) * c = 1) and ((a between b and c) = 1) and ((x * y) ^ z = 1)",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		stmt, err := testParser.ParseOneStmt(bm.sql, "", "")
+		require.NoError(b, err)
+		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
+			var normalized string
+			for b.Loop() {
+				normalized, _ = bindinfo.NormalizeStmtForBinding(stmt, "test", true)
+			}
+			runtime.KeepAlive(normalized)
+		})
 	}
 }
 

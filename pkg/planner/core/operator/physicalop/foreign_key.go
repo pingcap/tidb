@@ -489,7 +489,7 @@ func buildFKCheck(ctx base.PlanContext, tbl table.Table, cols []ast.CIStr, faile
 		}
 	}
 
-	referTbIdxInfo := model.FindIndexByColumns(tblInfo, tblInfo.Indices, cols...)
+	referTbIdxInfo := model.FindIndexByColumnsForForeignKey(tblInfo, tblInfo.Indices, cols...)
 	if referTbIdxInfo == nil {
 		return nil, failedErr
 	}
@@ -535,7 +535,7 @@ func buildFKCascade(ctx base.PlanContext, tp FKCascadeType, referredFK *model.Re
 			return fkCascade, nil
 		}
 	}
-	indexForFK := model.FindIndexByColumns(childTable.Meta(), childTable.Meta().Indices, fk.Cols...)
+	indexForFK := model.FindIndexByColumnsForForeignKey(childTable.Meta(), childTable.Meta().Indices, fk.Cols...)
 	if indexForFK == nil {
 		return nil, errors.Errorf("Missing index for '%s' foreign key columns in the table '%s'", fk.Name, childTable.Meta().Name)
 	}

@@ -65,7 +65,7 @@ func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.
 	}
 
 	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
-	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
+	// only the number of distinct values (NDV) is computed using TiKV. Other statistics
 	// are derived from sample data processed within TiDB.
 	// The reason is that we want to keep the same row sampling for all columns.
 	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))
@@ -214,9 +214,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	}()
 
-	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
-	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for range l {
+	totalLen := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
+	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
+	for range totalLen {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 
@@ -248,7 +248,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, l, id)
+			e.subMergeWorker(mergeCtx, taskCancel, mergeResultCh, mergeTaskCh, totalLen, id)
 		})
 	}
 	// Merge the result from collectors.
@@ -339,7 +339,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		return i.Handle.Compare(j.Handle)
 	})
 
-	totalLen := len(e.colsInfo) + len(e.indexes)
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
@@ -599,7 +598,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	cancel context.CancelCauseFunc,
 	resultCh chan<- *samplingMergeResult,
 	taskCh <-chan []byte,
-	l int,
+	totalLen int,
 	index int,
 ) {
 	// Only close the resultCh in the first worker.
@@ -637,8 +636,8 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		}
 	})
 	// Keep one private collector per merge worker and flush it when taskCh is closed.
-	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for range l {
+	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
+	for range totalLen {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 	// Early-return paths need to release the worker-local collector explicitly.
@@ -668,7 +667,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			inflightRespSize = int64(colResp.Size())
 			e.memTracker.Consume(inflightRespSize)
 
-			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), totalLen)
 			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 

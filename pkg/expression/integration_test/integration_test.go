@@ -2934,6 +2934,9 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("7 7 8 7 8 8"))
 	result = tk.MustQuery(`select week("2008-02-20", 5), week("2008-02-20", 6), week("2009-02-20", 7), week("2008-02-20", 8), week("2008-02-20", 9);`)
 	result.Check(testkit.Rows("7 8 7 7 8"))
+	result = tk.MustQuery(`select week("2023-01-01", null);`)
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select week("aa", 1), week(null, 2), week(11, 2), week(12.99, 2);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select week("aa"), week(null), week(11), week(12.99);`)
@@ -4314,6 +4317,23 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	// other plans
 	tk.MustGetDBError("select tidb_row_checksum() from t", expression.ErrNotSupportedYet)
 	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
+}
+
+func TestIssue66661(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table table1 (active bit)")
+	tk.MustExec("insert into table1 values (1)")
+
+	for _, vectorized := range []string{"on", "off"} {
+		tk.MustExec("set @@tidb_enable_vectorized_expression=" + vectorized)
+		tk.MustQuery("select hex(cast(any_value(active) as char)) from table1").Check(testkit.Rows("01"))
+		tk.MustQuery("select str_to_date(any_value(active), '%h:%i:%s') from table1").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00")
+		tk.MustQuery("select max(active) as c0 from table1 where str_to_date(any_value(active), '%h:%i:%s')").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("show warnings").CheckContain("Incorrect datetime value: '0000-00-00 00:00:00")
+	}
 }
 
 func TestIssue43527(t *testing.T) {

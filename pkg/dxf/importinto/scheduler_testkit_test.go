@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -382,7 +383,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			MultipleFilesStats: []globalsort.MultipleFilesStat{
+			MultipleFilesStats: []simplesst.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
@@ -395,7 +396,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 				StartKey:    []byte("ia"),
 				EndKey:      []byte("ic"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []globalsort.MultipleFilesStat{
+				MultipleFilesStats: []simplesst.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{"gs://sort-bucket/index/1", "gs://sort-bucket/index/1.stat"},

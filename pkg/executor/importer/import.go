@@ -37,11 +37,12 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
@@ -237,8 +238,8 @@ func (t DataSourceType) String() string {
 }
 
 var (
-	// NewClientWithContext returns a kv.Client.
-	NewClientWithContext = pd.NewClientWithContext
+	// NewClientWithAPIContext returns a kv.Client.
+	NewClientWithAPIContext = pd.NewClientWithAPIContext
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
@@ -1316,7 +1317,7 @@ func estimateCompressionRatio(
 			failpoint.Return(2.0, nil)
 		}
 	})
-	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, filePath, store)
 	if err != nil {
 		return 1.0, err
 	}
@@ -1500,7 +1501,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
-			ParquetMeta: mydump.ParquetFileMeta{Loc: e.location},
+			ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
@@ -1557,7 +1558,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
-					ParquetMeta: mydump.ParquetFileMeta{Loc: e.location},
+					ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 				}
 				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
 				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
@@ -1743,7 +1744,7 @@ func newLoadDataParser(
 			nil,
 		)
 	case DataFormatParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = parquetfile.NewParser(
 			ctx,
 			dataStore,
 			reader,
@@ -1918,8 +1919,8 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
 }
 
-func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
-	backendConfig := local.BackendConfig{
+func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) ingestctrl.BackendConfig {
+	backendConfig := ingestctrl.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,

@@ -586,6 +586,97 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
+	var startResult *Node
+	if nodeWithHint != nil || len(nodes) < 2 {
+		startResult, err = j.optimizeWithStart(detector, nodes, 0, cartesianFactor, allowNoEQ)
+		if err != nil {
+			return nil, err
+		}
+		if startResult == nil {
+			return group.root, nil
+		}
+		return startResult.p, nil
+	}
+
+	bestStartIdx := 0
+	startResult, bestStartIdx, err = chooseBestGreedyStart(2, func(startIdx int) (*Node, error) {
+		return j.optimizeWithStart(detector, nodes, startIdx, cartesianFactor, allowNoEQ)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if startResult == nil {
+		return group.root, nil
+	}
+	logutil.BgLogger().Debug("greedy join reorder picked multi-start candidate",
+		zap.Int("rootID", group.root.ID()),
+		zap.Int("startIdx", bestStartIdx),
+		zap.Float64("cumCost", startResult.cumCost),
+		zap.Int("nodeCount", len(nodes)))
+	return startResult.p, nil
+}
+
+func cloneNodeForGreedyStart(node *Node) *Node {
+	if node == nil {
+		return nil
+	}
+	cloned := &Node{
+		bitSet:  node.bitSet.Copy(),
+		p:       node.p,
+		cumCost: node.cumCost,
+	}
+	if node.usedEdges != nil {
+		cloned.usedEdges = maps.Clone(node.usedEdges)
+	}
+	return cloned
+}
+
+func cloneNodesForGreedyStart(nodes []*Node) []*Node {
+	cloned := make([]*Node, len(nodes))
+	for i, node := range nodes {
+		cloned[i] = cloneNodeForGreedyStart(node)
+	}
+	return cloned
+}
+
+func chooseBestGreedyStart(startCount int, runner func(startIdx int) (*Node, error)) (*Node, int, error) {
+	var best *Node
+	bestStartIdx := -1
+	for startIdx := range startCount {
+		candidate, err := runner(startIdx)
+		if err != nil {
+			return nil, -1, err
+		}
+		if candidate != nil && (best == nil || cumCostSignificantlyLess(candidate.cumCost, best.cumCost)) {
+			best = candidate
+			bestStartIdx = startIdx
+		}
+	}
+	return best, bestStartIdx, nil
+}
+
+func cumCostSignificantlyLess(cost, bestCost float64) bool {
+	if cost >= bestCost {
+		return false
+	}
+	scale := math.Max(1, math.Max(math.Abs(cost), math.Abs(bestCost)))
+	return bestCost-cost > scale*1e-12
+}
+
+func moveGreedyStartToFront(nodes []*Node, startIdx int) []*Node {
+	if startIdx <= 0 || startIdx >= len(nodes) {
+		return nodes
+	}
+	reordered := make([]*Node, 0, len(nodes))
+	reordered = append(reordered, nodes[startIdx])
+	reordered = append(reordered, nodes[:startIdx]...)
+	reordered = append(reordered, nodes[startIdx+1:]...)
+	return reordered
+}
+
+func (j *joinOrderGreedy) optimizeWithStart(detector *ConflictDetector, nodes []*Node, startIdx int, cartesianFactor float64, allowNoEQ bool) (*Node, error) {
+	nodes = moveGreedyStartToFront(cloneNodesForGreedyStart(nodes), startIdx)
+	var err error
 	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
 		return nil, err
 	}
@@ -613,29 +704,30 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	if detector.HasRemainingEdges(usedEdges) {
 		totalEdges, usedEdgeCount, missingEdges, missingDetail, nodeSets := summarizeEdges(detector, usedEdges, nodes, 4)
 		logutil.BgLogger().Warn("join reorder skipped because not all edges are used",
-			zap.Int("rootID", group.root.ID()),
+			zap.Int("rootID", j.group.root.ID()),
+			zap.Int("startIdx", startIdx),
 			zap.Int("nodes", len(nodes)),
 			zap.Int("totalEdges", totalEdges),
 			zap.Int("usedEdges", usedEdgeCount),
 			zap.Int("missingEdges", missingEdges),
 			zap.String("missingDetail", missingDetail),
 			zap.String("nodeSets", nodeSets),
-			zap.Bool("allInnerJoin", group.allInnerJoin))
+			zap.Bool("allInnerJoin", j.group.allInnerJoin))
 		if intest.InTest {
 			return nil, errors.New("got remaining edges during join reorder")
 		}
-		return group.root, nil
+		return nil, nil
 	}
 	if len(nodes) <= 0 {
 		return nil, errors.New("internal error: bushy join tree nodes is empty")
 	}
-	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins,
-	// It handles situations where there is no edges between different subgraphs,
-	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, true)
+	// makeBushyTree connects the remaining nodes into a bushy tree using cartesian joins.
+	// We need the returned Node metadata to compare start alternatives by cumCost.
+	root, err := makeBushyTree(j.ctx, detector, nodes, j.group.vertexHints, false)
 	if err != nil {
 		return nil, err
 	}
-	return root.p, nil
+	return root, nil
 }
 
 func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {

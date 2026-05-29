@@ -1289,6 +1289,9 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 		unSupportedReason = "stale read is not supported"
 	} else if sessionVars.SnapshotTS != 0 {
 		unSupportedReason = "historical read is not supported"
+	} else if sessionVars.MaxKeysRead > 0 {
+		// https://github.com/tikv/tikv/pull/19518#discussion_r3263461617
+		unSupportedReason = "tidb_max_keys_read is set"
 	}
 
 	if unSupportedReason != "" {
@@ -2613,9 +2616,14 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	for _, colInfo := range result {
 		shouldSkip := false
 		if colInfo.IsGenerated() {
-			// Check if any dependency is in the skip list
+			_, keep := mustAnalyze[colInfo.ID]
+			// Stored generated columns that must be analyzed are materialized in storage.
+			// They can be decoded directly without reading skipped base columns, while the
+			// skipped dependencies remain skipped.
+			decodableFromStorage := colInfo.GeneratedStored && keep
+			// Check if any dependency is in the skip list.
 			for depName := range colInfo.Dependences {
-				if _, exists := skipColNameMap[depName]; exists {
+				if _, exists := skipColNameMap[depName]; exists && !decodableFromStorage {
 					skipCol = append(skipCol, colInfo)
 					shouldSkip = true
 					break
