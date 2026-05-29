@@ -17,6 +17,7 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -52,6 +54,115 @@ func TestBindingCache(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t;")
 	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
 	require.Equal(t, 1, len(dom.BindHandle().GetAllGlobalBindings()))
+}
+
+// TestConcurrentBindingCacheReloadAndMatch mirrors the hot-binding repro:
+// keep a small set of digests hot while repeatedly reloading many bindings from storage.
+func TestConcurrentBindingCacheReloadAndMatch(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	const (
+		bindingCount = 24
+		hotCount     = 3
+		workerCount  = 8
+		testDuration = 20 * time.Second
+	)
+
+	type hotBindingLookup struct {
+		noDBDigest string
+		tableNames []*ast.TableName
+	}
+
+	parser4Test := parser.New()
+	hotLookups := make([]hotBindingLookup, 0, hotCount)
+	for i := 0; i < bindingCount; i++ {
+		tableName := fmt.Sprintf("binding_hot_%02d", i)
+		tk.MustExec(fmt.Sprintf("create table %s (a int, b int, key idx_a(a), key idx_b(b), key idx_ab(a, b))", tableName))
+
+		originSQL := fmt.Sprintf("select * from %s where a = 1 and b = 1", tableName)
+		bindSQL := fmt.Sprintf("select /*+ use_index(%s, idx_a) */ * from %s where a = 1 and b = 1", tableName, tableName)
+		tk.MustExec(fmt.Sprintf("create global binding for %s using %s", originSQL, bindSQL))
+
+		if i < hotCount {
+			stmt, err := parser4Test.ParseOneStmt(fmt.Sprintf("select * from test.%s where a = 1 and b = 1", tableName), "", "")
+			require.NoError(t, err)
+
+			_, noDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+			hotLookups = append(hotLookups, hotBindingLookup{
+				noDBDigest: noDBDigest,
+				tableNames: bindinfo.CollectTableNames(stmt),
+			})
+		}
+	}
+	require.Len(t, tk.MustQuery("show global bindings").Rows(), bindingCount)
+
+	bindHandle := dom.BindHandle()
+	require.NoError(t, bindHandle.LoadFromStorageToCache(true))
+
+	workers := make([]*testkit.TestKit, 0, workerCount)
+	for i := 0; i < workerCount; i++ {
+		worker := testkit.NewTestKit(t, store)
+		worker.MustExec("use test")
+		lookup := hotLookups[i%len(hotLookups)]
+		binding, matched := bindHandle.MatchGlobalBinding(worker.Session(), lookup.noDBDigest, lookup.tableNames)
+		require.True(t, matched)
+		require.NotEmpty(t, binding.BindSQL)
+		workers = append(workers, worker)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), testDuration)
+	defer cancel()
+
+	var (
+		wg       sync.WaitGroup
+		errOnce  sync.Once
+		firstErr error
+	)
+	start := make(chan struct{})
+	setErr := func(err error) {
+		if err == nil {
+			return
+		}
+		errOnce.Do(func() {
+			firstErr = err
+			cancel()
+		})
+	}
+
+	wg.Go(func() {
+		<-start
+		for ctx.Err() == nil {
+			setErr(bindHandle.LoadFromStorageToCache(false))
+		}
+	})
+
+	runMatchWorker := func(worker *testkit.TestKit, lookup hotBindingLookup) func() {
+		return func() {
+			<-start
+			matchCount := 0
+			for ctx.Err() == nil {
+				binding, matched := bindHandle.MatchGlobalBinding(worker.Session(), lookup.noDBDigest, lookup.tableNames)
+				if !matched || binding.BindSQL == "" {
+					setErr(fmt.Errorf("hot binding lookup missed after %d successful matches", matchCount))
+					return
+				}
+				matchCount++
+			}
+		}
+	}
+
+	for i, worker := range workers {
+		lookup := hotLookups[i%len(hotLookups)]
+		wg.Go(runMatchWorker(worker, lookup))
+	}
+
+	close(start)
+	wg.Wait()
+
+	require.NoError(t, firstErr)
+	require.Len(t, tk.MustQuery("show global bindings").Rows(), bindingCount)
 }
 
 func TestBindingLastUpdateTime(t *testing.T) {
