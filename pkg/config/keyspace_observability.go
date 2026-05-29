@@ -50,7 +50,10 @@ type KeyspaceObservabilityLogField struct {
 	Value string
 }
 
-const keyspaceObservabilityMetricLabelPrefix = "keyspace_meta_"
+const (
+	keyspaceObservabilityMetricLabelPrefix  = "keyspace_meta_"
+	keyspaceObservabilitySlowLogFieldPrefix = "Keyspace_meta_"
+)
 
 // Valid validates metadata observability mappings.
 func (o KeyspaceObservability) Valid() error {
@@ -81,10 +84,10 @@ func (o KeyspaceObservability) Valid() error {
 			if !validKeyspaceObservabilityLogFieldName(field.SlowLogField) {
 				return fmt.Errorf("[keyspace-observability.fields.%d] invalid slow-log-field %q", i, field.SlowLogField)
 			}
-			key := strings.ToLower(field.SlowLogField)
-			if !strings.HasPrefix(key, keyspaceObservabilityMetricLabelPrefix) {
-				return fmt.Errorf("[keyspace-observability.fields.%d] slow-log-field %q must start with %q", i, field.SlowLogField, keyspaceObservabilityMetricLabelPrefix)
+			if !strings.HasPrefix(field.SlowLogField, keyspaceObservabilitySlowLogFieldPrefix) {
+				return fmt.Errorf("[keyspace-observability.fields.%d] slow-log-field %q must start with %q", i, field.SlowLogField, keyspaceObservabilitySlowLogFieldPrefix)
 			}
+			key := strings.ToLower(field.SlowLogField)
 			if _, ok := slowLogFields[key]; ok {
 				return fmt.Errorf("[keyspace-observability.fields.%d] duplicated slow-log-field %q", i, field.SlowLogField)
 			}
