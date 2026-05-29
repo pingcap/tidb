@@ -688,6 +688,11 @@ func TestSQLModeOp(t *testing.T) {
 }
 
 func TestRequestSource(t *testing.T) {
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
+	t.Cleanup(func() {
+		tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginUnknown)
+	})
+
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.MockTiKV))
 	tk := testkit.NewTestKit(t, store)
 	withCheckInterceptor := func(source string) interceptor.RPCInterceptor {
@@ -695,27 +700,35 @@ func TestRequestSource(t *testing.T) {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				tikvrpc.AttachContext(req, req.Context)
 				requestSource := ""
+				requestOrigin := kvrpcpb.RequestOrigin_RequestOriginUnknown
 				readType := ""
 				switch r := req.Req.(type) {
 				case *kvrpcpb.PrewriteRequest:
 					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
 				case *kvrpcpb.CommitRequest:
 					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
 				case *coprocessor.Request:
 					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
 				case *kvrpcpb.GetRequest:
 					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
 				case *kvrpcpb.BatchGetRequest:
 					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
 				case *kvrpcpb.PessimisticLockRequest:
 					requestSource = r.GetContext().GetRequestSource()
+					requestOrigin = r.GetContext().GetRequestOrigin()
 				default:
 					fmt.Printf("unexpected request type %T\n", r)
 				}
 				require.Equal(t, readType+source, requestSource)
+				require.Equal(t, kvrpcpb.RequestOrigin_RequestOriginTiDB, requestOrigin)
 				return next(target, req)
 			}
 		})

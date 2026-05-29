@@ -31,6 +31,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -92,6 +93,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -308,6 +310,8 @@ func initDeployMode(cfg *config.Config) error {
 }
 
 func main() {
+	tikvrpc.SetDefaultRequestOrigin(kvrpcpb.RequestOrigin_RequestOriginTiDB)
+
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
 		if args[0] == "collect-log" && len(args) > 1 {
