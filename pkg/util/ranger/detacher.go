@@ -547,13 +547,22 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		}
 		return res, nil
 	}
+	// TODO: The EQ/IN extraction path (ExtractEqAndInCondition, specifically getPotentialEqOrInColOffset)
+	// still rejects columns with binary-casted literals, which causes suffix index columns to be treated
+	// as filters. It should apply the same CAST(... AS BINARY) / collation-compatibility exception used
+	// in the detacher loop so binary-cast equality predicates are treated as index-equalities. Fix this
+	// in a later release and add a regression test for a composite index case (e.g., index on (f,g) with
+	// f = CAST('a' AS BINARY) AND g = 1).
 	for _, cond := range newConditions {
-		isAccessCond, _ := checker.check(cond)
+		isAccessCond, shouldReserve := checker.check(cond)
 		if !isAccessCond {
 			filterConds = append(filterConds, cond)
 			continue
 		}
 		accessConds = append(accessConds, cond)
+		if shouldReserve {
+			filterConds = append(filterConds, cond)
+		}
 		// TODO: if it's prefix column, we need to add cond to filterConds?
 	}
 	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, eqOrInCount, accessConds)
@@ -1079,8 +1088,10 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 // It will find the point query column firstly and then extract the range query column.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
 // for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// The returned remainedConds are conditions that must be re-applied as filters (e.g. when a
+// collation mismatch makes the range approximate but the condition is still needed for correctness).
 func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions []expression.Expression,
-	cols []*expression.Column, lengths []int, rangeMaxSize int64) (Ranges, []expression.Expression, error) {
+	cols []*expression.Column, lengths []int, rangeMaxSize int64) (ranges Ranges, accessConds []expression.Expression, remainedConds []expression.Expression, err error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
@@ -1095,7 +1106,10 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 		rangeMaxSize:     rangeMaxSize,
 	}
 	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, newTpSlice, false)
-	return res.Ranges, res.AccessConds, err
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return res.Ranges, res.AccessConds, res.RemainedConds, nil
 }
 
 func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {

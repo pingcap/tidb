@@ -289,6 +289,10 @@ func TestSlowLogFormat(t *testing.T) {
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	ruDetails := util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond)
+	seVar.DurationParse = 10
+	seVar.DurationCompile = 10
+	seVar.DurationOptimization = 10
+	seVar.DurationWaitTS = 3
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -296,10 +300,6 @@ func TestSlowLogFormat(t *testing.T) {
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
-		TimeParse:         time.Duration(10),
-		TimeCompile:       time.Duration(10),
-		TimeOptimize:      time.Duration(10),
-		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
@@ -324,9 +324,7 @@ func TestSlowLogFormat(t *testing.T) {
 		IsWriteCacheTable: true,
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
-		RRU:               ruDetails.RRU(),
-		WRU:               ruDetails.WRU(),
-		WaitRUDuration:    ruDetails.RUWaitDuration(),
+		RUDetails:         ruDetails,
 		StorageKV:         true,
 		StorageMPP:        false,
 	}
@@ -335,11 +333,48 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.CurrentDBChanged = false
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
-
+	require.NotContains(t, logString, variable.SlowLogSessionConnectAttrs)
 	seVar.CurrentDBChanged = true
 	logString = seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
 	require.False(t, seVar.CurrentDBChanged)
+
+	// Verify SessionConnectAttrs serialization.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_client_name": "libmysql",
+		"_os":          "Linux",
+		"app_name":     "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	// json.Encoder sorts map keys, so the output is deterministic.
+	expectedAttrsLine := `# Session_connect_attrs: {"_client_name":"libmysql","_os":"Linux","app_name":"test_svc"}`
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = variable.On
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, expectedAttrsLine)
+	seVar.EnableRedactLog = variable.Off
+	// Session_connect_attrs should appear after Storage_from_mpp, before Prev_stmt, and before the SQL.
+	attrsIdx := strings.Index(logString, "Session_connect_attrs")
+	mppIdx := strings.Index(logString, variable.SlowLogStorageFromMPP)
+	prevStmtIdx := strings.Index(logString, variable.SlowLogPrevStmt)
+	sqlIdx := strings.Index(logString, sql)
+	require.Greater(t, attrsIdx, 0)
+	require.Greater(t, mppIdx, 0)
+	require.Greater(t, attrsIdx, mppIdx, "Session_connect_attrs should appear after Storage_from_mpp")
+	if prevStmtIdx > 0 {
+		require.Less(t, attrsIdx, prevStmtIdx, "Session_connect_attrs should appear before Prev_stmt")
+	}
+	require.Less(t, attrsIdx, sqlIdx, "Session_connect_attrs should appear before the SQL statement")
+
+	// Verify reserved truncation metadata key is serialized as expected.
+	logItems.SessionConnectAttrs = map[string]string{
+		"_truncated": "4",
+		"app_name":   "test_svc",
+	}
+	logString = seVar.SlowLogFormat(logItems)
+	require.Contains(t, logString, `# Session_connect_attrs: {"_truncated":"4","app_name":"test_svc"}`)
+	// Restore for subsequent assertions.
+	logItems.SessionConnectAttrs = nil
 
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
@@ -392,8 +427,6 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"TimeParse", "TimeCompile", "TimeOptimize", "TimeWaitTS",
-		"RRU", "WRU", "WaitRUDuration",
 		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
@@ -700,4 +733,34 @@ func TestUserVars(t *testing.T) {
 	dt, ok = vars.GetUserVarVal("b")
 	require.True(t, ok)
 	require.Equal(t, types.NewStringDatum("v2"), dt)
+}
+func TestPerformanceSchemaSessionConnectAttrsSizeGlobalSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originSize := variable.ConnectAttrsSize.Load()
+	defer func() {
+		variable.ConnectAttrsSize.Store(originSize)
+		tk.MustExec("set global performance_schema_session_connect_attrs_size = " + strconv.FormatInt(originSize, 10))
+	}()
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 0")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("0"))
+	require.Equal(t, int64(0), variable.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 65536")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), variable.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -1")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), variable.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = 70000")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("65536"))
+	require.Equal(t, int64(65536), variable.ConnectAttrsSize.Load())
+
+	tk.MustExec("set global performance_schema_session_connect_attrs_size = -2")
+	tk.MustQuery("select @@global.performance_schema_session_connect_attrs_size").Check(testkit.Rows("-1"))
+	require.Equal(t, int64(-1), variable.ConnectAttrsSize.Load())
 }

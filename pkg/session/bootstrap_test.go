@@ -2745,6 +2745,70 @@ func TestUpgradeToVer227FixPITRIDMapSchemaWhenVer221Conflict(t *testing.T) {
 	requirePITRIDMapSchemaFixed(t, se2)
 }
 
+func TestUpgradeToVer228BackfillsIgnoreInlistPlanDigest(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver227 := version227
+	seV227 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver227))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV227, ver227)
+
+	// Simulate a cluster upgraded through the old path where the variable existed in code
+	// but its row was never backfilled into mysql.global_variables.
+	MustExec(t, seV227, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	res := MustExecToRecodeSet(t, seV227, fmt.Sprintf(
+		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+	require.NoError(t, res.Close())
+
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf(
+		"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		variable.TiDBIgnoreInlistPlanDigest,
+	))
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, variable.Off, chk.GetRow(0).GetString(1))
+	require.NoError(t, res.Close())
+
+	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_ignore_inlist_plan_digest")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
+	require.NoError(t, res.Close())
+}
+
 func requirePITRIDMapSchemaFixed(t *testing.T, se sessiontypes.Session) {
 	t.Helper()
 	ctx := context.Background()
