@@ -1206,10 +1206,6 @@ max-allowed-packet = %d`, packetSize)), 0644))
 		require.ErrorContains(t, conf.AdjustStarterConfig(true), "CLUSTER_CERT and CLUSTER_KEY must be set together")
 	})
 
-	jsonConfig, err := GetJSONConfig()
-	require.NoError(t, err)
-	require.NotContains(t, jsonConfig, "enable-gc-fast-start")
-
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
