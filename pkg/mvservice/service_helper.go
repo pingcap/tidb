@@ -437,9 +437,9 @@ func (*serviceHelper) loadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 		var lastSuccessReadTSO uint64
 		var lastSuccessTime time.Time
 		if !row.IsNull(2) {
-			tso := row.GetInt64(2)
+			tso := row.GetUint64(2)
 			if tso > 0 {
-				lastSuccessReadTSO = uint64(tso)
+				lastSuccessReadTSO = tso
 				lastSuccessTime = mvsUnixMilli(oracle.ExtractPhysical(lastSuccessReadTSO))
 			}
 		}

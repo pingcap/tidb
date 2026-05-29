@@ -18,7 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -68,6 +70,23 @@ func TestLogicalSchemaClone(t *testing.T) {
 	// the column slice inside schema will grow at both case.
 	require.Equal(t, cloneSp.Schema().Len(), 2)
 	require.Equal(t, sp.Schema().Len(), 2)
+}
+
+func TestNewExtraCommitTSSchemaColType(t *testing.T) {
+	ctx := mock.NewContext()
+	ds := &logicalop.DataSource{
+		DBName: model.NewCIStr("test"),
+		TableInfo: &metamodel.TableInfo{
+			Name: model.NewCIStr("t"),
+		},
+	}
+	ds.LogicalSchemaProducer = logicalop.LogicalSchemaProducer{
+		BaseLogicalPlan: logicalop.NewBaseLogicalPlan(ctx, "DataSource", ds, 0),
+	}
+
+	col := ds.NewExtraCommitTSSchemaCol()
+	require.Equal(t, mysql.TypeLonglong, col.RetType.GetType())
+	require.True(t, mysql.HasUnsignedFlag(col.RetType.GetFlag()))
 }
 
 func TestLogicalApplyClone(t *testing.T) {

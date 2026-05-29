@@ -530,7 +530,7 @@ type RefreshMaterializedViewImplementStmt struct {
 	stmtNode
 
 	RefreshStmt                  *RefreshMaterializedViewStmt
-	LastSuccessfulRefreshReadTSO int64
+	LastSuccessfulRefreshReadTSO uint64
 }
 
 // Restore implements Node interface.
@@ -543,7 +543,7 @@ func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) e
 		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewImplementStmt.RefreshStmt")
 	}
 	ctx.WriteKeyWord(" USING TIMESTAMP ")
-	ctx.WritePlain(strconv.FormatInt(n.LastSuccessfulRefreshReadTSO, 10))
+	ctx.WritePlain(strconv.FormatUint(n.LastSuccessfulRefreshReadTSO, 10))
 	return nil
 }
 
