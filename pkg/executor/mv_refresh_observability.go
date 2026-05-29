@@ -512,10 +512,10 @@ func (e *RefreshMaterializedViewProfileExec) generateRows(ctx context.Context) (
 	refreshStmt := cloneRefreshMaterializedViewStmt(e.stmt)
 	refreshStmt.ObserveType = ast.RefreshMaterializedViewObserveNone
 	refreshExec := &RefreshMaterializedViewExec{
-		BaseExecutor:             exec.NewBaseExecutor(e.Ctx(), nil, 0),
-		stmt:                     refreshStmt,
-		stepObserver:             collector,
-	planFormatForObserver: types.ExplainFormatBrief,
+		BaseExecutor:          exec.NewBaseExecutor(e.Ctx(), nil, 0),
+		stmt:                  refreshStmt,
+		stepObserver:          collector,
+		planFormatForObserver: types.ExplainFormatBrief,
 	}
 	if err := refreshExec.executeRefreshMaterializedView(ctx, refreshStmt); err != nil {
 		return nil, err
