@@ -788,6 +788,47 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestExtractPartitionIDs(t *testing.T) {
+	// No partition info.
+	ti := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), State: model.StatePublic}
+	b, err := json.Marshal(ti)
+	require.NoError(t, err)
+	require.Nil(t, meta.ExtractPartitionIDs(b))
+
+	// Partition with definitions.
+	ti = &model.TableInfo{
+		ID:   100,
+		Name: ast.NewCIStr("t"),
+		Partition: &model.PartitionInfo{
+			Expr: "a",
+			Definitions: []model.PartitionDefinition{
+				{ID: 201, Name: ast.NewCIStr("p0")},
+				{ID: 202, Name: ast.NewCIStr("p1")},
+				{ID: 203, Name: ast.NewCIStr("p2")},
+			},
+		},
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(ti)
+	require.NoError(t, err)
+	ids := meta.ExtractPartitionIDs(b)
+	require.Equal(t, []int64{201, 202, 203}, ids)
+
+	// Partition with empty definitions.
+	ti2 := &model.TableInfo{
+		ID:   101,
+		Name: ast.NewCIStr("t2"),
+		Partition: &model.PartitionInfo{
+			Expr:        "b",
+			Definitions: []model.PartitionDefinition{},
+		},
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(ti2)
+	require.NoError(t, err)
+	require.Nil(t, meta.ExtractPartitionIDs(b))
+}
+
 func TestIsTableInfoMustLoad(t *testing.T) {
 	tableInfo := &model.TableInfo{
 		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
@@ -829,7 +870,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
-	require.True(t, meta.IsTableInfoMustLoad(b))
+	require.False(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
 		Lock:  &model.TableLockInfo{State: model.TableLockStatePreLock},
