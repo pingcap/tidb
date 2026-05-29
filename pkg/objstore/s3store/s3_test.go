@@ -441,6 +441,7 @@ func TestS3Storage(t *testing.T) {
 		testFn(&tests[i], t)
 	}
 
+<<<<<<< HEAD:pkg/objstore/s3store/s3_test.go
 	t.Run("cache assumed role credentials", func(t *testing.T) {
 		const assumeRoleResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
@@ -504,6 +505,50 @@ func TestS3Storage(t *testing.T) {
 		require.GreaterOrEqual(t, s3Calls.Load(), int32(2))
 		require.Equal(t, s3Calls.Load(), assumedCredentialUses.Load())
 		require.Equal(t, int32(1), assumeRoleCalls.Load())
+=======
+	t.Run("get object permission check uses configured prefix", func(t *testing.T) {
+		var (
+			mu    sync.Mutex
+			paths []string
+		)
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			paths = append(paths, r.URL.Path)
+			mu.Unlock()
+
+			w.Header().Set(bucketRegionHeader, "us-west-2")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer s.Close()
+
+		_, err := New(context.Background(), &backuppb.StorageBackend{
+			Backend: &backuppb.StorageBackend_S3{
+				S3: &backuppb.S3{
+					Region:         "",
+					Endpoint:       s.URL,
+					Bucket:         "bucket",
+					Prefix:         "prefix",
+					ForcePathStyle: true,
+				},
+			},
+		}, &ExternalStorageOptions{
+			SendCredentials:  true,
+			CheckPermissions: []Permission{GetObject},
+		})
+		require.NoError(t, err)
+
+		mu.Lock()
+		defer mu.Unlock()
+		var getObjectPath string
+		for _, p := range paths {
+			if strings.Contains(p, "perm-check") || strings.Contains(p, "not-exists") {
+				getObjectPath = p
+				break
+			}
+		}
+		require.NotEmpty(t, getObjectPath, "recorded paths: %v", paths)
+		require.True(t, strings.HasPrefix(getObjectPath, "/bucket/prefix/perm-check/"), "recorded paths: %v", paths)
+>>>>>>> 8bbb057ae99 (br: use configured prefix for S3 permission check (#68588)):br/pkg/storage/s3_test.go
 	})
 }
 
