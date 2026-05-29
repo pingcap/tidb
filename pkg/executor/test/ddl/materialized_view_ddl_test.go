@@ -617,14 +617,14 @@ func TestShowMaterializedViewStatusPrivilege(t *testing.T) {
 	err = tkUser.ExecToErr("show materialized view test.mv_show_status remain_logs")
 	require.ErrorContains(t, err, "SHOW VIEW command denied")
 	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status wait_purge")
-	require.ErrorContains(t, err, "SELECT command denied")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
 
 	tk.MustExec("grant show view on test.mv_show_status to 'show_mv_status_u'@'%'")
 	tkUser.MustQuery("show materialized view test.mv_show_status remain_logs").Check(testkit.Rows(mvExpected(0)))
 	err = tkUser.ExecToErr("show materialized view log on test.t_show_mv_status wait_purge")
-	require.ErrorContains(t, err, "SELECT command denied")
+	require.ErrorContains(t, err, "SHOW VIEW command denied")
 
-	tk.MustExec("grant select on test.t_show_mv_status to 'show_mv_status_u'@'%'")
+	tk.MustExec("grant show view on test.t_show_mv_status to 'show_mv_status_u'@'%'")
 	tkUser.MustQuery("show materialized view log on test.t_show_mv_status wait_purge").Check(testkit.Rows(mlogExpected(2)))
 }
 
