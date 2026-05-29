@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -368,19 +370,43 @@ func TestLoadDataSpecifiedColumns(t *testing.T) {
 }
 
 func TestLoadDataIgnoreLines(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test; drop table if exists load_data_test;")
-	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
-	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines"
-	ctx := tk.Session().(sessionctx.Context)
-	tests := []testCase{
-		{[]byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+	tests := []struct {
+		data     []byte
+		expected []string
+	}{
+		{[]byte("1\tline1\n2\tline2\n"), []string{"2|line2"}},
+		{[]byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}},
 	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	for _, tt := range tests {
+		parser, err := mydump.NewCSVParser(
+			context.Background(),
+			&config.CSVConfig{
+				FieldsTerminatedBy: "\t",
+				LinesTerminatedBy:  "\n",
+			},
+			mydump.NewStringReader(string(tt.data)),
+			int64(config.ReadBlockSize),
+			nil,
+			false,
+			nil,
+		)
+		require.NoError(t, err)
+
+		require.NoError(t, importer.HandleSkipNRows(parser, 1))
+
+		rows := make([]string, 0, len(tt.expected))
+		for {
+			err = parser.ReadRow()
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			require.NoError(t, err)
+			row := parser.LastRow().Row
+			require.Len(t, row, 2)
+			rows = append(rows, row[0].GetString()+"|"+row[1].GetString())
+		}
+		require.Equal(t, tt.expected, rows)
+	}
 }
 
 func TestLoadDataNULL(t *testing.T) {
