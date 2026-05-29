@@ -557,7 +557,12 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/MATERIALIZED VIEW/SEQUENCE ...' statement, ignore local temporary tables.
-	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateMaterializedView || p.showTp == ast.ShowCreateSequence) {
+	if p.stmtTp == TypeShow &&
+		(p.showTp == ast.ShowCreateView ||
+			p.showTp == ast.ShowCreateMaterializedView ||
+			p.showTp == ast.ShowMaterializedViewRemainLogs ||
+			p.showTp == ast.ShowMaterializedViewLogWaitPurge ||
+			p.showTp == ast.ShowCreateSequence) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 

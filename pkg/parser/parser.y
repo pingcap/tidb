@@ -1389,9 +1389,6 @@ import (
 	TableLock                              "Table name and lock type"
 	TableLockList                          "Table lock list"
 	TableName                              "Table name"
-	ShowMaterializedViewName               "SHOW MATERIALIZED VIEW table name"
-	ShowMaterializedViewRemainLogs         "SHOW MATERIALIZED VIEW REMAIN_LOGS suffix"
-	ShowMaterializedViewLogWaitPurge       "SHOW MATERIALIZED VIEW LOG ON ... WAIT_PURGE suffix"
 	TableNameOptWild                       "Table name with optional wildcard"
 	TableNameList                          "Table name list"
 	TableNameListOpt                       "Table name list opt"
@@ -9656,41 +9653,6 @@ TableName:
 		$$ = &ast.TableName{Schema: model.NewCIStr("*"), Name: model.NewCIStr($3)}
 	}
 
-ShowMaterializedViewName:
-	Identifier
-	{
-		$$ = &ast.TableName{Name: model.NewCIStr($1)}
-	}
-|	Identifier '.' Identifier
-	{
-		schema := $1
-		if isInCorrectIdentifierName(schema) {
-			yylex.AppendError(ErrWrongDBName.GenWithStackByArgs(schema))
-			return 1
-		}
-		$$ = &ast.TableName{Schema: model.NewCIStr(schema), Name: model.NewCIStr($3)}
-	}
-
-ShowMaterializedViewRemainLogs:
-	identifier
-	{
-		if !strings.EqualFold($1, "remain_logs") {
-			yylex.AppendError(yylex.Errorf("syntax error: expected REMAIN_LOGS"))
-			return 1
-		}
-		$$ = nil
-	}
-
-ShowMaterializedViewLogWaitPurge:
-	identifier
-	{
-		if !strings.EqualFold($1, "wait_purge") {
-			yylex.AppendError(yylex.Errorf("syntax error: expected WAIT_PURGE"))
-			return 1
-		}
-		$$ = nil
-	}
-
 TableNameList:
 	TableName
 	{
@@ -12164,17 +12126,25 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
-|	"SHOW" "MATERIALIZED" "VIEW" ShowMaterializedViewName ShowMaterializedViewRemainLogs
+|	"SHOW" "MATERIALIZED" "VIEW" TableName identifier
 	{
+		if !strings.EqualFold($5, "remain_logs") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected REMAIN_LOGS"))
+			return 1
+		}
 		$$ = &ast.ShowStmt{
-			Tp:    ast.ShowMaterializedView,
+			Tp:    ast.ShowMaterializedViewRemainLogs,
 			Table: $4.(*ast.TableName),
 		}
 	}
-|	"SHOW" "MATERIALIZED" "VIEW" "LOG" "ON" TableName ShowMaterializedViewLogWaitPurge
+|	"SHOW" "MATERIALIZED" "VIEW" "LOG" "ON" TableName identifier
 	{
+		if !strings.EqualFold($7, "wait_purge") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected WAIT_PURGE"))
+			return 1
+		}
 		$$ = &ast.ShowStmt{
-			Tp:    ast.ShowMaterializedViewLog,
+			Tp:    ast.ShowMaterializedViewLogWaitPurge,
 			Table: $6.(*ast.TableName),
 		}
 	}

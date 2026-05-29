@@ -77,6 +77,7 @@ create user 'u_refresh_select'@'%';
 grant show view on mview_privilege_test.mv to 'u_show_mv'@'%';
 grant show view, select on mview_privilege_test.mv to 'u_show_create'@'%';
 grant select on mview_privilege_test.t to 'u_show_log'@'%';
+grant show view on mview_privilege_test.t to 'u_show_log'@'%';
 grant operate view on mview_privilege_test.mv to 'u_refresh_select'@'%';
 grant select on mview_privilege_test.t to 'u_refresh_select'@'%';
 create user 'u_db_refresh'@'%';
@@ -111,8 +112,8 @@ grant operate view on *.* to 'u_purge_global'@'%';
 create user 'u_dml'@'%';
 grant select, insert, update, delete on mview_privilege_test.* to 'u_dml'@'%';
 show materialized view mv remain_logs;
-mview_id	mview_name	pending_rows
-<mview_id>	mv	1
+mview_id	mview_name	mlog_id	mlog_name	remain_logs
+<mview_id>	mv	<mlog_id>	$mlog$t	1
 show materialized views from mview_privilege_test;
 mview_id	mview_name
 <mview_id>	mv
@@ -127,8 +128,8 @@ Grants for u_show_create@%
 GRANT USAGE ON *.* TO 'u_show_create'@'%'
 GRANT SHOW VIEW ON `mview_privilege_test`.`mv` TO 'u_show_create'@'%'
 show materialized view mv remain_logs;
-mview_id	mview_name	pending_rows
-<mview_id>	mv	1
+mview_id	mview_name	mlog_id	mlog_name	remain_logs
+<mview_id>	mv	<mlog_id>	$mlog$t	1
 show create materialized view mv;
 Error 1142 (42000): SELECT command denied to user 'u_show_create'@'%' for table 'mv'
 grant select on mview_privilege_test.mv to 'u_show_create'@'%';
@@ -150,23 +151,25 @@ mlog_id	mlog_name	base_table_id	base_table_name
 show materialized view logs from mview_privilege_test like 'mview_privilege_test.$mlog$%';
 mlog_id	mlog_name	base_table_id	base_table_name
 show materialized view log on t wait_purge;
-mlog_id	mlog_name	base_table_id	base_table_name	pending_rows
+mlog_id	mlog_name	base_table_id	base_table_name	wait_purge
 <mlog_id>	$mlog$t	<base_table_id>	t	0
 show create materialized view log on t;
 Materialized View Log	Create Materialized View Log
 t	CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`) PURGE NEXT DATE_ADD(NOW(), INTERVAL 1 HOUR)
 show materialized view log on t_hidden wait_purge;
-Error 1142 (42000): SELECT command denied to user 'u_show_log'@'%' for table 't_hidden'
+Error 1142 (42000): SHOW VIEW command denied to user 'u_show_log'@'%' for table 't_hidden'
 revoke select on mview_privilege_test.t from 'u_show_log'@'%';
 show grants for 'u_show_log'@'%';
 Grants for u_show_log@%
 GRANT USAGE ON *.* TO 'u_show_log'@'%'
+GRANT SHOW VIEW ON `mview_privilege_test`.`t` TO 'u_show_log'@'%'
 show materialized views from mview_privilege_test;
 mview_id	mview_name
 show materialized view logs from mview_privilege_test;
 mlog_id	mlog_name	base_table_id	base_table_name
 show materialized view log on mview_privilege_test.t wait_purge;
-Error 1142 (42000): SELECT command denied to user 'u_show_log'@'%' for table 't'
+mlog_id	mlog_name	base_table_id	base_table_name	wait_purge
+<mlog_id>	$mlog$t	<base_table_id>	t	0
 show create materialized view log on mview_privilege_test.t;
 Error 1142 (42000): SELECT command denied to user 'u_show_log'@'%' for table 't'
 refresh materialized view mv complete delta apply;
