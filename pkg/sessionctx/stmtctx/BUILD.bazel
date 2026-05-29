@@ -45,7 +45,7 @@ go_test(
     ],
     embed = [":stmtctx"],
     flaky = True,
-    shard_count = 17,
+    shard_count = 16,
     deps = [
         "//pkg/errctx",
         "//pkg/kv",

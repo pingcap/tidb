@@ -25,6 +25,7 @@ go_library(
         "//pkg/planner/util/optimizetrace",
         "//pkg/privilege",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util",
