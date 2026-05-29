@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -332,7 +332,7 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 }
 
 func (w *GCWorker) isNeedToWait() bool {
-	if config.GetGlobalConfig().EnableGCFastStart && !intest.InTest {
+	if deploymode.IsStarter() && !intest.InTest {
 		return time.Since(w.lastFinish) < gcWaitTime && w.isFirstTickFinished
 	}
 	return time.Since(w.lastFinish) < gcWaitTime

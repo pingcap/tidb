@@ -360,9 +360,6 @@ type Config struct {
 
 	// MeteringConfigURI is the URI for metering configuration.
 	MeteringStorageURI string `toml:"metering-storage-uri" json:"metering-storage-uri"`
-
-	// EnableGCFastStart controls whether the first eligible GC tick can skip gcWaitTime.
-	EnableGCFastStart bool `toml:"enable-gc-fast-start" json:"enable-gc-fast-start"`
 }
 
 // RUV2Config is the configuration for RU v2 weight calculation.
@@ -1229,7 +1226,6 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
-	EnableGCFastStart:                    true,
 }
 
 var (

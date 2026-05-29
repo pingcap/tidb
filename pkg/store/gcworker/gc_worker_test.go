@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -1110,7 +1111,10 @@ func TestLeaderTick(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	t.Run("UnifiedGCFastStartSkipsInitialWait", func(t *testing.T) {
+	t.Run("UnifiedGCStarterFastStartSkipsInitialWait", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("starter deploy mode is only available in nextgen kernel")
+		}
 		txnSafePointSyncWaitTime = 0
 		veryLong := gcDefaultLifeTime * 10
 		lastRunBeforeFastStart := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
@@ -1123,12 +1127,10 @@ func TestLeaderTick(t *testing.T) {
 		t.Cleanup(func() {
 			intest.InTest = originInTest
 		})
-		originGlobalConfig := config.GetGlobalConfig()
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.EnableGCFastStart = true
-		})
+		originDeployMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Starter))
 		t.Cleanup(func() {
-			config.StoreGlobalConfig(originGlobalConfig)
+			require.NoError(t, deploymode.Set(originDeployMode))
 		})
 
 		err = s.gcWorker.runKeyspaceGCJobInUnifiedGCMode(gcContext(), gcConcurrency{v: 1})
@@ -1158,6 +1160,44 @@ func TestLeaderTick(t *testing.T) {
 		case <-time.After(time.Second):
 		}
 		require.NoError(t, err)
+		lastRunAfterWait, err := s.gcWorker.loadTime(gcLastRunTimeKey)
+		require.NoError(t, err)
+		require.NotNil(t, lastRunAfterWait)
+		require.Equal(t, lastRunBeforeWait.Unix(), lastRunAfterWait.Unix())
+	})
+
+	t.Run("UnifiedGCPremiumStillWaitsInitialTick", func(t *testing.T) {
+		if kerneltype.IsClassic() {
+			t.Skip("deploy mode is only available in nextgen kernel")
+		}
+		txnSafePointSyncWaitTime = 0
+		veryLong := gcDefaultLifeTime * 10
+		lastRunBeforeWait := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
+		err := s.gcWorker.saveTime(gcLastRunTimeKey, lastRunBeforeWait)
+		require.NoError(t, err)
+		s.gcWorker.lastFinish = time.Now()
+		s.gcWorker.isFirstTickFinished = false
+
+		originInTest := intest.InTest
+		intest.InTest = false
+		t.Cleanup(func() {
+			intest.InTest = originInTest
+		})
+		originDeployMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originDeployMode))
+		})
+
+		err = s.gcWorker.runKeyspaceGCJobInUnifiedGCMode(gcContext(), gcConcurrency{v: 1})
+		require.NoError(t, err)
+		select {
+		case err = <-s.gcWorker.done:
+			err = errors.Errorf("received signal s.gcWorker.done which shouldn't exist: %v", err)
+		case <-time.After(time.Second):
+		}
+		require.NoError(t, err)
+
 		lastRunAfterWait, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 		require.NoError(t, err)
 		require.NotNil(t, lastRunAfterWait)

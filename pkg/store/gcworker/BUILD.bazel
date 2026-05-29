@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/gcworker",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/ddl",
         "//pkg/ddl/label",
         "//pkg/ddl/placement",
@@ -61,6 +61,7 @@ go_test(
     shard_count = 36,
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
