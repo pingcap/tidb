@@ -60,6 +60,11 @@ type Builder struct {
 	store    kv.Storage
 	crossKS  bool
 
+	// partitionID2TableID is a temporary field used during full load (fast path) to
+	// fill the pid2tid btree for partition tables that are not in the must-load list.
+	// It is set via WithPartitionID2TableID and consumed in createSchemaTablesForDB.
+	partitionID2TableID map[int64]int64
+
 	// oldTableForPartitionDiff is set temporarily during applyTableUpdateV2 to cache the
 	// old table before it's removed, so that applyCreateTable can diff changed partitions.
 	oldTableForPartitionDiff table.Table
@@ -924,6 +929,21 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		}
 	}
 
+	// Fill pid2tid for partition tables that were not in the must-load list.
+	// This is collected by the loader via WithPartitionID2TableID during the fast path
+	// (schemaCacheSize > 0), where partition tables are skipped by IsTableInfoMustLoad
+	// but their pid2tid mappings are still needed for FindTableByPartitionID etc.
+	if b.enableV2 && len(b.partitionID2TableID) > 0 {
+		for pid, tid := range b.partitionID2TableID {
+			btreeSet(&b.infoData.pid2tid, partitionItem{
+				partitionID:   pid,
+				tableID:       tid,
+				schemaVersion: schemaVersion,
+			})
+		}
+		b.partitionID2TableID = nil
+	}
+
 	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
 	b.initMisc(policies, resourceGroups)
 
@@ -1067,7 +1087,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 
 // WithStore attaches the given store to builder.
 func (b *Builder) WithStore(s kv.Storage) *Builder {
-	b.store = s
+		b.store = s
 	return b
 }
 
