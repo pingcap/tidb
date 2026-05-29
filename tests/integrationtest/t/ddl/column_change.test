@@ -11,14 +11,12 @@ create table t (a int, b int as (a+3));
 alter table t change a c int not null;
 
 # TestIssue24321 / TestIssue43455
-# Modifications that do not require data reorganization are allowed even if the column
-# has a generated column dependency. See https://github.com/pingcap/tidb/issues/43455
+# Only metadata-only and safe collation-only changes are allowed for a column with
+# generated column dependencies. See https://github.com/pingcap/tidb/issues/43455
 drop table if exists t2;
 create table t2(id int, a int, b int generated always as (abs(a)) virtual);
-# INT -> BIGINT does not need reorg, so it is allowed now.
+-- error 8200
 alter table t2 modify column a bigint;
-DESC t2;
 # Changes that need reorg are still prohibited.
 -- error 8200
 alter table t2 modify column a varchar(20);
-

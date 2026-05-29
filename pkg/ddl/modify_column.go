@@ -2100,11 +2100,14 @@ func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInf
 }
 
 func needCheckGeneratedColumnDependencyForNoReorg(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
-	// The normal generated-column restriction is only relevant when another generated
-	// column or expression index depends on the modified column.
-	if ok, _, _ := hasDependentByGeneratedColumn(tblInfo, oldCol.Name); !ok {
+	// When modifying a generated column itself, leave it to checkModifyGeneratedColumn
+	// instead of the dependency check for base columns.
+	if oldCol.IsGenerated() {
 		return false
 	}
+
+	// The normal generated-column restriction is only relevant when another generated
+	// column or expression index depends on the modified column.
 
 	// Metadata-only changes do not change existing row values or generated expression results.
 	if oldCol.FieldType.Equal(&newCol.FieldType) {
