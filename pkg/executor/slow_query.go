@@ -62,7 +62,7 @@ var ParseSlowLogBatchSize = 64
 
 // slowLogTimeRangeInternalTolerance only widens internal file pruning and
 // reverse-scan stop checks. Rows are still filtered by the original time ranges
-// in slowLogChecker. In a real use cluster, the max time unorder thrift is 50ms.
+// in slowLogChecker. In a real use cluster, the max time unorder drift is 50ms.
 // The 1s tolerance should be enough.
 const slowLogTimeRangeInternalTolerance = time.Second
 
