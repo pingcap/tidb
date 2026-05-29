@@ -1049,7 +1049,7 @@ func TestMDLTruncateTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	originalTableID := tbl.Meta().ID
 	tk.MustExec("begin")
@@ -1063,15 +1063,10 @@ func TestMDLTruncateTable(t *testing.T) {
 	var errtk2 error
 	var errtk3 error
 
-<<<<<<< HEAD
-	one := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
-		if one {
-=======
 	waitTableIDChanged := func() error {
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
-			tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 			if err == nil && tbl.Meta().ID != originalTableID {
 				return nil
 			}
@@ -1081,9 +1076,8 @@ func TestMDLTruncateTable(t *testing.T) {
 	}
 
 	var once sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(job *model.Job, _ int64) {
 		if job.Type != model.ActionTruncateTable {
->>>>>>> fbce36ca944 (pkg/ddl: stabilize TestMDLTruncateTable (#67300))
 			return
 		}
 		once.Do(func() {
