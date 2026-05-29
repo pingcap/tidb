@@ -1272,7 +1272,7 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		// Handle IndexMerge with SortItemsHints when some (but not all) partial
 		// paths satisfy the sort hints. When all paths satisfy, the existing
 		// Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
-		if len(copTask.IdxMergePartPlans) > 0 && !copTask.IndexPlanFinished &&
+		if len(copTask.IdxMergePartPlans) > 0 && !copTask.IndexPlanFinished && !copTask.IdxMergeIsIntersection &&
 			len(copTask.IdxMergePartPlansSatisfySortHints) > 0 {
 			allSatisfy := true
 			for _, s := range copTask.IdxMergePartPlansSatisfySortHints {
@@ -1458,6 +1458,11 @@ func estimateMaxXForPartialOrder() uint64 {
 func handleSortItemsHintsForIndexMerge(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
 	newCount := p.Offset + p.Count
 
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
+
 	for i, partialPlan := range copTask.IdxMergePartPlans {
 		if i < len(copTask.IdxMergePartPlansSatisfySortHints) &&
 			copTask.IdxMergePartPlansSatisfySortHints[i] {
@@ -1470,7 +1475,7 @@ func handleSortItemsHintsForIndexMerge(p *physicalop.PhysicalTopN, copTask *phys
 			pushedDownLimit.SetChildren(partialPlan)
 			pushedDownLimit.SetSchema(partialPlan.Schema())
 			copTask.IdxMergePartPlans[i] = pushedDownLimit
-		} else {
+		} else if canPushToIndexPlan(partialPlan, cols) {
 			// This partial path does not satisfy the sort order, push TopN.
 			pushedDownTopN, _ := getPushedDownTopN(p, partialPlan, copTask.GetStoreType())
 			copTask.IdxMergePartPlans[i] = pushedDownTopN

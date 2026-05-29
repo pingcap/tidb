@@ -2259,7 +2259,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	}
 	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
 		if len(candidate.path.PartialIndexPaths) > 0 && !candidate.path.IndexMergeIsIntersection {
-			if prop.IsSortItemEmpty() && len(prop.SortItemsHints) == 0 {
+			if prop.IsSortItemEmpty() {
 				failpoint.Return(base.InvalidTask, nil)
 			}
 		}
