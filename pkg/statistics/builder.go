@@ -368,6 +368,23 @@ func BuildHistAndTopN(
 	isColumn bool,
 	memTracker *memory.Tracker,
 ) (*Histogram, *TopN, error) {
+	return BuildHistAndTopNWithNDV(ctx, numBuckets, numTopN, id, collector, tp, isColumn, memTracker, 0)
+}
+
+// BuildHistAndTopNWithNDV builds a histogram and TopN from samples, using ndvHint
+// when the collector does not carry an FM sketch. This is used by NDV
+// sub-sampling, where the NDV comes from HLL singleton sketches while the row
+// samples are still valid for histogram bucket construction.
+func BuildHistAndTopNWithNDV(
+	ctx sessionctx.Context,
+	numBuckets, numTopN int,
+	id int64,
+	collector *SampleCollector,
+	tp *types.FieldType,
+	isColumn bool,
+	memTracker *memory.Tracker,
+	ndvHint int64,
+) (*Histogram, *TopN, error) {
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
 	defer func() {
@@ -397,6 +414,9 @@ func BuildHistAndTopN(
 	}
 	count := collector.Count
 	ndv := collector.FMSketch.NDV()
+	if ndv == 0 && ndvHint > 0 {
+		ndv = ndvHint
+	}
 	nullCount := collector.NullCount
 	if ndv > count {
 		ndv = count

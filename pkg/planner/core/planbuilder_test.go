@@ -671,6 +671,16 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 			ExpectedErr: "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0",
 		},
 		{
+			name: "Too big NDVRate option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptNDVRate,
+					Value: ast.NewValueExpr(2, "", ""),
+				},
+			},
+			ExpectedErr: "Value of analyze option NDVRATE should not larger than 1.000000, and should be greater than 0",
+		},
+		{
 			name: "Too big NumBuckets option",
 			opts: []ast.AnalyzeOpt{
 				{
@@ -693,6 +703,20 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 				},
 			},
 			ExpectedErr: "ou can only either set the value of the sample num or set the value of the sample rate. Don't set both of them",
+		},
+		{
+			name: "NDVRate below SampleRate",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptSampleRate,
+					Value: ast.NewValueExpr(0.5, "", ""),
+				},
+				{
+					Type:  ast.AnalyzeOptNDVRate,
+					Value: ast.NewValueExpr(0.1, "", ""),
+				},
+			},
+			ExpectedErr: "Value of analyze option NDVRATE (0.100000) must not be smaller than SAMPLERATE (0.500000)",
 		},
 	}
 

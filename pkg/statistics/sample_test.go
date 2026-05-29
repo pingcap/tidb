@@ -19,12 +19,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,6 +79,7 @@ func TestWeightedSampling(t *testing.T) {
 			Collators:       make([]collate.Collator, 1),
 			ColGroups:       nil,
 			MaxSampleSize:   int(sampleNum),
+			NDVSampleRate:   NDVSampleSkipRate,
 			MaxFMSketchSize: 1000,
 			Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 		}
@@ -117,6 +122,7 @@ func TestDistributedWeightedSampling(t *testing.T) {
 				Collators:       make([]collate.Collator, 1),
 				ColGroups:       nil,
 				MaxSampleSize:   int(sampleNum),
+				NDVSampleRate:   NDVSampleSkipRate,
 				MaxFMSketchSize: 1000,
 				Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 			}
@@ -193,6 +199,30 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		"num: 196 lower_bound: 805 upper_bound: 1000 repeats: 1 ndv: 0", hist.ToString(0))
 }
 
+func TestBuildStatsOnRowSampleWithNDVHint(t *testing.T) {
+	ctx := mock.NewContext()
+	data := make([]*SampleItem, 0, 100)
+	for i := 1; i <= 100; i++ {
+		data = append(data, &SampleItem{Value: types.NewIntDatum(int64(i))})
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		Count:     int64(len(data)),
+		FMSketch:  NewFMSketch(1000),
+		TotalSize: int64(len(data)) * 8,
+	}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+
+	emptyHist, _, err := BuildHistAndTopN(ctx, 5, 0, 1, collector, tp, true, nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, emptyHist.Len())
+
+	hist, _, err := BuildHistAndTopNWithNDV(ctx, 5, 0, 1, collector, tp, true, nil, 100)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), hist.NDV)
+	require.Greater(t, hist.Len(), 0)
+}
+
 func TestBuildSampleFullNDV(t *testing.T) {
 	// Testing building TopN when the column NDV is larger than the NDV in the sample.
 	// This tests the scenario where ndv > sampleNDV in BuildHistAndTopN.
@@ -258,6 +288,28 @@ func TestBuildSampleFullNDV(t *testing.T) {
 	require.Equal(t, 2, len(topN.TopN), "TopN should be trimmed to sampleNDV-1 items when ndv > sampleNDV")
 }
 
+func TestRescaleSampledValue(t *testing.T) {
+	cases := []struct {
+		name       string
+		sampled    int64
+		population int64
+		sample     int64
+		expected   int64
+	}{
+		{"identity when sampled == sample", 50, 100, 50, 100},
+		{"scales up linearly", 10, 100, 50, 20},
+		{"rounds half up", 1, 3, 2, 2},
+		{"rounds down below half", 1, 4, 3, 1},
+		{"zero sampled stays zero", 0, 100, 50, 0},
+		{"negative sampled clamps to zero", -5, 100, 50, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.expected, rescaleSampledValue(c.sampled, c.population, c.sample))
+		})
+	}
+}
+
 type testSampleSuite struct {
 	count int
 	rs    sqlexec.RecordSet
@@ -268,6 +320,168 @@ func TestSampleSerial(t *testing.T) {
 	t.Run("SubTestCollectColumnStats", SubTestCollectColumnStats(s))
 	t.Run("SubTestMergeSampleCollector", SubTestMergeSampleCollector(s))
 	t.Run("SubTestCollectorProtoConversion", SubTestCollectorProtoConversion(s))
+	t.Run("SubTestRowSampleDefaultNDVRate", SubTestRowSampleDefaultNDVRate())
+	t.Run("SubTestRowSampleSingletonSketches", SubTestRowSampleSingletonSketches())
+	t.Run("SubTestRowSampleRescalesNullCountUnderSubSampling", SubTestRowSampleRescalesNullCountUnderSubSampling())
+	t.Run("SubTestSingletonSketchBuildHLLs", SubTestSingletonSketchBuildHLLs())
+	t.Run("SubTestMergePreservesPerRegionSingletonSketches", SubTestMergePreservesPerRegionSingletonSketches())
+}
+
+func SubTestRowSampleDefaultNDVRate() func(*testing.T) {
+	return func(t *testing.T) {
+		rs := recordSetForWeightSamplingTest(100)
+		builder := &RowSampleBuilder{
+			Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+			RecordSet:       rs,
+			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+			Collators:       make([]collate.Collator, 1),
+			MaxSampleSize:   10,
+			NDVSampleRate:   NDVSampleSkipRate,
+			MaxFMSketchSize: 1000,
+			Rng:             rand.New(rand.NewSource(1)),
+		}
+		collector, err := builder.Collect()
+		require.NoError(t, err)
+
+		require.Equal(t, int64(100), collector.Base().FMSketches[0].NDV())
+		require.Zero(t, collector.Base().SketchSampleCount)
+		require.Empty(t, collector.Base().hllSingletonSketches)
+
+		pbCollector := collector.Base().ToProto()
+		require.Empty(t, pbCollector.GetHllNdvSketch())
+		require.Empty(t, pbCollector.GetHllSingletonSketch())
+		require.Zero(t, pbCollector.GetSketchSampleCount())
+	}
+}
+
+func SubTestRowSampleSingletonSketches() func(*testing.T) {
+	return func(t *testing.T) {
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		rs := &sqlexec.SimpleRecordSet{
+			ResultFields: []*resolve.ResultField{
+				{Column: &model.ColumnInfo{FieldType: *intType}},
+				{Column: &model.ColumnInfo{FieldType: *intType}},
+			},
+			Rows: [][]any{
+				{int64(1), int64(10)},
+				{int64(2), int64(10)},
+				{int64(2), int64(20)},
+				{int64(3), int64(20)},
+			},
+			MaxChunkSize: 32,
+		}
+
+		builder := &RowSampleBuilder{
+			Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+			RecordSet:       rs,
+			ColsFieldType:   []*types.FieldType{intType, intType},
+			Collators:       make([]collate.Collator, 2),
+			ColGroups:       [][]int64{{0}, {0, 1}},
+			MaxSampleSize:   4,
+			NDVSampleRate:   0.5,
+			MaxFMSketchSize: 1000,
+			// Seed 1 deterministically samples rows [2, 3] under rate=0.5, exercising the
+			// "sketch sampling filtered some rows" path while keeping NDVs deterministic.
+			Rng: rand.New(rand.NewSource(1)),
+		}
+		collector, err := builder.Collect()
+		require.NoError(t, err)
+		base := collector.Base()
+
+		// Only rows (2, 20) and (3, 20) pass the rate=0.5 sketch sampling check.
+		require.Equal(t, int64(2), base.SketchSampleCount)
+		require.Len(t, base.hllSingletonSketches, 4)
+		singletonCount := func(i int) uint64 { return HLLFromProto(base.hllSingletonSketches[i]).Count() }
+		require.Equal(t, uint64(2), singletonCount(0)) // col 0: 2 and 3 are singletons.
+		require.Equal(t, uint64(0), singletonCount(1)) // col 1: 20 repeats.
+		// Single-column group [0] is cloned from col 0, so its singletons match.
+		require.Equal(t, singletonCount(0), singletonCount(2))
+		// Multi-column group [0,1]: (2,20) and (3,20) are singleton row pairs.
+		require.Equal(t, uint64(2), singletonCount(3))
+
+		pbCollector := base.ToProto()
+		require.Equal(t, int64(2), pbCollector.GetSketchSampleCount())
+		require.Len(t, pbCollector.GetHllNdvSketch(), 4)
+		require.Len(t, pbCollector.GetHllSingletonSketch(), 4)
+
+		restored := NewReservoirRowSampleCollector(4, 4)
+		restored.FromProto(pbCollector, memory.NewTracker(0, -1))
+		require.Equal(t, base.SketchSampleCount, restored.SketchSampleCount)
+		// FromProto retains this region's HLL sketches as one summary, straight from the
+		// decoded response (by reference, no re-serialization); the estimator decodes them.
+		require.Len(t, restored.RegionSketchSummaries, 1)
+		summary := restored.RegionSketchSummaries[0]
+		require.Same(t, pbCollector.GetHllNdvSketch()[0], summary.NDVSketches[0])
+		require.Same(t, pbCollector.GetHllSingletonSketch()[0], summary.SingletonSketches[0])
+		require.Len(t, summary.SingletonSketches, 4)
+		require.Equal(t, singletonCount(0), HLLFromProto(summary.SingletonSketches[0]).Count())
+		require.Equal(t, singletonCount(3), HLLFromProto(summary.SingletonSketches[3]).Count())
+	}
+}
+
+func SubTestRowSampleRescalesNullCountUnderSubSampling() func(*testing.T) {
+	return func(t *testing.T) {
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		rs := &sqlexec.SimpleRecordSet{
+			ResultFields: []*resolve.ResultField{
+				{Column: &model.ColumnInfo{FieldType: *intType}},
+				{Column: &model.ColumnInfo{FieldType: *intType}},
+			},
+			// Seed 1 + rate 0.5 deterministically samples rows [2, 3].
+			// Nulls outside the sampled window are intentionally not "seen" so the
+			// rescaled estimate diverges from the true full-table null count — that
+			// is the entire point of post-sampling rescaling.
+			Rows: [][]any{
+				{nil, int64(10)},      // row 0 — not sampled.
+				{int64(2), nil},       // row 1 — not sampled.
+				{int64(3), int64(20)}, // row 2 — sampled. no nulls.
+				{nil, int64(40)},      // row 3 — sampled. col 0 null.
+			},
+			MaxChunkSize: 32,
+		}
+
+		builder := &RowSampleBuilder{
+			Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+			RecordSet:       rs,
+			ColsFieldType:   []*types.FieldType{intType, intType},
+			Collators:       make([]collate.Collator, 2),
+			MaxSampleSize:   4,
+			NDVSampleRate:   0.5,
+			MaxFMSketchSize: 1000,
+			Rng:             rand.New(rand.NewSource(1)),
+		}
+		collector, err := builder.Collect()
+		require.NoError(t, err)
+		base := collector.Base()
+
+		// Count is exact by construction (mock store doesn't drop rows), so we
+		// don't assert on it here — we only check that NullCount got rescaled.
+		// Rows 2 and 3 are sampled (rate=0.5, seed=1), and within that sample
+		// col 0 has 1 null and col 1 has 0 nulls. Rescale factor is 4/2 = 2.
+		require.Equal(t, int64(2), base.SketchSampleCount)
+		require.Equal(t, int64(2), base.NullCount[0])
+		require.Equal(t, int64(0), base.NullCount[1])
+	}
+}
+
+func SubTestSingletonSketchBuildHLLs() func(*testing.T) {
+	return func(t *testing.T) {
+		builder := newSingletonSketchBuilder()
+		// 50 values seen once (singletons) and 50 seen twice (not singletons).
+		for i := range 50 {
+			builder.insertHashValue(splitmix64(uint64(i)))
+		}
+		for i := 50; i < 100; i++ {
+			h := splitmix64(uint64(i))
+			builder.insertHashValue(h)
+			builder.insertHashValue(h)
+		}
+		ndv, singleton := builder.buildHLLs(DefaultHLLPrecision)
+		require.Len(t, ndv.GetRegisters(), 1<<DefaultHLLPrecision)
+		// NDV covers all 100 distinct values; singletons cover the 50 seen once.
+		require.InDelta(t, 100.0, float64(HLLFromProto(ndv).Count()), 10)
+		require.InDelta(t, 50.0, float64(HLLFromProto(singleton).Count()), 5)
+	}
 }
 
 func createTestSampleSuite() *testSampleSuite {
@@ -380,5 +594,72 @@ func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 			require.Equal(t, s.TotalSize, collector.TotalSize)
 			require.Equal(t, len(s.Samples), len(collector.Samples))
 		}
+	}
+}
+
+// SubTestMergePreservesPerRegionSingletonSketches checks that merging keeps each
+// region's sketches separate (in RegionSketchSummaries) rather than unioning the
+// singleton sketches, which would miscount a value that is a singleton in two
+// regions as a global singleton.
+func SubTestMergePreservesPerRegionSingletonSketches() func(*testing.T) {
+	return func(t *testing.T) {
+		// Distinct ids map to distinct HLL registers, so tiny-set counts are exact.
+		var (
+			a = hllValue(0)
+			b = hllValue(1)
+			c = hllValue(2)
+		)
+		// makeRegion builds a single-column leaf collector that mimics one analyze
+		// response (ToProto -> FromProto), so it carries its own per-region HLL summary;
+		// merging then only concatenates summaries.
+		makeRegion := func(ndv, singleton []uint64, sketchSampleCount int64) *ReservoirRowSampleCollector {
+			src := NewReservoirRowSampleCollector(1, 1)
+			src.Base().FMSketches = []*FMSketch{NewFMSketch(1000)} // global NDV FM (for the root merge)
+			src.Base().hllNDVSketches = []*tipb.HLLSketch{newHLLFromHashValues(ndv...).ToProto()}
+			src.Base().hllSingletonSketches = []*tipb.HLLSketch{newHLLFromHashValues(singleton...).ToProto()}
+			src.Base().SketchSampleCount = sketchSampleCount
+			coll := NewReservoirRowSampleCollector(1, 1)
+			coll.FromProto(src.Base().ToProto(), memory.NewTracker(0, -1))
+			return coll
+		}
+
+		// `a` is a local singleton in both regions, so it occurs twice globally and
+		// is not a global singleton. `b` and `c` are the only global singletons.
+		region1 := makeRegion([]uint64{a, b}, []uint64{a, b}, 2)
+		region2 := makeRegion([]uint64{a, c}, []uint64{a, c}, 2)
+
+		root := NewReservoirRowSampleCollector(1, 1)
+		root.Base().FMSketches = []*FMSketch{NewFMSketch(1000)}
+		root.MergeCollector(region1)
+		root.MergeCollector(region2)
+
+		// The two regions stay separate instead of collapsing into one sketch.
+		require.Len(t, root.Base().RegionSketchSummaries, 2)
+		require.Equal(t, int64(4), root.Base().SketchSampleCount)
+
+		ndvSketches := make([]*HLL, 0, 2)
+		singletonSketches := make([]*HLL, 0, 2)
+		for _, region := range root.Base().RegionSketchSummaries {
+			ndvSketches = append(ndvSketches, HLLFromProto(region.NDVSketches[0]))
+			singletonSketches = append(singletonSketches, HLLFromProto(region.SingletonSketches[0]))
+		}
+		// Per-region keeps `a` out of the global singleton count (it appears in both
+		// regions' NDV sketches); only `b` and `c` remain.
+		require.Equal(t, uint64(2), EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches))
+
+		// Contrast: unioning the two regions into a single sketch over-counts the
+		// cross-region duplicate `a` as a global singleton.
+		unionNDV := newHLLFromHashValues(a, b, c)
+		unionSingleton := newHLLFromHashValues(a, b, c)
+		require.Equal(t, uint64(3),
+			EstimateGlobalSingletonBySketches([]*HLL{unionNDV}, []*HLL{unionSingleton}),
+			"a union of the regions over-counts the cross-region duplicate")
+
+		// A merged collector contributes its region summaries when merged again, so
+		// per-region granularity survives the second (worker -> root) merge level.
+		top := NewReservoirRowSampleCollector(1, 1)
+		top.Base().FMSketches = []*FMSketch{NewFMSketch(1000)}
+		top.MergeCollector(root)
+		require.Len(t, top.Base().RegionSketchSummaries, 2)
 	}
 }

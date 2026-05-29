@@ -17,10 +17,14 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,4 +70,48 @@ func TestCanBroadcastToTiDBRPCForTestRejectsInvalidEndpoints(t *testing.T) {
 func BuildExecutorForTest(ctx context.Context, stmt *ExecStmt) error {
 	_, err := stmt.buildExecutor(ctx)
 	return err
+}
+
+func TestEstimateSamplingNDV(t *testing.T) {
+	t.Run("configured NDV sample rate", func(t *testing.T) {
+		require.Equal(t, float64(statistics.NDVSampleSkipRate), configuredAnalyzeNDVSampleRate(nil))
+		require.Equal(t, 0.25, configuredAnalyzeNDVSampleRate(map[ast.AnalyzeOptionType]uint64{
+			ast.AnalyzeOptNDVRate: math.Float64bits(0.25),
+		}))
+	})
+
+	t.Run("effective NDV sample rate clamp", func(t *testing.T) {
+		// configured >= rowSampleRate: pass through.
+		require.Equal(t, 0.25, effectiveAnalyzeNDVSampleRate(0.25, 0.1))
+		// configured < rowSampleRate: clamp up.
+		require.Equal(t, 0.5, effectiveAnalyzeNDVSampleRate(0.25, 0.5))
+	})
+
+	rootCollector := statistics.NewReservoirRowSampleCollector(1, 2)
+	rootCollector.Count = 100
+
+	// RegionSketchSummary retains per-region HLL sketches. Each id maps to a distinct
+	// HLL register so the tiny-set counts (and thus the leave-one-out f1) are exact.
+	hllProto := func(ids ...uint64) *tipb.HLLSketch {
+		h := statistics.NewHLL(statistics.DefaultHLLPrecision)
+		for _, id := range ids {
+			h.InsertHash((id << 50) | (1 << 49))
+		}
+		return h.ToProto()
+	}
+	regions := []statistics.RegionSketchSummary{
+		{
+			NDVSketches:       []*tipb.HLLSketch{hllProto(1, 2, 3), hllProto(10)},
+			SingletonSketches: []*tipb.HLLSketch{hllProto(1, 2, 3), hllProto(10)},
+			SketchSampleCount: 3,
+		},
+		{
+			NDVSketches:       []*tipb.HLLSketch{hllProto(2, 3, 4), hllProto(11)},
+			SingletonSketches: []*tipb.HLLSketch{hllProto(2, 4), hllProto(11)},
+			SketchSampleCount: 3,
+		},
+	}
+
+	require.Equal(t, uint64(6), totalSketchSampleSize(regions))
+	require.Equal(t, int64(10), estimateSamplingNDV(rootCollector, regions, 0, 6))
 }

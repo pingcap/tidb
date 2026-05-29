@@ -222,6 +222,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for range totalLen {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
+	buildSingletons := statistics.ShouldBuildSingletonSketches(e.analyzePB.ColReq.GetNdvRate())
 
 	sc := e.ctx.GetSessionVars().StmtCtx
 
@@ -304,6 +305,31 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		return 0, nil, nil, nil, err
 	}
 
+	colLen := len(e.colsInfo)
+	estimateNDVs := make([]int64, totalLen)
+	// Each region's sketches were kept separate through the merge (see
+	// statistics.RegionSketchSummary); estimate the global singleton count from
+	// them rather than from a single unioned sketch.
+	regionSummaries := rootRowCollector.Base().RegionSketchSummaries
+	if buildSingletons && len(regionSummaries) > 0 {
+		sampleSize := totalSketchSampleSize(regionSummaries)
+		specialIdx := make(map[int]struct{}, len(indexesWithVirtualColOffsets))
+		for _, offset := range indexesWithVirtualColOffsets {
+			specialIdx[offset] = struct{}{}
+		}
+		for i := range totalLen {
+			// NOTE: Skip special indexes (virtual/prefix columns): their NDV comes from
+			// a dedicated TiKV pushdown, and their sampled sketches reflect
+			// undecoded/untruncated values that would mislead GEE.
+			if i >= colLen {
+				if _, ok := specialIdx[i-colLen]; ok {
+					continue
+				}
+			}
+			estimateNDVs[i] = estimateSamplingNDV(rootRowCollector, regionSummaries, i, sampleSize)
+		}
+	}
+
 	// Decode the data from sample collectors.
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
 	// Filling virtual columns is necessary here because these samples are used to build statistics for indexes that constructed by virtual columns.
@@ -335,7 +361,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			return 0, nil, nil, nil, err
 		}
 	}
-	colLen := len(e.colsInfo)
 	// The order of the samples are broken when merging samples from sub-collectors.
 	// So now we need to sort the samples according to the handle in order to calculate correlation.
 	slices.SortFunc(rootRowCollector.Base().Samples, func(i, j *statistics.ReservoirRowSampleItem) int {
@@ -357,7 +382,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	// Start workers to build stats.
 	for range samplingStatsConcurrency {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(ctx, buildResultChan, buildTaskChan, hists, topns, exitCh)
+			e.subBuildWorker(ctx, buildResultChan, buildTaskChan, hists, topns, estimateNDVs, exitCh)
 		})
 	}
 	// Generate tasks for building stats.
@@ -712,7 +737,7 @@ func drainPendingSamplingMergeTasks(taskCh <-chan []byte, memTracker *memory.Tra
 	}
 }
 
-func (e *AnalyzeColumnsExec) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExec) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, estimateNDVs []int64, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze subBuildWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -880,11 +905,19 @@ workLoop:
 					numTopN = 0
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
+			ndvHint := estimateNDVs[task.slicePos]
+			hist, topn, err := statistics.BuildHistAndTopNWithNDV(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker, ndvHint)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()
 				continue
+			}
+			// Under NDV sub-sampling, estimateNDVs holds the GEE estimate built from
+			// the per-region HLL sketches. The builder uses it when the FM sketch is
+			// absent; keep this final adjustment for any non-zero FM path where the
+			// HLL estimate is higher.
+			if ndvHint > hist.NDV {
+				hist.NDV = ndvHint
 			}
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
 			e.memTracker.Consume(finalMemSize)
@@ -917,6 +950,61 @@ type samplingBuildTask struct {
 	tp               *types.FieldType
 	isColumn         bool
 	slicePos         int
+}
+
+// totalSketchSampleSize returns the total number of rows across all regions that
+// contributed to the singleton sketches. This is the denominator the GEE
+// estimator expects.
+func totalSketchSampleSize(regions []statistics.RegionSketchSummary) uint64 {
+	var sampleSize uint64
+	for _, r := range regions {
+		sampleSize += uint64(r.SketchSampleCount)
+	}
+	return sampleSize
+}
+
+// estimateSamplingNDV returns the GEE-estimated NDV for column/index position
+// i, or 0 when there is not enough data to estimate.
+func estimateSamplingNDV(rootCollector statistics.RowSampleCollector, regions []statistics.RegionSketchSummary, i int, sampleSize uint64) int64 {
+	count := rootCollector.Base().Count - rootCollector.Base().NullCount[i]
+	if count <= 0 {
+		return 0
+	}
+	rowCount := uint64(count)
+	ndvSketches := make([]*statistics.HLL, 0, len(regions))
+	singletonSketches := make([]*statistics.HLL, 0, len(regions))
+	for _, r := range regions {
+		intest.Assert(len(r.SingletonSketches) > 0, "singleton sketches should not be empty")
+		intest.Assert(i < len(r.SingletonSketches), "singleton sketch should exist for the column")
+		intest.Assert(r.SingletonSketches[i] != nil, "singleton sketch should not be nil")
+		if i >= len(r.SingletonSketches) || r.SingletonSketches[i] == nil {
+			continue
+		}
+		// Decode the per-region HyperLogLog sketches (see statistics.RegionSketchSummary).
+		// Decoding per column (this is called once per column, and these slices are freed
+		// on return) keeps the live materialization at O(regions), not O(regions*columns).
+		ndvHLL := statistics.HLLFromProto(r.NDVSketches[i])
+		singletonHLL := statistics.HLLFromProto(r.SingletonSketches[i])
+		if ndvHLL == nil || singletonHLL == nil {
+			continue
+		}
+		ndvSketches = append(ndvSketches, ndvHLL)
+		singletonSketches = append(singletonSketches, singletonHLL)
+	}
+	if len(ndvSketches) == 0 {
+		return 0
+	}
+	// Both the GEE base term (the sub-sample NDV) and the singleton correction
+	// come from the per-region HyperLogLog sketches; this path builds no FM sketch.
+	sampleNDV := statistics.EstimateGlobalNDVBySketches(ndvSketches)
+	if sampleNDV == 0 {
+		return 0
+	}
+	if sampleNDV > rowCount {
+		sampleNDV = rowCount
+	}
+	singletonItems := statistics.EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
+	return int64(statistics.EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount))
 }
 
 func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {

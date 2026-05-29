@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -62,7 +63,15 @@ func TestAnalyzeBuildSucc(t *testing.T) {
 			succ: true,
 		},
 		{
+			sql:  "analyze table t with 0.5 ndvrate",
+			succ: true,
+		},
+		{
 			sql:  "analyze table t with 10 samplerate",
+			succ: false,
+		},
+		{
+			sql:  "analyze table t with 2 ndvrate",
 			succ: false,
 		},
 		{
@@ -101,20 +110,29 @@ func TestAnalyzeSetRate(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tests := []struct {
-		sql  string
-		rate float64
+		sql     string
+		rate    float64
+		ndvRate float64
 	}{
 		{
-			sql:  "analyze table t",
-			rate: -1,
+			sql:     "analyze table t",
+			rate:    -1,
+			ndvRate: statistics.NDVSampleSkipRate,
 		},
 		{
-			sql:  "analyze table t with 0.1 samplerate",
-			rate: 0.1,
+			sql:     "analyze table t with 0.1 samplerate",
+			rate:    0.1,
+			ndvRate: statistics.NDVSampleSkipRate,
 		},
 		{
-			sql:  "analyze table t with 10000 samples",
-			rate: -1,
+			sql:     "analyze table t with 0.25 ndvrate",
+			rate:    -1,
+			ndvRate: 0.25,
+		},
+		{
+			sql:     "analyze table t with 10000 samples",
+			rate:    -1,
+			ndvRate: statistics.NDVSampleSkipRate,
 		},
 	}
 
@@ -132,6 +150,7 @@ func TestAnalyzeSetRate(t *testing.T) {
 		require.NoError(t, err, comment)
 		ana := p.(*core.Analyze)
 		require.Equal(t, tt.rate, math.Float64frombits(ana.Opts[ast.AnalyzeOptSampleRate]))
+		require.Equal(t, tt.ndvRate, math.Float64frombits(ana.Opts[ast.AnalyzeOptNDVRate]))
 	}
 }
 

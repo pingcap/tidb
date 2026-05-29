@@ -3194,6 +3194,31 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 			}
 		}
 	}
+	configuredNDVRate := configuredAnalyzeNDVSampleRate(opts)
+	ndvRate := effectiveAnalyzeNDVSampleRate(configuredNDVRate, *sampleRate)
+	if ndvRate > configuredNDVRate {
+		// handleAnalyzeOptions already rejects the case where both samplerate and
+		// ndvrate are explicit and ndvrate is smaller, so this only fires when
+		// samplerate was auto-adjusted above the user-configured ndvrate.
+		if task.PartitionName != "" {
+			sc.AppendNote(errors.NewNoStackErrorf(
+				`Analyze raised NDV sample rate from %f to %f to match the auto-adjusted row sample rate for table %s.%s's partition %s`,
+				configuredNDVRate,
+				ndvRate,
+				task.DBName,
+				task.TableName,
+				task.PartitionName,
+			))
+		} else {
+			sc.AppendNote(errors.NewNoStackErrorf(
+				`Analyze raised NDV sample rate from %f to %f to match the auto-adjusted row sample rate for table %s.%s`,
+				configuredNDVRate,
+				ndvRate,
+				task.DBName,
+				task.TableName,
+			))
+		}
+	}
 	job := &statistics.AnalyzeJob{
 		DBName:           task.DBName,
 		TableName:        task.TableName,
@@ -3229,6 +3254,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
 		SampleRate:   sampleRate,
+		NdvRate:      &ndvRate,
 		SketchSize:   statistics.MaxSketchSize,
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
@@ -3241,6 +3267,28 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	b.err = tables.SetPBColumnsDefaultValue(b.sctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+// configuredAnalyzeNDVSampleRate returns the NDV sample rate explicitly set in
+// the analyze options, or NDVSampleSkipRate when the option is absent.
+func configuredAnalyzeNDVSampleRate(opts map[ast.AnalyzeOptionType]uint64) float64 {
+	if val, ok := opts[ast.AnalyzeOptNDVRate]; ok {
+		return math.Float64frombits(val)
+	}
+	return float64(statistics.NDVSampleSkipRate)
+}
+
+// effectiveAnalyzeNDVSampleRate raises the configured NDV sample rate up to
+// rowSampleRate. TiKV builds singleton sketches at ndvrate first and then
+// draws the row sample from that stream at samplerate, so ndvrate < samplerate
+// is incoherent — the row sample cannot exceed the population it is drawn
+// from. The usual trigger is a small table whose samplerate gets auto-adjusted
+// up to 1.0 (full scan) above a smaller configured ndvrate.
+func effectiveAnalyzeNDVSampleRate(configured, rowSampleRate float64) float64 {
+	if configured < rowSampleRate {
+		return rowSampleRate
+	}
+	return configured
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
