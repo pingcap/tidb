@@ -127,10 +127,7 @@ func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
 func checkTxnManagerStateWithoutFailpoints(t *testing.T, se sessionctx.Context) {
 	expectedIS, _ := se.Value(sessiontxn.AssertTxnInfoSchemaKey).(infoschema.InfoSchema)
 	if expectedIS != nil {
-		snapshotIS, ok := se.GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema)
-		if ok {
-			require.Equal(t, expectedIS.SchemaMetaVersion(), snapshotIS.SchemaMetaVersion())
-		}
+		requireSnapshotInfoSchemaVersion(t, se, expectedIS.SchemaMetaVersion())
 	}
 
 	require.False(t, se.GetSessionVars().StmtCtx.IsStaleness && se.GetSessionVars().TxnCtx.IsExplicit)
