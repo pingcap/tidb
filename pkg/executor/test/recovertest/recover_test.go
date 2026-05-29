@@ -774,6 +774,8 @@ func newFlashbackClusterTestStore(t *testing.T, minSafeTS *atomic.Uint64) kv.Sto
 		minSafeTS:                   minSafeTS,
 	}
 
+	origSchemaLease := vardef.GetSchemaLease()
+	origStatsLease := vardef.GetStatsLease()
 	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
@@ -786,6 +788,8 @@ func newFlashbackClusterTestStore(t *testing.T, minSafeTS *atomic.Uint64) kv.Sto
 		view.Stop()
 		require.NoError(t, wrappedStore.Close())
 		resourcemanager.InstanceResourceManager.Reset()
+		vardef.SetSchemaLease(origSchemaLease)
+		vardef.SetStatsLease(origStatsLease)
 	})
 	return wrappedStore
 }
@@ -834,7 +838,8 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 
 	wg.Wait()
 
-	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
+	ts, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	require.NoError(t, err)
 	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
 	minSafeTS.Store(oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)))
 
