@@ -110,7 +110,12 @@ func isPartitionOnlyAction(tp model.ActionType) bool {
 
 // diffChangedPartitionIDs returns the set of partition IDs that are NEW in the current table
 // compared to what was previously in pid2tid. For add partition, these are the newly added partitions.
-// Returns nil if all partitions should be inserted (non-partition DDL or unable to diff).
+// For reorganize partition, these are the replacement partitions that were not in the old table.
+// For truncate partition, these are the new replacement partition IDs.
+// For drop partition, no new partitions are added, so an empty (non-nil) map is returned
+// so that callers skip re-inserting all remaining partitions into pid2tid.
+// Returns nil if all partitions should be inserted (non-partition DDL, unable to diff, or no diff found).
+// When nil is returned, callers fall back to inserting all partitions, which is correct but less efficient.
 func diffChangedPartitionIDs(oldTable table.Table, newTblInfo *model.TableInfo, tp model.ActionType) map[int64]struct{} {
 	if !isPartitionOnlyAction(tp) {
 		return nil
@@ -119,9 +124,18 @@ func diffChangedPartitionIDs(oldTable table.Table, newTblInfo *model.TableInfo, 
 	if newPi == nil {
 		return nil
 	}
-	logutil.BgLogger().Info("infoschema v2 diffChangedPartitionIDs", zap.String("actionType", tp.String()), zap.Bool("hasOldTable", oldTable != nil), zap.Int("newPartCount", len(newPi.Definitions)))
 
-	// For add/reorganize partition: find partition IDs in new table that were NOT in old table.
+	// For drop partition: no new partitions are created. The removed partitions are
+	// handled by tomb entries via diffDroppedPartitionIDs. Return an empty non-nil map so that
+	// addPartitions skips re-inserting all remaining partitions into pid2tid.
+	// For truncate partition: new partitions replace old ones, so we fall through to the
+	// comparison logic below to detect the new partition IDs.
+	switch tp {
+	case model.ActionDropTablePartition:
+		return make(map[int64]struct{})
+	}
+
+	// For add/reorganize/truncate partition: find partition IDs in new table that were NOT in old table.
 	if oldTable != nil {
 		if oldPi := oldTable.Meta().GetPartitionInfo(); oldPi != nil {
 			oldIDs := make(map[int64]struct{}, len(oldPi.Definitions))
@@ -134,9 +148,6 @@ func diffChangedPartitionIDs(oldTable table.Table, newTblInfo *model.TableInfo, 
 					changed[def.ID] = struct{}{}
 				}
 			}
-			logutil.BgLogger().Info("infoschema v2 diffChangedPartitionIDs result", zap.Int("oldPartCount", len(oldPi.Definitions)), zap.Int("newPartCount", len(newPi.Definitions)), zap.Int("changedCount", len(changed)))
-			// For drop/truncate partition: old partitions are handled by tomb entries in applyDropTableV2.
-			// For add/reorganize: return the new partition IDs.
 			if len(changed) > 0 {
 				return changed
 			}
@@ -159,23 +170,31 @@ func diffDroppedPartitionIDs(diff *model.SchemaDiff, pi *model.PartitionInfo) ma
 
 	switch diff.Type {
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		// For drop/truncate partition, the partitions in old table but NOT in new table
-		// are the dropped ones. But at this point we only have the OLD table info.
-		// We use AffectedOpts from the diff which contains the dropped partition IDs.
+		// For drop/truncate partition in StatePublic (final state), AffectedOpts contains
+		// the affected partition IDs. For intermediate DDL states, AffectedOpts may be empty.
+		// In that case, return empty map (skip tomb marking) because the partitions are
+		// not actually dropped yet — they will be tomb-marked when the final state is applied.
+		//
+		// Note: For truncate partition, AffectedOpts[i].TableID is the NEW partition ID
+		// (replacement), while AffectedOpts[i].OldTableID is the OLD partition ID (truncated).
+		// We need to tomb the OLD partition ID, so we use OldTableID.
 		if len(diff.AffectedOpts) > 0 {
 			dropped := make(map[int64]struct{}, len(diff.AffectedOpts))
 			for _, opt := range diff.AffectedOpts {
-				dropped[opt.TableID] = struct{}{}
+				dropped[opt.OldTableID] = struct{}{}
 			}
 			return dropped
 		}
+		// Intermediate DDL state: no partitions are actually dropped yet.
+		return make(map[int64]struct{})
 	case model.ActionReorganizePartition:
 		// Reorganize replaces some partitions with new ones.
 		// Old partitions should be tomb-marked.
+		// Use OldTableID for the same reason as truncate partition above.
 		if len(diff.AffectedOpts) > 0 {
 			dropped := make(map[int64]struct{}, len(diff.AffectedOpts))
 			for _, opt := range diff.AffectedOpts {
-				dropped[opt.TableID] = struct{}{}
+				dropped[opt.OldTableID] = struct{}{}
 			}
 			return dropped
 		}
@@ -1868,13 +1887,18 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 
 	if pi := table.Meta().GetPartitionInfo(); pi != nil {
 		droppedPartitionIDs := diffDroppedPartitionIDs(diff, pi)
-		for _, def := range pi.Definitions {
-			if droppedPartitionIDs == nil {
-				// Non-partition DDL (e.g. drop table): tomb all partitions.
+		if droppedPartitionIDs == nil {
+			// Non-partition DDL (e.g. drop table): tomb all partitions from the old table.
+			for _, def := range pi.Definitions {
 				btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, diff.Version, table.Meta().ID, true})
-			} else if _, ok := droppedPartitionIDs[def.ID]; ok {
-				// Partition DDL: only tomb the specifically dropped partitions.
-				btreeSet(&b.infoData.pid2tid, partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+			}
+		} else {
+			// Partition-only DDL: tomb only the specifically dropped partitions.
+			// Iterate droppedPartitionIDs directly, not pi.Definitions, because the dropped
+			// partitions may no longer be in the old table's partition definitions
+			// (DDL intermediate states may have already updated the table meta).
+			for partitionID := range droppedPartitionIDs {
+				btreeSet(&b.infoData.pid2tid, partitionItem{partitionID, diff.Version, table.Meta().ID, true})
 			}
 		}
 	}

@@ -1229,7 +1229,7 @@ func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model
 }
 
 // addTableWithActionType inserts a table entry. For partition-only DDLs (add/drop/truncate/reorganize partition),
-// only changed partitions are inserted into pid2tid to avoid re-inserting all 1024+ partitions.
+// only changed partitions are inserted into pid2tid to avoid re-inserting all partitions.
 func (b *Builder) addTableWithActionType(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table, tp model.ActionType, oldTable table.Table) {
 	if b.enableV2 {
 		b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
