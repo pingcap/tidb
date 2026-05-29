@@ -69,7 +69,7 @@ For `WITH PROFILE`, the step header line also includes status/time.
 
 Example (FAST, abbreviated):
 
-```
+```text
 refresh steps
 [S01 TXN_BEGIN] status:success, time:281.311µs
 [S02 LOCK_REFRESH_INFO] status:success, time:788.718µs
@@ -206,7 +206,7 @@ Main files:
 
 - `pkg/planner/core/common_plans.go`
 - `pkg/planner/core/planbuilder.go`
-- `pkg/planner/core/casetest/mvrefresh/mv_refresh_test.go`
+- `pkg/planner/core/casetest/mview/mv_refresh_test.go`
 
 Acceptance criteria:
 
