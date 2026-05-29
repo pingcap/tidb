@@ -904,3 +904,4 @@ func TestIssues46005(t *testing.T) {
 
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 1025")
 }
+
