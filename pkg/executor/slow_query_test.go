@@ -612,7 +612,7 @@ select 7;`
 	}
 }
 
-func TestSplitbyColon(t *testing.T) {
+func TestSplitByColon(t *testing.T) {
 	cases := []struct {
 		line   string
 		fields []string
@@ -870,6 +870,101 @@ select 5;`
 	require.Equal(t, "2020-02-15 22:00:05.000000", t0)
 	require.Equal(t, "2020-02-15 21:00:05.000000", t1)
 	require.NoError(t, retriever.close())
+
+	// The long DB line makes the middle slow-log block cross readLastLines chunks.
+	// Forward scan can parse it; reverse scan should not synthesize blank lines and drop it.
+	crossChunkFileName := "tidb-slow-limit-reverse-scan-cross-chunk.log"
+	crossChunkSlowLog := fmt.Sprintf(`# Time: 2020-02-15T18:00:01.000000+08:00
+select 1;
+# Time: 2020-02-15T19:00:05.000000+08:00
+# DB: %s
+select 2;
+# Time: 2020-02-15T20:00:05.000000+08:00
+select 3;`, strings.Repeat("x", 5000))
+	prepareLogs(t, []string{crossChunkSlowLog}, []string{crossChunkFileName})
+	defer removeFiles([]string{crossChunkFileName})
+	sctx.GetSessionVars().SlowQueryFile = crossChunkFileName
+
+	forwardRetriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	require.NoError(t, forwardRetriever.initialize(context.Background(), sctx))
+	reader, err := forwardRetriever.getNextReader()
+	require.NoError(t, err)
+	forwardRows, err := parseLog(forwardRetriever, sctx, reader)
+	require.NoError(t, err)
+	require.Len(t, forwardRows, 3)
+	require.NoError(t, forwardRetriever.close())
+
+	reverseRetriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	reverseRetriever.extractor = &plannercore.SlowQueryExtractor{Desc: true}
+	reverseRetriever.limit = 3
+	reverseRows := make([][]types.Datum, 0, reverseRetriever.limit)
+	for {
+		rows, err := reverseRetriever.retrieve(context.Background(), sctx)
+		require.NoError(t, err)
+		if len(rows) == 0 {
+			break
+		}
+		reverseRows = append(reverseRows, rows...)
+	}
+	require.Len(t, reverseRows, 3)
+	require.NoError(t, reverseRetriever.close())
+}
+
+func TestSlowQueryRetrieverReversedScanWithTimeJitter(t *testing.T) {
+	fileName := "tidb-slow-limit-reverse-scan-time-jitter.log"
+	slowLog := `# Time: 2020-02-15T18:00:00.000500+08:00
+select in-window-1;
+# Time: 2020-02-15T18:00:00.001000+08:00
+select in-window-2;
+# Time: 2020-02-15T17:59:59.999700+08:00
+select just-before-window;
+# Time: 2020-02-15T18:00:00.001500+08:00
+select in-window-3;`
+	prepareLogs(t, []string{slowLog}, []string{fileName})
+	defer removeFiles([]string{fileName})
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	sctx.ResetSessionAndStmtTimeZone(loc)
+	sctx.GetSessionVars().SlowQueryFile = fileName
+	startTime, err := ParseTime("2020-02-15T18:00:00.000000+08:00")
+	require.NoError(t, err)
+	endTime, err := ParseTime("2020-02-15T18:00:00.002000+08:00")
+	require.NoError(t, err)
+	timeRange := []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
+
+	forwardRetriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	forwardRetriever.extractor = &plannercore.SlowQueryExtractor{Enable: true, TimeRanges: timeRange}
+	require.NoError(t, forwardRetriever.initialize(context.Background(), sctx))
+	reader, err := forwardRetriever.getNextReader()
+	require.NoError(t, err)
+	forwardRows, err := parseLog(forwardRetriever, sctx, reader)
+	require.NoError(t, err)
+	require.Len(t, forwardRows, 3)
+	require.NoError(t, forwardRetriever.close())
+
+	// This mirrors real slow logs where adjacent # Time values can move backwards
+	// by a few milliseconds. A block just before the lower bound should not make
+	// reverse scan stop before earlier in-range blocks are read.
+	reverseRetriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	reverseRetriever.extractor = &plannercore.SlowQueryExtractor{Enable: true, Desc: true, TimeRanges: timeRange}
+	reverseRetriever.limit = 3
+	reverseRows := make([][]types.Datum, 0, reverseRetriever.limit)
+	for {
+		rows, err := reverseRetriever.retrieve(context.Background(), sctx)
+		require.NoError(t, err)
+		if len(rows) == 0 {
+			break
+		}
+		reverseRows = append(reverseRows, rows...)
+	}
+	require.Len(t, reverseRows, 3)
+	require.NoError(t, reverseRetriever.close())
 }
 
 func TestPBPlanBuilderPushDownLimitToSlowQueryRetriever(t *testing.T) {
