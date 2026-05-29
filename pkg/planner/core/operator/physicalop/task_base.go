@@ -412,6 +412,11 @@ type CopTask struct {
 	// Set by convertToIndexScan when a prefix index provides partial order for TopN.
 	PartialOrderMatchResult *property.PartialOrderMatchResult
 
+	// IdxMergePartPlansSatisfySortHints tracks which partial paths of an IndexMerge
+	// satisfy SortItemsHints. Length equals len(IdxMergePartPlans).
+	// Set by convertToIndexMergeScan when SortItemsHints is used.
+	IdxMergePartPlansSatisfySortHints []bool
+
 	// Warnings passed through different task copy attached with more upper operator specific Warnings. (not concurrent safe)
 	Warnings SimpleWarnings
 }

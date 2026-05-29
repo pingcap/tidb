@@ -279,6 +279,25 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)+1)
 
+	// When TopN is directly above a DataSource, set SortItemsHints so that
+	// IndexMerge can prefer partial paths that satisfy the ORDER BY.
+	// This enables pushing Limit to ordered partial paths.
+	var sortItemsHints []property.SortItem
+	if _, ok := lt.Children()[0].(*logicalop.DataSource); ok && len(lt.ByItems) > 0 {
+		sortItemsHints = make([]property.SortItem, 0, len(lt.ByItems))
+		for _, byItem := range lt.ByItems {
+			col, ok := byItem.Expr.(*expression.Column)
+			if !ok {
+				sortItemsHints = nil
+				break
+			}
+			sortItemsHints = append(sortItemsHints, property.SortItem{
+				Col:  col,
+				Desc: byItem.Desc,
+			})
+		}
+	}
+
 	// Generate candidate plans for partial order optimization using prefix index FIRST.
 	// This is important because when use_index hint is used with a prefix index,
 	// we need to set ForcePartialOrder flag before other candidates are evaluated.
@@ -290,7 +309,8 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64,
-			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown,
+			SortItemsHints: sortItemsHints}
 		topN := PhysicalTopN{
 			ByItems:     lt.ByItems,
 			PartitionBy: lt.PartitionBy,
