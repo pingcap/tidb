@@ -510,10 +510,9 @@ func TestFix56408(t *testing.T) {
 // allow_auto_random_explicit_insert enabled.
 // See https://github.com/pingcap/tidb/issues/65585
 func TestLoadDataAutoRandomError(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_auto_random")
 	tk.MustExec("create table t_auto_random (a bigint primary key auto_random(5), b int)")
 
 	// Ensure allow_auto_random_explicit_insert is disabled (default)
