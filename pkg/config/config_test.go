@@ -1116,22 +1116,35 @@ dxf-resource-limit = 101`), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
-	require.True(t, conf.Standby.EnableZeroBackend)
+	require.True(t, conf.StarterParams.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
 	conf = NewConfig()
-	conf.Standby.EnableManagerNotifier = true
-	require.ErrorContains(t, conf.Valid(), "standby.enable-manager-notifier can only be configured for starter deploy mode")
+	conf.StarterParams.EnableManagerNotifier = true
+	require.ErrorContains(t, conf.Valid(), "starter.enable-manager-notifier can only be configured for starter deploy mode")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+[standby]
+standby-mode = true
+activation-timeout = 30
+max-idle-seconds = 60
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.Standby.StandByMode)
+	require.Equal(t, uint(30), conf.Standby.ActivationTimeout)
+	require.Equal(t, uint(60), conf.Standby.MaxIdleSeconds)
+	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`
 deploy-mode = "starter"
-[standby]
+[starter]
 enable-zero-backend = false
 `), 0644))
 	conf = NewConfig()
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
-	require.False(t, conf.Standby.EnableZeroBackend)
+	require.False(t, conf.StarterParams.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"

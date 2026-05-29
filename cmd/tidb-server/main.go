@@ -1335,7 +1335,7 @@ func createMgrClientForStarter() (tidbmanager.Client, error) {
 	}
 
 	cfg := config.GetGlobalConfig()
-	if !cfg.Standby.EnableManagerNotifier {
+	if !cfg.StarterParams.EnableManagerNotifier {
 		return nil, nil
 	}
 
@@ -1350,11 +1350,11 @@ func createMgrClientForStarter() (tidbmanager.Client, error) {
 		return nil, err
 	}
 
-	managerAddr := cfg.Standby.ManagerAddr
+	managerAddr := cfg.StarterParams.ManagerAddr
 	if managerAddr == "" {
 		managerNs := params.managerNamespace
 		if managerNs == "" {
-			managerNs = config.DefaultManagerNamespace
+			return nil, fmt.Errorf("manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
 		}
 		managerAddr = fmt.Sprintf("manager-server.%s.svc:8000", managerNs)
 	}

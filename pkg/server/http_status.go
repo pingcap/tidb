@@ -283,7 +283,7 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
 	if deploymode.IsStarter() {
-		router.HandleFunc("/owner_manager/auto_id_service", s.handleCheckAutoIDOwner).Name("isAutoIDServiceOwner")
+		router.Handle("/owner_manager/auto_id_service", handler.NewAutoIDOwnerHandler(s)).Name("isAutoIDServiceOwner")
 	}
 
 	// HTTP path for ingest configurations
@@ -682,29 +682,6 @@ type Status struct {
 // DetailStatus is to show the detail status of TiDB. for example the init stats percentage.
 type DetailStatus struct {
 	InitStatsPercentage float64 `json:"init_stats_percentage"`
-}
-
-type autoIDServiceOwnerStatus struct {
-	IsOwner bool `json:"is_owner"`
-}
-
-func (s *Server) handleCheckAutoIDOwner(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if s.health == nil || !s.health.Load() {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	js, err := json.Marshal(autoIDServiceOwnerStatus{
-		IsOwner: s.IsAutoIDOwner(),
-	})
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		logutil.BgLogger().Warn("encode json failed", zap.Error(err))
-		return
-	}
-	_, err = w.Write(js)
-	terror.Log(errors.Trace(err))
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {

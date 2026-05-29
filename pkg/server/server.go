@@ -133,8 +133,8 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
-	// zeroConnCond is used by Starter graceful shutdown to wait until all connections are closed.
-	zeroConnCond *sync.Cond
+	// gracefulShutdownCond is used by Starter graceful shutdown to wait until all connections are closed.
+	gracefulShutdownCond *sync.Cond
 
 	normalClosedConnsMutex sync.Mutex
 	normalClosedConns      *kvcache.SimpleLRUCache
@@ -166,9 +166,16 @@ type Server struct {
 
 // NewTestServer creates a new Server for test.
 func NewTestServer(cfg *config.Config) *Server {
-	return &Server{
-		cfg: cfg,
+	s := &Server{
+		cfg:                cfg,
+		clients:            make(map[uint64]*clientConn),
+		health:             uatomic.NewBool(false),
+		inShutdownMode:     uatomic.NewBool(false),
+		forceShutdown:      uatomic.NewBool(false),
+		needRequestMgrFree: uatomic.NewBool(false),
 	}
+	s.gracefulShutdownCond = sync.NewCond(&s.rwlock)
+	return s
 }
 
 // Socket returns the server's socket file.
@@ -311,7 +318,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		printMDLLogTime:    time.Now(),
 		needRequestMgrFree: uatomic.NewBool(false),
 	}
-	s.zeroConnCond = sync.NewCond(&s.rwlock)
+	s.gracefulShutdownCond = sync.NewCond(&s.rwlock)
 	s.capability = defaultCapability
 	setSystemTimeZoneVariable()
 
@@ -685,33 +692,21 @@ func (s *Server) closeListener() {
 
 // SetForceShutdown sets the force shutdown flag.
 func (s *Server) SetForceShutdown() {
-	if s.forceShutdown == nil {
-		s.forceShutdown = uatomic.NewBool(false)
-	}
 	s.forceShutdown.Store(true)
 }
 
 // GetForceShutdown gets the force shutdown flag.
 func (s *Server) GetForceShutdown() bool {
-	if s.forceShutdown == nil {
-		return false
-	}
 	return s.forceShutdown.Load()
 }
 
 // SetNeedRequestMgrFree sets the need request manager free flag.
 func (s *Server) SetNeedRequestMgrFree() {
-	if s.needRequestMgrFree == nil {
-		s.needRequestMgrFree = uatomic.NewBool(false)
-	}
 	s.needRequestMgrFree.Store(true)
 }
 
 // GetNeedRequestMgrFree gets the need request manager free flag.
 func (s *Server) GetNeedRequestMgrFree() bool {
-	if s.needRequestMgrFree == nil {
-		return false
-	}
 	return s.needRequestMgrFree.Load()
 }
 
@@ -731,11 +726,17 @@ func (s *Server) registerConn(conn *clientConn) bool {
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
-		terror.Log(closeConn(conn, len(s.clients)))
+		terror.Log(closeConn(conn))
 		return false
 	}
 	s.clients[conn.connectionID] = conn
 	return true
+}
+
+func (s *Server) notifyGracefulShutdownCondIfNeededLocked() {
+	if deploymode.IsStarter() && len(s.clients) == 0 && s.gracefulShutdownCond != nil && s.StandbyController != nil {
+		s.gracefulShutdownCond.Broadcast()
+	}
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.
@@ -1102,8 +1103,8 @@ func (s *Server) KillSysProcesses() {
 func (s *Server) KillAllConnections() {
 	logutil.BgLogger().Info("kill all connections.", zap.String("category", "server"))
 
-	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
 	for _, conn := range s.clients {
 		conn.setStatus(connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
@@ -1342,12 +1343,12 @@ func (s *Server) IsAutoIDOwner() bool {
 
 // WaitZeroConn waits until all client connections are closed.
 func (s *Server) WaitZeroConn() {
-	if s.zeroConnCond == nil {
+	if s.gracefulShutdownCond == nil {
 		return
 	}
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
 	for len(s.clients) > 0 {
-		s.zeroConnCond.Wait()
+		s.gracefulShutdownCond.Wait()
 	}
 }

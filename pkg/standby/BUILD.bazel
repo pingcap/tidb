@@ -17,6 +17,7 @@ go_library(
         "//pkg/tidbmanager",
         "//pkg/util/logutil",
         "//pkg/util/signal",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )

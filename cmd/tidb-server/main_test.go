@@ -195,8 +195,8 @@ func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
 	})
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Standby.EnableManagerNotifier = true
-		conf.Standby.ManagerAddr = "manager.example.com:8000"
+		conf.StarterParams.EnableManagerNotifier = true
+		conf.StarterParams.ManagerAddr = "manager.example.com:8000"
 	})
 
 	originalStarterAdditionalParams := starterAdditionalParams
@@ -216,6 +216,14 @@ func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
 	starterAdditionalParams = &unknownParam
 	_, err = createMgrClientForStarter()
 	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.ManagerAddr = ""
+	})
+	missingManagerNamespace := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &missingManagerNamespace
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, "manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
 
 	validParams := "manager-namespace=manager-ns,pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
 	starterAdditionalParams = &validParams

@@ -27,7 +27,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tidbmanager"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/signal"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -51,9 +51,7 @@ const (
 
 	httpPathPrefix = "/tidb-pool/"
 
-	maxCloseConnWait = time.Hour
-
-	maxRepresentableCloseConnWaitSeconds = int64(1<<63-1) / int64(time.Second)
+	maxCloseConnWait = 24 * time.Hour
 
 	managerFreeMaxAttempts   = 3
 	managerFreeRetryInterval = 200 * time.Millisecond
@@ -80,7 +78,7 @@ type LoadKeyspaceController struct {
 	startServerErr error
 	endOnce        sync.Once
 	mgrCli         tidbmanager.Client
-	closeConnWait  atomic.Int64
+	closeConnWait  atomic.Duration
 
 	lastActive int64
 }
@@ -424,17 +422,18 @@ func parseExitWait(value string) (time.Duration, error) {
 	if value == "" {
 		return 0, nil
 	}
-	waitSeconds, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || waitSeconds < 0 {
+	wait, err := time.ParseDuration(value)
+	if err != nil {
+		waitSeconds, parseErr := strconv.ParseInt(value, 10, 64)
+		if parseErr != nil || waitSeconds < 0 || waitSeconds > int64(maxCloseConnWait/time.Second) {
+			return 0, invalidExitOptionError{option: "wait"}
+		}
+		wait = time.Duration(waitSeconds) * time.Second
+	}
+	if wait < 0 || wait > maxCloseConnWait {
 		return 0, invalidExitOptionError{option: "wait"}
 	}
-	if waitSeconds == 0 {
-		return 0, nil
-	}
-	if waitSeconds > maxRepresentableCloseConnWaitSeconds || waitSeconds > int64(maxCloseConnWait/time.Second) {
-		return 0, invalidExitOptionError{option: "wait"}
-	}
-	return time.Duration(waitSeconds) * time.Second, nil
+	return wait, nil
 }
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
@@ -456,11 +455,11 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *LoadKeyspaceController) setCloseConnWait(wait time.Duration) {
-	c.closeConnWait.Store(int64(wait))
+	c.closeConnWait.Store(wait)
 }
 
 func (c *LoadKeyspaceController) getCloseConnWait() time.Duration {
-	return time.Duration(c.closeConnWait.Load())
+	return c.closeConnWait.Load()
 }
 
 var httpServer *http.Server
@@ -516,7 +515,7 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 	config.UpdateGlobal(func(c *config.Config) {
 		c.KeyspaceName = activateRequest.KeyspaceName
 		if deploymode.IsStarter() && activateRequest.ExportID != "" {
-			c.Standby.ExportID = activateRequest.ExportID
+			c.StarterParams.ExportID = activateRequest.ExportID
 		}
 		if activateRequest.MaxIdleSeconds > 0 {
 			c.Standby.MaxIdleSeconds = activateRequest.MaxIdleSeconds

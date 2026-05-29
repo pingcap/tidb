@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
@@ -272,19 +271,4 @@ func TestStartShutdownMarksUnhealthyBeforeStarterCallback(t *testing.T) {
 	default:
 		require.Fail(t, "starter shutdown callback was not called")
 	}
-}
-
-func TestCheckAutoIDOwnerHandler(t *testing.T) {
-	svr := NewTestServer(util.NewTestConfig())
-	svr.health = uatomic.NewBool(true)
-
-	recorder := httptest.NewRecorder()
-	svr.handleCheckAutoIDOwner(recorder, httptest.NewRequest(http.MethodGet, "/owner_manager/auto_id_service", nil))
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.JSONEq(t, `{"is_owner": false}`, recorder.Body.String())
-
-	svr.health.Store(false)
-	recorder = httptest.NewRecorder()
-	svr.handleCheckAutoIDOwner(recorder, httptest.NewRequest(http.MethodGet, "/owner_manager/auto_id_service", nil))
-	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 }

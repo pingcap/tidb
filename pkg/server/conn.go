@@ -402,21 +402,15 @@ func (cc *clientConn) Close() error {
 
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	connections := len(cc.server.clients)
+	cc.server.notifyGracefulShutdownCondIfNeededLocked()
 	cc.server.rwlock.Unlock()
 	metrics.DDLClearTempIndexWrite(cc.connectionID)
-	return closeConn(cc, connections)
+	return closeConn(cc)
 }
 
 // closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
-func closeConn(cc *clientConn, connections int) error {
-	defer func() {
-		if deploymode.IsStarter() && connections == 0 && cc.server.zeroConnCond != nil && cc.server.StandbyController != nil {
-			cc.server.zeroConnCond.Broadcast()
-		}
-	}()
-
+func closeConn(cc *clientConn) error {
 	var err error
 	cc.closeOnce.Do(func() {
 		if cc.connectionID > 0 {
@@ -447,9 +441,11 @@ func closeConn(cc *clientConn, connections int) error {
 	return err
 }
 
+// closeWithoutLock removes cc from the server connection map. The caller must hold server.rwlock.
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	return closeConn(cc, len(cc.server.clients))
+	cc.server.notifyGracefulShutdownCondIfNeededLocked()
+	return closeConn(cc)
 }
 
 func (cc *clientConn) currentResourceGroupName() string {

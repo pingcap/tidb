@@ -137,8 +137,6 @@ const (
 	// DefMaxAllowedPacket is the default value of max_allowed_packet.
 	DefMaxAllowedPacket = 64 << 20
 	UnavailableIP       = "<nil>"
-	// DefaultManagerNamespace is the default namespace for TiDB manager in Starter deployments.
-	DefaultManagerNamespace = "tidb-admin"
 )
 
 // Valid config maps
@@ -323,6 +321,8 @@ type Config struct {
 	KeyspaceActivateMode bool `toml:"keyspace-activate" json:"keyspace-activate"`
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
+	// StarterParams contains Starter-only extension parameters.
+	StarterParams StarterParams `toml:"starter" json:"starter"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -1029,17 +1029,21 @@ type Standby struct {
 	MaxIdleSeconds uint `toml:"max-idle-seconds" json:"max-idle-seconds"`
 	// ActivationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
 	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
+}
+
+// StarterParams contains Starter-only extension parameters.
+type StarterParams struct {
 	// ExportID is the export identifier supplied by standby activation.
 	ExportID string `toml:"export-id" json:"export-id"`
 	// EnableZeroBackend is used to control the behavior of standby idle watcher.
 	// When it is enabled, the idle watcher will not wait for session migration
 	// and will not consider client interactive connections.
 	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
-	// EnableManagerNotifier indicates whether standby shutdown should notify TiDB manager.
+	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
 	// It is only used in NextGen Starter deployments.
 	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier"`
 	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
-	// When empty and EnableManagerNotifier is true, the Starter path derives the default service address.
+	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
 	ManagerAddr string `toml:"manager-addr" json:"manager-addr"`
 }
 
@@ -1499,8 +1503,8 @@ func (c *Config) Load(confFile string) error {
 	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
-	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
-		c.Standby.EnableZeroBackend = true
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("starter", "enable-zero-backend") {
+		c.StarterParams.EnableZeroBackend = true
 	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
@@ -1579,8 +1583,8 @@ func (c *Config) Valid() error {
 	if c.KeyspaceActivateMode && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-activate can only be configured for starter deploy mode")
 	}
-	if c.Standby.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
-		return fmt.Errorf("standby.enable-manager-notifier can only be configured for starter deploy mode")
+	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter.enable-manager-notifier can only be configured for starter deploy mode")
 	}
 	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
 		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)

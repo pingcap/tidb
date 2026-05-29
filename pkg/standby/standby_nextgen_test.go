@@ -143,7 +143,7 @@ func TestExitRejectsInvalidQueryParams(t *testing.T) {
 			name: "too large wait",
 			query: url.Values{
 				"keyspace": {"ks1"},
-				"wait":     {"3601"},
+				"wait":     {"24h1s"},
 			},
 			want: "invalid wait\n",
 		},
@@ -270,8 +270,11 @@ func TestParseExitWait(t *testing.T) {
 	}{
 		{name: "empty"},
 		{name: "zero", value: "0"},
-		{name: "max", value: "3600", want: time.Hour},
-		{name: "above max", value: "3601", wantErr: true},
+		{name: "zero duration", value: "0s"},
+		{name: "duration", value: "1h30m", want: time.Hour + 30*time.Minute},
+		{name: "legacy seconds", value: "3600", want: time.Hour},
+		{name: "max", value: "24h", want: 24 * time.Hour},
+		{name: "above max", value: "24h1s", wantErr: true},
 		{name: "overflow", value: "9223372036854775807", wantErr: true},
 	}
 
