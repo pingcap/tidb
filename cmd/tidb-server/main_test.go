@@ -75,17 +75,23 @@ func TestExitCodeForSignal(t *testing.T) {
 
 func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
 	originalArgs := os.Args
+	originalStarterAdditionalParams := starterAdditionalParams
 	os.Args = []string{"tidb-server"}
 	t.Cleanup(func() {
 		os.Args = originalArgs
+		starterAdditionalParams = originalStarterAdditionalParams
 	})
 
 	fset := initFlagSet()
-	require.NoError(t, fset.Parse([]string{"--keyspace-activate=true"}))
+	require.NoError(t, fset.Parse([]string{
+		"--keyspace-activate=true",
+		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1",
+	}))
 
 	cfg := config.NewConfig()
 	overrideConfig(cfg, fset)
 	require.True(t, cfg.KeyspaceActivateMode)
+	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1", *starterAdditionalParams)
 }
 
 func TestSetGlobalVars(t *testing.T) {
@@ -193,19 +199,27 @@ func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
 		conf.Standby.ManagerAddr = "manager.example.com:8000"
 	})
 
-	t.Setenv(config.EnvPodName, "")
-	t.Setenv(config.EnvPodIP, "")
-	t.Setenv(config.EnvNamespace, "")
-	_, err := createMgrClient()
-	require.ErrorContains(t, err, "manager notifier requires pod identity envs")
-	require.ErrorContains(t, err, config.EnvPodName)
-	require.ErrorContains(t, err, config.EnvPodIP)
-	require.ErrorContains(t, err, config.EnvNamespace)
+	originalStarterAdditionalParams := starterAdditionalParams
+	t.Cleanup(func() {
+		starterAdditionalParams = originalStarterAdditionalParams
+	})
 
-	t.Setenv(config.EnvPodName, "pod-1")
-	t.Setenv(config.EnvPodIP, "10.0.0.1")
-	t.Setenv(config.EnvNamespace, "ns-1")
-	cli, err := createMgrClient()
+	_, err := createMgrClientForStarter()
+	require.ErrorContains(t, err, "manager notifier requires --starter-additional-params")
+
+	duplicatedParam := "pod-name=pod-1,pod-name=pod-2,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &duplicatedParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `starter additional param "pod-name" is duplicated`)
+
+	unknownParam := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,unknown=value"
+	starterAdditionalParams = &unknownParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
+
+	validParams := "manager-namespace=manager-ns,pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &validParams
+	cli, err := createMgrClientForStarter()
 	require.NoError(t, err)
 	require.NotNil(t, cli)
 }

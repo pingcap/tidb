@@ -1119,6 +1119,10 @@ dxf-resource-limit = 101`), 0644))
 	require.True(t, conf.Standby.EnableZeroBackend)
 	require.NoError(t, conf.Valid())
 
+	conf = NewConfig()
+	conf.Standby.EnableManagerNotifier = true
+	require.ErrorContains(t, conf.Valid(), "standby.enable-manager-notifier can only be configured for starter deploy mode")
+
 	require.NoError(t, os.WriteFile(configFile, []byte(`
 deploy-mode = "starter"
 [standby]

@@ -153,6 +153,7 @@ const (
 	nmActivationTimeout = "activation-timeout"
 	nmMaxIdleSeconds    = "max-idle-seconds"
 	nmKeyspaceActivate  = "keyspace-activate"
+	nmStarterParams     = "starter-additional-params"
 )
 
 const (
@@ -228,6 +229,8 @@ var (
 	maxIdleSeconds    *uint
 	// Keyspace activate
 	keyspaceActivateMode *bool
+	// Starter additional params
+	starterAdditionalParams *string
 )
 
 func initFlagSet() *flag.FlagSet {
@@ -296,6 +299,7 @@ func initFlagSet() *flag.FlagSet {
 	activationTimeout = fset.Uint(nmActivationTimeout, 0, "max time in second allowed for tidb to activate from standby, 0 means no limit")
 	maxIdleSeconds = fset.Uint(nmMaxIdleSeconds, 0, "max idle seconds for a connection, 0 means no limit")
 	keyspaceActivateMode = flagBoolean(fset, nmKeyspaceActivate, false, "exit after activating the keyspace")
+	starterAdditionalParams = fset.String(nmStarterParams, "", "starter additional params in k=v,k=v format")
 
 	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
@@ -345,7 +349,7 @@ func main() {
 
 	var standbyController server.StandbyController
 	if config.GetGlobalConfig().Standby.StandByMode {
-		mgrCli, err := createMgrClient()
+		mgrCli, err := createMgrClientForStarter()
 		terror.MustNil(err)
 		standbyController = standby.NewLoadKeyspaceController(mgrCli)
 	}
@@ -489,10 +493,7 @@ func exitAfterKeyspaceActivate(svr *server.Server, storage kv.Storage, dom *doma
 	if err := syncLog(); err != nil {
 		exitCode = exitCodeErr
 	}
-	if exitCode != exitCodeOK {
-		os.Exit(exitCode)
-	}
-	os.Exit(exitCodeOK)
+	os.Exit(exitCode)
 }
 
 func syncLog() error {
@@ -1267,7 +1268,68 @@ func closeStmtSummary() {
 	}
 }
 
-func createMgrClient() (tidbmanager.Client, error) {
+type starterParams struct {
+	managerNamespace string
+	podName          string
+	podIP            string
+	podNamespace     string
+}
+
+func parseStarterAdditionalParams(raw string) (starterParams, error) {
+	var params starterParams
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return params, nil
+	}
+
+	seen := make(map[string]struct{})
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return params, fmt.Errorf("starter additional params contains an empty item")
+		}
+
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			return params, fmt.Errorf("starter additional param %q must be in k=v format", item)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" {
+			return params, fmt.Errorf("starter additional param %q has an empty key", item)
+		}
+		if value == "" {
+			return params, fmt.Errorf("starter additional param %q has an empty value", key)
+		}
+		if _, ok := seen[key]; ok {
+			return params, fmt.Errorf("starter additional param %q is duplicated", key)
+		}
+		seen[key] = struct{}{}
+
+		switch key {
+		case "manager-namespace":
+			params.managerNamespace = value
+		case "pod-name":
+			params.podName = value
+		case "pod-ip":
+			params.podIP = value
+		case "pod-namespace":
+			params.podNamespace = value
+		default:
+			return params, fmt.Errorf("unknown starter additional param %q", key)
+		}
+	}
+	return params, nil
+}
+
+func getStarterAdditionalParams() string {
+	if starterAdditionalParams == nil {
+		return ""
+	}
+	return *starterAdditionalParams
+}
+
+func createMgrClientForStarter() (tidbmanager.Client, error) {
 	if !deploymode.IsStarter() {
 		return nil, nil
 	}
@@ -1283,23 +1345,26 @@ func createMgrClient() (tidbmanager.Client, error) {
 		return nil, err
 	}
 
+	params, err := parseStarterAdditionalParams(getStarterAdditionalParams())
+	if err != nil {
+		return nil, err
+	}
+
 	managerAddr := cfg.Standby.ManagerAddr
 	if managerAddr == "" {
-		managerNs := os.Getenv(config.EnvManagerNs)
+		managerNs := params.managerNamespace
 		if managerNs == "" {
 			managerNs = config.DefaultManagerNamespace
 		}
 		managerAddr = fmt.Sprintf("manager-server.%s.svc:8000", managerNs)
 	}
 
-	podName := os.Getenv(config.EnvPodName)
-	podIP := os.Getenv(config.EnvPodIP)
-	namespace := os.Getenv(config.EnvNamespace)
+	podName := params.podName
+	podIP := params.podIP
+	namespace := params.podNamespace
 	if podName == "" || podIP == "" || namespace == "" {
-		return nil, fmt.Errorf("manager notifier requires pod identity envs: %s=%q, %s=%q, %s=%q",
-			config.EnvPodName, podName,
-			config.EnvPodIP, podIP,
-			config.EnvNamespace, namespace)
+		return nil, fmt.Errorf("manager notifier requires --starter-additional-params with pod-name, pod-ip and pod-namespace: pod-name=%q, pod-ip=%q, pod-namespace=%q",
+			podName, podIP, namespace)
 	}
 
 	return tidbmanager.NewClient(

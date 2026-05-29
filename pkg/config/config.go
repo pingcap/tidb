@@ -127,14 +127,6 @@ const (
 	EnvSQLCert = "SQL_CERT"
 	// EnvSQLKey is the system env name for SQL key path.
 	EnvSQLKey = "SQL_KEY"
-	// EnvPodName is the system env name for pod name.
-	EnvPodName = "POD_NAME"
-	// EnvPodIP is the system env name for pod IP.
-	EnvPodIP = "POD_IP"
-	// EnvNamespace is the system env name for namespace.
-	EnvNamespace = "NAMESPACE"
-	// EnvManagerNs is the system env name for manager namespace.
-	EnvManagerNs = "MANAGER_NS"
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
@@ -1586,6 +1578,9 @@ func (c *Config) Valid() error {
 	}
 	if c.KeyspaceActivateMode && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-activate can only be configured for starter deploy mode")
+	}
+	if c.Standby.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("standby.enable-manager-notifier can only be configured for starter deploy mode")
 	}
 	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
 		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)
