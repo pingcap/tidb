@@ -345,26 +345,40 @@ func TestLoadDataEscape(t *testing.T) {
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
 func TestLoadDataSpecifiedColumns(t *testing.T) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)"
 	ctx := tk.Session().(sessionctx.Context)
-	// test
-	tests := []testCase{
-		{[]byte("7\ta string\n"), []string{"1|7|a string|0"}, trivialMsg},
-		{[]byte("8\tstr \\t\n"), []string{"2|8|str \t|0"}, trivialMsg},
-		{[]byte("9\tstr \\n\n"), []string{"3|9|str \n|0"}, trivialMsg},
-		{[]byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, trivialMsg},
-		{[]byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, trivialMsg},
-		{[]byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, trivialMsg},
-		{[]byte("\\N\ta string\n"), []string{"7|<nil>|a string|0"}, trivialMsg},
+
+	var reader io.ReadCloser = mydump.NewStringReader("7\ta string\n" +
+		"8\tstr \\t\n" +
+		"9\tstr \\n\n" +
+		"10\tboth \\t\\n\n" +
+		"11\tstr \\\\\n" +
+		"12\t\\r\\t\\n\\0\\Z\\b\n" +
+		"\\N\ta string\n")
+	var readerBuilder = executor.LoadDataReaderBuilder{
+		Build: func(_ string) (
+			r io.ReadCloser, err error,
+		) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
 	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	tk.MustExec(loadSQL)
+	require.Equal(t, "Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", tk.Session().LastMessage())
+	tk.MustQuery("select * from load_data_test order by id;").Check(testkit.RowsWithSep("|",
+		"1|7|a string|0",
+		"2|8|str \t|0",
+		"3|9|str \n|0",
+		"4|10|both \t\n|0",
+		"5|11|str \\|0",
+		"6|12|"+string([]byte{'\r', '\t', '\n', 0, 26, '\b'})+"|0",
+		"7|<nil>|a string|0",
+	))
 }
 
 func TestLoadDataIgnoreLines(t *testing.T) {
