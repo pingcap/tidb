@@ -140,6 +140,18 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	err = tk.ExecToErr("create materialized view mv_bad_sum_nullable (a, s, c) as select a, sum(b), count(1) from t_sum_nullable group by a")
 	require.ErrorContains(t, err, "only supports SUM/MIN/MAX on NOT NULL column")
 
+	// SUM does not support time or duration columns.
+	tk.MustExec("create table t_sum_time (a int not null, d date not null default '2020-01-01', dt datetime not null default '2020-01-01 00:00:00', ts timestamp not null default '2020-01-01 00:00:00', dur time not null default '00:00:00')")
+	tk.MustExec("create materialized view log on t_sum_time (a, d, dt, ts, dur) purge next date_add(now(), interval 1 hour)")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_date (a, s, c) as select a, sum(d), count(1) from t_sum_time group by a")
+	require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_datetime (a, s, c) as select a, sum(dt), count(1) from t_sum_time group by a")
+	require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_timestamp (a, s, c) as select a, sum(ts), count(1) from t_sum_time group by a")
+	require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+	err = tk.ExecToErr("create materialized view mv_bad_sum_time (a, s, c) as select a, sum(dur), count(1) from t_sum_time group by a")
+	require.ErrorContains(t, err, "does not support SUM on DATE/DATETIME/TIMESTAMP/TIME column")
+
 	// MIN/MAX requires a base-table index whose leading columns cover all GROUP BY columns.
 	tk.MustExec("create table t_minmax_bad (a int not null, b int not null, c int not null, index idx_cab(c, a, b))")
 	tk.MustExec("create materialized view log on t_minmax_bad (a, b, c) purge next date_add(now(), interval 1 hour)")
@@ -245,6 +257,7 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop materialized view log on t_nullable")
 	tk.MustExec("drop materialized view log on t_sum_nullable")
+	tk.MustExec("drop materialized view log on t_sum_time")
 	tk.MustExec("drop materialized view log on t_minmax_bad")
 	tk.MustExec("drop materialized view log on t_minmax_ok")
 	tk.MustExec("drop materialized view log on t_presplit")
@@ -421,6 +434,35 @@ func TestMaterializedViewDDLProtectsMinMaxSupportingBaseTableIndexesAgainstConcu
 	tk.MustExec("insert into t_concurrent_drop_idx values (1, 2, 10), (1, 2, 5)")
 	tk.MustExec("refresh materialized view mv_concurrent_drop_idx fast")
 	tk.MustQuery("select a, b, minc, cnt from mv_concurrent_drop_idx").Check(testkit.Rows("1 2 5 2"))
+}
+
+func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table base_test(id int, v1 int, v2 int, v3 int, v4 int, index k(v1,v2,v3,v4))")
+	tk.MustExec("create materialized view log on base_test(v1, v2) purge next date_add(now(), interval 1 hour)")
+	tk.MustQuery("select column_key from information_schema.columns where table_schema='test' and table_name='$mlog$base_test' and column_name='v1'").
+		Check(testkit.Rows(""))
+	tk.MustQuery("select column_key from information_schema.columns where table_schema='test' and table_name='$mlog$base_test' and column_name='v2'").
+		Check(testkit.Rows(""))
+}
+
+func TestCreateMaterializedViewColumnFlags(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table base_mv_flags(id bigint not null auto_increment primary key, g1 int not null, v1 bigint not null, key idx_g1_id(g1, id))")
+	tk.MustExec("create materialized view log on base_mv_flags(id, g1, v1) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_flags (g1, cnt, s_v1, min_id, max_id) as select g1, count(1), sum(v1), min(id), max(id) from base_mv_flags group by g1")
+	tk.MustQuery("select column_key from information_schema.columns where table_schema='test' and table_name='mv_flags' and column_name='min_id'").
+		Check(testkit.Rows(""))
+	tk.MustQuery("select extra from information_schema.columns where table_schema='test' and table_name='mv_flags' and column_name='min_id'").
+		Check(testkit.Rows(""))
+	tk.MustQuery("select column_key from information_schema.columns where table_schema='test' and table_name='mv_flags' and column_name='max_id'").
+		Check(testkit.Rows(""))
+	tk.MustQuery("select extra from information_schema.columns where table_schema='test' and table_name='mv_flags' and column_name='max_id'").
+		Check(testkit.Rows(""))
 }
 
 func TestShowCreateMaterializedView(t *testing.T) {
