@@ -270,6 +270,26 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Equal(t, len(tasks), 2)
 	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
 	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 0)
+
+	// Analyze full-sampling requests do not carry DAG row-count hints, but can
+	// still use store-batch tasks because TiKV reduces successful analyze
+	// sub-results into the top-level response.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeAnalyze,
+		KeyRanges:      kv.NewNonPartitionedKeyRanges(ranges),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+		KeepOrder:      true,
+		RequestSource: kv.RequestSource{
+			RequestSourceInternal: true,
+		},
+	}
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 1)
+	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
 }
 
 type mockResourceGroupProvider struct {
