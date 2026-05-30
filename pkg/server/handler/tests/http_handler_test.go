@@ -39,6 +39,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
@@ -626,10 +627,8 @@ func TestGetMVCCNotFound(t *testing.T) {
 }
 
 func TestDecodeColumnValue(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
+	router := mux.NewRouter()
+	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", tikvhandler.ValueHandler{})
 
 	// column is a structure used for test
 	type column struct {
@@ -662,16 +661,17 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	unitTest := func(col *column) {
 		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
-		resp, err := ts.FetchStatus(path)
-		require.NoErrorf(t, err, "url: %v", ts.StatusURL(path))
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+		require.Equalf(t, http.StatusOK, resp.Code, "url: %v", path)
 		decoder := json.NewDecoder(resp.Body)
 		var data any
 		err = decoder.Decode(&data)
-		require.NoErrorf(t, err, "url: %v\ndata: %v", ts.StatusURL(path), data)
-		require.NoError(t, resp.Body.Close())
+		require.NoErrorf(t, err, "url: %v\ndata: %v", path, data)
 		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false)
 		require.NoError(t, err)
-		require.Equalf(t, colVal, data, "url: %v", ts.StatusURL(path))
+		require.Equalf(t, colVal, data, "url: %v", path)
 	}
 
 	for _, col := range cols {
