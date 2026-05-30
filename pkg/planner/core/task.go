@@ -1473,7 +1473,7 @@ func handleSortItemsHintsForIndexMerge(p *physicalop.PhysicalTopN, copTask *phys
 			childProfile := partialPlan.StatsInfo()
 			stats := property.DeriveLimitStats(childProfile, float64(newCount))
 			pushedDownLimit := physicalop.PhysicalLimit{
-				Count: newCount,
+				Count:       newCount,
 				PartitionBy: newPartitionBy,
 			}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 			pushedDownLimit.SetChildren(partialPlan)
