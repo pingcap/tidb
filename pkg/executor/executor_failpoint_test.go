@@ -294,7 +294,6 @@ func TestCollectCopRuntimeStats(t *testing.T) {
 }
 
 func TestCoprocessorOOMTiCase(t *testing.T) {
-	t.Skip("skip")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -350,27 +349,20 @@ func TestCoprocessorOOMTiCase(t *testing.T) {
 		}
 	}
 
-	// ticase-4169, trigger oom action twice after workers consuming all the data
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4169", `return(true)`)
-	require.NoError(t, err)
-	f()
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4169")
-	require.NoError(t, err)
-	/*
-		// ticase-4170, trigger oom action twice after iterator receiving all the data.
-		err = failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4170", `return(true)`)
-		require.NoError(t, err)
+	runTiCase := func(fp string) {
+		require.NoError(t, failpoint.Enable(fp, `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fp))
+		}()
 		f()
-		err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4170")
-		require.NoError(t, err)
-		// ticase-4171, trigger oom before reading or consuming any data
-		err = failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4171", `return(true)`)
-		require.NoError(t, err)
-		f()
-		err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4171")
-		require.NoError(t, err)
+	}
 
-	*/
+	// ticase-4169, trigger oom action twice after workers consuming all the data.
+	runTiCase("github.com/pingcap/tidb/pkg/store/copr/ticase-4169")
+	// ticase-4170, trigger oom action twice after iterator receiving all the data.
+	runTiCase("github.com/pingcap/tidb/pkg/store/copr/ticase-4170")
+	// ticase-4171, trigger oom before reading or consuming any data.
+	runTiCase("github.com/pingcap/tidb/pkg/store/copr/ticase-4171")
 }
 
 func TestCoprocessorBlockIssues56916(t *testing.T) {
