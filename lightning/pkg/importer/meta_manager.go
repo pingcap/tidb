@@ -44,10 +44,10 @@ type metaMgrBuilder interface {
 }
 
 type dbMetaMgrBuilder struct {
-	db              *sql.DB
-	taskID          int64
-	schema          string
-	needChecksum    bool
+	db               *sql.DB
+	taskID           int64
+	schema           string
+	needChecksum     bool
 	targetPartitions []string
 }
 
@@ -84,12 +84,12 @@ func (b *dbMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 
 func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 	return &dbTableMetaMgr{
-		session:         b.db,
-		taskID:          b.taskID,
-		tr:              tr,
-		schemaName:      b.schema,
-		tableName:       TableMetaTableName,
-		needChecksum:    b.needChecksum,
+		session:          b.db,
+		taskID:           b.taskID,
+		tr:               tr,
+		schemaName:       b.schema,
+		tableName:        TableMetaTableName,
+		needChecksum:     b.needChecksum,
 		targetPartitions: b.targetPartitions,
 	}
 }
@@ -105,12 +105,12 @@ type tableMetaMgr interface {
 }
 
 type dbTableMetaMgr struct {
-	session         *sql.DB
-	taskID          int64
-	tr              *TableImporter
-	schemaName      string
-	tableName       string
-	needChecksum    bool
+	session          *sql.DB
+	taskID           int64
+	tr               *TableImporter
+	schemaName       string
+	tableName        string
+	needChecksum     bool
 	targetPartitions []string
 }
 
