@@ -88,12 +88,12 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_max_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
-	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(l2@sel_2) */ count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
 	// Only check if IndexHashJoin is used, not the specific plan tree.
-	tk.MustQuery("desc format='plan_tree' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").CheckContain("IndexHashJoin")
-	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
+	tk.MustQuery("desc format='plan_tree' select /*+ INL_HASH_JOIN(l2@sel_2) */ * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").CheckContain("IndexHashJoin")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(l2@sel_2) */ * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
 	// Only check if IndexHashJoin is used, not the specific plan tree.
-	tk.MustQuery("desc format='plan_tree' select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").CheckContain("IndexHashJoin")
+	tk.MustQuery("desc format='plan_tree' select /*+ INL_HASH_JOIN(l2@sel_2) */ count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").CheckContain("IndexHashJoin")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
 
 	// issue16586
