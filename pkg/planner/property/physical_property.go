@@ -688,7 +688,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		CTEProducerStatus:     p.CTEProducerStatus,
 		NoCopPushDown:         p.NoCopPushDown,
-		PartialOrderInfo:      p.PartialOrderInfo,
+		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
 		SortItemsHints:        p.SortItemsHints,
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.

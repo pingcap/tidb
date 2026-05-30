@@ -1656,9 +1656,10 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = isMatchPropForIndexMerge(ds, path, prop)
 
+	allSameOrder, _ := prop.AllSameOrder()
 	// When SortItems is empty and SortItemsHints is set, check which partial
 	// paths satisfy the hints (for Limit pushdown).
-	if prop.IsSortItemEmpty() && len(prop.SortItemsHints) > 0 {
+	if prop.IsSortItemEmpty() && len(prop.SortItemsHints) > 0 && !path.IndexMergeIsIntersection && allSameOrder {
 		hintsProp := prop.CloneEssentialFields()
 		hintsProp.SortItems = hintsProp.SortItemsHints
 		candidate.sortItemsHintsSatisfied = make([]bool, 0, len(path.PartialIndexPaths))

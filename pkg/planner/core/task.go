@@ -1462,15 +1462,19 @@ func handleSortItemsHintsForIndexMerge(p *physicalop.PhysicalTopN, copTask *phys
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
+	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
+	for _, expr := range p.GetPartitionBy() {
+		newPartitionBy = append(newPartitionBy, expr.Clone())
+	}
 
 	for i, partialPlan := range copTask.IdxMergePartPlans {
-		if i < len(copTask.IdxMergePartPlansSatisfySortHints) &&
-			copTask.IdxMergePartPlansSatisfySortHints[i] {
+		if copTask.IdxMergePartPlansSatisfySortHints[i] {
 			// This partial path satisfies the sort order, push Limit.
 			childProfile := partialPlan.StatsInfo()
 			stats := property.DeriveLimitStats(childProfile, float64(newCount))
 			pushedDownLimit := physicalop.PhysicalLimit{
 				Count: newCount,
+				PartitionBy: newPartitionBy,
 			}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 			pushedDownLimit.SetChildren(partialPlan)
 			pushedDownLimit.SetSchema(partialPlan.Schema())
