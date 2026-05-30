@@ -68,7 +68,7 @@ func TestDoChecksum(t *testing.T) {
 	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
-	checksum, err := manager.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, "")
+	checksum, err := manager.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, nil)
 	require.NoError(t, err)
 	require.Equal(t, RemoteChecksum{
 		Schema:     "test",
@@ -112,7 +112,7 @@ func TestDoChecksumParallel(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	for range 5 {
 		wg.Run(func() {
-			checksum, err := manager.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, "")
+			checksum, err := manager.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, nil)
 			require.NoError(t, err)
 			require.Equal(t, RemoteChecksum{
 				Schema:     "test",
@@ -152,7 +152,7 @@ func TestIncreaseGCLifeTimeFail(t *testing.T) {
 
 	for range 5 {
 		wg.Run(func() {
-			_, errChecksum := manager.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, "")
+			_, errChecksum := manager.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, nil)
 			require.Equal(t, "update GC lifetime failed: update gc error: context canceled", errChecksum.Error())
 		})
 	}
@@ -196,7 +196,7 @@ func TestDoChecksumWithTikv(t *testing.T) {
 			checksumTS = req.StartTs
 		}
 		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient, lightningServicePrefix), client: kvClient}
-		_, err := checksumExec.Checksum(ctx, &importdef.TableInfo{DB: "test", Name: "t", Core: tableInfo}, "")
+		_, err := checksumExec.Checksum(ctx, &importdef.TableInfo{DB: "test", Name: "t", Core: tableInfo}, nil)
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
 			checksumExec.Close()
@@ -225,7 +225,7 @@ func TestDoChecksumWithTikv(t *testing.T) {
 	kvClient.maxErrCount = 0
 	ttlManager := newGCTTLManager(pdClient, lightningServicePrefix)
 	checksumExec := &TiKVChecksumManager{manager: ttlManager, client: kvClient}
-	_, err := checksumExec.Checksum(ctx, &importdef.TableInfo{DB: "test", Name: "t", Core: tableInfo}, "")
+	_, err := checksumExec.Checksum(ctx, &importdef.TableInfo{DB: "test", Name: "t", Core: tableInfo}, nil)
 	require.NoError(t, err)
 	require.True(t, pdClient.isServiceGCSafePointExist(ttlManager.serviceID))
 	checksumExec.Close()
@@ -239,7 +239,7 @@ func TestTiKVChecksumManagerRejectsPartitionScope(t *testing.T) {
 	pdClient := &testPDClient{}
 	kvClient := &mockChecksumKVClient{}
 	checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient, lightningServicePrefix), client: kvClient}
-	_, err := checksumExec.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, "p0")
+	_, err := checksumExec.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, []string{"p0"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "partition-scoped checksum is not supported by TiKV checksum manager")
 }
@@ -263,7 +263,7 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 	mock.ExpectClose()
 
 	manager := NewTiDBChecksumExecutor(db)
-	_, err = manager.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, "")
+	_, err = manager.Checksum(context.Background(), &importdef.TableInfo{DB: "test", Name: "t"}, nil)
 	require.Regexp(t, "compute remote checksum failed: mock syntax error.*", err.Error())
 }
 
