@@ -39,6 +39,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
@@ -782,6 +783,18 @@ func TestDeleteKeyHandler(t *testing.T) {
 	ctx := context.Background()
 	store := ts.store
 
+	deleteKeyRouter := mux.NewRouter()
+	deleteKeyHandler := tikvhandler.NewDeleteKeyHandler(ts.server.NewTikvHandlerTool())
+	deleteKeyRouter.Handle("/test/delete/rowkey/{db}/{table}", deleteKeyHandler)
+	deleteKeyRouter.Handle("/test/delete/indexkey/{db}/{table}/{index}", deleteKeyHandler)
+	postDeleteKey := func(t *testing.T, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp := httptest.NewRecorder()
+		deleteKeyRouter.ServeHTTP(resp, req)
+		return resp
+	}
+
 	t.Run("index", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, ts.store)
 		tk.MustExec("use tidb")
@@ -817,10 +830,8 @@ func TestDeleteKeyHandler(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		resp, err := ts.PostStatus("/test/delete/indexkey/tidb/delete_idx/idx_ab?handle=1&a=1&b=2", "application/x-www-form-urlencoded", nil)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.NoError(t, resp.Body.Close())
+		resp := postDeleteKey(t, "/test/delete/indexkey/tidb/delete_idx/idx_ab?handle=1&a=1&b=2")
+		require.Equal(t, http.StatusOK, resp.Code)
 
 		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
@@ -853,10 +864,8 @@ func TestDeleteKeyHandler(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		resp, err := ts.PostStatus("/test/delete/rowkey/tidb/delete_row?handle=1", "application/x-www-form-urlencoded", nil)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.NoError(t, resp.Body.Close())
+		resp := postDeleteKey(t, "/test/delete/rowkey/tidb/delete_row?handle=1")
+		require.Equal(t, http.StatusOK, resp.Code)
 
 		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
