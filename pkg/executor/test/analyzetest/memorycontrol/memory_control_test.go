@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,6 +82,7 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	sm := newLiveSessionManager(dom, tk0.Session())
+	tk0.Session().SetSessionManager(sm)
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
@@ -103,21 +106,23 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	tk0 := testkit.NewTestKit(t, store)
+	tk0 := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
+	tk0.MustExec("select 3")
 	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	tk0.MustExec("set global tidb_mem_quota_query = 209715200 ") // 200MB
+	tk0.MustExec("set global tidb_mem_quota_query = 209715200") // 200MB
 	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
 	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
 
 	sm := newLiveSessionManager(dom, tk0.Session())
+	tk0.Session().SetSessionManager(sm)
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
 	go dom.ServerMemoryLimitHandle().Run()
 
 	tk0.MustExec("use test")
-	tk0.MustExec("create table t(a int)")
-	tk0.MustExec("insert into t select 1")
+	tk0.MustExec("create table t(a int, b varchar(2048), c varchar(2048), d varchar(2048), e varchar(2048), f varchar(2048), g varchar(2048), h varchar(2048))")
+	tk0.MustExec("insert into t values (1, repeat('x', 2048), repeat('x', 2048), repeat('x', 2048), repeat('x', 2048), repeat('x', 2048), repeat('x', 2048), repeat('x', 2048))")
 	for i := 1; i <= 8; i++ {
-		tk0.MustExec("insert into t select * from t") // 256 Lines
+		tk0.MustExec("insert into t select * from t")
 	}
 	sqlPrepare := "prepare stmt from 'analyze table t with 1.0 samplerate';"
 	sqlExecute := "execute stmt;"                                                                                     // Need about 100MB
@@ -128,16 +133,65 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	tk0.MustExec(sqlPrepare)
 	tk0.MustExec(sqlExecute)
 	runtime.GC()
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		return tk0.Session().GetSessionVars().MemTracker.BytesConsumed() == 0 &&
+			tk0.Session().GetSessionVars().SQLKiller.GetKillSignal() == 0
+	}, time.Second, 10*time.Millisecond)
+	baseKillTotal := servermemorylimit.SessionKillTotal.Load()
 	// killed by tidb_server_memory_limit
 	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
 	_, err0 := tk0.Exec(sqlPrepare)
 	require.NoError(t, err0)
-	_, err1 := tk0.Exec(sqlExecute)
+	var err1 error
+	if intest.InTest {
+		_, err1 = tk0.Exec(sqlExecute)
+	} else {
+		lastStmtTime := tk0.Session().ShowProcess().Time
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := tk0.Exec(sqlExecute)
+			errCh <- err
+		}()
+		require.Eventually(t, func() bool {
+			processInfo, ok := sm.GetProcessInfo(tk0.Session().GetSessionVars().ConnectionID)
+			return ok &&
+				processInfo.MemTracker != nil &&
+				!processInfo.Time.Equal(lastStmtTime) &&
+				processInfo.MemTracker.BytesConsumed() > 64<<20
+		}, 5*time.Second, 10*time.Millisecond)
+
+		pressure := make([][]byte, 32)
+		for i := range pressure {
+			pressure[i] = make([]byte, 8<<20)
+			pressure[i][0] = byte(i)
+		}
+		memory.ForceReadMemStats()
+		require.Eventually(t, func() bool {
+			return servermemorylimit.SessionKillTotal.Load() > baseKillTotal
+		}, 5*time.Second, 50*time.Millisecond)
+
+		select {
+		case err1 = <-errCh:
+		case <-time.After(5 * time.Second):
+			t.Fatal("prepared analyze did not finish after server memory controller kill")
+		}
+		pressure[0][0] = 0
+	}
 	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
+	require.Error(t, err1)
 	require.True(t, strings.Contains(err1.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."), err1.Error())
+	require.Greater(t, servermemorylimit.SessionKillTotal.Load(), baseKillTotal)
 	runtime.GC()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume"))
+	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		return !servermemorylimit.IsKilling.Load() &&
+			tk0.Session().GetSessionVars().MemTracker.BytesConsumed() == 0 &&
+			tk0.Session().GetSessionVars().SQLKiller.GetKillSignal() == 0
+	}, time.Second, 10*time.Millisecond)
 	tk0.MustExec(sqlPrepare)
 	tk0.MustExec(sqlExecute)
 }
