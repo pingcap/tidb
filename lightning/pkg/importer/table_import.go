@@ -1135,7 +1135,7 @@ func (tr *TableImporter) postProcess(
 			}
 
 			var remoteChecksum *ingestctrl.RemoteChecksum
-			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo, rc.cfg.Mydumper.TargetPartition)
+			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo, rc.cfg.Mydumper.TargetPartitions)
 			failpoint.Inject("checksum-error", func() {
 				tr.logger.Info("failpoint checksum-error injected.")
 				remoteChecksum = nil
@@ -1214,7 +1214,7 @@ func (tr *TableImporter) postProcess(
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzeSkipped
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
-			err := tr.analyzeTable(ctx, rc.db, rc.cfg.Mydumper.TargetPartition)
+			err := tr.analyzeTable(ctx, rc.db, rc.cfg.Mydumper.TargetPartitions)
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
 				if err != nil {
@@ -1402,19 +1402,23 @@ func (tr *TableImporter) compareChecksum(remoteChecksum *ingestctrl.RemoteChecks
 }
 
 // analyzeTable runs ANALYZE TABLE on the target table.
-// When partitionName is non-empty, the statement is scoped to that partition only:
-// ANALYZE TABLE t PARTITION (partitionName).
-func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB, partitionName string) error {
+// When partitionNames is non-empty, the statement is scoped to those partitions only:
+// ANALYZE TABLE t PARTITION (p1, p2, ...).
+func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB, partitionNames []string) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
 	exec := common.SQLWithRetry{
 		DB:     db,
 		Logger: tr.logger,
 	}
-	sql := "ANALYZE TABLE " + tr.tableName
-	if partitionName != "" {
-		sql += " PARTITION " + common.EscapeIdentifier(partitionName)
+	stmt := "ANALYZE TABLE " + tr.tableName
+	if len(partitionNames) > 0 {
+		escaped := make([]string, len(partitionNames))
+		for i, p := range partitionNames {
+			escaped[i] = common.EscapeIdentifier(p)
+		}
+		stmt += " PARTITION " + strings.Join(escaped, ", ")
 	}
-	err := exec.Exec(ctx, "analyze table", sql)
+	err := exec.Exec(ctx, "analyze table", stmt)
 	task.End(zap.ErrorLevel, err)
 	return err
 }

@@ -64,8 +64,8 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 
 // DoChecksum computes the remote checksum for a table using the ChecksumManager stored in ctx.
 // table must be in <db>.<table> format, e.g. foo.bar.
-// When partitionName is non-empty, the checksum is scoped to that partition only.
-func DoChecksum(ctx context.Context, table *importdef.TableInfo, partitionName string) (*ingestctrl.RemoteChecksum, error) {
+// When partitionNames is non-empty, the checksum is scoped to those partitions only.
+func DoChecksum(ctx context.Context, table *importdef.TableInfo, partitionNames []string) (*ingestctrl.RemoteChecksum, error) {
 	var err error
 	manager, ok := ctx.Value(&checksumManagerKey).(ingestctrl.ChecksumManager)
 	if !ok {
@@ -74,7 +74,7 @@ func DoChecksum(ctx context.Context, table *importdef.TableInfo, partitionName s
 
 	task := log.Wrap(logutil.Logger(ctx).With(zap.String("table", table.Name))).Begin(zap.InfoLevel, "remote checksum")
 
-	cs, err := manager.Checksum(ctx, table, partitionName)
+	cs, err := manager.Checksum(ctx, table, partitionNames)
 	dur := task.End(zap.ErrorLevel, err)
 	if m, ok := metric.FromContext(ctx); ok {
 		m.ChecksumSecondsHistogram.Observe(dur.Seconds())

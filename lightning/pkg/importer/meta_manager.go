@@ -48,7 +48,7 @@ type dbMetaMgrBuilder struct {
 	taskID          int64
 	schema          string
 	needChecksum    bool
-	targetPartition string
+	targetPartitions []string
 }
 
 func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
@@ -90,7 +90,7 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 		schemaName:      b.schema,
 		tableName:       TableMetaTableName,
 		needChecksum:    b.needChecksum,
-		targetPartition: b.targetPartition,
+		targetPartitions: b.targetPartitions,
 	}
 }
 
@@ -111,7 +111,7 @@ type dbTableMetaMgr struct {
 	schemaName      string
 	tableName       string
 	needChecksum    bool
-	targetPartition string
+	targetPartitions []string
 }
 
 func (m *dbTableMetaMgr) InitTableMeta(ctx context.Context) error {
@@ -355,7 +355,7 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 		if (myStartRowID > 0 || !hasAutoID) && m.needChecksum && baseTotalKvs == 0 {
 			// if another instance finished import before below checksum logic,
 			// it will cause checksum mismatch, but it's very rare.
-			remoteCk, err := DoChecksum(ctx, m.tr.tableInfo, m.targetPartition)
+			remoteCk, err := DoChecksum(ctx, m.tr.tableInfo, m.targetPartitions)
 			if err != nil {
 				return nil, 0, errors.Trace(err)
 			}

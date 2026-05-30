@@ -1463,18 +1463,18 @@ func TestRedactConfig(t *testing.T) {
 
 func TestTargetPartitionConfig(t *testing.T) {
 	cfg := NewConfig()
-	require.Equal(t, "", cfg.Mydumper.TargetPartition)
+	require.Empty(t, cfg.Mydumper.TargetPartitions)
 
 	tomlStr := `
 [mydumper]
 data-source-dir = "."
-target-partition = "p_acme"
+target-partition = ["p_acme", "p_other"]
 `
 	err := toml.Unmarshal([]byte(tomlStr), cfg)
 	require.NoError(t, err)
-	require.Equal(t, "p_acme", cfg.Mydumper.TargetPartition)
+	require.Equal(t, []string{"p_acme", "p_other"}, cfg.Mydumper.TargetPartitions)
 
 	jsonBytes, err := json.Marshal(cfg.Mydumper)
 	require.NoError(t, err)
-	require.Contains(t, string(jsonBytes), `"target-partition":"p_acme"`)
+	require.Contains(t, string(jsonBytes), `"target-partition":["p_acme","p_other"]`)
 }

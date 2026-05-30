@@ -7,7 +7,7 @@ sorted-kv-dir = "$TEST_DIR/lightning_partition_ingest.sorted"
 
 [mydumper]
 data-source-dir = "$TEST_DIR/lightning_partition_ingest/data"
-target-partition = "p_a"
+target-partition = ["p_a"]
 
 [tidb]
 host = "127.0.0.1"

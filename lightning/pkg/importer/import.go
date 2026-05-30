@@ -470,7 +470,7 @@ func NewImportControllerWithPauser(
 			taskID:          cfg.TaskID,
 			schema:          cfg.App.MetaSchemaName,
 			needChecksum:    cfg.PostRestore.Checksum != config.OpLevelOff,
-			targetPartition: cfg.Mydumper.TargetPartition,
+			targetPartitions: cfg.Mydumper.TargetPartitions,
 		}
 	case isSSTImport:
 		metaBuilder = singleMgrBuilder{
