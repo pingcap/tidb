@@ -994,8 +994,9 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		}
 		numericPrediction := estimateSampledIndexKVPredictionBytes(numericKVs)
 		require.NoError(t, numericPrediction.Err)
-		expectedNumericMVCC := int64(len(numericKVs) * tikvMVCCShortValueOverheadBytes)
-		require.GreaterOrEqual(t, numericPrediction.PredictedBytes, expectedNumericMVCC)
+		rawNumericMVCC := estimateSampledIndexKVMVCCOverheadBytes(numericKVs)
+		require.Positive(t, numericPrediction.MVCCOverheadBytes)
+		require.Less(t, numericPrediction.MVCCOverheadBytes, rawNumericMVCC)
 		require.Greater(t, numericLogicalBytes, numericPrediction.PredictedBytes)
 		numericRatio := float64(numericPrediction.PredictedBytes) / float64(numericLogicalBytes)
 		require.Less(t, numericRatio, float64(0.8))
@@ -1049,8 +1050,12 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.NoError(t, longValuePrediction.Err)
 		longValuePhysicalBytes, err := estimateSampledIndexKVPhysicalBytes(longValueKVs)
 		require.NoError(t, err)
-		require.Equal(t,
-			longValuePhysicalBytes+int64(tikvMVCCLongValueBaseOverheadBytes+len(longValueKVs[0].key)),
+		longValueMVCCPhysicalBytes, err := estimateSampledIndexKVMVCCPhysicalBytes(longValueKVs)
+		require.NoError(t, err)
+		require.Equal(t, longValueMVCCPhysicalBytes, longValuePrediction.PredictedBytes)
+		require.Equal(t, longValueMVCCPhysicalBytes-longValuePhysicalBytes, longValuePrediction.MVCCOverheadBytes)
+		require.NotEqual(t,
+			longValuePhysicalBytes+estimateSampledIndexKVMVCCOverheadBytes(longValueKVs),
 			longValuePrediction.PredictedBytes)
 
 		mixedKVs := append(slices.Clone(numericKVs), restoredKVs...)
@@ -1058,6 +1063,31 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.NoError(t, mixedPrediction.Err)
 		require.Less(t, mixedPrediction.PredictedBytes, numericLogicalBytes+restoredPrediction.PredictedBytes)
 		require.Less(t, mixedPrediction.PredictedBytes, numericLogicalBytes+restoredLogicalBytes)
+
+		prefixKVs := make([]sampledIndexKV, 0, 512)
+		for i := 0; i < cap(prefixKVs); i++ {
+			prefixKVs = append(prefixKVs, sampledIndexKV{
+				key:   []byte(fmt.Sprintf("t_index_order_no_000006a2-e4ec-4d93-bbf0-d47edf77ec9f-%07d", i)),
+				value: nil,
+			})
+		}
+		prefixPrediction := estimateSampledIndexKVPredictionBytes(prefixKVs)
+		require.NoError(t, prefixPrediction.Err)
+		require.Positive(t, prefixPrediction.MVCCOverheadBytes)
+		require.Less(t, prefixPrediction.MVCCOverheadBytes, estimateSampledIndexKVMVCCOverheadBytes(prefixKVs))
+
+		mvccKVs := buildSampledTiKVMVCCKVs([]sampledIndexKV{
+			{key: []byte("empty"), value: nil},
+			{key: []byte("short"), value: []byte("short-value")},
+			{key: []byte("long"), value: []byte(strings.Repeat("v", tikvMVCCShortValueMaxBytes+1))},
+		})
+		require.Len(t, mvccKVs.defaultKVs, 1)
+		require.Len(t, mvccKVs.writeKVs, 3)
+		require.Len(t, mvccKVs.writeKVs[0].key, len("empty")+tikvMVCCTimestampBytes)
+		require.Len(t, mvccKVs.writeKVs[0].value, tikvMVCCEmptyWriteCFValueMetaBytes)
+		require.Len(t, mvccKVs.writeKVs[1].value, tikvMVCCShortWriteCFValueMetaBytes+len("short-value"))
+		require.Len(t, mvccKVs.writeKVs[2].value, tikvMVCCLongWriteCFValueMetaBytes)
+		require.Len(t, mvccKVs.defaultKVs[0].value, tikvMVCCShortValueMaxBytes+1)
 	})
 }
 
