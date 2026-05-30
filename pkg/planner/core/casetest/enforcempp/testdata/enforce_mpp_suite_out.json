@@ -478,11 +478,11 @@
       {
         "SQL": "EXPLAIN SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
         "Plan": [
-          "MergeJoin_9 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
-          "├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
-          "│ └─TableFullScan_15 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
-          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "MergeJoin_10 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
+          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "│ └─TableFullScan_16 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
+          "└─TableReader_14(Probe) 10000.00 root  data:TableFullScan_13",
+          "  └─TableFullScan_13 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
@@ -492,7 +492,22 @@
       {
         "SQL": "EXPLAIN SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
         "Plan": [
-          "IndexJoin_16 12500.00 root  inner join, inner:TableReader_13, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "IndexJoin_17 12500.00 root  inner join, inner:TableReader_14, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_35(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_34",
+          "│ └─ExchangeSender_34 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan_33 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_14(Probe) 10000.00 root  data:TableRangeScan_13",
+          "  └─TableRangeScan_13 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
+        "Plan": [
+          "IndexHashJoin_18 12500.00 root  inner join, inner:TableReader_13, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
           "├─TableReader_34(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_33",
           "│ └─ExchangeSender_33 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan_32 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
@@ -505,31 +520,16 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
-        "Plan": [
-          "IndexHashJoin_17 12500.00 root  inner join, inner:TableReader_12, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
-          "├─TableReader_33(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_32",
-          "│ └─ExchangeSender_32 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan_31 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader_12(Probe) 10000.00 root  data:TableRangeScan_11",
-          "  └─TableRangeScan_11 10000.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
-          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
-        ]
-      },
-      {
         "SQL": "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
         "Plan": [
-          "TableReader_48 12500.00 root  MppVersion: 2, data:ExchangeSender_47",
-          "└─ExchangeSender_47 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_46 12500.00 mpp[tiflash]  test.t.a",
-          "    └─HashJoin_41 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
-          "      ├─ExchangeReceiver_44(Build) 10000.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender_43 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─TableFullScan_42 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─TableFullScan_45(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "TableReader_49 12500.00 root  MppVersion: 2, data:ExchangeSender_48",
+          "└─ExchangeSender_48 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_47 12500.00 mpp[tiflash]  test.t.a",
+          "    └─HashJoin_42 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.s.a)]",
+          "      ├─ExchangeReceiver_45(Build) 10000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_44 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─TableFullScan_43 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─TableFullScan_46(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -541,13 +541,13 @@
       {
         "SQL": "EXPLAIN SELECT * from t join s; -- 5. cartesian join, cartesian banned.",
         "Plan": [
-          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
-          "├─TableReader_19(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_18",
-          "│ └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan_17 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "└─TableReader_14(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_13",
-          "  └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_12 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashJoin_9 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_20(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_19",
+          "│ └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan_18 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_14",
+          "  └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`.",
@@ -562,13 +562,13 @@
       {
         "SQL": "EXPLAIN SELECT * from t join s; -- 6. cartesian join, broadcast banned.",
         "Plan": [
-          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
-          "├─TableReader_19(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_18",
-          "│ └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan_17 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
-          "└─TableReader_14(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_13",
-          "  └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan_12 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashJoin_9 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_20(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender_19",
+          "│ └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan_18 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender_14",
+          "  └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan_13 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
@@ -583,13 +583,13 @@
       {
         "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp",
         "Plan": [
-          "TableReader_29 100000000.00 root  MppVersion: 2, data:ExchangeSender_28",
-          "└─ExchangeSender_28 100000000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 100000000.00 mpp[tiflash]  CARTESIAN inner join",
-          "    ├─ExchangeReceiver_13(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─TableFullScan_14(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "TableReader_30 100000000.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "└─ExchangeSender_29 100000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_28 100000000.00 mpp[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_15(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -601,13 +601,13 @@
       {
         "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp",
         "Plan": [
-          "TableReader_29 100000000.00 root  MppVersion: 2, data:ExchangeSender_28",
-          "└─ExchangeSender_28 100000000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 100000000.00 mpp[tiflash]  CARTESIAN inner join",
-          "    ├─ExchangeReceiver_13(Build) 10000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_11 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─TableFullScan_14(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "TableReader_30 100000000.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "└─ExchangeSender_29 100000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_28 100000000.00 mpp[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_15(Probe) 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -673,71 +673,71 @@
       {
         "SQL": "EXPLAIN select count(*) from c, o where c.c_id=o.c_id; -- 1. test agg push down, scalar aggregate",
         "Plan": [
-          "HashAgg_13 1.00 root  funcs:count(Column#7)->Column#6",
-          "└─TableReader_36 9990.00 root  MppVersion: 2, data:ExchangeSender_35",
-          "  └─ExchangeSender_35 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection_34 9990.00 mpp[tiflash]  Column#7",
-          "      └─HashJoin_14 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
-          "        ├─ExchangeReceiver_33(Build) 8000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_32 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Projection_28 8000.00 mpp[tiflash]  Column#7, test.o.c_id",
-          "        │     └─HashAgg_29 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:sum(Column#8)->Column#7, funcs:firstrow(test.o.c_id)->test.o.c_id",
-          "        │       └─ExchangeReceiver_31 8000.00 mpp[tiflash]  ",
-          "        │         └─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.c_id, collate: binary]",
-          "        │           └─HashAgg_20 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:count(1)->Column#8",
-          "        │             └─TableFullScan_27 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
-          "        └─Selection_18(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
-          "          └─TableFullScan_17 10000.00 mpp[tiflash] table:c pushed down filter:empty, keep order:false, stats:pseudo"
+          "HashAgg_14 1.00 root  funcs:count(Column#7)->Column#6",
+          "└─TableReader_37 9990.00 root  MppVersion: 2, data:ExchangeSender_36",
+          "  └─ExchangeSender_36 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection_35 9990.00 mpp[tiflash]  Column#7",
+          "      └─HashJoin_15 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
+          "        ├─ExchangeReceiver_34(Build) 8000.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender_33 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "        │   └─Projection_29 8000.00 mpp[tiflash]  Column#7, test.o.c_id",
+          "        │     └─HashAgg_30 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:sum(Column#8)->Column#7, funcs:firstrow(test.o.c_id)->test.o.c_id",
+          "        │       └─ExchangeReceiver_32 8000.00 mpp[tiflash]  ",
+          "        │         └─ExchangeSender_31 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.c_id, collate: binary]",
+          "        │           └─HashAgg_21 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:count(1)->Column#8",
+          "        │             └─TableFullScan_28 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
+          "        └─Selection_19(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
+          "          └─TableFullScan_18 10000.00 mpp[tiflash] table:c pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "EXPLAIN select o.o_id, count(*) from c, o where c.c_id=o.c_id group by o.o_id; -- 2. test agg push down, group by non-join column",
         "Plan": [
-          "TableReader_82 8000.00 root  MppVersion: 2, data:ExchangeSender_81",
-          "└─ExchangeSender_81 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_10 8000.00 mpp[tiflash]  test.o.o_id, Column#6",
-          "    └─Projection_80 8000.00 mpp[tiflash]  Column#6, test.o.o_id",
-          "      └─HashAgg_79 8000.00 mpp[tiflash]  group by:test.o.o_id, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.o.o_id",
-          "        └─ExchangeReceiver_75 9990.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_74 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.o_id, collate: binary]",
-          "            └─Projection_73 9990.00 mpp[tiflash]  Column#7, Column#8, test.o.o_id",
-          "              └─HashJoin_72 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
-          "                ├─ExchangeReceiver_34(Build) 8000.00 mpp[tiflash]  ",
-          "                │ └─ExchangeSender_33 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "                │   └─Projection_29 8000.00 mpp[tiflash]  Column#7, Column#8, test.o.o_id, test.o.c_id",
-          "                │     └─HashAgg_30 8000.00 mpp[tiflash]  group by:test.o.c_id, test.o.o_id, funcs:sum(Column#9)->Column#7, funcs:firstrow(test.o.o_id)->Column#8, funcs:firstrow(test.o.o_id)->test.o.o_id, funcs:firstrow(test.o.c_id)->test.o.c_id",
-          "                │       └─ExchangeReceiver_32 8000.00 mpp[tiflash]  ",
-          "                │         └─ExchangeSender_31 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.o_id, collate: binary], [name: test.o.c_id, collate: binary]",
-          "                │           └─HashAgg_21 8000.00 mpp[tiflash]  group by:test.o.c_id, test.o.o_id, funcs:count(1)->Column#9",
-          "                │             └─TableFullScan_28 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
-          "                └─Selection_19(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
-          "                  └─TableFullScan_18 10000.00 mpp[tiflash] table:c pushed down filter:empty, keep order:false, stats:pseudo"
+          "TableReader_83 8000.00 root  MppVersion: 2, data:ExchangeSender_82",
+          "└─ExchangeSender_82 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_11 8000.00 mpp[tiflash]  test.o.o_id, Column#6",
+          "    └─Projection_81 8000.00 mpp[tiflash]  Column#6, test.o.o_id",
+          "      └─HashAgg_80 8000.00 mpp[tiflash]  group by:test.o.o_id, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.o.o_id",
+          "        └─ExchangeReceiver_76 9990.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_75 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.o_id, collate: binary]",
+          "            └─Projection_74 9990.00 mpp[tiflash]  Column#7, Column#8, test.o.o_id",
+          "              └─HashJoin_73 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
+          "                ├─ExchangeReceiver_35(Build) 8000.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender_34 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "                │   └─Projection_30 8000.00 mpp[tiflash]  Column#7, Column#8, test.o.o_id, test.o.c_id",
+          "                │     └─HashAgg_31 8000.00 mpp[tiflash]  group by:test.o.c_id, test.o.o_id, funcs:sum(Column#9)->Column#7, funcs:firstrow(test.o.o_id)->Column#8, funcs:firstrow(test.o.o_id)->test.o.o_id, funcs:firstrow(test.o.c_id)->test.o.c_id",
+          "                │       └─ExchangeReceiver_33 8000.00 mpp[tiflash]  ",
+          "                │         └─ExchangeSender_32 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.o_id, collate: binary], [name: test.o.c_id, collate: binary]",
+          "                │           └─HashAgg_22 8000.00 mpp[tiflash]  group by:test.o.c_id, test.o.o_id, funcs:count(1)->Column#9",
+          "                │             └─TableFullScan_29 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
+          "                └─Selection_20(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
+          "                  └─TableFullScan_19 10000.00 mpp[tiflash] table:c pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "EXPLAIN select o.c_id, count(*) from c, o where c.c_id=o.c_id group by o.c_id; -- 3. test agg push down, group by join column",
         "Plan": [
-          "TableReader_82 8000.00 root  MppVersion: 2, data:ExchangeSender_81",
-          "└─ExchangeSender_81 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_10 8000.00 mpp[tiflash]  test.o.c_id, Column#6",
-          "    └─Projection_80 8000.00 mpp[tiflash]  Column#6, test.o.c_id",
-          "      └─HashAgg_79 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.o.c_id",
-          "        └─ExchangeReceiver_75 9990.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_74 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.c_id, collate: binary]",
-          "            └─Projection_73 9990.00 mpp[tiflash]  Column#7, Column#8, test.o.c_id",
-          "              └─HashJoin_72 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
-          "                ├─ExchangeReceiver_34(Build) 8000.00 mpp[tiflash]  ",
-          "                │ └─ExchangeSender_33 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "                │   └─Projection_29 8000.00 mpp[tiflash]  Column#7, Column#8, test.o.c_id",
-          "                │     └─HashAgg_30 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:sum(Column#9)->Column#7, funcs:firstrow(test.o.c_id)->Column#8, funcs:firstrow(test.o.c_id)->test.o.c_id",
-          "                │       └─ExchangeReceiver_32 8000.00 mpp[tiflash]  ",
-          "                │         └─ExchangeSender_31 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.c_id, collate: binary]",
-          "                │           └─HashAgg_21 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:count(1)->Column#9",
-          "                │             └─TableFullScan_28 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
-          "                └─Selection_19(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
-          "                  └─TableFullScan_18 10000.00 mpp[tiflash] table:c pushed down filter:empty, keep order:false, stats:pseudo"
+          "TableReader_83 8000.00 root  MppVersion: 2, data:ExchangeSender_82",
+          "└─ExchangeSender_82 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_11 8000.00 mpp[tiflash]  test.o.c_id, Column#6",
+          "    └─Projection_81 8000.00 mpp[tiflash]  Column#6, test.o.c_id",
+          "      └─HashAgg_80 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.o.c_id",
+          "        └─ExchangeReceiver_76 9990.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_75 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.c_id, collate: binary]",
+          "            └─Projection_74 9990.00 mpp[tiflash]  Column#7, Column#8, test.o.c_id",
+          "              └─HashJoin_73 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
+          "                ├─ExchangeReceiver_35(Build) 8000.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender_34 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "                │   └─Projection_30 8000.00 mpp[tiflash]  Column#7, Column#8, test.o.c_id",
+          "                │     └─HashAgg_31 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:sum(Column#9)->Column#7, funcs:firstrow(test.o.c_id)->Column#8, funcs:firstrow(test.o.c_id)->test.o.c_id",
+          "                │       └─ExchangeReceiver_33 8000.00 mpp[tiflash]  ",
+          "                │         └─ExchangeSender_32 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.o.c_id, collate: binary]",
+          "                │           └─HashAgg_22 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:count(1)->Column#9",
+          "                │             └─TableFullScan_29 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
+          "                └─Selection_20(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
+          "                  └─TableFullScan_19 10000.00 mpp[tiflash] table:c pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
