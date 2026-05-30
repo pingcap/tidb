@@ -4387,8 +4387,6 @@ const (
 	blockSamplePredictionProbeRows       = 10
 	blockSamplePredictionMaxRows         = 2048
 	blockSamplePredictionMaxLogicalBytes = 4 * units.MiB
-	blockSamplePredictionLogMaxKVs       = 256
-	blockSamplePredictionLogPreviewBytes = 96
 	samplePredictionMaxReadErrors        = 3
 	samplePredictionMaxSkipRows          = 256
 )
@@ -4863,7 +4861,6 @@ func (w *worker) sampleBlockIndexKVsFromRegion(
 	rowCount := 0
 	totalBytes := int64(0)
 	kvs := make([]sampledIndexKV, 0, blockSamplePredictionProbeRows*len(indexes))
-	valueLogger := newBlockSamplePredictionIndexValueLogger(physicalTbl.GetPhysicalID(), region, skipRows)
 	readRows := func(targetRows int, logicalByteLimit int64) error {
 		for it.Valid() && rowCount < targetRows {
 			if !it.Key().HasPrefix(physicalTbl.RecordPrefix()) {
@@ -4880,7 +4877,7 @@ func (w *worker) sampleBlockIndexKVsFromRegion(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			rowKVs, rowBytes, err := collectIndexKVsForSampledRowWithLogger(sctx, physicalTbl, indexes, row, handle, rowCount, valueLogger)
+			rowKVs, rowBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
 			if err != nil {
 				return err
 			}
@@ -5009,128 +5006,12 @@ type sampledIndexKV struct {
 	value []byte
 }
 
-type blockSamplePredictionIndexValueLogger struct {
-	physicalID   int64
-	region       samplePredictionRegion
-	skipRows     int
-	loggedKVs    int
-	prevByIndex  map[int64][]string
-	prevKeyByIdx map[int64][]byte
-}
-
-func newBlockSamplePredictionIndexValueLogger(physicalID int64, region samplePredictionRegion, skipRows int) *blockSamplePredictionIndexValueLogger {
-	return &blockSamplePredictionIndexValueLogger{
-		physicalID:   physicalID,
-		region:       region,
-		skipRows:     skipRows,
-		prevByIndex:  make(map[int64][]string),
-		prevKeyByIdx: make(map[int64][]byte),
-	}
-}
-
-func (l *blockSamplePredictionIndexValueLogger) log(
-	sampleRowOrdinal int,
-	handle kv.Handle,
-	idx table.Index,
-	needRestoredData bool,
-	indexedValues []types.Datum,
-	key []byte,
-	value []byte,
-) {
-	if l == nil || l.loggedKVs >= blockSamplePredictionLogMaxKVs {
-		return
-	}
-	idxInfo := idx.Meta()
-	indexValues, indexValueBytes, fullIndexValues := formatDatumsForBlockSamplePredictionLog(indexedValues)
-	prevValues := l.prevByIndex[idxInfo.ID]
-	commonPrefixBytes := make([]int, len(indexValues))
-	for i, value := range fullIndexValues {
-		if i < len(prevValues) {
-			commonPrefixBytes[i] = commonPrefixLenBytes(value, prevValues[i])
-		}
-	}
-	prevKey := l.prevKeyByIdx[idxInfo.ID]
-	encodedKeyCommonPrefixBytes := 0
-	if len(prevKey) > 0 {
-		encodedKeyCommonPrefixBytes = commonPrefixLenBytes(string(key), string(prevKey))
-	}
-	l.prevByIndex[idxInfo.ID] = slices.Clone(fullIndexValues)
-	l.prevKeyByIdx[idxInfo.ID] = slices.Clone(key)
-	l.loggedKVs++
-
-	logutil.DDLLogger().Info("block-sampled add-index index values for TiKV size prediction",
-		zap.Int64("physicalID", l.physicalID),
-		zap.String("region_start_key_hex", previewStringForBlockSamplePredictionLog(hex.EncodeToString(l.region.StartKey))),
-		zap.String("region_end_key_hex", previewStringForBlockSamplePredictionLog(hex.EncodeToString(l.region.EndKey))),
-		zap.Int64("region_approximate_keys", l.region.ApproximateKeys),
-		zap.Int("skip_rows", l.skipRows),
-		zap.Int("sample_row_ordinal", sampleRowOrdinal),
-		zap.Int("sample_index_kv_ordinal", l.loggedKVs-1),
-		zap.String("handle", handle.String()),
-		zap.Int64("index_id", idxInfo.ID),
-		zap.String("index_name", idxInfo.Name.O),
-		zap.Bool("index_need_restored_data", needRestoredData),
-		zap.Strings("index_values", indexValues),
-		zap.Ints("index_value_bytes", indexValueBytes),
-		zap.Ints("index_value_common_prefix_bytes_with_previous", commonPrefixBytes),
-		zap.Int("encoded_key_common_prefix_bytes_with_previous", encodedKeyCommonPrefixBytes),
-		zap.Int("encoded_key_bytes", len(key)),
-		zap.Int("encoded_value_bytes", len(value)),
-		zap.Bool("encoded_value_exceeds_mvcc_short_value_threshold", len(value) > tikvMVCCShortValueMaxBytes))
-}
-
-func formatDatumsForBlockSamplePredictionLog(datums []types.Datum) ([]string, []int, []string) {
-	values := make([]string, 0, len(datums))
-	valueBytes := make([]int, 0, len(datums))
-	fullValues := make([]string, 0, len(datums))
-	for _, datum := range datums {
-		str, err := datum.ToString()
-		if err != nil {
-			str = datum.String()
-		}
-		valueBytes = append(valueBytes, len(str))
-		fullValues = append(fullValues, str)
-		values = append(values, str)
-	}
-	return values, valueBytes, fullValues
-}
-
-func previewStringForBlockSamplePredictionLog(s string) string {
-	if len(s) <= blockSamplePredictionLogPreviewBytes {
-		return s
-	}
-	half := blockSamplePredictionLogPreviewBytes / 2
-	return s[:half] + "...<truncated>..." + s[len(s)-half:]
-}
-
-func commonPrefixLenBytes(a, b string) int {
-	n := min(len(a), len(b))
-	for i := range n {
-		if a[i] != b[i] {
-			return i
-		}
-	}
-	return n
-}
-
 func collectIndexKVsForSampledRow(
 	sctx sessionctx.Context,
 	physicalTbl table.PhysicalTable,
 	indexes []table.Index,
 	row []types.Datum,
 	handle kv.Handle,
-) ([]sampledIndexKV, int64, error) {
-	return collectIndexKVsForSampledRowWithLogger(sctx, physicalTbl, indexes, row, handle, 0, nil)
-}
-
-func collectIndexKVsForSampledRowWithLogger(
-	sctx sessionctx.Context,
-	physicalTbl table.PhysicalTable,
-	indexes []table.Index,
-	row []types.Datum,
-	handle kv.Handle,
-	sampleRowOrdinal int,
-	valueLogger *blockSamplePredictionIndexValueLogger,
 ) ([]sampledIndexKV, int64, error) {
 	loc := predictionTimeLocation(sctx)
 	errCtx := sctx.GetSessionVars().StmtCtx.ErrCtx()
@@ -5158,13 +5039,12 @@ func collectIndexKVsForSampledRowWithLogger(
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
-		needRestoredData := tables.NeedRestoredData(idx.Meta().Columns, tblInfo.Columns)
 		actualHandle := handle
 		if idx.Meta().Global && idx.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
 			actualHandle = kv.NewPartitionHandle(physicalTbl.GetPhysicalID(), handle)
 		}
 		var rsData []types.Datum
-		if len(handleRestoreData) > 0 && (needRestoredData || primaryIndexNeedsRestoredData(tblInfo, pkIdx)) {
+		if len(handleRestoreData) > 0 && (tables.NeedRestoredData(idx.Meta().Columns, tblInfo.Columns) || primaryIndexNeedsRestoredData(tblInfo, pkIdx)) {
 			rsData = getRestoreData(tblInfo, idx.Meta(), pkIdx, handleRestoreData)
 		}
 		iter := idx.GenIndexKVIter(errCtx, loc, indexedValues, actualHandle, rsData)
@@ -5177,9 +5057,6 @@ func collectIndexKVsForSampledRowWithLogger(
 				key:   slices.Clone(key),
 				value: slices.Clone(value),
 			})
-			if valueLogger != nil {
-				valueLogger.log(sampleRowOrdinal, actualHandle, idx, needRestoredData, indexedValues, key, value)
-			}
 			totalBytes += int64(len(key) + len(value))
 		}
 	}
