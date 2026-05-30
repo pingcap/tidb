@@ -57,8 +57,11 @@ type metaServiceOnlyStorage struct {
 }
 
 func (s *metaServiceOnlyStorage) GetPDAddrs() ([]string, error) { return s.pdAddrs, s.getPDAddrsErr }
-func (*metaServiceOnlyStorage) TLSConfig() *tls.Config          { return nil }
-func (*metaServiceOnlyStorage) StartGCWorker() error            { return nil }
+func (s *metaServiceOnlyStorage) GetEtcdAddrs() ([]string, error) {
+	return s.pdAddrs, s.getPDAddrsErr
+}
+func (*metaServiceOnlyStorage) TLSConfig() *tls.Config { return nil }
+func (*metaServiceOnlyStorage) StartGCWorker() error   { return nil }
 func (*metaServiceOnlyStorage) MetaServiceInfo() (*metaservice.Info, error) {
 	return nil, nil
 }

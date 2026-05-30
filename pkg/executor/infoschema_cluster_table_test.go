@@ -232,6 +232,7 @@ type mockStore struct {
 }
 
 func (s *mockStore) GetPDAddrs() ([]string, error)               { return []string{s.host}, nil }
+func (s *mockStore) GetEtcdAddrs() ([]string, error)             { return []string{s.host}, nil }
 func (s *mockStore) MetaServiceInfo() (*metaservice.Info, error) { panic("not implemented") }
 func (s *mockStore) TLSConfig() *tls.Config                      { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error                        { panic("not implemented") }

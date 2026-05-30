@@ -807,6 +807,7 @@ type Storage interface {
 // MetaServiceBackend is used for judging a storage is a real TiKV.
 type MetaServiceBackend interface {
 	GetPDAddrs() ([]string, error)
+	GetEtcdAddrs() ([]string, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
 	MetaServiceInfo() (*metaservice.Info, error)

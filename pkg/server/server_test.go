@@ -205,6 +205,10 @@ func (*autoIDServiceTestStore) GetPDAddrs() ([]string, error) {
 	return nil, nil
 }
 
+func (*autoIDServiceTestStore) GetEtcdAddrs() ([]string, error) {
+	return nil, errors.New("meta service unavailable")
+}
+
 func (*autoIDServiceTestStore) StartGCWorker() error {
 	return nil
 }

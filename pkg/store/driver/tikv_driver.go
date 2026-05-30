@@ -337,6 +337,21 @@ func (s *tikvStore) GetPDAddrs() ([]string, error) {
 	return metaservice.GetPDHostPorts(context.Background(), s.GetPDClient(), false)
 }
 
+// GetEtcdAddrs returns the etcd addresses for metadata access.
+func (s *tikvStore) GetEtcdAddrs() ([]string, error) {
+	metaServiceInfo, err := s.MetaServiceInfo()
+	if err != nil {
+		return nil, errors.Annotate(err, "get meta service info")
+	}
+	if metaServiceInfo == nil {
+		return nil, errors.New("meta service info is nil")
+	}
+	if metaServiceInfo.KeyspaceMetaGroup == nil {
+		return nil, errors.New("keyspace meta service group is nil")
+	}
+	return metaServiceInfo.KeyspaceMetaGroup.KeyspaceMetaServiceAddrs, nil
+}
+
 // MetaServiceInfo returns the meta service information for the store.
 func (s *tikvStore) MetaServiceInfo() (*metaservice.Info, error) {
 	globalMetaServiceAddrs, err := s.GetPDAddrs()

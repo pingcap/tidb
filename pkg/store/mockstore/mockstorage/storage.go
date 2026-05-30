@@ -76,6 +76,17 @@ func (s *mockStorage) GetPDAddrs() ([]string, error) {
 	return nil, nil
 }
 
+func (s *mockStorage) GetEtcdAddrs() ([]string, error) {
+	metaServiceInfo, err := s.MetaServiceInfo()
+	if err != nil {
+		return nil, err
+	}
+	if metaServiceInfo == nil || metaServiceInfo.KeyspaceMetaGroup == nil {
+		return nil, nil
+	}
+	return metaServiceInfo.KeyspaceMetaGroup.KeyspaceMetaServiceAddrs, nil
+}
+
 func (s *mockStorage) MetaServiceInfo() (*metaservice.Info, error) {
 	return s.metaServiceInfo, nil
 }

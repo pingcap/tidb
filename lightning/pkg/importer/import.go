@@ -1326,7 +1326,7 @@ func getEtcdCliByPDCli(pdCli pd.Client, tls *common.TLS, keyspaceName string) (*
 	if !ok {
 		return nil, kvStore, errors.Errorf("storage %T does not implement kv.MetaServiceBackend", kvStore)
 	}
-	etcdAddrs, err := ebd.GetPDAddrs()
+	etcdAddrs, err := ebd.GetEtcdAddrs()
 	if err != nil {
 		return nil, kvStore, errors.Trace(err)
 	}

@@ -66,6 +66,10 @@ func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return []string{"localhost:2379"}, nil
 }
 
+func (mebd *mockEtcdBackend) GetEtcdAddrs() ([]string, error) {
+	return []string{"localhost:2379"}, nil
+}
+
 func (mebd *mockEtcdBackend) MetaServiceInfo() (*metaservice.Info, error) {
 	return nil, nil
 }

@@ -49,7 +49,8 @@ type mockStoreWithMultiPD struct {
 
 var hotRegionsResponses = make(map[string]*executor.HistoryHotRegions, 3)
 
-func (s *mockStoreWithMultiPD) GetPDAddrs() ([]string, error) { return s.hosts, nil }
+func (s *mockStoreWithMultiPD) GetPDAddrs() ([]string, error)   { return s.hosts, nil }
+func (s *mockStoreWithMultiPD) GetEtcdAddrs() ([]string, error) { return s.hosts, nil }
 func (s *mockStoreWithMultiPD) MetaServiceInfo() (*metaservice.Info, error) {
 	panic("not implemented")
 }

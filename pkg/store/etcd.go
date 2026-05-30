@@ -56,7 +56,7 @@ func GetEtcdAddrs(store kv.Storage) (kv.MetaServiceBackend, []string, error) {
 	if !ok {
 		return nil, nil, nil
 	}
-	addrs, err := etcdStore.GetPDAddrs()
+	addrs, err := etcdStore.GetEtcdAddrs()
 	if err != nil {
 		return nil, nil, err
 	}

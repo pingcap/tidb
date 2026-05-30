@@ -53,6 +53,10 @@ func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 
+func (mebd *mockEtcdBackend) GetEtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
 func (*mockEtcdBackend) MetaServiceInfo() (*metaservice.Info, error) {
 	return nil, nil
 }

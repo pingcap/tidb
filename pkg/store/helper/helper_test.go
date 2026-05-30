@@ -290,6 +290,9 @@ type mockStore struct {
 func (s *mockStore) MetaServiceInfo() (*metaservice.Info, error) {
 	panic("not implemented")
 }
+func (s *mockStore) GetEtcdAddrs() ([]string, error) {
+	return s.pdAddrs, nil
+}
 func (s *mockStore) StartGCWorker() error {
 	panic("not implemented")
 }

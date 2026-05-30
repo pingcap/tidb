@@ -15,21 +15,39 @@
 package store
 
 import (
+	"crypto/tls"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/stretchr/testify/require"
 )
 
 type mockEtcdBackend struct {
 	kv.Storage
 	kv.MetaServiceBackend
-	pdAddrs []string
+	pdAddrs         []string
+	metaServiceInfo *metaservice.Info
 }
 
 func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
+
+func (mebd *mockEtcdBackend) GetEtcdAddrs() ([]string, error) {
+	if mebd.metaServiceInfo == nil || mebd.metaServiceInfo.KeyspaceMetaGroup == nil {
+		return nil, nil
+	}
+	return mebd.metaServiceInfo.KeyspaceMetaGroup.KeyspaceMetaServiceAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) MetaServiceInfo() (*metaservice.Info, error) {
+	return mebd.metaServiceInfo, nil
+}
+
+func (*mockEtcdBackend) TLSConfig() *tls.Config { return nil }
+
+func (*mockEtcdBackend) StartGCWorker() error { return nil }
 
 func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
 	etcdStore, addrs, err := GetEtcdAddrs(nil)
@@ -37,7 +55,14 @@ func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
 	require.Empty(t, addrs)
 	require.Nil(t, etcdStore)
 
-	etcdStore, addrs, err = GetEtcdAddrs(&mockEtcdBackend{pdAddrs: []string{"localhost:2379"}})
+	etcdStore, addrs, err = GetEtcdAddrs(&mockEtcdBackend{
+		pdAddrs: []string{"localhost:2380"},
+		metaServiceInfo: &metaservice.Info{
+			KeyspaceMetaGroup: &metaservice.KeyspaceMetaServiceGroup{
+				KeyspaceMetaServiceAddrs: []string{"localhost:2379"},
+			},
+		},
+	})
 	require.NoError(t, err)
 	require.Equal(t, []string{"localhost:2379"}, addrs)
 	require.NotNil(t, etcdStore)
