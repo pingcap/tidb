@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -395,9 +396,9 @@ func TestGetRegionByIDWithError(t *testing.T) {
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 }
 
-func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
+func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T, storeOpts ...mockstore.MockTiKVStoreOption) {
 	var err error
-	ts.store, err = teststore.NewMockStoreWithoutBootstrap()
+	ts.store, err = teststore.NewMockStoreWithoutBootstrap(storeOpts...)
 	require.NoError(t, err)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)

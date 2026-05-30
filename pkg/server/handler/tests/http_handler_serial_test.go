@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -262,17 +263,18 @@ func TestRegionsFromMeta(t *testing.T) {
 
 func TestTiFlashReplica(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
+	ts.startServer(t, mockstore.WithMockTiFlash(2))
 	defer ts.stopServer(t)
 
-	db, err := sql.Open("mysql", ts.GetDSN())
-	require.NoError(t, err)
-	defer func() {
-		err := db.Close()
-		require.NoError(t, err)
-	}()
-	dbt := testkit.NewDBTestKit(t, db)
+	tk := testkit.NewTestKit(t, ts.store)
+	tk.MustExec("create database tidb")
+	tk.MustExec("use tidb")
+	tk.MustExec("create table test (a int auto_increment primary key, b varchar(20))")
+	tk.MustExec(`create table pt (a int primary key, b varchar(20), key idx(a, b))
+partition by range (a)
+(partition p0 values less than (256),
+ partition p1 values less than (512),
+ partition p2 values less than (1024))`)
 
 	defer func(originGC bool) {
 		if originGC {
@@ -291,7 +293,7 @@ func TestTiFlashReplica(t *testing.T) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 	// Set GC safe point and enable GC.
-	dbt.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	resp, err := ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
@@ -302,13 +304,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, 0, len(data))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
-	}()
-
-	dbt.MustExec("use tidb")
-	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
 	resp, err = ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
@@ -352,7 +348,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.Equal(t, true, data[0].Available)
 
 	// Should not take effect.
-	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 	checkFunc := func() {
 		resp, err := ts.FetchStatus("/tiflash/replica-deprecated")
 		require.NoError(t, err)
@@ -367,20 +363,20 @@ func TestTiFlashReplica(t *testing.T) {
 	}
 
 	// Test for get dropped table tiflash replica info.
-	dbt.MustExec("drop table test")
+	tk.MustExec("drop table test")
 	checkFunc()
 
 	// Test unique table id replica info.
-	dbt.MustExec("flashback table test")
+	tk.MustExec("flashback table test")
 	checkFunc()
-	dbt.MustExec("drop table test")
+	tk.MustExec("drop table test")
 	checkFunc()
-	dbt.MustExec("flashback table test")
+	tk.MustExec("flashback table test")
 	checkFunc()
 
 	// Test for partition table.
-	dbt.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
-	dbt.MustExec("alter table test set tiflash replica 0;")
+	tk.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("alter table test set tiflash replica 0;")
 	resp, err = ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
@@ -437,8 +433,8 @@ func TestTiFlashReplica(t *testing.T) {
 	}
 
 	// Test for get truncated table tiflash replica info.
-	dbt.MustExec("truncate table pt")
-	dbt.MustExec("alter table pt set tiflash replica 0;")
+	tk.MustExec("truncate table pt")
+	tk.MustExec("alter table pt set tiflash replica 0;")
 	checkFunc()
 }
 
