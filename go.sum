@@ -879,6 +879,8 @@ github.com/YuhaoZhang00/kvproto v0.0.0-20260526080839-acfca8a6521f h1:Z5K9nLblAt
 github.com/YuhaoZhang00/kvproto v0.0.0-20260526080839-acfca8a6521f/go.mod h1:z6+aAHB7dBkA+LyinEX+48/ImRJ3jag0Hg0c7wkhEvE=
 github.com/YuhaoZhang00/pd/client v0.0.0-20260514081800-e393a2130e70 h1:bI6FfbYaoNNosTmSf/suIhtxuIXojXnPvPOJPUJG8Ss=
 github.com/YuhaoZhang00/pd/client v0.0.0-20260514081800-e393a2130e70/go.mod h1:I6LzwZgaSbT7h2C74QwM9DgEbla7vLkVPIGeDKYpuoE=
+github.com/YuhaoZhang00/pd/client v0.0.0-20260530162250-9df491e74e6b h1:6rA+i9/Enbq3JKu+DWMvMMZNP2eCyFOL+MfTydeKGBE=
+github.com/YuhaoZhang00/pd/client v0.0.0-20260530162250-9df491e74e6b/go.mod h1:I6LzwZgaSbT7h2C74QwM9DgEbla7vLkVPIGeDKYpuoE=
 github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d h1:licZJFw2RwpHMqeKTCYkitsPqHNxTmd4SNR5r94FGM8=
 github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d/go.mod h1:asat636LX7Bqt5lYEZ27JNDcqxfjdBQuJ/MM4CN/Lzo=
 github.com/ajstarks/deck v0.0.0-20200831202436-30c9fc6549a9/go.mod h1:JynElWSGnm/4RlzPXRlREEwqTHAN3T56Bv2ITsFT3gY=
