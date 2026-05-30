@@ -691,23 +691,23 @@ limit 20;
 id	estRows	task	access object	operator info
 Projection	20.00	root		tpch50.customer.c_custkey, tpch50.customer.c_name, Column#39, tpch50.customer.c_acctbal, tpch50.nation.n_name, tpch50.customer.c_address, tpch50.customer.c_phone, tpch50.customer.c_comment
 └─TopN	20.00	root		Column#39:desc, offset:0, count:20
-  └─HashAgg	2862424.30	root		group by:Column#46, Column#47, Column#48, Column#49, Column#50, Column#51, Column#52, funcs:sum(Column#45)->Column#39, funcs:firstrow(Column#46)->tpch50.customer.c_custkey, funcs:firstrow(Column#47)->tpch50.customer.c_name, funcs:firstrow(Column#48)->tpch50.customer.c_address, funcs:firstrow(Column#49)->tpch50.customer.c_phone, funcs:firstrow(Column#50)->tpch50.customer.c_acctbal, funcs:firstrow(Column#51)->tpch50.customer.c_comment, funcs:firstrow(Column#52)->tpch50.nation.n_name
-    └─Projection	11619057.76	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#45, tpch50.customer.c_custkey->Column#46, tpch50.customer.c_name->Column#47, tpch50.customer.c_address->Column#48, tpch50.customer.c_phone->Column#49, tpch50.customer.c_acctbal->Column#50, tpch50.customer.c_comment->Column#51, tpch50.nation.n_name->Column#52
-      └─Projection	11619057.76	root		tpch50.customer.c_custkey, tpch50.customer.c_name, tpch50.customer.c_address, tpch50.customer.c_phone, tpch50.customer.c_acctbal, tpch50.customer.c_comment, tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.nation.n_name
-        └─IndexHashJoin	11619057.76	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
-          ├─HashJoin(Build)	2862424.30	root		inner join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
-          │ ├─TableReader(Build)	2862424.30	root		data:Selection
-          │ │ └─Selection	2862424.30	cop[tikv]		ge(tpch50.orders.o_orderdate, 1993-08-01 00:00:00.000000), lt(tpch50.orders.o_orderdate, 1993-11-01 00:00:00.000000)
-          │ │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-          │ └─HashJoin(Probe)	7499987.00	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.customer.c_nationkey)]
-          │   ├─TableReader(Build)	25.00	root		data:TableFullScan
-          │   │ └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
-          │   └─TableReader(Probe)	7500000.00	root		data:TableFullScan
-          │     └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
-          └─IndexLookUp(Probe)	11619057.76	root		
-            ├─IndexRangeScan(Build)	47063565.11	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)], keep order:false
-            └─Selection(Probe)	11619057.76	cop[tikv]		eq(tpch50.lineitem.l_returnflag, "R")
-              └─TableRowIDScan	47063565.11	cop[tikv]	table:lineitem	keep order:false
+  └─HashAgg	2862419.34	root		group by:Column#49, Column#50, Column#51, Column#52, Column#53, Column#54, Column#55, funcs:sum(Column#48)->Column#39, funcs:firstrow(Column#49)->tpch50.customer.c_custkey, funcs:firstrow(Column#50)->tpch50.customer.c_name, funcs:firstrow(Column#51)->tpch50.customer.c_address, funcs:firstrow(Column#52)->tpch50.customer.c_phone, funcs:firstrow(Column#53)->tpch50.customer.c_acctbal, funcs:firstrow(Column#54)->tpch50.customer.c_comment, funcs:firstrow(Column#55)->tpch50.nation.n_name
+    └─Projection	11619037.62	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#48, tpch50.customer.c_custkey->Column#49, tpch50.customer.c_name->Column#50, tpch50.customer.c_address->Column#51, tpch50.customer.c_phone->Column#52, tpch50.customer.c_acctbal->Column#53, tpch50.customer.c_comment->Column#54, tpch50.nation.n_name->Column#55
+      └─Projection	11619037.62	root		tpch50.customer.c_custkey, tpch50.customer.c_name, tpch50.customer.c_address, tpch50.customer.c_phone, tpch50.customer.c_acctbal, tpch50.customer.c_comment, tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.nation.n_name
+        └─IndexHashJoin	11619037.62	root		inner join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
+          ├─HashJoin(Build)	2862419.34	root		inner join, equal:[eq(tpch50.customer.c_nationkey, tpch50.nation.n_nationkey)]
+          │ ├─TableReader(Build)	25.00	root		data:TableFullScan
+          │ │ └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
+          │ └─IndexHashJoin(Probe)	2862424.30	root		inner join, inner:TableReader, outer key:tpch50.orders.o_custkey, inner key:tpch50.customer.c_custkey, equal cond:eq(tpch50.orders.o_custkey, tpch50.customer.c_custkey)
+          │   ├─TableReader(Build)	2862424.30	root		data:Selection
+          │   │ └─Selection	2862424.30	cop[tikv]		ge(tpch50.orders.o_orderdate, 1993-08-01 00:00:00.000000), lt(tpch50.orders.o_orderdate, 1993-11-01 00:00:00.000000)
+          │   │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
+          │   └─TableReader(Probe)	2862424.30	root		data:TableRangeScan
+          │     └─TableRangeScan	2862424.30	cop[tikv]	table:customer	range: decided by [tpch50.orders.o_custkey], keep order:false
+          └─IndexLookUp(Probe)	11619037.62	root		
+            ├─IndexRangeScan(Build)	47063483.53	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)], keep order:false
+            └─Selection(Probe)	11619037.62	cop[tikv]		eq(tpch50.lineitem.l_returnflag, "R")
+              └─TableRowIDScan	47063483.53	cop[tikv]	table:lineitem	keep order:false
 /*
 Q11 Important Stock Identification Query
 This query finds the most important subset of suppliers' stock in a given nation.

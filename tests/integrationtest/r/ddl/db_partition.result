@@ -126,24 +126,24 @@ aA
 aa
 explain format='brief' select * from t where a = "aa" collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:p2	data:Selection
-└─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
+TableReader	4.00	root	partition:p2	data:Selection
+└─Selection	4.00	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
   └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
 select * from t where a = "aa" collate utf8mb4_bin;
 a
 aa
 explain format='brief' select * from t where a = "ä" collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:p1	data:Selection
-└─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "ä")
+TableReader	3.00	root	partition:p1	data:Selection
+└─Selection	3.00	cop[tikv]		eq(ddl__db_partition.t.a, "ä")
   └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
 select * from t where a = "ä" collate utf8mb4_bin;
 a
 ä
 explain format='brief' select * from t where a = "b" collate utf8mb4_bin;
 id	estRows	task	access object	operator info
-TableReader	17.60	root	partition:p5	data:Selection
-└─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "b")
+TableReader	2.00	root	partition:p5	data:Selection
+└─Selection	2.00	cop[tikv]		eq(ddl__db_partition.t.a, "b")
   └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
 select * from t where a = "b" collate utf8mb4_bin;
 a
