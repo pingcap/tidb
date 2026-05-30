@@ -466,10 +466,10 @@ func NewImportControllerWithPauser(
 	switch {
 	case isSSTImport && cfg.TikvImporter.ParallelImport:
 		metaBuilder = &dbMetaMgrBuilder{
-			db:              db,
-			taskID:          cfg.TaskID,
-			schema:          cfg.App.MetaSchemaName,
-			needChecksum:    cfg.PostRestore.Checksum != config.OpLevelOff,
+			db:               db,
+			taskID:           cfg.TaskID,
+			schema:           cfg.App.MetaSchemaName,
+			needChecksum:     cfg.PostRestore.Checksum != config.OpLevelOff,
 			targetPartitions: cfg.Mydumper.TargetPartitions,
 		}
 	case isSSTImport:
