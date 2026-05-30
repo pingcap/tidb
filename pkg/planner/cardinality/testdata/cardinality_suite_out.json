@@ -1177,7 +1177,8 @@
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─IndexMerge 1.00 root  type: union",
           "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ib(b) range:[0,50], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 510.00 cop[tikv] table:t, index:ic(c) range:[0,50], keep order:false, stats:pseudo",
+          "  ├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
+          "  │ └─IndexRangeScan 510.00 cop[tikv] table:t, index:ic(c) range:[0,50], keep order:false, stats:pseudo",
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
           "    └─TableRowIDScan 1017.40 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
