@@ -430,6 +430,22 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	require.NoError(s.T(), err)
 	stores, err := dom.GetPDClient().GetAllStores(context.Background(), opt.WithExcludeTombstone())
 	require.NoError(s.T(), err)
+	eligibleStoreCnt := 0
+	for _, store := range stores {
+		if store.StatusAddress == "" {
+			continue
+		}
+		isTiFlash := false
+		for _, label := range store.Labels {
+			if label.Key == "engine" && (label.Value == "tiflash" || label.Value == "tiflash_compute") {
+				isTiFlash = true
+				break
+			}
+		}
+		if !isTiFlash {
+			eligibleStoreCnt++
+		}
+	}
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s' with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
@@ -444,14 +460,14 @@ func (s *mockGCSSuite) TestSplitRangeForTable() {
 	importSQL = fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'`, gcsEndpoint)
 	result = s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	require.Equal(s.T(), addCnt.Load(), int32(2*len(stores)))
+	require.Equal(s.T(), addCnt.Load(), int32(2*eligibleStoreCnt))
 	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 
 	addCnt.Store(0)
 	removeCnt.Store(0)
 	s.tk.MustExec("create table dst like t")
 	s.tk.MustExec(`import into dst FROM select * from t`)
-	require.Equal(s.T(), addCnt.Load(), int32(2*len(stores)))
+	require.Equal(s.T(), addCnt.Load(), int32(2*eligibleStoreCnt))
 	require.Equal(s.T(), removeCnt.Load(), addCnt.Load())
 }
 
