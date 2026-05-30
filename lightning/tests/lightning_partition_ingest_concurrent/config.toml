@@ -5,6 +5,9 @@ table-concurrency = 2
 backend = "local"
 parallel-import = true
 
+[post-restore]
+checksum-via-sql = true
+
 [mydumper]
 target-partition = ["p_a"]
 

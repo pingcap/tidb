@@ -5,6 +5,9 @@ table-concurrency = 1
 backend = "local"
 sorted-kv-dir = "$TEST_DIR/lightning_partition_ingest.sorted"
 
+[post-restore]
+checksum-via-sql = true
+
 [mydumper]
 data-source-dir = "$TEST_DIR/lightning_partition_ingest/data"
 target-partition = ["p_a"]
