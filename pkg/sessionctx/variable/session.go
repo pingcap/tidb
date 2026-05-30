@@ -801,6 +801,35 @@ type SessionVarsProvider interface {
 	GetSessionVars() *SessionVars
 }
 
+// AdminCheckIndexInconsistentType describes the type of inconsistency found during admin check index.
+type AdminCheckIndexInconsistentType string
+
+const (
+	// AdminCheckIndexRowWithoutIndex means the table row exists but the index entry is missing.
+	AdminCheckIndexRowWithoutIndex AdminCheckIndexInconsistentType = "row_without_index"
+	// AdminCheckIndexIndexWithoutRow means the index entry exists but the table row is missing.
+	AdminCheckIndexIndexWithoutRow AdminCheckIndexInconsistentType = "index_without_row"
+	// AdminCheckIndexRowIndexMismatch means table and index rows both exist but values don't match.
+	AdminCheckIndexRowIndexMismatch AdminCheckIndexInconsistentType = "row_index_mismatch"
+)
+
+// AdminCheckIndexInconsistentRow stores one inconsistent handle and mismatch type.
+type AdminCheckIndexInconsistentRow struct {
+	Handle       string                          `json:"handle"`
+	MismatchType AdminCheckIndexInconsistentType `json:"mismatch_type"`
+}
+
+// AdminCheckIndexInconsistentSummary is returned by HTTP API.
+type AdminCheckIndexInconsistentSummary struct {
+	// CollectedRowCount is the number of collected inconsistent rows,
+	// which may be capped by the limit parameter.
+	CollectedRowCount uint64 `json:"collected_row_count"`
+	// Truncated indicates whether the result was truncated due to reaching the limit.
+	Truncated bool `json:"truncated"`
+	// Rows contains the collected inconsistent row details.
+	Rows []AdminCheckIndexInconsistentRow `json:"rows"`
+}
+
 // SessionVars should implement `SessionVarsProvider`
 var _ SessionVarsProvider = &SessionVars{}
 
@@ -1816,6 +1845,18 @@ type SessionVars struct {
 
 	// FastCheckTable is used to control whether fast check table is enabled.
 	FastCheckTable bool
+
+	// FastCheckTableCollectInconsistent controls whether fast check table/index
+	// should continue collecting all inconsistencies instead of fail-fast.
+	FastCheckTableCollectInconsistent bool
+
+	// FastCheckTableInconsistentLimit limits collected inconsistency rows
+	// in fast check table/index. 0 means no limit.
+	FastCheckTableInconsistentLimit int
+
+	// FastCheckTableInconsistentSummary stores fast check inconsistency summary
+	// for the last executed statement in current session.
+	FastCheckTableInconsistentSummary *AdminCheckIndexInconsistentSummary
 
 	// HypoIndexes are for the Index Advisor.
 	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
