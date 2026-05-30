@@ -3350,6 +3350,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					zap.Int("block_sample_prediction_region_count", blockSamplePrediction.SampledRegionCount),
 					zap.Int("block_sample_prediction_row_count", blockSamplePrediction.SampledRowCount),
 					zap.Int("block_sample_prediction_read_error_count", blockSamplePrediction.ReadErrorCount),
+					zap.Float64("block_sample_key_shared_prefix_avg", blockSamplePrediction.KeySharedPrefixAvgBytes),
 					zap.Uint64("cluster_available_bytes", initialCapacity.AvailableBytes),
 					zap.Uint64("cluster_total_bytes", initialCapacity.TotalBytes),
 					zap.Int("tikv_store_count", initialCapacity.StoreCount))
@@ -3386,6 +3387,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			BlockSamplePredictionRegionCount:     blockSamplePrediction.SampledRegionCount,
 			BlockSamplePredictionRowCount:        blockSamplePrediction.SampledRowCount,
 			BlockSamplePredictionReadErrorCount:  blockSamplePrediction.ReadErrorCount,
+			BlockSampleKeySharedPrefixAvg:        blockSamplePrediction.KeySharedPrefixAvgBytes,
 			PredictedTiKVIndexBytes:              blockSamplePrediction.PredictedBytes,
 			Version:                              BackfillTaskMetaVersion1,
 		}
@@ -4169,6 +4171,7 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		zap.Int("block_sample_prediction_region_count", fallbackPredictionCount(taskMeta.BlockSamplePredictionRegionCount, taskMeta.SamplePredictionRegionCount)),
 		zap.Int("block_sample_prediction_row_count", fallbackPredictionCount(taskMeta.BlockSamplePredictionRowCount, taskMeta.SamplePredictionRowCount)),
 		zap.Int("block_sample_prediction_read_error_count", fallbackPredictionCount(taskMeta.BlockSamplePredictionReadErrorCount, taskMeta.SamplePredictionReadErrorCount)),
+		zap.Float64("block_sample_key_shared_prefix_avg", taskMeta.BlockSampleKeySharedPrefixAvg),
 		zap.Int64("logical_index_kv_bytes", logicalIndexKVBytes),
 		zap.Int64("observed_tikv_capacity_increase_bytes", observedIncrease.increase),
 		zap.Bool("observed_tikv_capacity_reliable", observedIncrease.reliable),
@@ -4448,16 +4451,33 @@ const (
 )
 
 type sampleTiKVIndexPredictionResult struct {
-	PredictedBytes     uint64
-	MVCCOverheadBytes  uint64
-	SampledRegionCount int
-	SampledRowCount    int
-	ReadErrorCount     int
+	PredictedBytes          uint64
+	MVCCOverheadBytes       uint64
+	SampledRegionCount      int
+	SampledRowCount         int
+	ReadErrorCount          int
+	KeySharedPrefixAvgBytes float64
 }
 
 type tiKVIndexPredictionResult struct {
 	PredictedBytes    uint64
 	MVCCOverheadBytes uint64
+}
+
+type samplePredictionPhysicalTable struct {
+	physicalTbl table.PhysicalTable
+	indexes     []table.Index
+	rowCount    int64
+}
+
+type samplePredictionPhysicalTableSelection struct {
+	samplePredictionPhysicalTable
+	regionCount int
+}
+
+type samplePredictionRegionTask struct {
+	samplePredictionPhysicalTable
+	region samplePredictionRegion
 }
 
 type samplePredictionRegion struct {
@@ -4558,9 +4578,12 @@ func (w *worker) predictTiKVIndexBytesStaticSample(
 	if err != nil {
 		return result, err
 	}
-	physicalTables, err := predictionPhysicalTables(tbl)
+	physicalTables, totalRowCount, err := w.buildSamplePredictionPhysicalTables(tbl, targetIndexInfos)
 	if err != nil {
 		return result, err
+	}
+	if totalRowCount <= 0 {
+		return result, nil
 	}
 	jobCtx := w.jobContext(reorgInfo.Job.ID, reorgInfo.Job.ReorgMeta)
 	currentVer, err := getValidCurrentVersion(w.store)
@@ -4568,76 +4591,52 @@ func (w *worker) predictTiKVIndexBytesStaticSample(
 		return result, err
 	}
 
-	var totalPredictedBytes float64
-	for _, physicalTbl := range physicalTables {
-		statsTbl := getPhysicalTableStatsForPrediction(physicalTbl.GetPhysicalID(), tbl.Meta(), w.ddlCtx.statsHandle)
-		rowCount := estimatePhysicalTableRowCount(statsTbl)
-		if rowCount <= 0 {
-			continue
+	baseSeed := samplePredictionSeed(reorgInfo.Job.ID, tbl.Meta().ID)
+	regionTasks, readErrors, err := w.buildSamplePredictionRegionTasks(ctx, reorgInfo.Job.ID, "sample prediction", physicalTables, baseSeed)
+	if readErrors > 0 {
+		result.ReadErrorCount += readErrors
+		if result.ReadErrorCount > samplePredictionMaxReadErrors {
+			return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				fmt.Sprintf("add index sample prediction failed after %d read errors", result.ReadErrorCount))
 		}
-
-		tableIndexes, err := buildPredictionIndexesForPhysicalTable(physicalTbl, targetIndexInfos)
-		if err != nil {
-			return result, err
-		}
-		regions, err := listSamplePredictionRegions(ctx, w.store, physicalTbl.GetPhysicalID())
-		if err != nil {
-			result.ReadErrorCount++
-			logutil.DDLLogger().Warn("failed to list sample prediction regions for add-index task",
-				zap.Int64("jobID", reorgInfo.Job.ID),
-				zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
-				zap.Error(err))
-			if result.ReadErrorCount > samplePredictionMaxReadErrors {
-				return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
-					fmt.Sprintf("add index sample prediction failed after %d read errors: %v", result.ReadErrorCount, err))
-			}
-			continue
-		}
-		selectedRegions := pickSamplePredictionRegions(regions, samplePredictionSeed(reorgInfo.Job.ID, physicalTbl.GetPhysicalID()))
-		if len(selectedRegions) == 0 {
-			continue
-		}
-
-		predictedAvgBytesPerRow, mvccAvgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableStaticSampleBytesPerRow(
-			jobCtx,
-			sctx,
-			physicalTbl,
-			tableIndexes,
-			selectedRegions,
-			currentVer.Ver,
-			samplePredictionSeed(reorgInfo.Job.ID, physicalTbl.GetPhysicalID())^0x9e3779b97f4a7c15,
-		)
-		result.SampledRegionCount += sampledRegions
-		result.SampledRowCount += sampledRows
-		if readErrors > 0 {
-			result.ReadErrorCount += readErrors
-			if result.ReadErrorCount > samplePredictionMaxReadErrors {
-				return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
-					fmt.Sprintf("add index sample prediction failed after %d read errors", result.ReadErrorCount))
-			}
-		}
-		if err != nil {
-			return result, err
-		}
-		if predictedAvgBytesPerRow <= 0 {
-			continue
-		}
-		totalPredictedBytes += predictedAvgBytesPerRow * float64(rowCount)
-		result.MVCCOverheadBytes += uint64(mvccAvgBytesPerRow * float64(rowCount))
+	}
+	if err != nil {
+		return result, err
+	}
+	if len(regionTasks) == 0 {
+		return result, nil
 	}
 
-	if totalPredictedBytes > 0 {
-		result.PredictedBytes = uint64(totalPredictedBytes)
+	predictedAvgBytesPerRow, mvccAvgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimateStaticSampleBytesPerRow(
+		jobCtx,
+		sctx,
+		regionTasks,
+		currentVer.Ver,
+		baseSeed^0x9e3779b97f4a7c15,
+	)
+	result.SampledRegionCount += sampledRegions
+	result.SampledRowCount += sampledRows
+	if readErrors > 0 {
+		result.ReadErrorCount += readErrors
+		if result.ReadErrorCount > samplePredictionMaxReadErrors {
+			return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				fmt.Sprintf("add index sample prediction failed after %d read errors", result.ReadErrorCount))
+		}
+	}
+	if err != nil {
+		return result, err
+	}
+	if predictedAvgBytesPerRow > 0 {
+		result.PredictedBytes = uint64(predictedAvgBytesPerRow * float64(totalRowCount))
+		result.MVCCOverheadBytes = uint64(mvccAvgBytesPerRow * float64(totalRowCount))
 	}
 	return result, nil
 }
 
-func (w *worker) estimatePhysicalTableStaticSampleBytesPerRow(
+func (w *worker) estimateStaticSampleBytesPerRow(
 	jobCtx *ReorgContext,
 	sctx sessionctx.Context,
-	physicalTbl table.PhysicalTable,
-	indexes []table.Index,
-	regions []samplePredictionRegion,
+	regionTasks []samplePredictionRegionTask,
 	snapshotTS uint64,
 	seed uint64,
 ) (
@@ -4648,21 +4647,21 @@ func (w *worker) estimatePhysicalTableStaticSampleBytesPerRow(
 	readErrorCount int,
 	err error,
 ) {
-	if len(regions) == 0 {
+	if len(regionTasks) == 0 {
 		return 0, 0, 0, 0, 0, nil
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	var (
 		totalLogicalBytes int64
-		sampledKVs        = make([]sampledIndexKV, 0, len(regions)*staticSamplePredictionRowsPerRegion*len(indexes))
+		sampledKVs        = make([]sampledIndexKV, 0, len(regionTasks)*staticSamplePredictionRowsPerRegion)
 	)
-	for _, region := range regions {
-		skipRows := predictionRegionSkipRows(region, rnd)
-		rowCnt, logicalBytes, kvs, err := w.sampleIndexKVsFromRegion(jobCtx, sctx, physicalTbl, indexes, region, snapshotTS, skipRows, staticSamplePredictionRowsPerRegion)
+	for _, task := range regionTasks {
+		skipRows := predictionRegionSkipRows(task.region, rnd)
+		rowCnt, logicalBytes, kvs, err := w.sampleIndexKVsFromRegion(jobCtx, sctx, task.physicalTbl, task.indexes, task.region, snapshotTS, skipRows, staticSamplePredictionRowsPerRegion)
 		if err != nil {
 			readErrorCount++
 			logutil.DDLLogger().Warn("failed to sample add-index prediction rows from region",
-				zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
+				zap.Int64("physicalID", task.physicalTbl.GetPhysicalID()),
 				zap.Int("skipRows", skipRows),
 				zap.Error(err))
 			if readErrorCount > samplePredictionMaxReadErrors {
@@ -4681,8 +4680,7 @@ func (w *worker) estimatePhysicalTableStaticSampleBytesPerRow(
 	}
 	estimatedBytes := estimateSampledIndexKVPredictionBytes(sampledKVs)
 	if estimatedBytes.Err != nil {
-		logutil.DDLLogger().Warn("failed to estimate physical TiKV bytes from sampled add-index KVs; fallback to logical bytes for this physical table",
-			zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
+		logutil.DDLLogger().Warn("failed to estimate physical TiKV bytes from sampled add-index KVs; fallback to logical bytes for sampled rows",
 			zap.Int("sampled_rows", totalRows),
 			zap.Int("sampled_kv_count", len(sampledKVs)),
 			zap.Error(estimatedBytes.Err))
@@ -4708,9 +4706,12 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 	if err != nil {
 		return result, err
 	}
-	physicalTables, err := predictionPhysicalTables(tbl)
+	physicalTables, totalRowCount, err := w.buildSamplePredictionPhysicalTables(tbl, targetIndexInfos)
 	if err != nil {
 		return result, err
+	}
+	if totalRowCount <= 0 {
+		return result, nil
 	}
 	jobCtx := w.jobContext(reorgInfo.Job.ID, reorgInfo.Job.ReorgMeta)
 	currentVer, err := getValidCurrentVersion(w.store)
@@ -4718,106 +4719,84 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 		return result, err
 	}
 
-	var totalPredictedBytes float64
-	for _, physicalTbl := range physicalTables {
-		statsTbl := getPhysicalTableStatsForPrediction(physicalTbl.GetPhysicalID(), tbl.Meta(), w.ddlCtx.statsHandle)
-		rowCount := estimatePhysicalTableRowCount(statsTbl)
-		if rowCount <= 0 {
-			continue
+	baseSeed := samplePredictionSeed(reorgInfo.Job.ID, tbl.Meta().ID)
+	regionTasks, readErrors, err := w.buildSamplePredictionRegionTasks(ctx, reorgInfo.Job.ID, "block sample prediction", physicalTables, baseSeed)
+	if readErrors > 0 {
+		result.ReadErrorCount += readErrors
+		if result.ReadErrorCount > samplePredictionMaxReadErrors {
+			return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				fmt.Sprintf("add index block sample prediction failed after %d read errors", result.ReadErrorCount))
 		}
-
-		tableIndexes, err := buildPredictionIndexesForPhysicalTable(physicalTbl, targetIndexInfos)
-		if err != nil {
-			return result, err
-		}
-		regions, err := listSamplePredictionRegions(ctx, w.store, physicalTbl.GetPhysicalID())
-		if err != nil {
-			result.ReadErrorCount++
-			logutil.DDLLogger().Warn("failed to list block sample prediction regions for add-index task",
-				zap.Int64("jobID", reorgInfo.Job.ID),
-				zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
-				zap.Error(err))
-			if result.ReadErrorCount > samplePredictionMaxReadErrors {
-				return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
-					fmt.Sprintf("add index block sample prediction failed after %d read errors: %v", result.ReadErrorCount, err))
-			}
-			continue
-		}
-		selectedRegions := pickSamplePredictionRegions(regions, samplePredictionSeed(reorgInfo.Job.ID, physicalTbl.GetPhysicalID()))
-		if len(selectedRegions) == 0 {
-			continue
-		}
-
-		predictedAvgBytesPerRow, mvccAvgBytesPerRow, sampledRegions, sampledRows, readErrors, err := w.estimatePhysicalTableBlockSampleBytesPerRow(
-			jobCtx,
-			sctx,
-			physicalTbl,
-			tableIndexes,
-			selectedRegions,
-			currentVer.Ver,
-			samplePredictionSeed(reorgInfo.Job.ID, physicalTbl.GetPhysicalID())^0xd1b54a32d192ed03,
-		)
-		result.SampledRegionCount += sampledRegions
-		result.SampledRowCount += sampledRows
-		if readErrors > 0 {
-			result.ReadErrorCount += readErrors
-			if result.ReadErrorCount > samplePredictionMaxReadErrors {
-				return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
-					fmt.Sprintf("add index block sample prediction failed after %d read errors", result.ReadErrorCount))
-			}
-		}
-		if err != nil {
-			return result, err
-		}
-		if predictedAvgBytesPerRow <= 0 {
-			continue
-		}
-		totalPredictedBytes += predictedAvgBytesPerRow * float64(rowCount)
-		result.MVCCOverheadBytes += uint64(mvccAvgBytesPerRow * float64(rowCount))
+	}
+	if err != nil {
+		return result, err
+	}
+	if len(regionTasks) == 0 {
+		return result, nil
 	}
 
-	if totalPredictedBytes > 0 {
-		result.PredictedBytes = uint64(totalPredictedBytes)
+	predictedAvgBytesPerRow, mvccAvgBytesPerRow, keySharedPrefixAvg, sampledRegions, sampledRows, readErrors, err := w.estimateBlockSampleBytesPerRow(
+		jobCtx,
+		sctx,
+		regionTasks,
+		currentVer.Ver,
+		baseSeed^0xd1b54a32d192ed03,
+	)
+	result.SampledRegionCount += sampledRegions
+	result.SampledRowCount += sampledRows
+	if readErrors > 0 {
+		result.ReadErrorCount += readErrors
+		if result.ReadErrorCount > samplePredictionMaxReadErrors {
+			return result, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				fmt.Sprintf("add index block sample prediction failed after %d read errors", result.ReadErrorCount))
+		}
+	}
+	if err != nil {
+		return result, err
+	}
+	if predictedAvgBytesPerRow > 0 {
+		result.PredictedBytes = uint64(predictedAvgBytesPerRow * float64(totalRowCount))
+		result.MVCCOverheadBytes = uint64(mvccAvgBytesPerRow * float64(totalRowCount))
+		result.KeySharedPrefixAvgBytes = keySharedPrefixAvg
 	}
 	return result, nil
 }
 
-func (w *worker) estimatePhysicalTableBlockSampleBytesPerRow(
+func (w *worker) estimateBlockSampleBytesPerRow(
 	jobCtx *ReorgContext,
 	sctx sessionctx.Context,
-	physicalTbl table.PhysicalTable,
-	indexes []table.Index,
-	regions []samplePredictionRegion,
+	regionTasks []samplePredictionRegionTask,
 	snapshotTS uint64,
 	seed uint64,
 ) (
 	predictedAvgBytesPerRow float64,
 	mvccAvgBytesPerRow float64,
+	keySharedPrefixAvg float64,
 	sampledRegions int,
 	totalRows int,
 	readErrorCount int,
 	err error,
 ) {
-	if len(regions) == 0 {
-		return 0, 0, 0, 0, 0, nil
+	if len(regionTasks) == 0 {
+		return 0, 0, 0, 0, 0, 0, nil
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	var (
-		totalWeightedAvgBytes  float64
-		totalWeightedMVCCBytes float64
-		totalRegionWeight      float64
+		totalLogicalBytes int64
+		sampledKVs        []sampledIndexKV
+		nonEmptySamples   int
 	)
-	for _, region := range regions {
-		skipRows := blockSamplePredictionSkipRows(region, rnd)
-		rowCnt, logicalBytes, kvs, err := w.sampleBlockIndexKVsFromRegion(jobCtx, sctx, physicalTbl, indexes, region, snapshotTS, skipRows)
+	for _, task := range regionTasks {
+		skipRows := blockSamplePredictionSkipRows(task.region, rnd)
+		rowCnt, logicalBytes, kvs, err := w.sampleBlockIndexKVsFromRegion(jobCtx, sctx, task.physicalTbl, task.indexes, task.region, snapshotTS, skipRows)
 		if err != nil {
 			readErrorCount++
 			logutil.DDLLogger().Warn("failed to block-sample add-index prediction rows from region",
-				zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
+				zap.Int64("physicalID", task.physicalTbl.GetPhysicalID()),
 				zap.Int("skipRows", skipRows),
 				zap.Error(err))
 			if readErrorCount > samplePredictionMaxReadErrors {
-				return 0, 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				return 0, 0, 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
 					fmt.Sprintf("add index block sample prediction failed after %d read errors: %v", readErrorCount, err))
 			}
 			continue
@@ -4827,31 +4806,28 @@ func (w *worker) estimatePhysicalTableBlockSampleBytesPerRow(
 		if rowCnt == 0 {
 			continue
 		}
-
-		estimatedBytes := estimateSampledIndexKVPredictionBytes(kvs)
-		if estimatedBytes.Err != nil {
-			logutil.DDLLogger().Warn("failed to estimate physical TiKV bytes from block-sampled add-index KVs; fallback to logical bytes for this region",
-				zap.Int64("physicalID", physicalTbl.GetPhysicalID()),
-				zap.Int("sampled_rows", rowCnt),
-				zap.Int("sampled_kv_count", len(kvs)),
-				zap.Error(estimatedBytes.Err))
-		}
-		if estimatedBytes.PredictedBytes <= 0 && logicalBytes > 0 {
-			estimatedBytes.PredictedBytes = logicalBytes
-		}
-
-		regionWeight := samplePredictionRegionWeight(region, rowCnt)
-		if regionWeight <= 0 {
-			continue
-		}
-		totalWeightedAvgBytes += float64(estimatedBytes.PredictedBytes) / float64(rowCnt) * float64(regionWeight)
-		totalWeightedMVCCBytes += float64(estimatedBytes.MVCCOverheadBytes) / float64(rowCnt) * float64(regionWeight)
-		totalRegionWeight += float64(regionWeight)
+		nonEmptySamples++
+		totalLogicalBytes += logicalBytes
+		sampledKVs = append(sampledKVs, kvs...)
 	}
-	if totalRegionWeight == 0 {
-		return 0, 0, sampledRegions, totalRows, readErrorCount, nil
+	if totalRows == 0 {
+		return 0, 0, 0, sampledRegions, totalRows, readErrorCount, nil
 	}
-	return totalWeightedAvgBytes / totalRegionWeight, totalWeightedMVCCBytes / totalRegionWeight, sampledRegions, totalRows, readErrorCount, nil
+	sortedKVs := sortSampledIndexKVs(sampledKVs)
+	keySharedPrefixAvg = estimateSortedSampledIndexKVKeySharedPrefixAvg(sortedKVs)
+	estimatedBytes := estimateSampledIndexKVPredictionBytesWithSortedKVs(sortedKVs, nonEmptySamples)
+	if estimatedBytes.Err != nil {
+		logutil.DDLLogger().Warn("failed to estimate physical TiKV bytes from block-sampled add-index KVs; fallback to logical bytes for sampled rows",
+			zap.Int("sampled_rows", totalRows),
+			zap.Int("sampled_kv_count", len(sampledKVs)),
+			zap.Int("sampled_region_count", sampledRegions),
+			zap.Int("non_empty_sample_count", nonEmptySamples),
+			zap.Error(estimatedBytes.Err))
+	}
+	if estimatedBytes.PredictedBytes <= 0 {
+		estimatedBytes.PredictedBytes = totalLogicalBytes
+	}
+	return float64(estimatedBytes.PredictedBytes) / float64(totalRows), float64(estimatedBytes.MVCCOverheadBytes) / float64(totalRows), keySharedPrefixAvg, sampledRegions, totalRows, readErrorCount, nil
 }
 
 func (w *worker) sampleBlockIndexKVsFromRegion(
@@ -5109,19 +5085,30 @@ type sampleTiKVIndexPredictionBytes struct {
 }
 
 func estimateSampledIndexKVPredictionBytes(kvs []sampledIndexKV) sampleTiKVIndexPredictionBytes {
+	return estimateSampledIndexKVPredictionBytesWithSortedKVs(sortSampledIndexKVs(kvs), 1)
+}
+
+func estimateSampledIndexKVPredictionBytesWithSplit(kvs []sampledIndexKV, splitCount int) sampleTiKVIndexPredictionBytes {
+	return estimateSampledIndexKVPredictionBytesWithSortedKVs(sortSampledIndexKVs(kvs), splitCount)
+}
+
+func estimateSampledIndexKVPredictionBytesWithSortedKVs(
+	sortedKVs []sampledIndexKV,
+	splitCount int,
+) sampleTiKVIndexPredictionBytes {
 	result := sampleTiKVIndexPredictionBytes{}
-	if len(kvs) == 0 {
+	if len(sortedKVs) == 0 {
 		return result
 	}
 	var totalLogicalBytes int64
-	for _, kv := range kvs {
+	for _, kv := range sortedKVs {
 		totalLogicalBytes += int64(len(kv.key) + len(kv.value))
 	}
-	logicalPhysicalBytes, logicalErr := estimateSampledIndexKVPhysicalBytes(kvs)
+	logicalPhysicalBytes, logicalErr := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortedKVs, splitCount)
 	if logicalErr != nil || logicalPhysicalBytes <= 0 {
 		logicalPhysicalBytes = totalLogicalBytes
 	}
-	mvccPhysicalBytes, mvccErr := estimateSampledIndexKVMVCCPhysicalBytes(kvs)
+	mvccPhysicalBytes, mvccErr := estimateSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs, splitCount)
 	if mvccErr != nil {
 		result.PredictedBytes = totalLogicalBytes
 		result.Err = mvccErr
@@ -5138,6 +5125,10 @@ func estimateSampledIndexKVPhysicalBytes(kvs []sampledIndexKV) (int64, error) {
 	if len(kvs) == 0 {
 		return 0, nil
 	}
+	return estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(kvs), 1)
+}
+
+func sortSampledIndexKVs(kvs []sampledIndexKV) []sampledIndexKV {
 	sortedKVs := slices.Clone(kvs)
 	slices.SortFunc(sortedKVs, func(a, b sampledIndexKV) int {
 		if c := bytes.Compare(a.key, b.key); c != 0 {
@@ -5145,7 +5136,57 @@ func estimateSampledIndexKVPhysicalBytes(kvs []sampledIndexKV) (int64, error) {
 		}
 		return bytes.Compare(a.value, b.value)
 	})
+	return sortedKVs
+}
 
+func estimateSampledIndexKVKeySharedPrefixAvg(kvs []sampledIndexKV) float64 {
+	return estimateSortedSampledIndexKVKeySharedPrefixAvg(sortSampledIndexKVs(kvs))
+}
+
+func estimateSortedSampledIndexKVKeySharedPrefixAvg(sortedKVs []sampledIndexKV) float64 {
+	if len(sortedKVs) < 2 {
+		return 0
+	}
+	var sharedPrefixBytes int64
+	for i := 1; i < len(sortedKVs); i++ {
+		sharedPrefixBytes += int64(sharedPrefixLength(sortedKVs[i-1].key, sortedKVs[i].key))
+	}
+	return float64(sharedPrefixBytes) / float64(len(sortedKVs)-1)
+}
+
+func sharedPrefixLength(a, b []byte) int {
+	limit := min(len(a), len(b))
+	for i := 0; i < limit; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return limit
+}
+
+func estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortedKVs []sampledIndexKV, splitCount int) (int64, error) {
+	if len(sortedKVs) == 0 {
+		return 0, nil
+	}
+	if splitCount <= 1 {
+		return estimateSortedSampledIndexKVPhysicalBytes(sortedKVs)
+	}
+	// For a single add-index target, splitting sorted index KVs evenly is equivalent
+	// to splitting sampled rows evenly. Each chunk approximates one local SST.
+	chunkSize := max(1, int(math.Ceil(float64(len(sortedKVs))/float64(splitCount))))
+	var totalPhysicalBytes int64
+	for start := 0; start < len(sortedKVs); start += chunkSize {
+		end := min(start+chunkSize, len(sortedKVs))
+		physicalBytes, err := estimateSortedSampledIndexKVPhysicalBytes(sortedKVs[start:end])
+		if err != nil {
+			return 0, err
+		}
+		totalPhysicalBytes += physicalBytes
+	}
+	return totalPhysicalBytes, nil
+}
+
+func estimateSortedSampledIndexKVPhysicalBytes(sortedKVs []sampledIndexKV) (int64, error) {
 	memFS := vfs.NewMem()
 	const sampleSSTName = "ddl-sample-prediction.sst"
 	f, err := memFS.Create(sampleSSTName)
@@ -5190,17 +5231,21 @@ type sampledTiKVMVCCKVs struct {
 }
 
 func estimateSampledIndexKVMVCCPhysicalBytes(kvs []sampledIndexKV) (int64, error) {
-	mvccKVs := buildSampledTiKVMVCCKVs(kvs)
+	return estimateSampledIndexKVMVCCPhysicalBytesWithSplit(sortSampledIndexKVs(kvs), 1)
+}
+
+func estimateSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs []sampledIndexKV, splitCount int) (int64, error) {
+	mvccKVs := buildSampledTiKVMVCCKVs(sortedKVs)
 	var physicalBytes int64
 	if len(mvccKVs.defaultKVs) > 0 {
-		defaultCFBytes, err := estimateSampledIndexKVPhysicalBytes(mvccKVs.defaultKVs)
+		defaultCFBytes, err := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(mvccKVs.defaultKVs), splitCount)
 		if err != nil {
 			return 0, errors.Annotate(err, "estimate default CF MVCC SST")
 		}
 		physicalBytes += defaultCFBytes
 	}
 	if len(mvccKVs.writeKVs) > 0 {
-		writeCFBytes, err := estimateSampledIndexKVPhysicalBytes(mvccKVs.writeKVs)
+		writeCFBytes, err := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(mvccKVs.writeKVs), splitCount)
 		if err != nil {
 			return 0, errors.Annotate(err, "estimate write CF MVCC SST")
 		}
@@ -5324,6 +5369,75 @@ func predictionPhysicalTables(tbl table.Table) ([]table.PhysicalTable, error) {
 	return []table.PhysicalTable{physicalTbl}, nil
 }
 
+func (w *worker) buildSamplePredictionPhysicalTables(
+	tbl table.Table,
+	targetIndexInfos []*model.IndexInfo,
+) ([]samplePredictionPhysicalTable, int64, error) {
+	physicalTables, err := predictionPhysicalTables(tbl)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := make([]samplePredictionPhysicalTable, 0, len(physicalTables))
+	var totalRowCount int64
+	for _, physicalTbl := range physicalTables {
+		statsTbl := getPhysicalTableStatsForPrediction(physicalTbl.GetPhysicalID(), tbl.Meta(), w.ddlCtx.statsHandle)
+		rowCount := estimatePhysicalTableRowCount(statsTbl)
+		if rowCount <= 0 {
+			continue
+		}
+		tableIndexes, err := buildPredictionIndexesForPhysicalTable(physicalTbl, targetIndexInfos)
+		if err != nil {
+			return nil, 0, err
+		}
+		result = append(result, samplePredictionPhysicalTable{
+			physicalTbl: physicalTbl,
+			indexes:     tableIndexes,
+			rowCount:    rowCount,
+		})
+		totalRowCount += rowCount
+	}
+	return result, totalRowCount, nil
+}
+
+func (w *worker) buildSamplePredictionRegionTasks(
+	ctx context.Context,
+	jobID int64,
+	logLabel string,
+	physicalTables []samplePredictionPhysicalTable,
+	seed uint64,
+) ([]samplePredictionRegionTask, int, error) {
+	// For partitioned tables, precheck should still stay cheap. We first allocate the
+	// fixed region-sample budget across physical tables using row-count weights, then
+	// list regions only for the selected physical tables.
+	selections := pickSamplePredictionPhysicalTables(physicalTables, seed)
+	tasks := make([]samplePredictionRegionTask, 0, samplePredictionMaxRegionCount)
+	readErrorCount := 0
+	for _, selection := range selections {
+		physicalID := selection.physicalTbl.GetPhysicalID()
+		regions, err := listSamplePredictionRegions(ctx, w.store, physicalID)
+		if err != nil {
+			readErrorCount++
+			logutil.DDLLogger().Warn("failed to list "+logLabel+" regions for add-index task",
+				zap.Int64("jobID", jobID),
+				zap.Int64("physicalID", physicalID),
+				zap.Error(err))
+			if readErrorCount > samplePredictionMaxReadErrors {
+				return tasks, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+					fmt.Sprintf("add index %s failed after %d read errors: %v", logLabel, readErrorCount, err))
+			}
+			continue
+		}
+		selectedRegions := pickSamplePredictionRegionsWithLimit(regions, seed^uint64(physicalID), selection.regionCount)
+		for _, region := range selectedRegions {
+			tasks = append(tasks, samplePredictionRegionTask{
+				samplePredictionPhysicalTable: selection.samplePredictionPhysicalTable,
+				region:                        region,
+			})
+		}
+	}
+	return tasks, readErrorCount, nil
+}
+
 func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physicalID int64) ([]samplePredictionRegion, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
@@ -5398,14 +5512,58 @@ func buildSamplePredictionRegion(codec tikv.Codec, tableStart, tableEnd []byte, 
 	return region, true, nil
 }
 
+func pickSamplePredictionPhysicalTables(physicalTables []samplePredictionPhysicalTable, seed uint64) []samplePredictionPhysicalTableSelection {
+	if len(physicalTables) == 0 {
+		return nil
+	}
+	rnd := rand.New(rand.NewSource(int64(seed)))
+	totalWeight := int64(0)
+	for _, physicalTbl := range physicalTables {
+		totalWeight += max(physicalTbl.rowCount, 1)
+	}
+	if totalWeight <= 0 {
+		return nil
+	}
+	selectionCounts := make([]int, len(physicalTables))
+	for range samplePredictionMaxRegionCount {
+		target := rnd.Int63n(totalWeight)
+		accumulated := int64(0)
+		for i, physicalTbl := range physicalTables {
+			accumulated += max(physicalTbl.rowCount, 1)
+			if accumulated > target {
+				selectionCounts[i]++
+				break
+			}
+		}
+	}
+	result := make([]samplePredictionPhysicalTableSelection, 0, min(len(physicalTables), samplePredictionMaxRegionCount))
+	for i, regionCount := range selectionCounts {
+		if regionCount == 0 {
+			continue
+		}
+		result = append(result, samplePredictionPhysicalTableSelection{
+			samplePredictionPhysicalTable: physicalTables[i],
+			regionCount:                   regionCount,
+		})
+	}
+	return result
+}
+
 func pickSamplePredictionRegions(regions []samplePredictionRegion, seed uint64) []samplePredictionRegion {
-	if len(regions) <= samplePredictionMaxRegionCount {
+	return pickSamplePredictionRegionsWithLimit(regions, seed, samplePredictionMaxRegionCount)
+}
+
+func pickSamplePredictionRegionsWithLimit(regions []samplePredictionRegion, seed uint64, limit int) []samplePredictionRegion {
+	if limit <= 0 {
+		return nil
+	}
+	if len(regions) <= limit {
 		return regions
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	perm := rnd.Perm(len(regions))
-	selected := make([]samplePredictionRegion, 0, samplePredictionMaxRegionCount)
-	for _, idx := range perm[:samplePredictionMaxRegionCount] {
+	selected := make([]samplePredictionRegion, 0, limit)
+	for _, idx := range perm[:limit] {
 		selected = append(selected, regions[idx])
 	}
 	return selected

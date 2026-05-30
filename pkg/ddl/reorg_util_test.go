@@ -932,6 +932,31 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Len(t, selected, samplePredictionMaxRegionCount)
 	})
 
+	t.Run("sample prediction physical table selection caps at five total regions", func(t *testing.T) {
+		selections := pickSamplePredictionPhysicalTables([]samplePredictionPhysicalTable{
+			{rowCount: 100},
+		}, 12345)
+		require.Len(t, selections, 1)
+		require.Equal(t, samplePredictionMaxRegionCount, selections[0].regionCount)
+
+		selections = pickSamplePredictionPhysicalTables([]samplePredictionPhysicalTable{
+			{rowCount: 100},
+			{rowCount: 200},
+			{rowCount: 300},
+			{rowCount: 400},
+			{rowCount: 500},
+			{rowCount: 600},
+			{rowCount: 700},
+			{rowCount: 800},
+		}, 54321)
+		totalSelected := 0
+		for _, selection := range selections {
+			totalSelected += selection.regionCount
+		}
+		require.LessOrEqual(t, len(selections), samplePredictionMaxRegionCount)
+		require.Equal(t, samplePredictionMaxRegionCount, totalSelected)
+	})
+
 	t.Run("block sample prediction bounds", func(t *testing.T) {
 		require.Equal(t, blockSamplePredictionProbeRows, clampSamplePredictionRows(0, blockSamplePredictionProbeRows, blockSamplePredictionMaxRows))
 		require.Equal(t, blockSamplePredictionProbeRows, blockSamplePredictionTargetRows(10, 1<<30))
@@ -1075,6 +1100,17 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.NoError(t, prefixPrediction.Err)
 		require.Positive(t, prefixPrediction.MVCCOverheadBytes)
 		require.Less(t, prefixPrediction.MVCCOverheadBytes, estimateSampledIndexKVMVCCOverheadBytes(prefixKVs))
+		prefixSplitPrediction := estimateSampledIndexKVPredictionBytesWithSplit(prefixKVs, 5)
+		require.NoError(t, prefixSplitPrediction.Err)
+		require.Greater(t, prefixSplitPrediction.PredictedBytes, prefixPrediction.PredictedBytes)
+		require.Zero(t, estimateSampledIndexKVKeySharedPrefixAvg(nil))
+		require.Zero(t, estimateSampledIndexKVKeySharedPrefixAvg([]sampledIndexKV{{key: []byte("single")}}))
+		require.InDelta(t, 1.5, estimateSampledIndexKVKeySharedPrefixAvg([]sampledIndexKV{
+			{key: []byte("b001")},
+			{key: []byte("a001")},
+			{key: []byte("a000")},
+		}), 1e-9)
+		require.Greater(t, estimateSampledIndexKVKeySharedPrefixAvg(prefixKVs), float64(50))
 
 		mvccKVs := buildSampledTiKVMVCCKVs([]sampledIndexKV{
 			{key: []byte("empty"), value: nil},
