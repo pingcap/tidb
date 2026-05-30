@@ -5194,7 +5194,7 @@ func buildSampledTiKVMVCCKVs(kvs []sampledIndexKV) sampledTiKVMVCCKVs {
 func appendTiKVMVCCTimestampForPrediction(key []byte) []byte {
 	mvccKey := make([]byte, 0, len(key)+tikvMVCCTimestampBytes)
 	mvccKey = append(mvccKey, key...)
-	for i := 0; i < tikvMVCCTimestampBytes; i++ {
+	for i := range tikvMVCCTimestampBytes {
 		mvccKey = append(mvccKey, byte(0xff-i))
 	}
 	return mvccKey
