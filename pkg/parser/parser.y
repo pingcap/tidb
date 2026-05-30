@@ -5252,12 +5252,13 @@ CreateMaterializedViewStmt:
 	{
 		opts := $8.(*mviewCreateOptions)
 		x := &ast.CreateMaterializedViewStmt{
-			ViewName: $4.(*ast.TableName),
-			Cols:     $6.([]model.CIStr),
-			Comment:  opts.comment,
-			Refresh:  opts.refresh,
-			Options:  opts.options,
-			Select:   $10.(ast.StmtNode).(ast.ResultSetNode),
+			ViewName:   $4.(*ast.TableName),
+			Cols:       $6.([]model.CIStr),
+			Comment:    opts.comment,
+			Refresh:    opts.refresh,
+			Attributes: opts.attributes,
+			Options:    opts.options,
+			Select:     $10.(ast.StmtNode).(ast.ResultSetNode),
 		}
 		$$ = x
 	}
@@ -5295,6 +5296,13 @@ MViewCreateOptionList:
 			opts.hasRefresh = true
 			opts.refresh = opt.refresh
 		}
+		if opt.hasAttributes {
+			if opts.hasAttributes {
+				yylex.AppendError(yylex.Errorf("Duplicate ATTRIBUTES specified in CREATE MATERIALIZED VIEW"))
+			}
+			opts.hasAttributes = true
+			opts.attributes = opt.attributes
+		}
 		if opt.hasShardRowIDBits {
 			if opts.hasShardRowIDBits {
 				yylex.AppendError(yylex.Errorf("Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW"))
@@ -5319,6 +5327,10 @@ MViewCreateOption:
 |	MViewRefreshClause
 	{
 		$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = &mviewCreateOptions{hasAttributes: true, attributes: $3}
 	}
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
@@ -5518,6 +5530,10 @@ AlterMaterializedViewAction:
 			refresh.Next = schedule.Next
 		}
 		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionRefresh, Refresh: refresh}
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionAttributes, Attributes: $3}
 	}
 
 AlterMaterializedViewLogStmt:

@@ -5224,6 +5224,10 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 			substring: "Duplicate PRE_SPLIT_REGIONS specified in CREATE MATERIALIZED VIEW",
 		},
 		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES='a=b' ATTRIBUTES='c=d' AS SELECT 1",
+			substring: "Duplicate ATTRIBUTES specified in CREATE MATERIALIZED VIEW",
+		},
+		{
 			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) SHARD_ROW_ID_BITS = 1 SHARD_ROW_ID_BITS = 2",
 			substring: "Duplicate SHARD_ROW_ID_BITS specified in CREATE MATERIALIZED VIEW LOG",
 		},
@@ -5348,6 +5352,16 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST NEXT 300 AS SELECT 1",
 		},
 		{
+			"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600' AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) ATTRIBUTES='mview_alert_warning=300,mview_alert_overdue=600' AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST ATTRIBUTES='mview_alert_warning=300' AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST ATTRIBUTES='mview_alert_warning=300' AS SELECT 1",
+		},
+		{
 			"CREATE MATERIALIZED VIEW LOG ON t (a,b)",
 			true,
 			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`)",
@@ -5401,6 +5415,11 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"ALTER MATERIALIZED VIEW mv REFRESH NEXT 300",
 			true,
 			"ALTER MATERIALIZED VIEW `mv` REFRESH NEXT 300",
+		},
+		{
+			"ALTER MATERIALIZED VIEW mv ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5'",
+			true,
+			"ALTER MATERIALIZED VIEW `mv` ATTRIBUTES='mview_alert_warning=5,mview_alert_overdue=5'",
 		},
 		{
 			"ALTER MATERIALIZED VIEW LOG ON t PURGE IMMEDIATE",

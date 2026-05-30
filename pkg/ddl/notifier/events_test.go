@@ -86,6 +86,11 @@ func TestMVAlterEventConstructors(t *testing.T) {
 	require.Same(t, mvTbl, alterMVRefresh.GetAlterMaterializedViewRefreshInfo())
 	require.Same(t, oldMVTbl, alterMVRefresh.inner.OldTableInfo)
 
+	alterMVAttrs := NewAlterMaterializedViewAttributesEvent(mvTbl, oldMVTbl)
+	require.Equal(t, model.ActionAlterMaterializedViewAttributes, alterMVAttrs.GetType())
+	require.Same(t, mvTbl, alterMVAttrs.GetAlterMaterializedViewAttributesInfo())
+	require.Same(t, oldMVTbl, alterMVAttrs.inner.OldTableInfo)
+
 	alterMLogPurge := NewAlterMaterializedViewLogPurgeEvent(mlogTbl, oldMLogTbl)
 	require.Equal(t, model.ActionAlterMaterializedViewLogPurge, alterMLogPurge.GetType())
 	require.Same(t, mlogTbl, alterMLogPurge.GetAlterMaterializedViewLogPurgeInfo())

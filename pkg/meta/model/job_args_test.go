@@ -577,6 +577,20 @@ func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 	}
 }
 
+func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
+	inArgs := &AlterMaterializedViewAttributesArgs{
+		AlertWarningSec: 10,
+		AlertOverdueSec: 20,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAlterMaterializedViewAttributes)))
+		args, err := GetAlterMaterializedViewAttributesArgs(j2)
+		require.NoError(t, err)
+		require.Equal(t, inArgs, args)
+	}
+}
+
 func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewLogPurgeArgs{
 		PurgeMethod:    "DEFERRED",

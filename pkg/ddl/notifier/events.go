@@ -126,6 +126,28 @@ func (s *SchemaChangeEvent) GetAlterMaterializedViewRefreshInfo() *model.TableIn
 	return s.inner.TableInfo
 }
 
+// NewAlterMaterializedViewAttributesEvent creates a SchemaChangeEvent whose type is
+// ActionAlterMaterializedViewAttributes.
+func NewAlterMaterializedViewAttributesEvent(
+	tableInfo *model.TableInfo,
+	oldTableInfo *model.TableInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		inner: &jsonSchemaChangeEvent{
+			Tp:           model.ActionAlterMaterializedViewAttributes,
+			TableInfo:    tableInfo,
+			OldTableInfo: oldTableInfo,
+		},
+	}
+}
+
+// GetAlterMaterializedViewAttributesInfo returns the table info of the SchemaChangeEvent whose type is
+// ActionAlterMaterializedViewAttributes.
+func (s *SchemaChangeEvent) GetAlterMaterializedViewAttributesInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionAlterMaterializedViewAttributes)
+	return s.inner.TableInfo
+}
+
 // NewAlterMaterializedViewLogPurgeEvent creates a SchemaChangeEvent whose type is
 // ActionAlterMaterializedViewLogPurge.
 func NewAlterMaterializedViewLogPurgeEvent(
