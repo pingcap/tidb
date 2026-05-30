@@ -259,6 +259,70 @@ func TestAnyValue(t *testing.T) {
 	}
 }
 
+func TestAnyValueHybridStringEvalWithIntSig(t *testing.T) {
+	ctx := createContext(t)
+	enumTp := types.NewFieldType(mysql.TypeEnum)
+	enumTp.SetElems([]string{"a", "b"})
+	enumTp.AddFlag(mysql.EnumSetAsIntFlag)
+	setTp := types.NewFieldType(mysql.TypeSet)
+	setTp.SetElems([]string{"a", "b"})
+	setTp.AddFlag(mysql.EnumSetAsIntFlag)
+	bitTp := types.NewFieldType(mysql.TypeBit)
+
+	tests := []struct {
+		name     string
+		tp       *types.FieldType
+		appendFn func(*chunk.Chunk)
+		expected string
+	}{
+		{
+			name: "enum",
+			tp:   enumTp,
+			appendFn: func(chk *chunk.Chunk) {
+				chk.AppendEnum(0, types.Enum{Name: "b", Value: 2})
+			},
+			expected: "b",
+		},
+		{
+			name: "set",
+			tp:   setTp,
+			appendFn: func(chk *chunk.Chunk) {
+				chk.AppendSet(0, types.Set{Name: "a,b", Value: 3})
+			},
+			expected: "a,b",
+		},
+		{
+			name: "bit",
+			tp:   bitTp,
+			appendFn: func(chk *chunk.Chunk) {
+				chk.AppendBytes(0, []byte{0x01})
+			},
+			expected: "\x01",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			col := &Column{Index: 0, RetType: tt.tp}
+			f, err := funcs[ast.AnyValue].getFunction(ctx, []Expression{col})
+			require.NoError(t, err)
+			require.IsType(t, &builtinIntAnyValueSig{}, f)
+
+			input := chunk.New([]*types.FieldType{tt.tp}, 1, 1)
+			tt.appendFn(input)
+			got, isNull, err := f.evalString(ctx, input.GetRow(0))
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, tt.expected, got)
+
+			result := chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1)
+			require.NoError(t, f.vecEvalString(ctx, input, result))
+			require.False(t, result.IsNull(0))
+			require.Equal(t, tt.expected, result.GetString(0))
+		})
+	}
+}
+
 func TestIsIPv6(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {

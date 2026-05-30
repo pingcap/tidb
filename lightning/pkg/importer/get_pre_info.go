@@ -29,11 +29,12 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -147,7 +148,7 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
+		backendTargetInfoGetter = ingestctrl.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
@@ -332,7 +333,7 @@ func NewPreImportInfoGetter(
 		case config.BackendTiDB:
 			encBuilder = tidb.NewEncodingBuilder()
 		case config.BackendLocal:
-			encBuilder = local.NewEncodingBuilder(context.Background())
+			encBuilder = ingestctrl.NewEncodingBuilder(context.Background())
 		default:
 			return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 		}
@@ -524,9 +525,9 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, 
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = parquetfile.NewParser(
 			ctx, p.srcStorage, reader,
-			dataFileMeta.Path, mydump.ParquetFileMeta{},
+			dataFileMeta.Path, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -700,9 +701,9 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = parquetfile.NewParser(
 			ctx, p.srcStorage, reader,
-			sampleFile.Path, mydump.ParquetFileMeta{},
+			sampleFile.Path, parquetfile.FileMeta{},
 		)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)

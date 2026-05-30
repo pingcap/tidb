@@ -29,7 +29,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// LFU is a LFU based on the ristretto.Cache
+// LFU is a LFU based on the ristretto.Cache.
+//
+// NOTE: In Ristretto, updates to keys already resident in the primary store become visible
+// immediately, but keys not currently resident go through a buffered admission path and are
+// applied by a background worker. So a successful Set does not guarantee immediate Get
+// visibility for a non-resident key.
 type LFU struct {
 	cache *ristretto.Cache
 	// This is a secondary cache layer used to store all tables,
@@ -87,7 +92,27 @@ func adjustMemCost(totalMemCost int64) (result int64, err error) {
 	return totalMemCost, nil
 }
 
-// Get implements statsCacheInner
+// Get reads the primary Ristretto cache first and falls back to resultKeySet.
+//
+// NOTE: We keep this order to preserve Ristretto's admission/frequency behavior.
+// That means a resident primary-cache entry wins even if resultKeySet has already been updated to
+// a newer table snapshot; until the buffered Ristretto write catches up, Get can still observe
+// that older snapshot. We are aware of this stale-read window, but it is very rare in practice, so
+// we currently document it instead of changing the read order and taking on different concurrency
+// trade-offs.
+//
+// Extreme example (the old flaky pattern from TestNonLiteInitStatsWithTableIDs):
+//  1. InitStats(tbl1) publishes tbl1 to resultKeySet, but the new primary-cache entry is still in
+//     Ristretto's buffered admission path.
+//  2. A later targeted InitStats call that includes tbl1 again reads tbl1 from resultKeySet,
+//     fills in more index state, and republishes a newer tbl1 snapshot there.
+//  3. The older tbl1 can still reach Ristretto first, so topn/buckets sees that resident older
+//     snapshot, misses the index entry, and Put() can write that stale tbl1 back into the main
+//     cache.
+//
+// For phase-by-phase or chunk-by-chunk cache construction, callers that read after writes should
+// call WaitForAsyncUpdates before the next dependent read. InitStats does this between load phases
+// and chunks so a temporary LFU cache cannot carry an older table snapshot into later loading.
 func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
@@ -96,7 +121,10 @@ func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	return result.(*statistics.Table), ok
 }
 
-// Put implements statsCacheInner
+// Put publishes to resultKeySet first, then hands the item to Ristretto.
+//
+// Resident-key updates become visible there immediately; non-resident keys still go through the
+// buffered admission path.
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
 	s.resultKeySet.AddKeyValue(tblID, tbl)
@@ -221,9 +249,9 @@ func (s *LFU) SetCapacity(maxCost int64) {
 	metrics.CostGauge.Set(float64(s.Cost()))
 }
 
-// wait blocks until all buffered writes have been applied. This ensures a call to Set()
-// will be visible to future calls to Get(). it is only used for test.
-func (s *LFU) wait() {
+// WaitForAsyncUpdates blocks until all buffered writes have been applied. This ensures a call to
+// Put is visible to future calls to Get.
+func (s *LFU) WaitForAsyncUpdates() {
 	s.cache.Wait()
 }
 

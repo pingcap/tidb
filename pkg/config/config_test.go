@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	meter_config "github.com/pingcap/metering_sdk/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -1046,6 +1047,168 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
 		require.Equal(t, tt.valid, conf.Valid() == nil)
 	}
+}
+
+func TestDeployModeConfig(t *testing.T) {
+	conf := NewConfig()
+	require.Equal(t, deploymode.Premium, conf.DeployMode)
+	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+	conf.DeployMode = deploymode.Mode(100)
+	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
+	conf.DeployMode = deploymode.Premium
+	conf.MaxAllowedPacket = 0
+	require.NoError(t, conf.Valid())
+	conf.MaxAllowedPacket = DefMaxAllowedPacket
+
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "config.toml")
+
+	if kerneltype.IsClassic() {
+		require.NoError(t, os.WriteFile(configFile, []byte(`dxf-resource-limit = 30`), 0644))
+		conf = NewConfig()
+		require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+
+		require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"`), 0644))
+		conf = NewConfig()
+		require.ErrorContains(t, conf.Load(configFile), "deploy-mode can only be configured for nextgen TiDB")
+
+		conf = NewConfig()
+		conf.DeployMode = deploymode.PremiumReserved
+		require.ErrorContains(t, conf.Valid(), "deploy-mode can only be configured for nextgen TiDB")
+		return
+	}
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"`), 0644))
+
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 30`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
+	require.Equal(t, 30, conf.DXFResourceLimit)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"
+dxf-resource-limit = 100`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 9`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
+dxf-resource-limit = 101`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.True(t, conf.Standby.EnableZeroBackend)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+deploy-mode = "starter"
+[standby]
+enable-zero-backend = false
+`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.False(t, conf.Standby.EnableZeroBackend)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
+max-allowed-packet = %d`, minMaxAllowedPacket)), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.Equal(t, uint64(minMaxAllowedPacket), conf.MaxAllowedPacket)
+	require.NoError(t, conf.Valid())
+
+	maxAllowedPacketErr := fmt.Sprintf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
+	for _, packetSize := range []uint64{0, minMaxAllowedPacket - 1, minMaxAllowedPacket + 1, maxOfMaxAllowedPacket + 1} {
+		require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
+max-allowed-packet = %d`, packetSize)), 0644))
+		conf = NewConfig()
+		require.NoError(t, conf.Load(configFile))
+		require.ErrorContains(t, conf.Valid(), maxAllowedPacketErr)
+	}
+
+	originDeployMode := deploymode.Get()
+	originGlobalConfig := GetGlobalConfig()
+	t.Cleanup(func() {
+		StoreGlobalConfig(originGlobalConfig)
+		require.NoError(t, deploymode.Set(originDeployMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	conf = NewConfig()
+	conf.MaxAllowedPacket = minMaxAllowedPacket
+	StoreGlobalConfig(conf)
+	require.Equal(t, uint64(minMaxAllowedPacket), GetMaxAllowedPacket())
+	conf.MaxAllowedPacket = 0
+	StoreGlobalConfig(conf)
+	require.Equal(t, uint64(DefMaxAllowedPacket), GetMaxAllowedPacket())
+
+	t.Run("adjust starter config with full TLS env", func(t *testing.T) {
+		conf := NewConfig()
+		t.Setenv(EnvClusterCA, "/tmp/cluster-ca.pem")
+		t.Setenv(EnvClusterCert, "/tmp/cluster-cert.pem")
+		t.Setenv(EnvClusterKey, "/tmp/cluster-key.pem")
+		t.Setenv(EnvSQLCA, "/tmp/sql-ca.pem")
+		t.Setenv(EnvSQLCert, "/tmp/sql-cert.pem")
+		t.Setenv(EnvSQLKey, "/tmp/sql-key.pem")
+		require.NoError(t, conf.AdjustStarterConfig(true))
+		require.Equal(t, "/tmp/cluster-ca.pem", conf.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/cluster-cert.pem", conf.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/cluster-key.pem", conf.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/sql-ca.pem", conf.Security.SSLCA)
+		require.Equal(t, "/tmp/sql-cert.pem", conf.Security.SSLCert)
+		require.Equal(t, "/tmp/sql-key.pem", conf.Security.SSLKey)
+	})
+
+	t.Run("adjust starter config keeps CA when env overrides cert and key", func(t *testing.T) {
+		conf := NewConfig()
+		conf.Security.ClusterSSLCA = "/tmp/config-cluster-ca.pem"
+		conf.Security.ClusterSSLCert = "/tmp/config-cluster-cert.pem"
+		conf.Security.ClusterSSLKey = "/tmp/config-cluster-key.pem"
+		conf.Security.SSLCA = "/tmp/config-sql-ca.pem"
+		conf.Security.SSLCert = "/tmp/config-sql-cert.pem"
+		conf.Security.SSLKey = "/tmp/config-sql-key.pem"
+		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
+		t.Setenv(EnvClusterKey, "/tmp/env-cluster-key.pem")
+		t.Setenv(EnvSQLCert, "/tmp/env-sql-cert.pem")
+		t.Setenv(EnvSQLKey, "/tmp/env-sql-key.pem")
+		require.NoError(t, conf.AdjustStarterConfig(true))
+		require.Equal(t, "/tmp/config-cluster-ca.pem", conf.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/env-cluster-cert.pem", conf.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/env-cluster-key.pem", conf.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/config-sql-ca.pem", conf.Security.SSLCA)
+		require.Equal(t, "/tmp/env-sql-cert.pem", conf.Security.SSLCert)
+		require.Equal(t, "/tmp/env-sql-key.pem", conf.Security.SSLKey)
+	})
+
+	t.Run("adjust starter config rejects incomplete TLS env", func(t *testing.T) {
+		conf := NewConfig()
+		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
+		require.ErrorContains(t, conf.AdjustStarterConfig(true), "CLUSTER_CERT and CLUSTER_KEY must be set together")
+	})
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
 }
 
 func TestConflictInstanceConfig(t *testing.T) {

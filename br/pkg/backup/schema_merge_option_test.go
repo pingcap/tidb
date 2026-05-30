@@ -4,7 +4,6 @@ package backup_test
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"testing"
 
@@ -17,14 +16,17 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // TestBackupSchemaMergeOptionRuleIDFormat tests the rule ID format generation
 func TestBackupSchemaMergeOptionRuleIDFormat(t *testing.T) {
+	codec := tikv.NewCodecV1(tikv.ModeTxn)
+
 	t.Run("normal table rule ID format", func(t *testing.T) {
 		dbName := "test"
 		tableName := "t1"
-		expectedRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, dbName, tableName)
+		expectedRuleID := label.NewRuleID(codec, dbName, tableName, "")
 		require.Equal(t, "schema/test/t1", expectedRuleID)
 	})
 
@@ -32,7 +34,7 @@ func TestBackupSchemaMergeOptionRuleIDFormat(t *testing.T) {
 		dbName := "test"
 		tableName := "pt1"
 		partitionName := "p0"
-		expectedRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, tableName, partitionName)
+		expectedRuleID := label.NewRuleID(codec, dbName, tableName, partitionName)
 		require.Equal(t, "schema/test/pt1/p0", expectedRuleID)
 	})
 
@@ -40,11 +42,15 @@ func TestBackupSchemaMergeOptionRuleIDFormat(t *testing.T) {
 		dbName := "test"
 		tableName := "pt2"
 		partitions := []string{"p0", "p1", "p2"}
+		expected := []string{
+			"schema/test/pt2/p0",
+			"schema/test/pt2/p1",
+			"schema/test/pt2/p2",
+		}
 
-		for _, partName := range partitions {
-			ruleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, tableName, partName)
-			expected := fmt.Sprintf("schema/%s/%s/%s", dbName, tableName, partName)
-			require.Equal(t, expected, ruleID, "partition %s rule ID should match", partName)
+		for i, partName := range partitions {
+			ruleID := label.NewRuleID(codec, dbName, tableName, partName)
+			require.Equal(t, expected[i], ruleID, "partition %s rule ID should match", partName)
 		}
 	})
 
@@ -56,13 +62,13 @@ func TestBackupSchemaMergeOptionRuleIDFormat(t *testing.T) {
 		// Simulate DDL behavior: uses .L (lowercase)
 		// DDL would use: schema.Name.L, meta.Name.L, spec.PartitionNames[0].L
 		// For "TestDB"/"TestTable"/"Partition0", .L would be: "testdb"/"testtable"/"partition0"
-		ddlRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, "testdb", "testtable")
-		ddlPartitionRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, "testdb", "testtable", "partition0")
+		ddlRuleID := label.NewRuleID(codec, "testdb", "testtable", "")
+		ddlPartitionRuleID := label.NewRuleID(codec, "testdb", "testtable", "partition0")
 
 		// BR should also use .L (lowercase) - simulate BR behavior
 		// In real code: table.DB.Name.L, table.Info.Name.L, def.Name.L
-		brRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, "testdb", "testtable")
-		brPartitionRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, "testdb", "testtable", "partition0")
+		brRuleID := label.NewRuleID(codec, "testdb", "testtable", "")
+		brPartitionRuleID := label.NewRuleID(codec, "testdb", "testtable", "partition0")
 
 		// Both should generate the same rule ID
 		require.Equal(t, ddlRuleID, brRuleID, "DDL and BR should generate same table rule ID")
