@@ -49,12 +49,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+<<<<<<< HEAD:pkg/executor/analyze_col_v2.go
 // AnalyzeColumnsExecV2 is used to maintain v2 analyze process
 type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
 }
 
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
+=======
+func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
+	intest.Assert(e.samplingStatsConcurrency > 0,
+		"samplingStatsConcurrency must be resolved by AnalyzeExec.Next before workers fan out")
+>>>>>>> 351a32bd4ec (pkg/executor: fix concurrent SessionVars.systems map access during ANALYZE (#68465)):pkg/executor/analyze_col_sampling.go
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -88,14 +94,14 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp 
 			specialIndexes = append(specialIndexes, idx)
 		}
 	}
-	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.ctx)
-	if err != nil {
-		e.memTracker.Release(e.memTracker.BytesConsumed())
-		return &statistics.AnalyzeResults{Err: err, Job: e.job}
-	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
+<<<<<<< HEAD:pkg/executor/analyze_col_v2.go
 	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
 	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
+=======
+	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, e.samplingStatsConcurrency)
+	count, hists, topNs, fmSketches, err := e.buildSamplingStats(ctx, gp, ranges, specialIndexesOffsets, idxNDVPushDownCh, e.samplingStatsConcurrency)
+>>>>>>> 351a32bd4ec (pkg/executor: fix concurrent SessionVars.systems map access during ANALYZE (#68465)):pkg/executor/analyze_col_sampling.go
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
