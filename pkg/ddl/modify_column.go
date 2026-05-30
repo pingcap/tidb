@@ -1371,6 +1371,9 @@ func doReorgWorkForModifyColumn(
 		if kv.IsTxnRetryableError(err) || dbterror.ErrNotOwner.Equal(err) {
 			return false, ver, errors.Trace(err)
 		}
+		if isRetryableModifyColumnReorgJobError(err, job.ErrorCount) {
+			return false, ver, errors.Trace(err)
+		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.DDLLogger().Warn("run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
@@ -1382,7 +1385,20 @@ func doReorgWorkForModifyColumn(
 	return true, ver, nil
 }
 
+<<<<<<< HEAD
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName pmodel.CIStr) error {
+=======
+func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
+	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
+		return false
+	}
+	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
+	// cause long retry loops and block the job from rolling back.
+	return isRetryableError(err, false)
+}
+
+func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName ast.CIStr) error {
+>>>>>>> d15bed39426 (ddl: retry modify column reorg on transient errors (#67713))
 	for _, col := range allCols {
 		if col.GeneratedExpr == nil {
 			continue
