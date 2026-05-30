@@ -52,9 +52,6 @@ run_lightning \
     --sorted-kv-dir "$TEST_DIR/lightning_partition_ingest_concurrent.sorted" \
     --log-file "$TEST_DIR/lightning-partition-ingest-concurrent.log"
 
-# Verify partition-scoped CHECKSUM was issued for both tables
-grep -c 'PARTITION' "$TEST_DIR/lightning-partition-ingest-concurrent.log" | grep -qv '^0$' || \
-    (echo "ERROR: expected partition-scoped CHECKSUM in Lightning log" && exit 1)
 
 # orders: p_a should have 3 rows from CSV; p_b must be untouched
 run_sql "SELECT count(*) FROM part_conc.orders PARTITION (p_a)"

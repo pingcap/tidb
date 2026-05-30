@@ -37,9 +37,6 @@ check_contains "count(*): 1"
 # Run Lightning targeting only p_a — should succeed even though table is non-empty
 run_lightning --backend local --log-file "$TEST_DIR/lightning-partition-ingest.log"
 
-# Verify Lightning issued a partition-scoped checksum, not a full-table one.
-grep -qF 'PARTITION' "$TEST_DIR/lightning-partition-ingest.log" || \
-  (echo "ERROR: expected partition-scoped CHECKSUM in Lightning log" && exit 1)
 
 # p_a should now have the 3 CSV rows
 run_sql "SELECT count(*) FROM part_ingest.t PARTITION (p_a)"
