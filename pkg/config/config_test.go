@@ -1121,7 +1121,7 @@ dxf-resource-limit = 101`), 0644))
 
 	conf = NewConfig()
 	conf.StarterParams.EnableManagerNotifier = true
-	require.ErrorContains(t, conf.Valid(), "starter.enable-manager-notifier can only be configured for starter deploy mode")
+	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`
 [standby]
@@ -1138,7 +1138,7 @@ max-idle-seconds = 60
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`
 deploy-mode = "starter"
-[starter]
+[starter-params]
 enable-zero-backend = false
 `), 0644))
 	conf = NewConfig()

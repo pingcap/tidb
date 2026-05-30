@@ -322,7 +322,7 @@ type Config struct {
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
 	// StarterParams contains Starter-only extension parameters.
-	StarterParams StarterParams `toml:"starter" json:"starter"`
+	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -1503,7 +1503,7 @@ func (c *Config) Load(confFile string) error {
 	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
-	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("starter", "enable-zero-backend") {
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("starter-params", "enable-zero-backend") {
 		c.StarterParams.EnableZeroBackend = true
 	}
 	if c.TokenLimit == 0 {
@@ -1584,7 +1584,7 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("keyspace-activate can only be configured for starter deploy mode")
 	}
 	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
-		return fmt.Errorf("starter.enable-manager-notifier can only be configured for starter deploy mode")
+		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
 	}
 	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
 		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)
