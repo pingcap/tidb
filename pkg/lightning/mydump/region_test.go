@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
@@ -228,6 +229,65 @@ func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
 	for range 20 {
 		_, _ = MakeTableRegions(ctx, divideConfig)
 	}
+}
+
+func TestParquetFileRegionUsesRealSizeForEngineAllocation(t *testing.T) {
+	const (
+		compressedFileSize = int64(40)
+		realSize           = int64(400)
+		engineDataSize     = int64(200)
+	)
+	makeParquetFile := func(path string) FileInfo {
+		return FileInfo{FileMeta: SourceFileMeta{
+			Path:     path,
+			Type:     SourceTypeParquet,
+			FileSize: compressedFileSize,
+			RealSize: realSize,
+		}}
+	}
+	meta := &MDTableMeta{
+		DB:   "db",
+		Name: "tbl",
+		DataFiles: []FileInfo{
+			makeParquetFile("a.parquet"),
+			makeParquetFile("b.parquet"),
+			makeParquetFile("c.parquet"),
+		},
+		IsRowOrdered: true,
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount", "return(100)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount"))
+	})
+
+	ctx := context.Background()
+	store, err := objstore.NewLocalStorage(".")
+	require.NoError(t, err)
+
+	divideConfig := &DataDivideConfig{
+		ColumnCnt:           1,
+		EngineDataSize:      engineDataSize,
+		MaxChunkSize:        engineDataSize,
+		Concurrency:         1,
+		EngineConcurrency:   10,
+		BatchImportRatio:    0.75,
+		Store:               store,
+		TableMeta:           meta,
+		SkipParquetRowCount: true,
+	}
+	regions, err := MakeTableRegions(ctx, divideConfig)
+	require.NoError(t, err)
+	require.Len(t, regions, 3)
+
+	maxEngineID := regions[0].EngineID
+	for _, region := range regions[1:] {
+		if region.EngineID > maxEngineID {
+			maxEngineID = region.EngineID
+		}
+	}
+	require.Greater(t, maxEngineID, int32(0),
+		"engine allocation should use RealSize; FileSize alone would keep all files on engine 0")
 }
 
 func TestCompressedMakeSourceFileRegion(t *testing.T) {

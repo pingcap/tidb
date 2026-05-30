@@ -132,6 +132,25 @@ func TestCalculateSubtaskCnt(t *testing.T) {
 	}
 }
 
+func TestCalculateSubtaskCntUsesRealSizeNotFileSize(t *testing.T) {
+	// Regression: compressed imports can have TotalFileSize << TotalRealSize.
+	// Subtask planning must use decoded footprint (TotalRealSize), not on-disk bytes.
+	e := &LoadDataController{
+		Plan: &Plan{
+			MaxEngineSize: 500,
+			TotalFileSize: 100,
+		},
+		TotalRealSize: 1500,
+	}
+	require.Equal(t, 3, e.calculateSubtaskCnt())
+	require.Equal(t, int64(500), e.getAdjustedMaxEngineSize())
+
+	e.Plan.TotalFileSize = 1500
+	e.TotalRealSize = 100
+	require.Equal(t, 1, e.calculateSubtaskCnt())
+	require.Equal(t, int64(100), e.getAdjustedMaxEngineSize())
+}
+
 func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
 	tests := []struct {
 		totalSize       int64
