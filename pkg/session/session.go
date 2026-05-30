@@ -3903,6 +3903,32 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	return s
 }
 
+// AttachStatsCollectorForInternalSession lazily attaches the same collectors used by
+// regular sessions for a specific internal session when the caller knows it will touch
+// user tables. This intentionally keeps index usage collection enabled as well when
+// tidb_enable_collect_execution_info is on, because internal maintenance SQL should be
+// reflected in usage accounting just like foreground SQL.
+// It returns a restore function that detaches only the collectors attached by this call.
+func (s *session) AttachStatsCollectorForInternalSession() func() {
+	dom, ok := s.dom.(*domain.Domain)
+	if !ok || dom == nil {
+		return func() {}
+	}
+	hadStatsCollector := s.statsCollector != nil
+	hadIdxUsageCollector := s.idxUsageCollector != nil
+	attachStatsCollector(s, dom)
+	return func() {
+		if !hadStatsCollector && s.statsCollector != nil {
+			s.statsCollector.Delete()
+			s.statsCollector = nil
+		}
+		if !hadIdxUsageCollector && s.idxUsageCollector != nil {
+			s.idxUsageCollector.Flush()
+			s.idxUsageCollector = nil
+		}
+	}
+}
+
 // detachStatsCollector removes the stats collector in the session
 func detachStatsCollector(s *session) *session {
 	if s.statsCollector != nil {
