@@ -131,7 +131,8 @@ const (
 	observedTiKVUsagePhaseTaskEnd  = "task_end"
 	observedTiKVUsagePhasePostTask = "post_task"
 
-	addIndexPostTaskObservationCount = 3
+	addIndexPostTaskObservationCount        = 3
+	addIndexPostTaskObservationMinDelayStep = 2 * time.Minute
 )
 
 type observedTiKVCapacityIncrease struct {
@@ -3963,6 +3964,10 @@ func buildAddIndexPostTaskObservationDelays(taskExecutionDuration time.Duration)
 	delays := make([]time.Duration, 0, addIndexPostTaskObservationCount)
 	for n := 1; n <= addIndexPostTaskObservationCount; n++ {
 		delay := taskExecutionDuration * time.Duration(n) / 2
+		minDelay := addIndexPostTaskObservationMinDelayStep * time.Duration(n)
+		if delay < minDelay {
+			delay = minDelay
+		}
 		if delay <= 0 {
 			continue
 		}
