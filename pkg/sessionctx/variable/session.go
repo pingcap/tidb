@@ -1136,6 +1136,9 @@ type SessionVars struct {
 	// correlate alternative round to enable conversion of non-correlated semi-joins
 	// to correlated Apply during plan building.
 	EnableCorrelateSubquery bool
+	// SavedEnableCorrelateSubquery stores the pre-round EnableCorrelateSubquery
+	// value while the correlate alternative round temporarily enables it.
+	SavedEnableCorrelateSubquery bool
 
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool

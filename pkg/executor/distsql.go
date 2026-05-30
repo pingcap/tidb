@@ -164,8 +164,21 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 		access = append(access, newCond)
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	ranges, _, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
-	return ranges, err
+	var remainedConds []expression.Expression
+	ranges, _, remainedConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, access, idxCols, colLens, 0)
+	if err != nil {
+		return nil, err
+	}
+	// Residuals from the detacher don't cause incorrect results on this path:
+	//   - Binary-collation residuals are blocked upstream by correlated-access
+	//     extraction before they can be promoted into is.AccessCondition.
+	//   - For other shouldReserve cases (prefix indexes, range predicates), the
+	//     planner keeps the original predicate in table filters, which becomes a
+	//     parent Selection / table-side filter.
+	// The assert guards future planner changes that introduce an uncovered
+	// shouldReserve case on the correlated-access path.
+	intest.Assert(len(remainedConds) == 0, "rebuildIndexRanges: detacher returned residuals on correlated-access path")
+	return ranges, nil
 }
 
 type indexReaderExecutorContext struct {

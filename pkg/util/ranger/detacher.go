@@ -132,7 +132,9 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return -1
+				if !collate.IsBinCollation(collation) || (f.FuncName.L != ast.EQ && f.FuncName.L != ast.NullEQ) {
+					return -1
+				}
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
@@ -160,7 +162,9 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return -1
+				if !collate.IsBinCollation(collation) || (f.FuncName.L != ast.EQ && f.FuncName.L != ast.NullEQ) {
+					return -1
+				}
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
@@ -183,7 +187,9 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			return -1
 		}
 		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-			return -1
+			if !collate.IsBinCollation(collation) {
+				return -1
+			}
 		}
 		for _, arg := range f.GetArgs()[1:] {
 			if _, ok := arg.(*expression.Constant); !ok {
@@ -795,15 +801,14 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			break
 		}
 
-		// Currently, if the access cond is on a prefix index, we will also add this cond to table filters.
-		// A possible optimization is that, if the value in the cond is shorter than the length of the prefix index, we don't
-		// need to add this cond to table filters.
-		// e.g. CREATE TABLE t(a varchar(10), index i(a(5)));  SELECT * FROM t USE INDEX i WHERE a > 'aaa';
-		// However, please notice that if you're implementing this, please (1) set StatementContext.OptimDependOnMutableConst to true,
-		// or (2) don't do this optimization when StatementContext.UseCache is true. That's because this plan is affected by
-		// flen of user variable, we cannot cache this plan.
-		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType(sctx.ExprCtx.GetEvalCtx()).GetFlen()
-		if !isFullLength {
+		checker := &conditionChecker{
+			checkerCol:               cols[i],
+			length:                   lengths[i],
+			optPrefixIndexSingleScan: sctx.OptPrefixIndexSingleScan,
+			ctx:                      sctx.ExprCtx.GetEvalCtx(),
+		}
+		_, shouldReserve := checker.check(cond)
+		if shouldReserve {
 			filters = append(filters, cond)
 		}
 	}

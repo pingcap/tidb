@@ -218,7 +218,7 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
 
-	require.False(t, v.EnableAlternativeLogicalPlans)
+	require.Equal(t, DefOptEnableAlternativeLogicalPlans, v.EnableAlternativeLogicalPlans)
 	err = v.SetSystemVar(TiDBOptEnableAlternativeLogicalPlans, "1")
 	require.NoError(t, err)
 	require.True(t, v.EnableAlternativeLogicalPlans)

@@ -180,11 +180,16 @@ func TestCorrelateParallelApply(t *testing.T) {
 	analyzeRows := tk.MustQuery("explain analyze " + sql).Rows()
 	foundConcurrency := false
 	for _, row := range analyzeRows {
-		line := fmt.Sprintf("%v", row)
-		if strings.Contains(line, "Apply") && strings.Contains(line, "Concurrency:") {
-			idx := strings.Index(line, "Concurrency:")
+		const executionInfoIdx = 5
+		if len(row) <= executionInfoIdx {
+			continue
+		}
+		operatorInfo := fmt.Sprintf("%v", row[0])
+		executionInfo := fmt.Sprintf("%v", row[executionInfoIdx])
+		if strings.Contains(operatorInfo, "Apply") && strings.Contains(executionInfo, "Concurrency:") {
+			idx := strings.Index(executionInfo, "Concurrency:")
 			if idx >= 0 {
-				rest := line[idx+len("Concurrency:"):]
+				rest := executionInfo[idx+len("Concurrency:"):]
 				var n int
 				if _, err := fmt.Sscanf(rest, "%d", &n); err == nil && n > 1 {
 					foundConcurrency = true

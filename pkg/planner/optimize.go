@@ -614,11 +614,6 @@ type alternativeRound struct {
 	cleanup    func(*variable.SessionVars)
 }
 
-// savedEnableCorrelateSubquery holds the pre-round value of
-// EnableCorrelateSubquery so setup/cleanup can share it without a closure
-// wrapper. Safe because optimize is single-threaded per session.
-var savedEnableCorrelateSubquery bool
-
 var alternativeRounds = [...]alternativeRound{
 	{
 		name:       "non-decorrelate",
@@ -630,11 +625,11 @@ var alternativeRounds = [...]alternativeRound{
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
 		enabled:    shouldTryCorrelateRound,
 		setup: func(sv *variable.SessionVars) {
-			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+			sv.SavedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
 			sv.EnableCorrelateSubquery = true
 		},
 		cleanup: func(sv *variable.SessionVars) {
-			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+			sv.EnableCorrelateSubquery = sv.SavedEnableCorrelateSubquery
 		},
 	},
 }

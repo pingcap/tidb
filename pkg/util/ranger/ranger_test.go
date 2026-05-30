@@ -1385,9 +1385,9 @@ create table t(
 		{
 			indexPos:    4,
 			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
-			accessConds: "[eq(test.t.f, a)]",
-			filterConds: "[eq(test.t.f, B)]",
-			resultStr:   "[[\"\\x00A\",\"\\x00A\"]]",
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
 		},
 		{
 			indexPos:    4,
@@ -2541,7 +2541,7 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (f varchar(10) collate utf8mb4_general_ci, index idx_f(f))")
+	tk.MustExec("create table t (f varchar(10) collate utf8mb4_general_ci, g int, index idx_f(f), index idx_fg(f, g))")
 
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -2563,4 +2563,16 @@ func TestBinCollationRangeForIndex(t *testing.T) {
 	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, accessConds))
 	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
 	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00C\"]]", fmt.Sprintf("%v", ranges))
+
+	sql = "select * from t where f = cast('abc' as binary) and g = 1"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[1])
+	require.NotNil(t, cols)
+
+	ranges, accessConds, remainedConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[eq(test.t.f, abc) eq(test.t.g, 1)]", expression.StringifyExpressionsWithCtx(ectx, accessConds))
+	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
+	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\" 1,\"\\x00A\\x00B\\x00C\" 1]]", fmt.Sprintf("%v", ranges))
 }
