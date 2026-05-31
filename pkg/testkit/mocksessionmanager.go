@@ -200,3 +200,8 @@ func (msm *MockSessionManager) CheckOldRunningTxn(job2ver map[int64]int64, job2i
 	}
 	msm.mu.Unlock()
 }
+
+// GetStatusVars is getting the per-session status variables
+func (msm *MockSessionManager) GetStatusVars() map[uint64]map[string]string {
+	return map[uint64]map[string]string{}
+}

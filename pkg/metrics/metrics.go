@@ -310,6 +310,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(IndexLookRowsCounter)
 	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
 	prometheus.MustRegister(IndexLookUpCopTaskCount)
+
+	// TLS
+	prometheus.MustRegister(TLSVersion)
+	prometheus.MustRegister(TLSCipher)
 }
 
 var mode struct {
