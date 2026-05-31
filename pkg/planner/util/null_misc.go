@@ -73,13 +73,8 @@ type nullRejectProof struct {
 
 // allConstants checks whether the expression tree consists entirely of constants.
 func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
-<<<<<<< HEAD
 	if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
 		return false // expression contains non-deterministic parameter
-=======
-	if expression.MaybeOverOptimized4PlanCache(ctx, expr) {
-		return false
->>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129))
 	}
 	switch v := expr.(type) {
 	case *expression.ScalarFunction:
@@ -95,76 +90,6 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 	return false
 }
 
-<<<<<<< HEAD
-// isNullRejectedInList checks null filter for IN list using OR logic.
-// Reason is that null filtering through evaluation by isNullRejectedSimpleExpr
-// has problems with IN list. For example, constant in (outer-table.col1, inner-table.col2)
-// is not null rejecting since constant in (outer-table.col1, NULL) is not false/unknown.
-func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction, innerSchema *expression.Schema) bool {
-	for i, arg := range expr.GetArgs() {
-		if i > 0 {
-			newArgs := make([]expression.Expression, 0, 2)
-			newArgs = append(newArgs, expr.GetArgs()[0])
-			newArgs = append(newArgs, arg)
-			eQCondition, err := expression.NewFunction(ctx.GetExprCtx(), ast.EQ,
-				expr.GetType(ctx.GetExprCtx().GetEvalCtx()), newArgs...)
-			if err != nil {
-				return false
-			}
-			if !(isNullRejectedSimpleExpr(ctx, innerSchema, eQCondition)) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// IsNullRejected takes care of complex predicates like this:
-// IsNullRejected(A OR B) = IsNullRejected(A) AND IsNullRejected(B)
-// IsNullRejected(A AND B) = IsNullRejected(A) OR IsNullRejected(B)
-func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression) bool {
-	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
-	if expression.ContainOuterNot(predicate) {
-		return false
-	}
-
-	switch expr := predicate.(type) {
-	case *expression.ScalarFunction:
-		if expr.FuncName.L == ast.LogicAnd {
-			if IsNullRejected(ctx, innerSchema, expr.GetArgs()[0]) {
-				return true
-			}
-			return IsNullRejected(ctx, innerSchema, expr.GetArgs()[1])
-		} else if expr.FuncName.L == ast.LogicOr {
-			if !(IsNullRejected(ctx, innerSchema, expr.GetArgs()[0])) {
-				return false
-			}
-			return IsNullRejected(ctx, innerSchema, expr.GetArgs()[1])
-		} else if expr.FuncName.L == ast.In {
-			return isNullRejectedInList(ctx, expr, innerSchema)
-		} else {
-			return isNullRejectedSimpleExpr(ctx, innerSchema, expr)
-		}
-	default:
-		return isNullRejectedSimpleExpr(ctx, innerSchema, predicate)
-	}
-}
-
-// isNullRejectedSimpleExpr check whether a condition is null-rejected
-// A condition would be null-rejected in one of following cases:
-// If it is a predicate containing a reference to an inner table (null producing side) that evaluates
-// to UNKNOWN or FALSE when one of its arguments is NULL.
-func isNullRejectedSimpleExpr(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
-	// The expression should reference at least one field in innerSchema or all constants.
-	if !expression.ExprReferenceSchema(expr, schema) && !allConstants(ctx.GetExprCtx(), expr) {
-		return false
-	}
-	exprCtx := ctx.GetNullRejectCheckExprCtx()
-	sc := ctx.GetSessionVars().StmtCtx
-	result, err := expression.EvaluateExprWithNull(exprCtx, schema, expr)
-	if err != nil {
-		return false
-=======
 // IsNullRejected proves whether `predicate` can be TRUE after every column in
 // `innerSchema` is replaced with SQL NULL.
 func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
@@ -219,7 +144,6 @@ func proveNullRejected(
 		return proofFromConstant(ctx, x)
 	case *expression.ScalarFunction:
 		return proveNullRejectedScalarFunc(ctx, innerSchema, x)
->>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129))
 	}
 	return nullRejectProof{}
 }

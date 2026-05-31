@@ -172,15 +172,7 @@ create table t1(c0 int);
 insert into t0 values (1);
 insert into t1 values (-71);
 
-<<<<<<< HEAD
-SELECT
-    t0.c0 AS ref0,
-    t1.c0 AS ref1
-FROM t0
-RIGHT OUTER JOIN t1 ON t0.c0 = t1.c0
-WHERE (t1.c0 AND (t0.c0 != NULL)) IS FALSE;
-=======
-explain format='plan_tree' select
+explain format='brief' select
   coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
     length(nullif(char(t1.c0), 'KV'))) as w_1
 from t0
@@ -203,7 +195,7 @@ insert into t0 values (1);
 create table t1(c0 int);
 insert into t1(c0) values (0);
 
-explain format='plan_tree' select
+explain format='brief' select
   t0.c0 as ref0,
   t1.c0 as ref1
 from t0
@@ -226,7 +218,7 @@ create table t1(c0 int);
 insert into t0 values (1);
 insert into t1 values (0);
 
-explain format='plan_tree' select
+explain format='brief' select
   t0.c0 as ref0,
   t1.c0 as ref1
 from t0
@@ -246,7 +238,7 @@ create table t0(c0 int);
 create table t1(c0 int);
 insert into t0 values (0);
 
-explain format='plan_tree' select
+explain format='brief' select
   t1.c0 as ref0,
   t0.c0 as ref1
 from t1
@@ -259,4 +251,3 @@ select
 from t1
 right outer join t0 on t1.c0 = t0.c0
 where (null and t0.c0) ^ (case when t1.c0 then t0.c0 else true end);
->>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129))

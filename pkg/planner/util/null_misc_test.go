@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
 
 	require.NotEmpty(t, names)
-	require.Equal(t, "a5ce0716b778fb8e0b488d3a11c402d8a8224191757a9e02ece80895d5d67e05", hex.EncodeToString(sum[:]))
+	require.Equal(t, "12dd16fda61c67b3dd74d38e0408df30855afaa5781dbdc14348987c59d7167c", hex.EncodeToString(sum[:]))
 
 	for name := range nullRejectRejectNullTests {
 		require.Contains(t, names, name)
@@ -47,7 +47,7 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 
 func TestIsNullRejectedProofModes(t *testing.T) {
 	sctx := mock.NewContext()
-	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb"))
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb"))
 	exprCtx := sctx.GetExprCtx()
 
 	innerA := newNullRejectIntColumn(1)
