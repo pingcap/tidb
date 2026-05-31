@@ -40,6 +40,15 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	require.NotEmpty(t, names)
 	require.Equal(t, "12dd16fda61c67b3dd74d38e0408df30855afaa5781dbdc14348987c59d7167c", hex.EncodeToString(sum[:]))
 
+	internalScalarNames := map[string]struct{}{
+		ast.Cast: {},
+	}
+	for name := range nullRejectNullPreservingFunctions {
+		if _, ok := internalScalarNames[name]; ok {
+			continue
+		}
+		require.Contains(t, names, name)
+	}
 	for name := range nullRejectRejectNullTests {
 		require.Contains(t, names, name)
 	}
@@ -55,7 +64,8 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 	outerC := newNullRejectIntColumn(3)
 	innerS := newNullRejectStringColumn(4)
 	innerUnsignedD := newNullRejectUintColumn(5)
-	innerSchema := expression.NewSchema(innerA, innerB, innerS, innerUnsignedD)
+	innerDate := newNullRejectDatetimeColumn(6)
+	innerSchema := expression.NewSchema(innerA, innerB, innerS, innerUnsignedD, innerDate)
 
 	gtInnerAZero := newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
 	eqInnerAZero := newNullRejectFunc(t, exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
@@ -181,6 +191,43 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		newNullRejectStringConst("abc"),
 		innerS,
 	)
+	weekWithNullableMode := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.Week,
+		types.NewFieldType(mysql.TypeLonglong),
+		newNullRejectStringConst("2024-01-08"),
+		innerA,
+	)
+	yearWeekWithNullableMode := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.YearWeek,
+		types.NewFieldType(mysql.TypeLonglong),
+		newNullRejectStringConst("2024-01-08"),
+		innerA,
+	)
+	weekWithNullableDateAndOuterMode := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.Week,
+		types.NewFieldType(mysql.TypeLonglong),
+		innerDate,
+		outerC,
+	)
+	yearWeekWithNullableDateAndOuterMode := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.YearWeek,
+		types.NewFieldType(mysql.TypeLonglong),
+		innerDate,
+		outerC,
+	)
+	deferredInnerGTZero := newNullRejectDeferredConst(exprCtx, gtInnerAZero)
+	deferredCoalesceInnerATwoGTTwo := newNullRejectDeferredConst(exprCtx,
+		newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), coalesceInnerATwo, newNullRejectIntConst(2)),
+	)
+	deferredOneWithNullPlaceholder := newNullRejectDeferredConst(exprCtx, expression.NewOne())
 
 	cases := []struct {
 		name     string
@@ -337,6 +384,69 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 			expr:     newNullRejectNotNull(t, exprCtx, jsonSearchNullableEscape),
 			expected: false,
 		},
+		{
+			name: "week_nullable_mode_uses_default_mode_zero",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GE,
+				types.NewFieldType(mysql.TypeTiny),
+				weekWithNullableMode,
+				expression.NewZero(),
+			),
+			expected: false,
+		},
+		{
+			name: "yearweek_nullable_mode_uses_default_mode_zero",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GE,
+				types.NewFieldType(mysql.TypeTiny),
+				yearWeekWithNullableMode,
+				expression.NewZero(),
+			),
+			expected: false,
+		},
+		{
+			name: "week_nullable_date_rejects_null_even_with_outer_mode",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GE,
+				types.NewFieldType(mysql.TypeTiny),
+				weekWithNullableDateAndOuterMode,
+				expression.NewZero(),
+			),
+			expected: true,
+		},
+		{
+			name: "yearweek_nullable_date_rejects_null_even_with_outer_mode",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GE,
+				types.NewFieldType(mysql.TypeTiny),
+				yearWeekWithNullableDateAndOuterMode,
+				expression.NewZero(),
+			),
+			expected: true,
+		},
+		{
+			name:     "deferred_expr_uses_symbolic_null_reject_proof",
+			expr:     deferredInnerGTZero,
+			expected: true,
+		},
+		{
+			name:     "deferred_expr_skips_nullified_fold",
+			expr:     deferredCoalesceInnerATwoGTTwo,
+			expected: false,
+		},
+		{
+			name:     "deferred_expr_does_not_classify_placeholder_null",
+			expr:     deferredOneWithNullPlaceholder,
+			expected: false,
+		},
 	}
 
 	for _, tt := range cases {
@@ -373,6 +483,15 @@ func newNullRejectUintColumn(id int64) *expression.Column {
 	}
 }
 
+func newNullRejectDatetimeColumn(id int64) *expression.Column {
+	return &expression.Column{
+		UniqueID: id,
+		ID:       id,
+		Index:    int(id),
+		RetType:  types.NewFieldType(mysql.TypeDatetime),
+	}
+}
+
 func newNullRejectStringConst(value string) *expression.Constant {
 	return &expression.Constant{
 		Value:   types.NewStringDatum(value),
@@ -391,6 +510,15 @@ func newNullRejectUintConst(value uint64) *expression.Constant {
 	return &expression.Constant{
 		Value:   types.NewUintDatum(value),
 		RetType: newNullRejectUintFieldType(mysql.TypeLonglong),
+	}
+}
+
+// newNullRejectDeferredConst builds a deferred constant with a NULL placeholder value.
+func newNullRejectDeferredConst(ctx expression.BuildContext, deferred expression.Expression) *expression.Constant {
+	return &expression.Constant{
+		Value:        types.NewDatum(nil),
+		RetType:      deferred.GetType(ctx.GetEvalCtx()),
+		DeferredExpr: deferred,
 	}
 }
 
