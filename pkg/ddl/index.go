@@ -4781,9 +4781,13 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 		return 0, 0, 0, 0, 0, 0, nil
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
+	sampledKVCapacity := 0
+	for _, task := range regionTasks {
+		sampledKVCapacity += blockSamplePredictionMaxRows * max(len(task.indexes), 1)
+	}
 	var (
 		totalLogicalBytes int64
-		sampledKVs        []sampledIndexKV
+		sampledKVs        = make([]sampledIndexKV, 0, sampledKVCapacity)
 		nonEmptySamples   int
 	)
 	for _, task := range regionTasks {
@@ -5156,7 +5160,7 @@ func estimateSortedSampledIndexKVKeySharedPrefixAvg(sortedKVs []sampledIndexKV) 
 
 func sharedPrefixLength(a, b []byte) int {
 	limit := min(len(a), len(b))
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		if a[i] != b[i] {
 			return i
 		}
