@@ -644,39 +644,34 @@ func TestG2AntiDependencyCycleForUpdate(t *testing.T) {
 	session1.MustExec("drop table if exists t;")
 	session1.MustExec("create table t (id int primary key, val int);")
 
-	// Scenario: both keys do not exist yet.
-	// T1 reads key 1 FOR UPDATE (acquires pessimistic lock), then inserts key 2.
-	// T2 tries to read key 2 FOR UPDATE but should block because T1's insert
-	// will conflict (or T2 blocks on the lock for key 2 once T1 writes it).
+	// T1 locks non-existent key 1 via point-get FOR UPDATE.
 	session1.MustExec("begin;")
 	session1.MustQuery("select * from t where id = 1 for update;").Check(testkit.Rows())
+	// T2 tries to lock the same non-existent key 1. Because T1 holds a
+	// pessimistic lock on it (even though the row doesn't exist), T2 must block
+	// until T1 commits.
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		session2.MustExec("begin;")
+		// This blocks until T1 releases its lock on key 1.
+		session2.MustQuery("select * from t where id = 1 for update;").Check(testkit.Rows("1 1"))
+		session2.MustExec("insert into t values(2, 1);")
+		session2.MustExec("commit;")
+	})
 
-	// T2 begins and tries to read key 2 FOR UPDATE.
-	session2.MustExec("begin;")
-	session2.MustQuery("select * from t where id = 2 for update;").Check(testkit.Rows())
-
-	// T1 inserts key 2. If key 2 was locked by T2, this would block. But since
-	// T2's read returned empty, the lock on key 2 is a pessimistic lock on a
-	// non-existent key.
-	session1.MustExec("insert into t values(2, 1);")
+	// T1 inserts key 1 and commits, releasing the lock.
+	session1.MustExec("insert into t values(1, 1);")
 	session1.MustExec("commit;")
-
-	// T2 now tries to insert key 1. Since T1 held a pessimistic lock on key 1
-	// (even though it didn't exist), and T1 has committed, T2 should be able to
-	// proceed. The anti-dependency cycle is avoided because the locks serialize
-	// the reads.
-	session2.MustExec("insert into t values(1, 1);")
-	session2.MustExec("commit;")
+	wg.Wait()
 
 	// Verify both rows exist.
 	session1.MustQuery("select * from t order by id;").Check(testkit.Rows("1 1", "2 1"))
 
-	// Test with concurrent blocking: T1 locks key 3, T2 tries to lock key 3
-	// and should block until T1 commits.
+	// T1 locks non-existent key 3, then T2 tries to lock key 3 and must block
+	// until T1 commits.
 	session1.MustExec("begin;")
 	session1.MustQuery("select * from t where id = 3 for update;").Check(testkit.Rows())
 
-	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		session2.MustExec("begin;")
 		// This should block until T1 releases its lock on key 3.
