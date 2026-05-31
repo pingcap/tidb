@@ -83,10 +83,19 @@ func canBeImpliedFromExprs(
 		return implIsNotNull(rangerctx, col, filters)
 	}
 
-	if _, ok := expression.CompareOpMap[sf.FuncName.L]; !ok {
+	if !isCompareOp(sf.FuncName.L) {
 		return false
 	}
 	return implCompareExpr(rangerctx, sf, filters)
+}
+
+func isCompareOp(funcName string) bool {
+	switch funcName {
+	case ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ:
+		return true
+	default:
+		return false
+	}
 }
 
 func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFunction, filters []expression.Expression) bool {
@@ -121,11 +130,18 @@ func implCompareExpr(rangerctx *context.RangerContext, pre *expression.ScalarFun
 		return false
 	}
 	for i, ran := range unionedRange {
-		if !ran.Equal(ranges[i]) {
+		if !rangeEqual(rangerctx, ran, ranges[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func rangeEqual(rangerctx *context.RangerContext, lhs, rhs *ranger.Range) bool {
+	if lhs == nil || rhs == nil {
+		return lhs == rhs
+	}
+	return lhs.Subset(rangerctx.TypeCtx, rhs) && rhs.Subset(rangerctx.TypeCtx, lhs)
 }
 
 func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Column, filters []expression.Expression) bool {
@@ -206,7 +222,7 @@ func checkIsNullRejected(sctx planctx.PlanContext, targetCol *expression.Column,
 			return false
 		}
 	}
-	if _, ok := expression.CompareOpMap[filter.FuncName.L]; ok {
+	if isCompareOp(filter.FuncName.L) {
 		if filter.FuncName.L == ast.NullEQ {
 			return false
 		}
