@@ -69,7 +69,11 @@ type BackfillTaskMeta struct {
 	BlockSamplePredictionRegionCount     int                     `json:"block_sample_prediction_region_count,omitempty"`
 	BlockSamplePredictionRowCount        int                     `json:"block_sample_prediction_row_count,omitempty"`
 	BlockSamplePredictionReadErrorCount  int                     `json:"block_sample_prediction_read_error_count,omitempty"`
-	BlockSampleKeySharedPrefixAvg        float64                 `json:"block_sample_key_shared_prefix_avg,omitempty"`
+	BlockSampleEncodedKeySharedPrefixAvg float64                 `json:"block_sample_encoded_key_shared_prefix_avg,omitempty"`
+	BlockSampleRawKeySharedPrefixAvg     float64                 `json:"block_sample_raw_key_shared_prefix_avg,omitempty"`
+	// BlockSampleKeySharedPrefixAvg is kept for compatibility with task metadata
+	// written before the encoded/raw split.
+	BlockSampleKeySharedPrefixAvg float64 `json:"block_sample_key_shared_prefix_avg,omitempty"`
 	// SamplePredictedTiKVIndexBytes and SamplePrediction* are kept for
 	// compatibility with task metadata written before the static/block split.
 	SamplePredictedTiKVIndexBytes  uint64 `json:"sample_predicted_tikv_index_bytes,omitempty"`

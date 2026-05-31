@@ -1023,6 +1023,10 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Positive(t, numericPrediction.MVCCOverheadBytes)
 		require.Less(t, numericPrediction.MVCCOverheadBytes, rawNumericMVCC)
 		require.Greater(t, numericLogicalBytes, numericPrediction.PredictedBytes)
+		require.NotEmpty(t, numericKVs[0].rawKey)
+		require.Less(t,
+			estimateSampledIndexKVRawKeySharedPrefixAvg(numericKVs),
+			estimateSampledIndexKVEncodedKeySharedPrefixAvg(numericKVs))
 		numericRatio := float64(numericPrediction.PredictedBytes) / float64(numericLogicalBytes)
 		require.Less(t, numericRatio, float64(0.8))
 
@@ -1103,14 +1107,25 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		prefixSplitPrediction := estimateSampledIndexKVPredictionBytesWithSplit(prefixKVs, 5)
 		require.NoError(t, prefixSplitPrediction.Err)
 		require.Greater(t, prefixSplitPrediction.PredictedBytes, prefixPrediction.PredictedBytes)
-		require.Zero(t, estimateSampledIndexKVKeySharedPrefixAvg(nil))
-		require.Zero(t, estimateSampledIndexKVKeySharedPrefixAvg([]sampledIndexKV{{key: []byte("single")}}))
-		require.InDelta(t, 1.5, estimateSampledIndexKVKeySharedPrefixAvg([]sampledIndexKV{
+		require.Zero(t, estimateSampledIndexKVEncodedKeySharedPrefixAvg(nil))
+		require.Zero(t, estimateSampledIndexKVEncodedKeySharedPrefixAvg([]sampledIndexKV{{key: []byte("single")}}))
+		require.InDelta(t, 1.5, estimateSampledIndexKVEncodedKeySharedPrefixAvg([]sampledIndexKV{
 			{key: []byte("b001")},
 			{key: []byte("a001")},
 			{key: []byte("a000")},
 		}), 1e-9)
-		require.Greater(t, estimateSampledIndexKVKeySharedPrefixAvg(prefixKVs), float64(50))
+		require.Greater(t, estimateSampledIndexKVEncodedKeySharedPrefixAvg(prefixKVs), float64(50))
+		require.Zero(t, estimateSampledIndexKVRawKeySharedPrefixAvg(nil))
+		require.Zero(t, estimateSampledIndexKVRawKeySharedPrefixAvg([]sampledIndexKV{{key: []byte("single"), rawKey: []byte("single")}}))
+		encodedPrefixKVs := []sampledIndexKV{
+			{key: []byte("t_index_b001"), rawKey: []byte("b001")},
+			{key: []byte("t_index_a001"), rawKey: []byte("a001")},
+			{key: []byte("t_index_a000"), rawKey: []byte("a000")},
+		}
+		require.InDelta(t, 1.5, estimateSampledIndexKVRawKeySharedPrefixAvg(encodedPrefixKVs), 1e-9)
+		require.Greater(t,
+			estimateSampledIndexKVEncodedKeySharedPrefixAvg(encodedPrefixKVs),
+			estimateSampledIndexKVRawKeySharedPrefixAvg(encodedPrefixKVs))
 
 		mvccKVs := buildSampledTiKVMVCCKVs([]sampledIndexKV{
 			{key: []byte("empty"), value: nil},
