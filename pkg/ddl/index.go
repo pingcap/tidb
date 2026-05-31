@@ -3352,6 +3352,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					zap.Int("block_sample_prediction_read_error_count", blockSamplePrediction.ReadErrorCount),
 					zap.Float64("block_sample_encoded_key_shared_prefix_avg", blockSamplePrediction.EncodedKeySharedPrefixAvgBytes),
 					zap.Float64("block_sample_raw_key_shared_prefix_avg", blockSamplePrediction.RawKeySharedPrefixAvgBytes),
+					zap.Float64("block_sample_raw_key_length_avg", blockSamplePrediction.RawKeyLengthAvgBytes),
 					zap.Uint64("cluster_available_bytes", initialCapacity.AvailableBytes),
 					zap.Uint64("cluster_total_bytes", initialCapacity.TotalBytes),
 					zap.Int("tikv_store_count", initialCapacity.StoreCount))
@@ -3390,6 +3391,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			BlockSamplePredictionReadErrorCount:  blockSamplePrediction.ReadErrorCount,
 			BlockSampleEncodedKeySharedPrefixAvg: blockSamplePrediction.EncodedKeySharedPrefixAvgBytes,
 			BlockSampleRawKeySharedPrefixAvg:     blockSamplePrediction.RawKeySharedPrefixAvgBytes,
+			BlockSampleRawKeyLengthAvg:           blockSamplePrediction.RawKeyLengthAvgBytes,
 			PredictedTiKVIndexBytes:              blockSamplePrediction.PredictedBytes,
 			Version:                              BackfillTaskMetaVersion1,
 		}
@@ -4175,6 +4177,7 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		zap.Int("block_sample_prediction_read_error_count", fallbackPredictionCount(taskMeta.BlockSamplePredictionReadErrorCount, taskMeta.SamplePredictionReadErrorCount)),
 		zap.Float64("block_sample_encoded_key_shared_prefix_avg", fallbackFloat64(taskMeta.BlockSampleEncodedKeySharedPrefixAvg, taskMeta.BlockSampleKeySharedPrefixAvg)),
 		zap.Float64("block_sample_raw_key_shared_prefix_avg", taskMeta.BlockSampleRawKeySharedPrefixAvg),
+		zap.Float64("block_sample_raw_key_length_avg", taskMeta.BlockSampleRawKeyLengthAvg),
 		zap.Int64("logical_index_kv_bytes", logicalIndexKVBytes),
 		zap.Int64("observed_tikv_capacity_increase_bytes", observedIncrease.increase),
 		zap.Bool("observed_tikv_capacity_reliable", observedIncrease.reliable),
@@ -4461,6 +4464,7 @@ type sampleTiKVIndexPredictionResult struct {
 	ReadErrorCount                 int
 	EncodedKeySharedPrefixAvgBytes float64
 	RawKeySharedPrefixAvgBytes     float64
+	RawKeyLengthAvgBytes           float64
 }
 
 type tiKVIndexPredictionResult struct {
@@ -4739,7 +4743,7 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 		return result, nil
 	}
 
-	predictedAvgBytesPerRow, mvccAvgBytesPerRow, encodedKeySharedPrefixAvg, rawKeySharedPrefixAvg, sampledRegions, sampledRows, readErrors, err := w.estimateBlockSampleBytesPerRow(
+	predictedAvgBytesPerRow, mvccAvgBytesPerRow, encodedKeySharedPrefixAvg, rawKeySharedPrefixAvg, rawKeyLengthAvg, sampledRegions, sampledRows, readErrors, err := w.estimateBlockSampleBytesPerRow(
 		jobCtx,
 		sctx,
 		regionTasks,
@@ -4763,6 +4767,7 @@ func (w *worker) predictTiKVIndexBytesBlockSample(
 		result.MVCCOverheadBytes = uint64(mvccAvgBytesPerRow * float64(totalRowCount))
 		result.EncodedKeySharedPrefixAvgBytes = encodedKeySharedPrefixAvg
 		result.RawKeySharedPrefixAvgBytes = rawKeySharedPrefixAvg
+		result.RawKeyLengthAvgBytes = rawKeyLengthAvg
 	}
 	return result, nil
 }
@@ -4778,13 +4783,14 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 	mvccAvgBytesPerRow float64,
 	encodedKeySharedPrefixAvg float64,
 	rawKeySharedPrefixAvg float64,
+	rawKeyLengthAvg float64,
 	sampledRegions int,
 	totalRows int,
 	readErrorCount int,
 	err error,
 ) {
 	if len(regionTasks) == 0 {
-		return 0, 0, 0, 0, 0, 0, 0, nil
+		return 0, 0, 0, 0, 0, 0, 0, 0, nil
 	}
 	rnd := rand.New(rand.NewSource(int64(seed)))
 	sampledKVCapacity := 0
@@ -4806,7 +4812,7 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 				zap.Int("skipRows", skipRows),
 				zap.Error(err))
 			if readErrorCount > samplePredictionMaxReadErrors {
-				return 0, 0, 0, 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+				return 0, 0, 0, 0, 0, sampledRegions, totalRows, readErrorCount, dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
 					fmt.Sprintf("add index block sample prediction failed after %d read errors: %v", readErrorCount, err))
 			}
 			continue
@@ -4821,11 +4827,12 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 		sampledKVs = append(sampledKVs, kvs...)
 	}
 	if totalRows == 0 {
-		return 0, 0, 0, 0, sampledRegions, totalRows, readErrorCount, nil
+		return 0, 0, 0, 0, 0, sampledRegions, totalRows, readErrorCount, nil
 	}
 	sortedKVs := sortSampledIndexKVs(sampledKVs)
 	encodedKeySharedPrefixAvg = estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVs)
 	rawKeySharedPrefixAvg = estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVs)
+	rawKeyLengthAvg = estimateSampledIndexKVRawKeyLengthAvg(sortedKVs)
 	estimatedBytes := estimateSampledIndexKVPredictionBytesWithSortedKVs(sortedKVs, nonEmptySamples)
 	if estimatedBytes.Err != nil {
 		logutil.DDLLogger().Warn("failed to estimate physical TiKV bytes from block-sampled add-index KVs; fallback to logical bytes for sampled rows",
@@ -4838,7 +4845,7 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 	if estimatedBytes.PredictedBytes <= 0 {
 		estimatedBytes.PredictedBytes = totalLogicalBytes
 	}
-	return float64(estimatedBytes.PredictedBytes) / float64(totalRows), float64(estimatedBytes.MVCCOverheadBytes) / float64(totalRows), encodedKeySharedPrefixAvg, rawKeySharedPrefixAvg, sampledRegions, totalRows, readErrorCount, nil
+	return float64(estimatedBytes.PredictedBytes) / float64(totalRows), float64(estimatedBytes.MVCCOverheadBytes) / float64(totalRows), encodedKeySharedPrefixAvg, rawKeySharedPrefixAvg, rawKeyLengthAvg, sampledRegions, totalRows, readErrorCount, nil
 }
 
 func (w *worker) sampleBlockIndexKVsFromRegion(
@@ -5257,6 +5264,17 @@ func estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVs []sampledIndexK
 		sharedPrefixBytes += int64(sharedPrefixLength(sortedKVs[i-1].rawKey, sortedKVs[i].rawKey))
 	}
 	return float64(sharedPrefixBytes) / float64(len(sortedKVs)-1)
+}
+
+func estimateSampledIndexKVRawKeyLengthAvg(kvs []sampledIndexKV) float64 {
+	if len(kvs) == 0 {
+		return 0
+	}
+	var totalRawKeyBytes int64
+	for _, kv := range kvs {
+		totalRawKeyBytes += int64(len(kv.rawKey))
+	}
+	return float64(totalRawKeyBytes) / float64(len(kvs))
 }
 
 func sharedPrefixLength(a, b []byte) int {
