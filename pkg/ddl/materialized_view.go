@@ -572,6 +572,9 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
 	}
 
+	// TODO: split ALTER MATERIALIZED VIEW LOG into per-action handlers and
+	// dedicated DDL job args when schema-changing actions (for example column
+	// add/drop) are supported.
 	for _, action := range s.Actions {
 		switch action.Tp {
 		case ast.AlterMaterializedViewLogActionPurge:

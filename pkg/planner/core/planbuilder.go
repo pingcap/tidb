@@ -6308,6 +6308,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			return nil, plannererrors.ErrNoDB
 		}
 		mlogName := b.materializedViewLogNameForBaseTable(ctx, dbName, v.Table.Name)
+		// TODO: add action-specific privilege checks for ALTER MATERIALIZED VIEW LOG
+		// (for example base-table SELECT for future column-level actions).
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, mlogName.L)
