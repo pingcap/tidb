@@ -11843,12 +11843,16 @@ AdminStmt:
 			HandleRanges: $6.([]ast.HandleRange),
 		}
 	}
-|	"ADMIN" "CHECKSUM" "TABLE" TableNameList
+|	"ADMIN" "CHECKSUM" "TABLE" TableNameList PartitionNameListOpt
 	{
-		$$ = &ast.AdminStmt{
+		stmt := &ast.AdminStmt{
 			Tp:     ast.AdminChecksumTable,
 			Tables: $4.([]*ast.TableName),
 		}
+		if names, ok := $5.([]ast.CIStr); ok && len(names) > 0 {
+			stmt.PartitionNames = names
+		}
+		$$ = stmt
 	}
 |	"ADMIN" "CANCEL" "DDL" "JOBS" NumList
 	{

@@ -1135,7 +1135,7 @@ func (tr *TableImporter) postProcess(
 			}
 
 			var remoteChecksum *ingestctrl.RemoteChecksum
-			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
+			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo, rc.cfg.Mydumper.TargetPartitions)
 			failpoint.Inject("checksum-error", func() {
 				tr.logger.Info("failpoint checksum-error injected.")
 				remoteChecksum = nil
@@ -1214,7 +1214,7 @@ func (tr *TableImporter) postProcess(
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzeSkipped
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
-			err := tr.analyzeTable(ctx, rc.db)
+			err := tr.analyzeTable(ctx, rc.db, rc.cfg.Mydumper.TargetPartitions)
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
 				if err != nil {
@@ -1401,13 +1401,26 @@ func (tr *TableImporter) compareChecksum(remoteChecksum *ingestctrl.RemoteChecks
 	return nil
 }
 
-func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
+// analyzeTable runs ANALYZE TABLE on the target table.
+// When partitionNames is non-empty, the statement is scoped to those partitions only:
+// ANALYZE TABLE t PARTITION (p1, p2, ...).
+// Note: rows written to partitions outside partitionNames are not analyzed.
+// Callers should ensure source data contains only rows for the named partitions.
+func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB, partitionNames []string) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
 	exec := common.SQLWithRetry{
 		DB:     db,
 		Logger: tr.logger,
 	}
-	err := exec.Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
+	stmt := "ANALYZE TABLE " + tr.tableName
+	if len(partitionNames) > 0 {
+		escaped := make([]string, len(partitionNames))
+		for i, p := range partitionNames {
+			escaped[i] = common.EscapeIdentifier(p)
+		}
+		stmt += " PARTITION " + strings.Join(escaped, ", ")
+	}
+	err := exec.Exec(ctx, "analyze table", stmt)
 	task.End(zap.ErrorLevel, err)
 	return err
 }

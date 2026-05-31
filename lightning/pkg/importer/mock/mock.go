@@ -330,6 +330,14 @@ func (t *TargetInfo) IsTableEmpty(_ context.Context, schemaName string, tableNam
 	return &result, nil
 }
 
+// IsPartitionEmpty checks whether the specified partition of the table contains data or not.
+// It implements the TargetInfoGetter interface.
+// NOTE: the mock does not track per-partition row counts; it falls back to table-level
+// emptiness, which is sufficient for precheck tests that don't depend on partition granularity.
+func (t *TargetInfo) IsPartitionEmpty(ctx context.Context, schemaName string, tableName string, _ string) (*bool, error) {
+	return t.IsTableEmpty(ctx, schemaName, tableName)
+}
+
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 // It implements the TargetInfoGetter interface.
 func (*TargetInfo) CheckVersionRequirements(_ context.Context) error {

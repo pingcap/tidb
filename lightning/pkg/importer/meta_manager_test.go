@@ -444,7 +444,7 @@ type testChecksumMgr struct {
 
 var _ ingestctrl.ChecksumManager = (*testChecksumMgr)(nil)
 
-func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *importdef.TableInfo) (*ingestctrl.RemoteChecksum, error) {
+func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *importdef.TableInfo, partitionNames []string) (*ingestctrl.RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
 }

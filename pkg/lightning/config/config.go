@@ -904,6 +904,14 @@ type MydumperRuntime struct {
 	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
 	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
 	IgnoreColumns    AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	// TargetPartitions scopes post-restore operations (empty pre-check, checksum, ANALYZE)
+	// to the named partitions only. It does NOT filter the data written during ingest —
+	// rows are always routed to whichever partition the partitioning key dictates.
+	// Callers are responsible for ensuring the source files contain only rows that belong
+	// to the named partitions; rows for other partitions will be ingested but will not
+	// be covered by the partition-scoped checksum or ANALYZE.
+	// Leave empty (default) for standard full-table behavior.
+	TargetPartitions []string `toml:"target-partition" json:"target-partition"`
 	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
 	//   - utf8mb4
 	//   - GB18030

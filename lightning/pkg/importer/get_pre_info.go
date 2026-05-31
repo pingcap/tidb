@@ -102,6 +102,8 @@ type TargetInfoGetter interface {
 	CheckVersionRequirements(ctx context.Context) error
 	// IsTableEmpty checks whether the specified table on the target DB contains data or not.
 	IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error)
+	// IsPartitionEmpty checks whether the specified partition of the table contains data or not.
+	IsPartitionEmpty(ctx context.Context, schemaName string, tableName string, partitionName string) (*bool, error)
 	// GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 	GetTargetSysVariablesForImport(ctx context.Context, opts ...ropts.GetPreInfoOption) map[string]string
 	// GetMaxReplica gets the max-replica from replication config on the target.
@@ -216,6 +218,37 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	rootErr := errors.Cause(err)
 	if mysqlErr, ok := rootErr.(*mysql_sql_driver.MySQLError); ok && mysqlErr.Number == errno.ErrNoSuchTable {
 		isNoSuchTableErr = true
+	}
+	switch {
+	case isNoSuchTableErr:
+		result = true
+	case errors.ErrorEqual(err, sql.ErrNoRows):
+		result = true
+	case err != nil:
+		return nil, errors.Trace(err)
+	default:
+		result = false
+	}
+	return &result, nil
+}
+
+// IsPartitionEmpty checks whether a specific named partition of the table is empty.
+func (g *TargetInfoGetterImpl) IsPartitionEmpty(ctx context.Context, schemaName string, tableName string, partitionName string) (*bool, error) {
+	var result bool
+	exec := common.SQLWithRetry{
+		DB:     g.db,
+		Logger: log.Wrap(logutil.Logger(ctx)),
+	}
+	var dump int
+	err := exec.QueryRow(ctx, "check partition empty",
+		common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s PARTITION (%s) USE INDEX() LIMIT 1", schemaName, tableName, partitionName),
+		&dump,
+	)
+	isNoSuchTableErr := false
+	if rootErr := errors.Cause(err); rootErr != nil {
+		if mysqlErr, ok := rootErr.(*mysql_sql_driver.MySQLError); ok && mysqlErr.Number == errno.ErrNoSuchTable {
+			isNoSuchTableErr = true
+		}
 	}
 	switch {
 	case isNoSuchTableErr:
@@ -810,6 +843,12 @@ func (p *PreImportInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdh
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
 	return p.targetInfoGetter.IsTableEmpty(ctx, schemaName, tableName)
+}
+
+// IsPartitionEmpty checks whether the specified partition of the table on the target DB contains data or not.
+// It implements the PreImportInfoGetter interface.
+func (p *PreImportInfoGetterImpl) IsPartitionEmpty(ctx context.Context, schemaName string, tableName string, partitionName string) (*bool, error) {
+	return p.targetInfoGetter.IsPartitionEmpty(ctx, schemaName, tableName, partitionName)
 }
 
 // FetchRemoteDBModels fetches the database structures from the remote target.

@@ -1405,14 +1405,29 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 					}
 				}
 
-				isEmptyPtr, err1 := ci.preInfoGetter.IsTableEmpty(gCtx, tblNameComp.DBName, tblNameComp.TableName)
-				if err1 != nil {
-					return err1
-				}
-				if !(*isEmptyPtr) {
-					lock.Lock()
-					tableNames = append(tableNames, fullTableName)
-					lock.Unlock()
+				if len(ci.cfg.Mydumper.TargetPartitions) > 0 {
+					for _, partName := range ci.cfg.Mydumper.TargetPartitions {
+						isEmptyPtr, err1 := ci.preInfoGetter.IsPartitionEmpty(gCtx, tblNameComp.DBName, tblNameComp.TableName, partName)
+						if err1 != nil {
+							return err1
+						}
+						if !(*isEmptyPtr) {
+							lock.Lock()
+							tableNames = append(tableNames, fullTableName)
+							lock.Unlock()
+							break
+						}
+					}
+				} else {
+					isEmptyPtr, err1 := ci.preInfoGetter.IsTableEmpty(gCtx, tblNameComp.DBName, tblNameComp.TableName)
+					if err1 != nil {
+						return err1
+					}
+					if !(*isEmptyPtr) {
+						lock.Lock()
+						tableNames = append(tableNames, fullTableName)
+						lock.Unlock()
+					}
 				}
 			}
 			return nil

@@ -23,9 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -205,30 +208,66 @@ type checksumContext struct {
 	tableInfo *model.TableInfo
 	startTs   uint64
 	response  *tipb.ChecksumResponse
+	// partitionNames restricts the checksum to the named partitions; all partitions are checksummed when empty.
+	partitionNames []ast.CIStr
 }
 
-func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64) *checksumContext {
+// newChecksumContext creates a checksumContext for the given table.
+// When partitionNames is non-empty, only those partitions are checksummed.
+func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64, partitionNames []ast.CIStr) *checksumContext {
 	return &checksumContext{
-		dbInfo:    db,
-		tableInfo: table,
-		startTs:   startTs,
-		response:  &tipb.ChecksumResponse{},
+		dbInfo:         db,
+		tableInfo:      table,
+		startTs:        startTs,
+		response:       &tipb.ChecksumResponse{},
+		partitionNames: partitionNames,
 	}
 }
 
 func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, error) {
+	if len(c.partitionNames) > 0 && c.tableInfo.Partition == nil {
+		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
+	}
 	var partDefs []model.PartitionDefinition
 	if part := c.tableInfo.Partition; part != nil {
-		partDefs = part.Definitions
+		if len(c.partitionNames) == 0 {
+			partDefs = part.Definitions
+		} else {
+			defByName := make(map[string]model.PartitionDefinition, len(part.Definitions))
+			for _, def := range part.Definitions {
+				defByName[def.Name.L] = def
+			}
+			seen := make(map[string]struct{}, len(c.partitionNames))
+			for _, n := range c.partitionNames {
+				if _, dup := seen[n.L]; dup {
+					continue
+				}
+				seen[n.L] = struct{}{}
+				def, ok := defByName[n.L]
+				if !ok {
+					return nil, table.ErrUnknownPartition.GenWithStackByArgs(n.O, c.tableInfo.Name.O)
+				}
+				partDefs = append(partDefs, def)
+			}
+		}
 	}
 
 	reqs := make([]*checksumTask, 0, (len(c.tableInfo.Indices)+1)*(len(partDefs)+1))
-	if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, c.tableInfo.ID, &reqs); err != nil {
-		return nil, err
+	if len(c.partitionNames) == 0 {
+		// Full-table checksum: scan the logical table ID first to cover global
+		// indexes (and the non-partitioned table's data when there are no partitions).
+		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, c.tableInfo.ID, false, &reqs); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, partDef := range partDefs {
-		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, partDef.ID, &reqs); err != nil {
+		// skipGlobal is true in two cases:
+		// - Full-table scan (partitionNames empty): global indexes were already
+		//   covered by the logical-table-ID call above; don't double-count.
+		// - Partition-scoped scan: global indexes span all partitions and cannot
+		//   be scoped to a subset, so exclude them entirely.
+		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, partDef.ID, true, &reqs); err != nil {
 			return nil, err
 		}
 	}
@@ -240,6 +279,7 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 	ctx sessionctx.Context,
 	tableID int64,
 	physicalTableID int64,
+	skipGlobal bool,
 	reqs *[]*checksumTask,
 ) error {
 	req, err := c.buildTableRequest(ctx, physicalTableID)
@@ -257,13 +297,24 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 		if indexInfo.State != model.StatePublic {
 			continue
 		}
-		req, err = c.buildIndexRequest(ctx, physicalTableID, indexInfo)
+		// Global indexes are stored under the logical table ID, not the
+		// partition's physical ID. Use tableID (== tableInfo.ID) for them.
+		// When skipGlobal is true (full-table scan iterating partitions), skip
+		// global indexes here — they were already covered by the logical-ID call.
+		indexPhysicalID := physicalTableID
+		if indexInfo.Global {
+			if skipGlobal {
+				continue
+			}
+			indexPhysicalID = tableID
+		}
+		req, err = c.buildIndexRequest(ctx, indexPhysicalID, indexInfo)
 		if err != nil {
 			return err
 		}
 		*reqs = append(*reqs, &checksumTask{
 			tableID:         tableID,
-			physicalTableID: physicalTableID,
+			physicalTableID: indexPhysicalID,
 			indexID:         indexInfo.ID,
 			request:         req,
 		})
