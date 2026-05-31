@@ -464,10 +464,10 @@ func TestBuildAddIndexPostTaskObservationDelays(t *testing.T) {
 	require.Nil(t, buildAddIndexPostTaskObservationDelays(-time.Second))
 
 	delays := buildAddIndexPostTaskObservationDelays(4 * time.Second)
-	require.Equal(t, []time.Duration{2 * time.Minute, 4 * time.Minute, 6 * time.Minute}, delays)
+	require.Equal(t, []time.Duration{2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 12 * time.Minute}, delays)
 
 	delays = buildAddIndexPostTaskObservationDelays(10 * time.Minute)
-	require.Equal(t, []time.Duration{5 * time.Minute, 10 * time.Minute, 15 * time.Minute}, delays)
+	require.Equal(t, []time.Duration{5 * time.Minute, 10 * time.Minute, 20 * time.Minute, 30 * time.Minute}, delays)
 }
 
 func TestObservedTiKVUsageTaskTiming(t *testing.T) {
