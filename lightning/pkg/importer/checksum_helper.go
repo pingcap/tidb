@@ -65,6 +65,8 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 // DoChecksum computes the remote checksum for a table using the ChecksumManager stored in ctx.
 // table must be in <db>.<table> format, e.g. foo.bar.
 // When partitionNames is non-empty, the checksum is scoped to those partitions only.
+// Note: rows written to partitions outside partitionNames are not covered by this checksum.
+// Callers should ensure source data contains only rows for the named partitions.
 func DoChecksum(ctx context.Context, table *importdef.TableInfo, partitionNames []string) (*ingestctrl.RemoteChecksum, error) {
 	var err error
 	manager, ok := ctx.Value(&checksumManagerKey).(ingestctrl.ChecksumManager)

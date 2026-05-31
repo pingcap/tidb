@@ -1404,6 +1404,8 @@ func (tr *TableImporter) compareChecksum(remoteChecksum *ingestctrl.RemoteChecks
 // analyzeTable runs ANALYZE TABLE on the target table.
 // When partitionNames is non-empty, the statement is scoped to those partitions only:
 // ANALYZE TABLE t PARTITION (p1, p2, ...).
+// Note: rows written to partitions outside partitionNames are not analyzed.
+// Callers should ensure source data contains only rows for the named partitions.
 func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB, partitionNames []string) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
 	exec := common.SQLWithRetry{
