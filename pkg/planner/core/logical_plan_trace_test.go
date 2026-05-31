@@ -283,7 +283,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 			assertRuleSteps: []assertTraceStep{
 				{
 					assertAction: "join order becomes ((t1*t2)*t3) from original ((t1*t2)*t3)",
-					assertReason: "join cost during reorder: [[((t1*t2)*t3), cost:58125],[(t1*t2), cost:32500],[(t1*t3), cost:32500],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000]]",
+					assertReason: "join cost during reorder: [[((t1*t2)*t3), cost:58125],[((t2*t1)*t3), cost:58125],[(t1*t2), cost:32500],[(t1*t3), cost:32500],[(t2*t1), cost:32500],[(t2*t3), cost:32500],[t1, cost:10000],[t2, cost:10000],[t3, cost:10000]]",
 				},
 			},
 		},

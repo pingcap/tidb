@@ -1385,9 +1385,9 @@ create table t(
 		{
 			indexPos:    4,
 			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
-			accessConds: "[eq(test.t.f, a)]",
-			filterConds: "[eq(test.t.f, B)]",
-			resultStr:   "[[\"\\x00A\",\"\\x00A\"]]",
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
 		},
 		{
 			indexPos:    4,
@@ -1416,6 +1416,22 @@ create table t(
 			accessConds: `[like(test.t.h, ÿÿ%, 92)]`,
 			filterConds: "[like(test.t.h, ÿÿ%, 92)]",
 			resultStr:   "[[\"ÿÿ\",\"ÿ\\xc3\\xc0\")]", // The decoding error is ignored.
+		},
+		// CAST AS BINARY on CI column: EQ should use range scan with filter.
+		{
+			indexPos:    4,
+			exprStr:     "f = cast('a' as binary)",
+			accessConds: "[eq(test.t.f, a)]",
+			filterConds: "[eq(test.t.f, a)]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"]]",
+		},
+		// CAST AS BINARY on CI column: IN should use range scan with filter.
+		{
+			indexPos:    4,
+			exprStr:     "f in (cast('a' as binary), cast('B' as binary))",
+			accessConds: "[in(test.t.f, a, B)]",
+			filterConds: "[in(test.t.f, a, B)]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"] [\"\\x00B\",\"\\x00B\"]]",
 		},
 	}
 
@@ -2518,4 +2534,45 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 			require.Equal(t, tt.minAccessCondsForDNFCond, res.MinAccessCondsForDNFCond)
 		})
 	}
+}
+
+func TestBinCollationRangeForIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (f varchar(10) collate utf8mb4_general_ci, g int, index idx_f(f), index idx_fg(f, g))")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	sctx := tk.Session()
+	rctx := sctx.GetRangerCtx()
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+
+	// Test DetachSimpleCondAndBuildRangeForIndex with binary collation EQ.
+	// This exercises the shouldReserve path in the !considerDNF branch of detachCNFCondAndBuildRangeForIndex.
+	sql := "select * from t where f = cast('abc' as binary)"
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := selection.Conditions
+	cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	require.NotNil(t, cols)
+
+	ranges, accessConds, remainedConds, err := ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, accessConds))
+	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
+	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00C\"]]", fmt.Sprintf("%v", ranges))
+
+	sql = "select * from t where f = cast('abc' as binary) and g = 1"
+	selection = getSelectionFromQuery(t, sctx, sql)
+	conds = selection.Conditions
+	cols, lengths = plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[1])
+	require.NotNil(t, cols)
+
+	ranges, accessConds, remainedConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[eq(test.t.f, abc) eq(test.t.g, 1)]", expression.StringifyExpressionsWithCtx(ectx, accessConds))
+	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
+	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\" 1,\"\\x00A\\x00B\\x00C\" 1]]", fmt.Sprintf("%v", ranges))
 }

@@ -132,7 +132,9 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return -1
+				if !collate.IsBinCollation(collation) || (f.FuncName.L != ast.EQ && f.FuncName.L != ast.NullEQ) {
+					return -1
+				}
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
@@ -160,7 +162,9 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-				return -1
+				if !collate.IsBinCollation(collation) || (f.FuncName.L != ast.EQ && f.FuncName.L != ast.NullEQ) {
+					return -1
+				}
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
 				return -1
@@ -183,7 +187,9 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			return -1
 		}
 		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
-			return -1
+			if !collate.IsBinCollation(collation) {
+				return -1
+			}
 		}
 		for _, arg := range f.GetArgs()[1:] {
 			if _, ok := arg.(*expression.Constant); !ok {
@@ -548,12 +554,15 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	for _, cond := range newConditions {
-		isAccessCond, _ := checker.check(cond)
+		isAccessCond, shouldReserve := checker.check(cond)
 		if !isAccessCond {
 			filterConds = append(filterConds, cond)
 			continue
 		}
 		accessConds = append(accessConds, cond)
+		if shouldReserve {
+			filterConds = append(filterConds, cond)
+		}
 		// TODO: if it's prefix column, we need to add cond to filterConds?
 	}
 	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, eqOrInCount, accessConds)
@@ -792,15 +801,14 @@ func ExtractEqAndInCondition(sctx *rangerctx.RangerContext, conditions []express
 			break
 		}
 
-		// Currently, if the access cond is on a prefix index, we will also add this cond to table filters.
-		// A possible optimization is that, if the value in the cond is shorter than the length of the prefix index, we don't
-		// need to add this cond to table filters.
-		// e.g. CREATE TABLE t(a varchar(10), index i(a(5)));  SELECT * FROM t USE INDEX i WHERE a > 'aaa';
-		// However, please notice that if you're implementing this, please (1) set StatementContext.OptimDependOnMutableConst to true,
-		// or (2) don't do this optimization when StatementContext.UseCache is true. That's because this plan is affected by
-		// flen of user variable, we cannot cache this plan.
-		isFullLength := lengths[i] == types.UnspecifiedLength || lengths[i] == cols[i].GetType(sctx.ExprCtx.GetEvalCtx()).GetFlen()
-		if !isFullLength {
+		checker := &conditionChecker{
+			checkerCol:               cols[i],
+			length:                   lengths[i],
+			optPrefixIndexSingleScan: sctx.OptPrefixIndexSingleScan,
+			ctx:                      sctx.ExprCtx.GetEvalCtx(),
+		}
+		_, shouldReserve := checker.check(cond)
+		if shouldReserve {
 			filters = append(filters, cond)
 		}
 	}
@@ -1079,8 +1087,10 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 // It will find the point query column firstly and then extract the range query column.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
 // for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// The returned remainedConds are conditions that must be re-applied as filters (e.g. when a
+// collation mismatch makes the range approximate but the condition is still needed for correctness).
 func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions []expression.Expression,
-	cols []*expression.Column, lengths []int, rangeMaxSize int64) (Ranges, []expression.Expression, error) {
+	cols []*expression.Column, lengths []int, rangeMaxSize int64) (ranges Ranges, accessConds []expression.Expression, remainedConds []expression.Expression, err error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
@@ -1095,7 +1105,10 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 		rangeMaxSize:     rangeMaxSize,
 	}
 	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, newTpSlice, false)
-	return res.Ranges, res.AccessConds, err
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return res.Ranges, res.AccessConds, res.RemainedConds, nil
 }
 
 func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {

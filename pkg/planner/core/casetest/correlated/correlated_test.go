@@ -15,9 +15,12 @@
 package correlated
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCorrelatedSubquery(t *testing.T) {
@@ -71,6 +74,60 @@ WHERE NOT (tlc07c2a51.col_1>=
               HAVING tlc07c2a51.col_6>0)) ;`).Check(testkit.Rows("1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
 }
 
+func TestAlternativeLogicalPlansChooseApply(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table alt_pick_t1(a int primary key)")
+	tk.MustExec("create table alt_pick_t2(a int, b int, key idx_a(a))")
+	tk.MustExec("create table alt_pick_t3(a int, c int, key idx_a(a))")
+	tk.MustExec("insert into alt_pick_t1 values (1), (2)")
+
+	vals2 := make([]string, 0, 200)
+	vals3 := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		vals2 = append(vals2, fmt.Sprintf("(%d, %d)", i%100, i))
+		vals3 = append(vals3, fmt.Sprintf("(%d, %d)", i%100, i))
+	}
+	tk.MustExec("insert into alt_pick_t2 values " + strings.Join(vals2, ","))
+	tk.MustExec("insert into alt_pick_t3 values " + strings.Join(vals3, ","))
+	tk.MustExec("analyze table alt_pick_t1, alt_pick_t2, alt_pick_t3")
+
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=off")
+	sql := "select alt_pick_t1.a, (select count(*) from alt_pick_t2 join alt_pick_t3 on alt_pick_t2.a = alt_pick_t3.a where alt_pick_t2.a = alt_pick_t1.a) as cnt from alt_pick_t1 order by alt_pick_t1.a"
+	explainSQL := "explain format = 'brief' " + sql
+
+	offPlan := rowsToStrings(tk.MustQuery(explainSQL).Rows())
+	tk.MustQuery(sql).Check(testkit.Rows("1 4", "2 4"))
+	require.False(t, planContainsText(offPlan, "Apply"), strings.Join(offPlan, "\n"))
+
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
+	onPlan := rowsToStrings(tk.MustQuery(explainSQL).Rows())
+	tk.MustQuery(sql).Check(testkit.Rows("1 4", "2 4"))
+	stmtCtx := tk.Session().GetSessionVars().StmtCtx
+	require.True(t, stmtCtx.AlternativeLogicalPlanDecorrelatedApply)
+	require.False(t, stmtCtx.AlternativeLogicalPlanSameOrderIndexJoin)
+	require.True(t, planContainsText(onPlan, "Apply"), strings.Join(onPlan, "\n"))
+}
+
+func TestAlternativeLogicalPlansSkipSecondRoundWhenIndexJoinExists(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
+	tk.MustExec("create table alt_skip_t1(a int primary key)")
+	tk.MustExec("create table alt_skip_t2(a int, b int, key idx_a(a))")
+	tk.MustExec("insert into alt_skip_t1 values (1), (2), (3)")
+	tk.MustExec("insert into alt_skip_t2 values (1, 1), (1, 2), (2, 3), (3, 4)")
+	tk.MustExec("analyze table alt_skip_t1, alt_skip_t2")
+
+	sql := "select alt_skip_t1.a from alt_skip_t1 where exists (select 1 from alt_skip_t2 where alt_skip_t2.a = alt_skip_t1.a and alt_skip_t2.b > 0) order by alt_skip_t1.a"
+	tk.MustQuery(sql).Check(testkit.Rows("1", "2", "3"))
+	stmtCtx := tk.Session().GetSessionVars().StmtCtx
+	require.True(t, stmtCtx.AlternativeLogicalPlanDecorrelatedApply)
+	require.True(t, stmtCtx.AlternativeLogicalPlanSameOrderIndexJoin)
+}
+
 func TestWrongDecorrelate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -83,4 +140,25 @@ func TestWrongDecorrelate(t *testing.T) {
 		"<nil> 0.00000000000000000000 60021022342",
 		" 30025.20000000000000000000 60121022342",
 		"X 6.23000000000000000000 60021022342"))
+}
+
+func rowsToStrings(rows [][]any) []string {
+	result := make([]string, 0, len(rows))
+	for _, row := range rows {
+		cols := make([]string, 0, len(row))
+		for _, col := range row {
+			cols = append(cols, fmt.Sprint(col))
+		}
+		result = append(result, strings.Join(cols, " "))
+	}
+	return result
+}
+
+func planContainsText(plan []string, needle string) bool {
+	for _, row := range plan {
+		if strings.Contains(row, needle) {
+			return true
+		}
+	}
+	return false
 }

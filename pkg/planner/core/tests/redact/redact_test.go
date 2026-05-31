@@ -43,12 +43,12 @@ func TestRedactExplain(t *testing.T) {
 	// in multi-value
 	tk.MustQuery("explain select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13)").
 		Check(testkit.Rows(
-			"Projection_7 2.50 root  ‹1›->Column#5",
-			"└─HashJoin_9 2.50 root  left outer join, equal:[eq(test.t.a, test.tlist.a)]",
-			"  ├─Batch_Point_Get_10(Build) 2.00 root table:t handle:[12 13], keep order:false, desc:false",
-			"  └─TableReader_13(Probe) 20.00 root partition:dual data:Selection_12",
-			"    └─Selection_12 20.00 cop[tikv]  in(test.tlist.a, ‹12›, ‹13›), not(isnull(test.tlist.a))",
-			"      └─TableFullScan_11 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
+			"Projection_8 2.50 root  ‹1›->Column#5",
+			"└─HashJoin_10 2.50 root  left outer join, equal:[eq(test.t.a, test.tlist.a)]",
+			"  ├─Batch_Point_Get_11(Build) 2.00 root table:t handle:[12 13], keep order:false, desc:false",
+			"  └─TableReader_14(Probe) 20.00 root partition:dual data:Selection_13",
+			"    └─Selection_13 20.00 cop[tikv]  in(test.tlist.a, ‹12›, ‹13›), not(isnull(test.tlist.a))",
+			"      └─TableFullScan_12 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
 	// TableRangeScan + Limit
 	tk.MustQuery("explain select * from t where a > 1 limit 10 offset 10;").
 		Check(testkit.Rows(
@@ -84,11 +84,11 @@ func TestRedactExplain(t *testing.T) {
 	// CTE
 	tk.MustQuery("explain with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
 		testkit.Rows(
-			"Limit_25 100.00 root  offset:‹100›, count:‹100›",
-			"└─HashJoin_27 200.00 root  CARTESIAN inner join",
-			"  ├─CTEFullScan_31(Build) 2.00 root CTE:cte data:CTE_0",
-			"  └─TableReader_33(Probe) 100.00 root  data:TableFullScan_32",
-			"    └─TableFullScan_32 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
+			"Limit_26 100.00 root  offset:‹100›, count:‹100›",
+			"└─HashJoin_28 200.00 root  CARTESIAN inner join",
+			"  ├─CTEFullScan_32(Build) 2.00 root CTE:cte data:CTE_0",
+			"  └─TableReader_34(Probe) 100.00 root  data:TableFullScan_33",
+			"    └─TableFullScan_33 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
 			"CTE_0 2.00 root  Recursive CTE",
 			"├─Projection_16(Seed Part) 1.00 root  ‹1›->Column#2",
 			"│ └─TableDual_17 1.00 root  rows:1",
@@ -116,12 +116,12 @@ func TestRedactExplain(t *testing.T) {
 	// in multi-value
 	tk.MustQuery("explain select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13)").
 		Check(testkit.Rows(
-			"Projection_7 2.50 root  ?->Column#5",
-			"└─HashJoin_9 2.50 root  left outer join, equal:[eq(test.t.a, test.tlist.a)]",
-			"  ├─Batch_Point_Get_10(Build) 2.00 root table:t handle:[12 13], keep order:false, desc:false",
-			"  └─TableReader_13(Probe) 20.00 root partition:dual data:Selection_12",
-			"    └─Selection_12 20.00 cop[tikv]  in(test.tlist.a, ?, ?), not(isnull(test.tlist.a))",
-			"      └─TableFullScan_11 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
+			"Projection_8 2.50 root  ?->Column#5",
+			"└─HashJoin_10 2.50 root  left outer join, equal:[eq(test.t.a, test.tlist.a)]",
+			"  ├─Batch_Point_Get_11(Build) 2.00 root table:t handle:[12 13], keep order:false, desc:false",
+			"  └─TableReader_14(Probe) 20.00 root partition:dual data:Selection_13",
+			"    └─Selection_13 20.00 cop[tikv]  in(test.tlist.a, ?, ?), not(isnull(test.tlist.a))",
+			"      └─TableFullScan_12 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
 	// TableRangeScan + Limit
 	tk.MustQuery("explain select * from t where a > 1 limit 10 offset 10;").
 		Check(testkit.Rows(
@@ -156,11 +156,11 @@ func TestRedactExplain(t *testing.T) {
 		"  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
 	// CTE
 	tk.MustQuery("explain with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
-		testkit.Rows("Limit_25 100.00 root  offset:?, count:?",
-			"└─HashJoin_27 200.00 root  CARTESIAN inner join",
-			"  ├─CTEFullScan_31(Build) 2.00 root CTE:cte data:CTE_0",
-			"  └─TableReader_33(Probe) 100.00 root  data:TableFullScan_32",
-			"    └─TableFullScan_32 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		testkit.Rows("Limit_26 100.00 root  offset:?, count:?",
+			"└─HashJoin_28 200.00 root  CARTESIAN inner join",
+			"  ├─CTEFullScan_32(Build) 2.00 root CTE:cte data:CTE_0",
+			"  └─TableReader_34(Probe) 100.00 root  data:TableFullScan_33",
+			"    └─TableFullScan_33 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
 			"CTE_0 2.00 root  Recursive CTE",
 			"├─Projection_16(Seed Part) 1.00 root  ?->Column#2",
 			"│ └─TableDual_17 1.00 root  rows:1",

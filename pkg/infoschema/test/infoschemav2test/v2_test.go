@@ -563,6 +563,7 @@ func TestInfoSchemaCachedAutoIncrement(t *testing.T) {
 func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")

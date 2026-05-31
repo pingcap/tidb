@@ -19,6 +19,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -70,8 +71,47 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 	if leadingJoinNodes != nil {
 		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
 		// So it can be joined first.
-		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)
-		s.curJoinGroup = leadingJoinNodes
+		result, err := s.solveWithStart(s.curJoinGroup, leadingJoinNodes, joinNodeNum, 0, tracer)
+		if err != nil {
+			return nil, err
+		}
+		return result.p, nil
+	}
+
+	startCount := 2
+	if len(s.curJoinGroup) < startCount {
+		startCount = len(s.curJoinGroup)
+	}
+	best, _, err := chooseBestGreedyStart(startCount, func(startIdx int) (*jrNode, error) {
+		candidateSolver := &joinReorderGreedySolver{
+			baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
+				ctx:                s.ctx,
+				basicJoinGroupInfo: cloneBasicJoinGroupInfoForGreedyStart(s.basicJoinGroupInfo),
+			},
+		}
+		return candidateSolver.solveWithStart(s.curJoinGroup, nil, joinNodeNum, startIdx, tracer)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if best == nil {
+		return nil, errors.New("internal error: greedy join reorder candidate is empty")
+	}
+	return best.p, nil
+}
+
+func (s *joinReorderGreedySolver) solveWithStart(
+	joinGroup []*jrNode,
+	leadingJoinNodes []*jrNode,
+	joinNodeNum int,
+	startIdx int,
+	tracer *joinReorderTrace,
+) (*jrNode, error) {
+	s.curJoinGroup = moveGreedyStartToFront(cloneJRNodesForGreedyStart(joinGroup), startIdx)
+	if leadingJoinNodes != nil {
+		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
+		// So it can be joined first.
+		s.curJoinGroup = append(cloneJRNodesForGreedyStart(leadingJoinNodes), s.curJoinGroup...)
 	}
 	var cartesianGroup []base.LogicalPlan
 	for len(s.curJoinGroup) > 0 {
@@ -91,7 +131,74 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan, tracer
 		cartesianGroup = append(cartesianGroup, newNode.p)
 	}
 
-	return s.makeBushyJoin(cartesianGroup), nil
+	root := s.makeBushyJoin(cartesianGroup)
+	_, err := root.RecursiveDeriveStats(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &jrNode{p: root, cumCost: s.baseNodeCumCost(root)}, nil
+}
+
+func cloneJRNodeForGreedyStart(node *jrNode) *jrNode {
+	if node == nil {
+		return nil
+	}
+	return &jrNode{
+		p:       node.p,
+		cumCost: node.cumCost,
+	}
+}
+
+func cloneJRNodesForGreedyStart(nodes []*jrNode) []*jrNode {
+	cloned := make([]*jrNode, len(nodes))
+	for i, node := range nodes {
+		cloned[i] = cloneJRNodeForGreedyStart(node)
+	}
+	return cloned
+}
+
+func cloneBasicJoinGroupInfoForGreedyStart(info *basicJoinGroupInfo) *basicJoinGroupInfo {
+	return &basicJoinGroupInfo{
+		eqEdges:            info.eqEdges,
+		otherConds:         slices.Clone(info.otherConds),
+		joinTypes:          info.joinTypes,
+		joinMethodHintInfo: info.joinMethodHintInfo,
+	}
+}
+
+func chooseBestGreedyStart(startCount int, runner func(startIdx int) (*jrNode, error)) (*jrNode, int, error) {
+	var best *jrNode
+	bestStartIdx := -1
+	for startIdx := 0; startIdx < startCount; startIdx++ {
+		candidate, err := runner(startIdx)
+		if err != nil {
+			return nil, -1, err
+		}
+		if candidate != nil && (best == nil || cumCostSignificantlyLess(candidate.cumCost, best.cumCost)) {
+			best = candidate
+			bestStartIdx = startIdx
+		}
+	}
+	return best, bestStartIdx, nil
+}
+
+func cumCostSignificantlyLess(cost, bestCost float64) bool {
+	if cost >= bestCost {
+		return false
+	}
+	scale := math.Max(1, math.Max(math.Abs(cost), math.Abs(bestCost)))
+	return bestCost-cost > scale*1e-12
+}
+
+func moveGreedyStartToFront(nodes []*jrNode, startIdx int) []*jrNode {
+	if startIdx <= 0 || startIdx >= len(nodes) {
+		return nodes
+	}
+	reordered := make([]*jrNode, 0, len(nodes))
+	reordered = append(reordered, nodes[startIdx])
+	reordered = append(reordered, nodes[:startIdx]...)
+	reordered = append(reordered, nodes[startIdx+1:]...)
+	return reordered
 }
 
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {

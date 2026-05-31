@@ -1124,8 +1124,21 @@ type SessionVars struct {
 	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
 	EnableNoDecorrelateInSelect bool
 
+	// EnableAlternativeLogicalPlans enables building an extra non-decorrelate
+	// logical alternative when decorrelation does not produce an equivalent
+	// same-order index join candidate.
+	EnableAlternativeLogicalPlans bool
+
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
+
+	// EnableCorrelateSubquery is an internal flag (not user-facing) toggled by the
+	// correlate alternative round to enable conversion of non-correlated semi-joins
+	// to correlated Apply during plan building.
+	EnableCorrelateSubquery bool
+	// SavedEnableCorrelateSubquery stores the pre-round EnableCorrelateSubquery
+	// value while the correlate alternative round temporarily enables it.
+	SavedEnableCorrelateSubquery bool
 
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
@@ -2184,6 +2197,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerSelectivityLevel:     DefTiDBOptimizerSelectivityLevel,
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
+		EnableAlternativeLogicalPlans: DefOptEnableAlternativeLogicalPlans,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:              kv.PriorityLow,
