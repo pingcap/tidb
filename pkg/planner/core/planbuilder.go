@@ -319,10 +319,56 @@ type PlanBuilder struct {
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
 
+<<<<<<< HEAD
 	// SavedViews is a stack that saves all views when traversing the AST. We depend on it to:
 	// 1. know whether the AST node is under a view
 	// 2. report precise error in appendColNamesToVisitInfo.
 	SavedViews []*ast.TableName
+=======
+	// nonViableFTSMatch is set during build when the expression rewriter
+	// encounters a predicate-context MATCH...AGAINST whose native form
+	// (FTSMysqlMatchAgainst) cannot be executed — the matched columns lack a
+	// public FULLTEXT index on a TiFlash-backed table, or the modifier is not
+	// supported by pushdown. The flag is read by the alternative-rounds driver
+	// after the round to invalidate the round's plan and trigger the
+	// fts-like-fallback round (see optimize.go).
+	nonViableFTSMatch bool
+
+	// predicateMatchSeen is set during build when the expression rewriter
+	// encounters a direct-boolean-context MATCH...AGAINST (one whose 0/1 boolean
+	// result is consumed directly as a predicate). The alternative-rounds driver
+	// uses this to enable the fts-like-fallback round even when round 1's
+	// native plan is executable, so the LIKE-based plan can compete on cost.
+	predicateMatchSeen bool
+}
+
+// HasNonViableFTSMatch reports whether the most recent build round saw a
+// predicate-context MATCH...AGAINST that could not be served by the native
+// FTSMysqlMatchAgainst builtin. The caller (optimize.go) uses this to
+// invalidate the round's plan and trigger the fts-like-fallback round.
+func (b *PlanBuilder) HasNonViableFTSMatch() bool {
+	return b.nonViableFTSMatch
+}
+
+// MarkNonViableFTSMatch records that a predicate-context MATCH...AGAINST in
+// the current build cannot be served natively. See HasNonViableFTSMatch.
+func (b *PlanBuilder) MarkNonViableFTSMatch() {
+	b.nonViableFTSMatch = true
+}
+
+// HasPredicateMatch reports whether the most recent build round saw a
+// direct-boolean-context MATCH...AGAINST. The caller (optimize.go) uses this
+// to decide whether to run the fts-like-fallback round for cost competition,
+// independent of whether round 1's native plan is executable.
+func (b *PlanBuilder) HasPredicateMatch() bool {
+	return b.predicateMatchSeen
+}
+
+// MarkPredicateMatch records that the current build encountered a
+// direct-boolean-context MATCH...AGAINST. See HasPredicateMatch.
+func (b *PlanBuilder) MarkPredicateMatch() {
+	b.predicateMatchSeen = true
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
 }
 
 type handleColHelper struct {

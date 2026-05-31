@@ -969,6 +969,13 @@ var funcs = map[string]functionClass{
 	ast.VecFromText:             &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
 	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
 
+<<<<<<< HEAD
+=======
+	// fts functions
+	ast.FTSMatchWord:         &ftsMatchWordFunctionClass{baseFunctionClass{ast.FTSMatchWord, 2, 2}},
+	ast.FTSMysqlMatchAgainst: &ftsMysqlMatchAgainstFunctionClass{baseFunctionClass{ast.FTSMysqlMatchAgainst, 2, -1}},
+
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
 	// TiDB internal function.
 	ast.TiDBDecodeKey:       &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
 	ast.TiDBMVCCInfo:        &tidbMVCCInfoFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBMVCCInfo, 1, 1}},

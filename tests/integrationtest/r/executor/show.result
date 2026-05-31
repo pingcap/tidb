@@ -756,7 +756,11 @@ ltrim
 make_set
 makedate
 maketime
+<<<<<<< HEAD
 master_pos_wait
+=======
+match_against
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
 md5
 microsecond
 mid

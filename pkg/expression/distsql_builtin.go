@@ -1149,6 +1149,18 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
+<<<<<<< HEAD
+=======
+	case tipb.ScalarFuncSig_FTSMatchWord:
+		f = &builtinFtsMatchWordSig{base}
+	case tipb.ScalarFuncSig_FTSMatchExpression:
+		// NOTE: builtinFtsMysqlMatchAgainstSig.modifier is not serialized in the
+		// protobuf encoding because the tipb schema has no FTS metadata message.
+		// The reconstructed sig therefore uses the zero modifier value
+		// (FulltextSearchModifierNaturalLanguageMode). TiFlash must derive the
+		// search mode from other context when executing this expression.
+		f = &builtinFtsMysqlMatchAgainstSig{baseBuiltinFunc: base}
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e

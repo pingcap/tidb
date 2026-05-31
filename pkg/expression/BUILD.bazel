@@ -60,6 +60,11 @@ go_library(
         "expr_to_pb.go",
         "expression.go",
         "extension.go",
+<<<<<<< HEAD
+=======
+        "fts_helper.go",
+        "fts_to_like.go",
+>>>>>>> f96cd1c2fd5 (planner: rewrite FTS predicates to LIKE for evaluation of non-TiCI query plan (#65626))
         "function_traits.go",
         "grouping_sets.go",
         "helper.go",
@@ -193,6 +198,7 @@ go_test(
         "evaluator_test.go",
         "expr_to_pb_test.go",
         "expression_test.go",
+        "fts_to_like_test.go",
         "function_traits_test.go",
         "grouping_sets_test.go",
         "helper_test.go",
