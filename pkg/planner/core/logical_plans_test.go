@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"testing"
@@ -68,6 +69,44 @@ func TestPredicatePushDown(t *testing.T) {
 		})
 		require.Equal(t, output[ith], ToString(p), fmt.Sprintf("for %s %d", ca, ith))
 	}
+}
+
+func TestCompareCandidatesLargeGapHeuristicWithLimit(t *testing.T) {
+	sctx := coretestsdk.MockContext()
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.TiDBOptFixControl, "45132:1000"))
+	lhs := &candidatePath{
+		path: &util.AccessPath{
+			Index:            &model.IndexInfo{Name: ast.NewCIStr("idx_lhs")},
+			IsSingleScan:     true,
+			CountAfterAccess: 200000,
+		},
+		matchPropResult: property.PropNotMatched,
+	}
+	rhs := &candidatePath{
+		path: &util.AccessPath{
+			Index:            &model.IndexInfo{Name: ast.NewCIStr("idx_rhs")},
+			IsSingleScan:     true,
+			CountAfterAccess: 101,
+		},
+		matchPropResult: property.PropNotMatched,
+	}
+
+	noLimitProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	result, _ := compareCandidates(sctx, nil, noLimitProp, lhs, rhs, false)
+	require.Equal(t, -1, result)
+
+	limitProp := &property.PhysicalProperty{ExpectedCnt: 100}
+	result, _ = compareCandidates(sctx, nil, limitProp, lhs, rhs, false)
+	require.Equal(t, -1, result)
+
+	orderedLimitProp := &property.PhysicalProperty{
+		ExpectedCnt: 100,
+		SortItems: []property.SortItem{
+			{Col: &expression.Column{UniqueID: 1}},
+		},
+	}
+	result, _ = compareCandidates(sctx, nil, orderedLimitProp, lhs, rhs, false)
+	require.Equal(t, 0, result)
 }
 
 // Issue: 31399

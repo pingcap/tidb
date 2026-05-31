@@ -909,9 +909,15 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
+	//
+	// Besides the no-limit case (ExpectedCnt == MaxFloat64), we also apply this rule to small expected counts
+	// (typical LIMIT queries) when there is no ordering requirement. For these queries, cardinality estimates among
+	// many similar indexes can be noisy, while a huge access-row-count gap is usually still a strong signal.
+	applyLargeGapHeuristic := prop.ExpectedCnt == math.MaxFloat64 ||
+		(prop.IsSortItemEmpty() && prop.ExpectedCnt > 0 && prop.ExpectedCnt <= 1000)
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 && // not IndexMerge since its row count estimation is not accurate enough
-		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
+		applyLargeGapHeuristic {
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		sctx.GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix45132)
 		if threshold > 0 { // set it to 0 to disable this rule
