@@ -1027,6 +1027,7 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Less(t,
 			estimateSampledIndexKVRawKeySharedPrefixAvg(numericKVs),
 			estimateSampledIndexKVEncodedKeySharedPrefixAvg(numericKVs))
+		require.Positive(t, estimateSampledIndexKVRawKeyLengthAvg(numericKVs))
 		numericRatio := float64(numericPrediction.PredictedBytes) / float64(numericLogicalBytes)
 		require.Less(t, numericRatio, float64(0.8))
 
@@ -1117,12 +1118,14 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Greater(t, estimateSampledIndexKVEncodedKeySharedPrefixAvg(prefixKVs), float64(50))
 		require.Zero(t, estimateSampledIndexKVRawKeySharedPrefixAvg(nil))
 		require.Zero(t, estimateSampledIndexKVRawKeySharedPrefixAvg([]sampledIndexKV{{key: []byte("single"), rawKey: []byte("single")}}))
+		require.Zero(t, estimateSampledIndexKVRawKeyLengthAvg(nil))
 		encodedPrefixKVs := []sampledIndexKV{
 			{key: []byte("t_index_b001"), rawKey: []byte("b001")},
 			{key: []byte("t_index_a001"), rawKey: []byte("a001")},
 			{key: []byte("t_index_a000"), rawKey: []byte("a000")},
 		}
 		require.InDelta(t, 1.5, estimateSampledIndexKVRawKeySharedPrefixAvg(encodedPrefixKVs), 1e-9)
+		require.InDelta(t, 4, estimateSampledIndexKVRawKeyLengthAvg(encodedPrefixKVs), 1e-9)
 		require.Greater(t,
 			estimateSampledIndexKVEncodedKeySharedPrefixAvg(encodedPrefixKVs),
 			estimateSampledIndexKVRawKeySharedPrefixAvg(encodedPrefixKVs))
