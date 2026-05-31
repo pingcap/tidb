@@ -131,10 +131,18 @@ const (
 
 	observedTiKVUsagePhaseTaskEnd  = "task_end"
 	observedTiKVUsagePhasePostTask = "post_task"
-
-	addIndexPostTaskObservationCount        = 3
-	addIndexPostTaskObservationMinDelayStep = 2 * time.Minute
 )
+
+var addIndexPostTaskObservationDelays = []struct {
+	durationMultiplierNumerator   int
+	durationMultiplierDenominator int
+	minDelay                      time.Duration
+}{
+	{durationMultiplierNumerator: 1, durationMultiplierDenominator: 2, minDelay: 2 * time.Minute},
+	{durationMultiplierNumerator: 1, durationMultiplierDenominator: 1, minDelay: 4 * time.Minute},
+	{durationMultiplierNumerator: 2, durationMultiplierDenominator: 1, minDelay: 8 * time.Minute},
+	{durationMultiplierNumerator: 3, durationMultiplierDenominator: 1, minDelay: 12 * time.Minute},
+}
 
 type observedTiKVCapacityIncrease struct {
 	increase int64
@@ -3968,12 +3976,16 @@ func buildAddIndexPostTaskObservationDelays(taskExecutionDuration time.Duration)
 	if taskExecutionDuration <= 0 {
 		return nil
 	}
-	delays := make([]time.Duration, 0, addIndexPostTaskObservationCount)
-	for n := 1; n <= addIndexPostTaskObservationCount; n++ {
-		delay := taskExecutionDuration * time.Duration(n) / 2
-		minDelay := addIndexPostTaskObservationMinDelayStep * time.Duration(n)
-		if delay < minDelay {
-			delay = minDelay
+	delays := make([]time.Duration, 0, len(addIndexPostTaskObservationDelays))
+	for _, observationDelay := range addIndexPostTaskObservationDelays {
+		if observationDelay.durationMultiplierDenominator <= 0 {
+			continue
+		}
+		delay := taskExecutionDuration *
+			time.Duration(observationDelay.durationMultiplierNumerator) /
+			time.Duration(observationDelay.durationMultiplierDenominator)
+		if delay < observationDelay.minDelay {
+			delay = observationDelay.minDelay
 		}
 		if delay <= 0 {
 			continue
