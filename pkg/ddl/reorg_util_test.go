@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"net"
@@ -970,6 +971,52 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.EqualValues(t, 100, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 100}, 10))
 		require.EqualValues(t, 10, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 0}, 10))
 		require.EqualValues(t, 10, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 5}, 10))
+	})
+
+	t.Run("block sample prediction uses scope aware TiKV write CF simulation", func(t *testing.T) {
+		ts := uint64(404411537129996288)
+		key := []byte("idx-key-00000001")
+		writeKey := buildTiKVWriteCFKeyForPrediction(key, ts)
+		require.Equal(t, byte('z'), writeKey[0])
+		require.Equal(t, ^ts, binary.BigEndian.Uint64(writeKey[len(writeKey)-tikvMVCCTimestampBytes:]))
+		require.Greater(t, len(writeKey), len(key)+tikvMVCCTimestampBytes)
+
+		writeValue := buildTiKVWriteCFValueForBlockSamplePrediction([]byte("x"), ts)
+		require.Equal(t, byte('P'), writeValue[0])
+		require.Equal(t, byte('v'), writeValue[len(writeValue)-3])
+		require.Equal(t, byte(1), writeValue[len(writeValue)-2])
+		require.Equal(t, byte('x'), writeValue[len(writeValue)-1])
+		emptyWriteValue := buildTiKVWriteCFValueForBlockSamplePrediction(nil, ts)
+		require.Equal(t, byte('v'), emptyWriteValue[len(emptyWriteValue)-2])
+		require.Equal(t, byte(0), emptyWriteValue[len(emptyWriteValue)-1])
+
+		localKVs := []sampledIndexKV{
+			{key: []byte("same-index-key"), value: []byte("x"), physicalID: 101, indexID: 7},
+			{key: []byte("same-index-key"), value: []byte("x"), physicalID: 102, indexID: 7},
+		}
+		localScopes := collectSampledIndexKVScopes(localKVs)
+		require.Len(t, localScopes, 2)
+		localScopeCounts := map[sampledIndexKVScope]int{
+			{physicalID: 101, indexID: 7}: 1,
+			{physicalID: 102, indexID: 7}: 1,
+		}
+		localPrediction := estimateBlockSampledIndexKVPredictionBytes(localKVs, localScopeCounts, ts)
+		require.NoError(t, localPrediction.Err)
+		require.Positive(t, localPrediction.PredictedBytes)
+
+		globalKVs := slices.Clone(localKVs)
+		for i := range globalKVs {
+			globalKVs[i].isGlobalIndex = true
+		}
+		globalScopes := collectSampledIndexKVScopes(globalKVs)
+		require.Len(t, globalScopes, 1)
+		globalScopeCounts := map[sampledIndexKVScope]int{
+			{indexID: 7, isGlobalIndex: true}: 1,
+		}
+		globalPrediction := estimateBlockSampledIndexKVPredictionBytes(globalKVs, globalScopeCounts, ts)
+		require.NoError(t, globalPrediction.Err)
+		require.Positive(t, globalPrediction.PredictedBytes)
+		require.Greater(t, localPrediction.PredictedBytes, globalPrediction.PredictedBytes)
 	})
 
 	t.Run("sample prediction uses physical estimate for all encodings", func(t *testing.T) {
