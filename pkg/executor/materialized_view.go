@@ -2267,7 +2267,7 @@ func (e *PurgeMaterializedViewLogExec) resolvePurgeMaterializedViewLogMeta(
 	baseTableMeta = baseTable.Meta()
 	baseTableID := baseTableMeta.ID
 
-	mlogName = pmodel.NewCIStr("$mlog$" + baseTableMeta.Name.O)
+	mlogName = model.MaterializedViewLogTableName(baseTableMeta.Name)
 	mlogTable, err := is.TableByName(context.Background(), schemaName, mlogName)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {

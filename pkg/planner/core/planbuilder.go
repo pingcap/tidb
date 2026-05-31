@@ -6325,9 +6325,9 @@ func (b *PlanBuilder) materializedViewLogNameForBaseTable(ctx context.Context, d
 		dbName = b.ctx.GetSessionVars().CurrentDB
 	}
 	if baseTable, err := b.is.TableByName(ctx, pmodel.NewCIStr(dbName), baseName); err == nil {
-		return pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
+		return model.MaterializedViewLogTableName(baseTable.Meta().Name)
 	}
-	return pmodel.NewCIStr("$mlog$" + baseName.O)
+	return model.MaterializedViewLogTableName(baseName)
 }
 
 const (
