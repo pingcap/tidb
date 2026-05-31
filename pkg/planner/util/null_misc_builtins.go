@@ -129,7 +129,6 @@ var nullRejectNullPreservingFunctions = map[string]struct{}{
 	ast.Right:           {},
 	ast.Rpad:            {},
 	ast.RTrim:           {},
-	ast.Soundex:         {},
 	ast.Space:           {},
 	ast.Substr:          {},
 	ast.Substring:       {},
@@ -185,11 +184,9 @@ var nullRejectNullPreservingFunctions = map[string]struct{}{
 	ast.ToDays:        {},
 	ast.ToSeconds:     {},
 	ast.UnixTimestamp: {},
-	ast.Week:          {},
 	ast.Weekday:       {},
 	ast.WeekOfYear:    {},
 	ast.Year:          {},
-	ast.YearWeek:      {},
 
 	// Encryption, hashing, and compression.
 	ast.Compress:           {},

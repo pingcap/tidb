@@ -181,6 +181,22 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		newNullRejectStringConst("abc"),
 		innerS,
 	)
+	weekWithNullableMode := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.Week,
+		types.NewFieldType(mysql.TypeLonglong),
+		newNullRejectStringConst("2024-01-08"),
+		innerA,
+	)
+	yearWeekWithNullableMode := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.YearWeek,
+		types.NewFieldType(mysql.TypeLonglong),
+		newNullRejectStringConst("2024-01-08"),
+		innerA,
+	)
 	deferredInnerGTZero := newNullRejectDeferredConst(exprCtx, gtInnerAZero)
 	deferredCoalesceInnerATwoGTTwo := newNullRejectDeferredConst(exprCtx,
 		newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), coalesceInnerATwo, newNullRejectIntConst(2)),
@@ -340,6 +356,30 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		{
 			name:     "json_search_nullable_escape_falls_back_to_default_escape",
 			expr:     newNullRejectNotNull(t, exprCtx, jsonSearchNullableEscape),
+			expected: false,
+		},
+		{
+			name: "week_nullable_mode_uses_default_mode_zero",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GE,
+				types.NewFieldType(mysql.TypeTiny),
+				weekWithNullableMode,
+				expression.NewZero(),
+			),
+			expected: false,
+		},
+		{
+			name: "yearweek_nullable_mode_uses_default_mode_zero",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GE,
+				types.NewFieldType(mysql.TypeTiny),
+				yearWeekWithNullableMode,
+				expression.NewZero(),
+			),
 			expected: false,
 		},
 		{
