@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	goerrors "errors"
@@ -4450,6 +4451,7 @@ const (
 	tikvMVCCShortValueOverheadBytes    = tikvMVCCTimestampBytes + tikvMVCCShortWriteCFValueMetaBytes
 	tikvMVCCEmptyValueOverheadBytes    = tikvMVCCTimestampBytes + tikvMVCCEmptyWriteCFValueMetaBytes
 	tikvMVCCLongValueBaseOverheadBytes = 2*tikvMVCCTimestampBytes + tikvMVCCLongWriteCFValueMetaBytes
+	tikvMVCCPredictionFallbackTS       = uint64(1) << 56
 )
 
 type sampleTiKVIndexPredictionResult struct {
@@ -4796,7 +4798,7 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 	var (
 		totalLogicalBytes int64
 		sampledKVs        = make([]sampledIndexKV, 0, sampledKVCapacity)
-		nonEmptySamples   int
+		scopeSampleCounts = make(map[sampledIndexKVScope]int)
 	)
 	for _, task := range regionTasks {
 		skipRows := blockSamplePredictionSkipRows(task.region, rnd)
@@ -4818,9 +4820,11 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 		if rowCnt == 0 {
 			continue
 		}
-		nonEmptySamples++
 		totalLogicalBytes += logicalBytes
 		sampledKVs = append(sampledKVs, kvs...)
+		for scope := range collectSampledIndexKVScopes(kvs) {
+			scopeSampleCounts[scope]++
+		}
 	}
 	if totalRows == 0 {
 		return 0, 0, 0, 0, 0, sampledRegions, totalRows, readErrorCount, nil
@@ -4829,13 +4833,13 @@ func (w *worker) estimateBlockSampleBytesPerRow(
 	encodedKeySharedPrefixAvg = estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVs)
 	rawKeySharedPrefixAvg = estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVs)
 	rawKeyLengthAvg = estimateSampledIndexKVRawKeyLengthAvg(sortedKVs)
-	estimatedBytes := estimateSampledIndexKVPredictionBytesWithSortedKVs(sortedKVs, nonEmptySamples)
+	estimatedBytes := estimateBlockSampledIndexKVPredictionBytes(sampledKVs, scopeSampleCounts, snapshotTS)
 	if estimatedBytes.Err != nil {
 		logutil.DDLLogger().Warn("failed to estimate physical TiKV bytes from block-sampled add-index KVs; fallback to logical bytes for sampled rows",
 			zap.Int("sampled_rows", totalRows),
 			zap.Int("sampled_kv_count", len(sampledKVs)),
 			zap.Int("sampled_region_count", sampledRegions),
-			zap.Int("non_empty_sample_count", nonEmptySamples),
+			zap.Int("sample_scope_count", len(scopeSampleCounts)),
 			zap.Error(estimatedBytes.Err))
 	}
 	if estimatedBytes.PredictedBytes <= 0 {
@@ -5031,9 +5035,37 @@ func estimateIndexKVBytesForSampledRow(
 }
 
 type sampledIndexKV struct {
-	key    []byte
-	value  []byte
-	rawKey []byte
+	key           []byte
+	value         []byte
+	rawKey        []byte
+	physicalID    int64
+	indexID       int64
+	isGlobalIndex bool
+}
+
+type sampledIndexKVScope struct {
+	indexID       int64
+	physicalID    int64
+	isGlobalIndex bool
+}
+
+func (kvPair sampledIndexKV) scope() sampledIndexKVScope {
+	scope := sampledIndexKVScope{
+		indexID:       kvPair.indexID,
+		isGlobalIndex: kvPair.isGlobalIndex,
+	}
+	if !kvPair.isGlobalIndex {
+		scope.physicalID = kvPair.physicalID
+	}
+	return scope
+}
+
+func collectSampledIndexKVScopes(kvs []sampledIndexKV) map[sampledIndexKVScope]struct{} {
+	scopes := make(map[sampledIndexKVScope]struct{})
+	for _, kvPair := range kvs {
+		scopes[kvPair.scope()] = struct{}{}
+	}
+	return scopes
 }
 
 func collectIndexKVsForSampledRow(
@@ -5082,6 +5114,8 @@ func collectIndexKVsForSampledRow(
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
+		idxInfo := idx.Meta()
+		physicalID := physicalTbl.GetPhysicalID()
 		rawKeyPos := 0
 		for iter.Valid() {
 			key, value, _, err := iter.Next(nil, nil)
@@ -5094,9 +5128,12 @@ func collectIndexKVsForSampledRow(
 			}
 			rawKeyPos++
 			kvs = append(kvs, sampledIndexKV{
-				key:    slices.Clone(key),
-				value:  slices.Clone(value),
-				rawKey: slices.Clone(rawKey),
+				key:           slices.Clone(key),
+				value:         slices.Clone(value),
+				rawKey:        slices.Clone(rawKey),
+				physicalID:    physicalID,
+				indexID:       idxInfo.ID,
+				isGlobalIndex: idxInfo.Global,
 			})
 			totalBytes += int64(len(key) + len(value))
 		}
@@ -5212,6 +5249,61 @@ func estimateSampledIndexKVPredictionBytesWithSortedKVs(
 		result.MVCCOverheadBytes = mvccPhysicalBytes - logicalPhysicalBytes
 	}
 	return result
+}
+
+func estimateBlockSampledIndexKVPredictionBytes(
+	kvs []sampledIndexKV,
+	scopeSampleCounts map[sampledIndexKVScope]int,
+	commitTS uint64,
+) sampleTiKVIndexPredictionBytes {
+	result := sampleTiKVIndexPredictionBytes{}
+	if len(kvs) == 0 {
+		return result
+	}
+	if commitTS == 0 {
+		commitTS = tikvMVCCPredictionFallbackTS
+	}
+	var totalLogicalBytes int64
+	groupedKVs := make(map[sampledIndexKVScope][]sampledIndexKV)
+	for _, kvPair := range kvs {
+		totalLogicalBytes += int64(len(kvPair.key) + len(kvPair.value))
+		scope := kvPair.scope()
+		groupedKVs[scope] = append(groupedKVs[scope], kvPair)
+	}
+	var logicalPhysicalBytes int64
+	var mvccPhysicalBytes int64
+	for scope, scopeKVs := range groupedKVs {
+		sortedKVs := sortSampledIndexKVs(scopeKVs)
+		splitCount := max(scopeSampleCounts[scope], 1)
+		scopeLogicalPhysicalBytes, logicalErr := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortedKVs, splitCount)
+		if logicalErr != nil || scopeLogicalPhysicalBytes <= 0 {
+			scopeLogicalPhysicalBytes = sampledIndexKVLogicalBytes(scopeKVs)
+		}
+		logicalPhysicalBytes += scopeLogicalPhysicalBytes
+		scopeMVCCPhysicalBytes, mvccErr := estimateBlockSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs, splitCount, commitTS)
+		if mvccErr != nil {
+			result.PredictedBytes = totalLogicalBytes
+			result.Err = mvccErr
+			return result
+		}
+		mvccPhysicalBytes += scopeMVCCPhysicalBytes
+	}
+	if logicalPhysicalBytes <= 0 {
+		logicalPhysicalBytes = totalLogicalBytes
+	}
+	result.PredictedBytes = mvccPhysicalBytes
+	if mvccPhysicalBytes > logicalPhysicalBytes {
+		result.MVCCOverheadBytes = mvccPhysicalBytes - logicalPhysicalBytes
+	}
+	return result
+}
+
+func sampledIndexKVLogicalBytes(kvs []sampledIndexKV) int64 {
+	var totalBytes int64
+	for _, kvPair := range kvs {
+		totalBytes += int64(len(kvPair.key) + len(kvPair.value))
+	}
+	return totalBytes
 }
 
 func estimateSampledIndexKVPhysicalBytes(kvs []sampledIndexKV) (int64, error) {
@@ -5373,6 +5465,26 @@ func estimateSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs []sampledIndexKV
 	return physicalBytes, nil
 }
 
+func estimateBlockSampledIndexKVMVCCPhysicalBytesWithSplit(sortedKVs []sampledIndexKV, splitCount int, commitTS uint64) (int64, error) {
+	mvccKVs := buildBlockSampledTiKVMVCCKVs(sortedKVs, commitTS)
+	var physicalBytes int64
+	if len(mvccKVs.defaultKVs) > 0 {
+		defaultCFBytes, err := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(mvccKVs.defaultKVs), splitCount)
+		if err != nil {
+			return 0, errors.Annotate(err, "estimate default CF MVCC SST")
+		}
+		physicalBytes += defaultCFBytes
+	}
+	if len(mvccKVs.writeKVs) > 0 {
+		writeCFBytes, err := estimateSortedSampledIndexKVPhysicalBytesWithSplit(sortSampledIndexKVs(mvccKVs.writeKVs), splitCount)
+		if err != nil {
+			return 0, errors.Annotate(err, "estimate write CF MVCC SST")
+		}
+		physicalBytes += writeCFBytes
+	}
+	return physicalBytes, nil
+}
+
 func buildSampledTiKVMVCCKVs(kvs []sampledIndexKV) sampledTiKVMVCCKVs {
 	mvccKVs := sampledTiKVMVCCKVs{
 		writeKVs: make([]sampledIndexKV, 0, len(kvs)),
@@ -5392,6 +5504,36 @@ func buildSampledTiKVMVCCKVs(kvs []sampledIndexKV) sampledTiKVMVCCKVs {
 		}
 	}
 	return mvccKVs
+}
+
+func buildBlockSampledTiKVMVCCKVs(kvs []sampledIndexKV, commitTS uint64) sampledTiKVMVCCKVs {
+	mvccKVs := sampledTiKVMVCCKVs{
+		writeKVs: make([]sampledIndexKV, 0, len(kvs)),
+	}
+	for _, kvPair := range kvs {
+		writeKV := sampledIndexKV{
+			key:   buildTiKVWriteCFKeyForPrediction(kvPair.key, commitTS),
+			value: buildTiKVWriteCFValueForBlockSamplePrediction(kvPair.value, commitTS),
+		}
+		mvccKVs.writeKVs = append(mvccKVs.writeKVs, writeKV)
+		if len(kvPair.value) > tikvMVCCShortValueMaxBytes {
+			defaultKV := sampledIndexKV{
+				// Keep the existing default-CF approximation in this iteration.
+				key:   appendTiKVMVCCTimestampForPrediction(kvPair.key),
+				value: slices.Clone(kvPair.value),
+			}
+			mvccKVs.defaultKVs = append(mvccKVs.defaultKVs, defaultKV)
+		}
+	}
+	return mvccKVs
+}
+
+func buildTiKVWriteCFKeyForPrediction(key []byte, commitTS uint64) []byte {
+	actualKey := make([]byte, 0, 1+utilcodec.EncodedBytesLength(len(key))+tikvMVCCTimestampBytes)
+	actualKey = append(actualKey, 'z')
+	actualKey = utilcodec.EncodeBytes(actualKey, key)
+	actualKey = binary.BigEndian.AppendUint64(actualKey, ^commitTS)
+	return actualKey
 }
 
 func appendTiKVMVCCTimestampForPrediction(key []byte) []byte {
@@ -5414,6 +5556,18 @@ func buildTiKVWriteCFValueForPrediction(value []byte) []byte {
 	default:
 		return make([]byte, tikvMVCCLongWriteCFValueMetaBytes)
 	}
+}
+
+func buildTiKVWriteCFValueForBlockSamplePrediction(value []byte, startTS uint64) []byte {
+	writeValue := make([]byte, 0, tikvMVCCShortWriteCFValueMetaBytes+len(value))
+	writeValue = append(writeValue, 'P')
+	writeValue = binary.AppendUvarint(writeValue, startTS)
+	if len(value) <= tikvMVCCShortValueMaxBytes {
+		writeValue = append(writeValue, 'v')
+		writeValue = append(writeValue, byte(len(value)))
+		writeValue = append(writeValue, value...)
+	}
+	return writeValue
 }
 
 func estimateSampledIndexKVMVCCOverheadBytes(kvs []sampledIndexKV) int64 {
