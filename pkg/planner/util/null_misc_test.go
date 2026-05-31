@@ -55,7 +55,8 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 	outerC := newNullRejectIntColumn(3)
 	innerS := newNullRejectStringColumn(4)
 	innerUnsignedD := newNullRejectUintColumn(5)
-	innerSchema := expression.NewSchema(innerA, innerB, innerS, innerUnsignedD)
+	innerDate := newNullRejectDatetimeColumn(6)
+	innerSchema := expression.NewSchema(innerA, innerB, innerS, innerUnsignedD, innerDate)
 
 	gtInnerAZero := newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
 	eqInnerAZero := newNullRejectFunc(t, exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
@@ -196,6 +197,22 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		types.NewFieldType(mysql.TypeLonglong),
 		newNullRejectStringConst("2024-01-08"),
 		innerA,
+	)
+	weekWithNullableDateAndOuterMode := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.Week,
+		types.NewFieldType(mysql.TypeLonglong),
+		innerDate,
+		outerC,
+	)
+	yearWeekWithNullableDateAndOuterMode := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.YearWeek,
+		types.NewFieldType(mysql.TypeLonglong),
+		innerDate,
+		outerC,
 	)
 	deferredInnerGTZero := newNullRejectDeferredConst(exprCtx, gtInnerAZero)
 	deferredCoalesceInnerATwoGTTwo := newNullRejectDeferredConst(exprCtx,
@@ -383,6 +400,30 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 			expected: false,
 		},
 		{
+			name: "week_nullable_date_rejects_null_even_with_outer_mode",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GE,
+				types.NewFieldType(mysql.TypeTiny),
+				weekWithNullableDateAndOuterMode,
+				expression.NewZero(),
+			),
+			expected: true,
+		},
+		{
+			name: "yearweek_nullable_date_rejects_null_even_with_outer_mode",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GE,
+				types.NewFieldType(mysql.TypeTiny),
+				yearWeekWithNullableDateAndOuterMode,
+				expression.NewZero(),
+			),
+			expected: true,
+		},
+		{
 			name:     "deferred_expr_uses_symbolic_null_reject_proof",
 			expr:     deferredInnerGTZero,
 			expected: true,
@@ -430,6 +471,15 @@ func newNullRejectUintColumn(id int64) *expression.Column {
 		ID:       id,
 		Index:    int(id),
 		RetType:  newNullRejectUintFieldType(mysql.TypeLonglong),
+	}
+}
+
+func newNullRejectDatetimeColumn(id int64) *expression.Column {
+	return &expression.Column{
+		UniqueID: id,
+		ID:       id,
+		Index:    int(id),
+		RetType:  types.NewFieldType(mysql.TypeDatetime),
 	}
 }
 
