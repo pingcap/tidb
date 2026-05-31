@@ -40,6 +40,15 @@ func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	require.NotEmpty(t, names)
 	require.Equal(t, "729f5252bcd91efe1a4bbf0c383a36c5a2e52ed2d90d7aab0a3e0b450322294c", hex.EncodeToString(sum[:]))
 
+	internalScalarNames := map[string]struct{}{
+		ast.Cast: {},
+	}
+	for name := range nullRejectNullPreservingFunctions {
+		if _, ok := internalScalarNames[name]; ok {
+			continue
+		}
+		require.Contains(t, names, name)
+	}
 	for name := range nullRejectRejectNullTests {
 		require.Contains(t, names, name)
 	}
