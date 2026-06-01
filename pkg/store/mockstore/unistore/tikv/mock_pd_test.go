@@ -32,11 +32,13 @@ func TestMockGCStatesManager(t *testing.T) {
 		ctl := m.GetGCInternalController(keyspaceID)
 		cli := m.GetGCStatesClient(keyspaceID)
 
-		s, err := cli.GetGCState(ctx)
+		s, err := cli.GetGCState(ctx, pdgc.ExcludeGCBarriers(false))
 		re.NoError(err)
 		re.Equal(uint64(0), s.GCSafePoint)
 		re.Equal(uint64(0), s.TxnSafePoint)
-		re.Empty(s.GCBarriers)
+		gcBarriers, err := s.GetGCBarriers()
+		re.NoError(err)
+		re.Empty(gcBarriers)
 
 		tspRes, err := ctl.AdvanceTxnSafePoint(ctx, 10)
 		re.NoError(err)
@@ -63,7 +65,9 @@ func TestMockGCStatesManager(t *testing.T) {
 		re.NoError(err)
 		re.Equal(uint64(9), s.GCSafePoint)
 		re.Equal(uint64(10), s.TxnSafePoint)
-		re.Empty(s.GCBarriers)
+		gcBarriers, err = s.GetGCBarriers()
+		re.NoError(err)
+		re.Empty(gcBarriers)
 
 		// Invalid arguments
 		_, err = cli.SetGCBarrier(ctx, "", 20, pdgc.TTLNeverExpire)
@@ -86,9 +90,10 @@ func TestMockGCStatesManager(t *testing.T) {
 		re.NoError(err)
 		re.Equal(uint64(9), s.GCSafePoint)
 		re.Equal(uint64(10), s.TxnSafePoint)
-		re.Len(s.GCBarriers, 1)
-		re.Equal("b2", s.GCBarriers[0].BarrierID)
-		re.Equal(uint64(25), s.GCBarriers[0].BarrierTS)
+		gcBarriers, err = s.GetGCBarriers()
+		re.Len(gcBarriers, 1)
+		re.Equal("b2", gcBarriers[0].BarrierID)
+		re.Equal(uint64(25), gcBarriers[0].BarrierTS)
 
 		tspRes, err = ctl.AdvanceTxnSafePoint(ctx, 30)
 		re.NoError(err)
@@ -117,6 +122,8 @@ func TestMockGCStatesManager(t *testing.T) {
 		re.NoError(err)
 		re.Equal(uint64(30), s.TxnSafePoint)
 		re.Equal(uint64(9), s.GCSafePoint)
-		re.Empty(s.GCBarriers)
+		gcBarriers, err = s.GetGCBarriers()
+		re.NoError(err)
+		re.Empty(gcBarriers)
 	}
 }
