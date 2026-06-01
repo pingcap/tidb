@@ -19,12 +19,12 @@ This plan implements `docs/agents/br/lease-lock-integration-test-design.md`.
 - [x] (2026-06-01) 实现 `pkg/objstore` renewal write block/error failpoint。
 - [x] (2026-06-01) 实现 BR 业务持锁后 signal/block failpoint。
 - [x] (2026-06-01) 新增 `br/tests/br_lease_lock` shell harness 和通用 helper。
-- [ ] 实现 migration renewal success case，并检查 normal unlock。
-- [ ] 实现 migration lost block/error 两个 case。
-- [ ] 实现 truncate renewal success case，并检查 normal unlock。
-- [ ] 实现 truncate lost block/error 两个 case。
-- [ ] 实现 stale lock reclaim real-command case。
-- [ ] 更新 BR integration test group。
+- [x] (2026-06-01) 实现 migration renewal success case，并检查 normal unlock。
+- [x] (2026-06-01) 实现 migration lost block/error 两个 case。
+- [x] (2026-06-01) 实现 truncate renewal success case，并检查 normal unlock。
+- [x] (2026-06-01) 实现 truncate lost block/error 两个 case。
+- [x] (2026-06-01) 实现 stale lock reclaim real-command case。
+- [x] (2026-06-01) 更新 BR integration test group。
 - [ ] 运行 WIP 验证。
 - [ ] 运行 Ready 验证并记录结果。
 - [ ] 合并独立审查发现并同步更新本计划。
@@ -50,7 +50,7 @@ This plan implements `docs/agents/br/lease-lock-integration-test-design.md`.
   Evidence: 在 `pkg/objstore/locking_helper.go` 的 named return 函数里，failpoint closure 使用 `dir, err := ...` 会被 failpoint transform 改写成非法的 `return false, err` 捕获；改为 `parseErr` 后 `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLockTestConstantsFailpoint|TestRenewalWriteBlockFailpoint|TestRenewalWriteErrorFailpoint|TestCleanUpStaleTruncateLockReclaimSignalFailpoint' -count=1` 通过。
 
 - Observation: scaffold 阶段不能让 `br/tests/br_lease_lock/run.sh` 静默成功。
-  Evidence: 独立审查指出仅打印 case list 会造成“集成测试通过但没有实际覆盖”的假象；因此在 7 个 case 全部接入前，脚本末尾必须明确非零退出，`br_lease_lock` 也暂不应加入 BR integration group。
+  Evidence: 独立审查指出仅打印 case list 会造成“集成测试通过但没有实际覆盖”的假象；因此在 7 个 case 全部接入前，脚本末尾必须明确非零退出，且不应加入 BR integration group。7 个 case 接入后才能移除 guard 并加入 group。
 
 ## Decision Log
 
@@ -89,8 +89,9 @@ This plan implements `docs/agents/br/lease-lock-integration-test-design.md`.
 - 2026-06-01 计划审查结论：第三轮独立审查通过。可实施性审查结论为“可实施”，设计一致性审查结论为“符合设计”，证明力审查结论为“证明力充足”，BR integration 模式审查结论为“符合模式”。后续可以进入实现阶段。
 - 2026-06-01 Task 1 实现记录：按 TDD 先新增 `pkg/objstore` failpoint contract 测试，red 结果为 `undefined: applyLeaseLockTestConstantsFailpoint`；实现后运行 `./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLockTestConstantsFailpoint|TestRenewalWriteBlockFailpoint|TestRenewalWriteErrorFailpoint' -count=1` 通过。当前只完成 objstore 底层 failpoint，不包含 BR 业务持锁点、PD clock marker、stale reclaim marker 或 shell integration case。
 - 2026-06-01 Task 2 实现记录：按 TDD 先新增 `br/pkg/utils` failpoint helper 测试，red 结果为 helper 类型和函数未定义；实现 helper 后接入 `LogClient.GetLockedMigrations`、`RunStreamTruncate`、`PDLeaseClock.Now` 和 stale cleanup marker。验证命令包括 `./tools/check/failpoint-go-test.sh br/pkg/utils -run 'TestLeaseLockFailpoint' -count=1`、`./tools/check/failpoint-go-test.sh pkg/objstore -run 'TestLeaseLockTestConstantsFailpoint|TestRenewalWriteBlockFailpoint|TestRenewalWriteErrorFailpoint|TestCleanUpStaleTruncateLockReclaimSignalFailpoint' -count=1`，以及 `br/pkg/restore`、`br/pkg/restore/log_client`、`br/pkg/task` 的 failpoint-enabled compile-only 检查。
-- 2026-06-01 Task 3 实现记录：新增 `br/tests/br_lease_lock/run.sh`，目前包含 case list、目录隔离、marker 等待、lock file 查找、lock JSON 读取、后台 BR 进程和 failpoint 作用域 helper，并先草拟了 migration success/block-lost/error-lost 三个 case 函数。当前只做 `bash -n br/tests/br_lease_lock/run.sh` 语法检查；case 尚未接入脚本主流程，真实 cluster smoke run、truncate case 和 stale reclaim case 仍待后续任务实现。为避免假通过，脚本在完整 suite 接入前会明确 `exit 1`，并暂不加入 `br/tests/run_group_br_tests.sh`。
-- 2026-06-01 独立审查阶段修正记录：保留 scaffolding 状态，但修复“静默成功”风险；`run_br_capture`/`run_br_with_failpoints` 失败时会打印日志；migration success 草稿要求 acquired 后 PD clock marker 至少增加 2 个；migration lost 草稿除了 `context canceled` 之外，还按 block/error 模式断言具体 renewal loss 日志。
+- 2026-06-01 Task 3 实现记录：新增 `br/tests/br_lease_lock/run.sh`，包含 case list、目录隔离、marker 等待、lock file 查找、lock JSON 读取、后台 BR 进程和 failpoint 作用域 helper，并先草拟了 migration success/block-lost/error-lost 三个 case 函数。该阶段只做 `bash -n br/tests/br_lease_lock/run.sh` 语法检查；case 当时尚未接入脚本主流程，真实 cluster smoke run、truncate case 和 stale reclaim case 仍待后续任务实现。
+- 2026-06-01 独立审查阶段修正记录：修复“静默成功”风险；`run_br_capture`/`run_br_with_failpoints` 失败时会打印日志；migration success 草稿要求 acquired 后 PD clock marker 至少增加 2 个；migration lost 草稿除了 `context canceled` 之外，还按 block/error 模式断言具体 renewal loss 日志。
+- 2026-06-01 下一阶段进展：`br/tests/br_lease_lock/run.sh` 已接入 7 个 case 的调用：migration renewal success、migration lost by block/error、truncate renewal success、truncate lost by block/error、stale lock reclaim。`br_lease_lock` 已加入 `br/tests/run_group_br_tests.sh` 的 G02。当前只做 shell 语法与文档检查，尚未运行真实集群；实际通过性需要后续 `make build_for_br_integration_test` 和 `TEST_NAME=br_lease_lock br/tests/run.sh` 验证。
 
 ## Context and Orientation
 

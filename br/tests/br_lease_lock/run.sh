@@ -141,6 +141,21 @@ with open(sys.argv[1], encoding="utf-8") as f:
 PY
 }
 
+read_truncate_safepoint() {
+	local storage_dir=$1
+	local safepoint_file="$storage_dir/v1_stream_trancate_safepoint.txt"
+	if [ ! -f "$safepoint_file" ]; then
+		echo 0
+		return
+	fi
+	cat "$safepoint_file"
+}
+
+count_log_data_files() {
+	local storage_dir=$1
+	find "$storage_dir" -type f -name '*.log' | wc -l
+}
+
 wait_expire_at_advanced() {
     local lock_file=$1
     local old_ns=$2
@@ -216,7 +231,27 @@ assert_log_not_contains() {
         echo "Expected log $log_file not to contain: $pattern"
         cat "$log_file"
         exit 1
-    fi
+	fi
+}
+
+assert_int_less_than() {
+	local lhs=$1
+	local rhs=$2
+	local message=$3
+	if [ "$lhs" -ge "$rhs" ]; then
+		echo "$message: expected $lhs < $rhs"
+		exit 1
+	fi
+}
+
+assert_int_equals() {
+	local lhs=$1
+	local rhs=$2
+	local message=$3
+	if [ "$lhs" -ne "$rhs" ]; then
+		echo "$message: expected $lhs == $rhs"
+		exit 1
+	fi
 }
 
 run_br_capture() {
@@ -254,16 +289,16 @@ run_br_bg_with_failpoints() {
 }
 
 wait_pid_with_timeout() {
-    local pid=$1
-    local timeout_seconds=$2
-    local expected_exit=$3
-    local log_file=${4:-}
-    local waited=0
+	local pid=$1
+	local timeout_seconds=$2
+	local expected_exit=$3
+	local log_file=${4:-}
+	local waited=0
 
-    while kill -0 "$pid" 2>/dev/null; do
-        if [ "$waited" -ge "$timeout_seconds" ]; then
-            echo "Timed out waiting for pid $pid"
-            if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+	while background_pid_is_running "$pid"; do
+		if [ "$waited" -ge "$timeout_seconds" ]; then
+			echo "Timed out waiting for pid $pid"
+			if [ -n "$log_file" ] && [ -f "$log_file" ]; then
                 cat "$log_file"
             fi
             kill_process_tree "$pid"
@@ -294,7 +329,12 @@ wait_pid_with_timeout() {
             echo "Unknown expected exit mode: $expected_exit"
             exit 1
             ;;
-    esac
+	esac
+}
+
+background_pid_is_running() {
+	local pid=$1
+	jobs -pr | grep -Fxq "$pid"
 }
 
 kill_process_tree() {
@@ -335,14 +375,20 @@ prepare_pitr_fixture() {
     sleep 5
     RESTORED_TS=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
 
-    run_sql "CREATE TABLE $DB.truncate_probe (id INT PRIMARY KEY);"
-    run_sql "INSERT INTO $DB.truncate_probe VALUES (7), (70);"
-    sleep 5
-    TRUNCATE_TS=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
+	run_sql "CREATE TABLE $DB.truncate_probe (id INT PRIMARY KEY);"
+	run_sql "INSERT INTO $DB.truncate_probe VALUES (7), (70);"
+	sleep 5
+	TRUNCATE_TS=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
 
-    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
-    run_br_capture "$CASE_LOG_DIR/log-stop.log" \
-        --pd "$PD_ADDR" log stop --task-name "$TASK_NAME"
+	. "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+	run_br_capture "$CASE_LOG_DIR/log-stop.log" \
+		--pd "$PD_ADDR" log stop --task-name "$TASK_NAME"
+	TRUNCATE_DATA_FILE_COUNT=$(count_log_data_files "$LOG_STORAGE")
+	if [ "$TRUNCATE_DATA_FILE_COUNT" -le 0 ]; then
+		echo "Expected PITR fixture to create log data files under $LOG_STORAGE"
+		find "$LOG_STORAGE" -type f
+		exit 1
+	fi
 }
 
 run_migration_renewal_success_case() {
@@ -451,8 +497,173 @@ run_migration_lost_case() {
                 "Lock renewal retry backoff would exceed proven lease window; calling onLeaseLost."
             ;;
     esac
-    run_sql "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = '$DB';"
-    check_contains "COUNT(*): 0"
+	run_sql "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = '$DB';"
+	check_contains "COUNT(*): 0"
+}
+
+run_truncate_renewal_success_case() {
+	local case_name="truncate_renewal_success"
+	prepare_pitr_fixture "$case_name"
+
+	local acquired="$CASE_MARKER_DIR/acquired"
+	local release="$CASE_MARKER_DIR/release"
+	local after="$CASE_MARKER_DIR/after"
+	local pd_clock_dir="$CASE_MARKER_DIR/pd-clock"
+	local truncate_log="$CASE_LOG_DIR/truncate.log"
+	local old_file_count="$TRUNCATE_DATA_FILE_COUNT"
+	local old_safepoint
+	old_safepoint=$(read_truncate_safepoint "$LOG_STORAGE")
+	local failpoints="$LEASE_FP;github.com/pingcap/tidb/br/pkg/restore/lease-clock-pd-now-signal=return(\"dir=$pd_clock_dir\");github.com/pingcap/tidb/br/pkg/task/lease-lock-after-truncate-lock-acquired=return(\"signal=$acquired,release=$release,after=$after\")"
+
+	run_br_bg_with_failpoints "$failpoints" "$truncate_log" \
+		--pd "$PD_ADDR" log truncate \
+		-s "local://$LOG_STORAGE" \
+		--until "$TRUNCATE_TS" \
+		-y
+	local pid=$BR_BG_PID
+
+	wait_for_file "$acquired" 30
+	local lock_file
+	lock_file=$(find_single_lock_file "$LOG_STORAGE" truncate)
+	read_lock_txn_id "$lock_file" > "$CASE_MARKER_DIR/lock-txn-id"
+
+	local old_expire_at
+	old_expire_at=$(read_expire_at_epoch_ns "$lock_file")
+	local old_pd_markers
+	old_pd_markers=$(count_pd_clock_markers "$pd_clock_dir")
+
+	wait_expire_at_advanced "$lock_file" "$old_expire_at" > "$CASE_MARKER_DIR/renewed-expire-at"
+	wait_pd_clock_marker_count_at_least "$pd_clock_dir" "$((old_pd_markers + 2))" > "$CASE_MARKER_DIR/pd-clock-count"
+
+	touch "$release"
+	wait_pid_with_timeout "$pid" 120 success "$truncate_log"
+
+	assert_file_exists "$after"
+	assert_file_not_exists "$lock_file"
+	assert_log_not_contains "$truncate_log" "lease lost"
+	assert_log_not_contains "$truncate_log" "context canceled"
+
+	local new_safepoint
+	new_safepoint=$(read_truncate_safepoint "$LOG_STORAGE")
+	if [ "$new_safepoint" -le "$old_safepoint" ] || [ "$new_safepoint" -ne "$TRUNCATE_TS" ]; then
+		echo "Expected truncate safepoint to advance from $old_safepoint to $TRUNCATE_TS, got $new_safepoint"
+		exit 1
+	fi
+	local new_file_count
+	new_file_count=$(count_log_data_files "$LOG_STORAGE")
+	assert_int_less_than "$new_file_count" "$old_file_count" "truncate should remove some log data files"
+
+	run_br_capture "$CASE_LOG_DIR/truncate-again.log" \
+		--pd "$PD_ADDR" log truncate \
+		-s "local://$LOG_STORAGE" \
+		--until "$TRUNCATE_TS" \
+		-y
+}
+
+run_truncate_lost_case() {
+	local mode=$1
+	local case_name="truncate_lost_${mode}"
+	prepare_pitr_fixture "$case_name"
+
+	local acquired="$CASE_MARKER_DIR/acquired"
+	local release="$CASE_MARKER_DIR/release"
+	local after="$CASE_MARKER_DIR/after"
+	local fault="$CASE_MARKER_DIR/renewal-write-blocked"
+	local fault_dir="$CASE_MARKER_DIR/renewal-write-errors"
+	local truncate_log="$CASE_LOG_DIR/truncate-$mode.log"
+	local old_file_count="$TRUNCATE_DATA_FILE_COUNT"
+	local old_safepoint
+	old_safepoint=$(read_truncate_safepoint "$LOG_STORAGE")
+	local failpoints="$LEASE_FP;github.com/pingcap/tidb/br/pkg/task/lease-lock-after-truncate-lock-acquired=return(\"signal=$acquired,release=$release,after=$after\")"
+
+	case "$mode" in
+		block)
+			failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block=return(\"signal=$fault\")"
+			;;
+		error)
+			failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error=return(\"signal-dir=$fault_dir\")"
+			;;
+		*)
+			echo "Unknown truncate lost mode: $mode"
+			exit 1
+			;;
+	esac
+
+	run_br_bg_with_failpoints "$failpoints" "$truncate_log" \
+		--pd "$PD_ADDR" log truncate \
+		-s "local://$LOG_STORAGE" \
+		--until "$TRUNCATE_TS" \
+		-y
+	local pid=$BR_BG_PID
+
+	wait_for_file "$acquired" 30
+	case "$mode" in
+		block)
+			wait_for_file "$fault" 30
+			;;
+		error)
+			wait_for_file "$fault_dir/attempt.1" 30
+			wait_for_file "$fault_dir/attempt.2" 30
+			;;
+	esac
+
+	wait_pid_with_timeout "$pid" 120 failure "$truncate_log"
+	assert_file_not_exists "$release"
+	assert_file_not_exists "$after"
+	assert_log_contains "$truncate_log" "context canceled"
+	case "$mode" in
+		block)
+			assert_log_contains "$truncate_log" "Lock renewal detected lease lost; calling onLeaseLost."
+			assert_log_contains "$truncate_log" "renewal: write timed out"
+			;;
+		error)
+			assert_log_contains "$truncate_log" "Lock renewal hit transient error; will retry with exponential backoff."
+			assert_log_contains_any "$truncate_log" \
+				"Lock renewal proven lease window elapsed; calling onLeaseLost." \
+				"Lock renewal retry backoff would exceed proven lease window; calling onLeaseLost."
+			;;
+	esac
+
+	local new_safepoint
+	new_safepoint=$(read_truncate_safepoint "$LOG_STORAGE")
+	assert_int_equals "$new_safepoint" "$old_safepoint" "truncate safepoint should not advance after lease lost"
+	local new_file_count
+	new_file_count=$(count_log_data_files "$LOG_STORAGE")
+	assert_int_equals "$new_file_count" "$old_file_count" "truncate should not remove log data files after lease lost"
+}
+
+write_stale_truncate_lock() {
+	local lock_file=$1
+	mkdir -p "$(dirname "$lock_file")"
+	cat > "$lock_file" <<'JSON'
+{
+  "locked_at": "2000-01-01T00:00:00Z",
+  "locker_host": "stale-test",
+  "locker_pid": 1,
+  "txn_id": "AAAAAAAAAAAAAAAAAAAAAA==",
+  "hint": "stale integration test",
+  "expire_at": "2000-01-01T00:00:01Z"
+}
+JSON
+}
+
+run_stale_lock_reclaim_case() {
+	local case_name="stale_lock_reclaim"
+	prepare_pitr_fixture "$case_name"
+
+	local stale_lock_path="$LOG_STORAGE/truncating.lock.0123456789abcdef0123456789abcdef"
+	local reclaim_dir="$CASE_MARKER_DIR/stale-reclaim"
+	local truncate_log="$CASE_LOG_DIR/stale-reclaim.log"
+	write_stale_truncate_lock "$stale_lock_path"
+
+	run_br_with_failpoints "$LEASE_FP;github.com/pingcap/tidb/pkg/objstore/lease-lock-stale-reclaim-signal=return(\"dir=$reclaim_dir\")" "$truncate_log" \
+		--pd "$PD_ADDR" log truncate \
+		-s "local://$LOG_STORAGE" \
+		--until "$TRUNCATE_TS" \
+		-y
+
+	assert_file_not_exists "$stale_lock_path"
+	assert_file_exists "$reclaim_dir/$(basename "$stale_lock_path")"
 }
 
 list_cases() {
@@ -471,9 +682,10 @@ CASES
 restart_services
 mkdir -p "$CASE_ROOT" "$LOG_DIR" "$MARKER_DIR"
 list_cases
-cat <<'MESSAGE'
-br_lease_lock is still scaffolding: the full seven-case suite is not wired yet.
-Do not treat this script as a passing integration test until every planned case
-is implemented and this guard is removed.
-MESSAGE
-exit 1
+run_migration_renewal_success_case
+run_migration_lost_case block
+run_migration_lost_case error
+run_truncate_renewal_success_case
+run_truncate_lost_case block
+run_truncate_lost_case error
+run_stale_lock_reclaim_case
