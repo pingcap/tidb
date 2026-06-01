@@ -134,14 +134,12 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	sessPool := ddlObj.sessPool
 	taskKS := s.task.Keyspace
 	if ddlObj.store.GetKeyspace() != taskKS {
-		var err error
-		err = s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
+		if err := s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
 			svr := se.GetSQLServer()
 			sp, err := svr.GetKSSessPool(taskKS)
 			sessPool = sess.NewSessionPool(sp)
 			return err
-		})
-		if err != nil {
+		}); err != nil {
 			return nil, err
 		}
 	}
