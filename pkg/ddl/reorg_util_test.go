@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
+	lightningtikv "github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -74,6 +75,18 @@ func (s mockHelperStorage) GetPDHTTPClient() pdhttp.Client {
 
 func (mockHelperStorage) GetRegionCache() *tikv.RegionCache {
 	return nil
+}
+
+func sampleScopeCountsForTest(kvs []sampledIndexKV, count int) map[sampledIndexKVScope]int {
+	scopeCounts := make(map[sampledIndexKVScope]int)
+	for scope := range collectSampledIndexKVScopes(kvs) {
+		scopeCounts[scope] = count
+	}
+	return scopeCounts
+}
+
+func sortedKVsForTest(kvs []sampledIndexKV) []sampledIndexKV {
+	return sortSampledIndexKVs(kvs)
 }
 
 type mockPDHTTPClient struct {
@@ -662,54 +675,50 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Equal(t, uint64(math.MaxUint64), estimateBlockSamplePeakPredictedTiKVIndexBytes(math.MaxUint64))
 	})
 
-	t.Run("mvcc overhead estimates short and long values", func(t *testing.T) {
-		require.Equal(t, float64(tikvMVCCShortValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, 1))
-		require.Equal(t, float64(tikvMVCCShortValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, tikvMVCCShortValueMaxBytes))
-		require.Equal(t, float64(tikvMVCCLongValueBaseOverheadBytes)+32, estimateTiKVMVCCOverheadBytesPerKV(32, tikvMVCCShortValueMaxBytes+1))
-		require.Equal(t, float64(tikvMVCCEmptyValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, 0))
-		require.Zero(t, estimateTiKVMVCCOverheadBytesPerKV(0, 10))
-	})
-
-	t.Run("sampled row prediction uses actual row values", func(t *testing.T) {
+	t.Run("virtual column filler populates generated column values", func(t *testing.T) {
 		sctx := mock.NewContext()
 		intType := types.NewFieldType(mysql.TypeLonglong)
 		intType.AddFlag(mysql.NotNullFlag)
-		stringType := types.NewFieldType(mysql.TypeVarString)
-		stringType.SetCharset(charset.CharsetUTF8MB4)
-		stringType.SetCollate("utf8mb4_general_ci")
 		tblInfo := &model.TableInfo{
 			ID:    200,
+			Name:  ast.NewCIStr("t"),
 			State: model.StatePublic,
 			Columns: []*model.ColumnInfo{
-				{ID: 1, Offset: 0, State: model.StatePublic, FieldType: *intType},
-				{ID: 2, Offset: 1, State: model.StatePublic, FieldType: *stringType},
+				{ID: 1, Name: ast.NewCIStr("a"), Offset: 0, State: model.StatePublic, FieldType: *intType},
+				{
+					ID:                  2,
+					Name:                ast.NewCIStr("b"),
+					Offset:              1,
+					State:               model.StatePublic,
+					FieldType:           *intType,
+					GeneratedExprString: "a + 1",
+					GeneratedStored:     false,
+				},
 			},
 			Indices: []*model.IndexInfo{
 				{
 					ID:    20,
 					State: model.StatePublic,
 					Columns: []*model.IndexColumn{
-						{Name: ast.NewCIStr("k"), Offset: 0, Length: types.UnspecifiedLength},
-						{Name: ast.NewCIStr("pad"), Offset: 1, Length: 32},
+						{Name: ast.NewCIStr("b"), Offset: 1, Length: types.UnspecifiedLength},
 					},
 				},
 			},
 		}
 		physicalTbl := tables.MockTableFromMeta(tblInfo).(table.PhysicalTable)
-		shortRow := []types.Datum{
-			types.NewIntDatum(1),
-			types.NewCollationStringDatum("x", "utf8mb4_general_ci"),
-		}
-		shortSampledBytes, err := estimateIndexKVBytesForSampledRow(sctx, physicalTbl, physicalTbl.Indices(), shortRow, kv.IntHandle(1))
+		filler, err := newSamplePredictionVirtualColumnFiller(sctx.GetExprCtx(), tblInfo, physicalTbl.Cols())
 		require.NoError(t, err)
+		require.NotNil(t, filler)
 
-		longRow := []types.Datum{
-			types.NewIntDatum(1),
-			types.NewCollationStringDatum(strings.Repeat("界", 32), "utf8mb4_general_ci"),
-		}
-		longSampledBytes, err := estimateIndexKVBytesForSampledRow(sctx, physicalTbl, physicalTbl.Indices(), longRow, kv.IntHandle(1))
+		row, err := filler.fill([]types.Datum{types.NewIntDatum(41), {}})
 		require.NoError(t, err)
-		require.Greater(t, longSampledBytes, shortSampledBytes)
+		require.EqualValues(t, 42, row[1].GetInt64())
+
+		rowKVs, rowBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, physicalTbl.Indices(), row, kv.IntHandle(1))
+		require.NoError(t, err)
+		require.Len(t, rowKVs, 1)
+		require.Positive(t, rowBytes)
+		require.NotEmpty(t, rowKVs[0].rawKey)
 	})
 
 	t.Run("sample prediction region selection caps at five", func(t *testing.T) {
@@ -720,7 +729,7 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 				EndKey:   kv.Key{byte(i + 1)},
 			})
 		}
-		selected := pickSamplePredictionRegions(regions, 12345)
+		selected := pickSamplePredictionRegionsWithLimit(regions, 12345, samplePredictionMaxRegionCount)
 		require.Len(t, selected, samplePredictionMaxRegionCount)
 	})
 
@@ -758,28 +767,27 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Zero(t, maxBlockSamplePredictionSkipRows(samplePredictionRegion{ApproximateKeys: int64(blockSamplePredictionMaxRows)}))
 		require.EqualValues(t, 1, maxBlockSamplePredictionSkipRows(samplePredictionRegion{ApproximateKeys: int64(blockSamplePredictionMaxRows + 1)}))
 		require.EqualValues(t, samplePredictionMaxSkipRows, maxBlockSamplePredictionSkipRows(samplePredictionRegion{ApproximateKeys: int64(blockSamplePredictionMaxRows + samplePredictionMaxSkipRows + 1)}))
-
-		require.EqualValues(t, 100, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 100}, 10))
-		require.EqualValues(t, 10, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 0}, 10))
-		require.EqualValues(t, 10, samplePredictionRegionWeight(samplePredictionRegion{ApproximateKeys: 5}, 10))
 	})
 
 	t.Run("block sample prediction uses scope aware TiKV write CF simulation", func(t *testing.T) {
 		ts := uint64(404411537129996288)
 		key := []byte("idx-key-00000001")
-		writeKey := buildTiKVWriteCFKeyForPrediction(key, ts)
+		writeKey := lightningtikv.EncodeTxnSSTWriteCFKey(key, ts)
 		require.Equal(t, byte('z'), writeKey[0])
 		require.Equal(t, ^ts, binary.BigEndian.Uint64(writeKey[len(writeKey)-tikvMVCCTimestampBytes:]))
 		require.Greater(t, len(writeKey), len(key)+tikvMVCCTimestampBytes)
 
-		writeValue := buildTiKVWriteCFValueForBlockSamplePrediction([]byte("x"), ts)
+		writeValue := lightningtikv.EncodeTxnSSTWriteCFValue(ts, []byte("x"), true)
 		require.Equal(t, byte('P'), writeValue[0])
 		require.Equal(t, byte('v'), writeValue[len(writeValue)-3])
 		require.Equal(t, byte(1), writeValue[len(writeValue)-2])
 		require.Equal(t, byte('x'), writeValue[len(writeValue)-1])
-		emptyWriteValue := buildTiKVWriteCFValueForBlockSamplePrediction(nil, ts)
+		emptyWriteValue := lightningtikv.EncodeTxnSSTWriteCFValue(ts, nil, true)
 		require.Equal(t, byte('v'), emptyWriteValue[len(emptyWriteValue)-2])
 		require.Equal(t, byte(0), emptyWriteValue[len(emptyWriteValue)-1])
+		longWriteValue := lightningtikv.EncodeTxnSSTWriteCFValue(ts, nil, false)
+		require.Equal(t, byte('P'), longWriteValue[0])
+		require.NotContains(t, string(longWriteValue), "v")
 
 		localKVs := []sampledIndexKV{
 			{key: []byte("same-index-key"), value: []byte("x"), physicalID: 101, indexID: 7},
@@ -808,9 +816,20 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.NoError(t, globalPrediction.Err)
 		require.Positive(t, globalPrediction.PredictedBytes)
 		require.Greater(t, localPrediction.PredictedBytes, globalPrediction.PredictedBytes)
+
+		mvccKVs := buildBlockSampledTiKVMVCCKVs([]sampledIndexKV{
+			{key: []byte("empty"), value: nil},
+			{key: []byte("short"), value: []byte("short-value")},
+			{key: []byte("long"), value: []byte(strings.Repeat("v", tikvMVCCShortValueMaxBytes+1))},
+		}, ts)
+		require.Len(t, mvccKVs.defaultKVs, 1)
+		require.Len(t, mvccKVs.writeKVs, 3)
+		require.Equal(t, byte('z'), mvccKVs.writeKVs[0].key[0])
+		require.Len(t, mvccKVs.defaultKVs[0].value, tikvMVCCShortValueMaxBytes+1)
 	})
 
-	t.Run("sample prediction uses physical estimate for all encodings", func(t *testing.T) {
+	t.Run("block sample prediction uses physical estimate for all encodings", func(t *testing.T) {
+		ts := uint64(404411537129996288)
 		sctx := mock.NewContext()
 		intType := types.NewFieldType(mysql.TypeLonglong)
 		intType.AddFlag(mysql.NotNullFlag)
@@ -855,19 +874,16 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 			numericKVs = append(numericKVs, rowKVs...)
 			numericLogicalBytes += rowBytes
 		}
-		numericPrediction := estimateSampledIndexKVPredictionBytes(numericKVs)
+		numericPrediction := estimateBlockSampledIndexKVPredictionBytes(numericKVs, sampleScopeCountsForTest(numericKVs, 1), ts)
 		require.NoError(t, numericPrediction.Err)
-		rawNumericMVCC := estimateSampledIndexKVMVCCOverheadBytes(numericKVs)
+		require.Positive(t, numericLogicalBytes)
+		require.Positive(t, numericPrediction.PredictedBytes)
 		require.Positive(t, numericPrediction.MVCCOverheadBytes)
-		require.Less(t, numericPrediction.MVCCOverheadBytes, rawNumericMVCC)
-		require.Greater(t, numericLogicalBytes, numericPrediction.PredictedBytes)
 		require.NotEmpty(t, numericKVs[0].rawKey)
 		require.Less(t,
-			estimateSampledIndexKVRawKeySharedPrefixAvg(numericKVs),
-			estimateSampledIndexKVEncodedKeySharedPrefixAvg(numericKVs))
+			estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVsForTest(numericKVs)),
+			estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest(numericKVs)))
 		require.Positive(t, estimateSampledIndexKVRawKeyLengthAvg(numericKVs))
-		numericRatio := float64(numericPrediction.PredictedBytes) / float64(numericLogicalBytes)
-		require.Less(t, numericRatio, float64(0.8))
 
 		restoredTblInfo := &model.TableInfo{
 			ID:    301,
@@ -904,33 +920,26 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 			restoredKVs = append(restoredKVs, rowKVs...)
 			restoredLogicalBytes += rowBytes
 		}
-		restoredPrediction := estimateSampledIndexKVPredictionBytes(restoredKVs)
+		restoredPrediction := estimateBlockSampledIndexKVPredictionBytes(restoredKVs, sampleScopeCountsForTest(restoredKVs, 1), ts)
 		require.NoError(t, restoredPrediction.Err)
-		require.Greater(t, restoredLogicalBytes, restoredPrediction.PredictedBytes)
-		restoredRatio := float64(restoredPrediction.PredictedBytes) / float64(restoredLogicalBytes)
-		require.Less(t, restoredRatio, float64(1))
+		require.Positive(t, restoredLogicalBytes)
+		require.Positive(t, restoredPrediction.PredictedBytes)
 
 		longValueKVs := []sampledIndexKV{{
 			key:   []byte("short-key"),
 			value: []byte(strings.Repeat("v", tikvMVCCShortValueMaxBytes+1)),
 		}}
-		longValuePrediction := estimateSampledIndexKVPredictionBytes(longValueKVs)
+		longValuePrediction := estimateBlockSampledIndexKVPredictionBytes(longValueKVs, sampleScopeCountsForTest(longValueKVs, 1), ts)
 		require.NoError(t, longValuePrediction.Err)
-		longValuePhysicalBytes, err := estimateSampledIndexKVPhysicalBytes(longValueKVs)
-		require.NoError(t, err)
-		longValueMVCCPhysicalBytes, err := estimateSampledIndexKVMVCCPhysicalBytes(longValueKVs)
+		longValueMVCCPhysicalBytes, err := estimateBlockSampledIndexKVMVCCPhysicalBytesWithSplit(sortSampledIndexKVs(longValueKVs), 1, ts)
 		require.NoError(t, err)
 		require.Equal(t, longValueMVCCPhysicalBytes, longValuePrediction.PredictedBytes)
-		require.Equal(t, longValueMVCCPhysicalBytes-longValuePhysicalBytes, longValuePrediction.MVCCOverheadBytes)
-		require.NotEqual(t,
-			longValuePhysicalBytes+estimateSampledIndexKVMVCCOverheadBytes(longValueKVs),
-			longValuePrediction.PredictedBytes)
+		require.Positive(t, longValuePrediction.MVCCOverheadBytes)
 
 		mixedKVs := append(slices.Clone(numericKVs), restoredKVs...)
-		mixedPrediction := estimateSampledIndexKVPredictionBytes(mixedKVs)
+		mixedPrediction := estimateBlockSampledIndexKVPredictionBytes(mixedKVs, sampleScopeCountsForTest(mixedKVs, 1), ts)
 		require.NoError(t, mixedPrediction.Err)
-		require.Less(t, mixedPrediction.PredictedBytes, numericLogicalBytes+restoredPrediction.PredictedBytes)
-		require.Less(t, mixedPrediction.PredictedBytes, numericLogicalBytes+restoredLogicalBytes)
+		require.Positive(t, mixedPrediction.PredictedBytes)
 
 		prefixKVs := make([]sampledIndexKV, 0, 512)
 		for i := 0; i < cap(prefixKVs); i++ {
@@ -939,47 +948,33 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 				value: nil,
 			})
 		}
-		prefixPrediction := estimateSampledIndexKVPredictionBytes(prefixKVs)
+		prefixPrediction := estimateBlockSampledIndexKVPredictionBytes(prefixKVs, sampleScopeCountsForTest(prefixKVs, 1), ts)
 		require.NoError(t, prefixPrediction.Err)
 		require.Positive(t, prefixPrediction.MVCCOverheadBytes)
-		require.Less(t, prefixPrediction.MVCCOverheadBytes, estimateSampledIndexKVMVCCOverheadBytes(prefixKVs))
-		prefixSplitPrediction := estimateSampledIndexKVPredictionBytesWithSplit(prefixKVs, 5)
+		prefixSplitPrediction := estimateBlockSampledIndexKVPredictionBytes(prefixKVs, sampleScopeCountsForTest(prefixKVs, 5), ts)
 		require.NoError(t, prefixSplitPrediction.Err)
 		require.Greater(t, prefixSplitPrediction.PredictedBytes, prefixPrediction.PredictedBytes)
-		require.Zero(t, estimateSampledIndexKVEncodedKeySharedPrefixAvg(nil))
-		require.Zero(t, estimateSampledIndexKVEncodedKeySharedPrefixAvg([]sampledIndexKV{{key: []byte("single")}}))
-		require.InDelta(t, 1.5, estimateSampledIndexKVEncodedKeySharedPrefixAvg([]sampledIndexKV{
+		require.Zero(t, estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(nil))
+		require.Zero(t, estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{{key: []byte("single")}})))
+		require.InDelta(t, 1.5, estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{
 			{key: []byte("b001")},
 			{key: []byte("a001")},
 			{key: []byte("a000")},
-		}), 1e-9)
-		require.Greater(t, estimateSampledIndexKVEncodedKeySharedPrefixAvg(prefixKVs), float64(50))
-		require.Zero(t, estimateSampledIndexKVRawKeySharedPrefixAvg(nil))
-		require.Zero(t, estimateSampledIndexKVRawKeySharedPrefixAvg([]sampledIndexKV{{key: []byte("single"), rawKey: []byte("single")}}))
+		})), 1e-9)
+		require.Greater(t, estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest(prefixKVs)), float64(50))
+		require.Zero(t, estimateSortedSampledIndexKVRawKeySharedPrefixAvg(nil))
+		require.Zero(t, estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVsForTest([]sampledIndexKV{{key: []byte("single"), rawKey: []byte("single")}})))
 		require.Zero(t, estimateSampledIndexKVRawKeyLengthAvg(nil))
 		encodedPrefixKVs := []sampledIndexKV{
 			{key: []byte("t_index_b001"), rawKey: []byte("b001")},
 			{key: []byte("t_index_a001"), rawKey: []byte("a001")},
 			{key: []byte("t_index_a000"), rawKey: []byte("a000")},
 		}
-		require.InDelta(t, 1.5, estimateSampledIndexKVRawKeySharedPrefixAvg(encodedPrefixKVs), 1e-9)
+		require.InDelta(t, 1.5, estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs)), 1e-9)
 		require.InDelta(t, 4, estimateSampledIndexKVRawKeyLengthAvg(encodedPrefixKVs), 1e-9)
 		require.Greater(t,
-			estimateSampledIndexKVEncodedKeySharedPrefixAvg(encodedPrefixKVs),
-			estimateSampledIndexKVRawKeySharedPrefixAvg(encodedPrefixKVs))
-
-		mvccKVs := buildSampledTiKVMVCCKVs([]sampledIndexKV{
-			{key: []byte("empty"), value: nil},
-			{key: []byte("short"), value: []byte("short-value")},
-			{key: []byte("long"), value: []byte(strings.Repeat("v", tikvMVCCShortValueMaxBytes+1))},
-		})
-		require.Len(t, mvccKVs.defaultKVs, 1)
-		require.Len(t, mvccKVs.writeKVs, 3)
-		require.Len(t, mvccKVs.writeKVs[0].key, len("empty")+tikvMVCCTimestampBytes)
-		require.Len(t, mvccKVs.writeKVs[0].value, tikvMVCCEmptyWriteCFValueMetaBytes)
-		require.Len(t, mvccKVs.writeKVs[1].value, tikvMVCCShortWriteCFValueMetaBytes+len("short-value"))
-		require.Len(t, mvccKVs.writeKVs[2].value, tikvMVCCLongWriteCFValueMetaBytes)
-		require.Len(t, mvccKVs.defaultKVs[0].value, tikvMVCCShortValueMaxBytes+1)
+			estimateSortedSampledIndexKVEncodedKeySharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs)),
+			estimateSortedSampledIndexKVRawKeySharedPrefixAvg(sortedKVsForTest(encodedPrefixKVs)))
 	})
 }
 

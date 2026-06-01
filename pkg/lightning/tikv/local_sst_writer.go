@@ -71,7 +71,15 @@ func newWriteCFWriter(
 func (w *writeCFWriter) set(key, value []byte) error {
 	intest.Assert(isShortValue(value), "not implemented, need to write to default CF")
 
-	// key layout in this case:
+	actualKey := EncodeTxnSSTWriteCFKey(key, w.ts)
+	actualValue := EncodeTxnSSTWriteCFValue(w.ts, value, true)
+
+	return errors.Trace(w.sstWriter.Set(actualKey, actualValue))
+}
+
+// EncodeTxnSSTWriteCFKey mimics TiKV's TxnSstWriter write-CF key encoding.
+func EncodeTxnSSTWriteCFKey(key []byte, ts uint64) []byte {
+	// Key layout:
 	// z{mem-comparable encoded key}{bit-wise reversed TS}
 	actualKey := make([]byte, 0, 1+codec.EncodedBytesLength(len(key))+8)
 	// keys::data_key will add the 'z' prefix [1] at `TxnSstWriter.put` [2].
@@ -89,21 +97,28 @@ func (w *writeCFWriter) set(key, value []byte) error {
 	// `TxnSstWriter.write` [4].
 	//
 	// [5] https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/txn_types/src/types.rs#L118
-	actualKey = binary.BigEndian.AppendUint64(actualKey, ^w.ts)
+	actualKey = binary.BigEndian.AppendUint64(actualKey, ^ts)
+	return actualKey
+}
 
-	// value layout in this case:
+// EncodeTxnSSTWriteCFValue mimics TiKV's TxnSstWriter write-CF value encoding.
+func EncodeTxnSSTWriteCFValue(startTS uint64, shortValue []byte, includeShortValue bool) []byte {
+	intest.Assert(!includeShortValue || isShortValue(shortValue), "short value is too large")
+	// Value layout when the short value is included:
 	// P{varint-encoded TS}v{value length}{value}
-	actualValue := make([]byte, 0, 1+binary.MaxVarintLen64+1+1+len(value))
+	actualValue := make([]byte, 0, 1+binary.MaxVarintLen64+1+1+len(shortValue))
 	// below logic can be found at `WriteRef.to_bytes` [6].
 	//
 	// [6] https://github.com/tikv/tikv/blob/7793f1d5dc40206fe406ca001be1e0d7f1b83a8f/components/txn_types/src/write.rs#L362
 	actualValue = append(actualValue, 'P')
-	actualValue = binary.AppendUvarint(actualValue, w.ts)
+	actualValue = binary.AppendUvarint(actualValue, startTS)
+	if !includeShortValue {
+		return actualValue
+	}
 	actualValue = append(actualValue, 'v')
-	actualValue = append(actualValue, byte(len(value)))
-	actualValue = append(actualValue, value...)
-
-	return errors.Trace(w.sstWriter.Set(actualKey, actualValue))
+	actualValue = append(actualValue, byte(len(shortValue)))
+	actualValue = append(actualValue, shortValue...)
+	return actualValue
 }
 
 func (w *writeCFWriter) close() error {

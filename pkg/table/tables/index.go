@@ -187,13 +187,14 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 	return idx, err
 }
 
-// getIndexedValue will produce the result like:
+// BuildMultiValueIndexValueGroups expands indexed values for a multi-valued index.
+// It will produce the result like:
 // 1. If not multi-valued index, return directly.
 // 2. (i1, [m1,m2], i2, ...) ==> [(i1, m1, i2, ...), (i1, m2, i2, ...)]
 // 3. (i1, null, i2, ...) ==> [(i1, null, i2, ...)]
 // 4. (i1, [], i2, ...) ==> nothing.
-func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
-	if !c.idxInfo.MVIndex {
+func BuildMultiValueIndexValueGroups(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) [][]types.Datum {
+	if idxInfo == nil || !idxInfo.MVIndex {
 		return [][]types.Datum{indexedValues}
 	}
 
@@ -205,7 +206,7 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 	for !jsonIsNull {
 		val := make([]types.Datum, 0, len(indexedValues))
 		for i, v := range indexedValues {
-			if !c.tblInfo.Columns[c.idxInfo.Columns[i].Offset].FieldType.IsArray() {
+			if !tblInfo.Columns[idxInfo.Columns[i].Offset].FieldType.IsArray() {
 				val = append(val, v)
 			} else {
 				// if the datum type is not JSON, it must come from cleanup index.
@@ -237,6 +238,10 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 	}
 out:
 	return vals
+}
+
+func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
+	return BuildMultiValueIndexValueGroups(c.tblInfo, c.idxInfo, indexedValues)
 }
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
