@@ -18,13 +18,14 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
-	"go.uber.org/zap"
 )
 
 type mockPDClient struct {
@@ -88,10 +89,31 @@ func TestGetPDLeaderAddrsWithRealClient(t *testing.T) {
 	serviceClient := metaservice.NewEtcdMetaServiceClient(etcdCli, nil)
 	ctx := context.Background()
 
-	leaderAddr, errMsgField := serviceClient.GetPDLeaderAddrs(ctx)
+	leaderAddr, err := serviceClient.GetPDLeaderAddrs(ctx)
 
+	require.NoError(t, err)
 	require.NotEmpty(t, leaderAddr, "Leader address should not be empty")
-	require.Equal(t, zap.Skip(), errMsgField) // No errors should be present
+}
+
+func TestGetPDLeaderAddrsReturnsErrorWhenLeaderNotFound(t *testing.T) {
+	etcdCli, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{"127.0.0.1:1"},
+		DialTimeout: 100 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, etcdCli.Close())
+	}()
+
+	serviceClient := metaservice.NewEtcdMetaServiceClient(etcdCli, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	leaderAddr, err := serviceClient.GetPDLeaderAddrs(ctx)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "pd leader not found")
+	require.Empty(t, leaderAddr)
 }
 
 // TestParseURL tests the ParseURL function with various inputs.

@@ -25,7 +25,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
 )
 
 const getAllMembersBackoff = 5000
@@ -62,7 +61,7 @@ func (n *EtcdMetaServiceClient) GetPDAddrs() ([]string, error) {
 }
 
 // GetPDLeaderAddrs implements ServiceClient interface.
-func (n *EtcdMetaServiceClient) GetPDLeaderAddrs(ctx context.Context) (string, zap.Field) {
+func (n *EtcdMetaServiceClient) GetPDLeaderAddrs(ctx context.Context) (string, error) {
 	// todo: PD GetAllMembers should directly return which is the pd leader.
 	// Don't use etcd client to get PD leader.
 
@@ -82,11 +81,13 @@ func (n *EtcdMetaServiceClient) GetPDLeaderAddrs(ctx context.Context) (string, z
 		}
 	}
 
-	errMsgField := zap.Skip()
-	if len(errMsgMap) > 0 {
-		errMsgField = zap.Any("errors when find leader", errMsgMap)
+	if leaderAddr == "" {
+		if len(errMsgMap) == 0 {
+			return "", errors.New("pd leader not found")
+		}
+		return "", fmt.Errorf("pd leader not found, errors when find leader: %v", errMsgMap)
 	}
-	return leaderAddr, errMsgField
+	return leaderAddr, nil
 }
 
 // GetPDHostPorts returns the PD addresses from PD client.
