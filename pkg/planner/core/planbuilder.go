@@ -3586,23 +3586,18 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			p.Extractor = extractor
 			buildPattern = false
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowCreateMaterializedViewLog, ast.ShowMaterializedView, ast.ShowMaterializedViewLog, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowCreateMaterializedViewLog, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(ctx, show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}
 		user := b.ctx.GetSessionVars().User
-		if show.Tp == ast.ShowCreateMaterializedViewLog || show.Tp == ast.ShowMaterializedViewLog {
+		if show.Tp == ast.ShowCreateMaterializedViewLog {
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
-		} else if show.Tp == ast.ShowMaterializedView {
-			if user != nil {
-				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
-			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 		} else if isView {
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
@@ -3636,6 +3631,12 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 		if user != nil {
+			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowMaterializedViewRemainLogs, ast.ShowMaterializedViewLogWaitPurge:
+		var err error
+		if user := b.ctx.GetSessionVars().User; user != nil {
 			err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
@@ -6585,11 +6586,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowMaterializedViewLogs:
 		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
-	case ast.ShowMaterializedView:
-		names = []string{"mview_id", "mview_name", "pending_rows"}
-		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
-	case ast.ShowMaterializedViewLog:
-		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name", "pending_rows"}
+	case ast.ShowMaterializedViewRemainLogs:
+		names = []string{"mview_id", "mview_name", "mlog_id", "mlog_name", "remain_logs"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowMaterializedViewLogWaitPurge:
+		names = []string{"mlog_id", "mlog_name", "base_table_id", "base_table_name", "wait_purge"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowTableStatus:
 		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",

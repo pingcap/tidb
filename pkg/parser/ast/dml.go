@@ -3000,8 +3000,8 @@ const (
 	ShowTables
 	ShowMaterializedViews
 	ShowMaterializedViewLogs
-	ShowMaterializedView
-	ShowMaterializedViewLog
+	ShowMaterializedViewRemainLogs
+	ShowMaterializedViewLogWaitPurge
 	ShowTableStatus
 	ShowColumns
 	ShowWarnings
@@ -3182,13 +3182,13 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW LOG")
 		}
-	case ShowMaterializedView:
+	case ShowMaterializedViewRemainLogs:
 		ctx.WriteKeyWord("MATERIALIZED VIEW ")
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW")
 		}
 		ctx.WriteKeyWord(" REMAIN_LOGS")
-	case ShowMaterializedViewLog:
+	case ShowMaterializedViewLogWaitPurge:
 		ctx.WriteKeyWord("MATERIALIZED VIEW LOG ON ")
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.MATERIALIZED VIEW LOG")
