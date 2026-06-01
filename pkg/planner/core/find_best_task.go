@@ -2291,18 +2291,16 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		TblColHists:       ds.TblColHists,
 	}
 	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
-	// Determine the effective property and byItems.
-	// When matching used SortItemsHints, pass hintsProp so each partial path
-	// gets the sort items from hints for merge-sort between partitions.
-	effectiveProp := prop
+
+	advisoryProp := prop
 	if candidate.matchWithAdvisorySortItems {
-		hintsProp := prop.CloneEssentialFields()
-		hintsProp.SortItems = hintsProp.AdvisorySortItems
-		effectiveProp = hintsProp
+		advisoryProp = prop.CloneEssentialFields()
+		advisoryProp.SortItems = advisoryProp.AdvisorySortItems
 	}
+
 	// Add sort items for index scan for merge-sort operation between partitions.
-	byItems := make([]*util.ByItems, 0, len(effectiveProp.SortItems))
-	for _, si := range effectiveProp.SortItems {
+	byItems := make([]*util.ByItems, 0, len(prop.SortItems))
+	for _, si := range prop.SortItems {
 		byItems = append(byItems, &util.ByItems{
 			Expr: si.Col,
 			Desc: si.Desc,
@@ -2314,6 +2312,12 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		partMatchPropResult := property.PropNotMatched
 		if len(candidate.partialPathMatchResults) > 0 {
 			partMatchPropResult = candidate.partialPathMatchResults[i]
+		}
+		effectiveProp := prop
+		// If matchWithAdvisorySortItems is true and this partial path can match the property,
+		// it means it actually matches the advisory property.
+		if candidate.matchWithAdvisorySortItems && partMatchPropResult.Matched() {
+			effectiveProp = advisoryProp
 		}
 		if partPath.IsTablePath() {
 			scan = convertToPartialTableScan(ds, effectiveProp, partPath, partMatchPropResult, byItems)

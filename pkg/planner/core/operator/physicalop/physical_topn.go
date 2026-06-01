@@ -309,8 +309,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64,
-			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown,
-			AdvisorySortItems: advisorySortItems}
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
 		topN := PhysicalTopN{
 			ByItems:     lt.ByItems,
 			PartitionBy: lt.PartitionBy,
@@ -319,6 +318,22 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
 		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
+
+		// The AdvisorySortItems optimization may not fully succeed (e.g. the global filter blocks the LIMIT pushdown),
+		// in this case, it may generate a plan with unnecessary `keep order: true`. So we add this plan as an extra
+		// candidate instead of replacing the original plan.
+		if tp == property.CopMultiReadTaskType && len(advisorySortItems) > 0 {
+			resultProp = resultProp.CloneEssentialFields()
+			resultProp.AdvisorySortItems = advisorySortItems
+			topN := PhysicalTopN{
+				ByItems:     lt.ByItems,
+				PartitionBy: lt.PartitionBy,
+				Count:       lt.Count,
+				Offset:      lt.Offset,
+			}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+			topN.SetSchema(lt.Schema())
+			ret = append(ret, topN)
+		}
 	}
 
 	// If we can generate MPP task and there's vector distance function in the order by column.
