@@ -3650,11 +3650,7 @@ func collectTiKVStoreCapacityFromPDGRPC(ctx context.Context, store kv.Storage) (
 		if err != nil {
 			return nil, err
 		}
-		capacity.StoreCount++
-		capacity.TotalBytes += storeCapacity.TotalBytes
-		capacity.AvailableBytes += storeCapacity.AvailableBytes
-		capacity.UsedBytes += storeCapacity.UsedBytes
-		capacity.Stores = append(capacity.Stores, *storeCapacity)
+		appendTiKVStoreCapacity(capacity, storeCapacity)
 	}
 	return capacity, nil
 }
@@ -3756,13 +3752,17 @@ func sumTiKVStoreCapacity(stores []pdhttp.StoreInfo) (*TiKVClusterCapacity, erro
 		if err != nil {
 			return nil, errors.Annotatef(err, "parse store %d capacity", store.Store.ID)
 		}
-		capacity.StoreCount++
-		capacity.TotalBytes += storeCapacity.TotalBytes
-		capacity.AvailableBytes += storeCapacity.AvailableBytes
-		capacity.UsedBytes += storeCapacity.UsedBytes
-		capacity.Stores = append(capacity.Stores, *storeCapacity)
+		appendTiKVStoreCapacity(capacity, storeCapacity)
 	}
 	return capacity, nil
+}
+
+func appendTiKVStoreCapacity(capacity *TiKVClusterCapacity, storeCapacity *TiKVStoreCapacity) {
+	capacity.StoreCount++
+	capacity.TotalBytes += storeCapacity.TotalBytes
+	capacity.AvailableBytes += storeCapacity.AvailableBytes
+	capacity.UsedBytes += storeCapacity.UsedBytes
+	capacity.Stores = append(capacity.Stores, *storeCapacity)
 }
 
 func buildTiKVStoreCapacity(store pdhttp.StoreInfo) (*TiKVStoreCapacity, error) {
@@ -4023,7 +4023,7 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 	if !taskEndTime.IsZero() && !observedAt.Before(taskEndTime) {
 		actualDelay = observedAt.Sub(taskEndTime)
 	}
-	logutil.DDLLogger().Info("observed TiKV capacity increase for add-index task",
+	logFields := []zap.Field{
 		zap.Int64("jobID", jobID),
 		zap.Int64("taskID", task.ID),
 		zap.String("task_key", taskKey),
@@ -4032,19 +4032,23 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		zap.Int64("task_execution_duration_ms", taskExecutionDuration.Milliseconds()),
 		zap.Int64("scheduled_delay_ms", opts.scheduledDelay.Milliseconds()),
 		zap.Int64("actual_delay_ms", actualDelay.Milliseconds()),
-		zap.Uint64("block_sample_steady_predicted_tikv_index_bytes", taskMeta.BlockSampleSteadyPredictedTiKVIndexBytes),
-		zap.Uint64("block_sample_peak_predicted_tikv_index_bytes", taskMeta.BlockSamplePeakPredictedTiKVIndexBytes),
-		zap.Uint64("block_sample_mvcc_overhead_total_bytes", taskMeta.BlockSampleMVCCOverheadTotalBytes),
-		zap.Bool("use_stats", taskMeta.BlockSampleUseStats),
-		zap.Uint64("tikv_replica_count", taskMeta.TiKVReplicaCount),
-		zap.String("tikv_replica_count_source", taskMeta.TiKVReplicaCountSource),
-		zap.Int64("tikv_replica_count_physical_id", taskMeta.TiKVReplicaCountPhysicalID),
-		zap.Int("block_sample_prediction_region_count", taskMeta.BlockSamplePredictionRegionCount),
-		zap.Int("block_sample_prediction_row_count", taskMeta.BlockSamplePredictionRowCount),
-		zap.Int("block_sample_prediction_read_error_count", taskMeta.BlockSamplePredictionReadErrorCount),
-		zap.Float64("block_sample_encoded_key_shared_prefix_avg", taskMeta.BlockSampleEncodedKeySharedPrefixAvg),
-		zap.Float64("block_sample_raw_key_shared_prefix_avg", taskMeta.BlockSampleRawKeySharedPrefixAvg),
-		zap.Float64("block_sample_raw_key_length_avg", taskMeta.BlockSampleRawKeyLengthAvg),
+	}
+	logFields = appendBlockSamplePredictionLogFields(logFields, sampleTiKVIndexPredictionResult{
+		PredictedBytes:                 taskMeta.BlockSampleSteadyPredictedTiKVIndexBytes,
+		MVCCOverheadBytes:              taskMeta.BlockSampleMVCCOverheadTotalBytes,
+		UseStats:                       taskMeta.BlockSampleUseStats,
+		SampledRegionCount:             taskMeta.BlockSamplePredictionRegionCount,
+		SampledRowCount:                taskMeta.BlockSamplePredictionRowCount,
+		ReadErrorCount:                 taskMeta.BlockSamplePredictionReadErrorCount,
+		EncodedKeySharedPrefixAvgBytes: taskMeta.BlockSampleEncodedKeySharedPrefixAvg,
+		RawKeySharedPrefixAvgBytes:     taskMeta.BlockSampleRawKeySharedPrefixAvg,
+		RawKeyLengthAvgBytes:           taskMeta.BlockSampleRawKeyLengthAvg,
+	},
+		taskMeta.BlockSamplePeakPredictedTiKVIndexBytes,
+		taskMeta.TiKVReplicaCount,
+		taskMeta.TiKVReplicaCountSource,
+		taskMeta.TiKVReplicaCountPhysicalID)
+	logFields = append(logFields,
 		zap.Int64("logical_index_kv_bytes", logicalIndexKVBytes),
 		zap.Int64("observed_tikv_capacity_increase_bytes", observedIncrease.increase),
 		zap.Bool("observed_tikv_capacity_reliable", observedIncrease.reliable),
@@ -4056,6 +4060,7 @@ func (w *worker) logDistTaskObservedTiKVUsageWithOptions(taskMgr *storage.TaskMa
 		zap.Int("initial_tikv_store_count", initialStoreCount),
 		zap.Int("final_tikv_store_count", finalUsage.StoreCount),
 	)
+	logutil.DDLLogger().Info("observed TiKV capacity increase for add-index task", logFields...)
 	failpoint.InjectCall("afterLogObservedTiKVCapacityIncrease",
 		task.ID, logicalIndexKVBytes, observedIncrease.increase,
 		int64(taskMeta.InitialTiKVStoreUsage.UsedBytes), int64(finalUsage.UsedBytes))
@@ -4315,6 +4320,30 @@ func saturatingMulUint64(value, factor uint64) uint64 {
 	return value * factor
 }
 
+func appendBlockSamplePredictionLogFields(
+	fields []zap.Field,
+	prediction sampleTiKVIndexPredictionResult,
+	peakPredictedBytes, replicaCount uint64,
+	replicaCountSource string,
+	replicaCountPhysicalID int64,
+) []zap.Field {
+	return append(fields,
+		zap.Uint64("block_sample_steady_predicted_tikv_index_bytes", prediction.PredictedBytes),
+		zap.Uint64("block_sample_peak_predicted_tikv_index_bytes", peakPredictedBytes),
+		zap.Uint64("block_sample_mvcc_overhead_total_bytes", prediction.MVCCOverheadBytes),
+		zap.Bool("use_stats", prediction.UseStats),
+		zap.Uint64("tikv_replica_count", replicaCount),
+		zap.String("tikv_replica_count_source", replicaCountSource),
+		zap.Int64("tikv_replica_count_physical_id", replicaCountPhysicalID),
+		zap.Int("block_sample_prediction_region_count", prediction.SampledRegionCount),
+		zap.Int("block_sample_prediction_row_count", prediction.SampledRowCount),
+		zap.Int("block_sample_prediction_read_error_count", prediction.ReadErrorCount),
+		zap.Float64("block_sample_encoded_key_shared_prefix_avg", prediction.EncodedKeySharedPrefixAvgBytes),
+		zap.Float64("block_sample_raw_key_shared_prefix_avg", prediction.RawKeySharedPrefixAvgBytes),
+		zap.Float64("block_sample_raw_key_length_avg", prediction.RawKeyLengthAvgBytes),
+	)
+}
+
 func addIndexTiKVSpacePrecheckLogFields(
 	jobID int64,
 	taskKey string,
@@ -4329,22 +4358,11 @@ func addIndexTiKVSpacePrecheckLogFields(
 	fields := []zap.Field{
 		zap.Int64("jobID", jobID),
 		zap.String("task-key", taskKey),
-		zap.Uint64("block_sample_steady_predicted_tikv_index_bytes", prediction.PredictedBytes),
-		zap.Uint64("block_sample_peak_predicted_tikv_index_bytes", peakPredictedBytes),
-		zap.Uint64("block_sample_peak_prediction_factor", blockSamplePeakPredictionFactor),
-		zap.Uint64("block_sample_mvcc_overhead_total_bytes", prediction.MVCCOverheadBytes),
-		zap.Bool("use_stats", prediction.UseStats),
-		zap.Uint64("tikv_replica_count", replicaCount),
-		zap.String("tikv_replica_count_source", replicaCountSource),
-		zap.Int64("tikv_replica_count_physical_id", replicaCountPhysicalID),
-		zap.Int("block_sample_prediction_region_count", prediction.SampledRegionCount),
-		zap.Int("block_sample_prediction_row_count", prediction.SampledRowCount),
-		zap.Int("block_sample_prediction_read_error_count", prediction.ReadErrorCount),
-		zap.Float64("block_sample_encoded_key_shared_prefix_avg", prediction.EncodedKeySharedPrefixAvgBytes),
-		zap.Float64("block_sample_raw_key_shared_prefix_avg", prediction.RawKeySharedPrefixAvgBytes),
-		zap.Float64("block_sample_raw_key_length_avg", prediction.RawKeyLengthAvgBytes),
-		zap.Bool("enforce_disk_space_precheck_before_add_index", enforce),
 	}
+	fields = appendBlockSamplePredictionLogFields(fields, prediction, peakPredictedBytes, replicaCount, replicaCountSource, replicaCountPhysicalID)
+	fields = append(fields,
+		zap.Uint64("block_sample_peak_prediction_factor", blockSamplePeakPredictionFactor),
+		zap.Bool("enforce_disk_space_precheck_before_add_index", enforce))
 	if capacity != nil {
 		fields = append(fields,
 			zap.Uint64("cluster_available_bytes", capacity.AvailableBytes),
@@ -4567,95 +4585,59 @@ func (w *worker) sampleBlockIndexKVsFromRegion(
 	if len(region.StartKey) == 0 || len(region.EndKey) == 0 || bytes.Compare(region.StartKey, region.EndKey) >= 0 {
 		return 0, 0, nil, nil
 	}
-	snapshot := w.store.GetSnapshot(kv.Version{Ver: snapshotTS})
-	snapshot.SetOption(kv.Priority, kv.PriorityLow)
-	snapshot.SetOption(kv.RequestSourceInternal, true)
-	snapshot.SetOption(kv.RequestSourceType, jobCtx.ddlJobSourceType())
-	snapshot.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)
-	if tagger := jobCtx.getResourceGroupTaggerForTopSQL(); tagger != nil {
-		snapshot.SetOption(kv.ResourceGroupTagger, tagger)
-	}
-	snapshot.SetOption(kv.ResourceGroupName, jobCtx.resourceGroupName)
-
-	it, err := snapshot.Iter(region.StartKey, region.EndKey)
-	if err != nil {
-		return 0, 0, nil, errors.Trace(err)
-	}
-	defer it.Close()
-
 	cols := physicalTbl.Cols()
 	virtualColumnFiller, err := newSamplePredictionVirtualColumnFiller(sctx.GetExprCtx(), physicalTbl.Meta(), cols)
 	if err != nil {
 		return 0, 0, nil, errors.Trace(err)
 	}
-	skipped := 0
-	for it.Valid() && skipped < skipRows {
-		if !it.Key().HasPrefix(physicalTbl.RecordPrefix()) {
-			if err := it.Next(); err != nil {
-				return 0, 0, nil, errors.Trace(err)
-			}
-			continue
-		}
-		skipped++
-		if err := kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key())); err != nil {
-			return 0, 0, nil, errors.Trace(err)
-		}
-	}
 
+	skipped := 0
 	rowCount := 0
 	totalBytes := int64(0)
+	targetRows := blockSamplePredictionProbeRows
+	logicalByteLimit := int64(0)
 	kvs := make([]sampledIndexKV, 0, blockSamplePredictionProbeRows*len(indexes))
-	readRows := func(targetRows int, logicalByteLimit int64) error {
-		for it.Valid() && rowCount < targetRows {
-			if !it.Key().HasPrefix(physicalTbl.RecordPrefix()) {
-				if err := it.Next(); err != nil {
-					return errors.Trace(err)
-				}
-				continue
+	err = iterateSnapshotKeys(jobCtx, w.store, kv.PriorityLow, physicalTbl.RecordPrefix(), snapshotTS, region.StartKey, region.EndKey,
+		func(handle kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
+			if bytes.Compare(rowKey, region.EndKey) >= 0 {
+				return false, nil
 			}
-			handle, err := tablecodec.DecodeRowKey(it.Key())
-			if err != nil {
-				return errors.Trace(err)
+			if skipped < skipRows {
+				skipped++
+				return true, nil
 			}
-			row, _, err := tables.DecodeRawRowData(sctx.GetExprCtx(), physicalTbl.Meta(), handle, cols, it.Value())
+			if rowCount >= targetRows {
+				return false, nil
+			}
+			row, _, err := tables.DecodeRawRowData(sctx.GetExprCtx(), physicalTbl.Meta(), handle, cols, rawRecord)
 			if err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 			if virtualColumnFiller != nil {
 				row, err = virtualColumnFiller.fill(row)
 				if err != nil {
-					return errors.Trace(err)
+					return false, errors.Trace(err)
 				}
 			}
 			rowKVs, rowBytes, err := collectIndexKVsForSampledRow(sctx, physicalTbl, indexes, row, handle)
 			if err != nil {
-				return err
+				return false, err
 			}
 			kvs = append(kvs, rowKVs...)
 			totalBytes += rowBytes
 			rowCount++
-			if err := kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key())); err != nil {
-				return errors.Trace(err)
+			if rowCount == blockSamplePredictionProbeRows {
+				targetRows = blockSamplePredictionTargetRows(rowCount, totalBytes)
+				logicalByteLimit = blockSamplePredictionMaxLogicalBytes
 			}
-			if logicalByteLimit > 0 && totalBytes >= logicalByteLimit {
-				break
-			}
-		}
-		return nil
-	}
-
-	if err := readRows(blockSamplePredictionProbeRows, 0); err != nil {
+			return rowCount < targetRows && (logicalByteLimit == 0 || totalBytes < logicalByteLimit), nil
+		},
+	)
+	if err != nil {
 		return rowCount, totalBytes, kvs, err
 	}
 	if rowCount == 0 {
 		return 0, 0, kvs, nil
-	}
-
-	targetRows := blockSamplePredictionTargetRows(rowCount, totalBytes)
-	if rowCount < targetRows && totalBytes < blockSamplePredictionMaxLogicalBytes {
-		if err := readRows(targetRows, blockSamplePredictionMaxLogicalBytes); err != nil {
-			return rowCount, totalBytes, kvs, err
-		}
 	}
 	return rowCount, totalBytes, kvs, nil
 }
@@ -5198,62 +5180,6 @@ func (w *worker) buildSamplePredictionRegionTasks(
 		}
 	}
 	return tasks, readErrorCount, nil
-}
-
-const tableRegionsPageSize = 128
-
-func listTableRegions(ctx context.Context, store kv.Storage, physicalID int64, maxRegions int) ([]pdhttp.RegionInfo, error) {
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
-	}
-	pdCli, err := helper.NewHelper(hStore).TryGetPDHTTPClient()
-	if err != nil {
-		return nil, err
-	}
-	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(physicalID)
-	start, end := hStore.GetCodec().EncodeRegionRange(tableStart, tableEnd)
-	capacity := 16
-	if maxRegions > 0 {
-		capacity = min(maxRegions, capacity)
-	}
-	regions := make([]pdhttp.RegionInfo, 0, capacity)
-	for {
-		limit := tableRegionsPageSize
-		if maxRegions > 0 {
-			remaining := maxRegions - len(regions)
-			if remaining <= 0 {
-				break
-			}
-			limit = min(limit, remaining)
-		}
-		regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdhttp.NewKeyRange(start, end), limit)
-		if err != nil {
-			return nil, err
-		}
-		if len(regionInfos.Regions) == 0 {
-			break
-		}
-		regions = append(regions, regionInfos.Regions...)
-		if maxRegions > 0 && len(regions) >= maxRegions {
-			break
-		}
-		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
-		if len(lastKey) == 0 {
-			break
-		}
-		start, err = hex.DecodeString(lastKey)
-		if err != nil {
-			return nil, err
-		}
-		if len(start) == 0 {
-			break
-		}
-		if bytes.Compare(start, end) >= 0 {
-			break
-		}
-	}
-	return regions, nil
 }
 
 func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physicalID int64) ([]samplePredictionRegion, error) {
