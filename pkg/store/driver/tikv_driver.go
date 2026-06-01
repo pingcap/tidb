@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -165,7 +164,17 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 			CertPath: d.security.ClusterSSLCert,
 			KeyPath:  d.security.ClusterSSLKey,
 		},
-		d.pdClientOptions()...)
+		opt.WithGRPCDialOptions(
+			// keep the same with etcd, see
+			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
+				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
+			}),
+		),
+		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
+		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -242,26 +251,6 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 
 	mc.cache[uuid] = store
 	return store, nil
-}
-
-func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
-	opts := []opt.ClientOption{
-		opt.WithGRPCDialOptions(
-			// keep the same with etcd, see
-			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
-				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-			}),
-		),
-		opt.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout) * time.Second),
-		opt.WithForwardingOption(config.GetGlobalConfig().EnableForwarding),
-	}
-	if labels := metricscommon.GetConstLabels(); len(labels) > 0 {
-		opts = append(opts, opt.WithMetricsLabels(labels))
-	}
-	return opts
 }
 
 type tikvStore struct {

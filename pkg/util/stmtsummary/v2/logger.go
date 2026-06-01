@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
@@ -72,28 +71,12 @@ func (s *stmtLogStorage) sync() error {
 }
 
 func (s *stmtLogStorage) log(r *StmtRecord) {
-	b, err := marshalStmtRecord(r)
+	b, err := json.Marshal(r)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to marshal statement summary", zap.Error(err))
 		return
 	}
 	s.logger.Info(string(b))
-}
-
-func marshalStmtRecord(r *StmtRecord) ([]byte, error) {
-	fields := config.GetGlobalConfig().GetKeyspaceObservabilityStmtLogFields()
-	if len(fields) == 0 {
-		return json.Marshal(r)
-	}
-	return json.Marshal(stmtRecordWithAdditionalFields{
-		StmtRecord:       r,
-		AdditionalFields: fields,
-	})
-}
-
-type stmtRecordWithAdditionalFields struct {
-	*StmtRecord
-	AdditionalFields map[string]string `json:"additional_fields"`
 }
 
 type stmtLogEncoder struct{}

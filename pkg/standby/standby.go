@@ -50,8 +50,6 @@ const (
 type ActivateRequest struct {
 	KeyspaceName   string `json:"keyspace_name"`
 	MaxIdleSeconds uint   `json:"max_idle_seconds"`
-	// Metadata is keyspace metadata sent by the manager during activation, such as tenant, project, and cluster identifiers.
-	Metadata map[string]string `json:"metadata,omitempty"`
 
 	// analyze table
 	RunAutoAnalyze bool `json:"run_auto_analyze"`
@@ -166,20 +164,6 @@ func IsPreTidbNormalRestart(keyspaceName string) (bool, string) {
 	}
 
 	return true, preTidbNormalRestartMsg
-}
-
-// ActivationMetadata returns a copy of metadata carried by the activate request.
-func (c *LoadKeyspaceController) ActivationMetadata() map[string]string {
-	mu.RLock()
-	defer mu.RUnlock()
-	if len(activateRequest.Metadata) == 0 {
-		return nil
-	}
-	metadata := make(map[string]string, len(activateRequest.Metadata))
-	for k, v := range activateRequest.Metadata {
-		metadata[k] = v
-	}
-	return metadata
 }
 
 // Handler returns a handler to query tidb pool status or activate or exit the tidb server.
@@ -365,12 +349,7 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 
 	<-activateCh
 
-	logutil.BgLogger().Info("standby receive activate request",
-		zap.String("keyspace-name", activateRequest.KeyspaceName),
-		zap.Uint("max-idle-seconds", activateRequest.MaxIdleSeconds),
-		zap.Bool("run-auto-analyze", activateRequest.RunAutoAnalyze),
-		zap.Bool("tidb-enable-ddl", activateRequest.TiDBEnableDDL),
-		zap.Int("metadata-count", len(activateRequest.Metadata)))
+	logutil.BgLogger().Info("standby receive activate request", zap.Any("activate-request", activateRequest))
 
 	config.UpdateGlobal(func(c *config.Config) {
 		c.KeyspaceName = activateRequest.KeyspaceName
