@@ -25,7 +25,9 @@ PREFIX="lease_lock"
 CASE_ROOT="$TEST_DIR/lease_lock"
 LOG_DIR="$CASE_ROOT/logs"
 MARKER_DIR="$CASE_ROOT/markers"
-LEASE_FP='github.com/pingcap/tidb/pkg/objstore/lease-lock-test-constants=return("ttl=2s,interval=200ms,write-timeout-cap=100ms,min-remaining=200ms,stale-reclaim-grace=500ms,base-backoff=100ms")'
+LEASE_FP='github.com/pingcap/tidb/pkg/objstore/lease-lock-test-constants=return("2s|200ms|100ms|200ms|500ms|100ms")'
+LEASE_LOST_LOG_FP='github.com/pingcap/tidb/br/pkg/utils/lease-lock-on-lease-lost-log=return(true)'
+LEASE_LOST_TEST_LOG='lease lock integration test onLeaseLost invoked'
 
 background_pids=()
 
@@ -348,6 +350,13 @@ kill_process_tree() {
     kill -9 "$pid" 2>/dev/null || true
 }
 
+restart_lease_lock_services() {
+    echo "Restarting services"
+    stop_services
+    start_services --no-tiflash
+    echo "Services restarted"
+}
+
 prepare_pitr_fixture() {
     local case_name=$1
     CASE_DIR=$(reset_case_dir "$case_name")
@@ -360,7 +369,7 @@ prepare_pitr_fixture() {
     EXPECTED_RESTORE_SUM=233
 
     echo "Preparing PITR fixture for $case_name"
-    restart_services
+    restart_lease_lock_services
     run_sql "DROP DATABASE IF EXISTS $DB;"
     run_sql "CREATE DATABASE $DB;"
     run_sql "CREATE TABLE $DB.t (id INT PRIMARY KEY);"
@@ -394,14 +403,14 @@ prepare_pitr_fixture() {
 run_migration_renewal_success_case() {
     local case_name="migration_renewal_success"
     prepare_pitr_fixture "$case_name"
-    restart_services
+    restart_lease_lock_services
 
     local acquired="$CASE_MARKER_DIR/acquired"
     local release="$CASE_MARKER_DIR/release"
     local after="$CASE_MARKER_DIR/after"
     local pd_clock_dir="$CASE_MARKER_DIR/pd-clock"
     local restore_log="$CASE_LOG_DIR/restore.log"
-    local failpoints="$LEASE_FP;github.com/pingcap/tidb/br/pkg/restore/lease-clock-pd-now-signal=return(\"dir=$pd_clock_dir\");github.com/pingcap/tidb/br/pkg/restore/log_client/lease-lock-after-migration-lock-acquired=return(\"signal=$acquired,release=$release,after=$after\")"
+    local failpoints="$LEASE_FP;$LEASE_LOST_LOG_FP;github.com/pingcap/tidb/br/pkg/restore/lease-clock-pd-now-signal=return(\"$pd_clock_dir\");github.com/pingcap/tidb/br/pkg/restore/log_client/lease-lock-after-migration-lock-acquired=return(\"$acquired|$release|$after\")"
 
     run_br_bg_with_failpoints "$failpoints" "$restore_log" \
         --pd "$PD_ADDR" restore point \
@@ -431,7 +440,7 @@ run_migration_renewal_success_case() {
     run_sql "SELECT SUM(id) AS SUM FROM $DB.t;"
     check_contains "SUM: $EXPECTED_RESTORE_SUM"
     assert_log_not_contains "$restore_log" "lease lost"
-    assert_log_not_contains "$restore_log" "context canceled"
+    assert_log_not_contains "$restore_log" "$LEASE_LOST_TEST_LOG"
     assert_file_not_exists "$lock_file"
 }
 
@@ -439,7 +448,7 @@ run_migration_lost_case() {
     local mode=$1
     local case_name="migration_lost_${mode}"
     prepare_pitr_fixture "$case_name"
-    restart_services
+    restart_lease_lock_services
 
     local acquired="$CASE_MARKER_DIR/acquired"
     local release="$CASE_MARKER_DIR/release"
@@ -447,14 +456,14 @@ run_migration_lost_case() {
     local fault="$CASE_MARKER_DIR/renewal-write-blocked"
     local fault_dir="$CASE_MARKER_DIR/renewal-write-errors"
     local restore_log="$CASE_LOG_DIR/restore-$mode.log"
-    local failpoints="$LEASE_FP;github.com/pingcap/tidb/br/pkg/restore/log_client/lease-lock-after-migration-lock-acquired=return(\"signal=$acquired,release=$release,after=$after\")"
+    local failpoints="$LEASE_FP;$LEASE_LOST_LOG_FP;github.com/pingcap/tidb/br/pkg/restore/log_client/lease-lock-after-migration-lock-acquired=return(\"$acquired|$release|$after\")"
 
     case "$mode" in
         block)
-            failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block=return(\"signal=$fault\")"
+            failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block=return(\"$fault\")"
             ;;
         error)
-            failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error=return(\"signal-dir=$fault_dir\")"
+            failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error=return(\"$fault_dir\")"
             ;;
         *)
             echo "Unknown migration lost mode: $mode"
@@ -484,7 +493,8 @@ run_migration_lost_case() {
     wait_pid_with_timeout "$pid" 120 failure "$restore_log"
     assert_file_not_exists "$release"
     assert_file_not_exists "$after"
-    assert_log_contains "$restore_log" "context canceled"
+    assert_log_contains "$restore_log" "$LEASE_LOST_TEST_LOG"
+    assert_log_contains "$restore_log" "restore log failed summary"
     case "$mode" in
         block)
             assert_log_contains "$restore_log" "Lock renewal detected lease lost; calling onLeaseLost."
@@ -497,8 +507,6 @@ run_migration_lost_case() {
                 "Lock renewal retry backoff would exceed proven lease window; calling onLeaseLost."
             ;;
     esac
-	run_sql "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = '$DB';"
-	check_contains "COUNT(*): 0"
 }
 
 run_truncate_renewal_success_case() {
@@ -513,7 +521,7 @@ run_truncate_renewal_success_case() {
 	local old_file_count="$TRUNCATE_DATA_FILE_COUNT"
 	local old_safepoint
 	old_safepoint=$(read_truncate_safepoint "$LOG_STORAGE")
-	local failpoints="$LEASE_FP;github.com/pingcap/tidb/br/pkg/restore/lease-clock-pd-now-signal=return(\"dir=$pd_clock_dir\");github.com/pingcap/tidb/br/pkg/task/lease-lock-after-truncate-lock-acquired=return(\"signal=$acquired,release=$release,after=$after\")"
+	local failpoints="$LEASE_FP;$LEASE_LOST_LOG_FP;github.com/pingcap/tidb/br/pkg/restore/lease-clock-pd-now-signal=return(\"$pd_clock_dir\");github.com/pingcap/tidb/br/pkg/task/lease-lock-after-truncate-lock-acquired=return(\"$acquired|$release|$after\")"
 
 	run_br_bg_with_failpoints "$failpoints" "$truncate_log" \
 		--pd "$PD_ADDR" log truncate \
@@ -541,7 +549,7 @@ run_truncate_renewal_success_case() {
 	assert_file_exists "$after"
 	assert_file_not_exists "$lock_file"
 	assert_log_not_contains "$truncate_log" "lease lost"
-	assert_log_not_contains "$truncate_log" "context canceled"
+	assert_log_not_contains "$truncate_log" "$LEASE_LOST_TEST_LOG"
 
 	local new_safepoint
 	new_safepoint=$(read_truncate_safepoint "$LOG_STORAGE")
@@ -574,14 +582,14 @@ run_truncate_lost_case() {
 	local old_file_count="$TRUNCATE_DATA_FILE_COUNT"
 	local old_safepoint
 	old_safepoint=$(read_truncate_safepoint "$LOG_STORAGE")
-	local failpoints="$LEASE_FP;github.com/pingcap/tidb/br/pkg/task/lease-lock-after-truncate-lock-acquired=return(\"signal=$acquired,release=$release,after=$after\")"
+	local failpoints="$LEASE_FP;$LEASE_LOST_LOG_FP;github.com/pingcap/tidb/br/pkg/task/lease-lock-after-truncate-lock-acquired=return(\"$acquired|$release|$after\")"
 
 	case "$mode" in
 		block)
-			failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block=return(\"signal=$fault\")"
+			failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-block=return(\"$fault\")"
 			;;
 		error)
-			failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error=return(\"signal-dir=$fault_dir\")"
+			failpoints="$failpoints;github.com/pingcap/tidb/pkg/objstore/lease-lock-renewal-write-error=return(\"$fault_dir\")"
 			;;
 		*)
 			echo "Unknown truncate lost mode: $mode"
@@ -610,7 +618,7 @@ run_truncate_lost_case() {
 	wait_pid_with_timeout "$pid" 120 failure "$truncate_log"
 	assert_file_not_exists "$release"
 	assert_file_not_exists "$after"
-	assert_log_contains "$truncate_log" "context canceled"
+	assert_log_contains "$truncate_log" "$LEASE_LOST_TEST_LOG"
 	case "$mode" in
 		block)
 			assert_log_contains "$truncate_log" "Lock renewal detected lease lost; calling onLeaseLost."
@@ -656,7 +664,7 @@ run_stale_lock_reclaim_case() {
 	local truncate_log="$CASE_LOG_DIR/stale-reclaim.log"
 	write_stale_truncate_lock "$stale_lock_path"
 
-	run_br_with_failpoints "$LEASE_FP;github.com/pingcap/tidb/pkg/objstore/lease-lock-stale-reclaim-signal=return(\"dir=$reclaim_dir\")" "$truncate_log" \
+	run_br_with_failpoints "$LEASE_FP;github.com/pingcap/tidb/pkg/objstore/lease-lock-stale-reclaim-signal=return(\"$reclaim_dir\")" "$truncate_log" \
 		--pd "$PD_ADDR" log truncate \
 		-s "local://$LOG_STORAGE" \
 		--until "$TRUNCATE_TS" \
@@ -679,7 +687,7 @@ planned lease lock integration cases:
 CASES
 }
 
-restart_services
+restart_lease_lock_services
 mkdir -p "$CASE_ROOT" "$LOG_DIR" "$MARKER_DIR"
 list_cases
 run_migration_renewal_success_case

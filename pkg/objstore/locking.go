@@ -224,6 +224,30 @@ func parseLeaseLockTestConstants(v failpoint.Value) (leaseLockTestConstants, err
 		return leaseLockTestConstants{}, errors.Errorf("parse lease-lock-test-constants: expected string, got %T", v)
 	}
 
+	if !strings.Contains(raw, "=") {
+		fields := strings.Split(raw, "|")
+		if len(fields) != 6 {
+			return leaseLockTestConstants{}, errors.Errorf("parse lease-lock-test-constants: expected 6 fields, got %d", len(fields))
+		}
+		var cfg leaseLockTestConstants
+		targets := []*time.Duration{
+			&cfg.ttl,
+			&cfg.interval,
+			&cfg.writeTimeoutCap,
+			&cfg.minRemaining,
+			&cfg.staleReclaimGrace,
+			&cfg.baseBackoff,
+		}
+		for i, field := range fields {
+			duration, err := time.ParseDuration(strings.TrimSpace(field))
+			if err != nil {
+				return leaseLockTestConstants{}, errors.Annotatef(err, "parse lease-lock-test-constants: field %d", i)
+			}
+			*targets[i] = duration
+		}
+		return cfg, nil
+	}
+
 	var cfg leaseLockTestConstants
 	seen := make(map[string]struct{})
 	for _, field := range strings.Split(raw, ",") {
@@ -637,6 +661,13 @@ func parseLeaseLockFailpointParam(v failpoint.Value, expectedKey string) (string
 	raw, ok := v.(string)
 	if !ok {
 		return "", errors.Errorf("failpoint: expected %s string, got %T", expectedKey, v)
+	}
+	raw = strings.TrimSpace(raw)
+	if !strings.Contains(raw, "=") {
+		if raw == "" {
+			return "", errors.Errorf("failpoint: %s must not be empty", expectedKey)
+		}
+		return raw, nil
 	}
 	key, value, ok := strings.Cut(strings.TrimSpace(raw), "=")
 	if !ok {

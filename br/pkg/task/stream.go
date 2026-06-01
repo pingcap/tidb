@@ -1128,7 +1128,11 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if _, err := objstore.CleanUpStaleTruncateLock(ctx, extStorage, leaseClock); err != nil {
 		return err
 	}
-	lock, err := objstore.LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, cancelFn, leaseClock)
+	onLeaseLost := func() {
+		utils.LogLeaseLockOnLeaseLostForTest("truncate")
+		cancelFn()
+	}
+	lock, err := objstore.LockRemoteTruncate(ctx, extStorage, hintOnTruncateLock, onLeaseLost, leaseClock)
 	if err != nil {
 		return err
 	}
@@ -1559,7 +1563,11 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
-	migs, err := client.GetLockedMigrations(ctx, cancelFn)
+	onLeaseLost := func() {
+		utils.LogLeaseLockOnLeaseLostForTest("migration")
+		cancelFn()
+	}
+	migs, err := client.GetLockedMigrations(ctx, onLeaseLost)
 	if err != nil {
 		return errors.Trace(err)
 	}

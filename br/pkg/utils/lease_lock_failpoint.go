@@ -22,6 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 const leaseLockFailpointPollInterval = 10 * time.Millisecond
@@ -35,8 +38,24 @@ type LeaseLockFailpointSpec struct {
 }
 
 // ParseLeaseLockFailpointSpec parses signal=<path>,release=<path>,after=<path>.
+// It also accepts signal|release|after, which is safe to pass through
+// GO_FAILPOINTS because failpoint environment parsing splits on every "=".
 func ParseLeaseLockFailpointSpec(raw string) (LeaseLockFailpointSpec, error) {
 	var spec LeaseLockFailpointSpec
+	if !strings.Contains(raw, "=") {
+		parts := strings.Split(raw, "|")
+		if len(parts) != 3 {
+			return spec, errors.Errorf("invalid lease lock failpoint positional item count %d", len(parts))
+		}
+		spec.Signal = strings.TrimSpace(parts[0])
+		spec.Release = strings.TrimSpace(parts[1])
+		spec.After = strings.TrimSpace(parts[2])
+		if spec.Signal == "" || spec.Release == "" || spec.After == "" {
+			return spec, errors.New("lease lock failpoint requires signal, release, and after paths")
+		}
+		return spec, nil
+	}
+
 	for _, part := range strings.Split(raw, ",") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok {
@@ -90,4 +109,12 @@ func createLeaseLockFailpointMarker(path string) error {
 func leaseLockFailpointFileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// LogLeaseLockOnLeaseLostForTest emits a narrow integration-test-only log
+// marker when the caller's onLeaseLost callback is invoked.
+func LogLeaseLockOnLeaseLostForTest(scope string) {
+	failpoint.Inject("lease-lock-on-lease-lost-log", func(_ failpoint.Value) {
+		log.Warn("lease lock integration test onLeaseLost invoked", zap.String("scope", scope))
+	})
 }

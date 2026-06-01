@@ -66,6 +66,13 @@ func (c PDLeaseClock) Now(ctx context.Context) (time.Time, error) {
 }
 
 func parsePDLeaseClockNowSignalDir(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if !strings.Contains(raw, "=") {
+		if raw == "" {
+			return "", errors.New("lease-clock-pd-now-signal requires non-empty dir")
+		}
+		return raw, nil
+	}
 	key, value, ok := strings.Cut(strings.TrimSpace(raw), "=")
 	if !ok || key != "dir" || value == "" {
 		return "", errors.New("lease-clock-pd-now-signal requires dir=<dir>")
