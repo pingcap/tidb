@@ -96,11 +96,7 @@ go_test(
     ],
     embed = [":snap_client"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 44,
-=======
-    shard_count = 47,
->>>>>>> 485bd4b9959 (br: set scan region limiter (#66822))
+    shard_count = 45,
     deps = [
         "//br/pkg/checkpoint",
         "//br/pkg/errors",
@@ -139,12 +135,8 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pkg_errors//:errors",
         "@com_github_stretchr_testify//require",
-<<<<<<< HEAD
         "@com_github_tikv_pd_client//:client",
-=======
-        "@com_github_tikv_pd_client//clients/router",
         "@com_github_tikv_pd_client//opt",
->>>>>>> 485bd4b9959 (br: set scan region limiter (#66822))
         "@org_golang_x_exp//slices",
         "@org_uber_go_goleak//:goleak",
     ],
