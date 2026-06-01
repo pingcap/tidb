@@ -50,6 +50,20 @@ func TestGetKeyspaceMetaServiceGroup(t *testing.T) {
 
 	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.KeyspaceMetaServiceAddrs)
 
+	// Test case with blank entries in addresses
+	keyspaceMeta.Config[metaservice.KeyspaceMetaGroupAddrsKey] = " 127.0.0.1:2388, ,127.0.0.1:2389,  "
+	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	require.NoError(t, err)
+	require.Equal(t, "1", keyspaceMetaServiceGroup.GroupID)
+	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.KeyspaceMetaServiceAddrs)
+
+	// Test case where all addresses are blank
+	keyspaceMeta.Config[metaservice.KeyspaceMetaGroupAddrsKey] = " , \t,  "
+	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)
+	require.Nil(t, keyspaceMetaServiceGroup)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, metaservice.ErrGroupNotMatch))
+
 	// Test case where the group ID exists but addresses do not
 	delete(keyspaceMeta.Config, metaservice.KeyspaceMetaGroupAddrsKey)
 	keyspaceMetaServiceGroup, err = metaservice.GetKeyspaceMetaServiceGroup(keyspaceMeta, globalMetaAddrs)

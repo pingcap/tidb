@@ -64,7 +64,18 @@ func GetKeyspaceMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, globalMe
 	if val, ok := keyspaceMeta.Config[KeyspaceMetaGroupIDKey]; ok {
 		groupID := val
 		if addrsStr, addrsOk := keyspaceMeta.Config[KeyspaceMetaGroupAddrsKey]; addrsOk {
-			addrs := strings.Split(addrsStr, ",")
+			rawAddrs := strings.Split(strings.TrimSpace(addrsStr), ",")
+			addrs := make([]string, 0, len(rawAddrs))
+			for _, addr := range rawAddrs {
+				addr = strings.TrimSpace(addr)
+				if addr == "" {
+					continue
+				}
+				addrs = append(addrs, addr)
+			}
+			if len(addrs) == 0 {
+				return nil, ErrGroupNotMatch
+			}
 			keyspaceMetaServiceGroup = &KeyspaceMetaServiceGroup{
 				GroupID:                  groupID,
 				KeyspaceMetaServiceAddrs: addrs,
