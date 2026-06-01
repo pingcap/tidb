@@ -2108,7 +2108,9 @@ func needCheckGeneratedColumnDependencyForNoReorg(tblInfo *model.TableInfo, oldC
 
 	// The normal generated-column restriction is only relevant when another generated
 	// column or expression index depends on the modified column.
-
+	if ok, _, _ := hasDependentByGeneratedColumn(tblInfo, oldCol.Name); !ok {
+		return false
+	}
 	// Metadata-only changes do not change existing row values or generated expression results.
 	if oldCol.FieldType.Equal(&newCol.FieldType) {
 		return false
