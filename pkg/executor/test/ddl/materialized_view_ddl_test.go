@@ -1243,6 +1243,39 @@ func TestDropMaterializedViewLogRecheckWithConcurrentCreateMaterializedView(t *t
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestDropDatabaseCleansMaterializedViewAndLogInfo(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	const dbName = "mv_drop_db_cleanup"
+	tk.MustExec("drop database if exists " + dbName)
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr("$mlog$t"))
+	require.NoError(t, err)
+
+	mvID := mvTable.Meta().ID
+	mlogID := mlogTable.Meta().ID
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).
+		Check(testkit.Rows("1"))
+
+	tk.MustExec("drop database " + dbName)
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_info where mview_id = %d", mvID)).
+		Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where mlog_id = %d", mlogID)).
+		Check(testkit.Rows("0"))
+}
+
 func TestCreateMaterializedViewRetryAfterUpsertFailure(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

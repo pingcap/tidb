@@ -268,18 +268,18 @@ func GetCreateMaterializedViewLogArgs(job *Job) (*CreateMaterializedViewLogArgs,
 // CreateMaterializedViewArgs is the arguments for create materialized view job.
 type CreateMaterializedViewArgs struct {
 	TableInfo *TableInfo `json:"table_info,omitempty"`
-	// MLogTableID is the table ID of the materialized view log that this MV depends on.
+	// MLogTableIDs are table IDs of materialized view logs that this MV depends on.
 	// It's used for DDL job discoverability/filtering (e.g. mysql.tidb_ddl_job.table_ids).
-	MLogTableID int64 `json:"mlog_table_id,omitempty"`
+	MLogTableIDs []int64 `json:"mlog_table_ids,omitempty"`
 }
 
 func (a *CreateMaterializedViewArgs) getArgsV1(*Job) []any {
-	return []any{a.TableInfo, a.MLogTableID}
+	return []any{a.TableInfo, a.MLogTableIDs}
 }
 
 func (a *CreateMaterializedViewArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
-	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableID))
+	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableIDs))
 }
 
 // GetCreateMaterializedViewArgs gets the create materialized view args.

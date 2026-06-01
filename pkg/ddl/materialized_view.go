@@ -210,7 +210,10 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		return err
 	}
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
-	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{TableInfo: mvTableInfo, MLogTableID: mlogTable.Meta().ID}, false)
+	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
+		TableInfo:    mvTableInfo,
+		MLogTableIDs: []int64{mlogTable.Meta().ID},
+	}, false)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
 		return errors.Trace(err)
 	}

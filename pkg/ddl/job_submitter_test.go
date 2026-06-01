@@ -526,7 +526,7 @@ func TestCreateMaterializedViewJobTableIDs(t *testing.T) {
 			TableInfo: &model.TableInfo{
 				MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{baseTableID}},
 			},
-			MLogTableID: mlogTableID,
+			MLogTableIDs: []int64{mlogTableID},
 		},
 		false,
 	)
@@ -541,6 +541,50 @@ func TestCreateMaterializedViewJobTableIDs(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		strconv.FormatInt(jobW.TableID, 10),
 		strconv.FormatInt(mlogTableID, 10),
+	}, tableIDs)
+}
+
+func TestCreateMaterializedViewJobTableIDsMultiMLog(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	// disable DDL to avoid it interfere the test
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	dom.DDL().OwnerManager().CampaignCancel()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	const (
+		baseTableID1 int64 = 900000000000000010
+		baseTableID2 int64 = 900000000000000011
+		mlogTableID1 int64 = 900000000000000012
+		mlogTableID2 int64 = 900000000000000013
+	)
+	jobW := ddl.NewJobWrapperWithArgs(
+		&model.Job{
+			Version:    model.GetJobVerInUse(),
+			Type:       model.ActionCreateMaterializedView,
+			SchemaName: "test",
+			TableName:  "mv_multi",
+		},
+		&model.CreateMaterializedViewArgs{
+			TableInfo: &model.TableInfo{
+				MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{baseTableID1, baseTableID2}},
+			},
+			MLogTableIDs: []int64{mlogTableID1, mlogTableID2, mlogTableID1},
+		},
+		false,
+	)
+	submitter := ddl.NewJobSubmitterForTest()
+	require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{jobW}))
+
+	rows := tk.MustQuery(fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()
+	require.Len(t, rows, 1)
+
+	tableIDs := strings.Split(rows[0][0].(string), ",")
+	require.Len(t, tableIDs, 3)
+	require.ElementsMatch(t, []string{
+		strconv.FormatInt(jobW.TableID, 10),
+		strconv.FormatInt(mlogTableID1, 10),
+		strconv.FormatInt(mlogTableID2, 10),
 	}, tableIDs)
 }
 
