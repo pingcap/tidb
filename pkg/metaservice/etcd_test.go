@@ -18,27 +18,20 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type mockPDClient struct {
 	pd.Client
-	members   []*pdpb.Member
-	leaderURL string
+	members []*pdpb.Member
 }
 
 func (c *mockPDClient) GetAllMembers(context.Context) (*pdpb.GetMembersResponse, error) {
 	return &pdpb.GetMembersResponse{Members: c.members}, nil
-}
-
-func (c *mockPDClient) GetLeaderURL() string {
-	return c.leaderURL
 }
 
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.
@@ -76,46 +69,6 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 	addrs, err := serviceClient.GetPDAddrs()
 	require.NoError(t, err)
 	require.Equal(t, expectAddrs, addrs)
-}
-
-// TestGetPDLeaderAddrsWithRealClient tests the GetPDLeaderAddrs method with a real etcd client
-func TestGetPDLeaderAddrsWithRealClient(t *testing.T) {
-	integration.BeforeTestExternal(t)
-	if !unixSocketAvailable() {
-		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
-	}
-
-	// Initialize etcd client
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-	etcdCli := cluster.RandClient()
-	pdCli := &mockPDClient{leaderURL: "http://127.0.0.1:2379"}
-
-	serviceClient := newClient(etcdCli, pdCli)
-	ctx := context.Background()
-
-	leaderAddr := serviceClient.GetPDLeaderAddrs(ctx)
-
-	require.Equal(t, pdCli.leaderURL, leaderAddr)
-}
-
-func TestGetPDLeaderAddrsReturnsEmptyWhenLeaderNotFound(t *testing.T) {
-	etcdCli, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"127.0.0.1:1"},
-		DialTimeout: 100 * time.Millisecond,
-	})
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, etcdCli.Close())
-	}()
-
-	serviceClient := newClient(etcdCli, &mockPDClient{})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	leaderAddr := serviceClient.GetPDLeaderAddrs(ctx)
-
-	require.Empty(t, leaderAddr)
 }
 
 // TestParseURL tests the ParseURL function with various inputs.

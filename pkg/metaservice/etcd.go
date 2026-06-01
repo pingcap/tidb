@@ -60,11 +60,6 @@ func (n *client) GetPDAddrs() ([]string, error) {
 	return addrs, err
 }
 
-// GetPDLeaderAddrs implements ServiceClient interface.
-func (n *client) GetPDLeaderAddrs(_ context.Context) string {
-	return n.pdCli.GetLeaderURL()
-}
-
 // GetPDHostPorts returns the PD addresses from PD client.
 func GetPDHostPorts(ctx context.Context, pdClient pd.Client, hasPrefix bool) ([]string, error) {
 	pdAddrs := make([]string, 0)
