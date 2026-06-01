@@ -3316,11 +3316,12 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 					job.ID, taskKey, blockSamplePrediction, blockSamplePeakPredictedTiKVBytes,
 					tikvReplicaCount, tikvReplicaCountSource, tikvReplicaCountPhysicalID,
 					initialCapacity, enforceTiKVSpacePrecheck)
-				if err := checkTiKVSpaceForAddIndex(initialCapacity, blockSamplePeakPredictedTiKVBytes); err != nil {
+				precheckErr, rejectErr := evaluateAddIndexTiKVSpacePrecheck(initialCapacity, blockSamplePeakPredictedTiKVBytes, enforceTiKVSpacePrecheck)
+				if precheckErr != nil {
 					logutil.DDLLogger().Warn("insufficient TiKV space predicted for add-index task",
-						append(precheckLogFields, zap.Error(err))...)
-					if enforceTiKVSpacePrecheck {
-						return err
+						append(precheckLogFields, zap.Error(precheckErr))...)
+					if rejectErr != nil {
+						return rejectErr
 					}
 				} else {
 					logutil.DDLLogger().Info("passed TiKV space precheck for add-index task",
@@ -4125,6 +4126,14 @@ func checkTiKVSpaceForAddIndex(capacity *TiKVClusterCapacity, predictedTiKVIndex
 		}
 	}
 	return nil
+}
+
+func evaluateAddIndexTiKVSpacePrecheck(capacity *TiKVClusterCapacity, predictedTiKVIndexBytes uint64, enforce bool) (checkErr, rejectErr error) {
+	checkErr = checkTiKVSpaceForAddIndex(capacity, predictedTiKVIndexBytes)
+	if checkErr != nil && enforce {
+		rejectErr = checkErr
+	}
+	return checkErr, rejectErr
 }
 
 func remainingTiKVBytes(availableBytes, predictBytes uint64) uint64 {
