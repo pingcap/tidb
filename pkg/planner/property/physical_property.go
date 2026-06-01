@@ -324,12 +324,12 @@ type PhysicalProperty struct {
 	// index: (a, b(10) )
 	PartialOrderInfo *PartialOrderInfo
 
-	// SortItemsHints contains sort items that are preferred but not required.
-	// When SortItems is empty and SortItemsHints is not, DataSource can try to
+	// AdvisorySortItems contains sort items that are preferred but not required.
+	// When SortItems is empty and AdvisorySortItems is not, DataSource can try to
 	// generate paths that satisfy these sort items, enabling Limit pushdown to
 	// partial paths of IndexMerge.
 	// Currently only set when TopN is directly above a DataSource.
-	SortItemsHints []SortItem
+	AdvisorySortItems []SortItem
 }
 
 // PartialOrderInfo records information needed for partial order optimization.
@@ -586,7 +586,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
-	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8 + (16+8)*len(p.SortItemsHints) + 8
+	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8 + (16+8)*len(p.AdvisorySortItems) + 8
 	if p.PartialOrderInfo != nil {
 		hashcodeSize += (16 + 8) * len(p.PartialOrderInfo.SortItems)
 	} else {
@@ -660,7 +660,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
 	// encode SortItemsHints into physical prop's hashcode.
-	for _, item := range p.SortItemsHints {
+	for _, item := range p.AdvisorySortItems {
 		p.hashcode = append(p.hashcode, item.Col.HashCode()...)
 		if item.Desc {
 			p.hashcode = codec.EncodeInt(p.hashcode, 1)
@@ -689,7 +689,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		CTEProducerStatus:     p.CTEProducerStatus,
 		NoCopPushDown:         p.NoCopPushDown,
 		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
-		SortItemsHints:        p.SortItemsHints,
+		AdvisorySortItems:     p.AdvisorySortItems,
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}
@@ -727,7 +727,7 @@ func (p *PhysicalProperty) MemoryUsage() (sum int64) {
 	for _, mppCol := range p.MPPPartitionCols {
 		sum += mppCol.MemoryUsage()
 	}
-	for _, sortItem := range p.SortItemsHints {
+	for _, sortItem := range p.AdvisorySortItems {
 		sum += sortItem.MemoryUsage()
 	}
 	return

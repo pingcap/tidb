@@ -779,7 +779,7 @@ type candidatePath struct {
 	// partialPathMatchResults stores each partial path's matchProperty result.
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
 	partialPathMatchResults []property.PhysicalPropMatchResult
-	indexJoinCols           int // how many index columns are used in access conditions in this IndexJoin.
+	indexJoinCols           int  // how many index columns are used in access conditions in this IndexJoin.
 	isFullRange             bool // cached result of whether this path covers the full scan range.
 	eqOrInCount             int  // cached result of equalPredicateCount().
 }
@@ -1420,7 +1420,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	// target:
 	//	1: index merge case, try to match the every alternative partial path to the order property as long as
 	//	possible, and generate that property-matched index merge path out if any.
-	//	2: If the prop is empty (means no sort requirement) but SortItemsHints is set, prefer alternatives
+	//	2: If the prop is empty (means no sort requirement) but AdvisorySortItems is set, prefer alternatives
 	//	that can satisfy the SoftSortItems for potential Limit pushdown.
 	//	3: If neither, generate a random index partial combination path from all alternatives.
 
@@ -1435,14 +1435,14 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		return nil, nil, false, property.PropNotMatched
 	}
 
-	// When SortItems is empty and SortItemsHints is set, use hints as soft sort
-	// requirements. Alternatives that satisfy SortItemsHints can benefit from
+	// When SortItems is empty and AdvisorySortItems is set, use hints as soft sort
+	// requirements. Alternatives that satisfy AdvisorySortItems can benefit from
 	// Limit pushdown.
-	useAdvisorySortItems := noSortItem && len(prop.SortItemsHints) > 0
+	useAdvisorySortItems := noSortItem && len(prop.AdvisorySortItems) > 0
 	var hintsProp *property.PhysicalProperty
 	if useAdvisorySortItems {
 		hintsProp = prop.CloneEssentialFields()
-		hintsProp.SortItems = hintsProp.SortItemsHints
+		hintsProp.SortItems = hintsProp.AdvisorySortItems
 	}
 
 	// step1: match the property from all the index partial alternative paths.
@@ -1661,10 +1661,10 @@ func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath
 		return nil
 	}
 	candidate := &candidatePath{
-		path:                     possiblePath,
-		matchPropResult:          match,
-		matchWithAdvisorySortItems:  matchWithAdvisory,
-		partialPathMatchResults:  partialMatchResults,
+		path:                       possiblePath,
+		matchPropResult:            match,
+		matchWithAdvisorySortItems: matchWithAdvisory,
+		partialPathMatchResults:    partialMatchResults,
 	}
 	candidate.isFullRange = possiblePath.IsFullScanRange(ds.TableInfo)
 	candidate.eqOrInCount = candidate.equalPredicateCount()
@@ -1677,9 +1677,9 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 	allSameOrder, _ := prop.AllSameOrder()
 	// When SortItems is empty and SortItemsHints is set, check which partial
 	// paths satisfy the hints (for Limit pushdown).
-	if prop.IsSortItemEmpty() && len(prop.SortItemsHints) > 0 && !path.IndexMergeIsIntersection && allSameOrder {
+	if prop.IsSortItemEmpty() && len(prop.AdvisorySortItems) > 0 && !path.IndexMergeIsIntersection && allSameOrder {
 		hintsProp := prop.CloneEssentialFields()
-		hintsProp.SortItems = hintsProp.SortItemsHints
+		hintsProp.SortItems = hintsProp.AdvisorySortItems
 		candidate.matchWithAdvisorySortItems = true
 		candidate.partialPathMatchResults, _ = isMatchPropForIndexMerge(ds, path, hintsProp)
 		// When using hints, there are no real sort items, so the overall match
@@ -2297,7 +2297,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	effectiveProp := prop
 	if candidate.matchWithAdvisorySortItems {
 		hintsProp := prop.CloneEssentialFields()
-		hintsProp.SortItems = hintsProp.SortItemsHints
+		hintsProp.SortItems = hintsProp.AdvisorySortItems
 		effectiveProp = hintsProp
 	}
 	// Add sort items for index scan for merge-sort operation between partitions.
