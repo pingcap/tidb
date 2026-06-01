@@ -24,33 +24,31 @@ import (
 )
 
 func TestLockNotFoundPrint(t *testing.T) {
-	t.Run("TxnLockNotFound", func(t *testing.T) {
-		msg := "Txn(Mvcc(TxnLockNotFound { start_ts: 408090278408224772, commit_ts: 408090279311835140, " +
-			"key: [116, 128, 0, 0, 0, 0, 0, 50, 137, 95, 105, 128, 0, 0, 0, 0,0 ,0, 1, 1, 67, 49, 57, 48, 57, 50, 57, 48, 255, 48, 48, 48, 48, 48, 52, 56, 54, 255, 50, 53, 53, 50, 51, 0, 0, 0, 252] }))"
-		key := prettyLockNotFoundKey(msg)
-		expected := "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}"
-		require.Equal(t, expected, key)
-	})
+	msg := "Txn(Mvcc(TxnLockNotFound { start_ts: 408090278408224772, commit_ts: 408090279311835140, " +
+		"key: [116, 128, 0, 0, 0, 0, 0, 50, 137, 95, 105, 128, 0, 0, 0, 0,0 ,0, 1, 1, 67, 49, 57, 48, 57, 50, 57, 48, 255, 48, 48, 48, 48, 48, 52, 56, 54, 255, 50, 53, 53, 50, 51, 0, 0, 0, 252] }))"
+	key := prettyLockNotFoundKey(msg)
+	expected := "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}"
+	require.Equal(t, expected, key)
+}
 
-	t.Run("LockUpgradeConflictMapsToNonRetryableDeadlock", func(t *testing.T) {
-		err := extractKeyErr(errors.WithStack(&tikverr.ErrLockUpgradeConflict{
-			LockUpgradeConflict: &kvrpcpb.LockUpgradeConflict{
-				Key:          []byte("key"),
-				StartTs:      101,
-				OwnerStartTs: 202,
-				Reason:       kvrpcpb.LockUpgradeConflict_SecondUpgrader,
-			},
-		}))
-		require.Error(t, err)
-		require.False(t, kv.ErrWriteConflict.Equal(err))
-		require.False(t, kv.ErrTxnRetryable.Equal(err))
+func TestLockUpgradeConflictMapsToNonRetryableDeadlock(t *testing.T) {
+	err := extractKeyErr(errors.WithStack(&tikverr.ErrLockUpgradeConflict{
+		LockUpgradeConflict: &kvrpcpb.LockUpgradeConflict{
+			Key:          []byte("key"),
+			StartTs:      101,
+			OwnerStartTs: 202,
+			Reason:       kvrpcpb.LockUpgradeConflict_SecondUpgrader,
+		},
+	}))
+	require.Error(t, err)
+	require.False(t, kv.ErrWriteConflict.Equal(err))
+	require.False(t, kv.ErrTxnRetryable.Equal(err))
 
-		var deadlock *tikverr.ErrDeadlock
-		require.ErrorAs(t, err, &deadlock)
-		require.False(t, deadlock.IsRetryable)
-		require.Equal(t, uint64(202), deadlock.LockTs)
-		require.Equal(t, []byte("key"), deadlock.LockKey)
-	})
+	var deadlock *tikverr.ErrDeadlock
+	require.ErrorAs(t, err, &deadlock)
+	require.False(t, deadlock.IsRetryable)
+	require.Equal(t, uint64(202), deadlock.LockTs)
+	require.Equal(t, []byte("key"), deadlock.LockKey)
 }
 
 func TestWriteConflictPrettyFormat(t *testing.T) {
