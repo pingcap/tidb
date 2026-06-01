@@ -53,7 +53,7 @@ func TestFragmentInitSingleton(t *testing.T) {
 	require.Equal(t, f.singleton, false)
 }
 
-func TestFixDuplicatedTimesForCTEUsesLocalTaskCounts(t *testing.T) {
+func TestFillLocalCTECountsUsesLocalTaskCounts(t *testing.T) {
 	task := func(addr string) *kv.MPPTask {
 		return &kv.MPPTask{Meta: &mppAddr{addr: addr}}
 	}
@@ -82,7 +82,7 @@ func TestFixDuplicatedTimesForCTEUsesLocalTaskCounts(t *testing.T) {
 		{Sink: sourceSink0},
 		{Sink: sourceSink1},
 	}
-	err := (&mppTaskGenerator{}).fixDuplicatedTimesForCTE(frags)
+	err := (&mppTaskGenerator{}).fillLocalCTECounts(frags)
 	require.NoError(t, err)
 
 	for _, sink := range []*PhysicalCTESink{sink0, sink1} {

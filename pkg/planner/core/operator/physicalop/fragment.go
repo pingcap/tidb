@@ -219,32 +219,35 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		frag.Sink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
-	// CteSinkNum/CteSourceNum are required fields in tipb.CTESink/CTESource. After we "untwist" UNION ALL
-	// and split the plan into fragments, one CTE id can appear in multiple CTESink/CTESource plan nodes.
-	// Count the executor instances per TiFlash task address and fill the local numbers into each node.
-	if err := e.fixDuplicatedTimesForCTE(e.frags); err != nil {
+	// CteSinkNum/CteSourceNum tell TiFlash CTEManager how many local CTESink/CTESource executors
+	// for the same storage id should participate. After UNION ALL is untwisted and the plan is split
+	// into fragments, one CTE id can appear in multiple plan nodes, so global counts are unsafe.
+	if err := e.fillLocalCTECounts(e.frags); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return e.frags, nil
 }
 
 // cteSinkInMPPTasks records one CTESink plan node and the self tasks of the fragment containing it.
-// The tasks provide the TiFlash addresses where this plan node's sink executors are instantiated.
+// The plan node is where CteSinkNum/CteSourceNum must be written, and the tasks provide the TiFlash
+// addresses where this node's sink executors are instantiated.
 type cteSinkInMPPTasks struct {
 	sink  *PhysicalCTESink
 	tasks []*kv.MPPTask
 }
 
 // cteSourceInMPPTasks records one CTESource plan node and the self tasks of the fragment containing it.
-// The tasks provide the TiFlash addresses where this plan node's source executors are instantiated.
+// The plan node is where CteSinkNum/CteSourceNum must be written, and the tasks provide the TiFlash
+// addresses where this node's source executors are instantiated.
 type cteSourceInMPPTasks struct {
 	source *PhysicalCTESource
 	tasks  []*kv.MPPTask
 }
 
 // cteInMPPTasks groups all split CTESink/CTESource plan nodes for one CTE id.
-// Each entry keeps its fragment tasks because TiFlash expects sink/source counts per address,
-// while the split MPP DAG can contain multiple global plan nodes for the same CTE id.
+// The group is global, but each entry still needs its own task set: a UNION ALL producer can have
+// two CTESink fragments for the same CTE id, one on tiflash0 and one on tiflash1. A CTESource
+// running on both addresses must see one local sink per address, not two global sinks.
 type cteInMPPTasks struct {
 	sinks   []cteSinkInMPPTasks
 	sources []cteSourceInMPPTasks
@@ -312,9 +315,8 @@ func getUniformCTELocalCount(cteID int, tasks []*kv.MPPTask, counts map[string]u
 	return count, nil
 }
 
-func (e *mppTaskGenerator) fixDuplicatedTimesForCTE(frags []*Fragment) error {
-	// Count sinks/sources by cte_id and TiFlash address in the split MPP DAG forest, then assign the
-	// per-address numbers to each CTE plan node.
+func (e *mppTaskGenerator) fillLocalCTECounts(frags []*Fragment) error {
+	// Build a global index of split CTE plan nodes, then write each node's task-local counts.
 	//
 	// Why this is needed:
 	// - A shared CTE can be referenced from multiple fragments.
