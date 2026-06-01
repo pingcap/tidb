@@ -141,7 +141,7 @@ git commit -m "pkg/objstore: split lease lock reclaim grace"
 - Modify: `pkg/objstore/locking_test.go`
 - Modify: `docs/agents/br/lease-lock-renewal-bounded-write-proof-implementation-plan.md`
 
-- [ ] **Step 1: Add renewal proof tests and storage wrapper**
+- [x] **Step 1: Add renewal proof tests and storage wrapper**
 
 In `pkg/objstore/locking_test.go`, add `sync` to imports and add this helper near the other test storage wrappers:
 
@@ -249,7 +249,7 @@ func TestTryRenewPostWriteProofRejectsTinyRemainingLease(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Update existing renewal-clock test expectations**
+- [x] **Step 2: Update existing renewal-clock test expectations**
 
 Rename `TestTryRenewUsesLeaseClockOneTimeForExpiryAndRefresh` to
 `TestTryRenewUsesLeaseClockForExpiryRefreshAndPostWriteProof`, then update its
@@ -274,7 +274,7 @@ require.Equal(t, 4, clock.idx)
 
 Keep the existing `ExpireAt == renewNow.Add(objstore.LeaseTTL)` assertion.
 
-- [ ] **Step 3: Run RED renewal proof tests**
+- [x] **Step 3: Run RED renewal proof tests**
 
 Run:
 
@@ -284,7 +284,7 @@ Run:
 
 Expected before implementation: compile failure because `TESTSetRenewalProofConstants` and new sentinel exports do not exist.
 
-- [ ] **Step 4: Add constants and sentinel errors**
+- [x] **Step 4: Add constants and sentinel errors**
 
 In `pkg/objstore/locking.go`, add constants near the renewal timing vars:
 
@@ -327,7 +327,7 @@ func TESTSetRenewalProofConstants(writeTimeoutCap, minRemaining time.Duration) (
 }
 ```
 
-- [ ] **Step 5: Change `tryRenew` to return next delay**
+- [x] **Step 5: Change `tryRenew` to return next delay**
 
 Change the internal signature in `pkg/objstore/locking.go`:
 
@@ -384,7 +384,7 @@ func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
 }
 ```
 
-- [ ] **Step 6: Implement bounded write and post-write proof**
+- [x] **Step 6: Implement bounded write and post-write proof**
 
 In `tryRenew`, after old-lease validation and before `WriteFile`, compute the bounded timeout:
 
@@ -430,7 +430,7 @@ Immediately prove the refreshed lease:
 
 Keep existing `TxnID` mismatch, missing clock, and old lease expiration behavior.
 
-- [ ] **Step 7: Mark new renewal proof failures as permanent lost in `renewalLoop`**
+- [x] **Step 7: Mark new renewal proof failures as permanent lost in `renewalLoop`**
 
 Add a helper near the renewal sentinel errors:
 
@@ -446,7 +446,7 @@ func isPermanentRenewalLoss(err error) bool {
 
 Use it from `renewalLoop` so every new proof failure calls `onLeaseLost` and exits instead of entering the transient retry path.
 
-- [ ] **Step 8: Run GREEN renewal proof tests**
+- [x] **Step 8: Run GREEN renewal proof tests**
 
 Run:
 
@@ -456,7 +456,7 @@ Run:
 
 Expected after implementation: selected tests pass.
 
-- [ ] **Step 9: Commit Task 2**
+- [x] **Step 9: Commit Task 2**
 
 Run:
 

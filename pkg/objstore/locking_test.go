@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -142,6 +143,27 @@ func (s cancelAwareDeleteStorage) DeleteFile(ctx context.Context, name string) e
 		return err
 	}
 	return s.Storage.DeleteFile(ctx, name)
+}
+
+type controlledWriteStorage struct {
+	storeapi.Storage
+	blockPath   string
+	block       atomic.Bool
+	started     chan struct{}
+	startedOnce sync.Once
+}
+
+func (s *controlledWriteStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if s.block.Load() && name == s.blockPath {
+		s.startedOnce.Do(func() { close(s.started) })
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+			return errors.New("renewal write did not receive bounded context")
+		}
+	}
+	return s.Storage.WriteFile(ctx, name, data)
 }
 
 func TestTryLockRemoteTruncate(t *testing.T) {
@@ -781,7 +803,7 @@ func TestTryRenewSuccess(t *testing.T) {
 	require.Equal(t, origMeta.TxnID, newMeta.TxnID, "TxnID must stay unchanged across renewal")
 }
 
-func TestTryRenewUsesLeaseClockOneTimeForExpiryAndRefresh(t *testing.T) {
+func TestTryRenewUsesLeaseClockForExpiryRefreshAndPostWriteProof(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
 	leaseNow := time.Date(2026, 5, 28, 10, 11, 12, 123456789, time.UTC)
@@ -791,6 +813,7 @@ func TestTryRenewUsesLeaseClockOneTimeForExpiryAndRefresh(t *testing.T) {
 			leaseNow,
 			leaseNow.Add(time.Millisecond),
 			renewNow,
+			renewNow.Add(time.Millisecond),
 		},
 	}
 
@@ -808,7 +831,80 @@ func TestTryRenewUsesLeaseClockOneTimeForExpiryAndRefresh(t *testing.T) {
 	var meta objstore.LockMeta
 	require.NoError(t, json.Unmarshal(data, &meta))
 	require.Equal(t, renewNow.Add(objstore.LeaseTTL), meta.ExpireAt)
-	require.Equal(t, 3, clock.idx)
+	require.Equal(t, 4, clock.idx)
+}
+
+func TestTryRenewWriteTimeoutIsLeaseLost(t *testing.T) {
+	ctx := context.Background()
+	base, _ := createMockStorage(t)
+	storage := &controlledWriteStorage{Storage: base, started: make(chan struct{})}
+	defer objstore.TESTSetRenewalProofConstants(20*time.Millisecond, time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+	renewNow := leaseNow.Add(time.Millisecond)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+			renewNow,
+		},
+	}
+	lock, err := objstore.TryLockRemoteWrite(ctx, storage, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+	storage.blockPath = requireSinglePathWithPrefix(t, storage, "v1/LOCK.WRIT.")
+	storage.block.Store(true)
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewWriteTimeout)
+	select {
+	case <-storage.started:
+	case <-time.After(time.Second):
+		t.Fatal("renewal write did not start")
+	}
+}
+
+func TestTryRenewPostWriteProofRejectsExpiredLease(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TESTSetRenewalProofConstants(5*time.Minute, time.Minute)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+	renewNow := leaseNow.Add(time.Minute)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+			renewNow,
+			renewNow.Add(objstore.LeaseTTL).Add(time.Nanosecond),
+		},
+	}
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewPostWriteProofFailed)
+}
+
+func TestTryRenewPostWriteProofRejectsTinyRemainingLease(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TESTSetRenewalProofConstants(5*time.Minute, time.Minute)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+	renewNow := leaseNow.Add(time.Minute)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+			renewNow,
+			renewNow.Add(objstore.LeaseTTL).Add(-30 * time.Second),
+		},
+	}
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+
+	err = objstore.TESTTryRenew(ctx, lock)
+	require.ErrorIs(t, err, objstore.TESTRenewRemainingLeaseTooSmall)
 }
 
 func TestTryRenewLeaseClockErrorIsTransient(t *testing.T) {

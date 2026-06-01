@@ -24,12 +24,22 @@ import (
 // Re-exports of internal sentinel errors so tests in objstore_test can match
 // them with errors.Is.
 var (
-	TESTRenewTxnIDMismatch = errRenewTxnIDMismatch
-	TESTRenewLeaseExpired  = errRenewLeaseExpired
+	TESTRenewTxnIDMismatch          = errRenewTxnIDMismatch
+	TESTRenewLeaseExpired           = errRenewLeaseExpired
+	TESTRenewWriteTimeout           = errRenewWriteTimeout
+	TESTRenewPostWriteProofFailed   = errRenewPostWriteProofFailed
+	TESTRenewRemainingLeaseTooSmall = errRenewRemainingLeaseTooSmall
 )
 
 // TESTTryRenew exposes the unexported tryRenew primitive for direct testing.
 func TESTTryRenew(ctx context.Context, l *RemoteLock) error {
+	_, err := l.tryRenew(ctx)
+	return err
+}
+
+// TESTTryRenewWithDelay exposes the unexported tryRenew primitive for tests
+// that need to inspect the computed next renewal delay.
+func TESTTryRenewWithDelay(ctx context.Context, l *RemoteLock) (time.Duration, error) {
 	return l.tryRenew(ctx)
 }
 
@@ -70,6 +80,17 @@ func TESTSetStaleReclaimGrace(grace time.Duration) (restore func()) {
 	old := staleReclaimGrace
 	staleReclaimGrace = grace
 	return func() { staleReclaimGrace = old }
+}
+
+// TESTSetRenewalProofConstants overrides renewal proof timing knobs for tests.
+func TESTSetRenewalProofConstants(writeTimeoutCap, minRemaining time.Duration) (restore func()) {
+	oldCap, oldMin := renewWriteTimeoutCap, minRenewRemainingLease
+	renewWriteTimeoutCap = writeTimeoutCap
+	minRenewRemainingLease = minRemaining
+	return func() {
+		renewWriteTimeoutCap = oldCap
+		minRenewRemainingLease = oldMin
+	}
 }
 
 // TESTSetNow overrides nowFunc for deterministic time-based tests.

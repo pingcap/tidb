@@ -171,6 +171,14 @@ var (
 	// backoff before the lease would actually expire.
 	renewInterval = LeaseTTL / 3
 
+	// renewWriteTimeoutCap bounds a single renewal WriteFile call. The actual
+	// timeout is also capped by the remaining old lease window.
+	renewWriteTimeoutCap = 5 * time.Minute
+
+	// minRenewRemainingLease is the minimum proven lease window required after
+	// a renewal write returns successfully.
+	minRenewRemainingLease = time.Minute
+
 	// renewMaxRetries and renewBaseBackoff define the exponential-backoff
 	// retry schedule used by the renewal goroutine after a tryRenew failure.
 	// With base 5s and 5 attempts the schedule is 5→10→20→40→80s (155s total).
@@ -357,50 +365,120 @@ var errRenewTxnIDMismatch = errors.New("renewal: txn id mismatch (lock was taken
 // reached this read too late to refresh; the lease is irrecoverably gone.
 var errRenewLeaseExpired = errors.New("renewal: lease already expired")
 
+var errRenewWriteTimeout = errors.New("renewal: write timed out")
+var errRenewPostWriteProofFailed = errors.New("renewal: post-write lease proof failed")
+var errRenewRemainingLeaseTooSmall = errors.New("renewal: remaining lease too small after write")
+
+func isPermanentRenewalLoss(err error) bool {
+	return stderrors.Is(err, errRenewTxnIDMismatch) ||
+		stderrors.Is(err, errRenewLeaseExpired) ||
+		stderrors.Is(err, errRenewWriteTimeout) ||
+		stderrors.Is(err, errRenewPostWriteProofFailed) ||
+		stderrors.Is(err, errRenewRemainingLeaseTooSmall)
+}
+
+func renewalWriteTimeout(expireAt, leaseNow time.Time) (time.Duration, error) {
+	if expireAt.IsZero() {
+		return renewWriteTimeoutCap, nil
+	}
+	remaining := expireAt.Sub(leaseNow)
+	if remaining <= 0 {
+		return 0, errRenewLeaseExpired
+	}
+	timeout := remaining / 2
+	if timeout > renewWriteTimeoutCap {
+		timeout = renewWriteTimeoutCap
+	}
+	if timeout <= 0 {
+		return 0, errRenewLeaseExpired
+	}
+	return timeout, nil
+}
+
+func nextRenewDelay(remaining time.Duration) (time.Duration, error) {
+	if remaining <= minRenewRemainingLease {
+		return 0, errRenewRemainingLeaseTooSmall
+	}
+	delay := remaining / 3
+	if delay > renewInterval {
+		delay = renewInterval
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	return delay, nil
+}
+
 // tryRenew performs one Read → Verify → Write cycle to refresh ExpireAt.
 //
 // Returns:
-//   - nil on successful refresh.
+//   - next renewal delay and nil on successful refresh.
 //   - errRenewTxnIDMismatch if the lock file's TxnID no longer matches ours.
 //   - errRenewLeaseExpired if the on-disk ExpireAt is already past.
+//   - errRenewWriteTimeout if the renewal write cannot finish inside the old
+//     lease-bounded timeout.
+//   - errRenewPostWriteProofFailed if the post-write lease proof cannot be made.
+//   - errRenewRemainingLeaseTooSmall if the proven remaining lease is too small.
 //   - any other error → transient (network/storage); caller should retry.
 //
 // Crucially, the GET-Verify-PUT order ensures we never write a refreshed
 // ExpireAt onto a lock that has already been reclaimed by another holder.
-func (l *RemoteLock) tryRenew(ctx context.Context) error {
+func (l *RemoteLock) tryRenew(ctx context.Context) (time.Duration, error) {
 	data, err := l.storage.ReadFile(ctx, l.path)
 	if err != nil {
-		return errors.Annotatef(err, "tryRenew: ReadFile %s", l.path)
+		return 0, errors.Annotatef(err, "tryRenew: ReadFile %s", l.path)
 	}
 	var meta LockMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return errors.Annotatef(err, "tryRenew: unmarshal LockMeta from %s", l.path)
+		return 0, errors.Annotatef(err, "tryRenew: unmarshal LockMeta from %s", l.path)
 	}
 	if !bytes.Equal(meta.TxnID, l.txnID[:]) {
-		return errRenewTxnIDMismatch
+		return 0, errRenewTxnIDMismatch
 	}
 
 	leaseClock := l.leaseClock
 	if leaseClock == nil {
-		return errors.New("lease clock is required")
+		return 0, errors.New("lease clock is required")
 	}
 	leaseNow, err := leaseClock.Now(ctx)
 	if err != nil {
-		return errors.Annotate(err, "tryRenew: get lease time")
+		return 0, errors.Annotate(err, "tryRenew: get lease time")
 	}
 	if !meta.ExpireAt.IsZero() && leaseNow.After(meta.ExpireAt) {
-		return errRenewLeaseExpired
+		return 0, errRenewLeaseExpired
 	}
-	meta.ExpireAt = leaseNow.Add(LeaseTTL)
+	writeTimeout, err := renewalWriteTimeout(meta.ExpireAt, leaseNow)
+	if err != nil {
+		return 0, err
+	}
+	newExpireAt := leaseNow.Add(LeaseTTL)
+	meta.ExpireAt = newExpireAt
 	newData, err := json.Marshal(meta)
 	if err != nil {
 		log.Panic("Unreachable: LockMeta JSON marshal failed during renewal.",
 			zap.String("path", l.path), logutil.ShortError(err))
 	}
-	if err := l.storage.WriteFile(ctx, l.path, newData); err != nil {
-		return errors.Annotatef(err, "tryRenew: WriteFile %s", l.path)
+	writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	if err := l.storage.WriteFile(writeCtx, l.path, newData); err != nil {
+		if stderrors.Is(writeCtx.Err(), context.DeadlineExceeded) {
+			return 0, errors.Annotate(errRenewWriteTimeout, err.Error())
+		}
+		return 0, errors.Annotatef(err, "tryRenew: WriteFile %s", l.path)
 	}
-	return nil
+	nowAfterWrite, err := leaseClock.Now(ctx)
+	if err != nil {
+		return 0, errors.Annotate(errRenewPostWriteProofFailed, err.Error())
+	}
+	if nowAfterWrite.After(newExpireAt) {
+		return 0, errors.Annotatef(errRenewPostWriteProofFailed,
+			"now=%s expire_at=%s", nowAfterWrite, newExpireAt)
+	}
+	delay, err := nextRenewDelay(newExpireAt.Sub(nowAfterWrite))
+	if err != nil {
+		return 0, err
+	}
+	return delay, nil
 }
 
 // startRenewal launches a background goroutine that periodically refreshes
@@ -449,12 +527,12 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		var lastErr error
 		renewSucceeded := false
 		for attempt := 0; attempt <= renewMaxRetries; attempt++ {
-			err := l.tryRenew(ctx)
+			_, err := l.tryRenew(ctx)
 			if err == nil {
 				renewSucceeded = true
 				break
 			}
-			if stderrors.Is(err, errRenewTxnIDMismatch) || stderrors.Is(err, errRenewLeaseExpired) {
+			if isPermanentRenewalLoss(err) {
 				log.Warn("Lock renewal detected lease lost; calling onLeaseLost.",
 					zap.Stringer("lock", l),
 					zap.Int("attempt", attempt),
