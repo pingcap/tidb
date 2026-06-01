@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/util/rowsize"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -74,17 +73,4 @@ func TestAvgColLen(t *testing.T) {
 	require.Equal(t, float64(unsafe.Sizeof(types.ZeroTime)), cardinality.AvgColSizeChunkFormat(statsTbl.GetCol(tableInfo.Columns[3].ID), statsTbl.RealtimeCount))
 	require.Equal(t, 8.0, cardinality.AvgColSizeChunkFormat(statsTbl.GetCol(tableInfo.Columns[4].ID), statsTbl.RealtimeCount))
 	require.Equal(t, 0.0, cardinality.AvgColSizeDataInDiskByRows(statsTbl.GetCol(tableInfo.Columns[4].ID), statsTbl.RealtimeCount))
-
-	require.Equal(t,
-		cardinality.AvgColSize(statsTbl.GetCol(tableInfo.Columns[1].ID), statsTbl.RealtimeCount, false),
-		rowsize.AvgColSize(statsTbl.GetCol(tableInfo.Columns[1].ID), statsTbl.RealtimeCount, false),
-	)
-	require.Equal(t,
-		cardinality.AvgColSizeChunkFormat(statsTbl.GetCol(tableInfo.Columns[1].ID), statsTbl.RealtimeCount),
-		rowsize.AvgColSizeChunkFormat(statsTbl.GetCol(tableInfo.Columns[1].ID), statsTbl.RealtimeCount),
-	)
-	require.Equal(t,
-		cardinality.AvgColSizeDataInDiskByRows(statsTbl.GetCol(tableInfo.Columns[1].ID), statsTbl.RealtimeCount),
-		rowsize.AvgColSizeDataInDiskByRows(statsTbl.GetCol(tableInfo.Columns[1].ID), statsTbl.RealtimeCount),
-	)
 }
