@@ -9,6 +9,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tikvkv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -24,9 +25,10 @@ const pkdbResolveLocksSafePointDelay = 6 * time.Second
 
 // TryResolveLocksIfNeeded is expected to be called when a single-node owner is
 // elected. If PD has written the marker key when disabling standby and
-// restarting TiDB, this function uses the TS stored in the marker value to start
-// an asynchronous resolve-locks task and delete the marker key after it finishes
-// successfully. TODO(lance6716): reuse GCWorker's resolveLocks.
+// restarting TiDB, this function waits until the marker TS has passed the
+// configured delay, fetches a fresh TS from PD, then starts an asynchronous
+// resolve-locks task and deletes the marker key after it finishes successfully.
+// TODO(lance6716): reuse GCWorker's resolveLocks.
 func TryResolveLocksIfNeeded(ctx context.Context, store kv.Storage, etcdCli *clientv3.Client) {
 	if etcdCli == nil {
 		return
@@ -44,15 +46,15 @@ func TryResolveLocksIfNeeded(ctx context.Context, store kv.Storage, etcdCli *cli
 	}
 
 	markerVal := string(resp.Kvs[0].Value)
-	safePoint, err := resolveLocksSafePointFromMarkerValue(markerVal)
+	resolveAfter, err := resolveLocksAfterFromMarkerValue(markerVal)
 	if err != nil {
 		logutil.BgLogger().Warn("marker key value is not a valid resolve-locks TS, skip",
 			zap.String("marker", markerVal),
 			zap.Error(err))
 		return
 	}
-	if safePoint == 0 {
-		logutil.BgLogger().Warn("marker key exists but resolve-locks safe point is zero, skip",
+	if resolveAfter.IsZero() {
+		logutil.BgLogger().Warn("marker key exists but resolve-locks marker TS is zero, skip",
 			zap.String("marker", markerVal))
 		return
 	}
@@ -65,13 +67,29 @@ func TryResolveLocksIfNeeded(ctx context.Context, store kv.Storage, etcdCli *cli
 		return
 	}
 
-	logutil.BgLogger().Info("marker key found, start resolving locks in background",
-		zap.Uint64("safePoint", safePoint),
+	logutil.BgLogger().Info("marker key found, schedule resolving locks in background",
+		zap.Time("resolveAfter", resolveAfter),
 		zap.Int("concurrency", pkdbResolveLocksConcurrency),
 		zap.String("marker", markerVal))
 
-	go func() {
+	go util.WithRecovery(func() {
 		startTime := time.Now()
+		if !waitResolveLocksUntil(ctx, resolveAfter) {
+			logutil.BgLogger().Info("resolve locks canceled before getting safe point",
+				zap.Time("resolveAfter", resolveAfter),
+				zap.String("marker", markerVal))
+			return
+		}
+
+		safePoint, err := getResolveLocksSafePoint(ctx, tikvStore.GetOracle())
+		if err != nil {
+			logutil.BgLogger().Warn("failed to get resolve-locks safe point from PD",
+				zap.Time("resolveAfter", resolveAfter),
+				zap.String("marker", markerVal),
+				zap.Error(err))
+			return
+		}
+
 		for {
 			err := resolveLocksForWholeCluster(ctx, tikvStore, safePoint, pkdbResolveLocksConcurrency)
 			if err == nil {
@@ -115,19 +133,30 @@ func TryResolveLocksIfNeeded(ctx context.Context, store kv.Storage, etcdCli *cli
 				zap.String("marker", markerVal),
 				zap.Duration("cost", time.Since(startTime)))
 		}
-	}()
+	}, nil)
 }
 
-func resolveLocksSafePointFromMarkerValue(markerVal string) (uint64, error) {
+func resolveLocksAfterFromMarkerValue(markerVal string) (time.Time, error) {
 	markerTS, err := strconv.ParseUint(markerVal, 10, 64)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return time.Time{}, errors.Trace(err)
 	}
 	if markerTS == 0 {
-		return 0, nil
+		return time.Time{}, nil
 	}
-	resolveTime := oracle.GetTimeFromTS(markerTS).Add(pkdbResolveLocksSafePointDelay)
-	return oracle.GoTimeToTS(resolveTime), nil
+	return oracle.GetTimeFromTS(markerTS).Add(pkdbResolveLocksSafePointDelay), nil
+}
+
+func waitResolveLocksUntil(ctx context.Context, resolveAfter time.Time) bool {
+	sleepDuration := time.Until(resolveAfter)
+	if sleepDuration > 0 {
+		sleep(ctx.Done(), sleepDuration)
+	}
+	return ctx.Err() == nil
+}
+
+func getResolveLocksSafePoint(ctx context.Context, oracleClient oracle.Oracle) (uint64, error) {
+	return oracleClient.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 }
 
 func resolveLocksForWholeCluster(
