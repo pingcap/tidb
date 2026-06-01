@@ -133,7 +133,11 @@ func (s *BaseScheduler) Init() error {
 func (s *BaseScheduler) ScheduleTask() {
 	task := s.GetTask()
 	s.logger.Info("schedule task",
-		zap.Stringer("state", task.State), zap.Int("requiredSlots", task.RequiredSlots))
+		zap.Stringer("state", task.State),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
+		zap.Int("requiredSlots", task.RequiredSlots),
+		zap.Stringer("prepare-mode", task.ExtraParams.PrepareMode),
+	)
 	s.scheduleTask()
 }
 
@@ -145,6 +149,12 @@ func (s *BaseScheduler) Close() {
 // GetTask implements the Scheduler interface.
 func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()
+}
+
+// OnPrepare implements Extension with a no-op default.
+// will be removed in later PR.
+func (*BaseScheduler) OnPrepare(context.Context, storage.TaskHandle, *proto.Task) error {
+	return nil
 }
 
 // getTaskClone returns a clone of the task.
@@ -201,7 +211,7 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
 				return
 			}
-			s.sampleLogger.Error("refresh task failed", zap.Error(err))
+			s.sampleLogger.Warn("refresh task failed", zap.Error(err))
 			continue
 		}
 		failpoint.InjectCall("afterRefreshTask", s.GetTask())
@@ -378,9 +388,28 @@ func (s *BaseScheduler) onReverting() error {
 
 // handle task in pending state, schedule subtasks.
 func (s *BaseScheduler) onPending() error {
-	task := s.GetTask()
+	task := s.getTaskClone()
 	s.logger.Debug("on pending state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	if task.Step == proto.StepInit && task.ExtraParams.PrepareMode == proto.PrepareModeRequired {
+		if err := s.Extension.OnPrepare(s.ctx, s, task); err != nil {
+			return s.handlePrepareOrPlanErr(err)
+		}
+		switched, err := s.taskMgr.SwitchTaskStepAfterPrepare(s.ctx, task)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !switched {
+			return nil
+		}
+		task.Step = proto.StepPrepared
+		s.task.Store(task)
+		// fall through to switch to next step to avoid wait another tick to
+		// schedule subtasks after prepare.
+		// NOTE: no real business task enables prepare mode yet, so StepPrepared
+		// is only exercised by framework tests for now. Business GetNextStep
+		// StepPrepared integration will be done in a follow-up PR.
+	}
 	return s.switch2NextStep()
 }
 
@@ -514,7 +543,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
-		return s.handlePlanErr(err)
+		return s.handlePrepareOrPlanErr(err)
 	}
 
 	if err = s.scheduleSubTask(task, nextStep, metas, eligibleNodes); err != nil {
@@ -596,9 +625,9 @@ func (s *BaseScheduler) scheduleSubTask(
 	)
 }
 
-func (s *BaseScheduler) handlePlanErr(err error) error {
+func (s *BaseScheduler) handlePrepareOrPlanErr(err error) error {
 	task := s.getTaskClone()
-	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
+	s.logger.Warn("prepare or generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
 		dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventRetry).Inc()
 		return err

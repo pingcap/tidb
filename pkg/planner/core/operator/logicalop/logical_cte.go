@@ -183,7 +183,10 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		// Build push-downed predicates.
 		if len(p.Cte.PushDownPredicates) > 0 {
 			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.Cte.PushDownPredicates...)
-			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
+			// Pull common filters out of the per-reference DNF before the seed is optimized,
+			// so the seed plan can see them as ordinary conjunctive predicates.
+			newConds := expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), []expression.Expression{newCond})
+			newSel := LogicalSelection{Conditions: newConds}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.Cte.SeedPartLogicalPlan)
 			p.Cte.SeedPartLogicalPlan = newSel
 			p.Cte.OptFlag = ruleutil.SetPredicatePushDownFlag(p.Cte.OptFlag)

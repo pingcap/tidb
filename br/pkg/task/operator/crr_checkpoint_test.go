@@ -16,8 +16,10 @@ package operator
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -30,6 +32,34 @@ type syncedStorage struct {
 
 func (s syncedStorage) FileSynced(context.Context, string) (bool, error) {
 	return s.synced, nil
+}
+
+func TestNewCRRCheckpointServiceRejectsNonLogBackupUpstream(t *testing.T) {
+	ctx := context.Background()
+	cfg := CRRCheckpointConfig{
+		UpstreamStorage: "local://" + filepath.ToSlash(t.TempDir()),
+	}
+	cfg.CRRConfig.TaskName = "test-task"
+
+	svc, cleanup, err := NewCRRCheckpointService(ctx, nil, cfg)
+	require.Nil(t, svc)
+	require.Nil(t, cleanup)
+	require.ErrorContains(t, err, "is not a log backup directory")
+	require.ErrorContains(t, err, metautil.LockFile)
+}
+
+func TestCheckCRRUpstreamStorage(t *testing.T) {
+	ctx := context.Background()
+	upstream, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(upstream.Close)
+
+	err = checkCRRUpstreamStorage(ctx, upstream)
+	require.ErrorContains(t, err, "is not a log backup directory")
+	require.ErrorContains(t, err, metautil.LockFile)
+
+	require.NoError(t, upstream.WriteFile(ctx, metautil.LockFile, nil))
+	require.NoError(t, checkCRRUpstreamStorage(ctx, upstream))
 }
 
 func TestBuildObjectSyncChecker(t *testing.T) {

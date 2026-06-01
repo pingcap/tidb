@@ -885,3 +885,106 @@ c1	c2	c3
 8	8	8
 9	9	9
 10	10	10
+///// IndexMerge with IN conditions and ORDER BY LIMIT (merge sort for partial paths)
+drop table if exists t_im_in;
+create table t_im_in (
+id int not null,
+a int default null,
+b int default null,
+c int default null,
+padding varchar(100) default null,
+primary key (id) clustered,
+key idx_a_c (a, c),
+key idx_b_c (b, c)
+);
+insert into t_im_in values
+(1, 1, 1, 10, 'row1'), (2, 1, 2, 20, 'row2'), (3, 2, 1, 30, 'row3'),
+(4, 2, 2, 40, 'row4'), (5, 1, 3, 50, 'row5'), (6, 3, 1, 60, 'row6'),
+(7, 3, 2, 70, 'row7'), (8, 1, 1, 5, 'row8'), (9, 2, 3, 15, 'row9'),
+(10, 3, 3, 25, 'row10');
+analyze table t_im_in;
+# Case 1: a=1 keeps order directly, b IN (1,2) needs merge sort
+explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
+id	estRows	task	access object	operator info
+IndexMerge_29	5.00	root		type: union, limit embedded(offset:0, count:5)
+├─Limit_27(Build)	2.44	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_24	2.44	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true
+├─Limit_28(Build)	4.27	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_25	4.27	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
+└─TableRowIDScan_26(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
+select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
+id	a	b	c	padding
+8	1	1	5	row8
+1	1	1	10	row1
+2	1	2	20	row2
+3	2	1	30	row3
+4	2	2	40	row4
+# Case 2: Both partial paths need merge sort
+explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a in (1, 2) or b in (1, 2) order by c limit 5;
+id	estRows	task	access object	operator info
+IndexMerge_29	5.00	root		type: union, limit embedded(offset:0, count:5)
+├─Limit_27(Build)	3.85	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_24	3.85	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], [2,2], keep order:true
+├─Limit_28(Build)	3.85	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_25	3.85	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
+└─TableRowIDScan_26(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
+select /*+ use_index_merge(t_im_in) */ * from t_im_in where a in (1, 2) or b in (1, 2) order by c limit 5;
+id	a	b	c	padding
+8	1	1	5	row8
+1	1	1	10	row1
+9	2	3	15	row9
+2	1	2	20	row2
+3	2	1	30	row3
+# Case 3: DESC ordering with IN condition
+explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c desc limit 5;
+id	estRows	task	access object	operator info
+IndexMerge_29	5.00	root		type: union, limit embedded(offset:0, count:5)
+├─Limit_27(Build)	2.44	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_24	2.44	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true, desc
+├─Limit_28(Build)	4.27	cop[tikv]		offset:0, count:5
+│ └─IndexRangeScan_25	4.27	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, desc
+└─TableRowIDScan_26(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
+select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c desc limit 5;
+id	a	b	c	padding
+7	3	2	70	row7
+6	3	1	60	row6
+5	1	3	50	row5
+4	2	2	40	row4
+3	2	1	30	row3
+# Case 4: UnionScan - verify correctness with uncommitted data
+begin;
+insert into t_im_in values (11, 1, 1, 1, 'uncommitted');
+explain select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
+id	estRows	task	access object	operator info
+Limit_15	5.00	root		offset:0, count:5
+└─UnionScan_21	5.00	root		or(eq(index_merge.t_im_in.a, 1), in(index_merge.t_im_in.b, 1, 2))
+  └─IndexMerge_25	5.00	root		type: union
+    ├─IndexRangeScan_22(Build)	2.44	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true
+    ├─IndexRangeScan_23(Build)	4.27	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
+    └─TableRowIDScan_24(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
+select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
+id	a	b	c	padding
+11	1	1	1	uncommitted
+8	1	1	5	row8
+1	1	1	10	row1
+2	1	2	20	row2
+3	2	1	30	row3
+rollback;
+# Case 5: PREPARE/EXECUTE with different parameter values
+prepare stmt from 'select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = ? or b in (1, 2) order by c limit 5';
+set @a = 1;
+execute stmt using @a;
+id	a	b	c	padding
+8	1	1	5	row8
+1	1	1	10	row1
+2	1	2	20	row2
+3	2	1	30	row3
+4	2	2	40	row4
+set @a = 3;
+execute stmt using @a;
+id	a	b	c	padding
+8	1	1	5	row8
+1	1	1	10	row1
+2	1	2	20	row2
+10	3	3	25	row10
+3	2	1	30	row3

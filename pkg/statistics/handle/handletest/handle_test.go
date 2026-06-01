@@ -669,6 +669,29 @@ func TestIncrementalModifyCountUpdate(t *testing.T) {
 	}
 }
 
+func TestFlushPendingStatsDeltaBeforeAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5)")
+
+	tk.MustExec("analyze table t")
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableID)).Check(testkit.Rows(
+		"5 0",
+	))
+
+	tk.MustExec("flush stats_delta test.t")
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableID)).Check(testkit.Rows(
+		"5 0",
+	))
+}
+
 func TestRecordHistoricalStatsToStorage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

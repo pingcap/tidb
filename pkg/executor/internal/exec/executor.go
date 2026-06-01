@@ -144,17 +144,47 @@ func ruv2ExecutorMetricByType(execType string) (ruv2ExecutorMetric, bool) {
 	}
 }
 
-func addRUV2ExecutorMetricWithInfo(ruv2Metrics *execdetails.RUV2Metrics, info ruv2ExecutorMetric, inRows, outRows, inCells, outCells int64) {
-	if ruv2Metrics == nil {
+// ruv2NextCacheState is repopulated on every Open(); a bypassed or missing
+// metrics container collapses to metrics==nil so Next() short-circuits with a
+// single check.
+type ruv2NextCacheState struct {
+	metrics    *execdetails.RUV2Metrics
+	regionName string
+	info       ruv2ExecutorMetric
+	hasInfo    bool
+}
+
+type ruv2CacheProvider interface {
+	ruv2NextCache() *ruv2NextCacheState
+}
+
+func populateRUV2NextCache(ctx context.Context, cache *ruv2NextCacheState, e Executor) {
+	execType := reflect.TypeOf(e).String()
+	cache.regionName = execType + ".Next"
+	cache.info, cache.hasInfo = ruv2ExecutorMetricByType(execType)
+	cache.metrics = nil
+	if !cache.hasInfo {
+		return
+	}
+	metrics := execdetails.RUV2MetricsFromContext(ctx)
+	if metrics == nil || metrics.Bypass() {
+		return
+	}
+	cache.metrics = metrics
+}
+
+func addRUV2ExecutorMetricCached(metrics *execdetails.RUV2Metrics, info ruv2ExecutorMetric, inRows, outRows, inCells, outCells int64) {
+	if metrics == nil {
 		return
 	}
 	delta := inRows + outRows
 	if info.useCells {
 		delta = inCells + outCells
 	}
-	if delta != 0 {
-		ruv2Metrics.AddExecutorMetric(info.level, info.label, delta)
+	if delta == 0 {
+		return
 	}
+	metrics.AddExecutorMetric(info.level, info.label, delta)
 }
 
 // Executor is the physical implementation of an algebra operator.
@@ -396,8 +426,8 @@ func newExecutorKillerHandler(handler signalHandler) executorKillerHandler {
 
 // BaseExecutorV2 is a simplified version of `BaseExecutor`, which doesn't contain a full session context
 type BaseExecutorV2 struct {
-	_ constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
-
+	_              constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
+	ruv2CacheState ruv2NextCacheState
 	executorKillerHandler
 	executorStats
 	executorMeta
@@ -452,6 +482,10 @@ func (*BaseExecutorV2) Detach() (Executor, bool) {
 func (e *BaseExecutorV2) reusableNextIOAcc() *nextIOAcc {
 	e.nextIOAccState.reset()
 	return &e.nextIOAccState
+}
+
+func (e *BaseExecutorV2) ruv2NextCache() *ruv2NextCacheState {
+	return &e.ruv2CacheState
 }
 
 // BuildNewBaseExecutorV2 builds a new `BaseExecutorV2` based on the configuration of the current base executor.
@@ -559,6 +593,9 @@ func Open(ctx context.Context, e Executor) (err error) {
 		start := time.Now()
 		defer func() { e.RuntimeStats().RecordOpen(time.Since(start)) }()
 	}
+	if provider, ok := e.(ruv2CacheProvider); ok {
+		populateRUV2NextCache(ctx, provider.ruv2NextCache(), e)
+	}
 	return e.Open(ctx)
 }
 
@@ -578,19 +615,39 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	execType := reflect.TypeOf(e).String()
-	r, ctx := tracing.StartRegionEx(ctx, execType+".Next")
+	var (
+		regionName  string
+		info        ruv2ExecutorMetric
+		trackRUV2   bool
+		ruv2Metrics *execdetails.RUV2Metrics
+	)
+	if provider, ok := e.(ruv2CacheProvider); ok {
+		cache := provider.ruv2NextCache()
+		if cache.regionName == "" {
+			populateRUV2NextCache(ctx, cache, e)
+		}
+		regionName = cache.regionName
+		info = cache.info
+		ruv2Metrics = cache.metrics
+	} else {
+		execType := reflect.TypeOf(e).String()
+		regionName = execType + ".Next"
+		var hasInfo bool
+		if info, hasInfo = ruv2ExecutorMetricByType(execType); hasInfo {
+			if m := execdetails.RUV2MetricsFromContext(ctx); m != nil && !m.Bypass() {
+				ruv2Metrics = m
+			}
+		}
+	}
+	// trackRUV2 means "this Next call will record into the metrics container".
+	// A tracked-type executor whose statement is bypassed leaves ruv2Metrics nil
+	// and must skip the per-child IO accumulator setup as well as the late update.
+	trackRUV2 = ruv2Metrics != nil
+
+	r, ctx := tracing.StartRegionEx(ctx, regionName)
 	defer r.End()
 
 	parentAcc, _ := ctx.Value(nextIOAccKey).(*nextIOAcc)
-	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-	if ruv2Metrics != nil && ruv2Metrics.Bypass() {
-		ruv2Metrics = nil
-	}
-	info, trackRUV2 := ruv2ExecutorMetric{}, false
-	if ruv2Metrics != nil {
-		info, trackRUV2 = ruv2ExecutorMetricByType(execType)
-	}
 	childCount := 0
 	if trackRUV2 || parentAcc != nil {
 		childCount = len(e.AllChildren())
@@ -630,7 +687,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		inCells = stdatomic.LoadInt64(&myAcc.inCells)
 	}
 	outCells := calcCellCount(outRows, outCols)
-	addRUV2ExecutorMetricWithInfo(ruv2Metrics, info, inRows, int64(outRows), inCells, outCells)
+	addRUV2ExecutorMetricCached(ruv2Metrics, info, inRows, int64(outRows), inCells, outCells)
 	// recheck whether the session/query is killed during the Next()
 	return e.HandleSQLKillerSignal()
 }

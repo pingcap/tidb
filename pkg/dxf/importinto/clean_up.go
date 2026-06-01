@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -102,7 +102,7 @@ func (*ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 		return err
 	}
 	defer store.Close()
-	if err = external.CleanUpFiles(ctx, store, strconv.Itoa(int(task.ID))); err != nil {
+	if err = globalsort.CleanUpFiles(ctx, store, strconv.Itoa(int(task.ID))); err != nil {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}

@@ -5280,7 +5280,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	if err != nil {
 		return err
 	}
-	if model.FindIndexByColumns(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
+	if model.FindIndexByColumnsForForeignKey(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
@@ -6101,7 +6101,7 @@ func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident,
 		return dbterror.ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
 	ids := getIDs([]*model.TableInfo{meta})
-	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
+	rule.Reset(e.store.GetCodec(), schema.Name.L, meta.Name.L, "", ids...)
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
@@ -6146,7 +6146,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	if err != nil {
 		return dbterror.ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
-	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
+	rule.Reset(e.store.GetCodec(), schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
 	pdLabelRule := (*pdhttp.LabelRule)(rule)
 	job := &model.Job{

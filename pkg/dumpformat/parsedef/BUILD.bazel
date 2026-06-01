@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "parsedef",
+    srcs = ["def.go"],
+    importpath = "github.com/pingcap/tidb/pkg/dumpformat/parsedef",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/types",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
