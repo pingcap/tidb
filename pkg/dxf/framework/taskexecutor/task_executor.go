@@ -262,7 +262,7 @@ func (e *BaseTaskExecutor) Init(_ context.Context) error {
 	if e.TaskStore.GetKeyspace() != e.GetTaskBase().Keyspace {
 		// shouldn't happen normally, but since keyspace mismatch might cause
 		// correctness error, we check it at runtime too.
-		return errors.New(fmt.Sprintf("store keyspace mismatch with task: %s vs %s",
+		return errors.Trace(fmt.Errorf("store keyspace mismatch with task: %s vs %s",
 			e.TaskStore.GetKeyspace(), e.GetTaskBase().Keyspace))
 	}
 	return nil
