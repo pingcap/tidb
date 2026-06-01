@@ -323,7 +323,8 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 			taskStore, err2 = se.GetSQLServer().GetKSStore(task.Keyspace)
 			return err2
 		}); err2 != nil {
-			m.failSubtask(err2, task.ID, nil)
+			m.logger.Warn("get task store failed", zap.Int64("task-id", task.ID),
+				zap.String("task-key", task.Key), zap.Error(err2))
 			return false
 		}
 	}

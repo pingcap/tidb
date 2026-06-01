@@ -258,7 +258,12 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 }
 
 // Init implements the TaskExecutor interface.
-func (*BaseTaskExecutor) Init(_ context.Context) error {
+func (e *BaseTaskExecutor) Init(_ context.Context) error {
+	if e.TaskStore.GetKeyspace() != e.GetTaskBase().Keyspace {
+		// shouldn't happen normally, but since keyspace mismatch might cause
+		// correctness error, we check it at runtime too.
+		return errors.New("store keyspace mismatch with task")
+	}
 	return nil
 }
 

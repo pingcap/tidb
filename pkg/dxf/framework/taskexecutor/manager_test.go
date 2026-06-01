@@ -508,6 +508,9 @@ func TestSlotManagerInManager(t *testing.T) {
 func TestStartTaskExecutorResolveTaskStoreFromTaskKeyspace(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	t.Cleanup(func() {
+		ClearTaskExecutors()
+	})
 
 	const (
 		instanceKS = "instance_ks"
@@ -585,19 +588,20 @@ func TestStartTaskExecutorResolveTaskStoreError(t *testing.T) {
 	mockSe := buildMockSessionWithSQLServer(&testSQLServer{
 		stores: map[string]kv.Storage{},
 	})
+	factoryCalled := false
+	RegisterTaskType(task.Type, func(context.Context, *proto.Task, Param) TaskExecutor {
+		factoryCalled = true
+		return nil
+	})
 
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(task, nil)
 	mockTaskTable.EXPECT().WithNewSession(gomock.Any()).DoAndReturn(func(fn func(sessionctx.Context) error) error {
 		return fn(mockSe)
 	})
-	mockTaskTable.EXPECT().FailSubtask(gomock.Any(), "test", task.ID, gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ string, _ int64, err error) error {
-			require.ErrorContains(t, err, "ks store not found")
-			return nil
-		},
-	)
 
 	require.False(t, m.startTaskExecutor(&task.TaskBase))
+	require.False(t, factoryCalled)
+	require.False(t, m.isExecutorStarted(task.ID))
 	require.Equal(t, proto.NodeResourceForTest.TotalCPU, m.slotManager.availableSlots())
 }
 

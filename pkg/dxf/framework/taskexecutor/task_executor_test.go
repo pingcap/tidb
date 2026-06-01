@@ -140,6 +140,24 @@ func (e *taskExecutorRunEnv) mockForCheckBalanceSubtask() {
 		}).AnyTimes()
 }
 
+func TestBaseTaskExecutorInitChecksTaskStoreKeyspace(t *testing.T) {
+	task := &proto.Task{TaskBase: proto.TaskBase{
+		ID:       1,
+		Type:     proto.TaskTypeExample,
+		Keyspace: "task_ks",
+	}}
+
+	taskExecutor := NewBaseTaskExecutor(context.Background(), task, Param{
+		TaskStore: &storeWithKS{ks: task.Keyspace},
+	})
+	require.NoError(t, taskExecutor.Init(context.Background()))
+
+	taskExecutor = NewBaseTaskExecutor(context.Background(), task, Param{
+		TaskStore: &storeWithKS{ks: "other_ks"},
+	})
+	require.ErrorContains(t, taskExecutor.Init(context.Background()), "store keyspace mismatch with task")
+}
+
 func TestTaskExecutorRun(t *testing.T) {
 	t.Run("context done when run", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
