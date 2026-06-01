@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -814,6 +815,16 @@ select 9;`
 	}
 }
 
+func getTimeColIdxFromRetrieverOutput(t *testing.T, outputCol []*model.ColumnInfo) int {
+	for idx, col := range outputCol {
+		if col.Name.O == variable.SlowLogTimeStr {
+			return idx
+		}
+	}
+	t.Fatalf("cannot find Time column in retriever output, %v", outputCol)
+	return -1
+}
+
 func TestSlowQueryRetrieverReversedScanWithLimit(t *testing.T) {
 	fileName := "tidb-slow-limit-reverse-scan.log"
 	slowLog := `# Time: 2020-02-15T18:00:01.000000+08:00
@@ -840,14 +851,7 @@ select 5;`
 	retriever.extractor = &plannercore.SlowQueryExtractor{Desc: true}
 	retriever.limit = 2
 
-	timeColIdx := -1
-	for idx, col := range retriever.outputCols {
-		if col.Name.O == variable.SlowLogTimeStr {
-			timeColIdx = idx
-			break
-		}
-	}
-	require.GreaterOrEqual(t, timeColIdx, 0)
+	timeColIdx := getTimeColIdxFromRetrieverOutput(t, retriever.outputCols)
 
 	DashboardSlowLogReadBlockCnt4Test = 0
 	ctx := context.Background()
@@ -872,7 +876,8 @@ select 5;`
 	require.NoError(t, retriever.close())
 
 	// The long DB line makes the middle slow-log block cross readLastLines chunks.
-	// Forward scan can parse it; reverse scan should not synthesize blank lines and drop it.
+	// Forward scan can parse it; reverse scan should not synthesize blank lines and
+	// drop it. Previous there's a bug when in the execution path of LIMIT.
 	crossChunkFileName := "tidb-slow-limit-reverse-scan-cross-chunk.log"
 	crossChunkSlowLog := fmt.Sprintf(`# Time: 2020-02-15T18:00:01.000000+08:00
 select 1;
@@ -945,6 +950,17 @@ select in-window-3;`
 	forwardRows, err := parseLog(forwardRetriever, sctx, reader)
 	require.NoError(t, err)
 	require.Len(t, forwardRows, 3)
+	timeColIdx := getTimeColIdxFromRetrieverOutput(t, forwardRetriever.outputCols)
+	t0, err := forwardRows[0][timeColIdx].ToString()
+	require.NoError(t, err)
+	t1, err := forwardRows[1][timeColIdx].ToString()
+	require.NoError(t, err)
+	t2, err := forwardRows[2][timeColIdx].ToString()
+	require.NoError(t, err)
+	require.Equal(t, "2020-02-15 18:00:00.000500", t0)
+	require.Equal(t, "2020-02-15 18:00:00.001000", t1)
+	require.Equal(t, "2020-02-15 18:00:00.001500", t2)
+
 	require.NoError(t, forwardRetriever.close())
 
 	// This mirrors real slow logs where adjacent # Time values can move backwards
@@ -964,6 +980,15 @@ select in-window-3;`
 		reverseRows = append(reverseRows, rows...)
 	}
 	require.Len(t, reverseRows, 3)
+	t0, err = reverseRows[0][timeColIdx].ToString()
+	require.NoError(t, err)
+	t1, err = reverseRows[1][timeColIdx].ToString()
+	require.NoError(t, err)
+	t2, err = reverseRows[2][timeColIdx].ToString()
+	require.NoError(t, err)
+	require.Equal(t, "2020-02-15 18:00:00.000500", t2)
+	require.Equal(t, "2020-02-15 18:00:00.001000", t1)
+	require.Equal(t, "2020-02-15 18:00:00.001500", t0)
 	require.NoError(t, reverseRetriever.close())
 }
 
