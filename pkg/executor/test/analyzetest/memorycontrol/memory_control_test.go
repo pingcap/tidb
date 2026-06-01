@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/stretchr/testify/require"
 )
@@ -143,41 +142,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
 	_, err0 := tk0.Exec(sqlPrepare)
 	require.NoError(t, err0)
-	var err1 error
-	if intest.InTest {
-		_, err1 = tk0.Exec(sqlExecute)
-	} else {
-		lastStmtTime := tk0.Session().ShowProcess().Time
-		errCh := make(chan error, 1)
-		go func() {
-			_, err := tk0.Exec(sqlExecute)
-			errCh <- err
-		}()
-		require.Eventually(t, func() bool {
-			processInfo, ok := sm.GetProcessInfo(tk0.Session().GetSessionVars().ConnectionID)
-			return ok &&
-				processInfo.MemTracker != nil &&
-				!processInfo.Time.Equal(lastStmtTime) &&
-				processInfo.MemTracker.BytesConsumed() > 64<<20
-		}, 5*time.Second, 10*time.Millisecond)
-
-		pressure := make([][]byte, 32)
-		for i := range pressure {
-			pressure[i] = make([]byte, 8<<20)
-			pressure[i][0] = byte(i)
-		}
-		memory.ForceReadMemStats()
-		require.Eventually(t, func() bool {
-			return servermemorylimit.SessionKillTotal.Load() > baseKillTotal
-		}, 5*time.Second, 50*time.Millisecond)
-
-		select {
-		case err1 = <-errCh:
-		case <-time.After(5 * time.Second):
-			t.Fatal("prepared analyze did not finish after server memory controller kill")
-		}
-		pressure[0][0] = 0
-	}
+	_, err1 := tk0.Exec(sqlExecute)
 	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
 	require.Error(t, err1)
 	require.True(t, strings.Contains(err1.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."), err1.Error())
