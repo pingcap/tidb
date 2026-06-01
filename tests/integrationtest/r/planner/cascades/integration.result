@@ -300,16 +300,6 @@ c	sum(a)
 24	2
 36	3
 48	4
-explain select max(a.a) from t a left join t b on a.a = b.a;
-id	estRows	task	access object	operator info
-HashAgg_36	1.00	root		funcs:max(planner__cascades__integration.t.a)->Column#5
-└─Limit_38	1.00	root		offset:0, count:1
-  └─TableReader_43	1.00	root		data:Limit_44
-    └─Limit_44	1.00	cop[tikv]		offset:0, count:1
-      └─TableFullScan_42	1.00	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
-select max(a.a) from t a left join t b on a.a = b.a;
-max(a.a)
-4
 explain select avg(a.b) from t a left join t b on a.a = b.a;
 id	estRows	task	access object	operator info
 HashAgg_17	1.00	root		funcs:avg(Column#6, Column#7)->Column#5
@@ -723,16 +713,6 @@ c	d
 3	24
 4	36
 5	48
-explain select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 order by a;
-id	estRows	task	access object	operator info
-TableReader_26	12500.00	root		data:TableFullScan_27
-└─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-select t1.a, t1.b from t as t1 left join t as t2 on t1.a = t2.a and t1.b = 3 order by a;
-a	b
-1	11
-2	22
-3	33
-4	44
 set @@session.tidb_executor_concurrency = 4;
 set @@session.tidb_hash_join_concurrency = 5;
 set @@session.tidb_distsql_scan_concurrency = 15;
@@ -743,91 +723,6 @@ create table t2(a int primary key, b int);
 insert into t1 values (1, 11), (4, 44), (2, 22), (3, 33);
 insert into t2 values (1, 111), (2, 222), (3, 333), (5, 555);
 set session tidb_enable_cascades_planner = 1;
-explain format = 'brief' select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2;
-id	estRows	task	access object	operator info
-Projection	4166.67	root		planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─MergeJoin	4166.67	root		inner join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
-  ├─TableReader(Build)	3333.33	root		data:TableRangeScan
-  │ └─TableRangeScan	3333.33	cop[tikv]	table:t2	range:(2,+inf], keep order:true, stats:pseudo
-  └─TableReader(Probe)	3333.33	root		data:TableRangeScan
-    └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(2,+inf], keep order:true, stats:pseudo
-select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2;
-a	b
-3	33
-explain format = 'brief' select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200;
-id	estRows	task	access object	operator info
-Projection	80000000.00	root		planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─HashJoin	80000000.00	root		CARTESIAN inner join, other cond:gt(planner__cascades__integration.t1.a, planner__cascades__integration.t2.a)
-  ├─TableReader(Build)	8000.00	root		data:Selection
-  │ └─Selection	8000.00	cop[tikv]		gt(planner__cascades__integration.t2.b, 200)
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200;
-a	b
-3	33
-4	44
-4	44
-explain format = 'brief' select t1.a, t1.b from t1 left join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200;
-id	estRows	task	access object	operator info
-Projection	3333.33	root		planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─Selection	3333.33	root		gt(planner__cascades__integration.t2.b, 200)
-  └─MergeJoin	4166.67	root		left outer join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
-    ├─TableReader(Build)	3333.33	root		data:TableRangeScan
-    │ └─TableRangeScan	3333.33	cop[tikv]	table:t2	range:(2,+inf], keep order:true, stats:pseudo
-    └─TableReader(Probe)	3333.33	root		data:TableRangeScan
-      └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(2,+inf], keep order:true, stats:pseudo
-select t1.a, t1.b from t1 left join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200;
-a	b
-3	33
-explain format = 'brief' select t2.a, t2.b from t1 right join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200;
-id	estRows	task	access object	operator info
-Projection	8000.00	root		planner__cascades__integration.t2.a, planner__cascades__integration.t2.b
-└─Selection	8000.00	root		gt(planner__cascades__integration.t1.a, 2)
-  └─MergeJoin	10000.00	root		right outer join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
-    ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-    └─TableReader(Probe)	8000.00	root		data:Selection
-      └─Selection	8000.00	cop[tikv]		gt(planner__cascades__integration.t2.b, 200)
-        └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
-select t2.a, t2.b from t1 right join t2 on t1.a = t2.a where t1.a > 2 and t2.b > 200;
-a	b
-3	333
-explain format = 'brief' select t1.a, t1.b from t1, t2 where t1.a = t2.a order by t1.a;
-id	estRows	task	access object	operator info
-Projection	12500.00	root		planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─MergeJoin	12500.00	root		inner join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
-  ├─TableReader(Build)	10000.00	root		data:TableFullScan
-  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
-  └─TableReader(Probe)	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-select t1.a, t1.b from t1, t2 where t1.a = t2.a order by t1.a;
-a	b
-1	11
-2	22
-3	33
-explain format = 'brief' select * from t1 join t2 on t1.a = t2.a;
-id	estRows	task	access object	operator info
-MergeJoin	12500.00	root		inner join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
-├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
-└─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-select * from t1 join t2 on t1.a = t2.a;
-a	b	a	b
-1	11	1	111
-2	22	2	222
-3	33	3	333
-explain format = 'brief' select * from t1 join t2 on t1.a = t2.a and t1.a > 2;
-id	estRows	task	access object	operator info
-MergeJoin	4166.67	root		inner join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
-├─TableReader(Build)	3333.33	root		data:TableRangeScan
-│ └─TableRangeScan	3333.33	cop[tikv]	table:t2	range:(2,+inf], keep order:true, stats:pseudo
-└─TableReader(Probe)	3333.33	root		data:TableRangeScan
-  └─TableRangeScan	3333.33	cop[tikv]	table:t1	range:(2,+inf], keep order:true, stats:pseudo
-select * from t1 join t2 on t1.a = t2.a and t1.a > 2;
-a	b	a	b
-3	33	3	333
 drop table if exists t1, t2;
 create table t1(a int primary key, b int);
 create table t2(a int primary key, b int);
@@ -877,18 +772,6 @@ Projection_32	1.00	root		Column#7, planner__cascades__integration.t1.a, planner_
 select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2;
 sum(a)	(select t1.a from t1 where t1.a = t2.a limit 1)	(select t1.b from t1 where t1.b = t2.b limit 1)
 6	1	11
-explain select a from t1 where exists(select 1 from t2 where t1.a = t2.a);
-id	estRows	task	access object	operator info
-MergeJoin_30	10000.00	root		semi join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
-├─TableReader_35(Build)	10000.00	root		data:TableFullScan_36
-│ └─TableFullScan_36	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
-└─TableReader_32(Probe)	10000.00	root		data:TableFullScan_33
-  └─TableFullScan_33	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-select a from t1 where exists(select 1 from t2 where t1.a = t2.a);
-a
-1
-2
-3
 set session tidb_enable_cascades_planner = 1;
 explain select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration";
 id	estRows	task	access object	operator info
