@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -144,33 +143,6 @@ func completeErr(err error, idxInfo *model.IndexInfo) error {
 		err = expression.ErrInvalidJSONForFuncIndex.GenWithStackByArgs(idxInfo.Name.O)
 	}
 	return errors.Trace(err)
-}
-
-func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
-	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
-		return nil
-	}
-	if pkIdx == nil {
-		return nil
-	}
-	for i, pkIdxCol := range pkIdx.Columns {
-		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredData(&pkCol.FieldType) {
-			// Since the handle data cannot be null, we can use SetNull to
-			// indicate that this column does not need to be restored.
-			handleDts[i].SetNull()
-			continue
-		}
-		tables.TryTruncateRestoredData(&handleDts[i], pkCol, pkIdxCol, targetIdx)
-		tables.ConvertDatumToTailSpaceCount(&handleDts[i], pkCol)
-	}
-	dtToRestored := handleDts[:0]
-	for _, handleDt := range handleDts {
-		if !handleDt.IsNull() {
-			dtToRestored = append(dtToRestored, handleDt)
-		}
-	}
-	return dtToRestored
 }
 
 func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {

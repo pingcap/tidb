@@ -180,13 +180,12 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 }
 
 func getTableSizeByID(ctx context.Context, store kv.Storage, tbl table.Table) int64 {
-	helperStore, ok := store.(helper.Storage)
-	if !ok {
+	helperStore, h, err := helperFromKVStorage(store)
+	if err != nil {
 		logutil.DDLLogger().Warn("store does not implement helper.Storage interface",
 			zap.String("storeType", fmt.Sprintf("%T", store)))
 		return 0
 	}
-	h := helper.NewHelper(helperStore)
 	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
 		logutil.DDLLogger().Warn("failed to get PD HTTP client for calculating table size",
@@ -243,21 +242,46 @@ func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helpe
 
 const tableRegionsPageSize = 128
 
-func listTableRegions(ctx context.Context, store kv.Storage, physicalID int64, maxRegions int) ([]pdhttp.RegionInfo, error) {
+func helperStorageFromKV(store kv.Storage) (helper.Storage, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
 	}
-	pdCli, err := helper.NewHelper(hStore).TryGetPDHTTPClient()
+	return hStore, nil
+}
+
+func helperFromKVStorage(store kv.Storage) (helper.Storage, *helper.Helper, error) {
+	hStore, err := helperStorageFromKV(store)
+	if err != nil {
+		return nil, nil, err
+	}
+	return hStore, helper.NewHelper(hStore), nil
+}
+
+func pdHTTPClientFromStorage(store kv.Storage) (helper.Storage, pdhttp.Client, error) {
+	hStore, h, err := helperFromKVStorage(store)
+	if err != nil {
+		return nil, nil, err
+	}
+	pdCli, err := h.TryGetPDHTTPClient()
+	return hStore, pdCli, err
+}
+
+func listTableRegions(ctx context.Context, store kv.Storage, physicalID int64, maxRegions int) ([]pdhttp.RegionInfo, error) {
+	hStore, pdCli, err := pdHTTPClientFromStorage(store)
 	if err != nil {
 		return nil, err
 	}
+	return listTableRegionsWithClient(ctx, pdCli, hStore, physicalID, maxRegions)
+}
+
+func listTableRegionsWithClient(ctx context.Context, pdCli pdhttp.Client, store helper.Storage, physicalID int64, maxRegions int) ([]pdhttp.RegionInfo, error) {
 	capacity := 16
 	if maxRegions > 0 {
 		capacity = min(maxRegions, capacity)
 	}
 	regions := make([]pdhttp.RegionInfo, 0, capacity)
-	err = iterateTableRegionsWithClient(ctx, pdCli, hStore, physicalID, maxRegions, true, func(region pdhttp.RegionInfo) error {
+	err := iterateTableRegionsWithClient(ctx, pdCli, store, physicalID, maxRegions, true, func(region pdhttp.RegionInfo) error {
 		regions = append(regions, region)
 		return nil
 	})
