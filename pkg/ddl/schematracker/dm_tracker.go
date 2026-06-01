@@ -231,18 +231,23 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
+// GenerateMLogTableName implements the DDL interface.
+func (*SchemaTracker) GenerateMLogTableName(sessionctx.Context, *ast.CreateMaterializedViewLogStmt) (string, error) {
+	return "", errors.New("not implemented")
+}
+
 // CreateMaterializedViewLog implements the DDL interface.
-func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt, mlogTableName string) (string, error) {
+func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt, mlogTableName string) error {
 	schemaName := s.Table.Schema
 	if schemaName.O == "" {
 		if ctx == nil || ctx.GetSessionVars().CurrentDB == "" {
-			return "", errors.Trace(plannererrors.ErrNoDB)
+			return errors.Trace(plannererrors.ErrNoDB)
 		}
 		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	}
 	schema := d.SchemaByName(schemaName)
 	if schema == nil {
-		return "", infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 
 	mlogNameCIStr := pmodel.NewCIStr(mlogTableName)
@@ -253,22 +258,22 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	)(mlogNameCIStr)
 
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	if mlogExists {
-		return "", infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
 	}
 
 	baseTable, err := d.TableClonedByName(schemaName, s.Table.Name)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if baseTable.IsView() || baseTable.IsSequence() || baseTable.TempTableType != model.TempTableNone {
-		return "", dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 	if baseTable.MaterializedViewBase != nil && baseTable.MaterializedViewBase.MLogID != 0 {
-		return "", infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Name.O))
+		return infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Name.O))
 	}
 
 	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Columns))
@@ -280,16 +285,16 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
 	for _, c := range s.Cols {
 		if _, exists := seenCols[c.L]; exists {
-			return "", infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
 		}
 		seenCols[c.L] = struct{}{}
 		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
 			c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
-			return "", infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
 		}
 		baseCol := colMap[c.L]
 		if baseCol == nil {
-			return "", infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
 		}
 		ft := baseCol.FieldType
 		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
@@ -332,7 +337,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	)
 	mlogTableInfo, err := ddl.BuildTableInfoWithStmt(metaBuildCtx, createTableStmt, schema.Charset, schema.Collate, nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	var purgeMethod string
@@ -340,21 +345,21 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	var purgeNext string
 	if s.Purge != nil {
 		if s.Purge.Immediate {
-			return "", errors.New("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
+			return errors.New("PURGE IMMEDIATE is not supported for CREATE MATERIALIZED VIEW LOG")
 		}
 		purgeMethod = "DEFERRED"
 		if s.Purge.StartWith != nil {
 			purgeStartWith, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.StartWith, "PURGE START WITH")
 			if err != nil {
-				return "", err
+				return err
 			}
 		}
 		if s.Purge.Next == nil {
-			return "", errors.New("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
+			return errors.New("PURGE NEXT is required for CREATE MATERIALIZED VIEW LOG")
 		}
 		purgeNext, err = ddl.BuildAndValidateMViewScheduleExpr(ctx, s.Purge.Next, "PURGE NEXT")
 		if err != nil {
-			return "", err
+			return err
 		}
 	}
 
@@ -367,7 +372,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
-		return "", err
+		return err
 	}
 
 	if baseTable.MaterializedViewBase == nil {
@@ -379,7 +384,7 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		// SchemaTracker doesn't allocate physical table IDs, use a non-zero sentinel.
 		baseTable.MaterializedViewBase.MLogID = 1
 	}
-	return mlogNameCIStr.O, d.PutTable(schemaName, baseTable)
+	return d.PutTable(schemaName, baseTable)
 }
 
 // CreateMaterializedView implements the DDL interface.

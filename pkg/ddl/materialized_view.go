@@ -70,9 +70,9 @@ var (
 func GenerateMLogTableName(
 	baseTableName pmodel.CIStr,
 	checkTableExistence func(pmodel.CIStr) (bool, error),
-) (pmodel.CIStr, error) {
+) (string, error) {
 	if checkTableExistence == nil {
-		return pmodel.CIStr{}, errors.New("materialized view log table name exists checker is nil")
+		return "", errors.New("materialized view log table name exists checker is nil")
 	}
 
 	var candidate pmodel.CIStr
@@ -85,12 +85,12 @@ func GenerateMLogTableName(
 				"materialized view log table name number is out of range",
 			)
 			if err != nil {
-				return pmodel.CIStr{}, err
+				return "", err
 			}
 			candidate = pmodel.NewCIStr(materializedViewLogTablePrefix + strconv.FormatUint(number, 10) + suffix)
 			exists, err := checkTableExistence(candidate)
 			if err != nil {
-				return pmodel.CIStr{}, err
+				return "", err
 			}
 			if !exists {
 				break
@@ -102,11 +102,11 @@ func GenerateMLogTableName(
 
 	exists, err := checkTableExistence(candidate)
 	if err != nil {
-		return pmodel.CIStr{}, err
+		return "", err
 	}
 
 	if !exists && utf8.RuneCountInString(candidate.L) <= mysql.MaxTableNameLength {
-		return candidate, nil
+		return candidate.O, nil
 	}
 
 	for {
@@ -116,18 +116,18 @@ func GenerateMLogTableName(
 			"materialized view log short table name number is out of range",
 		)
 		if err != nil {
-			return pmodel.CIStr{}, err
+			return "", err
 		}
 		candidate = pmodel.NewCIStr(materializedViewLogTablePrefix + strconv.FormatUint(number, 10))
 		if utf8.RuneCountInString(candidate.L) > mysql.MaxTableNameLength {
-			return pmodel.CIStr{}, dbterror.ErrTooLongIdent.GenWithStackByArgs(candidate)
+			return "", dbterror.ErrTooLongIdent.GenWithStackByArgs(candidate)
 		}
 		exists, err := checkTableExistence(candidate)
 		if err != nil {
-			return pmodel.CIStr{}, err
+			return "", err
 		}
 		if !exists {
-			return candidate, nil
+			return candidate.O, nil
 		}
 	}
 }

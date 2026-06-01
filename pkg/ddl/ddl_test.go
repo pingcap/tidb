@@ -283,8 +283,8 @@ func TestBuildMaterializedViewLogTableName(t *testing.T) {
 
 			name, err := GenerateMLogTableName(pmodel.NewCIStr(tt.baseTableName), tableExists)
 			require.NoError(t, err)
-			require.Equal(t, tt.expectedName, name.O)
-			require.LessOrEqual(t, utf8.RuneCountInString(name.L), mysql.MaxTableNameLength)
+			require.Equal(t, tt.expectedName, name)
+			require.LessOrEqual(t, utf8.RuneCountInString(strings.ToLower(name)), mysql.MaxTableNameLength)
 			require.Equal(t, tt.expectedMLogSeq, MLogTableNameSeq.Load())
 			require.Equal(t, tt.expectedShortSeq, MLogShortTableNameSeq.Load())
 		})

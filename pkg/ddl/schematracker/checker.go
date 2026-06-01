@@ -276,14 +276,19 @@ func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) e
 	return nil
 }
 
+// GenerateMLogTableName implements the DDL interface.
+func (d *Checker) GenerateMLogTableName(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) (string, error) {
+	return d.realExecutor.GenerateMLogTableName(ctx, s)
+}
+
 // CreateMaterializedViewLog implements the DDL interface.
-func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt, _ string) (string, error) {
-	mlogTableName, err := d.realExecutor.CreateMaterializedViewLog(ctx, stmt, "")
+func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt, mlogTableName string) error {
+	err := d.realExecutor.CreateMaterializedViewLog(ctx, stmt, mlogTableName)
 	if err != nil || d.closed.Load() {
-		return mlogTableName, err
+		return err
 	}
 
-	_, err = d.tracker.CreateMaterializedViewLog(ctx, stmt, mlogTableName)
+	err = d.tracker.CreateMaterializedViewLog(ctx, stmt, mlogTableName)
 	if err != nil {
 		panic(err)
 	}
@@ -294,7 +299,7 @@ func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.Cr
 	}
 	d.checkTableInfo(ctx, schemaName, pmodel.NewCIStr(mlogTableName))
 	d.checkTableInfo(ctx, schemaName, stmt.Table.Name)
-	return mlogTableName, nil
+	return nil
 }
 
 // CreateMaterializedView implements the DDL interface.
