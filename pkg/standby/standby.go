@@ -624,7 +624,7 @@ func (c *LoadKeyspaceController) reportManagerFree(exitReason string) bool {
 			if attempt < managerFreeMaxAttempts {
 				select {
 				case <-ctx.Done():
-					logutil.BgLogger().Error("manager free report timed out", zap.Error(ctx.Err()))
+					logutil.BgLogger().Warn("manager free report timed out", zap.Error(ctx.Err()))
 					return false
 				case <-time.After(managerFreeRetryInterval):
 				}
@@ -636,6 +636,6 @@ func (c *LoadKeyspaceController) reportManagerFree(exitReason string) bool {
 		}
 		return true
 	}
-	logutil.BgLogger().Error("failed to report free after retries", zap.Error(lastErr))
+	logutil.BgLogger().Warn("failed to report free after retries", zap.Error(lastErr))
 	return false
 }
