@@ -188,7 +188,6 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	ctx = inheritStmtRUV2Context(ctx, a.stmt)
 
 	err = a.stmt.next(ctx, a.executor, req)
-	syncRUV2MetricsAfterExec(a.stmt)
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 		return err
@@ -211,18 +210,6 @@ func inheritStmtRUV2Context(ctx context.Context, stmt *ExecStmt) context.Context
 		return ctx
 	}
 	return execdetails.ContextWithInheritedRUV2Details(ctx, stmt.GoCtx)
-}
-
-func syncRUV2MetricsAfterExec(stmt *ExecStmt) {
-	if stmt == nil || stmt.GoCtx == nil {
-		return
-	}
-	sessVars := stmt.Ctx.GetSessionVars()
-	if sessVars.RUV2Metrics == nil {
-		return
-	}
-	ruDetail, _ := stmt.GoCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
-	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
 }
 
 // NewChunk create a chunk base on top-level executor's exec.NewFirstChunk().
@@ -1131,7 +1118,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	}
 
 	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
-	syncRUV2MetricsAfterExec(a)
 	if err != nil {
 		return nil, err
 	}
@@ -1781,6 +1767,9 @@ func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
 	stmtCtx.InsertRowsAsRUV2Recorded = true
 }
 
+// finalizeStatementRUV2Metrics is the sole drain of raw RUv2 counters. In-flight
+// TopRU samples see ResourceManager{Read,Write}Cnt as zero until this runs;
+// per-statement totals telescope correctly across the post-finalize sample.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
@@ -2213,7 +2202,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	stmtDetail, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
+	writeSQLRespDuration, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
 		if execDetail.BackoffSleep == nil {
@@ -2257,7 +2246,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
 	stmtExecInfo.ExecRetryCount = a.retryCount
-	stmtExecInfo.StmtExecDetails = stmtDetail
+	stmtExecInfo.WriteSQLRespDuration = writeSQLRespDuration
 	stmtExecInfo.ResultRows = stmtCtx.GetResultRowsCount()
 	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
 	stmtExecInfo.Prepared = a.isPreparedStmt

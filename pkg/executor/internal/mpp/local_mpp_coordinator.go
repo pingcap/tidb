@@ -133,6 +133,9 @@ type localMppCoordinator struct {
 	firstErrMsg     string
 
 	mppReqs []*kv.MPPDispatchRequest
+	// For dispatch logging, reused across fragments.
+	dispatchTaskIDs  []int64
+	dispatchStoreIDs []uint64
 
 	planIDs    []int
 	mppQueryID kv.MPPQueryID
@@ -194,7 +197,10 @@ func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is inf
 	return coord
 }
 
-func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allTiFlashZoneInfo map[string]string) error {
+func (c *localMppCoordinator) appendMPPDispatchReq(
+	pf *physicalop.Fragment,
+	allTiFlashStoreInfo map[string]tiFlashStoreInfo,
+) error {
 	dagReq, err := builder.ConstructDAGReq(c.sessionCtx, []base.PhysicalPlan{pf.Sink}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -208,7 +214,22 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
 	zoneHelper := taskZoneInfoHelper{}
-	zoneHelper.init(allTiFlashZoneInfo)
+	zoneHelper.init(allTiFlashStoreInfo)
+	tasks := pf.Sink.GetSelfTasks()
+	if cap(c.dispatchTaskIDs) < len(tasks) {
+		c.dispatchTaskIDs = make([]int64, 0, len(tasks))
+	} else {
+		c.dispatchTaskIDs = c.dispatchTaskIDs[:0]
+	}
+	if cap(c.dispatchStoreIDs) < len(tasks) {
+		c.dispatchStoreIDs = make([]uint64, 0, len(tasks))
+	} else {
+		c.dispatchStoreIDs = c.dispatchStoreIDs[:0]
+	}
+	rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
+	if !vardef.EnableResourceControl.Load() {
+		rgName = ""
+	}
 	_, stmtDigest := c.sessionCtx.GetSessionVars().StmtCtx.SQLDigest()
 	sqlDigest := ""
 	if stmtDigest != nil {
@@ -219,7 +240,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 	if planDigest != nil {
 		planDigestStr = planDigest.String()
 	}
-	for _, mppTask := range pf.Sink.GetSelfTasks() {
+	for _, mppTask := range tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
@@ -231,28 +252,15 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 			return errors.Trace(err)
 		}
 		zoneHelper.isRoot = pf.IsRoot
-		zoneHelper.currentTaskZone = zoneHelper.allTiFlashZoneInfo[mppTask.Meta.GetAddress()]
+		zoneHelper.currentTaskZone = zoneHelper.allTiFlashStoreInfo[mppTask.Meta.GetAddress()].zone
 		zoneHelper.fillSameZoneFlagForExchange(dagReq.RootExecutor)
 		pbData, err := dagReq.Marshal()
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
-		if !vardef.EnableResourceControl.Load() {
-			rgName = ""
-		}
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
-			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
-			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.Sink)),
-			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
-			zap.Uint64("GatherID", c.gatherID),
-			zap.String("resource_group", rgName),
-			zap.String("sqlDigest", sqlDigest),
-			zap.String("planDigest", planDigestStr),
-		)
+		c.dispatchTaskIDs = append(c.dispatchTaskIDs, mppTask.ID)
+		c.dispatchStoreIDs = append(c.dispatchStoreIDs, allTiFlashStoreInfo[mppTask.Meta.GetAddress()].storeID)
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
 			Meta:                   mppTask.Meta,
@@ -276,12 +284,40 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
 	}
+	if len(tasks) > 0 {
+		firstTask := tasks[0]
+		logutil.BgLogger().Info("Dispatch mpp tasks", zap.Uint64("timestamp", firstTask.StartTs),
+			zap.Int64s("IDs", c.dispatchTaskIDs), zap.Uint64s("storeIDs", c.dispatchStoreIDs),
+			zap.Uint64("QueryTs", firstTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", firstTask.MppQueryID.LocalQueryID),
+			zap.Uint64("ServerID", firstTask.MppQueryID.ServerID),
+			zap.String("plan", plannercore.ToString(pf.Sink)),
+			zap.Int64("mpp-version", firstTask.MppVersion.ToInt64()),
+			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
+			zap.Uint64("GatherID", c.gatherID),
+			zap.String("resource_group", rgName),
+			zap.String("sqlDigest", sqlDigest),
+			zap.String("planDigest", planDigestStr),
+		)
+	}
 	return nil
+}
+
+type tiFlashStoreInfo struct {
+	zone    string
+	storeID uint64
+}
+
+func addTiFlashStoreInfo(allTiFlashStoreInfo map[string]tiFlashStoreInfo, tiflashStore *tikv.Store) {
+	storeInfo := tiFlashStoreInfo{storeID: tiflashStore.StoreID()}
+	if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
+		storeInfo.zone = tiflashZone
+	}
+	allTiFlashStoreInfo[tiflashStore.GetAddr()] = storeInfo
 }
 
 // taskZoneInfoHelper used to help reset exchange executor's same zone flags
 type taskZoneInfoHelper struct {
-	allTiFlashZoneInfo map[string]string
+	allTiFlashStoreInfo map[string]tiFlashStoreInfo
 	// exchangeZoneInfo is used to cache one mpp task's zone info:
 	// key is executor id, value is zone info array
 	// for ExchangeSender, it's target tiflash nodes' zone info; for ExchangeReceiver, it's source tiflash nodes' zone info
@@ -291,9 +327,9 @@ type taskZoneInfoHelper struct {
 	isRoot           bool
 }
 
-func (h *taskZoneInfoHelper) init(allTiFlashZoneInfo map[string]string) {
+func (h *taskZoneInfoHelper) init(allTiFlashStoreInfo map[string]tiFlashStoreInfo) {
 	h.tidbZone = config.GetGlobalConfig().Labels[placement.DCLabelKey]
-	h.allTiFlashZoneInfo = allTiFlashZoneInfo
+	h.allTiFlashStoreInfo = allTiFlashStoreInfo
 	// initial capacity to 2, for one exchange sender and one exchange receiver
 	h.exchangeZoneInfo = make(map[string][]string, 2)
 }
@@ -322,7 +358,7 @@ func (h *taskZoneInfoHelper) collectExchangeZoneInfos(encodedTaskMeta [][]byte, 
 			zoneInfos = append(zoneInfos, "")
 			continue
 		}
-		zoneInfos = append(zoneInfos, h.allTiFlashZoneInfo[taskMeta.GetAddress()])
+		zoneInfos = append(zoneInfos, h.allTiFlashStoreInfo[taskMeta.GetAddress()].zone)
 	}
 	return zoneInfos
 }
@@ -856,24 +892,30 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	}
 	c.nodeCnt = len(nodeInfo)
 
-	var allTiFlashZoneInfo map[string]string
+	var allTiFlashStoreInfo map[string]tiFlashStoreInfo
 	if c.sessionCtx.GetStore() == nil {
-		allTiFlashZoneInfo = make(map[string]string)
+		allTiFlashStoreInfo = make(map[string]tiFlashStoreInfo)
 	} else if tikvStore, ok := c.sessionCtx.GetStore().(helper.Storage); ok {
 		cache := tikvStore.GetRegionCache()
 		allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-		allTiFlashZoneInfo = make(map[string]string, len(allTiFlashStores))
+		allTiFlashStoreInfo = make(map[string]tiFlashStoreInfo, len(allTiFlashStores))
 		for _, tiflashStore := range allTiFlashStores {
-			tiflashStoreAddr := tiflashStore.GetAddr()
-			if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
-				allTiFlashZoneInfo[tiflashStoreAddr] = tiflashZone
+			addTiFlashStoreInfo(allTiFlashStoreInfo, tiflashStore)
+		}
+		if config.GetGlobalConfig().DisaggregatedTiFlash {
+			computeStores, getStoreErr := cache.GetTiFlashComputeStores(
+				backoff.NewBackoffer(ctx, copr.CopNextMaxBackoff).TiKVBackoffer())
+			if getStoreErr == nil {
+				for _, tiflashStore := range computeStores {
+					addTiFlashStoreInfo(allTiFlashStoreInfo, tiflashStore)
+				}
 			}
 		}
 	} else {
-		allTiFlashZoneInfo = make(map[string]string)
+		allTiFlashStoreInfo = make(map[string]tiFlashStoreInfo)
 	}
 	for _, frag := range frags {
-		err = c.appendMPPDispatchReq(frag, allTiFlashZoneInfo)
+		err = c.appendMPPDispatchReq(frag, allTiFlashStoreInfo)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,4 +39,17 @@ func TestPhysicalRestoreSysTables(t *testing.T) {
 		require.True(t, loadSysTablePhysical)
 		require.True(t, loadStatsPhysical)
 	}
+}
+
+func TestRestorePhaseRequiresCheckpoint(t *testing.T) {
+	flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+	DefineRestoreFlags(flags)
+	require.NoError(t, flags.Set(FlagRestorePhase, "1"))
+	require.NoError(t, flags.Set(flagUseCheckpoint, "false"))
+
+	cfg := &RestoreConfig{}
+	err := cfg.ParseFromFlags(flags, true)
+	require.Error(t, err)
+	require.ErrorContains(t, err, FlagRestorePhase)
+	require.ErrorContains(t, err, flagUseCheckpoint)
 }
