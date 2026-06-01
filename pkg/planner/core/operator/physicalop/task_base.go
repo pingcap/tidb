@@ -392,9 +392,9 @@ type CopTask struct {
 	IdxMergePartPlans      []base.PhysicalPlan
 	IdxMergeIsIntersection bool
 	IdxMergeAccessMVIndex  bool
-	// IdxMergeMatchWithSortItemsHints indicates the IndexMerge property matching
-	// used SortItemsHints (i.e. no SortItems but SortItemsHints was set).
-	IdxMergeMatchWithSortItemsHints bool
+	// IdxMergeMatchWithAdvisorySortItems indicates the IndexMerge property matching
+	// used advisory sort items (i.e. no SortItems but SortItemsHints was set).
+	IdxMergeMatchWithAdvisorySortItems bool
 	// IdxMergePartPlansMatchResults stores each partial path's matchProperty result.
 	// Set by convertToIndexMergeScan. Length equals len(IdxMergePartPlans) or 0.
 	// 0 length may be caused by cases like Intersection type IndexMerge, which can't satisfy any order property. When

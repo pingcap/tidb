@@ -1269,11 +1269,11 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		}
 	}
 	if copTask, ok := t.(*physicalop.CopTask); ok && needPushDown && canPushDownToTiKV(p, copTask) && len(copTask.RootTaskConds) == 0 {
-		// Handle IndexMerge with SortItemsHints when some (but not all) partial
-		// paths satisfy the sort hints. When all paths satisfy, the existing
-		// Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
+		// Handle IndexMerge with advisory sort items when some (but not all)
+		// partial paths satisfy the sort order. When all paths satisfy, the
+		// existing Limit pushdown via attach2Task4PhysicalLimit gives a better plan.
 		if len(copTask.IdxMergePartPlans) > 0 && !copTask.IndexPlanFinished && !copTask.IdxMergeIsIntersection &&
-			copTask.IdxMergeMatchWithSortItemsHints {
+			copTask.IdxMergeMatchWithAdvisorySortItems {
 			intest.Assert(len(copTask.IdxMergePartPlans) == len(copTask.IdxMergePartPlansMatchResults))
 			allSatisfy := true
 			for _, result := range copTask.IdxMergePartPlansMatchResults {
@@ -1283,7 +1283,7 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 				}
 			}
 			if !allSatisfy {
-				return handleSortItemsHintsForIndexMerge(p, copTask)
+				return handleAdvisorySortItemsForIndexMerge(p, copTask)
 			}
 		}
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
@@ -1452,11 +1452,11 @@ func estimateMaxXForPartialOrder() uint64 {
 	return 0
 }
 
-// handleSortItemsHintsForIndexMerge handles TopN pushdown when IndexMerge has
-// SortItemsHints satisfaction info. It pushes Limit to partial paths that
-// satisfy the sort order and TopN to those that don't, then keeps a root TopN
-// for final merge.
-func handleSortItemsHintsForIndexMerge(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
+// handleAdvisorySortItemsForIndexMerge handles TopN pushdown when IndexMerge
+// has advisory sort items satisfaction info. It pushes Limit to partial paths
+// that satisfy the sort order and TopN to those that don't, then keeps a root
+// TopN for final merge.
+func handleAdvisorySortItemsForIndexMerge(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
 	newCount := p.Offset + p.Count
 
 	cols := make([]*expression.Column, 0, len(p.ByItems))
