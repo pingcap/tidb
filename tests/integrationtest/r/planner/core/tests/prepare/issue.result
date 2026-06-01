@@ -42,7 +42,7 @@ COL1	COL2	COL3
 bb	-16994	1987
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists PK_MULTI_COL_360;
 CREATE TABLE PK_MULTI_COL_360 (
@@ -191,7 +191,7 @@ execute stmt using @a;
 a	b	c	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.c=?';
 set @a=1;
 execute stmt using @a;
@@ -200,7 +200,7 @@ execute stmt using @a;
 a	b	c	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 set tidb_enable_prepared_plan_cache=DEFAULT;
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists PK_SIGNED_10094;
@@ -426,7 +426,7 @@ execute stmt using @a;
 col1	col2	col1	col2
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 set tidb_enable_prepared_plan_cache=DEFAULT;
 drop table if exists t4;
 create table t4 (a date);
