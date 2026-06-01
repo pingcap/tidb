@@ -907,6 +907,29 @@ func TestTryRenewPostWriteProofRejectsTinyRemainingLease(t *testing.T) {
 	require.ErrorIs(t, err, objstore.TESTRenewRemainingLeaseTooSmall)
 }
 
+func TestTryRenewPostWriteProofAcceptsMinimumRemainingLease(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TESTSetRenewalProofConstants(5*time.Minute, time.Minute)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 0, time.UTC)
+	renewNow := leaseNow.Add(time.Minute)
+	clock := &sequenceLeaseClock{
+		times: []time.Time{
+			leaseNow,
+			leaseNow.Add(time.Millisecond),
+			renewNow,
+			renewNow.Add(objstore.LeaseTTL).Add(-time.Minute),
+		},
+	}
+	lock, err := objstore.TryLockRemoteWrite(ctx, strg, "v1/LOCK", "owner", clock)
+	require.NoError(t, err)
+
+	delay, err := objstore.TESTTryRenewWithDelay(ctx, lock)
+	require.NoError(t, err)
+	require.Equal(t, 20*time.Second, delay)
+}
+
 func TestTryRenewLeaseClockErrorIsTransient(t *testing.T) {
 	ctx := context.Background()
 	strg, _ := createMockStorage(t)
