@@ -83,7 +83,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -2591,15 +2590,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				if index.Meta().HasCondition() {
 					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
 				}
-				actualHandle := handle
-				// For global indexes V1+ on partitioned tables, we need to wrap the handle
-				// with the partition ID to create a PartitionHandle.
-				// This is critical for non-clustered tables after EXCHANGE PARTITION,
-				// where duplicate _tidb_rowid values exist across partitions.
-				// Legacy indexes (version 0) don't use PartitionHandle in the key.
-				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
-					actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
-				}
+				actualHandle := indexKVHandleForPhysicalTable(index, taskRange.physicalTable.GetPhysicalID(), handle)
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
@@ -2880,7 +2871,7 @@ func writeChunk(
 				if !needRestoreForIndexes[i] {
 					return nil
 				}
-				return getRestoreData(c.TableInfo, copCtx.IndexInfo(index.Meta().ID), c.PrimaryKeyInfo, restoreDataBuf)
+				return tables.TryGetHandleRestoredData(c.TableInfo, c.PrimaryKeyInfo, restoreDataBuf, copCtx.IndexInfo(index.Meta().ID))
 			},
 			func(i int, _ table.Index, _ []types.Datum, iter table.IndexKVGenerator) (int64, error) {
 				kvBytes, err := writeOneKV(ctx, writers[i], writeStmtBufs, iter, h)
@@ -3678,9 +3669,9 @@ func canRunTiKVSpacePrecheck(store kv.Storage) (bool, error) {
 	if pdStore, ok := store.(kv.StorageWithPD); ok && pdStore.GetPDClient() != nil {
 		return true, nil
 	}
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return false, fmt.Errorf("store %T does not implement helper.Storage", store)
+	hStore, err := helperStorageFromKV(store)
+	if err != nil {
+		return false, err
 	}
 	return hStore.GetPDHTTPClient() != nil, nil
 }
@@ -3696,15 +3687,7 @@ func collectTiKVStoreCapacity(ctx context.Context, store kv.Storage) (*TiKVClust
 }
 
 func collectTiKVStoreCapacityFromPDHTTP(ctx context.Context, store kv.Storage) (*TiKVClusterCapacity, error) {
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
-	}
-	h := &helper.Helper{
-		Store:       hStore,
-		RegionCache: hStore.GetRegionCache(),
-	}
-	pdCli, err := h.TryGetPDHTTPClient()
+	_, pdCli, err := pdHTTPClientFromStorage(store)
 	if err != nil {
 		return nil, err
 	}
@@ -4324,11 +4307,7 @@ func ruleTargetsNonTiKV(rule *pdhttp.Rule) bool {
 }
 
 func collectPDMaxReplicas(ctx context.Context, store kv.Storage) (uint64, error) {
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return 0, fmt.Errorf("store %T does not implement helper.Storage", store)
-	}
-	pdCli, err := helper.NewHelper(hStore).TryGetPDHTTPClient()
+	_, pdCli, err := pdHTTPClientFromStorage(store)
 	if err != nil {
 		return 0, err
 	}
@@ -5229,12 +5208,12 @@ func (w *worker) buildSamplePredictionRegionTasks(
 }
 
 func listSamplePredictionRegions(ctx context.Context, store kv.Storage, physicalID int64) ([]samplePredictionRegion, error) {
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return nil, fmt.Errorf("store %T does not implement helper.Storage", store)
+	hStore, pdCli, err := pdHTTPClientFromStorage(store)
+	if err != nil {
+		return nil, err
 	}
 	tableStart, tableEnd := tablecodec.GetTableHandleKeyRange(physicalID)
-	regionInfos, err := listTableRegions(ctx, store, physicalID, 0)
+	regionInfos, err := listTableRegionsWithClient(ctx, pdCli, hStore, physicalID, 0)
 	if err != nil {
 		return nil, err
 	}
