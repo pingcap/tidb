@@ -32,7 +32,7 @@ const getAllMembersBackoff = 5000
 // client is used to implement etcd meta service.
 type client struct {
 	pdCli           pd.Client
-	KeyspaceEtcdCli *clientv3.Client
+	keyspaceEtcdCli *clientv3.Client
 }
 
 // newClient is used to implement etcd meta service.
@@ -41,14 +41,14 @@ func newClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
 		return nil
 	}
 	return &client{
-		KeyspaceEtcdCli: etcdCli,
+		keyspaceEtcdCli: etcdCli,
 		pdCli:           pdCli,
 	}
 }
 
 // GetKeyspaceEtcdCli return etcd client.
 func (n *client) GetKeyspaceEtcdCli() *clientv3.Client {
-	return n.KeyspaceEtcdCli
+	return n.keyspaceEtcdCli
 }
 
 // GetPDAddrs implements ServiceClient interface.
@@ -69,8 +69,8 @@ func (n *client) GetPDLeaderAddrs(ctx context.Context) (string, error) {
 		leaderAddr string
 		errMsgMap  = map[string]string{}
 	)
-	for _, addr := range n.KeyspaceEtcdCli.Endpoints() {
-		status, err := n.KeyspaceEtcdCli.Status(ctx, addr)
+	for _, addr := range n.keyspaceEtcdCli.Endpoints() {
+		status, err := n.keyspaceEtcdCli.Status(ctx, addr)
 		if err != nil {
 			errMsgMap[addr] = err.Error()
 			continue
