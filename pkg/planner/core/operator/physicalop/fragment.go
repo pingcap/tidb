@@ -221,23 +221,30 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 	}
 	// CteSinkNum/CteSourceNum are required fields in tipb.CTESink/CTESource. After we "untwist" UNION ALL
 	// and split the plan into fragments, the same CTE sink/source can appear multiple times in the final
-	// MPP DAG. Count them here and fill the numbers into each node.
+	// MPP DAG. Count the executors per TiFlash task address and fill the local numbers into each node.
 	if err := e.fixDuplicatedTimesForCTE(e.frags); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return e.frags, nil
 }
 
+// cteSinkInMPPTasks records one CTESink plan node and the self tasks of the fragment containing it.
+// The tasks provide the TiFlash addresses where this sink executor will run.
 type cteSinkInMPPTasks struct {
 	sink  *PhysicalCTESink
 	tasks []*kv.MPPTask
 }
 
+// cteSourceInMPPTasks records one CTESource plan node and the self tasks of the fragment containing it.
+// The tasks provide the TiFlash addresses where this source executor will run.
 type cteSourceInMPPTasks struct {
 	source *PhysicalCTESource
 	tasks  []*kv.MPPTask
 }
 
+// cteInMPPTasks groups all split CTESink/CTESource plan nodes for one CTE id.
+// Each entry keeps its fragment tasks because TiFlash expects sink/source counts per address,
+// while the split MPP DAG can contain multiple global plan nodes for the same CTE id.
 type cteInMPPTasks struct {
 	sinks   []cteSinkInMPPTasks
 	sources []cteSourceInMPPTasks
@@ -296,6 +303,8 @@ func getUniformCTELocalCount(cteID int, tasks []*kv.MPPTask, counts map[string]u
 			initialized = true
 			continue
 		}
+		// One plan node carries one CteSinkNum/CteSourceNum value. If its tasks would need different
+		// per-address values, the split fragment layout cannot be represented by the current TiPB fields.
 		if count != localCount {
 			return 0, errors.Errorf("MPP shared CTE %d has different local %s counts in one fragment", cteID, countName)
 		}
@@ -305,14 +314,14 @@ func getUniformCTELocalCount(cteID int, tasks []*kv.MPPTask, counts map[string]u
 
 func (e *mppTaskGenerator) fixDuplicatedTimesForCTE(frags []*Fragment) error {
 	// Count sinks/sources by cte_id and TiFlash address in the split MPP DAG forest, then assign the
-	// node-local numbers to each CTE node.
+	// per-address numbers to each CTE plan node.
 	//
 	// Why this is needed:
 	// - A shared CTE can be referenced from multiple fragments.
 	// - UNION ALL is handled by "untwist" which copies plans above UNION ALL. That can duplicate
 	//   CTESink/CTESource nodes in the final fragment forest.
-	// - TiFlash CTEManager is node-local, so the expected sink/source numbers must match the executor
-	//   instances on each TiFlash address, not the global plan-node count.
+	// - TiFlash CTEManager is local to one TiFlash address, so the expected sink/source numbers must
+	//   match the executor instances on that address, not the global plan-node count.
 	cteMap := make(map[int]*cteInMPPTasks)
 	for _, f := range frags {
 		e.traverseFragForCTE(f.Sink, f.Sink.GetSelfTasks(), cteMap)

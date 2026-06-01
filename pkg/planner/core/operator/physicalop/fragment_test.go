@@ -60,7 +60,8 @@ func TestFixDuplicatedTimesForCTEUsesLocalTaskCounts(t *testing.T) {
 
 	// This models a CTE producer with UNION ALL split into two CTESink fragments:
 	// one sink runs on tiflash0, the other runs on tiflash1, and both CTE consumers
-	// run on both TiFlash nodes.
+	// run on both TiFlash nodes. Each TiFlash address should see one local sink
+	// and two local sources for the CTE.
 	sink0 := &PhysicalCTESink{IDForStorage: 1}
 	sink0.SetSelfTasks([]*kv.MPPTask{task("tiflash0")})
 	sink1 := &PhysicalCTESink{IDForStorage: 1}
