@@ -31,15 +31,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/util/rowsize"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -558,7 +554,7 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 				{StoreID: 2, TotalBytes: 500, AvailableBytes: 50},
 			},
 		}, 20)
-		require.ErrorContains(t, err, "cluster capacity check")
+		require.ErrorContains(t, err, "TiKV cluster capacity")
 
 		err = checkTiKVSpaceForAddIndex(&TiKVClusterCapacity{
 			TotalBytes:     1000,
@@ -569,7 +565,7 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 				{StoreID: 2, TotalBytes: 500, AvailableBytes: 60},
 			},
 		}, 120)
-		require.ErrorContains(t, err, "store capacity check")
+		require.ErrorContains(t, err, "TiKV store capacity")
 	})
 
 	t.Run("replica count from placement bundle excludes non-TiKV rules", func(t *testing.T) {
@@ -660,215 +656,18 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 		require.Equal(t, uint64(math.MaxUint64), scalePredictedBytesByReplicaCount(math.MaxUint64, 2))
 	})
 
+	t.Run("block sample peak prediction uses steady factor with saturation", func(t *testing.T) {
+		require.Zero(t, estimateBlockSamplePeakPredictedTiKVIndexBytes(0))
+		require.EqualValues(t, 300, estimateBlockSamplePeakPredictedTiKVIndexBytes(100))
+		require.Equal(t, uint64(math.MaxUint64), estimateBlockSamplePeakPredictedTiKVIndexBytes(math.MaxUint64))
+	})
+
 	t.Run("mvcc overhead estimates short and long values", func(t *testing.T) {
 		require.Equal(t, float64(tikvMVCCShortValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, 1))
 		require.Equal(t, float64(tikvMVCCShortValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, tikvMVCCShortValueMaxBytes))
 		require.Equal(t, float64(tikvMVCCLongValueBaseOverheadBytes)+32, estimateTiKVMVCCOverheadBytesPerKV(32, tikvMVCCShortValueMaxBytes+1))
 		require.Equal(t, float64(tikvMVCCEmptyValueOverheadBytes), estimateTiKVMVCCOverheadBytesPerKV(32, 0))
 		require.Zero(t, estimateTiKVMVCCOverheadBytesPerKV(0, 10))
-	})
-
-	t.Run("prediction columns include generated column dependencies", func(t *testing.T) {
-		sctx := mock.NewContext()
-		intType := types.NewFieldType(mysql.TypeLonglong)
-		tblInfo := &model.TableInfo{
-			ID:    100,
-			Name:  ast.NewCIStr("t"),
-			State: model.StatePublic,
-			Columns: []*model.ColumnInfo{
-				{ID: 1, Name: ast.NewCIStr("c28"), Offset: 0, State: model.StatePublic, FieldType: *intType},
-				{
-					ID:                  2,
-					Name:                ast.NewCIStr("c29"),
-					Offset:              1,
-					State:               model.StatePublic,
-					FieldType:           *intType,
-					GeneratedExprString: "t.c28 + 1",
-					Dependences:         map[string]struct{}{"c28": {}},
-				},
-			},
-		}
-		idxInfo := &model.IndexInfo{
-			Columns: []*model.IndexColumn{
-				{Name: ast.NewCIStr("c29"), Offset: 1, Length: types.UnspecifiedLength},
-			},
-		}
-
-		cols, err := buildIndexPredictionColumns(sctx, tblInfo, idxInfo)
-		require.NoError(t, err)
-		require.Len(t, cols, 2)
-		require.Equal(t, int64(2), cols[0].ID)
-		require.NotNil(t, cols[0].VirtualExpr)
-		depCols := expression.ExtractColumns(cols[0].VirtualExpr)
-		require.Len(t, depCols, 1)
-		require.Equal(t, int64(1), depCols[0].ID)
-		require.Equal(t, int64(model.ExtraHandleID), cols[1].ID)
-	})
-
-	t.Run("prediction columns include expression index dependencies", func(t *testing.T) {
-		sctx := mock.NewContext()
-		intType := types.NewFieldType(mysql.TypeLonglong)
-		tblInfo := &model.TableInfo{
-			ID:    101,
-			Name:  ast.NewCIStr("t"),
-			State: model.StatePublic,
-			Columns: []*model.ColumnInfo{
-				{ID: 1, Name: ast.NewCIStr("c"), Offset: 0, State: model.StatePublic, FieldType: *intType},
-				{
-					ID:                  2,
-					Name:                ast.NewCIStr("_V$_idx2_0"),
-					Offset:              1,
-					State:               model.StatePublic,
-					FieldType:           *intType,
-					GeneratedExprString: "t.c + 2",
-					Dependences:         map[string]struct{}{"c": {}},
-					Hidden:              true,
-				},
-			},
-		}
-		idxInfo := &model.IndexInfo{
-			Columns: []*model.IndexColumn{
-				{Name: ast.NewCIStr("_V$_idx2_0"), Offset: 1, Length: types.UnspecifiedLength},
-			},
-		}
-
-		cols, err := buildIndexPredictionColumns(sctx, tblInfo, idxInfo)
-		require.NoError(t, err)
-		require.Len(t, cols, 2)
-		require.Equal(t, int64(2), cols[0].ID)
-		require.NotNil(t, cols[0].VirtualExpr)
-		depCols := expression.ExtractColumns(cols[0].VirtualExpr)
-		require.Len(t, depCols, 1)
-		require.Equal(t, int64(1), depCols[0].ID)
-		require.Equal(t, int64(model.ExtraHandleID), cols[1].ID)
-	})
-
-	t.Run("prediction rowsize uses unique id stats", func(t *testing.T) {
-		sessionVars := variable.NewSessionVars(nil)
-		indexCols := []*expression.Column{
-			{ID: 1, UniqueID: 101, RetType: types.NewFieldType(mysql.TypeLonglong)},
-			{ID: 2, UniqueID: 102, RetType: types.NewFieldType(mysql.TypeVarString)},
-			{ID: model.ExtraHandleID, UniqueID: 103, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		}
-		statsColl := statistics.NewHistColl(1, 100, 0, 3, 0)
-		statsColl.SetCol(1, &statistics.Column{
-			Info:      &model.ColumnInfo{ID: 1},
-			Histogram: *statistics.NewHistogram(1, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 0, 100),
-		})
-		statsColl.SetCol(2, &statistics.Column{
-			Info:      &model.ColumnInfo{ID: 2},
-			Histogram: *statistics.NewHistogram(2, 0, 0, 0, types.NewFieldType(mysql.TypeVarString), 0, 3300),
-		})
-		statsColl.SetCol(model.ExtraHandleID, &statistics.Column{
-			Info:      model.NewExtraHandleColInfo(),
-			Histogram: *statistics.NewHistogram(model.ExtraHandleID, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 0, 0),
-			IsHandle:  true,
-		})
-
-		rawSize := rowsize.GetIndexAvgRowSize(sessionVars, statsColl, indexCols, false)
-		mappedSize := rowsize.GetIndexAvgRowSize(sessionVars, statsColl.ID2UniqueID(indexCols), indexCols, false)
-
-		require.Greater(t, mappedSize, rawSize)
-		require.Greater(t, mappedSize, float64(60))
-		require.Less(t, rawSize, float64(50))
-	})
-
-	t.Run("prediction value estimate includes restored data", func(t *testing.T) {
-		sessionVars := variable.NewSessionVars(nil)
-		intType := types.NewFieldType(mysql.TypeLonglong)
-		intType.AddFlag(mysql.NotNullFlag)
-		stringType := types.NewFieldType(mysql.TypeVarString)
-		stringType.SetCharset(charset.CharsetUTF8MB4)
-		stringType.SetCollate("utf8mb4_general_ci")
-		tblInfo := &model.TableInfo{
-			Columns: []*model.ColumnInfo{
-				{ID: 1, Offset: 0, FieldType: *intType},
-				{ID: 2, Offset: 1, FieldType: *stringType},
-			},
-		}
-		idxInfo := &model.IndexInfo{
-			Columns: []*model.IndexColumn{
-				{Name: ast.NewCIStr("k"), Offset: 0, Length: types.UnspecifiedLength},
-				{Name: ast.NewCIStr("pad"), Offset: 1, Length: 32},
-			},
-		}
-		indexCols := []*expression.Column{
-			{ID: 1, UniqueID: 101, RetType: &tblInfo.Columns[0].FieldType},
-			{ID: 2, UniqueID: 102, RetType: &tblInfo.Columns[1].FieldType},
-			{ID: model.ExtraHandleID, UniqueID: 103, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		}
-		statsColl := statistics.NewHistColl(1, 4_000_000, 0, 3, 0)
-		statsColl.SetCol(1, &statistics.Column{
-			Info:      tblInfo.Columns[0],
-			Histogram: *statistics.NewHistogram(1, 0, 0, 0, intType, 0, 32_000_000),
-		})
-		statsColl.SetCol(2, &statistics.Column{
-			Info:      tblInfo.Columns[1],
-			Histogram: *statistics.NewHistogram(2, 0, 0, 0, stringType, 0, 128_000_000),
-		})
-		statsColl.SetCol(model.ExtraHandleID, &statistics.Column{
-			Info:      model.NewExtraHandleColInfo(),
-			Histogram: *statistics.NewHistogram(model.ExtraHandleID, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 0, 0),
-			IsHandle:  true,
-		})
-
-		keyBytes := rowsize.GetIndexAvgRowSize(sessionVars, statsColl.ID2UniqueID(indexCols), indexCols, false)
-		valueBytes := estimateIndexValueBytesPerRowForPrediction(tblInfo, idxInfo, statsColl)
-
-		require.True(t, tables.NeedRestoredData(idxInfo.Columns, tblInfo.Columns))
-		require.Greater(t, valueBytes, float64(60))
-		require.Greater(t, keyBytes+valueBytes, keyBytes+float64(40))
-	})
-
-	t.Run("basic and represent predictions include mvcc overhead for restored data index", func(t *testing.T) {
-		sctx := mock.NewContext()
-		intType := types.NewFieldType(mysql.TypeLonglong)
-		intType.AddFlag(mysql.NotNullFlag)
-		stringType := types.NewFieldType(mysql.TypeVarString)
-		stringType.SetCharset(charset.CharsetUTF8MB4)
-		stringType.SetCollate("utf8mb4_general_ci")
-		tblInfo := &model.TableInfo{
-			ID: 100,
-			Columns: []*model.ColumnInfo{
-				{ID: 1, Offset: 0, FieldType: *intType},
-				{ID: 2, Offset: 1, FieldType: *stringType},
-			},
-		}
-		idxInfo := &model.IndexInfo{
-			ID: 10,
-			Columns: []*model.IndexColumn{
-				{Name: ast.NewCIStr("k"), Offset: 0, Length: types.UnspecifiedLength},
-				{Name: ast.NewCIStr("pad"), Offset: 1, Length: 32},
-			},
-		}
-		indexCols := []*expression.Column{
-			{ID: 1, UniqueID: 101, RetType: &tblInfo.Columns[0].FieldType},
-			{ID: 2, UniqueID: 102, RetType: &tblInfo.Columns[1].FieldType},
-			{ID: model.ExtraHandleID, UniqueID: 103, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		}
-		statsColl := statistics.NewHistColl(1, 4_000_000, 0, 3, 0)
-		statsColl.SetCol(1, &statistics.Column{
-			Info:      tblInfo.Columns[0],
-			Histogram: *statistics.NewHistogram(1, 0, 0, 0, intType, 0, 32_000_000),
-		})
-		statsColl.SetCol(2, &statistics.Column{
-			Info:      tblInfo.Columns[1],
-			Histogram: *statistics.NewHistogram(2, 0, 0, 0, stringType, 0, 128_000_000),
-		})
-		statsColl.SetCol(model.ExtraHandleID, &statistics.Column{
-			Info:      model.NewExtraHandleColInfo(),
-			Histogram: *statistics.NewHistogram(model.ExtraHandleID, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 0, 0),
-			IsHandle:  true,
-		})
-		statsTbl := &statistics.Table{HistColl: *statsColl}
-
-		basicBytes, basicMVCCBytes := estimateIndexKVBytesPerRowForBasicPrediction(sctx, tblInfo, idxInfo, statsTbl, indexCols)
-		representBytes, representMVCCBytes, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idxInfo, tblInfo.ID, statsTbl)
-		require.NoError(t, err)
-		require.Greater(t, basicBytes, float64(tikvMVCCShortValueOverheadBytes))
-		require.Greater(t, representBytes, float64(tikvMVCCShortValueOverheadBytes))
-		require.Positive(t, basicMVCCBytes)
-		require.Positive(t, representMVCCBytes)
 	})
 
 	t.Run("sampled row prediction uses actual row values", func(t *testing.T) {
@@ -897,28 +696,20 @@ func TestCollectTiKVStoreUsage(t *testing.T) {
 			},
 		}
 		physicalTbl := tables.MockTableFromMeta(tblInfo).(table.PhysicalTable)
-		idxInfo := tblInfo.Indices[0]
-		statsColl := statistics.NewHistColl(1, 4_000_000, 0, 3, 0)
-		statsColl.SetCol(1, &statistics.Column{
-			Info:      tblInfo.Columns[0],
-			Histogram: *statistics.NewHistogram(1, 0, 0, 0, intType, 0, 32_000_000),
-		})
-		statsColl.SetCol(2, &statistics.Column{
-			Info:      tblInfo.Columns[1],
-			Histogram: *statistics.NewHistogram(2, 0, 0, 0, stringType, 0, 128_000_000),
-		})
-		statsTbl := &statistics.Table{HistColl: *statsColl}
-
-		representBytes, _, err := estimateIndexKVBytesPerRowForRepresentPrediction(sctx, tblInfo, idxInfo, tblInfo.ID, statsTbl)
+		shortRow := []types.Datum{
+			types.NewIntDatum(1),
+			types.NewCollationStringDatum("x", "utf8mb4_general_ci"),
+		}
+		shortSampledBytes, err := estimateIndexKVBytesForSampledRow(sctx, physicalTbl, physicalTbl.Indices(), shortRow, kv.IntHandle(1))
 		require.NoError(t, err)
 
-		row := []types.Datum{
+		longRow := []types.Datum{
 			types.NewIntDatum(1),
 			types.NewCollationStringDatum(strings.Repeat("界", 32), "utf8mb4_general_ci"),
 		}
-		sampledBytes, err := estimateIndexKVBytesForSampledRow(sctx, physicalTbl, physicalTbl.Indices(), row, kv.IntHandle(1))
+		longSampledBytes, err := estimateIndexKVBytesForSampledRow(sctx, physicalTbl, physicalTbl.Indices(), longRow, kv.IntHandle(1))
 		require.NoError(t, err)
-		require.Greater(t, float64(sampledBytes), representBytes)
+		require.Greater(t, longSampledBytes, shortSampledBytes)
 	})
 
 	t.Run("sample prediction region selection caps at five", func(t *testing.T) {

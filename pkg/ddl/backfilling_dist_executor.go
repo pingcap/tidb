@@ -47,43 +47,23 @@ type BackfillTaskMeta struct {
 	// For now, only index type is supported.
 	EleTypeKey []byte `json:"ele_type_key"`
 
-	CloudStorageURI                      string                  `json:"cloud_storage_uri"`
-	EstimateRowSize                      int                     `json:"estimate_row_size"`
-	MergeTempIndex                       bool                    `json:"merge_temp_index"`
-	InitialTiKVStoreUsage                *TiKVStoreUsageSnapshot `json:"initial_tikv_store_usage,omitempty"`
-	InitialTiKVCapacity                  *TiKVClusterCapacity    `json:"initial_tikv_capacity,omitempty"`
-	BasicPredictedTiKVIndexBytes         uint64                  `json:"basic_predicted_tikv_index_bytes,omitempty"`
-	RepresentPredictedTiKVIndexBytes     uint64                  `json:"represent_predicted_tikv_index_bytes,omitempty"`
-	StaticSamplePredictedTiKVIndexBytes  uint64                  `json:"static_sample_predicted_tikv_index_bytes,omitempty"`
-	BlockSamplePredictedTiKVIndexBytes   uint64                  `json:"block_sample_predicted_tikv_index_bytes,omitempty"`
-	BasicMVCCOverheadTotalBytes          uint64                  `json:"basic_mvcc_overhead_total_bytes,omitempty"`
-	RepresentMVCCOverheadTotalBytes      uint64                  `json:"represent_mvcc_overhead_total_bytes,omitempty"`
-	StaticSampleMVCCOverheadTotalBytes   uint64                  `json:"static_sample_mvcc_overhead_total_bytes,omitempty"`
-	BlockSampleMVCCOverheadTotalBytes    uint64                  `json:"block_sample_mvcc_overhead_total_bytes,omitempty"`
-	TiKVReplicaCount                     uint64                  `json:"tikv_replica_count,omitempty"`
-	TiKVReplicaCountSource               string                  `json:"tikv_replica_count_source,omitempty"`
-	TiKVReplicaCountPhysicalID           int64                   `json:"tikv_replica_count_physical_id,omitempty"`
-	StaticSamplePredictionRegionCount    int                     `json:"static_sample_prediction_region_count,omitempty"`
-	StaticSamplePredictionRowCount       int                     `json:"static_sample_prediction_row_count,omitempty"`
-	StaticSamplePredictionReadErrorCount int                     `json:"static_sample_prediction_read_error_count,omitempty"`
-	BlockSamplePredictionRegionCount     int                     `json:"block_sample_prediction_region_count,omitempty"`
-	BlockSamplePredictionRowCount        int                     `json:"block_sample_prediction_row_count,omitempty"`
-	BlockSamplePredictionReadErrorCount  int                     `json:"block_sample_prediction_read_error_count,omitempty"`
-	BlockSampleEncodedKeySharedPrefixAvg float64                 `json:"block_sample_encoded_key_shared_prefix_avg,omitempty"`
-	BlockSampleRawKeySharedPrefixAvg     float64                 `json:"block_sample_raw_key_shared_prefix_avg,omitempty"`
-	BlockSampleRawKeyLengthAvg           float64                 `json:"block_sample_raw_key_length_avg,omitempty"`
-	// BlockSampleKeySharedPrefixAvg is kept for compatibility with task metadata
-	// written before the encoded/raw split.
-	BlockSampleKeySharedPrefixAvg float64 `json:"block_sample_key_shared_prefix_avg,omitempty"`
-	// SamplePredictedTiKVIndexBytes and SamplePrediction* are kept for
-	// compatibility with task metadata written before the static/block split.
-	SamplePredictedTiKVIndexBytes  uint64 `json:"sample_predicted_tikv_index_bytes,omitempty"`
-	SamplePredictionRegionCount    int    `json:"sample_prediction_region_count,omitempty"`
-	SamplePredictionRowCount       int    `json:"sample_prediction_row_count,omitempty"`
-	SamplePredictionReadErrorCount int    `json:"sample_prediction_read_error_count,omitempty"`
-	// PredictedTiKVIndexBytes is kept for compatibility with task metadata written by
-	// earlier builds. New task submissions store the block sample prediction here.
-	PredictedTiKVIndexBytes uint64 `json:"predicted_tikv_index_bytes,omitempty"`
+	CloudStorageURI                          string                  `json:"cloud_storage_uri"`
+	EstimateRowSize                          int                     `json:"estimate_row_size"`
+	MergeTempIndex                           bool                    `json:"merge_temp_index"`
+	InitialTiKVStoreUsage                    *TiKVStoreUsageSnapshot `json:"initial_tikv_store_usage,omitempty"`
+	InitialTiKVCapacity                      *TiKVClusterCapacity    `json:"initial_tikv_capacity,omitempty"`
+	BlockSampleSteadyPredictedTiKVIndexBytes uint64                  `json:"block_sample_steady_predicted_tikv_index_bytes,omitempty"`
+	BlockSamplePeakPredictedTiKVIndexBytes   uint64                  `json:"block_sample_peak_predicted_tikv_index_bytes,omitempty"`
+	BlockSampleMVCCOverheadTotalBytes        uint64                  `json:"block_sample_mvcc_overhead_total_bytes,omitempty"`
+	TiKVReplicaCount                         uint64                  `json:"tikv_replica_count,omitempty"`
+	TiKVReplicaCountSource                   string                  `json:"tikv_replica_count_source,omitempty"`
+	TiKVReplicaCountPhysicalID               int64                   `json:"tikv_replica_count_physical_id,omitempty"`
+	BlockSamplePredictionRegionCount         int                     `json:"block_sample_prediction_region_count,omitempty"`
+	BlockSamplePredictionRowCount            int                     `json:"block_sample_prediction_row_count,omitempty"`
+	BlockSamplePredictionReadErrorCount      int                     `json:"block_sample_prediction_read_error_count,omitempty"`
+	BlockSampleEncodedKeySharedPrefixAvg     float64                 `json:"block_sample_encoded_key_shared_prefix_avg,omitempty"`
+	BlockSampleRawKeySharedPrefixAvg         float64                 `json:"block_sample_raw_key_shared_prefix_avg,omitempty"`
+	BlockSampleRawKeyLengthAvg               float64                 `json:"block_sample_raw_key_length_avg,omitempty"`
 
 	Version int `json:"version,omitempty"`
 }
