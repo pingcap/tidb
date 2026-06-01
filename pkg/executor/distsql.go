@@ -843,6 +843,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		defer func() {
+			close(workCh)
 			close(e.resultCh)
 			e.idxWorkerWg.Done()
 		}()
