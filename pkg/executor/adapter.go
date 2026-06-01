@@ -1767,6 +1767,14 @@ func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
 	stmtCtx.InsertRowsAsRUV2Recorded = true
 }
 
+// finalizeStatementRUV2Metrics is the sole drain point for RUv2 raw counters
+// since the per-Next syncRUV2MetricsAfterExec calls were removed. It runs
+// before LogSlowQuery / SummaryStmt, so post-statement consumers see fully
+// drained metrics. The trade-off: ResourceManagerReadCnt and
+// ResourceManagerWriteCnt on RUV2Metrics stay at zero until this drain fires,
+// so an in-flight TopRU sample read between Open() and FinishExecuteStmt will
+// not see those two fields' contribution. Per-statement totals telescope to
+// the correct sum because the post-finalize sample picks up the residual.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
