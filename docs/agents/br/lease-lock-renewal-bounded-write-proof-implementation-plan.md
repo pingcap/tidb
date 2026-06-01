@@ -473,7 +473,7 @@ git commit -m "pkg/objstore: prove renewed lease after bounded write"
 - Modify: `pkg/objstore/locking_test.go`
 - Modify: `docs/agents/br/lease-lock-renewal-bounded-write-proof-implementation-plan.md`
 
-- [ ] **Step 1: Add direct next-delay test**
+- [x] **Step 1: Add direct next-delay test**
 
 In `pkg/objstore/locking_test.go`, add:
 
@@ -503,7 +503,7 @@ func TestTryRenewReturnsDelayFromRemainingLease(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run RED next-delay test**
+- [x] **Step 2: Run RED next-delay test**
 
 Run:
 
@@ -513,7 +513,7 @@ Run:
 
 Expected before renewal-loop update: compile failure until `TESTTryRenewWithDelay` exists, then pass once Task 2 helper is present. Keep this test as the direct proof for delay calculation.
 
-- [ ] **Step 3: Update renewal loop to use returned delay**
+- [x] **Step 3: Update renewal loop to use returned delay**
 
 In `renewalLoop`, replace the fixed `time.After(renewInterval)` top-level sleep with a mutable delay. Use this complete shape and preserve the existing log message text:
 
@@ -586,11 +586,11 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 }
 ```
 
-- [ ] **Step 4: Add loop-level smoke coverage**
+- [x] **Step 4: Add loop-level smoke coverage**
 
 Update `TestStartRenewalRefreshesLeasePeriodically` only if it becomes flaky under remaining-window scheduling. Keep the assertion that `ExpireAt` advances; do not add broad sleeps beyond what existing tests use.
 
-- [ ] **Step 5: Run GREEN renewal scheduling tests**
+- [x] **Step 5: Run GREEN renewal scheduling tests**
 
 Run:
 
@@ -600,7 +600,7 @@ Run:
 
 Expected after implementation: selected tests pass.
 
-- [ ] **Step 6: Commit Task 3**
+- [x] **Step 6: Commit Task 3**
 
 Run:
 

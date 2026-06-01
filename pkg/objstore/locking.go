@@ -517,18 +517,22 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 		}
 	}
 
+	nextDelay := renewInterval
 	for {
+		timer := time.NewTimer(nextDelay)
 		select {
 		case <-l.stopCh:
+			timer.Stop()
 			return
-		case <-time.After(renewInterval):
+		case <-timer.C:
 		}
 
 		var lastErr error
 		renewSucceeded := false
 		for attempt := 0; attempt <= renewMaxRetries; attempt++ {
-			_, err := l.tryRenew(ctx)
+			delay, err := l.tryRenew(ctx)
 			if err == nil {
+				nextDelay = delay
 				renewSucceeded = true
 				break
 			}
@@ -568,7 +572,6 @@ func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
 			invokeLost()
 			return
 		}
-		// renewSucceeded → wait for the next tick.
 	}
 }
 
