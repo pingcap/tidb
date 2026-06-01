@@ -318,12 +318,11 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 
 	taskStore := m.store
 	if m.store.GetKeyspace() != task.Keyspace {
-		var err2 error
-		err2 = m.taskTable.WithNewSession(func(se sessionctx.Context) error {
+		if err2 := m.taskTable.WithNewSession(func(se sessionctx.Context) error {
+			var err2 error
 			taskStore, err2 = se.GetSQLServer().GetKSStore(task.Keyspace)
 			return err2
-		})
-		if err2 != nil {
+		}); err2 != nil {
 			m.failSubtask(err2, task.ID, nil)
 			return false
 		}
