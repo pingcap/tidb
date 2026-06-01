@@ -37,7 +37,7 @@ Second-stage lifecycle ideas are intentionally out of scope:
 - Modify: `pkg/objstore/locking_test.go`
 - Modify: `docs/agents/br/lease-lock-renewal-bounded-write-proof-implementation-plan.md`
 
-- [ ] **Step 1: Write failing cleanup-grace tests**
+- [x] **Step 1: Write failing cleanup-grace tests**
 
 In `pkg/objstore/locking_test.go`, add focused coverage near the existing `TestCleanUpStaleTruncateLock*` tests:
 
@@ -75,7 +75,7 @@ func TestCleanUpStaleTruncateLockUsesStaleReclaimGrace(t *testing.T) {
 
 Update nearby comments/assertions that still say `ExpireAt+LeaseTTL` so they use `staleReclaimGrace`.
 
-- [ ] **Step 2: Run RED cleanup test**
+- [x] **Step 2: Run RED cleanup test**
 
 Run:
 
@@ -85,7 +85,7 @@ Run:
 
 Expected before implementation: compile failure because `objstore.TESTSetStaleReclaimGrace` does not exist, or behavior failure because cleanup still uses `LeaseTTL`.
 
-- [ ] **Step 3: Implement `staleReclaimGrace`**
+- [x] **Step 3: Implement `staleReclaimGrace`**
 
 In `pkg/objstore/locking.go`, add the new variable next to `LeaseTTL`:
 
@@ -113,7 +113,7 @@ func TESTSetStaleReclaimGrace(grace time.Duration) (restore func()) {
 }
 ```
 
-- [ ] **Step 4: Run GREEN cleanup tests**
+- [x] **Step 4: Run GREEN cleanup tests**
 
 Run:
 
@@ -123,7 +123,7 @@ Run:
 
 Expected after implementation: selected cleanup tests pass. Update old test names only if needed; keep behavior-based names.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 Run:
 

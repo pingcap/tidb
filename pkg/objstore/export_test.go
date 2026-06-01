@@ -65,6 +65,13 @@ func TESTSetLeaseConstants(ttl, interval time.Duration, maxRetries int, baseBack
 	return SetLeaseConstantsForTest(ttl, interval, maxRetries, baseBackoff)
 }
 
+// TESTSetStaleReclaimGrace overrides the stale cleanup grace for tests.
+func TESTSetStaleReclaimGrace(grace time.Duration) (restore func()) {
+	old := staleReclaimGrace
+	staleReclaimGrace = grace
+	return func() { staleReclaimGrace = old }
+}
+
 // TESTSetNow overrides nowFunc for deterministic time-based tests.
 // Callers should invoke the returned restore function in a defer or t.Cleanup.
 func TESTSetNow(fn func() time.Time) (restore func()) {

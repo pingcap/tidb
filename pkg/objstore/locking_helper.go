@@ -399,7 +399,7 @@ func cleanUpStaleLockInstance(ctx context.Context, storage storeapi.Storage, pat
 	if err != nil {
 		return false, cleanupLeaseClockError{err: err}
 	}
-	reclaimAfter := meta.ExpireAt.Add(LeaseTTL)
+	reclaimAfter := meta.ExpireAt.Add(staleReclaimGrace)
 	if !now.After(reclaimAfter) {
 		return false, nil
 	}

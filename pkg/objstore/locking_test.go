@@ -1096,6 +1096,7 @@ func TestCleanUpStaleTruncateLockOverdueWithinTTL(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
 	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetStaleReclaimGrace(100 * time.Millisecond)()
 
 	t.Run("missing lock is no-op", func(t *testing.T) {
 		reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg, localLeaseClock())
@@ -1103,8 +1104,8 @@ func TestCleanUpStaleTruncateLockOverdueWithinTTL(t *testing.T) {
 		require.False(t, reclaimed, "missing lock means there is nothing to clean up")
 	})
 
-	// Plant a lock that expired 30ms ago. With LeaseTTL=100ms, the lock is
-	// not reclaimable until ExpireAt+LeaseTTL.
+	// Plant a lock that expired 30ms ago. With staleReclaimGrace=100ms, the
+	// lock is not reclaimable until ExpireAt+staleReclaimGrace.
 	now := time.Now()
 	defer objstore.TESTSetNow(func() time.Time { return now })()
 	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
@@ -1121,9 +1122,39 @@ func TestCleanUpStaleTruncateLockOverdueWithinTTL(t *testing.T) {
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
-	require.False(t, reclaimed, "lock must not be reclaimed until ExpireAt+LeaseTTL")
+	require.False(t, reclaimed, "lock must not be reclaimed until ExpireAt+staleReclaimGrace")
 	requireFileExists(t, filepath.Join(pth, lockPath))
 	require.Less(t, elapsed, 30*time.Millisecond, "cleanup should not wait for the grace window")
+}
+
+func TestCleanUpStaleTruncateLockUsesStaleReclaimGrace(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetStaleReclaimGrace(30 * time.Millisecond)()
+
+	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 123456789, time.UTC)
+	stalePath := "truncating.lock.0123456789abcdef0123456789abcdef"
+	alivePath := "truncating.lock.33333333333333333333333333333333"
+	writeLockMeta(t, strg, stalePath, objstore.LockMeta{
+		LockedAt: leaseNow.Add(-time.Hour),
+		ExpireAt: leaseNow.Add(-30 * time.Millisecond).Add(-time.Nanosecond),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "past-reclaim-grace",
+	})
+	writeLockMeta(t, strg, alivePath, objstore.LockMeta{
+		LockedAt: leaseNow.Add(-time.Hour),
+		ExpireAt: leaseNow.Add(-30 * time.Millisecond).Add(time.Nanosecond),
+		TxnID:    []byte{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
+		Hint:     "inside-reclaim-grace",
+	})
+
+	clock := &sequenceLeaseClock{times: []time.Time{leaseNow, leaseNow}}
+	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg, clock)
+	require.NoError(t, err)
+	require.True(t, reclaimed)
+	requireFileNotExists(t, filepath.Join(pth, stalePath))
+	requireFileExists(t, filepath.Join(pth, alivePath))
 }
 
 func TestCleanUpStaleTruncateLockOverduePastTTL(t *testing.T) {
@@ -1195,9 +1226,10 @@ func TestCleanUpStaleTruncateLockRefreshedDuringWait(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
 	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetStaleReclaimGrace(100 * time.Millisecond)()
 
 	// Plant a lock that expired 20ms ago. It is past ExpireAt but still
-	// inside the extra LeaseTTL grace window, so cleanup must not delete it.
+	// inside staleReclaimGrace, so cleanup must not delete it.
 	now := time.Now()
 	lockPath := "truncating.lock.0123456789abcdef0123456789abcdef"
 	writeLockMeta(t, strg, lockPath, objstore.LockMeta{
@@ -1209,7 +1241,7 @@ func TestCleanUpStaleTruncateLockRefreshedDuringWait(t *testing.T) {
 
 	reclaimed, err := objstore.CleanUpStaleTruncateLock(ctx, strg, localLeaseClock())
 	require.NoError(t, err)
-	require.False(t, reclaimed, "reclaim must wait until ExpireAt+LeaseTTL has passed")
+	require.False(t, reclaimed, "reclaim must wait until ExpireAt+staleReclaimGrace has passed")
 	requireFileExists(t, filepath.Join(pth, lockPath))
 }
 
@@ -1254,6 +1286,7 @@ func TestCleanUpStaleTruncateLockUsesClockForStaleDecision(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
 	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetStaleReclaimGrace(100 * time.Millisecond)()
 
 	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 123456789, time.UTC)
 	stalePath := "truncating.lock.0123456789abcdef0123456789abcdef"
@@ -1319,6 +1352,7 @@ func TestLockWithRetryReclaimsUsingLeaseClock(t *testing.T) {
 	ctx := context.Background()
 	strg, pth := createMockStorage(t)
 	defer objstore.TESTSetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+	defer objstore.TESTSetStaleReclaimGrace(100 * time.Millisecond)()
 
 	leaseNow := time.Date(2030, 5, 28, 10, 11, 12, 123456789, time.UTC)
 	instancePath := "v1/LOCK.READ.0123456789abcdef0123456789abcdef"

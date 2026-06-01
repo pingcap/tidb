@@ -161,6 +161,11 @@ var (
 	// before other processes may consider it stale and attempt to reclaim it.
 	LeaseTTL = time.Hour
 
+	// staleReclaimGrace is the extra delay after ExpireAt before stale cleanup
+	// may reclaim a physical lock instance. It is separate from LeaseTTL so a
+	// long lease does not force an equally long crash-reclaim delay.
+	staleReclaimGrace = 30 * time.Minute
+
 	// renewInterval is the cadence at which a startRenewal-tracked lock
 	// refreshes its ExpireAt. Renewing at TTL/3 leaves 2*TTL/3 for retry
 	// backoff before the lease would actually expire.
