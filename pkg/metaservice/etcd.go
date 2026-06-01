@@ -61,7 +61,7 @@ func (n *client) GetPDAddrs() ([]string, error) {
 }
 
 // GetPDHostPorts returns the PD addresses from PD client.
-func GetPDHostPorts(ctx context.Context, pdClient pd.Client, hasPrefix bool) ([]string, error) {
+func GetPDHostPorts(ctx context.Context, pdClient pd.Client, withSchema bool) ([]string, error) {
 	pdAddrs := make([]string, 0)
 	bo := tikv.NewBackoffer(ctx, getAllMembersBackoff)
 	if pdClient == nil {
