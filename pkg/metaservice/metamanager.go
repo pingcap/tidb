@@ -130,7 +130,7 @@ type ServiceClient interface {
 	// GetPDAddrs is used to get pd addrs(host:port).
 	GetPDAddrs() ([]string, error)
 	// GetPDLeaderAddrs is used to get meta service leader addrs.
-	GetPDLeaderAddrs(ctx context.Context) (string, error)
+	GetPDLeaderAddrs(ctx context.Context) string
 	// GetPDHttpAddrs is used to get PD http addrs.
 	GetPDHttpAddrs() ([]string, error)
 }

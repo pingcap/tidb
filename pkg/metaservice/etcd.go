@@ -61,33 +61,8 @@ func (n *client) GetPDAddrs() ([]string, error) {
 }
 
 // GetPDLeaderAddrs implements ServiceClient interface.
-func (n *client) GetPDLeaderAddrs(ctx context.Context) (string, error) {
-	// todo: PD GetAllMembers should directly return which is the pd leader.
-	// Don't use etcd client to get PD leader.
-
-	var (
-		leaderAddr string
-		errMsgMap  = map[string]string{}
-	)
-	for _, addr := range n.keyspaceEtcdCli.Endpoints() {
-		status, err := n.keyspaceEtcdCli.Status(ctx, addr)
-		if err != nil {
-			errMsgMap[addr] = err.Error()
-			continue
-		}
-		if status.Leader == status.Header.MemberId {
-			leaderAddr = addr
-			break
-		}
-	}
-
-	if leaderAddr == "" {
-		if len(errMsgMap) == 0 {
-			return "", errors.New("pd leader not found")
-		}
-		return "", fmt.Errorf("pd leader not found, errors when find leader: %v", errMsgMap)
-	}
-	return leaderAddr, nil
+func (n *client) GetPDLeaderAddrs(_ context.Context) string {
+	return n.pdCli.GetLeaderURL()
 }
 
 // GetPDHostPorts returns the PD addresses from PD client.

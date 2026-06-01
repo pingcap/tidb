@@ -29,11 +29,16 @@ import (
 
 type mockPDClient struct {
 	pd.Client
-	members []*pdpb.Member
+	members   []*pdpb.Member
+	leaderURL string
 }
 
 func (c *mockPDClient) GetAllMembers(context.Context) (*pdpb.GetMembersResponse, error) {
 	return &pdpb.GetMembersResponse{Members: c.members}, nil
+}
+
+func (c *mockPDClient) GetLeaderURL() string {
+	return c.leaderURL
 }
 
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.
@@ -84,17 +89,17 @@ func TestGetPDLeaderAddrsWithRealClient(t *testing.T) {
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	etcdCli := cluster.RandClient()
+	pdCli := &mockPDClient{leaderURL: "http://127.0.0.1:2379"}
 
-	serviceClient := newClient(etcdCli, nil)
+	serviceClient := newClient(etcdCli, pdCli)
 	ctx := context.Background()
 
-	leaderAddr, err := serviceClient.GetPDLeaderAddrs(ctx)
+	leaderAddr := serviceClient.GetPDLeaderAddrs(ctx)
 
-	require.NoError(t, err)
-	require.NotEmpty(t, leaderAddr, "Leader address should not be empty")
+	require.Equal(t, pdCli.leaderURL, leaderAddr)
 }
 
-func TestGetPDLeaderAddrsReturnsErrorWhenLeaderNotFound(t *testing.T) {
+func TestGetPDLeaderAddrsReturnsEmptyWhenLeaderNotFound(t *testing.T) {
 	etcdCli, err := clientv3.New(clientv3.Config{
 		Endpoints:   []string{"127.0.0.1:1"},
 		DialTimeout: 100 * time.Millisecond,
@@ -104,14 +109,12 @@ func TestGetPDLeaderAddrsReturnsErrorWhenLeaderNotFound(t *testing.T) {
 		require.NoError(t, etcdCli.Close())
 	}()
 
-	serviceClient := newClient(etcdCli, nil)
+	serviceClient := newClient(etcdCli, &mockPDClient{})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	leaderAddr, err := serviceClient.GetPDLeaderAddrs(ctx)
+	leaderAddr := serviceClient.GetPDLeaderAddrs(ctx)
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, "pd leader not found")
 	require.Empty(t, leaderAddr)
 }
 
